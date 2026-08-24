@@ -221,28 +221,64 @@ public sealed class EditMetadataDialog : ContentDialog
             Visibility = IsLockable ? Visibility.Visible : Visibility.Collapsed,
         };
         var resetButton = new Button { Content = "Reset to Provider" };
-        var resetHint = new TextBlock
+        resetPanel.Children.Add(resetButton);
+        Grid.SetRow(resetPanel, 1);
+        Grid.SetColumn(resetPanel, 1);
+        root.Children.Add(resetPanel);
+
+        var resetConfirmation = new Grid
         {
-            Text = "Unlocks fields and refreshes metadata from configured providers.",
-            FontSize = 11,
-            Foreground = Brush("SecondaryTextBrush"),
+            Background = new SolidColorBrush(Color.FromArgb(184, 0, 0, 0)),
+            Visibility = Visibility.Collapsed,
+        };
+        Canvas.SetZIndex(resetConfirmation, 100);
+        Grid.SetRowSpan(resetConfirmation, 2);
+        Grid.SetColumnSpan(resetConfirmation, 2);
+        var confirmationCard = new Border
+        {
+            Width = 460,
+            Padding = new Thickness(22),
+            CornerRadius = new CornerRadius(12),
+            Background = Brush("SurfaceRaisedBrush"),
+            BorderBrush = Brush("BorderBrush"),
+            BorderThickness = new Thickness(1),
+            HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        var resetArmed = false;
-        resetButton.Click += async (_, _) =>
+        var confirmationContent = new StackPanel { Spacing = 16 };
+        confirmationContent.Children.Add(new TextBlock
         {
-            if (!resetArmed)
-            {
-                resetArmed = true;
-                resetButton.Content = "Confirm reset & refresh";
-                resetHint.Text = "Manual edits may be overwritten. Click again to confirm.";
-                resetHint.Foreground = new SolidColorBrush(Color.FromArgb(255, 232, 184, 110));
-                return;
-            }
-
+            Text = "Reset to Provider",
+            FontSize = 19,
+            FontWeight = FontWeights.SemiBold,
+        });
+        confirmationContent.Children.Add(new TextBlock
+        {
+            Text = "This will unlock all fields and refresh metadata from your providers. Any manual edits will be overwritten on the next refresh.",
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = Brush("SecondaryTextBrush"),
+        });
+        var confirmationActions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 10,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        var cancelReset = new Button { Content = "Cancel" };
+        var confirmReset = new Button
+        {
+            Content = "Reset & Refresh",
+            Style = (Style)Application.Current.Resources["DestructiveButtonStyle"],
+        };
+        cancelReset.Click += (_, _) => resetConfirmation.Visibility = Visibility.Collapsed;
+        confirmReset.Click += async (_, _) =>
+        {
             try
             {
-                resetButton.IsEnabled = false;
+                cancelReset.IsEnabled = false;
+                confirmReset.IsEnabled = false;
+                confirmReset.Content = "Resetting…";
                 await _adminApi.RefreshItemMetadataAsync(_item.ContentId, "quick");
                 HasAppliedChanges = true;
                 _toast.Success("Metadata refresh started.");
@@ -250,15 +286,23 @@ public sealed class EditMetadataDialog : ContentDialog
             }
             catch (Exception ex)
             {
-                resetButton.IsEnabled = true;
                 _toast.Error(ex.Message);
+                cancelReset.IsEnabled = true;
+                confirmReset.IsEnabled = true;
+                confirmReset.Content = "Reset & Refresh";
             }
         };
-        resetPanel.Children.Add(resetButton);
-        resetPanel.Children.Add(resetHint);
-        Grid.SetRow(resetPanel, 1);
-        Grid.SetColumn(resetPanel, 1);
-        root.Children.Add(resetPanel);
+        confirmationActions.Children.Add(cancelReset);
+        confirmationActions.Children.Add(confirmReset);
+        confirmationContent.Children.Add(confirmationActions);
+        confirmationCard.Child = confirmationContent;
+        resetConfirmation.Children.Add(confirmationCard);
+        root.Children.Add(resetConfirmation);
+        resetButton.Click += (_, _) =>
+        {
+            resetConfirmation.Visibility = Visibility.Visible;
+            cancelReset.Focus(FocusState.Programmatic);
+        };
 
         _sectionList.SelectedIndex = 0;
         return root;
@@ -274,6 +318,7 @@ public sealed class EditMetadataDialog : ContentDialog
         _overview.TextWrapping = TextWrapping.Wrap;
         _overview.MinHeight = 110;
         _tagline.Text = _item.Tagline ?? "";
+        _tagline.PlaceholderText = "No tagline";
         _contentRating.Text = _item.ContentRating ?? "";
         _year.Value = _item.Year > 0 ? _item.Year : double.NaN;
         _runtime.Value = _item.Runtime > 0 ? _item.Runtime : double.NaN;
@@ -482,11 +527,11 @@ public sealed class EditMetadataDialog : ContentDialog
     private FrameworkElement BuildTagsSection()
     {
         var panel = FormPanel();
-        panel.Children.Add(Field("Genres", _genres, FieldGenres, "Comma-separated"));
-        panel.Children.Add(Field("Studios", _studios, FieldStudios, "Comma-separated"));
+        panel.Children.Add(Field("Genres", _genres, FieldGenres, "Add genre..."));
+        panel.Children.Add(Field("Studios", _studios, FieldStudios, "Add studio..."));
         if (_item.Type == "series")
-            panel.Children.Add(Field("Networks", _networks, FieldStudios, "Comma-separated"));
-        panel.Children.Add(Field("Countries", _countries, FieldTags, "Comma-separated"));
+            panel.Children.Add(Field("Networks", _networks, FieldStudios, "Add network..."));
+        panel.Children.Add(Field("Countries", _countries, FieldTags, "Add country..."));
         return Scroll(panel);
     }
 
@@ -821,8 +866,12 @@ public sealed class EditMetadataDialog : ContentDialog
         var deferral = args.GetDeferral();
         try
         {
+            var payload = BuildChangedPayload();
+            if (payload.Count == 0)
+                return;
+
             IsPrimaryButtonEnabled = false;
-            await _adminApi.UpdateItemMetadataAsync(_item.ContentId, BuildPayload());
+            await _adminApi.UpdateItemMetadataAsync(_item.ContentId, payload);
             HasAppliedChanges = true;
             _toast.Success("Metadata updated.");
         }
@@ -836,6 +885,16 @@ public sealed class EditMetadataDialog : ContentDialog
         {
             deferral.Complete();
         }
+    }
+
+    private Dictionary<string, object?> BuildChangedPayload()
+    {
+        var current = BuildPayload();
+        var original = BuildOriginalPayload();
+        return current
+            .Where(pair => !original.TryGetValue(pair.Key, out var originalValue)
+                || !PayloadValuesEqual(pair.Value, originalValue))
+            .ToDictionary(pair => pair.Key, pair => pair.Value);
     }
 
     private Dictionary<string, object?> BuildPayload()
@@ -893,6 +952,82 @@ public sealed class EditMetadataDialog : ContentDialog
 
         return payload;
     }
+
+    private Dictionary<string, object?> BuildOriginalPayload()
+    {
+        var payload = new Dictionary<string, object?>
+        {
+            ["title"] = (_item.Title ?? "").Trim(),
+            ["sort_title"] = (_item.SortTitle ?? "").Trim(),
+            ["original_title"] = (_item.OriginalTitle ?? "").Trim(),
+            ["overview"] = (_item.Overview ?? "").Trim(),
+            ["tagline"] = (_item.Tagline ?? "").Trim(),
+            ["content_rating"] = (_item.ContentRating ?? "").Trim(),
+            ["imdb_id"] = (_item.ImdbId ?? "").Trim(),
+            ["tmdb_id"] = (_item.TmdbId ?? "").Trim(),
+            ["tvdb_id"] = (_item.TvdbId ?? "").Trim(),
+        };
+
+        if (_item.Type is "movie" or "series")
+        {
+            payload["year"] = _item.Year > 0 ? _item.Year : null;
+            payload["rating_imdb"] = _item.RatingImdb;
+            payload["rating_tmdb"] = _item.RatingTmdb;
+            payload["rating_rt_critic"] = _item.RatingRtCritic;
+            payload["rating_rt_audience"] = _item.RatingRtAudience;
+            payload["genres"] = NormalizeTags(_item.Genres);
+            payload["studios"] = NormalizeTags(_item.Studios);
+            payload["countries"] = NormalizeTags(_item.Countries);
+            payload["locked_fields"] = (_item.LockedFields ?? []).OrderBy(value => value).ToArray();
+        }
+
+        switch (_item.Type)
+        {
+            case "movie":
+                payload["runtime"] = _item.Runtime > 0 ? _item.Runtime : null;
+                payload["release_date"] = NormalizeDate(_item.ReleaseDate);
+                break;
+            case "series":
+                payload["networks"] = NormalizeTags(_item.Networks);
+                payload["first_air_date"] = NormalizeDate(_item.FirstAirDate);
+                payload["last_air_date"] = NormalizeDate(_item.LastAirDate);
+                payload["air_time"] = EmptyToNull(_item.AirTime);
+                payload["air_timezone"] = (_item.AirTimezone ?? "").Trim();
+                payload["status"] = string.IsNullOrWhiteSpace(_item.Status) ? "Continuing" : _item.Status;
+                break;
+            case "season":
+                payload["season_number"] = _item.SeasonNumber;
+                payload["air_date"] = NormalizeDate(_item.AirDate);
+                break;
+            case "episode":
+                payload["episode_number"] = _item.EpisodeNumber;
+                payload["runtime"] = _item.Runtime > 0 ? _item.Runtime : null;
+                payload["air_date"] = NormalizeDate(_item.AirDate);
+                break;
+        }
+
+        return payload;
+    }
+
+    private static bool PayloadValuesEqual(object? current, object? original)
+    {
+        if (ReferenceEquals(current, original)) return true;
+        if (current is null || original is null) return false;
+        if (current is IEnumerable<string> currentStrings && original is IEnumerable<string> originalStrings)
+            return currentStrings.SequenceEqual(originalStrings, StringComparer.Ordinal);
+        if (current is IEnumerable<int> currentInts && original is IEnumerable<int> originalInts)
+            return currentInts.SequenceEqual(originalInts);
+        return Equals(current, original);
+    }
+
+    private static string? NormalizeDate(string? value) =>
+        DateTimeOffset.TryParse(value, out var parsed) ? parsed.ToString("yyyy-MM-dd") : null;
+
+    private static string[] NormalizeTags(IEnumerable<string>? values) => (values ?? [])
+        .Select(value => value.Trim())
+        .Where(value => value.Length > 0)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
 
     private void SectionList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {

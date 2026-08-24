@@ -2,7 +2,7 @@
 ; Inno Setup script for Silo Desktop Player
 
 #define MyAppName "Silo Desktop Player"
-#define MyAppVersion "1.1.85"
+#define MyAppVersion "1.1.90"
 #define MyAppPublisher "Silo"
 #define MyAppExeName "SiloPlayer.exe"
 #ifndef PublishSourceDir
@@ -58,6 +58,13 @@ Source: "deps\windowsappruntimeinstall-x64.exe"; DestDir: "{tmp}"; Flags: delete
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\app.ico"; Tasks: desktopicon
+
+[Registry]
+; Native invitation deep links emitted by the current Silo WebUI.
+Root: HKA; Subkey: "Software\Classes\silo"; ValueType: string; ValueData: "URL:Silo invitation"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\silo"; ValueName: "URL Protocol"; ValueType: string; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\silo\DefaultIcon"; ValueType: string; ValueData: "{app}\Assets\app.ico,0"
+Root: HKA; Subkey: "Software\Classes\silo\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 [Run]
 ; Install Windows App SDK runtime (--quiet suppresses UI, --force skips if already installed)

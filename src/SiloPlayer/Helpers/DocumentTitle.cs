@@ -41,15 +41,15 @@ public static class DocumentTitle
         [typeof(CollectionsPage)] = "Collections",
         [typeof(CollectionBrowsePage)] = "Collection",
         [typeof(CollectionEditorPage)] = "Edit Collection",
-        [typeof(SmartCollectionWizardPage)] = "Smart Collection",
+        [typeof(SmartCollectionWizardPage)] = "New Collection",
         [typeof(DownloadsPage)] = "Downloads",
         [typeof(LibraryPage)] = "Library",
         [typeof(ItemDetailPage)] = "Details",
         [typeof(PersonDetailPage)] = "Person",
         [typeof(SettingsPage)] = "Settings",
         [typeof(TasteSeedPage)] = "Pick what you love",
-        [typeof(WatchTogetherJoinPage)] = "Watch Together",
-        [typeof(WatchTogetherRoomPage)] = "Watch Together",
+        [typeof(WatchTogetherJoinPage)] = "Watch Party",
+        [typeof(WatchTogetherRoomPage)] = "Watch Party",
 
         // Auth / setup
         [typeof(LoginPage)] = "Sign In",

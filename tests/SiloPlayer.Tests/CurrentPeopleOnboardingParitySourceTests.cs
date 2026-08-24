@@ -37,6 +37,7 @@ public sealed class CurrentPeopleOnboardingParitySourceTests
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "PersonDetailPage.xaml");
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "PersonDetailPage.xaml.cs");
         var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "PersonDetailViewModel.cs");
+        var customization = ReadRepoFile("src", "SiloPlayer", "Services", "UICustomizationService.cs");
 
         Assert.Contains("x:Name=\"PersonContentShell\"", xaml);
         Assert.Contains("MaxWidth=\"1400\"", xaml);
@@ -47,10 +48,47 @@ public sealed class CurrentPeopleOnboardingParitySourceTests
         Assert.Contains("FontSize=\"30\"", xaml);
         Assert.Contains("x:Name=\"FilmographyGridLayout\"", xaml);
         Assert.Contains("FilmographyRepeater_ElementPrepared", page);
-        Assert.Contains("e.NewSize.Width >= 1280 ? 8", page);
+        Assert.Contains("_uiCustomizationService.GetPosterColumnCount(innerWidth)", page);
+        Assert.Contains("_ => contentWidth >= 1280 ? 8", customization);
         Assert.Contains("nav.Navigate<HomePage>();", page);
         Assert.Contains("public string BirthDateDisplay", viewModel);
         Assert.Contains("public string DeathDateDisplay", viewModel);
+    }
+
+    [Fact]
+    public void PersonEditorIncludesEveryCurrentWebUiMetadataField()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "PersonDetailPage.xaml.cs");
+
+        Assert.Contains("AddField(\"Homepage\"", page);
+        Assert.Contains("AddField(\"TMDB ID\"", page);
+        Assert.Contains("AddField(\"IMDb ID\"", page);
+        Assert.Contains("AddField(\"TVDB ID\"", page);
+        Assert.Contains("AddStringChange(changes, \"homepage\"", page);
+        Assert.Contains("AddStringChange(changes, \"tmdb_id\"", page);
+        Assert.Contains("AddStringChange(changes, \"imdb_id\"", page);
+        Assert.Contains("AddStringChange(changes, \"tvdb_id\"", page);
+    }
+
+    [Fact]
+    public void InvitationAndHouseholdSetupUseCurrentNativeContract()
+    {
+        var authApi = ReadRepoFile("src", "SiloPlayer.Core", "Api", "AuthApi.cs");
+        var deepLink = ReadRepoFile("src", "SiloPlayer", "Helpers", "InviteDeepLink.cs");
+        var invite = ReadRepoFile("src", "SiloPlayer", "Views", "InviteClaimPage.xaml");
+        var household = ReadRepoFile("src", "SiloPlayer", "Views", "HouseholdSetupPage.xaml");
+        var householdPage = ReadRepoFile("src", "SiloPlayer", "Views", "HouseholdSetupPage.xaml.cs");
+        var installer = ReadRepoFile("installer", "SiloInstaller.iss");
+
+        Assert.Contains("/api/v1/invitations/{Uri.EscapeDataString(token)}", authApi);
+        Assert.Contains("/accept", authApi);
+        Assert.Contains("uri.Scheme, \"silo\"", deepLink);
+        Assert.Contains("uri.Host, \"invite\"", deepLink);
+        Assert.Contains("x:Name=\"WelcomeTitle\"", invite);
+        Assert.Contains("Invitation expired", invite);
+        Assert.Contains("Who’s watching?", household);
+        Assert.Contains("ProfileEditorDialog.ShowAsync", householdPage);
+        Assert.Contains("Software\\Classes\\silo", installer);
     }
 
     [Fact]
@@ -72,10 +110,15 @@ public sealed class CurrentPeopleOnboardingParitySourceTests
     {
         var markup = ReadRepoFile("src", "SiloPlayer", "Views", "TasteSeedPage.xaml");
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "TasteSeedPage.xaml.cs");
+        var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "TasteSeedViewModel.cs");
 
         Assert.Contains("MaxWidth=\"1152\"", markup);
         Assert.Contains("MaximumRowsOrColumns=\"7\"", markup);
         Assert.Contains("That's everything popular on this server.", markup);
+        Assert.Contains("ItemsSource=\"{x:Bind SkeletonItems}\"", markup);
+        Assert.Contains("Enumerable.Range(0, 24)", page);
+        Assert.Contains("AutomationProperties.Name=\"{x:Bind AccessibleName, Mode=OneWay}\"", markup);
+        Assert.Contains("Deselect", viewModel);
         Assert.Contains("typeof(SettingsPage), \"Playback\"", page);
     }
 

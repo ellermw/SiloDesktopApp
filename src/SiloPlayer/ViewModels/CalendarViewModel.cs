@@ -106,6 +106,7 @@ public partial class CalendarViewModel : ObservableObject
                 end,
                 requestedFilter,
                 requestedLibraryId,
+                GetViewerTimezone(),
                 ct);
             ct.ThrowIfCancellationRequested();
             if (!ReferenceEquals(Volatile.Read(ref _loadCts), owner)) return;
@@ -234,6 +235,15 @@ public partial class CalendarViewModel : ObservableObject
 
     private static DateTime ParseDate(string s)
         => DateTime.ParseExact(s, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+    private static string GetViewerTimezone()
+    {
+        var local = TimeZoneInfo.Local.Id;
+        return TimeZoneInfo.TryConvertWindowsIdToIanaId(local, out var iana) &&
+               !string.IsNullOrWhiteSpace(iana)
+            ? iana
+            : local;
+    }
 
     private static string Ordinal(int n)
     {

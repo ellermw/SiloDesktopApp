@@ -17,7 +17,14 @@ public class PlaybackManager : IDisposable
     private double _lastReportedPosition;
     private bool _isPaused;
     private readonly SemaphoreSlim _progressGuard = new(1, 1);
+    private readonly SemaphoreSlim _replanGuard = new(1, 1);
     private int _consecutiveProgressFailures;
+    private PlaybackPlanV3? _currentPlanV3;
+    private PlaybackClientCapabilitiesV3? _clientCapabilitiesV3;
+    private PlaybackClientContextV3? _clientContextV3;
+    private string? _playbackAttemptIdV3;
+    private string? _planAttemptIdV3;
+    private string _qualityPreferenceV3 = "original";
 
     /// <summary>
     /// Fires when progress reporting has failed 3 consecutive times (network
@@ -93,38 +100,45 @@ public class PlaybackManager : IDisposable
         int? audioTrackIndex = null,
         bool forceDirectAudioSelection = false,
         bool disableProgressPersistence = false,
+        string? qualityPreference = null,
         CancellationToken ct = default)
     {
-        // Declare full codec capabilities so the server chooses direct play for HEVC/HDR/lossless
-        // audio content. This is the whole point of the native mpv player — without these caps
-        // the server falls back to forcing H.264 transcoding for HEVC content.
-        var request = new PlaybackStartRequest
+        var appVersion = System.Diagnostics.FileVersionInfo
+            .GetVersionInfo(Environment.ProcessPath ?? "")
+            .ProductVersion?.Split('+')[0] ?? "unknown";
+        var (capabilities, context) = MpvNativePlaybackCapabilities.CreateProtocolV3Profile(
+            appVersion,
+            _audioPassthrough);
+        var request = new PlaybackStartRequestV3
         {
+            ProtocolVersion = 3,
+            ClientFeatures = ["playback_plan_v3"],
             FileId = fileId,
             ProfileId = _authService.SelectedProfileId ?? "",
-            // Native mpv can select any embedded audio track without changing
-            // the media bytes. The current server only honors
-            // PreserveDirectAudioSelection for an explicit direct request.
-            PlayMethod = forceDirectAudioSelection && audioTrackIndex.HasValue ? "direct" : null,
-            // Send explicit 0 when forceStartPosition is true (play from start).
-            // null means "let server restore saved progress".
-            StartPosition = forceStartPosition ? startPosition : (startPosition > 0 ? startPosition : null),
+            PlaybackAttemptId = Guid.NewGuid().ToString(),
+            QualityPreference = NormalizeQualityPreference(
+                qualityPreference ?? _authService.SelectedProfile?.QualityPreference),
+            SubtitleFidelityPreference = "preserve",
+            StartPosition = forceStartPosition || disableProgressPersistence
+                ? Math.Max(0, startPosition)
+                : (startPosition > 0 ? startPosition : null),
             AudioTrackIndex = audioTrackIndex,
-            PreserveDirectAudioSelection = true,
-            DisableProgressPersistence = disableProgressPersistence,
+            ProgressPersistence = disableProgressPersistence ? "client" : null,
+            Metered = false,
+            ClientCapabilities = capabilities,
+            ClientPlaybackContext = context,
         };
 
-        // Keep the request synchronized with the exact libmpv/FFmpeg binary
-        // shipped in this build. Advertising less forces needless transcodes;
-        // advertising more can make the server choose an unplayable stream.
-        MpvNativePlaybackCapabilities.ApplyTo(request, _audioPassthrough);
-        request.MaxResolution = TranscodeQualityPolicy.ResolveMaximumResolution(
-            request.MaxResolution,
-            _authService.SelectedProfile?.QualityPreference);
+        LogToStateTrace($"StartSession v3: fileId={fileId}, pos={startPosition}, force={forceStartPosition}, attempt={request.PlaybackAttemptId}, codecs_video=[{string.Join(",", capabilities.CodecsVideo)}], codecs_audio=[{string.Join(",", capabilities.CodecsAudio)}], max_res={capabilities.MaxResolution}, hdr={capabilities.Hdr}");
 
-        LogToStateTrace($"StartSession: fileId={fileId}, pos={startPosition}, force={forceStartPosition}, codecs_video=[{string.Join(",", request.CodecsVideo)}], codecs_audio=[{string.Join(",", request.CodecsAudio)}], containers=[{string.Join(",", request.Containers)}], max_res={request.MaxResolution}, hdr={request.Hdr}");
-
-        var response = await _playbackApi.StartPlaybackAsync(request, ct);
+        var decision = await _playbackApi.StartPlaybackV3Async(request, ct).ConfigureAwait(false);
+        var response = AdoptProtocolV3Decision(decision, request.PlaybackAttemptId);
+        _currentPlanV3 = decision.PlaybackPlan;
+        _clientCapabilitiesV3 = capabilities;
+        _clientContextV3 = context;
+        _playbackAttemptIdV3 = request.PlaybackAttemptId;
+        _planAttemptIdV3 = Guid.NewGuid().ToString();
+        _qualityPreferenceV3 = request.QualityPreference;
         _sessionId = response.SessionId;
         CurrentSession = response;
         _lastReportedPosition = Math.Max(0, response.Position);
@@ -139,7 +153,8 @@ public class PlaybackManager : IDisposable
         if (!streamPath.StartsWith("http") && !streamPath.StartsWith("/api/v1"))
             streamPath = "/api/v1" + streamPath;
         var url = streamPath.StartsWith("http") ? streamPath : $"{baseUrl}{streamPath}";
-        if (response.PlayMethod == "remux" &&
+        if (response.ProtocolVersion < 3 &&
+            response.PlayMethod == "remux" &&
             response.Position > 0 &&
             !PlaybackTransportPlanner.IsHlsStreamUrl(response.StreamUrl))
             url += (url.Contains('?') ? "&" : "?") + "seek=" +
@@ -148,6 +163,261 @@ public class PlaybackManager : IDisposable
         StreamUrl = url;
         StartProgressReporting();
         return response;
+    }
+
+    private static string NormalizeQualityPreference(string? qualityPreference)
+        => (qualityPreference ?? "").Trim().ToLowerInvariant() switch
+        {
+            "original" => "original",
+            "2160p" or "4k" or "uhd" => "2160p",
+            "1080p" => "1080p",
+            "720p" => "720p",
+            "480p" => "480p",
+            _ => "auto",
+        };
+
+    private static PlaybackStartResponse AdoptProtocolV3Decision(
+        PlaybackDecisionResponseV3 decision,
+        string playbackAttemptId)
+    {
+        ArgumentNullException.ThrowIfNull(decision);
+        if (!string.Equals(decision.Outcome, "playable", StringComparison.OrdinalIgnoreCase) ||
+            decision.PlaybackPlan == null)
+        {
+            var terminal = decision.Terminal;
+            var detail = terminal?.Message;
+            if (string.IsNullOrWhiteSpace(detail))
+                detail = "The server could not find a compatible playback route.";
+            throw new InvalidOperationException(
+                $"{detail} ({terminal?.Reason ?? decision.Outcome})");
+        }
+
+        var plan = decision.PlaybackPlan;
+        var playMethod = plan.Delivery switch
+        {
+            "original_http" => "direct",
+            "server_remux_progressive" or "server_remux_hls" => "remux",
+            "server_transcode_hls" => "transcode",
+            _ => throw new InvalidOperationException($"Unsupported Silo playback delivery '{plan.Delivery}'."),
+        };
+        var hls = string.Equals(plan.Stream.Protocol, "hls", StringComparison.OrdinalIgnoreCase) ||
+            plan.Stream.Url.EndsWith(".m3u8", StringComparison.OrdinalIgnoreCase);
+
+        return new PlaybackStartResponse
+        {
+            ProtocolVersion = 3,
+            PlaybackAttemptId = playbackAttemptId,
+            PlanId = plan.PlanId,
+            PlanAttemptKey = plan.PlanAttemptKey,
+            Delivery = plan.Delivery,
+            SessionId = string.IsNullOrWhiteSpace(plan.SessionId) ? decision.SessionId ?? "" : plan.SessionId,
+            MediaFileId = plan.EffectiveMediaFileId,
+            PlayMethod = playMethod,
+            Position = Math.Max(0, plan.Timeline.SourceStartSeconds),
+            IsPaused = false,
+            StreamUrl = plan.Stream.Url,
+            AudioTrackIndex = plan.SelectedTracks.Audio?.Index ?? 0,
+            DurationSeconds = plan.Source.DurationSeconds,
+            StreamOriginSeconds = Math.Max(0, plan.Timeline.StreamOriginSeconds),
+            PlayerStartSeconds = Math.Max(0, plan.Timeline.PlayerStartSeconds),
+            TimelineOffsetSeconds = Math.Max(0, plan.Timeline.TimelineOffsetSeconds),
+            CanSeekAnywhere = plan.Timeline.CanSeekAnywhere,
+            SelectedSubtitleTrackId = plan.Subtitle.TrackId,
+            SubtitleMode = plan.Subtitle.Mode,
+            SelectedSubtitleArtifactUrl = plan.Subtitle.Artifact?.Url,
+            SubtitleTimingOriginSeconds = plan.Subtitle.Artifact?.TimingOriginSeconds ?? 0,
+            ActiveQuality = plan.Delivery == "server_transcode_hls"
+                ? plan.AvailableQualities.FirstOrDefault(quality =>
+                    quality.Height.HasValue && quality.Height == plan.EffectiveRecipe.Height)?.Label ?? "auto"
+                : "original",
+            AvailableQualities = plan.AvailableQualities,
+            PlaybackInfo = new PlaybackInfo
+            {
+                StreamType = hls ? "hls" : "progressive",
+                TranscodeAudio = plan.Delivery is "server_transcode_hls",
+                VideoCodec = plan.EffectiveRecipe.VideoCodec ?? "",
+                AudioCodec = plan.EffectiveRecipe.AudioCodec ?? "",
+            },
+            SubtitleUrls = plan.Subtitle.Inventory.Select(track => new SubtitleTrackInfo
+            {
+                TrackId = track.TrackId,
+                Index = track.CombinedIndex,
+                MediaFileId = plan.EffectiveMediaFileId,
+                Language = track.Language ?? "",
+                Codec = track.Codec,
+                Label = string.IsNullOrWhiteSpace(track.Label) ? track.Language ?? "Subtitle" : track.Label,
+                Source = track.Source,
+                Url = track.Url ?? "",
+                FontBundleUrl = track.FontBundleUrl,
+                Forced = track.Forced,
+                HearingImpaired = track.HearingImpaired,
+                Delivery = track.Delivery,
+            }).ToList(),
+        };
+    }
+
+    public Task<PlaybackStartResponse> ReplanQualityAsync(
+        string qualityPreference,
+        double positionSeconds,
+        CancellationToken ct = default)
+        => ReplanAsync(
+            "quality_change",
+            positionSeconds,
+            NormalizeQualityPreference(qualityPreference),
+            selectedTracks => { },
+            failure: null,
+            ct);
+
+    public Task<PlaybackStartResponse> ReplanAudioAsync(
+        int audioTrackIndex,
+        double positionSeconds,
+        CancellationToken ct = default)
+        => ReplanAsync(
+            "track_change",
+            positionSeconds,
+            _qualityPreferenceV3,
+            selectedTracks => selectedTracks.Audio = new PlaybackTrackIdentityV3
+            {
+                Id = $"file:{_currentPlanV3?.EffectiveMediaFileId ?? 0}:audio:{audioTrackIndex}",
+                Index = audioTrackIndex,
+            },
+            failure: null,
+            ct);
+
+    public Task<PlaybackStartResponse> ReplanSubtitleAsync(
+        int? subtitleTrackIndex,
+        double positionSeconds,
+        CancellationToken ct = default)
+        => ReplanAsync(
+            "track_change",
+            positionSeconds,
+            _qualityPreferenceV3,
+            selectedTracks => selectedTracks.Subtitle = subtitleTrackIndex.HasValue
+                ? FindSubtitleIdentity(subtitleTrackIndex.Value)
+                : null,
+            failure: null,
+            ct);
+
+    public Task<PlaybackStartResponse> ReplanSeekAsync(
+        double positionSeconds,
+        CancellationToken ct = default)
+        => ReplanAsync(
+            "seek_reanchor",
+            positionSeconds,
+            _qualityPreferenceV3,
+            selectedTracks => { },
+            failure: null,
+            ct);
+
+    public Task<PlaybackStartResponse> ReplanFailureAsync(
+        double positionSeconds,
+        string classification,
+        string? message = null,
+        CancellationToken ct = default)
+        => ReplanAsync(
+            "failure_recovery",
+            positionSeconds,
+            _qualityPreferenceV3,
+            selectedTracks => { },
+            new PlaybackFailureV3
+            {
+                Classification = string.IsNullOrWhiteSpace(classification) ? "unknown" : classification,
+                Message = message,
+            },
+            ct);
+
+    private PlaybackTrackIdentityV3 FindSubtitleIdentity(int combinedIndex)
+    {
+        var track = _currentPlanV3?.Subtitle.Inventory.FirstOrDefault(item => item.CombinedIndex == combinedIndex)
+            ?? throw new InvalidOperationException("The selected subtitle is no longer available in the active playback plan.");
+        return new PlaybackTrackIdentityV3 { Id = track.TrackId, Index = track.CombinedIndex };
+    }
+
+    private async Task<PlaybackStartResponse> ReplanAsync(
+        string operation,
+        double positionSeconds,
+        string qualityPreference,
+        Action<PlaybackSelectedTracksV3> mutateSelectedTracks,
+        PlaybackFailureV3? failure,
+        CancellationToken ct)
+    {
+        await _replanGuard.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var plan = _currentPlanV3
+                ?? throw new InvalidOperationException("The active playback session does not have a protocol-v3 plan.");
+            var sessionId = _sessionId
+                ?? throw new InvalidOperationException("The playback session is no longer active.");
+            var capabilities = _clientCapabilitiesV3
+                ?? throw new InvalidOperationException("Playback capabilities are unavailable for replanning.");
+            var context = _clientContextV3
+                ?? throw new InvalidOperationException("Playback output context is unavailable for replanning.");
+            var playbackAttemptId = _playbackAttemptIdV3
+                ?? throw new InvalidOperationException("The playback attempt identity is unavailable.");
+
+            var selectedTracks = new PlaybackSelectedTracksV3
+            {
+                Audio = plan.SelectedTracks.Audio == null ? null : new PlaybackTrackIdentityV3
+                {
+                    Id = plan.SelectedTracks.Audio.Id,
+                    Index = plan.SelectedTracks.Audio.Index,
+                },
+                Subtitle = plan.SelectedTracks.Subtitle == null ? null : new PlaybackTrackIdentityV3
+                {
+                    Id = plan.SelectedTracks.Subtitle.Id,
+                    Index = plan.SelectedTracks.Subtitle.Index,
+                },
+            };
+            mutateSelectedTracks(selectedTracks);
+
+            var isFailureRecovery = failure != null;
+            var request = new PlaybackReplanRequestV3
+            {
+                Operation = operation,
+                PlaybackAttemptId = playbackAttemptId,
+                ReplanRequestId = Guid.NewGuid().ToString(),
+                FailedPlanId = plan.PlanId,
+                PlanAttemptId = _planAttemptIdV3 ?? Guid.NewGuid().ToString(),
+                PlanAttemptKey = plan.PlanAttemptKey,
+                AttemptedPlanKeys = isFailureRecovery ? [plan.PlanAttemptKey] : [],
+                AttemptCount = 1,
+                QualityPreference = qualityPreference,
+                PositionSeconds = Math.Clamp(positionSeconds, 0, 31_536_000),
+                Metered = false,
+                SelectedTracks = selectedTracks,
+                Failure = failure,
+                ClientCapabilities = capabilities,
+                ClientPlaybackContext = context,
+            };
+
+            var decision = await _playbackApi.ReplanPlaybackV3Async(sessionId, request, ct).ConfigureAwait(false);
+            var response = AdoptProtocolV3Decision(decision, playbackAttemptId);
+            _currentPlanV3 = decision.PlaybackPlan;
+            _planAttemptIdV3 = Guid.NewGuid().ToString();
+            _qualityPreferenceV3 = qualityPreference;
+            _sessionId = response.SessionId;
+            CurrentSession = response;
+            _lastReportedPosition = Math.Max(0, response.Position);
+            ApplyStreamUrl(response);
+            LogToStateTrace(
+                $"Replan v3: operation={operation}, plan={response.PlanId}, delivery={response.Delivery}, position={response.Position:F1}");
+            return response;
+        }
+        finally
+        {
+            _replanGuard.Release();
+        }
+    }
+
+    private void ApplyStreamUrl(PlaybackStartResponse response)
+    {
+        var streamPath = response.StreamUrl;
+        if (!streamPath.StartsWith("http", StringComparison.OrdinalIgnoreCase) &&
+            !streamPath.StartsWith("/api/v1", StringComparison.OrdinalIgnoreCase))
+            streamPath = "/api/v1" + (streamPath.StartsWith('/') ? "" : "/") + streamPath;
+        StreamUrl = streamPath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
+            ? streamPath
+            : $"{_apiClient.BaseUrl}{streamPath}";
     }
 
     /// <summary>
@@ -163,6 +433,7 @@ public class PlaybackManager : IDisposable
         int? audioTrackIndex = null,
         bool forceDirectAudioSelection = false,
         double? previousFinalPosition = null,
+        string? qualityPreference = null,
         CancellationToken ct = default)
     {
         var previousSessionId = _sessionId;
@@ -172,6 +443,7 @@ public class PlaybackManager : IDisposable
             forceStartPosition,
             audioTrackIndex,
             forceDirectAudioSelection,
+            qualityPreference: qualityPreference,
             ct: ct).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(previousSessionId) &&
@@ -391,7 +663,9 @@ public class PlaybackManager : IDisposable
         if (CurrentSession == null) return [];
         var baseUrl = _apiClient.BaseUrl;
         var token = _apiClient.AccessToken;
-        return CurrentSession.SubtitleUrls.Select(s =>
+        return CurrentSession.SubtitleUrls
+            .Where(s => !string.IsNullOrWhiteSpace(s.Url))
+            .Select(s =>
         {
             var subPath = s.Url;
             if (!subPath.StartsWith("http") && !subPath.StartsWith("/api/v1"))

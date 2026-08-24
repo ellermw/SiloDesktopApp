@@ -39,6 +39,11 @@ public sealed class CurrentAdminParitySourceTests
         Assert.Contains("Detect intro markers", code);
         Assert.Contains("Trailer & extras types", code);
         Assert.Contains("Provider Priority", code);
+        Assert.Contains("private const int CollapsedScanRowLimit = 4", code);
+        Assert.Contains("_expandedInlineScanLibraries", code);
+        Assert.Contains("_expandedScanQueueLibraries", code);
+        Assert.Contains("Text = scansExpanded ? \"Show less\" : $\"Show all {scans.Count}\"", code);
+        Assert.Contains("MaxHeight=\"360\"", xaml);
     }
 
     [Fact]
@@ -53,6 +58,37 @@ public sealed class CurrentAdminParitySourceTests
         Assert.Contains("RecentActivitySection.Visibility = Visibility.Visible", code);
         Assert.Contains("for (var i = 0; i < 4; i++)", code);
         Assert.Contains("AdminPageContent.Spacing = contentWidth >= 1024 ? 32 : 24", code);
+    }
+
+    [Fact]
+    public void AdminDashboardCtrlKUsesAdminSectionAndSettingsPalette()
+    {
+        var root = FindRepositoryRoot();
+        var window = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.xaml.cs"));
+        var shell = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "Admin", "AdminShellPage.xaml.cs"));
+        var palette = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Controls", "AdminCommandPaletteDialog.cs"));
+
+        Assert.Contains("TryShowAdminCommandPaletteAsync", window);
+        Assert.Contains("IsDashboardActive", shell);
+        Assert.Contains("Admin Settings", shell);
+        Assert.Contains("Search admin sections...", palette);
+        Assert.Contains("Windows.System.VirtualKey.Down", palette);
+        Assert.Contains("Windows.System.VirtualKey.Enter", palette);
+    }
+
+    [Fact]
+    public void AdminPlaybackSettingsExposeCurrentGpuAndHdrThumbnailControls()
+    {
+        var root = FindRepositoryRoot();
+        var page = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "Admin", "AdminSettingsDetailPage.xaml.cs"));
+        var api = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Api", "AdminApi.cs"));
+
+        Assert.Contains("playback.hw_device", page);
+        Assert.Contains("GPU Devices", page);
+        Assert.Contains("Not present on:", page);
+        Assert.Contains("Multi-GPU balancing supports QSV/VA-API only", page);
+        Assert.Contains("playback.chapter_thumbnail_software_tone_map_enabled", page);
+        Assert.Contains("GetHWAccelDetectionAsync", api);
     }
 
     [Fact]

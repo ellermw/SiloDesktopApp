@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="SiloPlayer.Views.InviteClaimPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:converters="using:SiloPlayer.Converters"
+    Background="{StaticResource AppBackgroundBrush}">
+    <Page.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:NullToVisibilityConverter x:Key="NullToVis" />
+        <converters:InverseBoolConverter x:Key="InverseBool" />
+    </Page.Resources>
+
+    <Grid>
+        <Image Source="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay}"
+               Stretch="UniformToFill"
+               Visibility="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource NullToVis}}"
+               IsHitTestVisible="False"
+               AutomationProperties.AccessibilityView="Raw" />
+        <Border Background="#B3000000"
+                Visibility="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource NullToVis}}"
+                IsHitTestVisible="False" />
+
+        <ProgressRing x:Name="LoadingState" Width="32" Height="32"
+                      HorizontalAlignment="Center" VerticalAlignment="Center" />
+
+        <Border x:Name="ExpiredState" Style="{StaticResource GlassCardStyle}"
+                MaxWidth="384" HorizontalAlignment="Center" VerticalAlignment="Center"
+                Visibility="Collapsed">
+            <StackPanel Spacing="18">
+                <TextBlock Text="Invitation expired" FontSize="30" FontWeight="ExtraBold"
+                           CharacterSpacing="-40" Foreground="{StaticResource PrimaryTextBrush}" />
+                <TextBlock Text="This invite link is no longer valid — it may have been used already, revoked, or simply expired. Ask whoever invited you to send a fresh one."
+                           FontSize="14" LineHeight="24" TextWrapping="Wrap"
+                           Foreground="{StaticResource SecondaryTextBrush}" />
+                <Button Content="Already have an account? Sign in"
+                        Style="{StaticResource GhostButtonStyle}"
+                        HorizontalAlignment="Center" Click="SignIn_Click" />
+            </StackPanel>
+        </Border>
+
+        <Border x:Name="ClaimState" Style="{StaticResource GlassCardStyle}"
+                MaxWidth="400" HorizontalAlignment="Center" VerticalAlignment="Center"
+                Visibility="Collapsed">
+            <StackPanel Spacing="20">
+                <StackPanel Spacing="8">
+                    <TextBlock x:Name="InviterText" FontFamily="Consolas" FontSize="11"
+                               FontWeight="SemiBold" CharacterSpacing="100"
+                               Foreground="{StaticResource SecondaryTextBrush}" />
+                    <TextBlock x:Name="WelcomeTitle" FontSize="30" FontWeight="ExtraBold"
+                               CharacterSpacing="-40" TextWrapping="Wrap"
+                               Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Choose a password and you’re in. You’ll sign in with your email address."
+                               FontSize="14" LineHeight="24" TextWrapping="Wrap"
+                               Foreground="{StaticResource SecondaryTextBrush}" />
+                </StackPanel>
+
+                <Border Background="#2DEF6B73" CornerRadius="8" Padding="12,10"
+                        Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                    <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
+                               Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" FontSize="13" />
+                </Border>
+
+                <StackPanel Spacing="16">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Email" FontSize="14" FontWeight="Medium" />
+                        <TextBox x:Name="EmailBox" IsReadOnly="True" IsEnabled="False"
+                                 Style="{StaticResource DarkTextBoxStyle}" />
+                    </StackPanel>
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Password" FontSize="14" FontWeight="Medium" />
+                        <TextBlock Text="At least 8 characters" FontSize="12"
+                                   Foreground="{StaticResource SecondaryTextBrush}" />
+                        <PasswordBox x:Name="PasswordBox" Style="{StaticResource DarkPasswordBoxStyle}"
+                                     PasswordChanged="PasswordBox_PasswordChanged" KeyDown="Input_KeyDown" />
+                    </StackPanel>
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="Confirm password" FontSize="14" FontWeight="Medium" />
+                        <PasswordBox x:Name="ConfirmPasswordBox" Style="{StaticResource DarkPasswordBoxStyle}"
+                                     PasswordChanged="ConfirmPasswordBox_PasswordChanged" KeyDown="Input_KeyDown" />
+                        <TextBlock x:Name="MismatchText" Text="Passwords do not match"
+                                   Foreground="{StaticResource ErrorBrush}" FontSize="12" Visibility="Collapsed" />
+                    </StackPanel>
+                    <Button x:Name="CreateAccountButton" Content="Create account"
+                            Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Stretch"
+                            Padding="16,11" Command="{x:Bind ViewModel.AcceptCommand}"
+                            IsEnabled="{x:Bind ViewModel.IsSubmitting, Mode=OneWay, Converter={StaticResource InverseBool}}" />
+                    <ProgressRing IsActive="{x:Bind ViewModel.IsSubmitting, Mode=OneWay}"
+                                  Visibility="{x:Bind ViewModel.IsSubmitting, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                                  HorizontalAlignment="Center" Width="24" Height="24" />
+                </StackPanel>
+                <Button Content="Already set this up? Sign in"
+                        Style="{StaticResource GhostButtonStyle}" HorizontalAlignment="Center"
+                        Click="SignIn_Click" />
+            </StackPanel>
+        </Border>
+
+        <Border x:Name="ConnectionErrorState" Style="{StaticResource GlassCardStyle}"
+                MaxWidth="384" HorizontalAlignment="Center" VerticalAlignment="Center"
+                Visibility="Collapsed">
+            <StackPanel Spacing="16">
+                <TextBlock Text="Unable to open invitation" FontSize="26" FontWeight="ExtraBold" />
+                <TextBlock x:Name="ConnectionErrorText" TextWrapping="Wrap"
+                           Foreground="{StaticResource SecondaryTextBrush}" />
+                <Button Content="Try again" Style="{StaticResource AccentButtonStyle}" Click="Retry_Click" />
+                <Button Content="Sign in" Style="{StaticResource GhostButtonStyle}" Click="SignIn_Click" />
+            </StackPanel>
+        </Border>
+    </Grid>
+</Page>

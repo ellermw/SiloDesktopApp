@@ -31,6 +31,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
     private int _searchVersion;
     private bool _downloadInProgress;
     private bool _uploadInProgress;
+    private readonly bool _playerMode;
 
     /// <summary>
     /// Optional owner supplied by the playback dialog host. File pickers must
@@ -43,11 +44,29 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
     /// exact track without recreating the active playback session.</summary>
     public event Action<int?>? SubtitleDownloaded;
 
-    public SubtitleSearchDialog(int mediaFileId, string? defaultLanguage = null)
+    public SubtitleSearchDialog(
+        int mediaFileId,
+        string? defaultLanguage = null,
+        bool playerMode = true,
+        string? title = null,
+        string? versionLabel = null)
     {
         _playbackApi = App.Services.GetRequiredService<PlaybackApi>();
         _mediaFileId = mediaFileId;
+        _playerMode = playerMode;
         this.InitializeComponent();
+
+        if (!playerMode)
+        {
+            DialogRoot.Width = 720;
+            DialogRoot.MaxWidth = 720;
+            DialogDescriptionText.Text = string.Join(" · ", new[] { title, versionLabel }
+                .Where(value => !string.IsNullOrWhiteSpace(value)));
+            DialogDescriptionText.Visibility = string.IsNullOrWhiteSpace(DialogDescriptionText.Text)
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+            EmptyStateText.Visibility = Visibility.Collapsed;
+        }
 
         if (!string.IsNullOrEmpty(defaultLanguage))
         {
@@ -61,6 +80,40 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             _lifetimeCts.Cancel();
             _uploadDetectionCts?.Cancel();
         };
+    }
+
+    private void ClearMessages()
+    {
+        ErrorText.Text = "";
+        ErrorBorder.Visibility = Visibility.Collapsed;
+        WarningsPanel.Children.Clear();
+    }
+
+    private void ShowError(string message)
+    {
+        ErrorText.Text = message;
+        ErrorBorder.Visibility = Visibility.Visible;
+    }
+
+    private void ShowWarnings(IEnumerable<string> warnings)
+    {
+        WarningsPanel.Children.Clear();
+        foreach (var warning in warnings.Where(value => !string.IsNullOrWhiteSpace(value)))
+        {
+            WarningsPanel.Children.Add(new Border
+            {
+                Padding = new Thickness(10, 8, 10, 8),
+                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1A, 0xEA, 0xB3, 0x08)),
+                CornerRadius = new CornerRadius(8),
+                Child = new TextBlock
+                {
+                    Text = warning,
+                    FontSize = 12,
+                    Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xFD, 0xE0, 0x68)),
+                    TextWrapping = TextWrapping.Wrap,
+                },
+            });
+        }
     }
 
     private static void SelectLanguageByTag(ComboBox comboBox, string tag)
@@ -232,6 +285,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             return;
 
         _uploadInProgress = true;
+        ClearMessages();
         UploadButton.IsEnabled = false;
         BrowseUploadButton.IsEnabled = false;
         ResultsList.IsEnabled = false;
@@ -252,7 +306,17 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             UploadStatusText.Text = "Subtitle uploaded.";
             StatusText.Text = "Subtitle uploaded.";
             try { SubtitleDownloaded?.Invoke(GetDownloadedSubtitleId(response)); } catch { }
-            Hide();
+            if (_playerMode)
+            {
+                Hide();
+            }
+            else
+            {
+                _uploadFileBytes = null;
+                _uploadFileName = null;
+                UploadFileText.Text = "No file selected";
+                UploadButton.IsEnabled = false;
+            }
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
@@ -260,6 +324,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         catch (Exception ex)
         {
             UploadStatusText.Text = $"Upload failed: {ex.Message}";
+            ShowError($"Upload failed: {ex.Message}");
         }
         finally
         {
@@ -279,6 +344,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             return;
 
         var searchVersion = Interlocked.Increment(ref _searchVersion);
+        ClearMessages();
         SearchProgress.IsActive = true;
         SearchButton.IsEnabled = false;
         EmptyStateText.Visibility = Visibility.Collapsed;
@@ -297,23 +363,26 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             if (result.Results.Count == 0)
             {
                 StatusText.Text = "No results.";
-                EmptyStateText.Text = "No subtitles found in this language.";
+                EmptyStateText.Text = _playerMode
+                    ? "No subtitles found in this language."
+                    : "No subtitles found for this version and language.";
                 EmptyStateText.Visibility = Visibility.Visible;
+                ShowWarnings(result.Warnings);
                 return;
             }
 
             foreach (var r in result.Results.OrderByDescending(x => x.Score))
                 ResultsList.Items.Add(BuildResultRow(r));
-            StatusText.Text = result.Warnings.Count > 0
-                ? $"{result.Results.Count} result(s). {string.Join(" ", result.Warnings)}"
-                : $"{result.Results.Count} result(s).";
+            ShowWarnings(result.Warnings);
+            StatusText.Text = $"{result.Results.Count} result(s).";
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"Search failed: {ex.Message}";
+            StatusText.Text = "Search failed.";
+            ShowError(ex.Message);
         }
         finally
         {
@@ -327,6 +396,9 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
     }
 
     private FrameworkElement BuildResultRow(SubtitleSearchResult r)
+        => _playerMode ? BuildPlayerResultRow(r) : BuildDetailResultRow(r);
+
+    private FrameworkElement BuildPlayerResultRow(SubtitleSearchResult r)
     {
         var releaseNames = SplitReleaseNames(r.ReleaseName);
         var primaryReleaseName = releaseNames.FirstOrDefault();
@@ -416,6 +488,188 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         return rowButton;
     }
 
+    private FrameworkElement BuildDetailResultRow(SubtitleSearchResult result)
+    {
+        var releaseNames = SplitReleaseNames(result.ReleaseName);
+        var primaryReleaseName = releaseNames.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(primaryReleaseName))
+            primaryReleaseName = $"{result.Provider} · {result.Language.ToUpperInvariant()}";
+
+        var scoreColor = result.Score >= 70
+            ? Windows.UI.Color.FromArgb(0xFF, 0x6E, 0xD9, 0x9A)
+            : result.Score >= 40
+                ? Windows.UI.Color.FromArgb(0xFF, 0xFD, 0xE0, 0x68)
+                : Windows.UI.Color.FromArgb(0xFF, 0xFC, 0xA5, 0xA5);
+
+        var scorePanel = new Border
+        {
+            Width = 48,
+            MinHeight = 54,
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1A, scoreColor.R, scoreColor.G, scoreColor.B)),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x4D, scoreColor.R, scoreColor.G, scoreColor.B)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Child = new StackPanel
+            {
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                Spacing = 1,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = Math.Round(result.Score).ToString("0"),
+                        FontSize = 16,
+                        FontWeight = FontWeights.SemiBold,
+                        Foreground = new SolidColorBrush(scoreColor),
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                    },
+                    new TextBlock
+                    {
+                        Text = "SCORE",
+                        FontSize = 9,
+                        CharacterSpacing = 120,
+                        Foreground = new SolidColorBrush(scoreColor),
+                        Opacity = 0.72,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                    },
+                },
+            },
+        };
+        AutomationProperties.SetName(scorePanel, $"Match score {Math.Round(result.Score):0}");
+
+        var provider = result.Provider.ToLowerInvariant() switch
+        {
+            "opensubtitles" => ("OS", Windows.UI.Color.FromArgb(0xFF, 0xFD, 0xE0, 0x68)),
+            "subdl" => ("SDL", Windows.UI.Color.FromArgb(0xFF, 0x7D, 0xC4, 0xFF)),
+            "subsource" => ("SS", Windows.UI.Color.FromArgb(0xFF, 0xFC, 0xA5, 0xA5)),
+            "upload" => ("UP", Windows.UI.Color.FromArgb(0xFF, 0xD8, 0xB4, 0xFE)),
+            _ => (result.Provider.Length > 2 ? result.Provider[..2].ToUpperInvariant() : result.Provider.ToUpperInvariant(),
+                Windows.UI.Color.FromArgb(0xFF, 0xC4, 0xC7, 0xCE)),
+        };
+
+        var badges = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        badges.Children.Add(CreateBadge(provider.Item1, provider.Item2, 10, FontWeights.SemiBold));
+        badges.Children.Add(CreateBadge(result.Format.ToUpperInvariant(), Windows.UI.Color.FromArgb(0xFF, 0xC4, 0xC7, 0xCE), 10, FontWeights.Normal));
+        badges.Children.Add(CreateBadge(
+            Services.PlayerService.LanguageCodeToName(result.Language),
+            Windows.UI.Color.FromArgb(0xFF, 0xC4, 0xC7, 0xCE),
+            10,
+            FontWeights.Normal));
+        if (result.HearingImpaired)
+            badges.Children.Add(CreateBadge("HI", Windows.UI.Color.FromArgb(0xFF, 0xC4, 0xC7, 0xCE), 10, FontWeights.Normal));
+        if (result.Downloads > 0)
+        {
+            badges.Children.Add(new TextBlock
+            {
+                Text = $"{result.Downloads:N0} {(result.Downloads == 1 ? "download" : "downloads")}",
+                FontSize = 11,
+                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0x88, 0xFF, 0xFF, 0xFF)),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+        }
+
+        var releaseText = new TextBlock
+        {
+            Text = primaryReleaseName,
+            FontSize = 13,
+            FontFamily = new FontFamily("Consolas"),
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        ToolTipService.SetToolTip(releaseText, string.Join(Environment.NewLine, releaseNames));
+
+        var releasePanel = new StackPanel { Spacing = 4 };
+        releasePanel.Children.Add(releaseText);
+        var extras = releaseNames.Skip(1).ToList();
+        if (extras.Count > 0)
+        {
+            var extrasPanel = new StackPanel
+            {
+                Spacing = 2,
+                Visibility = Visibility.Collapsed,
+                Margin = new Thickness(8, 2, 0, 0),
+            };
+            foreach (var extra in extras)
+            {
+                extrasPanel.Children.Add(new TextBlock
+                {
+                    Text = extra,
+                    FontSize = 12,
+                    FontFamily = new FontFamily("Consolas"),
+                    Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF)),
+                    TextTrimming = TextTrimming.CharacterEllipsis,
+                });
+            }
+
+            var expandButton = new Button
+            {
+                Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                Padding = new Thickness(0, 2, 4, 2),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xAA, 0xFF, 0xFF, 0xFF)),
+                Content = $"⌄  {extras.Count} more variant{(extras.Count == 1 ? "" : "s")}",
+                FontSize = 11,
+            };
+            expandButton.Click += (_, _) =>
+            {
+                var expanding = extrasPanel.Visibility != Visibility.Visible;
+                extrasPanel.Visibility = expanding ? Visibility.Visible : Visibility.Collapsed;
+                expandButton.Content = expanding
+                    ? "⌃  Collapse"
+                    : $"⌄  {extras.Count} more variant{(extras.Count == 1 ? "" : "s")}";
+            };
+            releasePanel.Children.Add(extrasPanel);
+            releasePanel.Children.Add(expandButton);
+        }
+
+        var centerPanel = new StackPanel { Spacing = 6 };
+        centerPanel.Children.Add(badges);
+        centerPanel.Children.Add(releasePanel);
+
+        var downloadButton = new Button
+        {
+            MinWidth = 120,
+            Padding = new Thickness(14, 7, 14, 7),
+            VerticalAlignment = VerticalAlignment.Center,
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 7,
+                Children =
+                {
+                    new FontIcon { Glyph = "\uE896", FontSize = 14 },
+                    new TextBlock { Text = "Download", VerticalAlignment = VerticalAlignment.Center },
+                },
+            },
+        };
+        downloadButton.Click += async (_, _) => await DownloadAsync(result, downloadButton);
+        AutomationProperties.SetName(downloadButton, $"Download {primaryReleaseName}");
+
+        var grid = new Grid { ColumnSpacing = 12 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(scorePanel, 0);
+        Grid.SetColumn(centerPanel, 1);
+        Grid.SetColumn(downloadButton, 2);
+        grid.Children.Add(scorePanel);
+        grid.Children.Add(centerPanel);
+        grid.Children.Add(downloadButton);
+
+        return new Border
+        {
+            Padding = new Thickness(12),
+            Margin = new Thickness(0, 0, 0, 8),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x0D, 0xFF, 0xFF, 0xFF)),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(12),
+            Child = grid,
+        };
+    }
+
     private async Task DownloadAsync(SubtitleSearchResult r, Button btn)
     {
         if (_downloadInProgress || _uploadInProgress)
@@ -427,6 +681,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         SearchButton.IsEnabled = false;
         UploadButton.IsEnabled = false;
         BrowseUploadButton.IsEnabled = false;
+        ClearMessages();
         StatusText.Text = $"Downloading {r.Language.ToUpperInvariant()} from {r.Provider}…";
         try
         {
@@ -436,14 +691,16 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
                 _lifetimeCts.Token);
             StatusText.Text = $"Downloaded {r.Language.ToUpperInvariant()} · {r.Provider}.";
             try { SubtitleDownloaded?.Invoke(GetDownloadedSubtitleId(response)); } catch { }
-            Hide();
+            if (_playerMode)
+                Hide();
         }
         catch (OperationCanceledException) when (_lifetimeCts.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
-            StatusText.Text = $"Download failed: {ex.Message}";
+            StatusText.Text = "Download failed.";
+            ShowError(ex.Message);
         }
         finally
         {

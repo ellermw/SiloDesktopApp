@@ -456,6 +456,9 @@ public sealed class MpvOscScriptTests
         Assert.Contains("Allow Pause", script);
         Assert.Contains("Host Only", script);
         Assert.Contains("End watch party?", script);
+        Assert.Contains("End the watch party for everyone?", script);
+        Assert.Contains("if state.watch_party_end_confirm then", script);
+        Assert.Contains("state.watch_party_end_confirm = false", script);
         Assert.Contains("Syncing playback", script);
         Assert.Contains("silo-watch-party-action", script);
     }

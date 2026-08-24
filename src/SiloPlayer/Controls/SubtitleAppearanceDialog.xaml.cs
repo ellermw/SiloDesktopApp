@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
@@ -17,7 +18,7 @@ namespace SiloPlayer.Controls;
 /// <c>web/src/player/components/SubtitleAppearancePanel.tsx</c>).
 ///
 /// Opened from the subtitles utility-rail button's "Appearance…" menu item.
-/// Each change writes the same <c>subtitle_appearance</c> user setting as the
+/// Each change writes the same <c>playback.subtitle_appearance</c> user setting as the
 /// settings page and pushes live to mpv via <see cref="PlayerService.ApplySubtitleAppearance"/>,
 /// so the rendered subtitles update without leaving the player.
 /// </summary>
@@ -31,6 +32,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
 
     /// <summary>Optional initial JSON for an administrator editing another device.</summary>
     public string? InitialValue { get; set; }
+    public Func<Task<string?>>? LoadOverrideAsync { get; set; }
     public Func<string, Task>? SaveOverrideAsync { get; set; }
     public Func<Task>? ResetOverrideAsync { get; set; }
     public bool ApplyToLocalPlayer { get; set; } = true;
@@ -128,12 +130,14 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         _loading = true;
         try
         {
-            if (InitialValue is not null)
+            if (LoadOverrideAsync is not null)
+                _state = SubtitleAppearance.Parse(await LoadOverrideAsync());
+            else if (InitialValue is not null)
                 _state = SubtitleAppearance.Parse(InitialValue);
             else
             {
-                var response = await _settingsApi.GetEffectiveSettingsAsync(["subtitle_appearance"]);
-                _state = SubtitleAppearance.Parse(response.Settings.FirstOrDefault()?.EffectiveValue);
+                var response = await _settingsApi.GetContractEffectiveSettingsAsync(["playback.subtitle_appearance"]);
+                _state = SubtitleAppearance.Parse(response.Settings.FirstOrDefault()?.Value.GetRawText());
             }
         }
         catch
@@ -178,7 +182,12 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         try
         {
             if (SaveOverrideAsync is not null) await SaveOverrideAsync(_state.ToJson());
-            else await _settingsApi.PutDeviceSettingAsync("subtitle_appearance", _state.ToJson());
+            else
+            {
+                using var document = JsonDocument.Parse(_state.ToJson());
+                await _settingsApi.SetContractSettingValueAsync("playback.subtitle_appearance", "profile_device",
+                    document.RootElement.Clone());
+            }
         }
         catch { /* surface later if needed; silent write-retry pattern */ }
     }
@@ -241,16 +250,27 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
                 Fill = new SolidColorBrush(ColorFromHex(sw.Hex)),
                 StrokeThickness = 1,
                 Stroke = new SolidColorBrush(Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF)),
-                Tag = sw.Hex,
             };
-            ToolTipService.SetToolTip(ellipse, sw.Label);
-            ellipse.Tapped += (_, _) =>
+            var button = new Button
+            {
+                Width = 30,
+                Height = 30,
+                Padding = new Thickness(2),
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(15),
+                Tag = sw.Hex,
+                Content = ellipse,
+            };
+            AutomationProperties.SetName(button, sw.Label);
+            ToolTipService.SetToolTip(button, sw.Label);
+            button.Click += (_, _) =>
             {
                 setter(sw.Hex);
                 SyncSwatches(host, getter);
                 ScheduleSave();
             };
-            host.Children.Add(ellipse);
+            host.Children.Add(button);
         }
     }
 
@@ -259,13 +279,14 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         var active = getter().ToLowerInvariant();
         foreach (var child in host.Children)
         {
-            if (child is Ellipse e && e.Tag is string hex)
+            if (child is Button { Tag: string hex, Content: Ellipse e } button)
             {
                 var isActive = string.Equals(hex, active, StringComparison.OrdinalIgnoreCase);
                 e.StrokeThickness = isActive ? 3 : 1;
                 e.Stroke = new SolidColorBrush(isActive
                     ? Color.FromArgb(0xEE, 0xFF, 0xFF, 0xFF)
                     : Color.FromArgb(0x2E, 0xFF, 0xFF, 0xFF));
+                AutomationProperties.SetHelpText(button, isActive ? "Selected" : "Not selected");
             }
         }
     }
@@ -383,11 +404,11 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
             if (ResetOverrideAsync is not null)
             {
                 await ResetOverrideAsync();
-                _state = new SubtitleAppearance();
+                await LoadAsync();
             }
             else
             {
-                await _settingsApi.DeleteDeviceSettingAsync("subtitle_appearance");
+                await _settingsApi.DeleteContractSettingValueAsync("playback.subtitle_appearance", "profile_device");
                 await LoadAsync();
             }
             SyncAllFromState();

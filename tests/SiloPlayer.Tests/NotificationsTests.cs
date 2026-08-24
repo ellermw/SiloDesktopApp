@@ -25,7 +25,7 @@ public sealed class NotificationsTests
 
         Assert.NotNull(notification);
         Assert.Equal("The Series", notification.DisplayTitle);
-        Assert.Equal("S2E5 - The Episode", notification.Subtitle);
+        Assert.Equal("S2E5 — The Episode", notification.Subtitle);
         Assert.Equal(new[] { "Favorite", "Next Up" }, notification.ReasonLabels);
     }
 

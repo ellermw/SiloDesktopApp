@@ -29,7 +29,11 @@ public sealed partial class RecommendationsPage : Page
             _eventsAttached = true;
             ViewModel.Rows.CollectionChanged += (_, _) =>
             {
-                QueueRowsBuild();
+                // Rows are replaced as a batch while IsLoading is true. The
+                // IsLoading transition below queues one rebuild after the batch
+                // instead of reconstructing every carousel twice.
+                if (!ViewModel.IsLoading)
+                    QueueRowsBuild();
             };
             ViewModel.PropertyChanged += (_, args) =>
             {
@@ -39,14 +43,19 @@ public sealed partial class RecommendationsPage : Page
                 }
                 else if (args.PropertyName is nameof(ViewModel.IsLoading) or nameof(ViewModel.ErrorMessage))
                 {
-                    DispatcherQueue.TryEnqueue(UpdatePageState);
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        if (!ViewModel.IsLoading)
+                            QueueRowsBuild();
+                        UpdatePageState();
+                    });
                 }
             };
         }
 
         await ViewModel.LoadCommand.ExecuteAsync(null);
         BuildTasteProfile();
-        BuildRows();
+        QueueRowsBuild();
     }
 
     private void QueueRowsBuild()

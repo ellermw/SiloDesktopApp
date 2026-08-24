@@ -2,6 +2,7 @@ using SiloPlayer.Core.Models.Requests;
 using SiloPlayer.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Text;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
@@ -129,6 +130,8 @@ public sealed partial class RequestsPage : Page
         DiscoverySection.Visibility = !yours && !busy ? Visibility.Visible : Visibility.Collapsed;
         DiscoverTabButton.Opacity = yours ? 0.6 : 1;
         YoursTabButton.Opacity = yours ? 1 : 0.6;
+        DiscoverTabUnderline.Visibility = yours ? Visibility.Collapsed : Visibility.Visible;
+        YoursTabUnderline.Visibility = yours ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void Render()
@@ -291,8 +294,10 @@ public sealed partial class RequestsPage : Page
 
     private FrameworkElement BuildMediaPosterCard(RequestMediaResult result)
     {
-        var card = new StackPanel { Width = _requestCardWidth, Spacing = 6, Tag = new RequestDetailNavigation(result.MediaType, result.TmdbId) };
-        card.Tapped += RequestCard_Tapped;
+        var card = new Grid { Width = _requestCardWidth, RowSpacing = 6 };
+        card.RowDefinitions.Add(new RowDefinition { Height = new GridLength(_requestCardWidth * 1.5) });
+        card.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        card.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var image = new Image { Width = _requestCardWidth, Height = _requestCardWidth * 1.5, Stretch = Stretch.UniformToFill };
         if (!string.IsNullOrWhiteSpace(result.PosterUrl))
             image.Source = new BitmapImage(new Uri(result.PosterUrl));
@@ -303,33 +308,125 @@ public sealed partial class RequestsPage : Page
             : !result.Request.Requestable ? FormatReason(result.Request.Reason) : "";
         if (!string.IsNullOrWhiteSpace(ribbonLabel))
         {
-            poster.Children.Add(new Border
-            {
-                Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(220, 20, 20, 22)),
-                CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 3, 8, 3),
-                HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(7),
-                Child = new TextBlock { Text = ribbonLabel, FontSize = 10, FontWeight = FontWeights.SemiBold }
-            });
+            var ribbon = BuildRequestRibbon(result, ribbonLabel);
+            poster.Children.Add(ribbon);
         }
-        if (result.Request.Requestable)
-        {
-            var request = new Button { Content = "+  Request", Tag = result, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 0, 12), Padding = new Thickness(13, 6, 13, 6), CornerRadius = new CornerRadius(16), Opacity = 0 };
-            request.Tapped += (_, args) => args.Handled = true;
-            request.Click += SubmitRequest_Click;
-            poster.Children.Add(request);
-            card.PointerEntered += (_, _) => request.Opacity = 1;
-            card.PointerExited += (_, _) => request.Opacity = 0;
-        }
+        Grid.SetRow(poster, 0);
         card.Children.Add(poster);
-        card.Children.Add(new TextBlock { Text = result.Title, FontSize = 13, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+
+        var title = new TextBlock { Text = result.Title, FontSize = 13, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
+        Grid.SetRow(title, 1);
+        card.Children.Add(title);
         var meta = new List<string>();
         if (!string.IsNullOrWhiteSpace(result.YearText)) meta.Add(result.YearText);
         meta.Add(result.MediaType == "series" ? "Series" : "Movie");
         if (result.VoteAverage is > 0) meta.Add($"★ {result.VoteAverage:0.0}");
-        card.Children.Add(new TextBlock { Text = string.Join(" · ", meta), FontSize = 11, Foreground = Brush("SecondaryTextBrush") });
+        var metadata = new TextBlock { Text = string.Join(" · ", meta), FontSize = 11, Foreground = Brush("SecondaryTextBrush") };
+        Grid.SetRow(metadata, 2);
+        card.Children.Add(metadata);
+
+        var open = new Button
+        {
+            Tag = new RequestDetailNavigation(result.MediaType, result.TmdbId),
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Padding = new Thickness(0),
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+        };
+        Grid.SetRowSpan(open, 3);
+        AutomationProperties.SetName(open, $"Open {result.Title} request details");
+        open.Click += RequestCard_Click;
+        card.Children.Add(open);
+
+        if (!string.IsNullOrWhiteSpace(result.LibraryContentId))
+        {
+            var library = new Button
+            {
+                Content = "▥  Library",
+                Tag = result.LibraryContentId,
+                FontSize = 10,
+                FontWeight = FontWeights.SemiBold,
+                Padding = new Thickness(8, 3, 8, 3),
+                CornerRadius = new CornerRadius(10),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(7),
+                Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(220, 20, 20, 22)),
+            };
+            AutomationProperties.SetName(library, $"Open {result.Title} in library");
+            library.Tapped += (_, args) => args.Handled = true;
+            library.Click += LibraryBadge_Click;
+            Grid.SetRow(library, 0);
+            card.Children.Add(library);
+        }
+        if (result.Request.Requestable)
+        {
+            var request = new Button { Content = "+  Request", Tag = result, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 0, 12), Padding = new Thickness(13, 6, 13, 6), CornerRadius = new CornerRadius(16), Opacity = 0 };
+            AutomationProperties.SetName(request, $"Request {result.Title}");
+            request.Tapped += (_, args) => args.Handled = true;
+            request.Click += SubmitRequest_Click;
+            request.GotFocus += (_, _) => request.Opacity = 1;
+            request.LostFocus += (_, _) => request.Opacity = 0;
+            Grid.SetRow(request, 0);
+            card.Children.Add(request);
+            card.PointerEntered += (_, _) => request.Opacity = 1;
+            card.PointerExited += (_, _) => request.Opacity = request.FocusState == FocusState.Unfocused ? 0 : 1;
+        }
         return card;
     }
+
+    private static Border BuildRequestRibbon(RequestMediaResult result, string label)
+    {
+        var tone = result.Request.Status switch
+        {
+            "pending" => "amber",
+            "queued" or "downloading" => "sky",
+            "approved" or "completed" => "emerald",
+            _ when result.Availability == "available" => "emerald",
+            _ => "zinc",
+        };
+        var (background, foreground, border, dotColor) = RequestStatusColors(tone);
+        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        content.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse
+        {
+            Width = 6,
+            Height = 6,
+            Fill = new SolidColorBrush(dotColor),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        content.Children.Add(new TextBlock
+        {
+            Text = label.ToUpperInvariant(),
+            FontSize = 10,
+            FontWeight = FontWeights.SemiBold,
+            CharacterSpacing = 60,
+            Foreground = new SolidColorBrush(foreground),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        var ribbon = new Border
+        {
+            Background = new SolidColorBrush(background),
+            BorderBrush = new SolidColorBrush(border),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(8, 3, 8, 3),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(7),
+            Child = content,
+        };
+        AutomationProperties.SetName(ribbon, label);
+        return ribbon;
+    }
+
+    private static (Windows.UI.Color Background, Windows.UI.Color Foreground, Windows.UI.Color Border, Windows.UI.Color Dot) RequestStatusColors(string tone) => tone switch
+    {
+        "amber" => (Microsoft.UI.ColorHelper.FromArgb(191, 69, 26, 3), Microsoft.UI.ColorHelper.FromArgb(255, 254, 243, 199), Microsoft.UI.ColorHelper.FromArgb(77, 251, 191, 36), Microsoft.UI.ColorHelper.FromArgb(255, 252, 211, 77)),
+        "sky" => (Microsoft.UI.ColorHelper.FromArgb(191, 8, 47, 73), Microsoft.UI.ColorHelper.FromArgb(255, 224, 242, 254), Microsoft.UI.ColorHelper.FromArgb(89, 56, 189, 248), Microsoft.UI.ColorHelper.FromArgb(255, 125, 211, 252)),
+        "emerald" => (Microsoft.UI.ColorHelper.FromArgb(204, 2, 44, 34), Microsoft.UI.ColorHelper.FromArgb(255, 209, 250, 229), Microsoft.UI.ColorHelper.FromArgb(77, 52, 211, 153), Microsoft.UI.ColorHelper.FromArgb(255, 110, 231, 183)),
+        _ => (Microsoft.UI.ColorHelper.FromArgb(204, 24, 24, 27), Microsoft.UI.ColorHelper.FromArgb(255, 228, 228, 231), Microsoft.UI.ColorHelper.FromArgb(26, 255, 255, 255), Microsoft.UI.ColorHelper.FromArgb(255, 161, 161, 170)),
+    };
 
     private void BuildBrands()
     {
@@ -414,22 +511,53 @@ public sealed partial class RequestsPage : Page
 
     private FrameworkElement BuildRequestPosterCard(MediaRequest request)
     {
-        var panel = new StackPanel { Width = _requestCardWidth, Spacing = 6, Tag = new RequestDetailNavigation(request.MediaType, request.TmdbId) };
-        panel.Tapped += RequestCard_Tapped;
+        var panel = new Grid { Width = _requestCardWidth, RowSpacing = 6 };
+        panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(_requestCardWidth * 1.5) });
+        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var image = new Image { Width = _requestCardWidth, Height = _requestCardWidth * 1.5, Stretch = Stretch.UniformToFill };
         if (!string.IsNullOrWhiteSpace(request.PosterPath)) image.Source = new BitmapImage(new Uri($"https://image.tmdb.org/t/p/w342{request.PosterPath}"));
         var poster = new Grid { Width = _requestCardWidth, Height = _requestCardWidth * 1.5 };
         poster.Children.Add(new Border { CornerRadius = new CornerRadius(9), Background = Brush("CardBackgroundBrush"), Child = image });
         var failed = request.Outcome is "declined" or "cancelled" or "failed";
         var label = failed ? FormatOutcome(request.Outcome) : FormatStatus(request.Status);
-        poster.Children.Add(new Border
+        var tone = failed ? "zinc" : request.Status switch
         {
-            Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(220, 20, 20, 22)),
+            "pending" => "amber",
+            "queued" or "downloading" => "sky",
+            "approved" or "completed" => "emerald",
+            _ => "zinc",
+        };
+        var (ribbonBackground, ribbonForeground, ribbonBorder, ribbonDot) = RequestStatusColors(tone);
+        var ribbonContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        ribbonContent.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse
+        {
+            Width = 6,
+            Height = 6,
+            Fill = new SolidColorBrush(ribbonDot),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        ribbonContent.Children.Add(new TextBlock
+        {
+            Text = label.ToUpperInvariant(),
+            FontSize = 10,
+            FontWeight = FontWeights.SemiBold,
+            CharacterSpacing = 60,
+            Foreground = new SolidColorBrush(ribbonForeground),
+        });
+        var ribbon = new Border
+        {
+            Background = new SolidColorBrush(ribbonBackground),
+            BorderBrush = new SolidColorBrush(ribbonBorder),
+            BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 3, 8, 3),
             HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
             Margin = new Thickness(8),
-            Child = new TextBlock { Text = label, FontSize = 10, FontWeight = FontWeights.SemiBold }
-        });
+            Child = ribbonContent,
+        };
+        AutomationProperties.SetName(ribbon, label);
+        poster.Children.Add(ribbon);
         if (request.Status == "completed")
         {
             poster.Children.Add(new Border
@@ -441,10 +569,56 @@ public sealed partial class RequestsPage : Page
                 Child = new TextBlock { Text = "✓  Ready to watch", FontSize = 10, FontWeight = FontWeights.SemiBold }
             });
         }
+        Grid.SetRow(poster, 0);
         panel.Children.Add(poster);
-        panel.Children.Add(new TextBlock { Text = request.Title, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
-        panel.Children.Add(new TextBlock { Text = $"{request.Year} · {(request.MediaType == "series" ? "Series" : "Movie")}", FontSize = 11, Foreground = Brush("SecondaryTextBrush") });
-        if (!string.IsNullOrWhiteSpace(request.LastError)) panel.Children.Add(new TextBlock { Text = request.LastError, FontSize = 10, Foreground = Brush("ErrorBrush"), TextWrapping = TextWrapping.Wrap, MaxLines = 2 });
+        var title = new TextBlock { Text = request.Title, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
+        Grid.SetRow(title, 1);
+        panel.Children.Add(title);
+        var metadata = new TextBlock { Text = $"{request.Year} · {(request.MediaType == "series" ? "Series" : "Movie")}", FontSize = 11, Foreground = Brush("SecondaryTextBrush") };
+        Grid.SetRow(metadata, 2);
+        panel.Children.Add(metadata);
+        if (!string.IsNullOrWhiteSpace(request.LastError))
+        {
+            var error = new TextBlock { Text = request.LastError, FontSize = 10, Foreground = Brush("ErrorBrush"), TextWrapping = TextWrapping.Wrap, MaxLines = 2 };
+            Grid.SetRow(error, 3);
+            panel.Children.Add(error);
+        }
+
+        var open = new Button
+        {
+            Tag = new RequestDetailNavigation(request.MediaType, request.TmdbId),
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Padding = new Thickness(0),
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+        };
+        Grid.SetRowSpan(open, 4);
+        AutomationProperties.SetName(open, $"Open {request.Title} request details");
+        open.Click += RequestCard_Click;
+        panel.Children.Add(open);
+
+        if (!string.IsNullOrWhiteSpace(request.LibraryContentId))
+        {
+            var library = new Button
+            {
+                Content = "▥  Library",
+                Tag = request.LibraryContentId,
+                FontSize = 10,
+                FontWeight = FontWeights.SemiBold,
+                Padding = new Thickness(8, 3, 8, 3),
+                CornerRadius = new CornerRadius(10),
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
+                Margin = new Thickness(8),
+                Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(220, 20, 20, 22)),
+            };
+            Grid.SetRow(library, 0);
+            AutomationProperties.SetName(library, $"Open {request.Title} in library");
+            library.Tapped += (_, args) => args.Handled = true;
+            library.Click += LibraryBadge_Click;
+            panel.Children.Add(library);
+        }
         return panel;
     }
 
@@ -509,10 +683,22 @@ public sealed partial class RequestsPage : Page
         Render();
     }
 
+    private void RequestCard_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: RequestDetailNavigation nav })
+            App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(nav);
+    }
+
     private void RequestCard_Tapped(object sender, TappedRoutedEventArgs e)
     {
         if (sender is FrameworkElement { Tag: RequestDetailNavigation nav })
             App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(nav);
+    }
+
+    private void LibraryBadge_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string contentId } && !string.IsNullOrWhiteSpace(contentId))
+            App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(contentId);
     }
 
     private static Grid ThreeColumnGrid()

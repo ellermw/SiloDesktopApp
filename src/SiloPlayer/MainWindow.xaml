@@ -13,6 +13,7 @@
     <Grid
         x:Name="RootGrid"
         Background="{StaticResource AppBackgroundBrush}"
+        KeyboardAcceleratorPlacementMode="Hidden"
         CharacterReceived="RootGrid_CharacterReceived"
         PointerPressed="RootGrid_PointerPressed">
         <Grid.KeyboardAccelerators>
@@ -67,7 +68,11 @@
             </NavigationView.Resources>
 
             <NavigationView.PaneHeader>
-                <Grid x:Name="SidebarBrandHost" Height="96">
+                <Grid x:Name="SidebarBrandHost" Height="96"
+                      Tapped="SidebarBrandHost_Tapped"
+                      IsTabStop="True"
+                      KeyDown="SidebarBrandHost_KeyDown"
+                      AutomationProperties.Name="Go to home">
                     <Image
                         x:Name="SiloWordmarkImage"
                         Source="ms-appx:///Assets/silo-wordmark-sidebar.png"
@@ -114,7 +119,10 @@
 
                 <!-- LIBRARIES section header (collapsible — click toggles library visibility) -->
                 <NavigationViewItem x:Name="LibrariesHeader" SelectsOnInvoked="False"
-                                    Tapped="LibrariesHeader_Tapped">
+                                    Tapped="LibrariesHeader_Tapped"
+                                    KeyDown="LibrariesHeader_KeyDown"
+                                    AutomationProperties.Name="Libraries"
+                                    AutomationProperties.HelpText="Collapse libraries">
                     <NavigationViewItem.Content>
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -176,7 +184,7 @@
                         </Grid>
                     </NavigationViewItem.Content>
                 </NavigationViewItem>
-                <NavigationViewItem Content="Recommendations" Tag="Recommendations">
+                <NavigationViewItem x:Name="RecommendationsNavItem" Content="Recommendations" Tag="Recommendations">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE735;" />
                     </NavigationViewItem.Icon>
@@ -186,7 +194,7 @@
                         <FontIcon Glyph="&#xE8F4;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="Calendar" Tag="Calendar">
+                <NavigationViewItem x:Name="CalendarNavItem" Content="Calendar" Tag="Calendar">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE787;" />
                     </NavigationViewItem.Icon>
@@ -345,6 +353,9 @@
                                         <Setter Property="MinWidth" Value="260" />
                                         <Setter Property="MaxWidth" Value="300" />
                                         <Setter Property="CornerRadius" Value="16" />
+                                        <Setter Property="Background" Value="{StaticResource PopoverBrush}" />
+                                        <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+                                        <Setter Property="BorderThickness" Value="1" />
                                     </Style>
                                 </Flyout.FlyoutPresenterStyle>
                                 <StackPanel Spacing="4">
@@ -507,6 +518,7 @@
                                 Click="MobileHome_Click"
                                 AutomationProperties.Name="Home">
                                 <Image
+                                    x:Name="MobileSiloWordmarkImage"
                                     Source="ms-appx:///Assets/silo-wordmark-sidebar.png"
                                     Width="94"
                                     Height="40"

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
@@ -38,6 +39,8 @@ public sealed partial class GlobalSearchDialog : ContentDialog
     private readonly List<MediaItem> _results = [];
     private readonly List<RequestMediaResult> _requestResults = [];
     private int _selectedIndex = -1;
+    private bool _hasMore;
+    private bool _searchFailed;
 
     public GlobalSearchDialog()
     {
@@ -89,6 +92,8 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         {
             _results.Clear();
             _requestResults.Clear();
+            _hasMore = false;
+            _searchFailed = false;
             Render();
             return;
         }
@@ -112,6 +117,8 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
             _results.Clear();
             _results.AddRange(response.Items);
+            _hasMore = response.HasMore;
+            _searchFailed = false;
             _requestResults.Clear();
             _requestResults.AddRange(await requestsTask);
             Render();
@@ -121,6 +128,8 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         {
             _results.Clear();
             _requestResults.Clear();
+            _hasMore = false;
+            _searchFailed = true;
             Render();
         }
     }
@@ -133,7 +142,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             if (!status.RequestsEnabled) return [];
             return (await _requestsApi.SearchAsync("all", query, 1, ct)).Results
                 .Where(item => !string.Equals(item.Availability, "available", StringComparison.OrdinalIgnoreCase))
-                .Take(5)
+                .Take(4)
                 .ToList();
         }
         catch { return []; }
@@ -149,15 +158,31 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             ResultsScroll.Visibility = Visibility.Collapsed;
             EmptyText.Visibility = Visibility.Collapsed;
             ResultsDivider.Visibility = Visibility.Collapsed;
+            SearchFooter.Visibility = Visibility.Collapsed;
             return;
         }
 
         ResultsDivider.Visibility = Visibility.Visible;
+        SearchFooter.Visibility = Visibility.Visible;
+        SearchFooterText.Text = _hasMore
+            ? "Showing top results. Press Enter for all results."
+            : "Press Enter to open the full search page.";
         ResultsPanel.Children.Clear();
+
+        if (_searchFailed)
+        {
+            ResultsScroll.Visibility = Visibility.Collapsed;
+            EmptyText.Text = "Could not load results. Press Enter to open the search page.";
+            EmptyText.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
+            EmptyText.Visibility = Visibility.Visible;
+            return;
+        }
 
         if (_results.Count == 0 && _requestResults.Count == 0)
         {
             ResultsScroll.Visibility = Visibility.Collapsed;
+            EmptyText.Text = "No matches";
+            EmptyText.Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"];
             EmptyText.Visibility = Visibility.Visible;
             return;
         }
@@ -171,26 +196,63 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         }
         if (_requestResults.Count > 0)
         {
-            ResultsPanel.Children.Add(new TextBlock
+            ResultsPanel.Children.Add(new Border
             {
-                Text = "REQUEST TO ADD",
-                Margin = new Thickness(8, 10, 8, 4),
-                FontSize = 10,
-                CharacterSpacing = 120,
-                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+                Height = 1,
+                Margin = new Thickness(0, 4, 0, 0),
+                Background = (Brush)Application.Current.Resources["BorderBrush"],
             });
+            if (_results.Count > 0)
+            {
+                var header = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 7,
+                    Margin = new Thickness(8, 10, 8, 4),
+                };
+                header.Children.Add(new TextBlock
+                {
+                    Text = "REQUEST TO ADD",
+                    FontSize = 10,
+                    FontWeight = FontWeights.SemiBold,
+                    CharacterSpacing = 100,
+                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                });
+                header.Children.Add(new Border
+                {
+                    CornerRadius = new CornerRadius(8),
+                    Padding = new Thickness(6, 0, 6, 0),
+                    Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+                    Child = new TextBlock
+                    {
+                        Text = _requestResults.Count.ToString(),
+                        FontSize = 10,
+                        Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                    },
+                });
+                ResultsPanel.Children.Add(header);
+            }
+            else
+            {
+                ResultsPanel.Children.Add(new TextBlock
+                {
+                    Text = "Not in your library, but you can request:",
+                    Margin = new Thickness(8, 10, 8, 4),
+                    FontSize = 12,
+                    Foreground = (Brush)Application.Current.Resources["WarningBrush"],
+                });
+            }
             foreach (var item in _requestResults) ResultsPanel.Children.Add(BuildRequestRow(item));
         }
         SyncSelectionHighlight();
     }
 
-    private Border BuildResultRow(MediaItem item, int index)
+    private Button BuildResultRow(MediaItem item, int index)
     {
-        var row = new Border
+        var surface = new Border
         {
             CornerRadius = new CornerRadius(6),
             Padding = new Thickness(8, 6, 8, 6),
-            Tag = index,
         };
         var grid = new Grid { ColumnSpacing = 10 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -198,7 +260,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
         var thumb = new Border
         {
-            Width = 36, Height = 50,
+            Width = 40, Height = 56,
             CornerRadius = new CornerRadius(4),
             Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"],
             VerticalAlignment = VerticalAlignment.Center,
@@ -209,6 +271,20 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             {
                 Source = new BitmapImage(new Uri(item.PosterUrl)),
                 Stretch = Stretch.UniformToFill
+            };
+        }
+        else
+        {
+            thumb.Child = new TextBlock
+            {
+                Text = (item.Title ?? string.Empty)[..Math.Min(item.Title?.Length ?? 0, 24)],
+                FontSize = 10,
+                TextAlignment = TextAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+                MaxLines = 3,
+                Margin = new Thickness(3),
+                VerticalAlignment = VerticalAlignment.Center,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             };
         }
         Grid.SetColumn(thumb, 0);
@@ -236,24 +312,91 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         Grid.SetColumn(textStack, 1);
         grid.Children.Add(textStack);
 
-        row.Child = grid;
-        row.Tapped += (_, _) => PickResult(index);
+        surface.Child = grid;
+        var row = new Button
+        {
+            Padding = new Thickness(0),
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Tag = index,
+            Content = surface,
+        };
+        AutomationProperties.SetName(row,
+            $"Open {item.Title}, {string.Join(", ", subtitle)}");
+        row.Click += (_, _) => PickResult(index);
         return row;
     }
 
-    private Border BuildRequestRow(RequestMediaResult item)
+    private Button BuildRequestRow(RequestMediaResult item)
     {
-        var poster = new Border { Width = 36, Height = 50, CornerRadius = new CornerRadius(4), Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"] };
-        if (!string.IsNullOrWhiteSpace(item.PosterUrl)) poster.Child = new Image { Source = new BitmapImage(new Uri(item.PosterUrl)), Stretch = Stretch.UniformToFill };
+        var poster = new Border { Width = 40, Height = 56, CornerRadius = new CornerRadius(4), Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"] };
+        if (!string.IsNullOrWhiteSpace(item.PosterUrl))
+        {
+            poster.Child = new Image { Source = new BitmapImage(new Uri(item.PosterUrl)), Stretch = Stretch.UniformToFill };
+        }
+        else
+        {
+            poster.Child = new FontIcon
+            {
+                Glyph = "\uE7F4",
+                FontSize = 16,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+        }
         var text = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
         text.Children.Add(new TextBlock { Text = item.Title, FontSize = 13, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
-        text.Children.Add(new TextBlock { Text = $"{item.YearText} · Request to add", FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        var metadata = new List<string>();
+        if (!string.IsNullOrWhiteSpace(item.YearText)) metadata.Add(item.YearText);
+        metadata.Add(TypeLabel(item.MediaType));
+        text.Children.Add(new TextBlock { Text = string.Join(" \u00B7 ", metadata), FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
         var grid = new Grid { ColumnSpacing = 10 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         Grid.SetColumn(text, 1); grid.Children.Add(poster); grid.Children.Add(text);
-        var row = new Border { CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 6, 8, 6), Child = grid };
-        row.Tapped += (_, _) =>
+        var requestable = item.Request.Requestable;
+        var badge = new Border
+        {
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(8, 2, 8, 2),
+            BorderThickness = new Thickness(1),
+            BorderBrush = (Brush)Application.Current.Resources[requestable ? "WarningBrush" : "BorderBrush"],
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                Text = requestable ? "REQUEST" : item.RequestLabel.ToUpperInvariant(),
+                FontSize = 9,
+                FontWeight = requestable ? FontWeights.SemiBold : FontWeights.Medium,
+                CharacterSpacing = 50,
+                Foreground = (Brush)Application.Current.Resources[requestable ? "WarningBrush" : "SecondaryTextBrush"],
+            },
+        };
+        Grid.SetColumn(badge, 2);
+        grid.Children.Add(badge);
+        var surface = new Border
+        {
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(8, 6, 8, 6),
+            Child = grid,
+        };
+        var row = new Button
+        {
+            Padding = new Thickness(0),
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Content = surface,
+            Opacity = requestable ? 1 : 0.7,
+        };
+        AutomationProperties.SetName(row,
+            $"Open request details for {item.Title}, {string.Join(", ", metadata)}");
+        row.Click += (_, _) =>
         {
             Hide();
             App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(item.MediaType, item.TmdbId));
@@ -269,26 +412,31 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         "episode" => "Episode",
         "audiobook" => "Audiobook",
         "ebook" => "Ebook",
+        "manga" => "Manga",
         _ => type ?? "",
     };
 
     private void SyncSelectionHighlight()
     {
-        for (int i = 0; i < ResultsPanel.Children.Count; i++)
+        FrameworkElement? selectedElement = null;
+        foreach (var child in ResultsPanel.Children)
         {
-            if (ResultsPanel.Children[i] is Border b)
+            if (child is Button { Tag: int resultIndex, Content: Border surface } button)
             {
-                b.Background = i == _selectedIndex
+                surface.Background = resultIndex == _selectedIndex
                     ? (Brush)Application.Current.Resources["AccentBackgroundBrush"]
                     : new SolidColorBrush(Colors.Transparent);
+                if (resultIndex == _selectedIndex)
+                {
+                    selectedElement = button;
+                }
             }
         }
 
         // Scroll selected into view.
-        if (_selectedIndex >= 0 && _selectedIndex < ResultsPanel.Children.Count
-            && ResultsPanel.Children[_selectedIndex] is FrameworkElement el)
+        if (selectedElement is not null)
         {
-            el.StartBringIntoView(new Microsoft.UI.Xaml.BringIntoViewOptions
+            selectedElement.StartBringIntoView(new Microsoft.UI.Xaml.BringIntoViewOptions
             {
                 VerticalAlignmentRatio = 0.5,
                 AnimationDesired = false,

@@ -12,11 +12,19 @@ namespace SiloPlayer.Controls;
 
 public sealed partial class PosterCard : UserControl
 {
+    private readonly UICustomizationService _uiCustomizationService;
+    private bool _observingUICustomization;
     public void SetCatalogGridLayout(double width)
     {
         var safeWidth = Math.Max(96, width);
         var posterHeight = safeWidth * 1.5;
-        var totalHeight = posterHeight + 56;
+        var captionHeight = _uiCustomizationService.CardPresentation.Caption switch
+        {
+            "artwork" => 0,
+            "title" => 36,
+            _ => 56,
+        };
+        var totalHeight = posterHeight + captionHeight;
         Width = safeWidth;
         Height = totalHeight;
         RootGrid.Width = safeWidth;
@@ -88,8 +96,15 @@ public sealed partial class PosterCard : UserControl
     public PosterCard()
     {
         this.InitializeComponent();
+        _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.Loaded += (_, _) =>
         {
+            if (!_observingUICustomization)
+            {
+                _observingUICustomization = true;
+                _uiCustomizationService.Changed += UICustomization_Changed;
+            }
+            ApplyCardPresentation();
             // Cached pages retain their card controls across navigation. Their
             // Unloaded handler deliberately drops the decoded bitmap, so reload
             // the unchanged item when the card becomes live again.
@@ -109,6 +124,11 @@ public sealed partial class PosterCard : UserControl
         // piling up across 100k-scale libraries.
         this.Unloaded += (_, _) =>
         {
+            if (_observingUICustomization)
+            {
+                _observingUICustomization = false;
+                _uiCustomizationService.Changed -= UICustomization_Changed;
+            }
             try { _loadCts?.Cancel(); } catch { }
             _loadCts?.Dispose();
             _loadCts = null;
@@ -122,6 +142,25 @@ public sealed partial class PosterCard : UserControl
         // presses), which during fast library scroll saves ~8 MenuFlyoutItem
         // constructions + closures per recycled card.
         this.ContextRequested += PosterCard_ContextRequested;
+    }
+
+    private void UICustomization_Changed(object? sender, EventArgs e)
+        => DispatcherQueue.TryEnqueue(ApplyCardPresentation);
+
+    private void ApplyCardPresentation()
+    {
+        var caption = _uiCustomizationService.CardPresentation.Caption;
+        var showCaption = caption != "artwork";
+        var showMetadata = caption == "title_metadata";
+        TitleText.Visibility = showCaption ? Visibility.Visible : Visibility.Collapsed;
+        EpisodeTitleText.Visibility = showMetadata && !string.IsNullOrWhiteSpace(EpisodeTitleText.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        SubtitleText.Visibility = showMetadata && !string.IsNullOrWhiteSpace(SubtitleText.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        if (Width > 0)
+            SetCatalogGridLayout(Width);
     }
 
     private void PosterCard_ContextRequested(UIElement sender, Microsoft.UI.Xaml.Input.ContextRequestedEventArgs args)
@@ -208,6 +247,7 @@ public sealed partial class PosterCard : UserControl
         SubtitleText.Text = item.UpcomingEvent is { } upcomingSchedule
             ? MediaItemDisplayText.FormatUpcomingSchedule(upcomingSchedule)
             : MediaItemDisplayText.BuildSubtitle(item, CurrentSortKey);
+        ApplyCardPresentation();
 
         PosterImage.Opacity = 0;
 
@@ -555,9 +595,9 @@ public sealed partial class PosterCard : UserControl
 
     private static string? DefaultOverlayAccent(string overlayId) => overlayId switch
     {
-        "rating_imdb" or "imdb_top_250" => "#f5c518",
+        "rating_imdb" => "#f5c518",
         "rating_tmdb" => "#01b4e4",
-        "rating_rt" or "rt_certified_fresh" => "#fa320a",
+        "rating_rt" => "#fa320a",
         "rating_rt_audience" => "#fa6400",
         _ => null,
     };
@@ -573,7 +613,7 @@ public sealed partial class PosterCard : UserControl
         "year" => "\uE787",
         "studio" or "network" => "\uE80F",
         "content_rating" => "\uE72E",
-        "show_status" or "imdb_top_250" or "rt_certified_fresh" => "\uE735",
+        "show_status" => "\uE735",
         "container" or "release_type" or "edition" => "\uE8B7",
         "aspect_ratio" => "\uE740",
         _ => null,
@@ -645,6 +685,8 @@ public sealed partial class PosterCard : UserControl
 
     private void OnCardKeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (!ReferenceEquals(FocusManager.GetFocusedElement(XamlRoot), this))
+            return;
         if (e.Key is not (Windows.System.VirtualKey.Enter or Windows.System.VirtualKey.Space))
             return;
         e.Handled = ActivateCard();

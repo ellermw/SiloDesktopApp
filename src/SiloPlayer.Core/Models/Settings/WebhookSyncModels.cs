@@ -33,6 +33,7 @@ public class RotateWebhookSyncResponse
 public class WebhookSyncEventLog
 {
     public long Id { get; set; }
+    [JsonPropertyName("request_id")] public string? RequestId { get; set; }
     [JsonPropertyName("received_at")] public DateTimeOffset ReceivedAt { get; set; }
     [JsonPropertyName("http_status")] public int HttpStatus { get; set; }
     public string Outcome { get; set; } = "";

@@ -126,44 +126,101 @@ public sealed partial class LoginPage : Page
 
     private async Task ShowOAuthDialogAsync(AuthProvider provider, Uri authorizeUri)
     {
+        using var lifetimeCts = new CancellationTokenSource();
         var webView = new WebView2
         {
             Width = 840,
-            Height = 680,
+            Height = 620,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
         };
+        var progress = new ProgressRing
+        {
+            Width = 18,
+            Height = 18,
+            IsActive = true,
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        var statusText = new TextBlock
+        {
+            Text = $"Opening {provider.DisplayName}...",
+            VerticalAlignment = VerticalAlignment.Center,
+            TextWrapping = TextWrapping.Wrap
+        };
+        var status = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 10,
+            Visibility = Visibility.Visible
+        };
+        status.Children.Add(progress);
+        status.Children.Add(statusText);
+        var errorText = new TextBlock
+        {
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ErrorBrush"],
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed
+        };
+        var content = new StackPanel { Spacing = 12 };
+        content.Children.Add(status);
+        content.Children.Add(errorText);
+        content.Children.Add(webView);
 
         var dialog = new ContentDialog
         {
             Title = $"Sign in with {provider.DisplayName}",
-            Content = webView,
+            Content = content,
             CloseButtonText = "Cancel",
             XamlRoot = XamlRoot,
             DefaultButton = ContentDialogButton.Close,
         };
 
+        var completing = false;
         webView.NavigationStarting += async (_, args) =>
         {
-            if (!TryGetOAuthCompletionCode(args.Uri, out var completionCode))
+            if (completing || !TryGetOAuthCompletionCode(args.Uri, out var completionCode))
                 return;
 
             args.Cancel = true;
+            completing = true;
+            progress.IsActive = true;
+            statusText.Text = "Completing sign-in...";
+            status.Visibility = Visibility.Visible;
+            errorText.Visibility = Visibility.Collapsed;
             try
             {
-                await ViewModel.CompleteOAuthAsync(completionCode);
+                await ViewModel.CompleteOAuthAsync(completionCode, lifetimeCts.Token);
                 dialog.Hide();
             }
-            catch
+            catch (OperationCanceledException) when (lifetimeCts.IsCancellationRequested)
             {
-                dialog.Hide();
+                // The user closed the sign-in window while completion was pending.
+            }
+            catch (Exception ex)
+            {
+                errorText.Text = ViewModel.ErrorMessage ?? $"OAuth sign-in failed: {ex.Message}";
+                errorText.Visibility = Visibility.Visible;
+                status.Visibility = Visibility.Collapsed;
+                completing = false;
             }
         };
         webView.NavigationCompleted += (_, args) =>
         {
             if (!args.IsSuccess)
-                ViewModel.ErrorMessage = $"OAuth page failed to load: {args.WebErrorStatus}";
+            {
+                var message = $"OAuth page failed to load: {args.WebErrorStatus}";
+                ViewModel.ErrorMessage = message;
+                errorText.Text = message;
+                errorText.Visibility = Visibility.Visible;
+            }
+
+            if (!completing)
+            {
+                progress.IsActive = false;
+                status.Visibility = Visibility.Collapsed;
+            }
         };
+        dialog.Closed += (_, _) => lifetimeCts.Cancel();
 
         webView.Source = authorizeUri;
         await dialog.ShowAsync();

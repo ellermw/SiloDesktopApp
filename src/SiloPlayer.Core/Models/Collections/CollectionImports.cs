@@ -179,6 +179,9 @@ public class ImportUserCollectionRequest
     public string? SyncSchedule { get; set; }
     public bool? IsShared { get; set; }
     public List<int>? LibraryIds { get; set; }
+    public string? PosterUrl { get; set; }
+    public DisplayQueryDefinition? DisplayQueryDefinition { get; set; }
+    public Dictionary<string, object>? SortConfig { get; set; }
 }
 
 public sealed class ImportUserMDBListCollectionRequest : ImportUserCollectionRequest

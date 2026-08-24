@@ -343,6 +343,22 @@
                                 FontStyle="Italic"
                                 TextWrapping="Wrap"
                                 MaxLines="2" />
+
+                            <!-- AudiobookContent renders these as two distinct subtitle
+                                 lines between the title and metadata. Keeping them out of
+                                 HeroCrewLine preserves the exact WebUI information order. -->
+                            <TextBlock
+                                x:Name="BookAuthorLine"
+                                FontSize="15"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                TextWrapping="Wrap"
+                                Visibility="Collapsed" />
+                            <TextBlock
+                                x:Name="BookNarratorLine"
+                                FontSize="15"
+                                Foreground="{StaticResource SecondaryTextBrush}"
+                                TextWrapping="Wrap"
+                                Visibility="Collapsed" />
                         </StackPanel>
                     </Grid>
                 </Grid>
@@ -429,13 +445,19 @@
                                Visibility="Collapsed" />
 
                     <!-- Genres: styled badge pills (webui: flex-wrap gap-1.5) -->
-                    <StackPanel
+                    <controls:WrapPanel
                         x:Name="GenresBadgesPanel"
-                        Orientation="Horizontal"
-                        Spacing="6"
+                        HorizontalSpacing="6"
+                        VerticalSpacing="6"
                         Visibility="Collapsed" />
                     <!-- Hidden TextBlock kept for code-behind compat -->
                     <TextBlock x:Name="GenresText" Visibility="Collapsed" />
+
+                    <TextBlock
+                        x:Name="BookProgressSummaryText"
+                        FontSize="13"
+                        Foreground="{StaticResource SecondaryTextBrush}"
+                        Visibility="Collapsed" />
 
                     <!-- Action buttons row -->
                     <controls:WrapPanel x:Name="HeroActionsRow" HorizontalSpacing="12" VerticalSpacing="10">
@@ -535,11 +557,18 @@
                                            Foreground="{StaticResource SecondaryTextBrush}"
                                            VerticalAlignment="Center" MaxWidth="180" TextTrimming="CharacterEllipsis" />
                                 <FontIcon Glyph="&#xE70D;" FontSize="10" Foreground="{StaticResource SecondaryTextBrush}" />
-                            </StackPanel>
-                            <Button.Flyout>
-                                <MenuFlyout x:Name="AudioTracksFlyout" />
-                            </Button.Flyout>
-                        </Button>
+                             </StackPanel>
+                             <Button.Flyout>
+                                <Flyout x:Name="AudioTracksFlyout" Placement="Bottom">
+                                    <ScrollViewer MaxHeight="360"
+                                                  Width="320"
+                                                  HorizontalScrollBarVisibility="Disabled"
+                                                  VerticalScrollBarVisibility="Auto">
+                                        <StackPanel x:Name="AudioTracksFlyoutContent" Spacing="2" />
+                                    </ScrollViewer>
+                                </Flyout>
+                             </Button.Flyout>
+                         </Button>
 
                         <!-- Subtitles popover (pre-play selection) — Phase 2b.
                              Visible only when the current version has subtitle tracks or downloaded subs.
@@ -558,11 +587,18 @@
                                            Foreground="{StaticResource SecondaryTextBrush}"
                                            VerticalAlignment="Center" MaxWidth="180" TextTrimming="CharacterEllipsis" />
                                 <FontIcon Glyph="&#xE70D;" FontSize="10" Foreground="{StaticResource SecondaryTextBrush}" />
-                            </StackPanel>
-                            <Button.Flyout>
-                                <MenuFlyout x:Name="SubtitlesPopoverFlyout" />
-                            </Button.Flyout>
-                        </Button>
+                             </StackPanel>
+                             <Button.Flyout>
+                                <Flyout x:Name="SubtitlesPopoverFlyout" Placement="Bottom">
+                                    <ScrollViewer MaxHeight="320"
+                                                  Width="320"
+                                                  HorizontalScrollBarVisibility="Disabled"
+                                                  VerticalScrollBarVisibility="Auto">
+                                        <StackPanel x:Name="SubtitlesPopoverContent" Spacing="8" />
+                                    </ScrollViewer>
+                                </Flyout>
+                             </Button.Flyout>
+                         </Button>
 
                         <!-- Watched toggle button -->
                         <Button
@@ -751,15 +787,47 @@
                          YouTube entries and opens them in a privacy-enhanced embed. -->
                     <StackPanel x:Name="TrailersSection" Visibility="Collapsed" Spacing="20">
                         <TextBlock Text="Trailers &amp; More" Style="{StaticResource TitleTextStyle}" FontSize="20" />
-                        <ScrollViewer HorizontalScrollBarVisibility="Hidden"
-                                      IsTabStop="True"
-                                      KeyDown="HorizontalCarousel_KeyDown"
-                                      VerticalScrollBarVisibility="Disabled"
-                                      HorizontalScrollMode="Enabled"
-                                      VerticalScrollMode="Disabled"
-                                      ZoomMode="Disabled">
-                            <StackPanel x:Name="TrailersPanel" Orientation="Horizontal" Spacing="12" />
-                        </ScrollViewer>
+                        <Grid>
+                            <ScrollViewer x:Name="TrailersScrollViewer"
+                                          HorizontalScrollBarVisibility="Hidden"
+                                          IsTabStop="True"
+                                          KeyDown="HorizontalCarousel_KeyDown"
+                                          ViewChanged="TrailersScrollViewer_ViewChanged"
+                                          SizeChanged="TrailersScrollViewer_SizeChanged"
+                                          PointerPressed="DetailCarousel_PointerPressed"
+                                          PointerMoved="DetailCarousel_PointerMoved"
+                                          PointerReleased="DetailCarousel_PointerReleased"
+                                          PointerCanceled="DetailCarousel_PointerCanceled"
+                                          PointerCaptureLost="DetailCarousel_PointerCaptureLost"
+                                          VerticalScrollBarVisibility="Disabled"
+                                          HorizontalScrollMode="Disabled"
+                                          VerticalScrollMode="Disabled"
+                                          ZoomMode="Disabled">
+                                <StackPanel x:Name="TrailersPanel" Orientation="Horizontal" Spacing="12" />
+                            </ScrollViewer>
+                            <Button x:Name="TrailersPrevButton"
+                                    Width="44" Height="44" Padding="0" CornerRadius="22"
+                                    HorizontalAlignment="Left" VerticalAlignment="Center"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                    Visibility="Collapsed" Canvas.ZIndex="2"
+                                    Click="TrailersPrev_Click"
+                                    AutomationProperties.Name="Scroll trailers left"
+                                    ToolTipService.ToolTip="Scroll left">
+                                <FontIcon Glyph="&#xE76B;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
+                            </Button>
+                            <Button x:Name="TrailersNextButton"
+                                    Width="44" Height="44" Padding="0" CornerRadius="22"
+                                    HorizontalAlignment="Right" VerticalAlignment="Center"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                    Visibility="Collapsed" Canvas.ZIndex="2"
+                                    Click="TrailersNext_Click"
+                                    AutomationProperties.Name="Scroll trailers right"
+                                    ToolTipService.ToolTip="Scroll right">
+                                <FontIcon Glyph="&#xE76C;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
+                            </Button>
+                        </Grid>
                     </StackPanel>
 
                     <!-- Local extras are first-class watch targets, grouped by kind
@@ -769,13 +837,75 @@
                         <StackPanel x:Name="ExtrasGroupsPanel" Spacing="24" />
                     </StackPanel>
 
+                    <StackPanel x:Name="AudiobookNarratorSection" Visibility="Collapsed" Spacing="12" Margin="0,16,0,0">
+                        <TextBlock Text="Narrator" Style="{StaticResource TitleTextStyle}" FontSize="20" />
+                        <Border
+                            HorizontalAlignment="Left"
+                            MinWidth="280"
+                            Padding="16"
+                            CornerRadius="12"
+                            Background="{StaticResource SurfaceBrush}"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1">
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <Border Width="64" Height="64" CornerRadius="32"
+                                        Background="{StaticResource SurfaceRaisedBrush}">
+                                    <TextBlock x:Name="AudiobookNarratorInitials"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               FontSize="18" FontWeight="SemiBold" />
+                                </Border>
+                                <StackPanel VerticalAlignment="Center">
+                                    <TextBlock x:Name="AudiobookNarratorName"
+                                               FontSize="15" FontWeight="SemiBold" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
                     <StackPanel x:Name="BookRelatedSection" Visibility="Collapsed" Spacing="28" Margin="0,16,0,0">
                         <StackPanel x:Name="BookRelatedGroupsPanel" Spacing="28" />
                     </StackPanel>
 
                     <StackPanel x:Name="AudiobookChaptersSection" Visibility="Collapsed" Spacing="12" Margin="0,16,0,0">
-                        <TextBlock Text="Chapters" Style="{StaticResource TitleTextStyle}" FontSize="20" />
-                        <StackPanel x:Name="AudiobookChaptersPanel" Spacing="2" />
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="AudiobookChaptersToggleButton"
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    HorizontalAlignment="Left"
+                                    Padding="0,8"
+                                    Click="AudiobookChaptersToggleButton_Click"
+                                    AutomationProperties.Name="Toggle audiobook chapters">
+                                <StackPanel Orientation="Horizontal" Spacing="9">
+                                    <FontIcon x:Name="AudiobookChaptersChevron" Glyph="&#xE70D;" FontSize="13" />
+                                    <TextBlock x:Name="AudiobookChapterCountText"
+                                               Style="{StaticResource TitleTextStyle}"
+                                               FontSize="20" />
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="AudiobookChapterSortButton"
+                                    Grid.Column="1"
+                                    Visibility="Collapsed"
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    Padding="10,7"
+                                    Click="AudiobookChapterSortButton_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="6">
+                                    <FontIcon Glyph="&#xE8CB;" FontSize="13" />
+                                    <TextBlock x:Name="AudiobookChapterSortText" Text="By position" FontSize="12" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                        <Border x:Name="AudiobookChaptersBorder"
+                                Visibility="Collapsed"
+                                CornerRadius="12"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                Background="{StaticResource SurfaceBrush}">
+                            <StackPanel x:Name="AudiobookChaptersPanel" Spacing="0" />
+                        </Border>
                     </StackPanel>
 
                     <StackPanel x:Name="MangaChaptersSection" Visibility="Collapsed" Spacing="12" Margin="0,16,0,0">
@@ -804,16 +934,47 @@
                             Text="Cast"
                             Style="{StaticResource TitleTextStyle}" />
 
-                        <ScrollViewer
-                            x:Name="CastScrollViewer"
-                            IsTabStop="True"
-                            KeyDown="HorizontalCarousel_KeyDown"
-                            HorizontalScrollBarVisibility="Hidden"
-                            VerticalScrollBarVisibility="Disabled"
-                            HorizontalScrollMode="Enabled"
-                            VerticalScrollMode="Disabled">
-                            <StackPanel x:Name="CastPanel" Orientation="Horizontal" Spacing="12" />
-                        </ScrollViewer>
+                        <Grid>
+                            <ScrollViewer
+                                x:Name="CastScrollViewer"
+                                IsTabStop="True"
+                                KeyDown="HorizontalCarousel_KeyDown"
+                                ViewChanged="CastScrollViewer_ViewChanged"
+                                SizeChanged="CastScrollViewer_SizeChanged"
+                                PointerPressed="DetailCarousel_PointerPressed"
+                                PointerMoved="DetailCarousel_PointerMoved"
+                                PointerReleased="DetailCarousel_PointerReleased"
+                                PointerCanceled="DetailCarousel_PointerCanceled"
+                                PointerCaptureLost="DetailCarousel_PointerCaptureLost"
+                                HorizontalScrollBarVisibility="Hidden"
+                                VerticalScrollBarVisibility="Disabled"
+                                HorizontalScrollMode="Disabled"
+                                VerticalScrollMode="Disabled">
+                                <StackPanel x:Name="CastPanel" Orientation="Horizontal" Spacing="12" />
+                            </ScrollViewer>
+                            <Button x:Name="CastPrevButton"
+                                    Width="44" Height="44" Padding="0" CornerRadius="22"
+                                    HorizontalAlignment="Left" VerticalAlignment="Center"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                    Visibility="Collapsed" Canvas.ZIndex="2"
+                                    Click="CastPrev_Click"
+                                    AutomationProperties.Name="Scroll cast left"
+                                    ToolTipService.ToolTip="Scroll left">
+                                <FontIcon Glyph="&#xE76B;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
+                            </Button>
+                            <Button x:Name="CastNextButton"
+                                    Width="44" Height="44" Padding="0" CornerRadius="22"
+                                    HorizontalAlignment="Right" VerticalAlignment="Center"
+                                    Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                    Visibility="Collapsed" Canvas.ZIndex="2"
+                                    Click="CastNext_Click"
+                                    AutomationProperties.Name="Scroll cast right"
+                                    ToolTipService.ToolTip="Scroll right">
+                                <FontIcon Glyph="&#xE76C;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
+                            </Button>
+                        </Grid>
                     </StackPanel>
 
                     <!-- Crew section (directors + writers) -->
@@ -1105,5 +1266,33 @@
                 </StackPanel>
             </StackPanel>
         </ScrollViewer>
+
+        <!-- Current WebUI TrailerModal: a frameless, black, in-page 16:9
+             surface. Keeping it in this visual tree also preserves the loaded
+             detail page and returns focus to the invoking trailer card. -->
+        <Grid x:Name="TrailerOverlay" Visibility="Collapsed" Canvas.ZIndex="1000">
+            <Grid.KeyboardAccelerators>
+                <KeyboardAccelerator Key="Escape" Invoked="TrailerEscape_Invoked" />
+            </Grid.KeyboardAccelerators>
+            <Button Background="#CC000000" BorderThickness="0" Padding="0"
+                    HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                    Click="TrailerBackdrop_Click" AutomationProperties.Name="Close trailer" />
+            <Border x:Name="TrailerModalSurface" MaxWidth="896" Background="Black"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    CornerRadius="8">
+                <Grid>
+                    <WebView2 x:Name="TrailerWebView" Width="896" Height="504"
+                              DefaultBackgroundColor="Black"
+                              AutomationProperties.Name="Trailer video player" />
+                    <Button x:Name="TrailerCloseButton" Width="36" Height="36"
+                            HorizontalAlignment="Right" VerticalAlignment="Top"
+                            Margin="12" Padding="0" CornerRadius="18"
+                            Background="#B3000000" BorderThickness="0"
+                            Click="TrailerClose_Click" AutomationProperties.Name="Close trailer">
+                        <FontIcon Glyph="&#xE711;" FontSize="14" Foreground="White" />
+                    </Button>
+                </Grid>
+            </Border>
+        </Grid>
     </Grid>
 </Page>

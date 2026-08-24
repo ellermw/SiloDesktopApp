@@ -57,7 +57,7 @@ public partial class SearchViewModel : ObservableObject
     [ObservableProperty]
     private string? _mediaType;
 
-    [ObservableProperty] private string _sortField = "relevance";
+    [ObservableProperty] private string _sortField = "added_at";
     [ObservableProperty] private string _sortOrder = "desc";
     [ObservableProperty] private string? _genre;
     [ObservableProperty] private string? _contentRating;
@@ -228,7 +228,7 @@ public partial class SearchViewModel : ObservableObject
             if (!IsCurrentSearchOwner(searchCts, querySnapshot)) return;
             LocalLog.AppendLine(
                 "search_timing.txt",
-                $"catalog_complete | elapsed_ms={primaryTimer.ElapsedMilliseconds} | query_length={querySnapshot.Length} | scope={MediaScope} | type={MediaType ?? "all"} | sort={SortField} | count={response.Items.Count} | has_more={response.HasMore}");
+                $"catalog_complete | elapsed_ms={primaryTimer.ElapsedMilliseconds} | query_length={querySnapshot.Length} | scope={MediaScope} | type={MediaType ?? "all"} | sort={SortField} | request_sort={GetRequestSortField() ?? "server_default"} | count={response.Items.Count} | has_more={response.HasMore}");
 
             // Update people results
             var people = await peopleTask;
@@ -378,10 +378,14 @@ public partial class SearchViewModel : ObservableObject
         CancellationToken ct,
         string? query = null)
     {
+        var requestSort = GetRequestSortField();
         return _catalogApi.GetCatalogAsync(
             null,
-            sort: SortField,
-            order: SortOrder,
+            // Current WebUI displays Date Added as the default query sort but
+            // intentionally omits it from an unscoped query request. The
+            // server then applies its optimized default query ordering.
+            sort: requestSort,
+            order: requestSort == null ? null : SortOrder,
             genre: Genre,
             contentRating: ContentRating,
             resolution: Resolution,
@@ -396,6 +400,11 @@ public partial class SearchViewModel : ObservableObject
             ct: ct);
     }
 
+    private string? GetRequestSortField()
+        => string.Equals(SortField, "added_at", StringComparison.Ordinal)
+            ? null
+            : SortField;
+
     private async Task<List<RequestMediaResult>> SearchOutsideLibraryAsync(string query, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -405,7 +414,10 @@ public partial class SearchViewModel : ObservableObject
             var status = await _requestsApi.GetStatusAsync(timeout.Token);
             if (!status.RequestsEnabled) return [];
             var response = await _requestsApi.SearchAsync("all", query, 1, timeout.Token);
-            return response.Results.Where(item => !string.Equals(item.Availability, "available", StringComparison.OrdinalIgnoreCase)).ToList();
+            return response.Results
+                .Where(item => !string.Equals(item.Availability, "available", StringComparison.OrdinalIgnoreCase))
+                .Take(20)
+                .ToList();
         }
         catch { return []; }
     }

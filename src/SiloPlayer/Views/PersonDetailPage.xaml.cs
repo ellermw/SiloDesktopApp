@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
@@ -12,12 +13,14 @@ namespace SiloPlayer.Views;
 public sealed partial class PersonDetailPage : Page
 {
     public PersonDetailViewModel ViewModel { get; }
+    private readonly UICustomizationService _uiCustomizationService;
     private bool _bioExpanded;
     private double _filmographyCardWidth = 178;
 
     public PersonDetailPage()
     {
         ViewModel = App.Services.GetRequiredService<PersonDetailViewModel>();
+        _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
 
         FilmographyRepeater.ItemsSource = ViewModel.Filmography;
@@ -43,6 +46,10 @@ public sealed partial class PersonDetailPage : Page
                         ? Visibility.Visible : Visibility.Collapsed;
                 });
             }
+            else if (args.PropertyName == nameof(PersonDetailViewModel.Person))
+            {
+                DispatcherQueue.TryEnqueue(UpdateUI);
+            }
         };
     }
 
@@ -62,6 +69,7 @@ public sealed partial class PersonDetailPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _uiCustomizationService.Changed += UICustomization_Changed;
 
         // B33: PersonDetailPage now accepts a string ID; supports non-numeric
         // person IDs from third-party providers (matches WebUI cast/crew shape).
@@ -81,6 +89,7 @@ public sealed partial class PersonDetailPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         ViewModel.Cancel();
+        _uiCustomizationService.Changed -= UICustomization_Changed;
         base.OnNavigatedFrom(e);
     }
 
@@ -156,26 +165,31 @@ public sealed partial class PersonDetailPage : Page
 
     private void PersonDetailPage_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        var gutter = e.NewSize.Width >= 1024 ? 40d
-            : e.NewSize.Width >= 640 ? 24d
+        ApplyResponsiveLayout(e.NewSize.Width);
+    }
+
+    private void UICustomization_Changed(object? sender, EventArgs e)
+        => DispatcherQueue.TryEnqueue(() => ApplyResponsiveLayout(ActualWidth));
+
+    private void ApplyResponsiveLayout(double width)
+    {
+        if (width <= 0) return;
+        var gutter = width >= 1024 ? 40d
+            : width >= 640 ? 24d
             : 16d;
-        PersonContentShell.Padding = new Thickness(gutter, e.NewSize.Width >= 640 ? 40 : 32, gutter, 48);
-        PersonSkeletonShell.Padding = new Thickness(gutter, e.NewSize.Width >= 640 ? 40 : 32, gutter, 48);
-        var photoWidth = e.NewSize.Width >= 640 ? 180d : 140d;
+        PersonContentShell.Padding = new Thickness(gutter, width >= 640 ? 40 : 32, gutter, 48);
+        PersonSkeletonShell.Padding = new Thickness(gutter, width >= 640 ? 40 : 32, gutter, 48);
+        var photoWidth = width >= 640 ? 180d : 140d;
         PersonPhotoBorder.Width = photoWidth;
         PersonPhotoBorder.Height = photoWidth * 1.5;
-        PersonName.FontSize = e.NewSize.Width >= 640 ? 30 : 24;
+        PersonName.FontSize = width >= 640 ? 30 : 24;
 
-        var columns = e.NewSize.Width >= 1280 ? 8
-            : e.NewSize.Width >= 1024 ? 7
-            : e.NewSize.Width >= 768 ? 5
-            : e.NewSize.Width >= 640 ? 4
-            : 3;
-        var innerWidth = Math.Max(320, Math.Min(1400, e.NewSize.Width) - (gutter * 2));
+        var innerWidth = Math.Max(320, Math.Min(1400, width) - (gutter * 2));
+        var columns = _uiCustomizationService.GetPosterColumnCount(innerWidth);
         _filmographyCardWidth = Math.Max(96, (innerWidth - ((columns - 1) * 12)) / columns);
         FilmographyGridLayout.MaximumRowsOrColumns = columns;
         FilmographyGridLayout.MinItemWidth = _filmographyCardWidth;
-        FilmographyGridLayout.MinItemHeight = (_filmographyCardWidth * 1.5) + 56;
+        FilmographyGridLayout.MinItemHeight = (_filmographyCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight;
         for (var index = 0; index < ViewModel.Filmography.Count; index++)
         {
             if (FilmographyRepeater.TryGetElement(index) is PosterCard card)
@@ -194,9 +208,6 @@ public sealed partial class PersonDetailPage : Page
         int count = ViewModel.Filmography.Count;
         FilmographyEmptyText.Visibility = count == 0 && !ViewModel.IsLoading
             ? Visibility.Visible : Visibility.Collapsed;
-        FilmographyCountText.Text = ViewModel.FilmographyTotal > 0
-            ? $"{ViewModel.FilmographyTotal} {(ViewModel.FilmographyTotal == 1 ? "title" : "titles")}"
-            : "";
     }
 
     private void UpdateFilterTabStyles()
@@ -245,24 +256,50 @@ public sealed partial class PersonDetailPage : Page
         if (person == null) return;
 
         var nameBox = new TextBox { Text = person.Name ?? "", PlaceholderText = "Name", CornerRadius = new CornerRadius(6), FontSize = 13 };
-        var bioBox = new TextBox { Text = person.Bio ?? "", PlaceholderText = "Biography", AcceptsReturn = true, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, MinHeight = 100, MaxHeight = 200, CornerRadius = new CornerRadius(6), FontSize = 13 };
+        var bioBox = new TextBox { Text = person.Bio ?? "", PlaceholderText = "Bio", AcceptsReturn = true, TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap, MinHeight = 128, MaxHeight = 240, CornerRadius = new CornerRadius(6), FontSize = 13 };
         var birthDateBox = new TextBox { Text = person.BirthDate ?? "", PlaceholderText = "YYYY-MM-DD", CornerRadius = new CornerRadius(6), FontSize = 13 };
         var deathDateBox = new TextBox { Text = person.DeathDate ?? "", PlaceholderText = "YYYY-MM-DD (leave blank if alive)", CornerRadius = new CornerRadius(6), FontSize = 13 };
         var birthplaceBox = new TextBox { Text = person.Birthplace ?? "", PlaceholderText = "Birthplace", CornerRadius = new CornerRadius(6), FontSize = 13 };
+        var homepageBox = new TextBox { Text = person.Homepage ?? "", PlaceholderText = "https://…", CornerRadius = new CornerRadius(6), FontSize = 13 };
+        var tmdbIdBox = new TextBox { Text = person.TmdbId ?? "", PlaceholderText = "TMDB ID", CornerRadius = new CornerRadius(6), FontSize = 13 };
+        var imdbIdBox = new TextBox { Text = person.ImdbId ?? "", PlaceholderText = "IMDb ID", CornerRadius = new CornerRadius(6), FontSize = 13 };
+        var tvdbIdBox = new TextBox { Text = person.TvdbId ?? "", PlaceholderText = "TVDB ID", CornerRadius = new CornerRadius(6), FontSize = 13 };
 
-        var form = new StackPanel { Width = 480, Spacing = 14 };
-        void AddField(string label, FrameworkElement control)
+        var availableWidth = ActualWidth > 0 ? ActualWidth - 112 : 600;
+        var formWidth = Math.Clamp(availableWidth, 300, 600);
+        var compactForm = formWidth < 520;
+        var form = new Grid
         {
+            Width = formWidth,
+            ColumnSpacing = 16,
+            RowSpacing = 14,
+        };
+        form.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        if (!compactForm)
+            form.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var nextRow = 0;
+        void AddField(string label, FrameworkElement control, int column, bool span = false)
+        {
+            while (form.RowDefinitions.Count <= nextRow)
+                form.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             var group = new StackPanel { Spacing = 6 };
             group.Children.Add(new TextBlock { Text = label, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium, Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"] });
             group.Children.Add(control);
+            Grid.SetRow(group, nextRow);
+            Grid.SetColumn(group, compactForm ? 0 : column);
+            if (!compactForm && span) Grid.SetColumnSpan(group, 2);
             form.Children.Add(group);
+            if (compactForm || span || column == 1) nextRow++;
         }
-        AddField("Name", nameBox);
-        AddField("Biography", bioBox);
-        AddField("Birth Date", birthDateBox);
-        AddField("Death Date", deathDateBox);
-        AddField("Birthplace", birthplaceBox);
+        AddField("Name", nameBox, 0, span: true);
+        AddField("Bio", bioBox, 0, span: true);
+        AddField("Birth Date", birthDateBox, 0);
+        AddField("Death Date", deathDateBox, 1);
+        AddField("Birthplace", birthplaceBox, 0);
+        AddField("Homepage", homepageBox, 1);
+        AddField("TMDB ID", tmdbIdBox, 0);
+        AddField("IMDb ID", imdbIdBox, 1);
+        AddField("TVDB ID", tvdbIdBox, 0);
 
         var dialog = new ContentDialog
         {
@@ -274,27 +311,67 @@ public sealed partial class PersonDetailPage : Page
             DefaultButton = ContentDialogButton.Primary
         };
 
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        dialog.PrimaryButtonClick += async (_, args) =>
         {
+            var deferral = args.GetDeferral();
+            dialog.IsPrimaryButtonEnabled = false;
             try
             {
-                var adminApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
-                ViewModel.Person = await adminApi.UpdatePersonAsync(person.Id, new Dictionary<string, object?>
+                static bool IsValidOptionalDate(string value)
+                    => string.IsNullOrWhiteSpace(value) ||
+                       DateOnly.TryParseExact(value.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture,
+                           DateTimeStyles.None, out DateOnly _);
+                if (!IsValidOptionalDate(birthDateBox.Text) || !IsValidOptionalDate(deathDateBox.Text))
                 {
-                    ["name"] = nameBox.Text.Trim(),
-                    ["bio"] = string.IsNullOrWhiteSpace(bioBox.Text) ? null : bioBox.Text.Trim(),
-                    ["birth_date"] = string.IsNullOrWhiteSpace(birthDateBox.Text) ? null : birthDateBox.Text.Trim(),
-                    ["death_date"] = string.IsNullOrWhiteSpace(deathDateBox.Text) ? null : deathDateBox.Text.Trim(),
-                    ["birthplace"] = string.IsNullOrWhiteSpace(birthplaceBox.Text) ? null : birthplaceBox.Text.Trim(),
-                });
+                    args.Cancel = true;
+                    App.Services.GetRequiredService<ToastService>()
+                        .Error("Dates must use YYYY-MM-DD.");
+                    return;
+                }
+
+                var changes = new Dictionary<string, object?>();
+                static void AddStringChange(Dictionary<string, object?> target, string key, string current, string? original)
+                {
+                    if (!string.Equals(current, original ?? "", StringComparison.Ordinal))
+                        target[key] = current;
+                }
+                static void AddDateChange(Dictionary<string, object?> target, string key, string current, string? original)
+                {
+                    if (!string.Equals(current, original ?? "", StringComparison.Ordinal))
+                        target[key] = string.IsNullOrEmpty(current) ? null : current;
+                }
+
+                AddStringChange(changes, "name", nameBox.Text, person.Name);
+                AddStringChange(changes, "bio", bioBox.Text, person.Bio);
+                AddDateChange(changes, "birth_date", birthDateBox.Text, person.BirthDate);
+                AddDateChange(changes, "death_date", deathDateBox.Text, person.DeathDate);
+                AddStringChange(changes, "birthplace", birthplaceBox.Text, person.Birthplace);
+                AddStringChange(changes, "homepage", homepageBox.Text, person.Homepage);
+                AddStringChange(changes, "tmdb_id", tmdbIdBox.Text, person.TmdbId);
+                AddStringChange(changes, "imdb_id", imdbIdBox.Text, person.ImdbId);
+                AddStringChange(changes, "tvdb_id", tvdbIdBox.Text, person.TvdbId);
+
+                if (changes.Count == 0)
+                    return;
+
+                var adminApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
+                ViewModel.Person = await adminApi.UpdatePersonAsync(person.Id, changes);
                 UpdateUI();
                 App.Services.GetRequiredService<ToastService>().Success("Person metadata saved.");
             }
             catch (Exception ex)
             {
-                ViewModel.ErrorMessage = $"Failed to update: {ex.Message}";
+                args.Cancel = true;
+                App.Services.GetRequiredService<ToastService>().Error($"Failed to update: {ex.Message}");
             }
-        }
+            finally
+            {
+                dialog.IsPrimaryButtonEnabled = true;
+                deferral.Complete();
+            }
+        };
+
+        await dialog.ShowAsync();
     }
 
     private void ShowMoreBio_Click(object sender, RoutedEventArgs e)

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using CommunityToolkit.Mvvm.Messaging;
@@ -259,6 +260,20 @@ public partial class WatchProviderCardViewModel : ObservableObject
 public partial class SettingsViewModel : ObservableObject
 {
     private const string PlaybackAudioLanguageSettingKey = "playback.audio_language";
+    private static readonly string[] ContractPlaybackSettingKeys =
+    [
+        "playback.preferred_quality",
+        "playback.max_bitrate_kbps",
+        PlaybackAudioLanguageSettingKey,
+        "catalog.metadata_language",
+        "catalog.metadata_language_overrides",
+        "playback.auto_skip_intro",
+        "playback.auto_skip_credits",
+        "playback.auto_skip_recap",
+        "playback.auto_play_next_preview",
+        "playback.auto_play_next",
+        "ui.next_up_mode",
+    ];
 
     private readonly SettingsApi _settingsApi;
     private readonly CatalogApi _catalogApi;
@@ -343,10 +358,16 @@ public partial class SettingsViewModel : ObservableObject
     private string _maxPlaybackQuality = "";
 
     [ObservableProperty]
+    private string _maxBitrateKbps = "";
+
+    [ObservableProperty]
     private string _audioLanguage = "";
 
     [ObservableProperty]
     private string _preferredMetadataLanguage = "";
+
+    private Dictionary<string, string> _metadataLanguageOverrides = new(StringComparer.OrdinalIgnoreCase);
+    public IReadOnlyDictionary<string, string> MetadataLanguageOverrides => _metadataLanguageOverrides;
 
     // ===== Libraries =====
     [ObservableProperty]
@@ -361,6 +382,9 @@ public partial class SettingsViewModel : ObservableObject
     private int _visibleLibraryCount;
 
     public int TotalLibraryCount => LibraryCards.Count;
+    public bool HasSelectedProfile => !string.IsNullOrWhiteSpace(_authService.SelectedProfileId);
+    public bool CanShowAllLibraries => TotalLibraryCount > 0 && VisibleLibraryCount < TotalLibraryCount;
+    public bool CanHideAllLibraries => VisibleLibraryCount > 0;
     private HashSet<int> _disabledLibraryIds = [];
 
     // ===== Subtitles =====
@@ -498,6 +522,34 @@ public partial class SettingsViewModel : ObservableObject
                 catch { AutoPlayNext = true; }
             }
 
+            async Task LoadContractPlaybackAsync()
+            {
+                try
+                {
+                    var response = await _settingsApi.GetContractEffectiveSettingsAsync(ContractPlaybackSettingKeys);
+                    var values = response.Settings.ToDictionary(setting => setting.Key, StringComparer.Ordinal);
+
+                    QualityPreference = ReadString(values, "playback.preferred_quality", "auto");
+                    MaxBitrateKbps = ReadNullableNumber(values, "playback.max_bitrate_kbps");
+                    AudioLanguage = ReadNullableString(values, PlaybackAudioLanguageSettingKey);
+                    PreferredMetadataLanguage = ReadNullableString(values, "catalog.metadata_language");
+                    _metadataLanguageOverrides = ReadStringMap(values, "catalog.metadata_language_overrides");
+                    OnPropertyChanged(nameof(MetadataLanguageOverrides));
+                    AutoSkipIntro = ReadBool(values, "playback.auto_skip_intro", AutoSkipIntro);
+                    AutoSkipCredits = ReadBool(values, "playback.auto_skip_credits", AutoSkipCredits);
+                    AutoSkipRecap = ReadBool(values, "playback.auto_skip_recap", AutoSkipRecap);
+                    AutoPlayNextPreview = ReadBool(values, "playback.auto_play_next_preview", AutoPlayNextPreview);
+                    AutoPlayNext = ReadBool(values, "playback.auto_play_next", AutoPlayNext);
+                    NextUpMode = ReadString(values, "ui.next_up_mode",
+                        string.IsNullOrWhiteSpace(NextUpMode) ? "combined" : NextUpMode);
+                }
+                catch
+                {
+                    // Servers predating the typed settings contract still use
+                    // the profile/legacy values loaded above.
+                }
+            }
+
             async Task LoadSectionOverridesAsync()
             {
                 try { SectionOverrides = (await _settingsApi.GetSettingAsync("section_overrides:home:")).Value; }
@@ -513,6 +565,7 @@ public partial class SettingsViewModel : ObservableObject
                 LoadCustomThemeAsync(),
                 LoadNextUpAsync(),
                 LoadAutoPlayAsync(),
+                LoadContractPlaybackAsync(),
                 LoadSubtitleAppearanceAsync(),
                 LoadSectionOverridesAsync());
 
@@ -601,12 +654,12 @@ public partial class SettingsViewModel : ObservableObject
 
     partial void OnAutoSkipIntroChanged(bool value)
     {
-        if (!_suppressSave) _ = SaveProfileFieldAsync("auto_skip_intro", value);
+        if (!_suppressSave) _ = SaveContractProfileSettingAsync("playback.auto_skip_intro", value);
     }
 
     partial void OnAutoSkipCreditsChanged(bool value)
     {
-        if (!_suppressSave) _ = SaveProfileFieldAsync("auto_skip_credits", value);
+        if (!_suppressSave) _ = SaveContractProfileSettingAsync("playback.auto_skip_credits", value);
     }
 
     public async Task SetAccessibilityAsync(string? textScale = null, string? textWeight = null, bool? highContrast = null)
@@ -645,7 +698,12 @@ public partial class SettingsViewModel : ObservableObject
         _ = SaveLibraryVisibilityAsync();
     }
 
-    private void UpdateLibraryCounts() => VisibleLibraryCount = LibraryCards.Count(card => card.IsEnabled);
+    private void UpdateLibraryCounts()
+    {
+        VisibleLibraryCount = LibraryCards.Count(card => card.IsEnabled);
+        OnPropertyChanged(nameof(CanShowAllLibraries));
+        OnPropertyChanged(nameof(CanHideAllLibraries));
+    }
 
     private async Task SaveLibraryVisibilityAsync()
     {
@@ -686,6 +744,13 @@ public partial class SettingsViewModel : ObservableObject
     {
         var oldIndex = LibraryCards.ToList().FindIndex(card => card.LibraryId == libraryId);
         var newIndex = Math.Clamp(oldIndex + offset, 0, LibraryCards.Count - 1);
+        await MoveLibraryToAsync(libraryId, newIndex);
+    }
+
+    public async Task MoveLibraryToAsync(int libraryId, int newIndex)
+    {
+        var oldIndex = LibraryCards.ToList().FindIndex(card => card.LibraryId == libraryId);
+        newIndex = Math.Clamp(newIndex, 0, LibraryCards.Count - 1);
         if (oldIndex < 0 || oldIndex == newIndex) return;
 
         LibraryCards.Move(oldIndex, newIndex);
@@ -704,12 +769,12 @@ public partial class SettingsViewModel : ObservableObject
 
     partial void OnAutoSkipRecapChanged(bool value)
     {
-        if (!_suppressSave) _ = SaveProfileFieldAsync("auto_skip_recap", value);
+        if (!_suppressSave) _ = SaveContractProfileSettingAsync("playback.auto_skip_recap", value);
     }
 
     partial void OnAutoPlayNextPreviewChanged(bool value)
     {
-        if (!_suppressSave) _ = SaveProfileFieldAsync("auto_play_next_preview", value);
+        if (!_suppressSave) _ = SaveContractProfileSettingAsync("playback.auto_play_next_preview", value);
     }
 
     partial void OnAutoPlayNextChanged(bool value)
@@ -721,7 +786,9 @@ public partial class SettingsViewModel : ObservableObject
     {
         try
         {
-            await _settingsApi.PutDeviceSettingAsync("playback.auto_play_next", value ? "true" : "false");
+            await _settingsApi.SetContractSettingValueAsync("playback.auto_play_next", "profile", value);
+            try { await _settingsApi.DeleteContractSettingValueAsync("playback.auto_play_next", "profile_device"); }
+            catch { }
             ShowStatus("Auto-play preference saved");
         }
         catch (Exception ex) { ErrorMessage = $"Failed to save auto-play preference: {ex.Message}"; }
@@ -743,7 +810,17 @@ public partial class SettingsViewModel : ObservableObject
     private async Task SaveQualityPreferenceAsync()
     {
         if (_suppressSave) return;
-        await SaveProfileFieldAsync("quality_preference", QualityPreference);
+        await SaveContractProfileSettingAsync("playback.preferred_quality", QualityPreference);
+    }
+
+    [RelayCommand]
+    private async Task SaveMaxBitrateKbpsAsync()
+    {
+        if (_suppressSave) return;
+        if (int.TryParse(MaxBitrateKbps, out var bitrate))
+            await SaveContractProfileSettingAsync("playback.max_bitrate_kbps", bitrate);
+        else
+            await ClearContractProfileSettingAsync("playback.max_bitrate_kbps");
     }
 
     [RelayCommand]
@@ -757,14 +834,106 @@ public partial class SettingsViewModel : ObservableObject
     private async Task SaveAudioLanguageAsync()
     {
         if (_suppressSave) return;
-        await SaveProfileFieldAsync("language", AudioLanguage);
+        await SaveContractProfileSettingAsync(PlaybackAudioLanguageSettingKey,
+            string.IsNullOrWhiteSpace(AudioLanguage) ? null : AudioLanguage);
     }
 
     [RelayCommand]
     private async Task SavePreferredMetadataLanguageAsync()
     {
         if (_suppressSave) return;
-        await SaveProfileFieldAsync("preferred_metadata_language", PreferredMetadataLanguage);
+        await SaveContractProfileSettingAsync("catalog.metadata_language",
+            string.IsNullOrWhiteSpace(PreferredMetadataLanguage) ? null : PreferredMetadataLanguage);
+    }
+
+    public async Task SetMetadataLanguageOverrideAsync(string sourceLanguage, string? targetLanguage)
+    {
+        sourceLanguage = sourceLanguage.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(sourceLanguage) || sourceLanguage == "original") return;
+
+        if (string.IsNullOrWhiteSpace(targetLanguage))
+            _metadataLanguageOverrides.Remove(sourceLanguage);
+        else
+            _metadataLanguageOverrides[sourceLanguage] = targetLanguage.Trim().ToLowerInvariant();
+
+        _metadataLanguageOverrides = _metadataLanguageOverrides
+            .OrderBy(pair => MediaLanguageCatalog.Label(pair.Key), StringComparer.CurrentCultureIgnoreCase)
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+        OnPropertyChanged(nameof(MetadataLanguageOverrides));
+        await SaveContractProfileSettingAsync("catalog.metadata_language_overrides", _metadataLanguageOverrides);
+    }
+
+    private async Task SaveContractProfileSettingAsync(string key, object? value)
+    {
+        try
+        {
+            await _settingsApi.SetContractSettingValueAsync(key, "profile", value);
+            try { await _settingsApi.DeleteContractSettingValueAsync(key, "profile_device"); }
+            catch { }
+            ShowStatus("Setting saved");
+        }
+        catch (Exception ex)
+        {
+            ShowError($"Failed to save setting: {ex.Message}");
+        }
+    }
+
+    private async Task ClearContractProfileSettingAsync(string key)
+    {
+        try
+        {
+            await _settingsApi.DeleteContractSettingValueAsync(key, "profile");
+            try { await _settingsApi.DeleteContractSettingValueAsync(key, "profile_device"); }
+            catch { }
+            ShowStatus("Setting reset");
+        }
+        catch (Exception ex)
+        {
+            ShowError($"Failed to reset setting: {ex.Message}");
+        }
+    }
+
+    private static string ReadString(
+        IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, string key, string fallback)
+    {
+        if (!values.TryGetValue(key, out var entry) || entry.Value.ValueKind != JsonValueKind.String)
+            return fallback;
+        return entry.Value.GetString() ?? fallback;
+    }
+
+    private static string ReadNullableString(
+        IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, string key)
+        => values.TryGetValue(key, out var entry) && entry.Value.ValueKind == JsonValueKind.String
+            ? entry.Value.GetString() ?? ""
+            : "";
+
+    private static string ReadNullableNumber(
+        IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, string key)
+        => values.TryGetValue(key, out var entry) && entry.Value.ValueKind == JsonValueKind.Number
+            ? entry.Value.GetRawText()
+            : "";
+
+    private static bool ReadBool(
+        IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, string key, bool fallback)
+        => values.TryGetValue(key, out var entry) && entry.Value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? entry.Value.GetBoolean()
+            : fallback;
+
+    private static Dictionary<string, string> ReadStringMap(
+        IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, string key)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!values.TryGetValue(key, out var entry) || entry.Value.ValueKind != JsonValueKind.Object)
+            return result;
+
+        foreach (var property in entry.Value.EnumerateObject())
+        {
+            if (property.Value.ValueKind != JsonValueKind.String) continue;
+            var value = property.Value.GetString();
+            if (!string.IsNullOrWhiteSpace(property.Name) && !string.IsNullOrWhiteSpace(value))
+                result[property.Name.Trim().ToLowerInvariant()] = value.Trim().ToLowerInvariant();
+        }
+        return result;
     }
 
     [RelayCommand]
@@ -1200,10 +1369,10 @@ public partial class SettingsViewModel : ObservableObject
     {
         try
         {
-            var response = await _settingsApi.GetEffectiveSettingsAsync(["subtitle_appearance"]);
-            var entry = response.Settings.FirstOrDefault(setting => setting.Key == "subtitle_appearance");
-            HasSubtitleAppearanceDeviceOverride = entry?.HasDeviceOverride == true;
-            ApplySubtitleAppearanceDraft(Core.Models.Settings.SubtitleAppearance.Parse(entry?.EffectiveValue), remember: true);
+            var response = await _settingsApi.GetContractEffectiveSettingsAsync(["playback.subtitle_appearance"]);
+            var entry = response.Settings.FirstOrDefault(setting => setting.Key == "playback.subtitle_appearance");
+            HasSubtitleAppearanceDeviceOverride = string.Equals(entry?.Scope, "profile_device", StringComparison.OrdinalIgnoreCase);
+            ApplySubtitleAppearanceDraft(Core.Models.Settings.SubtitleAppearance.Parse(entry?.Value.GetRawText()), remember: true);
         }
         catch
         {
@@ -1245,7 +1414,11 @@ public partial class SettingsViewModel : ObservableObject
         try
         {
             var appearance = BuildSubtitleAppearanceDraft();
-            await _settingsApi.PutDeviceSettingAsync("subtitle_appearance", appearance.ToJson());
+            using (var document = JsonDocument.Parse(appearance.ToJson()))
+            {
+                await _settingsApi.SetContractSettingValueAsync("playback.subtitle_appearance", "profile_device",
+                    document.RootElement.Clone());
+            }
             _savedSubtitleAppearance = appearance.Clone();
             HasSubtitleAppearanceDeviceOverride = true;
 
@@ -1275,7 +1448,7 @@ public partial class SettingsViewModel : ObservableObject
     {
         try
         {
-            await _settingsApi.DeleteDeviceSettingAsync("subtitle_appearance");
+            await _settingsApi.DeleteContractSettingValueAsync("playback.subtitle_appearance", "profile_device");
             await LoadSubtitleAppearanceAsync();
             try { App.Services.GetRequiredService<PlayerService>().ApplySubtitleAppearance(_savedSubtitleAppearance); } catch { }
             ShowStatus("Subtitle appearance reset");
@@ -1295,11 +1468,20 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private bool _isLoadingHomeSections;
 
+    [ObservableProperty]
+    private bool _canEditHomeSections;
+
+    [ObservableProperty]
+    private string? _homeSectionsEditStateMessage = "Loading saved section state before section changes are enabled.";
+
     [RelayCommand]
     private async Task LoadHomeSectionsAsync()
     {
         if (IsLoadingHomeSections) return;
         IsLoadingHomeSections = true;
+        CanEditHomeSections = false;
+        HomeSectionsEditStateMessage = "Loading saved section state before section changes are enabled.";
+        HomeSections.Clear();
         try
         {
             var (scope, libraryId) = GetSectionScope();
@@ -1307,6 +1489,8 @@ public partial class SettingsViewModel : ObservableObject
             var overridesTask = _settingsApi.GetProfileSectionsAsync(scope, libraryId);
             await Task.WhenAll(settingsTask, overridesTask);
             var response = settingsTask.Result;
+            CanEditHomeSections = true;
+            HomeSectionsEditStateMessage = null;
             HomeSections.Clear();
             foreach (var section in response.Sections.OrderBy(s => s.Position))
             {
@@ -1320,6 +1504,8 @@ public partial class SettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             ErrorMessage = $"Failed to load home sections: {ex.Message}";
+            CanEditHomeSections = false;
+            HomeSectionsEditStateMessage = "Saved section state failed to load. Editing is disabled.";
         }
         finally
         {
@@ -1330,15 +1516,20 @@ public partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task SaveHomeSectionsAsync()
     {
+        ErrorMessage = null;
         try
         {
-            var overrides = _rawHomeOverrides.Select(ToWireOverride).ToList();
+            // Match the WebUI's buildSectionOverrides contract: the payload is
+            // rebuilt from the currently visible rows. Starting with every raw
+            // override resurrected deleted custom sections on the next save.
+            var overrides = new List<SectionOverride>();
             foreach (var (section, position) in HomeSections.Select((value, index) => (value, index)))
             {
-                var existing = overrides.FirstOrDefault(o =>
-                    string.Equals(o.SectionId, section.Id, StringComparison.Ordinal) ||
-                    (string.IsNullOrWhiteSpace(o.SectionId) && string.Equals(o.Id, section.Id, StringComparison.Ordinal)));
-                if (existing == null)
+                var raw = _rawHomeOverrides.FirstOrDefault(value =>
+                    string.Equals(value.SectionId, section.Id, StringComparison.Ordinal) ||
+                    (string.IsNullOrWhiteSpace(value.SectionId) && string.Equals(value.Id, section.Id, StringComparison.Ordinal)));
+                var existing = raw == null ? null : ToWireOverride(raw);
+                if (existing is null)
                 {
                     existing = new SectionOverride
                     {
@@ -1349,10 +1540,24 @@ public partial class SettingsViewModel : ObservableObject
                         UserTitle = section.IsCustom ? section.Title : null,
                         UserConfig = section.IsCustom ? section.Config : null,
                     };
-                    overrides.Add(existing);
                 }
+                overrides.Add(existing);
                 existing.Position = position;
                 existing.Hidden = section.Hidden;
+                existing.Title = section.Title;
+                existing.Featured = section.Featured;
+                existing.ItemLimit = section.ItemLimit;
+                existing.Config = section.Config;
+                existing.SectionType = section.IsCustom ? section.SectionType : null;
+                if (section.IsCustom)
+                {
+                    existing.Id = section.Id;
+                    existing.SectionId = null;
+                    existing.IsUserAdded = true;
+                    existing.UserSectionType = section.SectionType;
+                    existing.UserTitle = section.Title;
+                    existing.UserConfig = section.Config;
+                }
                 existing.Removed = false;
             }
             foreach (var id in _removedSystemSectionIds)
@@ -1380,7 +1585,11 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to save home sections: {ex.Message}";
+            var message = $"Failed to save home sections: {ex.Message}";
+            // Restore the last server-confirmed layout after an optimistic
+            // reorder/edit/delete fails, matching the WebUI rollback behavior.
+            await LoadHomeSectionsAsync();
+            ErrorMessage = message;
         }
     }
 
@@ -1397,7 +1606,7 @@ public partial class SettingsViewModel : ObservableObject
                     MediaSurfaceChangeKind.HomeLayoutChanged,
                     string.Empty));
             }
-            ShowStatus("Home sections reset to defaults");
+            ShowStatus("Sections reset to default");
             await LoadHomeSectionsAsync();
         }
         catch (Exception ex)

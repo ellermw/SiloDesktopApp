@@ -28,10 +28,16 @@ public partial class WatchTogetherJoinViewModel : ObservableObject
         _playbackApi = playbackApi;
     }
 
-    [ObservableProperty] private string _roomCode = "";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanJoin))]
+    private string _roomCode = "";
     [ObservableProperty] private string _selectionMode = "host_pick"; // host_pick | vote
-    [ObservableProperty] private bool _isBusy;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanJoin))]
+    private bool _isBusy;
     [ObservableProperty] private string? _errorMessage;
+
+    public bool CanJoin => !IsBusy && !string.IsNullOrWhiteSpace(RoomCode);
 
     /// <summary>Set by the page after a successful create/join so it can navigate.</summary>
     [ObservableProperty] private WatchTogetherRoomResponse? _lastResponse;

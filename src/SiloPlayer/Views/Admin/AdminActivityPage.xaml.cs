@@ -670,6 +670,7 @@ public sealed partial class AdminActivityPage : Page
         }
         var clientMeta = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         var clientLabel = AdminActivityViewModel.GetSessionClientLabel(session);
+        var clientLabelFull = AdminActivityViewModel.GetSessionClientLabelFull(session);
         if (session.IsJellyfinClient)
         {
             clientMeta.Children.Add(BuildClientProtocolPill(
@@ -688,7 +689,10 @@ public sealed partial class AdminActivityPage : Page
         if (!string.IsNullOrWhiteSpace(clientLabel))
         {
             var label = new TextBlock { Text = clientLabel, FontSize = 10, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"], TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 128 };
-            ToolTipService.SetToolTip(label, session.ClientUserAgent ?? clientLabel);
+            var clientTitle = !string.IsNullOrWhiteSpace(session.ClientUserAgent)
+                ? $"{clientLabelFull} — {session.ClientUserAgent.Trim()}"
+                : clientLabelFull;
+            ToolTipService.SetToolTip(label, clientTitle);
             clientMeta.Children.Add(label);
         }
         var visibleClientIp = session.IsNativeSiloClient ? null : session.ClientIp;
@@ -1338,8 +1342,10 @@ public sealed partial class AdminActivityPage : Page
             FontWeight = FontWeights.SemiBold,
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
         });
-        var grid = new Grid { ColumnSpacing = 8 };
+        var grid = new Grid { ColumnSpacing = 8, RowSpacing = 8 };
         for (var i = 0; i < 3; i++) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var cards = new[]
         {
             BuildPlaybackDetailCard("Container", AdminActivityViewModel.NormalizeContainerDecision(session.PlayMethod), AdminActivityViewModel.FormatSourceContainer(session), AdminActivityViewModel.FormatDeliveredContainer(session), AdminActivityViewModel.FormatContainerDetail(session), null),
@@ -1347,8 +1353,36 @@ public sealed partial class AdminActivityPage : Page
             BuildPlaybackDetailCard("Audio", AdminActivityViewModel.NormalizeStreamDecision(session.AudioDecision ?? (session.TranscodeAudio ? "transcode" : session.PlayMethod)), AdminActivityViewModel.FormatAudioSummary(session), AdminActivityViewModel.FormatDeliveredAudio(session), AdminActivityViewModel.FormatAudioDetail(session), session.VideoDecision == "transcode" ? null : AdminActivityViewModel.FormatTranscodeMode(session)),
         };
         for (var i = 0; i < cards.Length; i++) { Grid.SetColumn(cards[i], i); grid.Children.Add(cards[i]); }
+        var clientCard = BuildPlaybackClientCard(session);
+        Grid.SetRow(clientCard, 1);
+        Grid.SetColumn(clientCard, 0);
+        grid.Children.Add(clientCard);
         root.Children.Add(grid);
         return root;
+    }
+
+    private Border BuildPlaybackClientCard(AdminSession session)
+    {
+        var panel = new StackPanel { Spacing = 4 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "CLIENT",
+            FontSize = 10,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
+        });
+        var label = AdminActivityViewModel.GetSessionClientLabelFull(session);
+        AddPlaybackDetailLine(panel, "App", string.IsNullOrWhiteSpace(label) ? "Unknown client" : label);
+        if (!string.IsNullOrWhiteSpace(session.ClientUserAgent))
+            AddPlaybackDetailLine(panel, "Agent", session.ClientUserAgent.Trim(), muted: true);
+        return new Border
+        {
+            BorderBrush = new SolidColorBrush(Color.FromArgb(80, 80, 100, 125)),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(10),
+            Child = panel,
+        };
     }
 
     private Border BuildPlaybackDetailCard(string label, string decision, string source, string delivered, string detail, string? mode)
@@ -1372,13 +1406,19 @@ public sealed partial class AdminActivityPage : Page
         };
     }
 
-    private void AddPlaybackDetailLine(StackPanel panel, string label, string value)
+    private void AddPlaybackDetailLine(StackPanel panel, string label, string value, bool muted = false)
     {
         var grid = new Grid { ColumnSpacing = 6 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(64) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         var name = new TextBlock { Text = label, FontSize = 10, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"] };
-        var text = new TextBlock { Text = value, FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"], TextWrapping = TextWrapping.Wrap };
+        var text = new TextBlock
+        {
+            Text = value,
+            FontSize = 11,
+            Foreground = (SolidColorBrush)Application.Current.Resources[muted ? "TertiaryTextBrush" : "PrimaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        };
         Grid.SetColumn(name, 0); Grid.SetColumn(text, 1);
         grid.Children.Add(name); grid.Children.Add(text);
         panel.Children.Add(grid);

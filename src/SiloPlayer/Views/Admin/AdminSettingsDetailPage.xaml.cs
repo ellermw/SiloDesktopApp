@@ -8,6 +8,7 @@ using System.ComponentModel;
 using System.Text.Json;
 using Windows.UI;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels.Admin;
 
@@ -20,6 +21,16 @@ public sealed partial class AdminSettingsDetailPage : Page
     // Static so the active tab persists across page navigations
     private static string _persistedTab = "General";
     private string _activeTab = _persistedTab;
+
+    protected override void OnNavigatedTo(Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        if (e.Parameter is string requestedTab && SettingsTabs.Any(tab => tab.Label == requestedTab))
+        {
+            _activeTab = requestedTab;
+            _persistedTab = requestedTab;
+        }
+    }
     private string _settingsSearchQuery = "";
     private Button? _activeTabButton;
     private readonly List<(Button Button, string TabName)> _tabButtons = [];
@@ -1782,81 +1793,14 @@ public sealed partial class AdminSettingsDetailPage : Page
         AddTextField(tcCard, "FFmpeg Path", "playback.ffmpeg_path");
         AddTextField(tcCard, "Transcode Directory", "playback.transcode_dir");
         AddSelectField(tcCard, "Hardware Acceleration", "playback.hw_accel",
-            [("auto", "Auto"), ("qsv", "Intel Quick Sync (QSV)"), ("vaapi", "VA-API"), ("nvenc", "NVIDIA NVENC"), ("none", "Software")]);
-
-        // HW-accel resolved indicator (webui: green/amber dot + resolved method + device)
-        if (ViewModel.GetSetting("playback.hw_accel") is "auto" or "" or null)
+            [("auto", "Auto"), ("qsv", "Intel Quick Sync (QSV)"), ("vaapi", "VA-API"), ("nvenc", "NVIDIA NVENC"), ("none", "Software")],
+            onChanged: _ => ShowTab("Playback"));
+        if (ViewModel.GetSetting("playback.hw_accel") != "none")
         {
-            var hwInfoPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(0, -4, 0, 8) };
-            hwInfoPanel.Children.Add(new TextBlock
-            {
-                Text = "Detecting...",
-                FontSize = 11,
-                Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
-            });
-            tcCard.Children.Add(hwInfoPanel);
-
-            // Async fetch hw-accel info
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var adminApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AdminApi>();
-                    var info = await adminApi.GetHWAccelInfoAsync();
-                    var resolved = "none";
-                    if (info.TryGetValue("resolved", out var r) && r is System.Text.Json.JsonElement re && re.ValueKind == System.Text.Json.JsonValueKind.String)
-                        resolved = re.GetString() ?? "none";
-                    string? device = null;
-                    if (info.TryGetValue("render_devices", out var rd) && rd is System.Text.Json.JsonElement rde && rde.ValueKind == System.Text.Json.JsonValueKind.Array)
-                    {
-                        var first = rde.EnumerateArray().FirstOrDefault();
-                        if (first.ValueKind == System.Text.Json.JsonValueKind.String)
-                            device = first.GetString();
-                    }
-                    DispatcherQueue.TryEnqueue(() =>
-                    {
-                        hwInfoPanel.Children.Clear();
-                        bool isHealthy = resolved != "none";
-                        hwInfoPanel.Children.Add(new Border
-                        {
-                            Width = 8, Height = 8, CornerRadius = new CornerRadius(4),
-                            Background = new SolidColorBrush(isHealthy
-                                ? Windows.UI.Color.FromArgb(0xFF, 0x22, 0xC5, 0x5E)
-                                : Windows.UI.Color.FromArgb(0xFF, 0xFB, 0xBF, 0x24)),
-                            VerticalAlignment = VerticalAlignment.Center,
-                        });
-                        var label = resolved switch
-                        {
-                            "vaapi" => "VA-API",
-                            "qsv" => "Intel Quick Sync",
-                            "nvenc" => "NVIDIA NVENC",
-                            "none" => "No acceleration available",
-                            _ => resolved,
-                        };
-                        if (device != null) label += $" -- {device}";
-                        hwInfoPanel.Children.Add(new TextBlock
-                        {
-                            Text = label,
-                            FontSize = 11,
-                            Foreground = (SolidColorBrush)Application.Current.Resources[isHealthy ? "PrimaryTextBrush" : "SecondaryTextBrush"],
-                            VerticalAlignment = VerticalAlignment.Center,
-                        });
-                    });
-                }
-                catch
-                {
-                    DispatcherQueue.TryEnqueue(() =>
-                    {
-                        hwInfoPanel.Children.Clear();
-                        hwInfoPanel.Children.Add(new TextBlock
-                        {
-                            Text = "Could not detect hardware acceleration",
-                            FontSize = 11,
-                            Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
-                        });
-                    });
-                }
-            });
+            var hwDetailsHost = new StackPanel { Spacing = 8 };
+            hwDetailsHost.Children.Add(new TextBlock { Text = "Detecting hardware...", FontSize = 11, Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"] });
+            tcCard.Children.Add(hwDetailsHost);
+            _ = LoadHardwareAccelerationDetailsAsync(hwDetailsHost);
         }
 
         AddToggleField(tcCard, "Transcoding Enabled", "playback.transcode_enabled");
@@ -1881,7 +1825,11 @@ public sealed partial class AdminSettingsDetailPage : Page
             "Per transcode-node budget for chapter thumbnail jobs when remote execution is enabled.");
         AddSelectField(segCard, "HDR Chapter Thumbnail Policy", "playback.chapter_thumbnail_hdr_policy",
             [("best_effort", "Best effort tone mapping"), ("disabled", "Disable HDR/DV thumbnails")],
-            "Controls whether chapter thumbnails are generated for HDR or Dolby Vision sources. SDR files are unaffected.");
+            "Controls whether chapter thumbnails are generated for HDR or Dolby Vision sources. SDR files are unaffected.",
+            _ => ShowTab("Playback"));
+        var cpuToneMap = AddToggleField(segCard, "Enable CPU Tone Mapping", "playback.chapter_thumbnail_software_tone_map_enabled",
+            "Allows CPU/software tone mapping when hardware HDR chapter-thumbnail extraction is unavailable or fails. Disabled by default because it can be CPU-intensive.");
+        cpuToneMap.IsEnabled = ViewModel.GetSetting("playback.chapter_thumbnail_hdr_policy") != "disabled";
         EndCard(segCard);
 
         AddSectionHeader("Behavior");
@@ -1892,6 +1840,106 @@ public sealed partial class AdminSettingsDetailPage : Page
             "Ignore progress below this % of duration (default: 5)");
         EndCard(behCard);
     }
+
+    private async Task LoadHardwareAccelerationDetailsAsync(StackPanel host)
+    {
+        try
+        {
+            var info = await App.Services.GetRequiredService<AdminApi>().GetHWAccelDetectionAsync();
+            host.Children.Clear();
+            var configured = ViewModel.GetSetting("playback.hw_device")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .ToList();
+            var hwAccel = ViewModel.GetSetting("playback.hw_accel");
+            var isNvenc = hwAccel == "nvenc" || hwAccel == "auto" && info.Resolved == "nvenc";
+
+            if (hwAccel is "auto" or "")
+            {
+                var resolvedRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
+                resolvedRow.Children.Add(new Border
+                {
+                    Width = 7, Height = 7, CornerRadius = new CornerRadius(4),
+                    Background = new SolidColorBrush(info.Resolved != "none"
+                        ? Color.FromArgb(255, 34, 197, 94)
+                        : Color.FromArgb(255, 251, 191, 36)),
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+                var resolved = info.Resolved switch
+                {
+                    "qsv" => "Intel Quick Sync (QSV)", "vaapi" => "VA-API",
+                    "nvenc" => "NVIDIA NVENC", "none" => "Software", _ => info.Resolved,
+                };
+                var firstDevice = info.RenderDevices.FirstOrDefault();
+                resolvedRow.Children.Add(new TextBlock
+                {
+                    Text = resolved + (string.IsNullOrWhiteSpace(firstDevice) ? "" : $" — {firstDevice}") + (info.Source == "transcode_node" ? " (transcode node)" : ""),
+                    FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                });
+                host.Children.Add(resolvedRow);
+            }
+
+            if (isNvenc && configured.Count > 1)
+                host.Children.Add(BuildHardwareWarning($"Multi-GPU balancing supports QSV/VA-API only; with NVENC the server uses the first configured device ({configured[0]})."));
+            if (isNvenc) return;
+
+            var deviceRows = info.RenderDeviceDetails.Count > 0
+                ? info.RenderDeviceDetails.Select(device => (device.Path, device.Description, true)).ToList()
+                : info.RenderDevices.Select(path => (path, "GPU", true)).ToList();
+            foreach (var missing in configured.Where(path => deviceRows.All(row => row.Item1 != path)))
+                deviceRows.Add((missing, "Configured device not detected", false));
+            if (deviceRows.Count == 0) return;
+
+            var respondingNodes = info.Nodes.Where(node => string.IsNullOrWhiteSpace(node.Error)).ToList();
+            var inventories = respondingNodes.Select(node => string.Join(",", node.RenderDevices.Order())).Distinct().Count();
+            host.Children.Add(new TextBlock { Text = "GPU Devices", FontSize = 13, FontWeight = FontWeights.Medium });
+            host.Children.Add(new TextBlock
+            {
+                Text = configured.Count switch
+                {
+                    0 => "Auto — the first available device handles every transcode. Select devices to pin or balance.",
+                    1 => "All transcodes run on the selected device.",
+                    _ => "Transcode sessions balance across the selected devices (least loaded first).",
+                } + (info.Source == "transcode_node" ? " Devices reported by a transcode node." : ""),
+                FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], TextWrapping = TextWrapping.Wrap,
+            });
+            if (inventories > 1)
+                host.Children.Add(BuildHardwareWarning("This setting applies to every transcode node, but the nodes report different devices. Only paths present on all nodes are safe to select."));
+
+            var detectedOrder = deviceRows.Where(row => row.Item3).Select(row => row.Item1).ToList();
+            foreach (var (path, description, detected) in deviceRows)
+            {
+                var row = new Grid { ColumnSpacing = 12, Margin = new Thickness(0, 4, 0, 4) };
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                var copy = new StackPanel { Spacing = 2 };
+                copy.Children.Add(new TextBlock { Text = description, FontSize = 12, Foreground = (Brush)Application.Current.Resources[detected ? "PrimaryTextBrush" : "SecondaryTextBrush"] });
+                copy.Children.Add(new TextBlock { Text = path, FontFamily = new FontFamily("Consolas"), FontSize = 10, Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"] });
+                var missingOn = respondingNodes.Where(node => !node.RenderDevices.Contains(path)).Select(node => node.NodeName ?? node.NodeUrl).ToList();
+                if (missingOn.Count > 0) copy.Children.Add(new TextBlock { Text = "Not present on: " + string.Join(", ", missingOn), FontSize = 10, Foreground = new SolidColorBrush(Color.FromArgb(255, 245, 158, 11)), TextWrapping = TextWrapping.Wrap });
+                var toggle = new ToggleSwitch { IsOn = configured.Contains(path), OnContent = "", OffContent = "", Tag = path };
+                toggle.Toggled += (_, _) =>
+                {
+                    var selected = ViewModel.GetSetting("playback.hw_device").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet();
+                    if (toggle.IsOn) selected.Add(path); else selected.Remove(path);
+                    var ordered = detectedOrder.Where(selected.Contains).Concat(selected.Where(value => !detectedOrder.Contains(value)));
+                    ViewModel.SetSetting("playback.hw_device", string.Join(",", ordered));
+                    UpdateDirtyCountText();
+                };
+                Grid.SetColumn(toggle, 1); row.Children.Add(copy); row.Children.Add(toggle); host.Children.Add(row);
+            }
+        }
+        catch
+        {
+            host.Children.Clear();
+            host.Children.Add(new TextBlock { Text = "Could not detect hardware acceleration", FontSize = 11, Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"] });
+        }
+    }
+
+    private static TextBlock BuildHardwareWarning(string text) => new()
+    {
+        Text = text, FontSize = 11, TextWrapping = TextWrapping.Wrap,
+        Foreground = new SolidColorBrush(Color.FromArgb(255, 245, 158, 11)),
+    };
 
     private void BuildScannerTab()
     {
@@ -5760,7 +5808,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         parent.Children.Add(field);
     }
 
-    private void AddToggleField(StackPanel parent, string label, string key, string? hint = null,
+    private ToggleSwitch AddToggleField(StackPanel parent, string label, string key, string? hint = null,
         bool defaultValue = false, Action<bool>? onChanged = null)
     {
         if (parent.Children.Count > 0) AddDivider(parent);
@@ -5820,6 +5868,7 @@ public sealed partial class AdminSettingsDetailPage : Page
         field.Children.Add(toggle);
 
         parent.Children.Add(field);
+        return toggle;
     }
 
     private void AddDurationField(StackPanel parent, string label, string key, string? hint = null)
@@ -5868,13 +5917,13 @@ public sealed partial class AdminSettingsDetailPage : Page
     }
 
     /// <summary>Overload with explicit (value, label) pairs for human-friendly display.</summary>
-    private void AddSelectField(StackPanel parent, string label, string key, (string Value, string Label)[] options, string? hint = null)
+    private void AddSelectField(StackPanel parent, string label, string key, (string Value, string Label)[] options, string? hint = null, Action<string>? onChanged = null)
     {
         AddSelectField(parent, label, key, options.Select(o => o.Value).ToArray(), hint,
-            options.ToDictionary(o => o.Value, o => o.Label));
+            options.ToDictionary(o => o.Value, o => o.Label), onChanged);
     }
 
-    private void AddSelectField(StackPanel parent, string label, string key, string[] options, string? hint = null, Dictionary<string, string>? labelMap = null)
+    private void AddSelectField(StackPanel parent, string label, string key, string[] options, string? hint = null, Dictionary<string, string>? labelMap = null, Action<string>? onChanged = null)
     {
         if (parent.Children.Count > 0) AddDivider(parent);
 
@@ -5923,8 +5972,10 @@ public sealed partial class AdminSettingsDetailPage : Page
         {
             if (comboBox.SelectedItem is ComboBoxItem selected)
             {
-                ViewModel.SetSetting(key, selected.Tag?.ToString() ?? "");
+                var nextValue = selected.Tag?.ToString() ?? "";
+                ViewModel.SetSetting(key, nextValue);
                 UpdateDirtyCountText();
+                onChanged?.Invoke(nextValue);
             }
         };
 

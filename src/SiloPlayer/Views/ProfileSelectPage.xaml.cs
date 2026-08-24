@@ -108,32 +108,70 @@ public sealed partial class ProfileSelectPage : Page
 
     private async Task ShowPinDialogAsync(Profile profile)
     {
-        while (ViewModel.IsPinRequired)
+        var pinBox = new PasswordBox
         {
-            var pinBox = new PasswordBox { PlaceholderText = "Enter 4-digit PIN", MaxLength = 4, PasswordRevealMode = PasswordRevealMode.Hidden };
-            var error = new TextBlock { Text = ViewModel.PinErrorMessage ?? "", Foreground = (Brush)Application.Current.Resources["ErrorBrush"], TextWrapping = TextWrapping.Wrap };
-            var content = new StackPanel { Spacing = 12 };
-            content.Children.Add(new TextBlock { Text = $"Enter the PIN for {profile.Name}.", Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
-            content.Children.Add(pinBox);
-            content.Children.Add(error);
-            var dialog = new ContentDialog
+            PlaceholderText = "Enter 4-digit PIN",
+            MaxLength = 4,
+            PasswordRevealMode = PasswordRevealMode.Hidden,
+            InputScope = new InputScope { Names = { new InputScopeName(InputScopeNameValue.Number) } },
+        };
+        var error = new TextBlock
+        {
+            Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed,
+        };
+        var content = new StackPanel { Spacing = 8 };
+        content.Children.Add(new TextBlock { Text = "PIN", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        content.Children.Add(pinBox);
+        content.Children.Add(error);
+        var dialog = new ContentDialog
+        {
+            Title = $"Enter PIN for {profile.Name}",
+            Content = content,
+            PrimaryButtonText = "Confirm",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Primary,
+            IsPrimaryButtonEnabled = false,
+            XamlRoot = XamlRoot,
+        };
+        pinBox.PasswordChanged += (_, _) => dialog.IsPrimaryButtonEnabled = pinBox.Password.Length > 0;
+        dialog.Opened += (_, _) => pinBox.Focus(FocusState.Programmatic);
+        dialog.PrimaryButtonClick += async (sender, args) =>
+        {
+            args.Cancel = true;
+            var deferral = args.GetDeferral();
+            try
             {
-                Title = profile.Name,
-                Content = content,
-                PrimaryButtonText = "Confirm",
-                CloseButtonText = "Cancel",
-                DefaultButton = ContentDialogButton.Primary,
-                XamlRoot = XamlRoot
-            };
-            var result = await dialog.ShowAsync();
-            if (result != ContentDialogResult.Primary)
-            {
-                ViewModel.CancelPinCommand.Execute(null);
-                return;
+                sender.IsPrimaryButtonEnabled = false;
+                sender.PrimaryButtonText = "Verifying...";
+                error.Visibility = Visibility.Collapsed;
+                ViewModel.Pin = pinBox.Password;
+                await ViewModel.VerifyPinCommand.ExecuteAsync(null);
+                if (!ViewModel.IsPinRequired)
+                {
+                    sender.Hide();
+                    return;
+                }
+
+                error.Text = string.IsNullOrWhiteSpace(ViewModel.PinErrorMessage)
+                    ? "Verification failed"
+                    : ViewModel.PinErrorMessage;
+                error.Visibility = Visibility.Visible;
+                pinBox.Password = "";
+                pinBox.Focus(FocusState.Programmatic);
             }
-            ViewModel.Pin = pinBox.Password;
-            await ViewModel.VerifyPinCommand.ExecuteAsync(null);
-        }
+            finally
+            {
+                sender.PrimaryButtonText = "Confirm";
+                sender.IsPrimaryButtonEnabled = pinBox.Password.Length > 0;
+                deferral.Complete();
+            }
+        };
+
+        var result = await dialog.ShowAsync();
+        if (ViewModel.IsPinRequired && result != ContentDialogResult.Primary)
+            ViewModel.CancelPinCommand.Execute(null);
     }
 
     private void ProfileCard_PointerEntered(object sender, PointerRoutedEventArgs e)
@@ -158,14 +196,27 @@ public sealed partial class ProfileSelectPage : Page
 
     private async void AddProfileButton_Click(object sender, RoutedEventArgs e)
     {
-        await ShowProfileFormDialog(null);
+        var result = await Dialogs.ProfileEditorDialog.ShowWithContextAsync(XamlRoot, profile: null);
+        if (result.Profile == null) return;
+
+        await ViewModel.SelectProfileCommand.ExecuteAsync(result.Profile);
+        if (!ViewModel.IsPinRequired) return;
+
+        ViewModel.Pin = result.Pin;
+        await ViewModel.VerifyPinCommand.ExecuteAsync(null);
+        if (ViewModel.IsPinRequired)
+        {
+            App.Services.GetRequiredService<Services.ToastService>()
+                .Error("Profile created, but PIN verification failed");
+        }
     }
 
     private async void EditProfileButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button button && button.Tag is Profile profile)
         {
-            await ShowProfileFormDialog(profile);
+            await Dialogs.ProfileEditorDialog.ShowAsync(XamlRoot, profile);
+            await ViewModel.LoadProfilesCommand.ExecuteAsync(null);
         }
     }
 
@@ -173,127 +224,66 @@ public sealed partial class ProfileSelectPage : Page
     {
         if (sender is Button button && button.Tag is Profile profile)
         {
+            var error = new TextBlock
+            {
+                Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                Visibility = Visibility.Collapsed,
+            };
+            var content = new StackPanel
+            {
+                Spacing = 10,
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = $"Delete profile \"{profile.Name}\"? This action cannot be undone.",
+                        TextWrapping = TextWrapping.Wrap,
+                    },
+                    error,
+                },
+            };
             var dialog = new ContentDialog
             {
                 Title = "Delete profile",
-                Content = $"Delete profile \"{profile.Name}\"? This action cannot be undone.",
+                Content = content,
                 PrimaryButtonText = "Delete",
                 CloseButtonText = "Cancel",
                 DefaultButton = ContentDialogButton.Close,
-                XamlRoot = this.XamlRoot
+                PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
+                XamlRoot = this.XamlRoot,
             };
 
-            var result = await dialog.ShowAsync();
-            if (result == ContentDialogResult.Primary)
+            dialog.PrimaryButtonClick += async (_, args) =>
             {
-                await ViewModel.DeleteProfileAsync(profile);
-            }
-        }
-    }
-
-    private async Task ShowProfileFormDialog(Profile? existingProfile)
-    {
-        var isEdit = existingProfile != null;
-        var dialog = new ContentDialog
-        {
-            Title = isEdit ? "Edit Profile" : "New Profile",
-            PrimaryButtonText = "Save",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary,
-            XamlRoot = this.XamlRoot
-        };
-
-        // Build form content
-        var formPanel = new StackPanel { Spacing = 16 };
-
-        // Name field
-        var nameLabel = new TextBlock
-        {
-            Text = "Name",
-            FontSize = 14,
-            FontWeight = Microsoft.UI.Text.FontWeights.Medium,
-            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
-        };
-        var nameBox = new TextBox
-        {
-            PlaceholderText = "Profile name",
-            Text = existingProfile?.Name ?? "",
-            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"]
-        };
-        var nameGroup = new StackPanel { Spacing = 6 };
-        nameGroup.Children.Add(nameLabel);
-        nameGroup.Children.Add(nameBox);
-        formPanel.Children.Add(nameGroup);
-
-        // PIN field
-        var pinLabel = new TextBlock
-        {
-            Text = "PIN (optional)",
-            FontSize = 14,
-            FontWeight = Microsoft.UI.Text.FontWeights.Medium,
-            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]
-        };
-        var pinBox = new PasswordBox
-        {
-            PlaceholderText = "4 digits",
-            MaxLength = 4,
-            Style = (Style)Application.Current.Resources["DarkPasswordBoxStyle"]
-        };
-        var pinGroup = new StackPanel { Spacing = 6 };
-        pinGroup.Children.Add(pinLabel);
-        pinGroup.Children.Add(pinBox);
-        formPanel.Children.Add(pinGroup);
-
-        // Kids profile toggle
-        var kidsToggle = new ToggleSwitch
-        {
-            Header = "Kids profile",
-            IsOn = existingProfile?.IsChild ?? false,
-            OnContent = "Yes",
-            OffContent = "No"
-        };
-        formPanel.Children.Add(kidsToggle);
-
-        dialog.Content = formPanel;
-
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary && !string.IsNullOrWhiteSpace(nameBox.Text))
-        {
-            var pin = pinBox.Password;
-            if (!string.IsNullOrEmpty(pin) &&
-                (pin.Length != 4 || pin.Any(c => !char.IsDigit(c))))
-            {
-                ViewModel.ErrorMessage = "PIN must contain exactly 4 digits.";
-                return;
-            }
-
-            if (isEdit && existingProfile != null)
-            {
-                // Build update dict. Only include fields the user can actually change in
-                // this dialog. An empty PIN means "don't change the PIN" (user can't clear
-                // it from this dialog — that would need a separate "remove PIN" flow).
-                var updates = new Dictionary<string, object?>
+                args.Cancel = true;
+                var deferral = args.GetDeferral();
+                try
                 {
-                    ["name"] = nameBox.Text.Trim(),
-                };
-                var authService = App.Services.GetRequiredService<AuthService>();
-                if (string.Equals(authService.CurrentUser?.Role, "admin", StringComparison.OrdinalIgnoreCase))
-                    updates["is_child"] = kidsToggle.IsOn;
-                if (!string.IsNullOrEmpty(pin))
-                {
-                    updates["pin"] = pin;
+                    dialog.IsPrimaryButtonEnabled = false;
+                    dialog.PrimaryButtonText = "Deleting...";
+                    error.Visibility = Visibility.Collapsed;
+                    await ViewModel.DeleteProfileAsync(profile);
+                    if (ViewModel.Profiles.All(candidate => candidate.Id != profile.Id))
+                    {
+                        args.Cancel = false;
+                    }
+                    else
+                    {
+                        error.Text = ViewModel.ErrorMessage ?? "The profile could not be deleted.";
+                        error.Visibility = Visibility.Visible;
+                        dialog.PrimaryButtonText = "Delete";
+                        dialog.IsPrimaryButtonEnabled = true;
+                    }
                 }
-                await ViewModel.UpdateProfileAsync(existingProfile.Id, updates);
-            }
-            else
-            {
-                await ViewModel.CreateProfileCommand.ExecuteAsync(new CreateProfileRequest
+                finally
                 {
-                    Name = nameBox.Text.Trim(),
-                    Pin = string.IsNullOrEmpty(pin) ? null : pin,
-                    IsChild = kidsToggle.IsOn,
-                });
-            }
+                    deferral.Complete();
+                }
+            };
+
+            await dialog.ShowAsync();
         }
     }
 

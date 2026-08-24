@@ -61,6 +61,8 @@ public sealed partial class AdminPolicyPage : Page
         }
         if (e.PropertyName is nameof(ViewModel.DecisionNextCursor))
             DispatcherQueue.TryEnqueue(UpdateDecisionPager);
+        if (e.PropertyName is nameof(ViewModel.Source) or nameof(ViewModel.EditorStep) or nameof(ViewModel.ActivationTarget))
+            DispatcherQueue.TryEnqueue(UpdateEditorLifecycle);
     }
 
     private void ApplyResponsiveLayout(double width)
@@ -277,6 +279,7 @@ public sealed partial class AdminPolicyPage : Page
         SelectedVersionSourcePanel.Visibility = Visibility.Collapsed;
         OverridesOverview.Visibility = Visibility.Collapsed;
         EditorPanel.Visibility = Visibility.Visible;
+        UpdateEditorLifecycle();
     }
 
     private void RebuildVersionRows()
@@ -341,13 +344,92 @@ public sealed partial class AdminPolicyPage : Page
         RebuildDomainCards();
     }
 
+    private async void Validate_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.ValidateDraftAsync();
+        UpdateEditorLifecycle();
+    }
+
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
         await ViewModel.SaveVersionAsync();
-        if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)) return;
         RebuildVersionRows();
-        var latest = ViewModel.Versions.OrderByDescending(v => v.VersionNumber).FirstOrDefault();
-        if (latest != null) LiveVersionText.Text = $"Live · v{latest.VersionNumber}";
+        UpdateEditorLifecycle();
+    }
+
+    private async void ActivateDraft_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.ActivationTarget is not { } target) return;
+        var dialog = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = $"Make v{target.VersionNumber} the live policy?",
+            Content = "New requests start using it immediately, on every server node. You can roll back to any earlier version from the history below.",
+            PrimaryButtonText = "Go live",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        await ViewModel.ActivateDraftAsync();
+        RebuildVersionRows();
+        UpdateEditorLifecycle();
+    }
+
+    private void PolicySourceBox_TextChanged(object sender, TextChangedEventArgs e)
+        => UpdateEditorLifecycle();
+
+    private void UpdateEditorLifecycle()
+    {
+        if (EditorPanel.Visibility != Visibility.Visible) return;
+        var step = ViewModel.EditorStep;
+        var reached = step switch
+        {
+            "validate" => 1,
+            "save" => 2,
+            "activate" => 3,
+            _ => 4,
+        };
+        ApplyLifecycleStage(DraftStageBadge, DraftStageText, 0, reached);
+        ApplyLifecycleStage(ValidatedStageBadge, ValidatedStageText, 1, reached);
+        ApplyLifecycleStage(SavedStageBadge, SavedStageText, 2, reached);
+        ApplyLifecycleStage(LiveStageBadge, LiveVersionText, 3, reached);
+
+        var activeVersion = ViewModel.SelectedDocument?.ActiveVersion?.VersionNumber;
+        LiveVersionText.Text = step == "live" && activeVersion is int version ? $"Live · v{version}" : "Live";
+        LiveSourceExplanation.Visibility = step == "live" ? Visibility.Visible : Visibility.Collapsed;
+        DisabledOverrideExplanation.Visibility = ViewModel.SelectedDocument?.Enabled == false
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        CompileIssuesPanel.Visibility = ViewModel.CompileIssues.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        RevalidateButton.Visibility = step is "save" or "activate" ? Visibility.Visible : Visibility.Collapsed;
+        ValidateDraftButton.Visibility = step == "validate" ? Visibility.Visible : Visibility.Collapsed;
+        SaveVersionButton.Visibility = step == "save" ? Visibility.Visible : Visibility.Collapsed;
+        VersionCommentBox.Visibility = step == "save" ? Visibility.Visible : Visibility.Collapsed;
+        ActivateVersionButton.Visibility = step == "activate" ? Visibility.Visible : Visibility.Collapsed;
+        ActivateVersionButton.Content = ViewModel.ActivationTarget is { } target
+            ? $"Activate v{target.VersionNumber}"
+            : "Activate";
+    }
+
+    private static void ApplyLifecycleStage(Border badge, TextBlock text, int index, int reached)
+    {
+        var done = index < reached;
+        var current = index == reached;
+        var green = Color.FromArgb(255, 110, 231, 183);
+        badge.Background = done
+            ? new SolidColorBrush(Color.FromArgb(24, 52, 211, 153))
+            : current
+                ? (Brush)Application.Current.Resources["SurfaceRaisedBrush"]
+                : new SolidColorBrush(Colors.Transparent);
+        text.Foreground = done
+            ? new SolidColorBrush(green)
+            : current
+                ? (Brush)Application.Current.Resources["PrimaryTextBrush"]
+                : (Brush)Application.Current.Resources["TertiaryTextBrush"];
+        var label = index switch { 0 => "Draft", 1 => "Validated", 2 => "Saved", _ => "Live" };
+        if (index != 3) text.Text = done ? $"✓ {label}" : label;
     }
 
     private async void Simulate_Click(object sender, RoutedEventArgs e) => await ViewModel.SimulateAsync();
@@ -386,7 +468,7 @@ public sealed partial class AdminPolicyPage : Page
             return;
         try
         {
-            var detail = await _adminApi.GetPolicyVersionAsync(ViewModel.SelectedDocument.Id, version.VersionNumber);
+            var detail = await _adminApi.GetPolicyVersionAsync(ViewModel.SelectedDocument.Id, version.Id);
             SelectedVersionSourceTitle.Text = $"Selected Source · v{version.VersionNumber}";
             SelectedVersionSource.Text = detail.Source ?? "";
             SelectedVersionSourcePanel.Visibility = Visibility.Visible;

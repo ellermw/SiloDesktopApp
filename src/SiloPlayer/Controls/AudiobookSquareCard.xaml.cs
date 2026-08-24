@@ -10,6 +10,9 @@ namespace SiloPlayer.Controls;
 
 public sealed partial class AudiobookSquareCard : UserControl
 {
+    private bool _isPointerOver;
+    private bool _isKeyboardFocusWithin;
+
     public static readonly DependencyProperty MediaItemProperty = DependencyProperty.Register(
         nameof(MediaItem), typeof(MediaItem), typeof(AudiobookSquareCard),
         new PropertyMetadata(null, OnMediaItemChanged));
@@ -37,6 +40,8 @@ public sealed partial class AudiobookSquareCard : UserControl
     {
         TitleText.Text = item.Title;
         FallbackTitle.Text = item.Title;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, item.Title);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(MoreButton, $"More actions for {item.Title}");
         var position = Math.Max(0, item.PositionSeconds ?? 0);
         var duration = Math.Max(0, item.DurationSeconds ?? 0);
         ProgressFill.Width = duration > 0 ? 168 * Math.Clamp(position / duration, 0, 1) : 0;
@@ -61,26 +66,67 @@ public sealed partial class AudiobookSquareCard : UserControl
 
     private void Card_Tapped(object sender, TappedRoutedEventArgs e)
     {
-        if (MediaItem == null) return;
+        e.Handled = ActivateCard();
+    }
+
+    private void Card_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (!ReferenceEquals(FocusManager.GetFocusedElement(XamlRoot), this)) return;
+        if (e.Key is Windows.System.VirtualKey.Enter or Windows.System.VirtualKey.Space)
+            e.Handled = ActivateCard();
+    }
+
+    private bool ActivateCard()
+    {
+        if (MediaItem == null) return false;
         App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(MediaItem.ContentId);
+        return true;
     }
 
     private void Card_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
-        CardHoverTransform.TranslateY = -4;
-        CoverHoverTransform.ScaleX = 1.06;
-        CoverHoverTransform.ScaleY = 1.06;
-        HoverBrighten.Opacity = 1;
-        MoreButton.Opacity = 1;
+        _isPointerOver = true;
+        SetInteractiveVisualState(true);
     }
 
     private void Card_PointerExited(object sender, PointerRoutedEventArgs e)
     {
-        CardHoverTransform.TranslateY = 0;
-        CoverHoverTransform.ScaleX = 1;
-        CoverHoverTransform.ScaleY = 1;
-        HoverBrighten.Opacity = 0;
-        MoreButton.Opacity = 0;
+        _isPointerOver = false;
+        if (!_isKeyboardFocusWithin) SetInteractiveVisualState(false);
+    }
+
+    private void Card_GotFocus(object sender, RoutedEventArgs e)
+    {
+        _isKeyboardFocusWithin = true;
+        SetInteractiveVisualState(true);
+    }
+
+    private void Card_LostFocus(object sender, RoutedEventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var focused = XamlRoot == null ? null : FocusManager.GetFocusedElement(XamlRoot) as DependencyObject;
+            _isKeyboardFocusWithin = IsDescendantOf(focused, this);
+            if (!_isKeyboardFocusWithin && !_isPointerOver) SetInteractiveVisualState(false);
+        });
+    }
+
+    private void SetInteractiveVisualState(bool active)
+    {
+        CardHoverTransform.TranslateY = active ? -4 : 0;
+        CoverHoverTransform.ScaleX = active ? 1.06 : 1;
+        CoverHoverTransform.ScaleY = active ? 1.06 : 1;
+        HoverBrighten.Opacity = active ? 1 : 0;
+        MoreButton.Opacity = active ? 1 : 0;
+    }
+
+    private static bool IsDescendantOf(DependencyObject? element, DependencyObject ancestor)
+    {
+        for (var current = element; current != null; current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current))
+        {
+            if (ReferenceEquals(current, ancestor)) return true;
+        }
+        return false;
     }
 
     private void MoreButton_Click(object sender, RoutedEventArgs e)

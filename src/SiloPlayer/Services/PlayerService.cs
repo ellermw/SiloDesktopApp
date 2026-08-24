@@ -61,6 +61,7 @@ public class PlayerService : IDisposable
     /// </summary>
     private int? _pendingSubtitleSelection;
     private int? _pendingInitialServerSubtitleIndex;
+    private int _activeSubtitleServerIndex = -1;
     private volatile bool _qualitySwitchActive;
     private bool _playingNextShown;
     private bool _postRollActive;
@@ -101,6 +102,15 @@ public class PlayerService : IDisposable
     private PlaybackTransportPlan? _preBitmapBurnInPlan;
     private string? _preBitmapBurnInQualityTier;
     private int? _requestedMediaFileId;
+
+    public string ActiveQualityTier => _activeQualityTier;
+    public bool IsQualitySwitchActive => _qualitySwitchActive;
+    public IReadOnlyList<PlaybackQualityV3> AvailableQualities =>
+        _playbackManager?.CurrentSession?.AvailableQualities ?? [];
+    public int? ActiveMediaFileId => _playbackManager?.CurrentSession?.MediaFileId;
+    public int? RequestedMediaFileId => _requestedMediaFileId ?? ActiveMediaFileId;
+
+    public Task SelectQualityAsync(string qualityId) => SwitchQualityTierAsync(qualityId);
     private readonly SemaphoreSlim _transportRestartGate = new(1, 1);
     private readonly SemaphoreSlim _streamRecoveryGate = new(1, 1);
     private CancellationTokenSource? _seekRestartCts;
@@ -519,7 +529,22 @@ public class PlayerService : IDisposable
             _ = ReportSeekProgressAsync(mediaPosition, seekPaused);
 
             PreparedPlaybackTransport prepared;
-            if (plan.TransportKind == PlaybackTransportKind.RemuxProgressive)
+            if (session.ProtocolVersion >= 3)
+            {
+                session = await manager.ReplanSeekAsync(mediaPosition, ct).ConfigureAwait(false);
+                version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
+                    ?? version;
+                var streamUrl = manager.StreamUrl
+                    ?? throw new InvalidOperationException("The replanned playback stream is unavailable.");
+                prepared = await PreparePlaybackTransportAsync(
+                    session,
+                    version,
+                    streamUrl,
+                    mediaPosition,
+                    ct).ConfigureAwait(false);
+                PlayMethod = session.PlayMethod;
+            }
+            else if (plan.TransportKind == PlaybackTransportKind.RemuxProgressive)
             {
                 var remuxStreamUrl = manager.StreamUrl;
                 if (string.IsNullOrWhiteSpace(remuxStreamUrl))
@@ -782,6 +807,7 @@ public class PlayerService : IDisposable
     /// </summary>
     public async Task SetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)
     {
+        _activeSubtitleServerIndex = mpvTrackIndex <= 0 || track == null ? -1 : track.Index;
         var wasPaused = CaptureUserPausedState();
         var position = CurrentMediaPosition;
         var transportReloadScheduled = false;
@@ -1050,6 +1076,7 @@ public class PlayerService : IDisposable
     public event Action? PlaybackEnded;
     public event Action? ContentLoaded; // fired when file is loaded and decoding starts
     public event Action? MarkersChanged;
+    public event Action? ChaptersChanged;
     /// <summary>
     /// Fired instead of <see cref="PlaybackEnded"/> when the current episode
     /// finishes AND a next episode is available (NextEpisode* fields are set).
@@ -1789,6 +1816,8 @@ public class PlayerService : IDisposable
                 subtitleSelection,
                 subtitleTrackSignature);
             PlayMethod = session.PlayMethod;
+            if (session.ProtocolVersion >= 3)
+                _activeQualityTier = session.ActiveQuality;
             InvokeSubscribersSafely(SessionStarted, session.SessionId, nameof(SessionStarted));
 
             if (Math.Abs(session.Position - startPosition) > 0.001)
@@ -2375,6 +2404,46 @@ public class PlayerService : IDisposable
 
         try
         {
+            if (session.ProtocolVersion >= 3 &&
+                !string.Equals(reason, "progress-reporting-failed", StringComparison.Ordinal))
+            {
+                var classification = reason switch
+                {
+                    "file-load-timeout" => "startup_timeout",
+                    "playback-error" => "decoder_or_transport_error",
+                    _ => "playback_interrupted",
+                };
+                var replannedSession = await manager.ReplanFailureAsync(
+                    resumePosition,
+                    classification,
+                    reason,
+                    ct).ConfigureAwait(false);
+                var replannedVersion = Versions.FirstOrDefault(v => v.FileId == replannedSession.MediaFileId)
+                    ?? throw new InvalidOperationException("The replanned media version is unavailable.");
+                var replannedStreamUrl = manager.StreamUrl
+                    ?? throw new InvalidOperationException("No stream URL was returned by playback recovery.");
+                var replannedTransport = await PreparePlaybackTransportAsync(
+                    replannedSession,
+                    replannedVersion,
+                    replannedStreamUrl,
+                    resumePosition,
+                    ct).ConfigureAwait(false);
+                if (_closing || State == PlayerState.Idle ||
+                    !ReferenceEquals(_playbackManager, manager) || ct.IsCancellationRequested)
+                    return;
+                PlayMethod = replannedSession.PlayMethod;
+                _activeQualityTier = replannedSession.ActiveQuality;
+                ApplyPreparedTransport(replannedTransport);
+                BeginMpvLoad(replannedTransport, restorePaused);
+                IsPaused = restorePaused;
+                _mpv.SendScriptMessage("osc-set-play-method", PlayMethod ?? "direct");
+                LogToFile(
+                    "state_trace.txt",
+                    $"Stream recovery ({reason}) adopted protocol-v3 plan {replannedSession.PlanId} " +
+                    $"at mediaPos={resumePosition:F1}");
+                return;
+            }
+
             if (previousPlan != null &&
                 PlaybackRecoveryPolicy.CanReloadCurrentDirectSession(
                     previousPlan.TransportKind,
@@ -2855,7 +2924,7 @@ public class PlayerService : IDisposable
                 Tracks: SubtitleAutoSelect.BuildCandidates(session.SubtitleUrls),
                 PreferredLanguage: preferredLanguage,
                 AudioLanguage: audioLanguage,
-                ProfileLanguage: null,
+                ProfileLanguage: _authService.SelectedProfile?.Language,
                 ShowForcedSubtitles: showForced ?? true,
                 PreferredTrackSignature: watchDetail.EffectiveSubtitleTrackSignature));
             if (selectedIndex is int index)
@@ -3081,6 +3150,24 @@ public class PlayerService : IDisposable
         var plan = PlaybackTransportPlanner.Plan(session);
         var knownDuration = GetKnownDuration(session, version);
         mediaStartSeconds = Math.Max(0, mediaStartSeconds);
+
+        if (session.ProtocolVersion >= 3)
+        {
+            var localUrl = plan.IsHls
+                ? PrepareHlsStreamForMpv(NormalizePlaybackUrl(remoteStreamUrl))
+                : PrepareDirectStreamForMpv(
+                    remoteStreamUrl,
+                    session.PlayMethod,
+                    supportsRanges: session.CanSeekAnywhere);
+            return new PreparedPlaybackTransport(
+                plan,
+                localUrl,
+                MpvLoadStartSeconds: Math.Max(0, session.PlayerStartSeconds),
+                ResumeAfterLoadSeconds: 0,
+                TimelineOffsetSeconds: Math.Max(0, session.TimelineOffsetSeconds),
+                DurationSeconds: knownDuration,
+                CanSeekAnywhere: session.CanSeekAnywhere);
+        }
 
         if (!plan.RequiresTranscodeStartPreparation)
         {
@@ -3472,9 +3559,9 @@ public class PlayerService : IDisposable
 
             try
             {
-                var response = await _settingsApi.GetEffectiveSettingsAsync(["subtitle_appearance"], ct);
+                var response = await _settingsApi.GetContractEffectiveSettingsAsync(["playback.subtitle_appearance"], ct: ct);
                 _subtitleAppearance = Core.Models.Settings.SubtitleAppearance.Parse(
-                    response.Settings.FirstOrDefault(setting => setting.Key == "subtitle_appearance")?.EffectiveValue);
+                    response.Settings.FirstOrDefault(setting => setting.Key == "playback.subtitle_appearance")?.Value.GetRawText());
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -3990,6 +4077,50 @@ public class PlayerService : IDisposable
         var ct = _playbackCts?.Token ?? CancellationToken.None;
         var wasPaused = CaptureUserPausedState();
         var currentPos = CurrentMediaPosition;
+        if (manager.CurrentSession?.ProtocolVersion >= 3)
+        {
+            _switchingContent = true;
+            IsLoading = true;
+            try
+            {
+                var session = await manager.ReplanAudioAsync(trackIndex, currentPos, ct).ConfigureAwait(false);
+                var version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
+                    ?? throw new InvalidOperationException("No active version is available for the audio switch.");
+                var streamUrl = manager.StreamUrl
+                    ?? throw new InvalidOperationException("No stream URL was returned for the audio switch.");
+                var prepared = await PreparePlaybackTransportAsync(
+                    session,
+                    version,
+                    streamUrl,
+                    currentPos,
+                    ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                if (_closing || !ReferenceEquals(_playbackManager, manager) ||
+                    !ReferenceEquals(manager.CurrentSession, session))
+                    return;
+                PlayMethod = session.PlayMethod;
+                ApplyPreparedTransport(prepared);
+                BeginMpvLoad(prepared, restorePaused: wasPaused);
+                await PersistAudioPreferenceAsync(trackIndex);
+                SendAudioTrackListToOsc();
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                LogToFile("state_trace.txt", "Protocol-v3 audio switch canceled");
+            }
+            catch (Exception ex)
+            {
+                _switchingContent = false;
+                IsLoading = false;
+                LogToFile("player_audio_switch_error.txt", ex.ToString());
+                var (title, detail) = DescribePlaybackError(ex);
+                ErrorMessage = detail;
+                ShowNotice(title, detail, "error");
+                SendAudioTrackListToOsc();
+            }
+            return;
+        }
+
         if (_activeTransportPlan?.TransportKind == PlaybackTransportKind.DirectProgressive)
         {
             // A native direct stream already contains every audio track. Keep
@@ -4197,6 +4328,8 @@ public class PlayerService : IDisposable
 
     private static bool IsUnsupportedBitmapSubtitle(SubtitleTrackInfo track)
     {
+        if (string.Equals(track.Delivery, "burn_in_only", StringComparison.OrdinalIgnoreCase))
+            return true;
         var codec = track.Codec?.ToLowerInvariant() ?? "";
         return codec is "dvdsub" or "dvd_subtitle" or "vobsub" or "dvbsub" or "dvb_subtitle";
     }
@@ -4248,6 +4381,38 @@ public class PlayerService : IDisposable
                 ?? Versions.FirstOrDefault(v => v.FileId == (_requestedMediaFileId ?? 0))
                 ?? throw new InvalidOperationException("The subtitle source version is unavailable.");
             var position = CurrentMediaPosition;
+            if (session.ProtocolVersion >= 3)
+            {
+                transportMutationAttempted = true;
+                _switchingContent = true;
+                IsLoading = true;
+                _mpv.Pause();
+                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
+                    () => App.MainWindowInstance?.ShowLoadingOverlay());
+
+                var replanned = await manager.ReplanSubtitleAsync(track?.Index, position, ct)
+                    .ConfigureAwait(false);
+                var replannedVersion = Versions.FirstOrDefault(v => v.FileId == replanned.MediaFileId)
+                    ?? version;
+                var streamUrl = manager.StreamUrl
+                    ?? throw new InvalidOperationException("No stream URL was returned for the subtitle switch.");
+                var preparedV3 = await PreparePlaybackTransportAsync(
+                    replanned,
+                    replannedVersion,
+                    streamUrl,
+                    position,
+                    ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                if (_closing || manager.CurrentSession != replanned) return false;
+                ApplyPreparedTransport(preparedV3);
+                PlayMethod = replanned.PlayMethod;
+                _pendingInitialServerSubtitleIndex = postLoadSubtitleIndex;
+                BeginMpvLoad(preparedV3, restorePaused: wasPaused);
+                _mpv.ShowOsdText(track is null ? "Bitmap subtitles off" : $"{track.Label} · burned in", 2500);
+                SendQualityInfoToOsc();
+                return true;
+            }
+
             if (track is not null && _activeHlsRecipe?.SubtitleBurnIn != true)
             {
                 _preBitmapBurnInPlan = _activeTransportPlan;
@@ -4374,6 +4539,7 @@ public class PlayerService : IDisposable
     private async Task SelectSubtitleByServerIndexAsync(int serverTrackIndex, bool persist = true)
     {
         if (_mpv == null) return;
+        _activeSubtitleServerIndex = serverTrackIndex;
         if (serverTrackIndex < 0)
         {
             ClearEmbeddedSubtitleWindows();
@@ -4408,6 +4574,9 @@ public class PlayerService : IDisposable
             "osc-set-active-subtitle",
             serverTrackIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
+
+    /// <summary>The selected server subtitle-track index, or -1 when subtitles are off.</summary>
+    public int ActiveSubtitleServerIndex => _activeSubtitleServerIndex;
 
     private void SelectSubtitleTrack(SubtitleTrackInfo track)
     {
@@ -5004,7 +5173,19 @@ public class PlayerService : IDisposable
             ["versions"] = versions,
             ["active_file_id"] = session.MediaFileId,
             ["requested_file_id"] = _requestedMediaFileId ?? session.MediaFileId,
-            ["active_quality"] = _activeQualityTier
+            ["active_quality"] = _activeQualityTier,
+            ["qualities"] = session.ProtocolVersion >= 3
+                ? session.AvailableQualities.Select(quality => new Dictionary<string, object?>
+                {
+                    ["id"] = quality.Label,
+                    ["label"] = quality.Label.Equals("original", StringComparison.OrdinalIgnoreCase)
+                        ? "Original"
+                        : quality.Label,
+                    ["height"] = quality.Height,
+                    ["bitrate_kbps"] = quality.BitrateKbps,
+                    ["preserves_source"] = quality.PreservesSource,
+                }).ToArray()
+                : null,
         };
 
         var json = System.Text.Json.JsonSerializer.Serialize(info);
@@ -5267,6 +5448,62 @@ public class PlayerService : IDisposable
         var wasPaused = CaptureUserPausedState();
         var currentPos = CurrentMediaPosition;
         var switchSucceeded = false;
+
+        if (manager.CurrentSession?.ProtocolVersion >= 3)
+        {
+            _switchingContent = true;
+            _qualitySwitchActive = true;
+            IsLoading = true;
+            App.MainWindowInstance?.ShowLoadingOverlay();
+            try
+            {
+                var quality = tierId.ToLowerInvariant() switch
+                {
+                    "1080p-high" => "1080p",
+                    "720p-high" => "720p",
+                    "420p" => "480p",
+                    _ => tierId,
+                };
+                var session = await manager.ReplanQualityAsync(quality, currentPos, ct).ConfigureAwait(false);
+                var version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
+                    ?? throw new InvalidOperationException("No active version is available for the quality switch.");
+                var streamUrl = manager.StreamUrl
+                    ?? throw new InvalidOperationException("No stream URL was returned for the quality switch.");
+                var prepared = await PreparePlaybackTransportAsync(
+                    session,
+                    version,
+                    streamUrl,
+                    currentPos,
+                    ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                if (_closing || !ReferenceEquals(_playbackManager, manager) ||
+                    !ReferenceEquals(manager.CurrentSession, session))
+                    return;
+                PlayMethod = session.PlayMethod;
+                ApplyPreparedTransport(prepared);
+                BeginMpvLoad(prepared, restorePaused: wasPaused);
+                _activeQualityTier = quality;
+                _mpv?.SendScriptMessage("osc-set-active-quality", quality);
+                SendQualityInfoToOsc();
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                LogToFile("state_trace.txt", "Protocol-v3 quality switch canceled");
+            }
+            catch (Exception ex)
+            {
+                _switchingContent = false;
+                _qualitySwitchActive = false;
+                IsLoading = false;
+                App.MainWindowInstance?.HideLoadingOverlay();
+                LogToFile("player_quality_switch_error.txt", ex.ToString());
+                var (title, detail) = DescribePlaybackError(ex);
+                ErrorMessage = detail;
+                ShowNotice(title, detail, "error");
+                _mpv?.SendScriptMessage("osc-set-active-quality", _activeQualityTier);
+            }
+            return;
+        }
 
         if (tierId == "original")
         {
@@ -6182,6 +6419,9 @@ public class PlayerService : IDisposable
     {
         switch (ev.Name)
         {
+            case "chapter_thumbnail_ready":
+                ApplyRealtimeChapterThumbnail(ev.Payload);
+                break;
             case "markers_updated":
                 ApplyRealtimeMarkersUpdated(ev.Payload);
                 break;
@@ -6202,6 +6442,43 @@ public class PlayerService : IDisposable
                     _ = RefreshSubtitlesAfterAiAsync(readyFileId);
                 break;
         }
+    }
+
+    private void ApplyRealtimeChapterThumbnail(JsonElement payload)
+    {
+        if (!TryGetPayloadInt(payload, "file_id", out var fileId) ||
+            !TryGetPayloadInt(payload, "chapter_index", out var chapterIndex))
+            return;
+
+        var session = _playbackManager?.CurrentSession;
+        if (session == null || session.MediaFileId != fileId)
+            return;
+
+        var thumbnailUrl = TryGetPayloadString(payload, "thumbnail_url");
+        if (string.IsNullOrWhiteSpace(thumbnailUrl))
+            return;
+
+        var version = Versions.FirstOrDefault(item => item.FileId == fileId);
+        var chapter = version?.Chapters?.FirstOrDefault(item => item.Index == chapterIndex);
+        if (chapter == null)
+            return;
+
+        var thumbnailThumbhash = TryGetPayloadString(payload, "thumbnail_thumbhash");
+        if (string.Equals(chapter.ThumbnailUrl, thumbnailUrl, StringComparison.Ordinal) &&
+            string.Equals(chapter.ThumbnailThumbhash, thumbnailThumbhash, StringComparison.Ordinal))
+            return;
+
+        chapter.ThumbnailUrl = thumbnailUrl;
+        chapter.ThumbnailThumbhash = thumbnailThumbhash;
+
+        // The current WebUI patches its active playback version in response to
+        // this event. Keep both native player surfaces in sync without
+        // recreating the stream or disturbing play/pause state.
+        _mpv?.SendScriptMessage(
+            "osc-patch-chapter-thumbnail-url",
+            chapterIndex.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            thumbnailUrl);
+        InvokeSubscribersSafely(ChaptersChanged, nameof(ChaptersChanged));
     }
 
     public void PrepareLiveSubtitleTranslation(long jobId, int mediaFileId, string language, string label)

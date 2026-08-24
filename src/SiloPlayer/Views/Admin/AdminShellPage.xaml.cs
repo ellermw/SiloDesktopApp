@@ -33,6 +33,58 @@ public sealed partial class AdminShellPage : Page
     private Type? _startingPage;
     private object? _startingParameter;
 
+    public bool IsDashboardActive => AdminContentFrame.CurrentSourcePageType == typeof(AdminDashboardPage);
+
+    public async Task<bool> TryShowAdminCommandPaletteAsync()
+    {
+        if (!IsDashboardActive || XamlRoot is null) return false;
+        var dialog = new Controls.AdminCommandPaletteDialog(BuildAdminCommandTargets()) { XamlRoot = XamlRoot };
+        await dialog.ShowAsync();
+        if (dialog.SelectedTarget is { } target)
+        {
+            var button = GetNavButtonForPage(target.PageType);
+            if (button is not null) SetActiveNavItem(button);
+            NavigateAdmin(target.PageType, target.Parameter);
+        }
+        return true;
+    }
+
+    private IReadOnlyList<Controls.AdminCommandTarget> BuildAdminCommandTargets()
+    {
+        var targets = new List<Controls.AdminCommandTarget>
+        {
+            new("Overview", "Dashboard", "Live sessions, content health, and server activity.", "overview stats health scan all", typeof(AdminDashboardPage)),
+            new("Overview", "Activity", "Live streams and current playback sessions.", "streams sessions now playing transcode", typeof(AdminActivityPage)),
+            new("Overview", "Logs", "Server log stream and operational output.", "server logs debug tail events", typeof(AdminLogsPage)),
+            new("Overview", "Diagnostics", "Uploaded client crash reports, device context, and debug bundles.", "client diagnostics crash reports debug bundles support", typeof(AdminDiagnosticsPage)),
+            new("Content", "Libraries", "Media libraries, paths, scanning, and catalog import/export.", "library paths scan catalog seed", typeof(AdminLibrariesPage)),
+            new("Content", "Collections", "Curated and smart collection management.", "collection groups templates smart collections", typeof(AdminCollectionsPage)),
+            new("Content", "Sections", "Home and catalog section configuration.", "home rows rails featured sections", typeof(AdminSectionsPage)),
+            new("Content", "Requests", "User media requests and request handling.", "requested media approvals overseerr", typeof(AdminRequestsPage)),
+            new("Automation", "Autoscan", "Autoscan sources, queue state, and poller behavior.", "scan queue cephfs polling matcher", typeof(AdminAutoscanPage)),
+            new("Automation", "Scheduled Tasks", "Background task schedules, runs, and job history.", "tasks jobs scheduler sync", typeof(AdminTasksPage)),
+            new("Automation", "Subtitles", "Downloaded subtitle records and subtitle admin tools.", "captions subtitle downloads providers", typeof(AdminSubtitlesPage)),
+            new("Automation", "Markers", "Intro, recap, and credits marker history.", "intro markers credits recaps chapters", typeof(AdminMarkerHistoryPage)),
+            new("Automation", "Recommendations", "Recommendation diagnostics, seed data, and ranking controls.", "taste ranking recommendation seeds", typeof(AdminRecommendationsPage)),
+            new("Users", "Users", "Accounts, roles, profile settings, and access.", "accounts profiles roles permissions", typeof(AdminUsersPage)),
+            new("Users", "Access Groups", "Shared access defaults: libraries, downloads, streams, permissions.", "groups roles permissions library access downloads limits", typeof(AdminAccessGroupsPage)),
+            new("Users", "Devices", "Registered devices, overrides, and per-device settings.", "clients device overrides sessions", typeof(AdminDevicesPage)),
+            new("Users", "Playback History", "Historical playback events across users and profiles.", "history watched progress plays", typeof(AdminPlaybackHistoryPage)),
+            new("Users", "History Import", "Admin history import mappings and bulk import runs.", "emby imports mappings watch history", typeof(AdminHistoryImportPage)),
+            new("System", "Settings", "Server-wide settings, integrations, storage, and compatibility proxies.", "configuration server settings admin settings", typeof(AdminSettingsDetailPage)),
+            new("System", "Plugins", "Plugin catalog, repositories, installs, and plugin configuration.", "extensions plugin catalog repositories", typeof(AdminPluginsPage)),
+            new("System", "Nodes", "Stream nodes and remote worker status.", "stream nodes workers transcode nodes", typeof(AdminNodesPage)),
+            new("System", "API Keys", "Admin API keys and tier assignment.", "tokens keys access rate limit tier", typeof(AdminApiKeysPage)),
+            new("System", "Maintenance", "Operational maintenance tools.", "repair cleanup system maintenance", typeof(AdminMaintenancePage)),
+        };
+        if (_policyAvailable)
+            targets.Insert(targets.FindIndex(target => target.Label == "Nodes"), new("System", "Policy", "OPA policy documents, vendor modules, simulations, and decision logs.", "opa rego authorization decision log access policy", typeof(AdminPolicyPage)));
+
+        string[] settings = ["General", "Branding", "Theming", "Card Overlays", "Scanner & Matcher", "Search", "Intro Markers", "Subtitles", "AI Services", "Playback", "Downloads", "Watch Providers", "Integrations", "Email", "Notifications", "Compatibility Proxies", "Rate Limiting", "Database", "Storage", "Log Retention"];
+        targets.AddRange(settings.Select(label => new Controls.AdminCommandTarget("Admin Settings", label, $"Open the {label} server settings section.", $"admin settings {label}", typeof(AdminSettingsDetailPage), label)));
+        return targets;
+    }
+
     public AdminShellPage()
     {
         this.InitializeComponent();
@@ -145,6 +197,7 @@ public sealed partial class AdminShellPage : Page
         _navItems.Add((NavDashboard,       NavDashboardBar,       NavDashboardIcon,       NavDashboardText));
         _navItems.Add((NavActivity,        NavActivityBar,        NavActivityIcon,        NavActivityText));
         _navItems.Add((NavLogs,            NavLogsBar,            NavLogsIcon,            NavLogsText));
+        _navItems.Add((NavDiagnostics,      NavDiagnosticsBar,      NavDiagnosticsIcon,      NavDiagnosticsText));
         // CONTENT
         _navItems.Add((NavLibraries,       NavLibrariesBar,       NavLibrariesIcon,       NavLibrariesText));
         _navItems.Add((NavCollections,     NavCollectionsBar,     NavCollectionsIcon,     NavCollectionsText));
@@ -252,7 +305,7 @@ public sealed partial class AdminShellPage : Page
             group.Children.Clear();
         AdminNavStack.Children.Clear();
 
-        AddNavGroup("OVERVIEW", NavDashboard, NavActivity, NavLogs);
+        AddNavGroup("OVERVIEW", NavDashboard, NavActivity, NavLogs, NavDiagnostics);
         AddNavGroup("CONTENT", NavLibraries, NavCollections, NavSections, NavRequests);
         AddNavGroup("AUTOMATION", NavAutoscan, NavScheduledTasks, NavSubtitles, NavMarkerHistory, NavRecommendations);
         AddNavGroup("USERS", NavUsers, NavAccessGroups, NavDevices, NavPlaybackHistory, NavHistoryImport);
@@ -504,6 +557,7 @@ public sealed partial class AdminShellPage : Page
         if (pageType == typeof(AdminDashboardPage)) return NavDashboard;
         if (pageType == typeof(AdminActivityPage)) return NavActivity;
         if (pageType == typeof(AdminLogsPage)) return NavLogs;
+        if (pageType == typeof(AdminDiagnosticsPage)) return NavDiagnostics;
         if (pageType == typeof(AdminLibrariesPage)) return NavLibraries;
         if (pageType == typeof(AdminCollectionsPage)) return NavCollections;
         if (pageType == typeof(AdminRequestsPage)) return NavRequests;
@@ -575,6 +629,18 @@ public sealed partial class AdminShellPage : Page
     {
         SetActiveNavItem(NavLogs);
         NavigateAdmin(typeof(AdminLogsPage));
+    }
+
+    private void NavDiagnostics_Click(object sender, RoutedEventArgs e)
+    {
+        SetActiveNavItem(NavDiagnostics);
+        NavigateAdmin(typeof(AdminDiagnosticsPage));
+    }
+
+    public void OpenLogsForSession(string sessionId)
+    {
+        SetActiveNavItem(NavLogs);
+        NavigateAdmin(typeof(AdminLogsPage), sessionId);
     }
 
     private void NavLibraries_Click(object sender, RoutedEventArgs e)

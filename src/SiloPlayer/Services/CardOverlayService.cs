@@ -110,9 +110,9 @@ public static class OverlayRegistry
     public static readonly IReadOnlyList<OverlayDef> All =
     [
         new("resolution",         "Resolution",       OverlayPosition.TopLeft,     true,  d => FormatResolution(d.Resolution)),
-        new("hdr",                "HDR",              OverlayPosition.TopLeft,     true,  d => string.IsNullOrEmpty(d.Hdr) ? null : d.Hdr),
-        new("resolution_hdr",     "Resolution + HDR", OverlayPosition.TopLeft,     false, d => FormatResolutionHdr(d.Resolution, d.Hdr)),
-        new("audio",              "Audio",            OverlayPosition.TopLeft,     true,  d => string.IsNullOrEmpty(d.Audio) ? null : d.Audio),
+        new("hdr",                "HDR / Dolby Vision", OverlayPosition.TopLeft,     true,  d => string.IsNullOrEmpty(d.Hdr) ? null : d.Hdr),
+        new("resolution_hdr",     "Resolution + HDR (combined)", OverlayPosition.TopLeft, false, d => FormatResolutionHdr(d.Resolution, d.Hdr)),
+        new("audio",              "Audio Codec",      OverlayPosition.TopLeft,     true,  d => string.IsNullOrEmpty(d.Audio) ? null : d.Audio),
         new("audio_channels",     "Audio Channels",   OverlayPosition.TopLeft,     false, d => string.IsNullOrEmpty(d.AudioChannels) ? null : d.AudioChannels),
         new("video_codec",        "Video Codec",      OverlayPosition.TopLeft,     false, d => string.IsNullOrEmpty(d.VideoCodec) ? null : d.VideoCodec),
         new("container",          "Container",        OverlayPosition.BottomLeft,  false, d => string.IsNullOrEmpty(d.Container) ? null : d.Container),
@@ -120,10 +120,10 @@ public static class OverlayRegistry
         new("release_type",       "Release Type",     OverlayPosition.BottomLeft,  true,  d => string.IsNullOrEmpty(d.ReleaseType) ? null : d.ReleaseType),
         new("edition",            "Edition",          OverlayPosition.BottomLeft,  false, d => string.IsNullOrEmpty(d.Edition) ? null : d.Edition),
         new("multi_audio",        "Multi-Audio",      OverlayPosition.BottomRight, false, d => d.MultiAudio ? "Multi-Audio" : null),
-        new("multi_sub",          "Subtitles",        OverlayPosition.BottomRight, false, d => d.MultiSub ? "CC" : null),
-        new("rating_imdb",        "IMDb",             OverlayPosition.TopRight,    false, d => d.RatingImdb.HasValue ? d.RatingImdb.Value.ToString("0.0") : null),
-        new("rating_tmdb",        "TMDB",             OverlayPosition.TopRight,    false, d => d.RatingTmdb.HasValue ? d.RatingTmdb.Value.ToString("0.0") : null),
-        new("rating_rt",          "RT",               OverlayPosition.TopRight,    false, d => d.RatingRtCritic.HasValue ? $"{d.RatingRtCritic.Value}%" : null),
+        new("multi_sub",          "Subtitles Available", OverlayPosition.BottomRight, false, d => d.MultiSub ? "CC" : null),
+        new("rating_imdb",        "IMDb Rating",      OverlayPosition.TopRight,    false, d => d.RatingImdb.HasValue ? d.RatingImdb.Value.ToString("0.0") : null),
+        new("rating_tmdb",        "TMDB Rating",      OverlayPosition.TopRight,    false, d => d.RatingTmdb.HasValue ? d.RatingTmdb.Value.ToString("0.0") : null),
+        new("rating_rt",          "RT Critics",       OverlayPosition.TopRight,    false, d => d.RatingRtCritic.HasValue ? $"{d.RatingRtCritic.Value}%" : null),
         new("rating_rt_audience", "RT Audience",      OverlayPosition.TopRight,    false, d => d.RatingRtAudience.HasValue ? $"{d.RatingRtAudience.Value}%" : null),
         new("content_rating",     "Age Rating",       OverlayPosition.BottomRight, false, d => string.IsNullOrEmpty(d.ContentRating) ? null : d.ContentRating),
         new("year",               "Year",             OverlayPosition.BottomLeft,  false, d => d.Year is > 0 ? d.Year.Value.ToString() : null),
@@ -132,8 +132,6 @@ public static class OverlayRegistry
         new("studio",             "Studio",           OverlayPosition.BottomRight, false, d => string.IsNullOrEmpty(d.Studio) ? null : d.Studio),
         new("network",            "Network",          OverlayPosition.BottomRight, false, d => string.IsNullOrEmpty(d.Network) ? null : d.Network),
         new("show_status",        "Show Status",      OverlayPosition.TopRight,    false, d => FormatShowStatus(d.ShowStatus)),
-        new("imdb_top_250",       "IMDb Top 250",     OverlayPosition.TopRight,    false, _ => null),
-        new("rt_certified_fresh", "Certified Fresh",  OverlayPosition.TopRight,    false, _ => null),
     ];
 
     public static Dictionary<string, OverlayItemConfig> DefaultPrefs =>
@@ -178,9 +176,10 @@ public static class OverlayRegistry
         if (string.IsNullOrWhiteSpace(value)) return null;
         return value.Trim().ToLowerInvariant() switch
         {
-            "returning" or "returning series" or "in_production" or "in production" => "Returning",
+            "returning" or "returning series" or "continuing" or "in_production" or "in production" => "Returning",
             "ended" => "Ended",
             "cancelled" or "canceled" => "Cancelled",
+            "upcoming" or "planned" => "Upcoming",
             _ => value,
         };
     }

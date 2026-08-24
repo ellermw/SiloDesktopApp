@@ -30,63 +30,52 @@ public partial class HomeViewModel : ObservableObject,
     // F4 — messenger receivers.
     public void Receive(MediaSurfaceChanged message)
     {
-        // Any favorite/watchlist/watched/rating change could affect downstream
-        // recommendations + continue-watching positioning. Invalidate cache so
-        // the next navigation back to home triggers a fresh fetch.
-        switch (message.Kind)
+        _ = RunOnUiThreadAsync(() =>
         {
-            case MediaSurfaceChangeKind.WatchedMarked:
-                // Mark-watched should also drop the item from Continue Watching
-                // and Next Up immediately, not wait for a fetch.
-                RemoveFromProgressRows(message.ContentId, message.SeriesId);
-                InvalidateCache();
-                break;
-            case MediaSurfaceChangeKind.WatchedCleared:
-            case MediaSurfaceChangeKind.FavoriteAdded:
-            case MediaSurfaceChangeKind.FavoriteRemoved:
-            case MediaSurfaceChangeKind.WatchlistAdded:
-            case MediaSurfaceChangeKind.WatchlistRemoved:
-            case MediaSurfaceChangeKind.RatingChanged:
-            case MediaSurfaceChangeKind.HomeLayoutChanged:
-                InvalidateCache();
-                break;
-            case MediaSurfaceChangeKind.HomeDismissed:
-                RemoveFromProgressRows(message.ContentId, message.SeriesId);
-                InvalidateCache();
-                break;
-        }
+            switch (message.Kind)
+            {
+                case MediaSurfaceChangeKind.WatchedMarked:
+                case MediaSurfaceChangeKind.HomeDismissed:
+                    RemoveFromProgressRows(message.ContentId, message.SeriesId);
+                    break;
+            }
+
+            QueueRealtimeRefresh($"media_surface:{message.Kind}");
+        });
     }
 
     public void Receive(PlaybackProgressUpdated message)
     {
-        // Update the Continue Watching row in place so returning from the
-        // player shows the latest progress. If the user actually finished
-        // the item, drop it from CW / Next Up.
-        foreach (var section in FeaturedSections.Concat(Sections))
+        _ = RunOnUiThreadAsync(() =>
         {
-            if (section.SectionType is not ("continue_watching" or "next_up")) continue;
-            for (int i = 0; i < section.Items.Count; i++)
+            // Apply the position/removal optimistically, then fetch the server's
+            // authoritative rows so Next Up can advance to the following episode.
+            foreach (var section in FeaturedSections.Concat(Sections))
             {
-                var item = section.Items[i];
-                if (item.ContentId != message.ContentId) continue;
+                if (section.SectionType is not ("continue_watching" or "next_up")) continue;
+                for (int i = 0; i < section.Items.Count; i++)
+                {
+                    var item = section.Items[i];
+                    if (item.ContentId != message.ContentId) continue;
 
-                if (message.Completed)
-                {
-                    section.Items.RemoveAt(i);
+                    if (message.Completed)
+                    {
+                        section.Items.RemoveAt(i);
+                    }
+                    else
+                    {
+                        item.PositionSeconds = message.PositionSeconds;
+                        if (message.DurationSeconds > 0)
+                            item.DurationSeconds = message.DurationSeconds;
+                        item.ProgressUpdatedAt = message.UpdatedAt.ToString("o");
+                    }
+                    break;
                 }
-                else
-                {
-                    item.PositionSeconds = message.PositionSeconds;
-                    if (message.DurationSeconds > 0)
-                        item.DurationSeconds = message.DurationSeconds;
-                    item.ProgressUpdatedAt = message.UpdatedAt.ToString("o");
-                }
-                break;
             }
-        }
 
-        // Next-refresh fetches the authoritative ordering.
-        InvalidateCache();
+            BumpRenderRevision();
+            QueueRealtimeRefresh(message.Completed ? "playback_completed" : "playback_progress");
+        });
     }
 
     private void RemoveFromProgressRows(string contentId, string? seriesId)
@@ -138,7 +127,12 @@ public partial class HomeViewModel : ObservableObject,
     private CancellationTokenSource? _sectionLoadCts;
     private int _sectionLoadGeneration;
     private string? _loadedProfileId;
+    private CancellationTokenSource? _realtimeRefreshCts;
+    private bool _realtimeRefreshInProgress;
+    private bool _realtimeRefreshRequested;
+    private bool _isActive;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan RealtimeRefreshDebounce = TimeSpan.FromMilliseconds(350);
 
     // F12: maximum number of concurrent per-section fetches. Matches the
     // webui `MAX_CONCURRENT_SECTION_REQUESTS = 5` limit so we don't overwhelm
@@ -152,6 +146,103 @@ public partial class HomeViewModel : ObservableObject,
     private int _renderRevision;
 
     private void BumpRenderRevision() => RenderRevision++;
+
+    /// <summary>
+    /// Tracks whether the cached Home surface is the current navigation target.
+    /// Realtime events still invalidate inactive data, but only a visible Home
+    /// page performs network work immediately.
+    /// </summary>
+    public void SetActive(bool active)
+    {
+        _isActive = active;
+        if (!active)
+        {
+            var pending = Interlocked.Exchange(ref _realtimeRefreshCts, null);
+            pending?.Cancel();
+            pending?.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// Mirrors the WebUI home refresh signal: coalesce bursts from progress,
+    /// watched-state, and catalog scan events, then re-fetch every mounted Home
+    /// section without navigating away or tearing down the page.
+    /// </summary>
+    public void QueueRealtimeRefresh(string reason)
+    {
+        InvalidateCache();
+        if (!_isActive) return;
+
+        var cts = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _realtimeRefreshCts, cts);
+        previous?.Cancel();
+        previous?.Dispose();
+        _ = QueueRealtimeRefreshAsync(reason, cts);
+    }
+
+    private async Task QueueRealtimeRefreshAsync(string reason, CancellationTokenSource owner)
+    {
+        try
+        {
+            await Task.Delay(RealtimeRefreshDebounce, owner.Token).ConfigureAwait(false);
+            await RunOnUiThreadAsync(() =>
+            {
+                if (!ReferenceEquals(_realtimeRefreshCts, owner) || owner.IsCancellationRequested || !_isActive)
+                    return;
+
+                _ = RefreshMountedSectionsAsync(reason);
+            }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (owner.IsCancellationRequested)
+        {
+            // A newer event superseded this debounce window or Home went inactive.
+        }
+        finally
+        {
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _realtimeRefreshCts, null, owner), owner))
+                owner.Dispose();
+        }
+    }
+
+    private async Task RefreshMountedSectionsAsync(string reason)
+    {
+        _realtimeRefreshRequested = true;
+        if (_realtimeRefreshInProgress) return;
+
+        _realtimeRefreshInProgress = true;
+        try
+        {
+            while (_realtimeRefreshRequested && _isActive)
+            {
+                _realtimeRefreshRequested = false;
+
+                // Preserve the mounted visual tree and patch every row from the
+                // authoritative section endpoints. If the first layout has not
+                // loaded yet, fall back to the ordinary initial-load path.
+                if (!_hasLoadedLayout || FeaturedSections.Count + Sections.Count == 0)
+                {
+                    await LoadAsync();
+                    continue;
+                }
+
+                _sectionLoadCts?.Cancel();
+                _sectionLoadCts?.Dispose();
+                _sectionLoadCts = new CancellationTokenSource();
+                var generation = ++_sectionLoadGeneration;
+                LocalLog.AppendLine("home_refresh.txt", $"realtime | reason={reason} | generation={generation}");
+                await FetchSectionItemsInBatchesAsync(generation, _sectionLoadCts.Token);
+                _lastLoadedAt = DateTime.UtcNow;
+            }
+        }
+        catch (Exception ex)
+        {
+            LocalLog.AppendLine("home_error.txt", $"realtime_refresh | reason={reason} | {ex.GetType().Name}: {ex.Message}");
+        }
+        finally
+        {
+            _realtimeRefreshInProgress = false;
+        }
+    }
 
     [RelayCommand]
     private async Task LoadAsync()

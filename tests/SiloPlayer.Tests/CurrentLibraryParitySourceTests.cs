@@ -38,8 +38,12 @@ public sealed class CurrentLibraryParitySourceTests
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
         var card = ReadRepoFile("src", "SiloPlayer", "Controls", "LibraryGridCard.cs");
         var display = ReadRepoFile("src", "SiloPlayer.Core", "Services", "MediaItemDisplayText.cs");
+        var customization = ReadRepoFile("src", "SiloPlayer", "Services", "UICustomizationService.cs");
 
-        Assert.Contains(">= 1000 => 8", page);
+        Assert.Contains("_uiCustomizationService.CardPresentation.PosterSize switch", page);
+        Assert.Contains("\"compact\" => availableWidth switch", page);
+        Assert.Contains("\"large\" => availableWidth switch", page);
+        Assert.Contains("_ => contentWidth >= 1280 ? 8", customization);
         Assert.Contains("itemWidth * 1.5", page);
         Assert.Contains("isAudiobook ? itemWidth", page);
         Assert.Contains("string.Equals(item.Type, \"audiobook\"", card);

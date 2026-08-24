@@ -10,11 +10,19 @@ public partial class SignupViewModel : ObservableObject
 {
     private readonly AuthService _authService;
     private readonly AuthApi _authApi;
+    private readonly SettingsApi _settingsApi;
+    private readonly SiloApiClient _apiClient;
 
-    public SignupViewModel(AuthService authService, AuthApi authApi)
+    public SignupViewModel(
+        AuthService authService,
+        AuthApi authApi,
+        SettingsApi settingsApi,
+        SiloApiClient apiClient)
     {
         _authService = authService;
         _authApi = authApi;
+        _settingsApi = settingsApi;
+        _apiClient = apiClient;
     }
 
     [ObservableProperty]
@@ -50,6 +58,9 @@ public partial class SignupViewModel : ObservableObject
     [ObservableProperty]
     private string _serverName = "";
 
+    [ObservableProperty]
+    private string? _loginBackgroundUrl;
+
     /// <summary>
     /// Event raised when signup succeeds. The caller should navigate to the profile select page.
     /// </summary>
@@ -74,6 +85,7 @@ public partial class SignupViewModel : ObservableObject
     private async Task CheckSignupStatusAsync()
     {
         IsCheckingSignupStatus = true;
+        var brandingTask = LoadBrandingAsync();
         try
         {
             var status = await _authApi.GetSignupStatusAsync();
@@ -88,7 +100,23 @@ public partial class SignupViewModel : ObservableObject
         }
         finally
         {
+            await brandingTask;
             IsCheckingSignupStatus = false;
+        }
+    }
+
+    private async Task LoadBrandingAsync()
+    {
+        try
+        {
+            var branding = await _settingsApi.GetServerBrandingAsync();
+            ServerName = string.IsNullOrWhiteSpace(branding.ServerName) ? "Silo" : branding.ServerName;
+            LoginBackgroundUrl = _apiClient.ResolveServerUrl(branding.LoginBackgroundUrl);
+        }
+        catch
+        {
+            if (string.IsNullOrWhiteSpace(ServerName)) ServerName = "Silo";
+            LoginBackgroundUrl = null;
         }
     }
 

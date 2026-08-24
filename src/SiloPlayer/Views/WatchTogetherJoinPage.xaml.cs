@@ -146,7 +146,7 @@ public sealed partial class WatchTogetherJoinPage : Page
 
     private async void RoomCodeBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (e.Key == VirtualKey.Enter && !ViewModel.IsBusy)
+        if (e.Key == VirtualKey.Enter && ViewModel.CanJoin)
         {
             await ViewModel.JoinByCodeCommand.ExecuteAsync(null);
         }

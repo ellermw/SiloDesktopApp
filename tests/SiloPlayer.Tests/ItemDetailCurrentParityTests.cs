@@ -72,6 +72,7 @@ public sealed class ItemDetailCurrentParityTests
         var code = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
         var xaml = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml");
         var viewModel = Read("src", "SiloPlayer", "ViewModels", "ItemDetailViewModel.cs");
+        var customization = Read("src", "SiloPlayer", "Services", "UICustomizationService.cs");
 
         Assert.Contains("x:Name=\"DetailSkeletonHero\"", xaml);
         Assert.Contains("x:Name=\"DetailSkeletonPoster\" Width=\"220\" Height=\"330\"", xaml);
@@ -87,7 +88,8 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("TitleText.LineStackingStrategy = LineStackingStrategy.BlockLineHeight", code);
         Assert.Contains("TitleText.LineHeight = TitleText.FontSize * (isSeason ? 1.1d : 0.98d)", code);
         Assert.Contains("FontWeight=\"ExtraBold\"", xaml);
-        Assert.Contains("width >= 1280 ? 6", code);
+        Assert.Contains("_uiCustomizationService.GetPosterColumnCount(innerWidth)", code);
+        Assert.Contains("_ => contentWidth >= 1280 ? 8", customization);
         Assert.Contains("card.SetCatalogGridLayout(cardWidth)", code);
         Assert.Contains("response.Items.Take(12)", viewModel);
         Assert.Contains("x:Name=\"SeasonsPrevButton\"", xaml);
@@ -212,6 +214,21 @@ public sealed class ItemDetailCurrentParityTests
     }
 
     [Fact]
+    public void SplitVersionsOpensImmediatelyAndMatchesTheCurrentIdentitySearchDefaults()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+
+        Assert.Contains("Text = \"Loading files…\"", page);
+        Assert.Contains("dialog.Opened += async", page);
+        Assert.Contains("This item has only one file; splitting needs at least two.", page);
+        Assert.Contains("PlaceholderText = \"Title\"", page);
+        Assert.Contains("PlaceholderText = \"Year\"", page);
+        Assert.Contains("PlaceholderText = \"IMDb ID (tt…)\"", page);
+        Assert.Contains("Text = \"No candidates found.\"", page);
+        Assert.DoesNotContain("var title = new TextBox { Text = item.Title", page);
+    }
+
+    [Fact]
     public void MediaInfoUsesCurrentMultiVersionSpecSheetsAndAudioProfiles()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
@@ -247,7 +264,8 @@ public sealed class ItemDetailCurrentParityTests
         var web = ReadWeb("web", "src", "components", "MediaLocations.tsx");
 
         Assert.Contains("x:Name=\"HeroContextText\"", xaml);
-        Assert.Contains("item.Type == \"movie\" ? \"Movie\" : \"Series\"", page);
+        Assert.Contains("\"movie\" => \"Movie\"", page);
+        Assert.Contains("\"audiobook\" => \"Audiobook\"", page);
         Assert.Contains("AuthorizationPolicy.CanCurateMetadata(authService)", page);
         Assert.Contains("_watchDetail.Versions", page);
         Assert.Contains("space-y-3", web);
@@ -283,8 +301,8 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("return string.Join(\" · \", parts)", page);
         Assert.Contains("2 => \"stereo\"", page);
         Assert.Contains("Auto, Off, optional candidate sections", page);
-        Assert.Contains("var autoItem = CreateSubtitleMenuItem(\"Auto\")", page);
-        Assert.Contains("var offItem = CreateSubtitleMenuItem(\"Off\")", page);
+        Assert.Contains("CreateTrackSelectionRow(\"Auto\"", page);
+        Assert.Contains("CreateTrackSelectionRow(\"Off\"", page);
         Assert.Contains("Text = \"No subtitles available.\"", page);
         Assert.Contains("SubtitlesSummary.Text = \"Auto: Off\"", page);
         Assert.Contains("MediaLanguageCatalog.Label(sub.Language)", page);
@@ -297,8 +315,10 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("ThenByDescending(row => row.Track.Forced == true)", page);
         Assert.Contains("ThenByDescending(row => row.Track.Default == true)", page);
         Assert.Contains("OrderByDescending(entry => entry.Score)", page);
-        Assert.Contains("MinWidth = 300", page);
-        Assert.Contains("FormatSubtitleTrackMenuText", page);
+        Assert.Contains("SubtitleTrackDescription(sub)", page);
+        Assert.Contains("PersistPrePlaySubtitlePreferenceAsync", page);
+        Assert.Contains("ResetPrePlaySubtitlePreferenceAsync", page);
+        Assert.Contains("DeleteSubtitlePrefsAsync", page);
         Assert.DoesNotContain("Text = \"Add subtitles...\"", page);
         Assert.DoesNotContain("Add subtitles", web);
     }
@@ -317,6 +337,31 @@ public sealed class ItemDetailCurrentParityTests
     }
 
     [Fact]
+    public void TrailerAndCastRowsExposeTheCurrentWebUiCarouselInteractions()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var xaml = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml");
+        var trailers = ReadWeb("web", "src", "pages", "ItemDetail", "components", "TrailersSection.tsx");
+        var cast = ReadWeb("web", "src", "components", "CastCarousel.tsx");
+
+        Assert.Contains("useCarouselEmbla", trailers);
+        Assert.Contains("useCarouselEmbla", cast);
+        Assert.Contains("x:Name=\"TrailersScrollViewer\"", xaml);
+        Assert.Contains("x:Name=\"TrailersPrevButton\"", xaml);
+        Assert.Contains("x:Name=\"TrailersNextButton\"", xaml);
+        Assert.Contains("x:Name=\"CastPrevButton\"", xaml);
+        Assert.Contains("x:Name=\"CastNextButton\"", xaml);
+        Assert.Contains("PointerPressed=\"DetailCarousel_PointerPressed\"", xaml);
+        Assert.Contains("KeyDown=\"HorizontalCarousel_KeyDown\"", xaml);
+        Assert.Contains("ScrollDetailCarousel(TrailersScrollViewer", page);
+        Assert.Contains("ScrollDetailCarousel(CastScrollViewer", page);
+        Assert.Contains("CapturePointer(e.Pointer)", page);
+        Assert.Contains("UpdateDetailCarouselButtons", page);
+        Assert.Contains("UpdateDetailCarouselButtons(TrailersScrollViewer, TrailersPrevButton, TrailersNextButton)", page);
+        Assert.Contains("UpdateDetailCarouselButtons(CastScrollViewer, CastPrevButton, CastNextButton)", page);
+    }
+
+    [Fact]
     public void SplitVersionsAutomaticallyDebouncesItsDryRunPreview()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
@@ -326,6 +371,10 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("previewText.Text = \"Previewing…\"", page);
         Assert.Contains("dialog.IsPrimaryButtonEnabled = true", page);
         Assert.Contains("BuildSplitRequest(dryRun: false)", page);
+        Assert.Contains("dialog.PrimaryButtonClick += async", page);
+        Assert.Contains("args.Cancel = true", page);
+        Assert.Contains("dialog.PrimaryButtonText = \"Splitting…\"", page);
+        Assert.Contains("args.Cancel = false", page);
         Assert.DoesNotContain("PrimaryButtonText = \"Review Split\"", page);
         Assert.DoesNotContain("Title = \"Confirm Split\"", page);
     }
@@ -406,10 +455,20 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("AudiobookChaptersSection", xaml);
         Assert.Contains("MangaChaptersSection", xaml);
         Assert.Contains("BookRelatedSection", xaml);
+        Assert.Contains("AudiobookNarratorSection", xaml);
+        Assert.Contains("AudiobookChaptersToggleButton", xaml);
+        Assert.Contains("AudiobookChapterSortButton", xaml);
+        Assert.Contains("BookAuthorLine", xaml);
+        Assert.Contains("BookNarratorLine", xaml);
         Assert.Contains("Resume Reading", page);
         Assert.Contains("Listen from Start", xaml);
         Assert.Contains("new EbookReaderNavigation(target, _readerTargetFileId)", page);
-        Assert.Contains("startPositionOverride: seconds", page);
+        Assert.Contains("startPositionOverride: chapter.AbsoluteStart", page);
+        Assert.Contains("offset += Math.Max(0, version.Duration)", page);
+        Assert.Contains("OrderByDescending(row => row.DurationSeconds)", page);
+        Assert.Contains("Resume \\u00B7 {currentChapter.Label}", page);
+        Assert.Contains("BuildBookGenreLinks(item)", page);
+        Assert.Contains("Genre: genre", page);
         Assert.Contains("GetMangaSeriesFilesAsync", api);
         Assert.Contains("MangaDetailExtension", model);
         Assert.Contains("LoadMangaChapterPosterAsync", page);
@@ -510,9 +569,10 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("EpisodeContextText.Text = $\"S{item.SeasonNumber}", page);
         Assert.Contains("ItemSource = \"episode_carousel\"", page);
         Assert.Contains("nav.Navigate<ItemDetailPage>(MediaItem.ContentId)", landscape);
-        Assert.Contains("private void OnHeadingTapped", landscape);
+        Assert.Contains("private void OnHeadingClick", landscape);
+        Assert.Contains("MediaItem.ItemSource != \"episode_carousel\"", landscape);
         Assert.Contains("headingIsSeries ? MediaItem.SeriesId! : MediaItem.ContentId", landscape);
-        Assert.Contains("private void OnMetadataTapped", landscape);
+        Assert.Contains("private void OnMetadataClick", landscape);
         Assert.Contains("CurrentItemBorder.Visibility = CurrentItemBadge.Visibility", landscape);
         Assert.Contains("EpisodeWatchedBadge.Visibility", landscape);
     }

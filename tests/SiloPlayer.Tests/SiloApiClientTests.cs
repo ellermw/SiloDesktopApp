@@ -10,6 +10,22 @@ namespace SiloPlayer.Tests;
 public sealed class SiloApiClientTests
 {
     [Fact]
+    public void ResolveServerUrl_HandlesRootRelativeAndAbsoluteBrandingAssets()
+    {
+        var client = CreateClient(new DelegateHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound))));
+        client.SetBaseUrl("https://silo.example.test");
+
+        Assert.Equal(
+            "https://silo.example.test/api/v1/branding/assets/mark?v=one",
+            client.ResolveServerUrl("/api/v1/branding/assets/mark?v=one"));
+        Assert.Equal(
+            "https://cdn.example.test/brand.webp",
+            client.ResolveServerUrl("https://cdn.example.test/brand.webp"));
+        Assert.Null(client.ResolveServerUrl(" "));
+    }
+
+    [Fact]
     public async Task GetAsync_DisposesSuccessfulResponse()
     {
         TrackingResponse? response = null;
@@ -120,6 +136,7 @@ public sealed class SiloApiClientTests
     public async Task PlaybackStart_SendsFriendlyWindowsClientIdentityHeaders()
     {
         string? clientName = null;
+        string? clientFamily = null;
         string? clientVersion = null;
         string? path = null;
         var handler = new DelegateHandler((request, _) =>
@@ -127,6 +144,9 @@ public sealed class SiloApiClientTests
             path = request.RequestUri!.AbsolutePath;
             clientName = request.Headers.TryGetValues("X-Silo-Client", out var names)
                 ? names.SingleOrDefault()
+                : null;
+            clientFamily = request.Headers.TryGetValues("X-Silo-Client-Family", out var families)
+                ? families.SingleOrDefault()
                 : null;
             clientVersion = request.Headers.TryGetValues("X-Silo-Client-Version", out var versions)
                 ? versions.SingleOrDefault()
@@ -147,6 +167,7 @@ public sealed class SiloApiClientTests
 
         Assert.Equal("/api/v1/playback/start", path);
         Assert.Equal("Silo for Windows", clientName);
+        Assert.Equal("desktop", clientFamily);
         Assert.Null(clientVersion);
     }
 

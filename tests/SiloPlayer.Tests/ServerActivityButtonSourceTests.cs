@@ -21,6 +21,21 @@ public sealed class ServerActivityButtonSourceTests
         Assert.Contains(": \"Disconnected\"", source);
     }
 
+    [Fact]
+    public void ActiveCountBadgeMatchesTheCurrentWebUiPulseWithoutMovingItsHitTarget()
+    {
+        var root = FindRepositoryRoot();
+        var xaml = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Controls", "ServerActivityButton.xaml"));
+        var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Controls", "ServerActivityButton.xaml.cs"));
+
+        Assert.Contains("x:Name=\"CountBadgePulse\" RepeatBehavior=\"Forever\"", xaml);
+        Assert.Contains("Storyboard.TargetName=\"CountBadge\"", xaml);
+        Assert.Contains("Duration=\"0:0:2\"", xaml);
+        Assert.Contains("CountBadgePulse.Begin();", source);
+        Assert.Contains("CountBadgePulse.Stop();", source);
+        Assert.Contains("CountBadge.Opacity = 1;", source);
+    }
+
     private static string FindRepositoryRoot()
     {
         var dir = AppContext.BaseDirectory;

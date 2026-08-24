@@ -138,6 +138,11 @@ public sealed class CurrentItemCardParityTests
         Assert.Contains("View Play History", code);
         Assert.Contains("ShowRefreshMetadataDialogAsync", code);
         Assert.Contains("progress_updated_at = item.ProgressUpdatedAt", code);
+        Assert.Contains("var currentlyWatched = item.UserState?.Played == true", code);
+        Assert.Contains("var currentlyFavorite = item.UserState?.IsFavorite == true", code);
+        Assert.Contains("var currentlyInWatchlist = item.UserState?.InWatchlist == true", code);
+        Assert.Contains("if (!item.IsEnabled) return", code);
+        Assert.Contains("AutomationProperties.SetName(item, text)", code);
         Assert.DoesNotContain("AuthorizationPolicy.CanCurateMetadata(authService)", code);
 
         var restart = code.IndexOf("Play from Beginning", StringComparison.Ordinal);

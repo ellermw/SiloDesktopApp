@@ -54,6 +54,12 @@ public sealed class WatchTogetherCurrentParityTests
         Assert.Contains("End watch party?", code);
         Assert.Contains("inviteUri.ToString()", code);
         Assert.Contains("No suggestions yet — search for something to add.", code);
+        Assert.Contains("AutomationProperties.Name=\"Copy invite link\"", xaml);
+        Assert.Contains("x:Name=\"TerminalStatePanel\"", xaml);
+        Assert.Contains("This invite link is incomplete", code);
+        Assert.Contains("The link is missing its access token", code);
+        Assert.Contains("Start a new watch party or join another room", code);
+        Assert.Contains("ShowTerminalState", code);
     }
 
     private static string SourcePath(params string[] parts)

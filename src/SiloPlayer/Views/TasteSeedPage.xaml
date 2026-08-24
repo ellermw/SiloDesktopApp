@@ -35,9 +35,19 @@
         </Border>
         <ScrollViewer x:Name="ItemsScrollViewer" Grid.Row="1" ViewChanged="ItemsScrollViewer_ViewChanged">
             <StackPanel Padding="24" Spacing="20" MaxWidth="1152" HorizontalAlignment="Center">
-                <StackPanel Orientation="Horizontal" Spacing="12" Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
-                    <controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster />
-                </StackPanel>
+                <ItemsRepeater ItemsSource="{x:Bind SkeletonItems}"
+                               Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                    <ItemsRepeater.Layout>
+                        <UniformGridLayout MinItemWidth="147" MaximumRowsOrColumns="7"
+                                           MinColumnSpacing="12" MinRowSpacing="12"
+                                           ItemsJustification="Start" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate>
+                            <controls:SkeletonPoster Width="147" Height="221" />
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
                 <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" HorizontalAlignment="Center" Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}" />
                 <Border Padding="32" Background="{StaticResource SurfaceBrush}" CornerRadius="16" Visibility="{x:Bind ViewModel.ShowEmptyState, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                     <StackPanel Spacing="8" HorizontalAlignment="Center">
@@ -52,7 +62,8 @@
                     </ItemsRepeater.Layout>
                     <ItemsRepeater.ItemTemplate>
                         <DataTemplate x:DataType="vm:TasteSeedItemViewModel">
-                            <Button Tag="{x:Bind}" Click="Item_Click" Background="Transparent" BorderThickness="0" Padding="0" CornerRadius="12" HorizontalAlignment="Left">
+                            <Button Tag="{x:Bind}" Click="Item_Click" Background="Transparent" BorderThickness="0" Padding="0" CornerRadius="12" HorizontalAlignment="Left"
+                                    AutomationProperties.Name="{x:Bind AccessibleName, Mode=OneWay}">
                                 <Grid Width="147" Height="221" CornerRadius="12" Background="{StaticResource SurfaceBrush}">
                                     <TextBlock Text="{x:Bind Title}" TextWrapping="Wrap" TextAlignment="Center"
                                                VerticalAlignment="Center" Margin="12" Foreground="{StaticResource SecondaryTextBrush}"/>

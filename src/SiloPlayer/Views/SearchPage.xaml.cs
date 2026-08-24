@@ -6,12 +6,14 @@ using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Core.Models.Requests;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
 public sealed partial class SearchPage : Page
 {
     public SearchViewModel ViewModel { get; }
+    private readonly UICustomizationService _uiCustomizationService;
     private bool _filterInitializing = true;
     private bool _initialized;
     private bool _isNavigated;
@@ -24,6 +26,7 @@ public sealed partial class SearchPage : Page
     public SearchPage()
     {
         ViewModel = App.Services.GetRequiredService<SearchViewModel>();
+        _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Required;
         SearchLoadingRepeater.ItemsSource = Enumerable.Range(0, 24).ToArray();
@@ -68,6 +71,7 @@ public sealed partial class SearchPage : Page
     {
         base.OnNavigatedTo(e);
         _isNavigated = true;
+        _uiCustomizationService.Changed += UICustomization_Changed;
 
         if (e.NavigationMode == NavigationMode.Back && !string.IsNullOrWhiteSpace(ViewModel.Query))
         {
@@ -91,9 +95,9 @@ public sealed partial class SearchPage : Page
             SearchBox.Focus(FocusState.Programmatic);
         }
 
-        // The empty search surface is interactive immediately. Settings and
-        // filter metadata warm in parallel, but never block the primary
-        // catalog request when the user starts typing.
+        // The empty search surface is interactive immediately. The saved
+        // scope loads without blocking typing; query facets remain deferred
+        // until the user opens the filter sheet.
         _ = EnsureInitializedAsync();
     }
 
@@ -104,8 +108,8 @@ public sealed partial class SearchPage : Page
     private async Task InitializeAsync()
     {
         // The empty WebUI search surface does not enumerate every catalog
-        // facet. Load the lightweight saved scope immediately, then warm
-        // query-scoped filters only after primary results are visible.
+        // facet. Load only the lightweight saved scope here; query-scoped
+        // filters are requested on demand when the filter sheet opens.
         await ViewModel.LoadMediaScopeAsync();
         _filterInitializing = false;
         _initialized = true;
@@ -163,7 +167,7 @@ public sealed partial class SearchPage : Page
         await EnsureInitializedAsync();
         await ViewModel.SetMediaScopeAsync(scope);
         UpdateScopeButtons();
-        _ = EnsureSearchFiltersLoadedAsync();
+        RefreshOpenSearchFilters();
     }
 
     private void UpdateScopeButtons()
@@ -236,12 +240,90 @@ public sealed partial class SearchPage : Page
         RequestResultsSection.Visibility = ViewModel.OutsideLibraryResults.Count > 0
             ? Visibility.Visible
             : Visibility.Collapsed;
+        var hasLibraryHits = ViewModel.Results.Count > 0;
+        RequestResultsEyebrow.Text = hasLibraryHits
+            ? "Discover · Outside your library"
+            : "Outside your library";
+        RequestResultsTitle.Text = hasLibraryHits
+            ? "Request to Add"
+            : "Not in your library, but you can request";
+        var count = ViewModel.OutsideLibraryResults.Count;
+        RequestResultsCount.Text = $"{count} {(count == 1 ? "result" : "results")}";
     }
 
     private void RequestResult_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: RequestMediaResult item })
             App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(item.MediaType, item.TmdbId));
+    }
+
+    private async void RequestNow_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: RequestMediaResult item } button || !item.Request.Requestable)
+            return;
+
+        button.IsEnabled = false;
+        var previousContent = button.Content;
+        button.Content = "Requesting…";
+        try
+        {
+            var created = await App.Services.GetRequiredService<SiloPlayer.Core.Api.RequestsApi>()
+                .CreateAsync(new CreateMediaRequestInput
+                {
+                    MediaType = item.MediaType,
+                    TmdbId = item.TmdbId,
+                    Title = item.Title,
+                    Year = item.Year,
+                    Overview = item.Overview,
+                    PosterPath = item.PosterPath,
+                    BackdropPath = item.BackdropPath,
+                });
+            item.Request.Requestable = false;
+            item.Request.Status = created.Status;
+            item.Request.RequestId = created.Id;
+            button.Content = item.RequestLabel;
+            App.Services.GetRequiredService<ToastService>().Success("Request submitted");
+        }
+        catch (Exception ex)
+        {
+            button.Content = previousContent;
+            button.IsEnabled = true;
+            App.Services.GetRequiredService<ToastService>().Error($"Request failed: {ex.Message}");
+        }
+    }
+
+    private static Border? FindRequestOverlay(object sender)
+        => sender is Grid grid
+            ? grid.Children.OfType<Border>().FirstOrDefault(border => Equals(border.Tag, "request-overlay"))
+            : null;
+
+    private void RequestCard_PointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        if (FindRequestOverlay(sender) is not { } overlay) return;
+        overlay.Opacity = 1;
+        overlay.IsHitTestVisible = true;
+    }
+
+    private void RequestCard_PointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        if (FindRequestOverlay(sender) is not { } overlay) return;
+        overlay.Opacity = 0;
+        overlay.IsHitTestVisible = false;
+    }
+
+    private void RequestCard_GotFocus(object sender, RoutedEventArgs e)
+    {
+        if (FindRequestOverlay(sender) is not { } overlay) return;
+        overlay.Opacity = 1;
+        overlay.IsHitTestVisible = true;
+    }
+
+    private void RequestCard_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is Grid grid && grid.FocusState != FocusState.Unfocused) return;
+        if (FindRequestOverlay(sender) is not { } overlay) return;
+        overlay.Opacity = 0;
+        overlay.IsHitTestVisible = false;
     }
 
     private DispatcherTimer? _searchDebounce;
@@ -292,7 +374,7 @@ public sealed partial class SearchPage : Page
             ShowResultsShellForCurrentQuery();
 
             await ViewModel.SearchCommand.ExecuteAsync(null);
-            _ = EnsureSearchFiltersLoadedAsync();
+            RefreshOpenSearchFilters();
         };
         _searchDebounce.Start();
     }
@@ -342,7 +424,7 @@ public sealed partial class SearchPage : Page
         _searchDebounce?.Stop();
         ShowResultsShellForCurrentQuery();
         await ViewModel.SearchCommand.ExecuteAsync(null);
-        _ = EnsureSearchFiltersLoadedAsync();
+        RefreshOpenSearchFilters();
     }
 
     private void PersonCard_Click(object sender, RoutedEventArgs e)
@@ -422,21 +504,17 @@ public sealed partial class SearchPage : Page
 
     private void UpdateCatalogGridLayout(double viewportWidth, double gutter)
     {
-        var columns = viewportWidth >= 1280 ? 8
-            : viewportWidth >= 1024 ? 7
-            : viewportWidth >= 768 ? 5
-            : viewportWidth >= 640 ? 4
-            : 3;
         var contentWidth = Math.Max(
             320,
             Math.Min(1400 - (gutter * 2), viewportWidth - (gutter * 2)));
+        var columns = _uiCustomizationService.GetPosterColumnCount(contentWidth);
         _catalogCardWidth = Math.Max(96, (contentWidth - (12 * (columns - 1))) / columns);
         ResultsGridLayout.MaximumRowsOrColumns = columns;
         ResultsGridLayout.MinItemWidth = _catalogCardWidth;
-        ResultsGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + 56;
+        ResultsGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight;
         SearchLoadingGridLayout.MaximumRowsOrColumns = columns;
         SearchLoadingGridLayout.MinItemWidth = _catalogCardWidth;
-        SearchLoadingGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + 43;
+        SearchLoadingGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight;
         for (var index = 0; index < ViewModel.Results.Count; index++)
             if (ResultsRepeater.TryGetElement(index) is SiloPlayer.Controls.PosterCard card)
                 card.SetCatalogGridLayout(_catalogCardWidth);
@@ -472,10 +550,20 @@ public sealed partial class SearchPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         _isNavigated = false;
+        _uiCustomizationService.Changed -= UICustomization_Changed;
         _searchDebounce?.Stop();
         ViewModel.CancelPendingSearch();
         base.OnNavigatedFrom(e);
     }
+
+    private void UICustomization_Changed(object? sender, EventArgs e)
+        => DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_isNavigated) return;
+            var width = Math.Max(320, ActualWidth);
+            var gutter = width < 640 ? 16d : width < 1024 ? 24d : 40d;
+            UpdateCatalogGridLayout(width, gutter);
+        });
 
     private Task EnsureSearchFiltersLoadedAsync()
     {
@@ -492,6 +580,15 @@ public sealed partial class SearchPage : Page
         _searchFiltersTaskKey = key;
         _searchFiltersTask = LoadSearchFiltersCoreAsync(key, query, mediaType);
         return _searchFiltersTask;
+    }
+
+    private void RefreshOpenSearchFilters()
+    {
+        // The current WebUI requests query facets only while the filter sheet
+        // is actually open. A normal keystroke search must not start a second,
+        // potentially expensive catalog aggregation beside the visible query.
+        if (ResultFiltersSheet.IsOpen)
+            _ = EnsureSearchFiltersLoadedAsync();
     }
 
     private async Task LoadSearchFiltersCoreAsync(string key, string query, string? mediaType)
@@ -550,7 +647,7 @@ public sealed partial class SearchPage : Page
         {
             await ViewModel.SetMediaTypeAsync(SelectedTag(ResultTypeCombo));
             UpdateScopeButtons();
-            _ = EnsureSearchFiltersLoadedAsync();
+            RefreshOpenSearchFilters();
             return;
         }
 
@@ -566,7 +663,7 @@ public sealed partial class SearchPage : Page
     private async void ResultSort_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_filterInitializing) return;
-        ViewModel.SortField = SelectedTag(ResultSortCombo) ?? "relevance";
+        ViewModel.SortField = SelectedTag(ResultSortCombo) ?? "added_at";
         var ascending = ViewModel.SortField is "title" or "content_rating" or "author" or "narrator" or "series";
         _filterInitializing = true;
         SelectComboTag(ResultOrderCombo, ascending ? "asc" : "desc");

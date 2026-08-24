@@ -6,6 +6,8 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:converters="using:SiloPlayer.Converters"
+    xmlns:controls="using:SiloPlayer.Controls"
+    xmlns:models="using:SiloPlayer.Core.Models.Home"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}"
     Loaded="Page_Loaded">
@@ -33,6 +35,7 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
 
                     <Button
@@ -41,10 +44,7 @@
                         Margin="0,8,14,0"
                         VerticalAlignment="Top"
                         Click="BackButton_Click">
-                        <StackPanel Orientation="Horizontal" Spacing="6">
-                            <FontIcon Glyph="&#xE72B;" FontSize="14" />
-                            <TextBlock Text="Back to Collections" FontSize="13" />
-                        </StackPanel>
+                        <FontIcon Glyph="&#xE72B;" FontSize="14" />
                     </Button>
 
                     <StackPanel Grid.Column="1" Spacing="6">
@@ -62,17 +62,16 @@
                             TextWrapping="Wrap"
                             MaxWidth="720" />
                     </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Bottom" Margin="24,0,0,4">
+                        <Border x:Name="FiltersStepBadge" CornerRadius="14" Padding="12,6" Background="{StaticResource AccentBackgroundBrush}">
+                            <TextBlock x:Name="FiltersStepText" Text="1  Filters" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" />
+                        </Border>
+                        <FontIcon Glyph="&#xE76C;" FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
+                        <Border x:Name="DetailsStepBadge" CornerRadius="14" Padding="12,6" Background="{StaticResource SurfaceBrush}">
+                            <TextBlock x:Name="DetailsStepText" Text="2  Details" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                        </Border>
+                    </StackPanel>
                 </Grid>
-
-                <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Left">
-                    <Border x:Name="FiltersStepBadge" CornerRadius="14" Padding="12,6" Background="{StaticResource AccentBackgroundBrush}">
-                        <TextBlock Text="1  Filters" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" />
-                    </Border>
-                    <FontIcon Glyph="&#xE76C;" FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
-                    <Border x:Name="DetailsStepBadge" CornerRadius="14" Padding="12,6" Background="{StaticResource SurfaceBrush}">
-                        <TextBlock Text="2  Details" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
-                    </Border>
-                </StackPanel>
 
                 <Border
                     Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
@@ -100,219 +99,220 @@
                         <Border
                             x:Name="DetailsStepPanel"
                             Visibility="Collapsed"
-                            Background="{StaticResource CardBackgroundBrush}"
-                            BorderBrush="{StaticResource BorderBrush}"
-                            BorderThickness="1"
-                            CornerRadius="18"
-                            Padding="22,20">
-                            <StackPanel Spacing="16">
-                                <TextBlock
-                                    Text="Details"
-                                    FontSize="18"
-                                    FontWeight="SemiBold"
-                                    Foreground="{StaticResource PrimaryTextBrush}" />
-
-                                <StackPanel Spacing="6">
-                                    <TextBlock Text="Title" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <TextBox
-                                        Style="{StaticResource DarkTextBoxStyle}"
-                                        PlaceholderText="A collection worth building"
-                                        Text="{x:Bind ViewModel.Title, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Padding="0">
+                            <StackPanel Spacing="18">
+                            <Button x:Name="TopBackToFiltersButton"
+                                    Style="{StaticResource GhostButtonStyle}"
+                                    HorizontalAlignment="Left"
+                                    Click="BackToFilters_Click">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE72B;" FontSize="12" />
+                                    <TextBlock Text="Back to Filters" />
                                 </StackPanel>
-
-                                <StackPanel Spacing="6">
-                                    <TextBlock Text="Description" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <TextBox
-                                        Style="{StaticResource DarkTextBoxStyle}"
-                                        PlaceholderText="Optional description"
-                                        Text="{x:Bind ViewModel.Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                        AcceptsReturn="True"
-                                        TextWrapping="Wrap"
-                                        Height="84" />
+                            </Button>
+                            <Grid x:Name="DetailsGrid" ColumnSpacing="28" RowSpacing="24">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="300" />
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <StackPanel Spacing="20">
+                                    <StackPanel Spacing="6">
+                                        <TextBlock Text="Name" FontSize="13" FontWeight="SemiBold" />
+                                        <TextBox Style="{StaticResource DarkTextBoxStyle}"
+                                                 PlaceholderText="e.g. Saturday Night Movies"
+                                                 Text="{x:Bind ViewModel.Title, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                    <StackPanel x:Name="DescriptionPanel" Spacing="6" Visibility="Collapsed">
+                                        <TextBlock Text="Description" FontSize="13" FontWeight="SemiBold" />
+                                        <TextBox Style="{StaticResource DarkTextBoxStyle}" PlaceholderText="Optional description"
+                                                 Text="{x:Bind ViewModel.Description, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 AcceptsReturn="True" TextWrapping="Wrap" Height="84" />
+                                    </StackPanel>
+                                    <TextBlock Text="Sharing" FontSize="16" FontWeight="SemiBold" />
+                                    <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}"
+                                            BorderThickness="1" CornerRadius="12" Padding="14">
+                                        <Grid ColumnSpacing="18">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel Spacing="3">
+                                                <TextBlock Text="Share with this account" FontSize="13" FontWeight="SemiBold" />
+                                                <TextBlock Text="Shared collections appear for the selected profiles across the account."
+                                                           FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
+                                            </StackPanel>
+                                            <ToggleSwitch x:Name="SharedToggle" Grid.Column="1" VerticalAlignment="Center"
+                                                          IsOn="{x:Bind ViewModel.IsShared, Mode=TwoWay}"
+                                                          Toggled="SharedToggle_Toggled" OnContent="" OffContent="" />
+                                        </Grid>
+                                    </Border>
+                                    <StackPanel x:Name="ProfileAccessSection" Spacing="8" Visibility="Collapsed">
+                                        <TextBlock Text="Profiles" FontSize="13" FontWeight="SemiBold" />
+                                        <StackPanel x:Name="ProfilesPanel" Spacing="4" />
+                                    </StackPanel>
+                                    <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}"
+                                            BorderThickness="1" CornerRadius="12" Padding="14">
+                                        <Grid ColumnSpacing="18">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                            <StackPanel Spacing="3">
+                                                <TextBlock Text="Show in my library Collections tab" FontSize="13" FontWeight="SemiBold" />
+                                                <TextBlock Text="Pin this collection to your library's Collections tab alongside the admin shelves. Only you see it — personal collections are private to your user."
+                                                           FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
+                                            </StackPanel>
+                                            <ToggleSwitch x:Name="IncludeServerToggle" Grid.Column="1" VerticalAlignment="Center"
+                                                          IsOn="{x:Bind ViewModel.IncludeInServerCollections, Mode=TwoWay}"
+                                                          OnContent="" OffContent="" />
+                                        </Grid>
+                                    </Border>
+                                    <ToggleSwitch x:Name="FeaturedToggle" Visibility="Collapsed"
+                                                  IsOn="{x:Bind ViewModel.Featured, Mode=TwoWay}"
+                                                  Header="Featured" OnContent="Enabled" OffContent="Disabled" />
+                                    <StackPanel x:Name="AdminVisibilityPanel" Spacing="6" Visibility="Collapsed">
+                                        <TextBlock Text="Visibility" FontSize="13" FontWeight="SemiBold" />
+                                        <ComboBox x:Name="VisibilityCombo" HorizontalAlignment="Stretch" CornerRadius="8" SelectionChanged="VisibilityCombo_SelectionChanged">
+                                            <ComboBoxItem Content="Visible" Tag="visible" />
+                                            <ComboBoxItem Content="Hidden" Tag="hidden" />
+                                        </ComboBox>
+                                    </StackPanel>
                                 </StackPanel>
-
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" Spacing="6">
-                                        <TextBlock Text="Media Scope" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
-                                        <ComboBox x:Name="MediaScopeCombo" HorizontalAlignment="Stretch" CornerRadius="8" SelectionChanged="MediaScopeCombo_SelectionChanged" />
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1" Spacing="6">
-                                        <TextBlock Text="Limit" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
-                                        <TextBox
-                                            Style="{StaticResource DarkTextBoxStyle}"
-                                            PlaceholderText="No limit"
-                                            Text="{x:Bind ViewModel.LimitText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                                    </StackPanel>
-                                </Grid>
-
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" Spacing="6">
-                                        <TextBlock Text="Sort" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
-                                        <ComboBox x:Name="SortFieldCombo" HorizontalAlignment="Stretch" CornerRadius="8" SelectionChanged="SortFieldCombo_SelectionChanged" />
-                                    </StackPanel>
-                                    <StackPanel Grid.Column="1" Spacing="6">
-                                        <TextBlock Text="Order" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
-                                        <ComboBox x:Name="SortOrderCombo" HorizontalAlignment="Stretch" CornerRadius="8" SelectionChanged="SortOrderCombo_SelectionChanged" />
-                                    </StackPanel>
-                                </Grid>
-
-                                <ToggleSwitch
-                                    x:Name="SharedToggle"
-                                    IsOn="{x:Bind ViewModel.IsShared, Mode=TwoWay}"
-                                    Toggled="SharedToggle_Toggled"
-                                    OnContent="Shared with all profiles"
-                                    OffContent="Private to your profile" />
-                                <StackPanel x:Name="ProfileAccessSection" Spacing="8" Visibility="Collapsed">
-                                    <TextBlock Text="Profile access" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <TextBlock Text="Choose profiles that can access this shared collection. Leave all unchecked to allow every profile."
-                                               FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
-                                    <StackPanel x:Name="ProfilesPanel" Spacing="4" />
-                                </StackPanel>
-                                <ToggleSwitch
-                                    x:Name="IncludeServerToggle"
-                                    IsOn="{x:Bind ViewModel.IncludeInServerCollections, Mode=TwoWay}"
-                                    OnContent="Include on server collection surfaces"
-                                    OffContent="Hide from server collection surfaces" />
-                                <ToggleSwitch
-                                    x:Name="FeaturedToggle"
-                                    IsOn="{x:Bind ViewModel.Featured, Mode=TwoWay}"
-                                    OnContent="Featured in library"
-                                    OffContent="Not featured" />
-
-                                <StackPanel x:Name="AdminVisibilityPanel" Spacing="6" Visibility="Collapsed">
-                                    <TextBlock Text="Visibility" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <ComboBox x:Name="VisibilityCombo" HorizontalAlignment="Stretch" CornerRadius="8" SelectionChanged="VisibilityCombo_SelectionChanged">
-                                        <ComboBoxItem Content="Visible" Tag="visible" />
-                                        <ComboBoxItem Content="Hidden" Tag="hidden" />
-                                    </ComboBox>
-                                </StackPanel>
-
-                                <StackPanel Spacing="6">
-                                    <TextBlock Text="Poster" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Button Content="Choose image" Style="{StaticResource OutlineButtonStyle}" Click="ChoosePoster_Click" />
-                                        <TextBlock x:Name="PosterFileStatusText" Text="Upload a JPG, PNG, or WebP (max 20 MB)."
-                                                   FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
-                                    </StackPanel>
-                                    <TextBox
-                                        Style="{StaticResource DarkTextBoxStyle}"
-                                        PlaceholderText="Or paste a poster image URL"
-                                        Text="{x:Bind ViewModel.PosterSourceUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                                </StackPanel>
-
-                                <StackPanel x:Name="AdminBackdropPanel" Spacing="6" Visibility="Collapsed">
-                                    <TextBlock Text="Backdrop" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Button Content="Choose image" Style="{StaticResource OutlineButtonStyle}" Click="ChooseBackdrop_Click" />
-                                        <TextBlock x:Name="BackdropFileStatusText" Text="Upload a wide JPG, PNG, or WebP (max 20 MB)."
-                                                   FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
-                                    </StackPanel>
-                                    <TextBox Style="{StaticResource DarkTextBoxStyle}"
-                                             PlaceholderText="Or paste a backdrop image URL"
-                                             Text="{x:Bind ViewModel.BackdropSourceUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                                </StackPanel>
-                            </StackPanel>
-                        </Border>
-
-                        <Border
-                            x:Name="FiltersStepRulesPanel"
-                            Background="{StaticResource CardBackgroundBrush}"
-                            BorderBrush="{StaticResource BorderBrush}"
-                            BorderThickness="1"
-                            CornerRadius="18"
-                            Padding="22,20">
-                            <StackPanel Spacing="16">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <TextBlock
-                                        Text="Rules"
-                                        FontSize="18"
-                                        FontWeight="SemiBold"
-                                        Foreground="{StaticResource PrimaryTextBrush}" />
-                                    <Button
-                                        Grid.Column="1"
-                                        Style="{StaticResource GhostButtonStyle}"
-                                        Click="AddRule_Click">
-                                        <StackPanel Orientation="Horizontal" Spacing="6">
-                                            <FontIcon Glyph="&#xE710;" FontSize="13" />
-                                            <TextBlock Text="Add Rule" />
+                                <StackPanel x:Name="PosterDetailsPanel" Grid.Column="1" Spacing="10">
+                                    <TextBlock Text="Poster" FontSize="16" FontWeight="SemiBold" />
+                                    <Button Style="{StaticResource OutlineButtonStyle}"
+                                            HorizontalAlignment="Stretch" Height="128" Click="ChoosePoster_Click">
+                                        <StackPanel Spacing="8" HorizontalAlignment="Center">
+                                            <FontIcon Glyph="&#xE898;" FontSize="22" />
+                                            <TextBlock Text="Click or drop image" />
                                         </StackPanel>
                                     </Button>
-                                </Grid>
-
-                                <ComboBox x:Name="MatchModeCombo" HorizontalAlignment="Left" MinWidth="180" CornerRadius="8" SelectionChanged="MatchModeCombo_SelectionChanged" />
-                                <StackPanel x:Name="RulesPanel" Spacing="10" />
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-
-                    <StackPanel x:Name="FiltersStepPreviewPanel" Grid.Column="1" Spacing="18">
-                        <Border
-                            Background="{StaticResource CardBackgroundBrush}"
-                            BorderBrush="{StaticResource BorderBrush}"
-                            BorderThickness="1"
-                            CornerRadius="18"
-                            Padding="22,20">
-                            <StackPanel Spacing="14">
-                                <TextBlock
-                                    Text="Libraries"
-                                    FontSize="18"
-                                    FontWeight="SemiBold"
-                                    Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock
-                                    Text="Leave every library unchecked to match all visible libraries."
-                                    FontSize="12"
-                                    Foreground="{StaticResource TertiaryTextBrush}"
-                                    TextWrapping="Wrap" />
-                                <ScrollViewer MaxHeight="190" VerticalScrollBarVisibility="Auto">
-                                    <StackPanel x:Name="LibrariesPanel" Spacing="4" />
-                                </ScrollViewer>
+                                    <TextBlock x:Name="PosterFileStatusText" Text="Upload a JPG, PNG, or WebP (max 20 MB)."
+                                               FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
+                                    <TextBox Style="{StaticResource DarkTextBoxStyle}" PlaceholderText="https://example.com/image.jpg"
+                                             Text="{x:Bind ViewModel.PosterSourceUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    <TextBlock Text="Paste an image URL instead of uploading a file. If both are provided, the uploaded file wins."
+                                               FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
+                                    <StackPanel x:Name="AdminBackdropPanel" Spacing="6" Visibility="Collapsed">
+                                        <TextBlock Text="Backdrop" FontSize="13" FontWeight="SemiBold" />
+                                        <Button Content="Choose image" Style="{StaticResource OutlineButtonStyle}" Click="ChooseBackdrop_Click" />
+                                        <TextBlock x:Name="BackdropFileStatusText" Text="Upload a wide JPG, PNG, or WebP (max 20 MB)."
+                                                   FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" />
+                                        <TextBox Style="{StaticResource DarkTextBoxStyle}" PlaceholderText="Or paste a backdrop image URL"
+                                                 Text="{x:Bind ViewModel.BackdropSourceUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Grid>
                             </StackPanel>
                         </Border>
 
-                        <Border
-                            Background="{StaticResource CardBackgroundBrush}"
-                            BorderBrush="{StaticResource BorderBrush}"
-                            BorderThickness="1"
-                            CornerRadius="18"
-                            Padding="22,20">
-                            <StackPanel Spacing="14">
-                                <Grid>
+                        <StackPanel x:Name="FiltersStepRulesPanel" Spacing="18">
+                            <controls:WrapPanel HorizontalSpacing="10" VerticalSpacing="10">
+                                <ComboBox x:Name="MediaScopeCombo" MinWidth="160" CornerRadius="8" SelectionChanged="MediaScopeCombo_SelectionChanged" />
+                                <ComboBox x:Name="SortFieldCombo" MinWidth="160" CornerRadius="8" SelectionChanged="SortFieldCombo_SelectionChanged" />
+                                <ComboBox x:Name="SortOrderCombo" MinWidth="140" CornerRadius="8" SelectionChanged="SortOrderCombo_SelectionChanged" />
+                                <Button x:Name="FiltersButton" Style="{StaticResource OutlineButtonStyle}" Click="FiltersButton_Click">
+                                    <StackPanel Orientation="Horizontal" Spacing="7">
+                                        <FontIcon Glyph="&#xE71C;" FontSize="13" />
+                                        <TextBlock Text="Filters" />
+                                    </StackPanel>
+                                </Button>
+                                <TextBlock x:Name="PreviewCountTextBlock" Text="Loading items…" FontSize="13"
+                                           Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" Margin="4,0,0,0" />
+                            </controls:WrapPanel>
+
+                            <Border x:Name="FiltersAdvancedPanel" Visibility="Collapsed"
+                                    Background="{StaticResource CardBackgroundBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                    CornerRadius="14" Padding="18">
+                                <StackPanel Spacing="14">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="3">
+                                            <TextBlock Text="Filters" FontSize="17" FontWeight="SemiBold" />
+                                            <TextBlock Text="Choose libraries and add rules to refine this collection."
+                                                       FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" />
+                                        </StackPanel>
+                                        <Button Grid.Column="1" Style="{StaticResource GhostButtonStyle}" Click="FiltersButton_Click"
+                                                ToolTipService.ToolTip="Close filters">
+                                            <FontIcon Glyph="&#xE711;" FontSize="13" />
+                                        </Button>
+                                    </Grid>
+                                    <StackPanel Spacing="7">
+                                        <TextBlock Text="Libraries" FontSize="13" FontWeight="SemiBold" />
+                                        <TextBlock Text="Leave every library unchecked to match all visible libraries."
+                                                   FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
+                                        <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto">
+                                            <StackPanel x:Name="LibrariesPanel" Spacing="4" />
+                                        </ScrollViewer>
+                                    </StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <ComboBox x:Name="MatchModeCombo" MinWidth="180" HorizontalAlignment="Left" CornerRadius="8"
+                                                  SelectionChanged="MatchModeCombo_SelectionChanged" />
+                                        <Button Grid.Column="1" Style="{StaticResource GhostButtonStyle}" Click="AddRule_Click">
+                                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                                <FontIcon Glyph="&#xE710;" FontSize="13" />
+                                                <TextBlock Text="Add filter" />
+                                            </StackPanel>
+                                        </Button>
+                                    </Grid>
+                                    <StackPanel x:Name="RulesPanel" Spacing="10" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}"
+                                    BorderThickness="1" CornerRadius="14" Padding="18,14">
+                                <Grid ColumnSpacing="18">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="180" />
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" Spacing="2">
-                                        <TextBlock
-                                            Text="Preview"
-                                            FontSize="18"
-                                            FontWeight="SemiBold"
-                                            Foreground="{StaticResource PrimaryTextBrush}" />
-                                        <TextBlock
-                                            Text="{x:Bind PreviewCountText, Mode=OneTime}"
-                                            FontSize="12"
-                                            Foreground="{StaticResource TertiaryTextBrush}" />
+                                    <StackPanel Spacing="3" VerticalAlignment="Center">
+                                        <TextBlock Text="Max items" FontSize="14" FontWeight="SemiBold" />
+                                        <TextBlock Text="Caps saved collection results. Use 1–500."
+                                                   FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
                                     </StackPanel>
-                                    <ProgressRing Grid.Column="1"
-                                                  IsActive="{x:Bind ViewModel.IsPreviewing, Mode=OneWay}"
-                                                  Visibility="{x:Bind ViewModel.IsPreviewing, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                                                  Width="18" Height="18" />
+                                    <TextBox Grid.Column="1" Style="{StaticResource DarkTextBoxStyle}" PlaceholderText="No limit"
+                                             Text="{x:Bind ViewModel.LimitText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             TextChanged="LimitTextBox_TextChanged" />
                                 </Grid>
-                                <StackPanel x:Name="PreviewItemsPanel" Spacing="6" />
+                            </Border>
+
+                            <ProgressRing x:Name="PreviewLoadingRing" Width="32" Height="32" HorizontalAlignment="Center"
+                                          IsActive="{x:Bind ViewModel.IsPreviewing, Mode=OneWay}"
+                                          Visibility="{x:Bind ViewModel.IsPreviewing, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
+                            <StackPanel x:Name="PreviewEmptyPanel" Visibility="Collapsed" Spacing="5" HorizontalAlignment="Center" Margin="0,42">
+                                <TextBlock Text="No titles match these filters yet." FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                <TextBlock Text="Loosen the filters above to see what your collection would include."
+                                           FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" HorizontalAlignment="Center" />
                             </StackPanel>
-                        </Border>
+                            <ItemsRepeater x:Name="PreviewItemsRepeater"
+                                           ItemsSource="{x:Bind ViewModel.PreviewMediaItems, Mode=OneWay}">
+                                <ItemsRepeater.Layout>
+                                    <UniformGridLayout MinItemWidth="150"
+                                                       MinItemHeight="260"
+                                                       MinColumnSpacing="12"
+                                                       MinRowSpacing="18"
+                                                       ItemsStretch="Fill"
+                                                       MaximumRowsOrColumns="6" />
+                                </ItemsRepeater.Layout>
+                                <ItemsRepeater.ItemTemplate>
+                                    <DataTemplate x:DataType="models:MediaItem">
+                                        <controls:PosterCard MediaItem="{x:Bind}" />
+                                    </DataTemplate>
+                                </ItemsRepeater.ItemTemplate>
+                            </ItemsRepeater>
+                        </StackPanel>
                     </StackPanel>
+
+                    <StackPanel x:Name="FiltersStepPreviewPanel" Grid.Column="1" Visibility="Collapsed" />
                 </Grid>
 
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
@@ -325,13 +325,8 @@
                         x:Name="BackToFiltersButton"
                         Visibility="Collapsed"
                         Style="{StaticResource GhostButtonStyle}"
-                        Content="Back to Filters"
+                        Content="Back"
                         Click="BackToFilters_Click" />
-                    <Button
-                        x:Name="ContinueButton"
-                        Style="{StaticResource AccentButtonStyle}"
-                        Content="Continue to Details"
-                        Click="ContinueToDetails_Click" />
                     <Button
                         x:Name="SaveButton"
                         Visibility="Collapsed"
@@ -350,5 +345,17 @@
                 </StackPanel>
             </StackPanel>
         </ScrollViewer>
+
+        <Border x:Name="FilterActionBar" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                Margin="0,0,28,24" Padding="14,10" CornerRadius="14"
+                Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="1" Canvas.ZIndex="30">
+            <StackPanel Orientation="Horizontal" Spacing="14">
+                <TextBlock x:Name="NextSummaryText" Text="Choose filters to preview matching titles"
+                           FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
+                <Button x:Name="ContinueButton" Style="{StaticResource AccentButtonStyle}"
+                        Content="Next: Details" Click="ContinueToDetails_Click" />
+            </StackPanel>
+        </Border>
     </Grid>
 </Page>

@@ -30,10 +30,17 @@
             <TextBlock Text="Who's watching?" FontSize="64" FontWeight="ExtraBold" Foreground="{StaticResource PrimaryTextBrush}" HorizontalAlignment="Center" />
             <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{StaticResource ErrorBrush}" HorizontalAlignment="Center" TextWrapping="Wrap" />
             <ItemsControl ItemsSource="{x:Bind ViewModel.Profiles, Mode=OneWay}" HorizontalAlignment="Center">
-                <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="20" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <ItemsWrapGrid Orientation="Horizontal" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Button Click="ProfileButton_Click" Tag="{Binding}" Background="Transparent" BorderThickness="0" Padding="0" PointerEntered="ProfileCard_PointerEntered" PointerExited="ProfileCard_PointerExited">
+                        <Button Click="ProfileButton_Click" Tag="{Binding}" Background="Transparent"
+                                BorderThickness="0" Padding="0" Margin="10"
+                                AutomationProperties.Name="{Binding SelectProfileAccessibleName}"
+                                PointerEntered="ProfileCard_PointerEntered" PointerExited="ProfileCard_PointerExited">
                             <Border x:Name="ProfileCardBorder" Width="148" Background="{StaticResource SurfaceBrush}" CornerRadius="28" Padding="20" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
                                 <StackPanel Spacing="12" HorizontalAlignment="Center">
                                     <Grid Width="80" Height="80">

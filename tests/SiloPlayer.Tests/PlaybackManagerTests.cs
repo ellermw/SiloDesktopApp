@@ -28,6 +28,11 @@ public sealed class PlaybackManagerTests
             Assert.Contains("\"truehd\"", handler.LastStartBody);
             Assert.Contains("\"hdr10_plus\":true", handler.LastStartBody);
             Assert.Contains("\"dolby_vision_profiles\":[5,8]", handler.LastStartBody);
+            Assert.Contains("\"protocol_version\":3", handler.LastStartBody);
+            Assert.Contains("\"client_features\":[\"playback_plan_v3\"]", handler.LastStartBody);
+            Assert.Contains("\"video_evidence\":\"declared\"", handler.LastStartBody);
+            Assert.Contains("\"audio_evidence\":\"declared\"", handler.LastStartBody);
+            Assert.Contains("\"client_playback_context\"", handler.LastStartBody);
             Assert.DoesNotContain("\"audio_passthrough\"", handler.LastStartBody);
         }
         finally
@@ -59,7 +64,7 @@ public sealed class PlaybackManagerTests
                 disableProgressPersistence: true);
 
             Assert.Contains("\"start_position\":17", handler.LastStartBody);
-            Assert.Contains("\"disable_progress_persistence\":true", handler.LastStartBody);
+            Assert.Contains("\"progress_persistence\":\"client\"", handler.LastStartBody);
         }
         finally
         {
@@ -246,26 +251,7 @@ public sealed class PlaybackManagerTests
                 LastStartBody = request.Content == null
                     ? null
                     : await request.Content.ReadAsStringAsync(cancellationToken);
-                return JsonResponse(
-                    """
-                    {
-                      "session_id": "session-1",
-                      "media_file_id": 123,
-                      "play_method": "direct",
-                      "position": 0,
-                      "is_paused": false,
-                      "stream_url": "/stream/session-1",
-                      "audio_track_index": 0,
-                      "duration_seconds": 3600,
-                      "subtitle_urls": [],
-                      "playback_info": {
-                        "stream_type": "progressive",
-                        "transcode_audio": false,
-                        "video_codec": "hevc",
-                        "audio_codec": "aac"
-                      }
-                    }
-                    """);
+                return JsonResponse(PlayableDecision("session-1", 123, 0));
             }
 
             if (request.Method == HttpMethod.Post && path == "/api/v1/playback/session-1/progress")
@@ -310,6 +296,32 @@ public sealed class PlaybackManagerTests
                 Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
             };
         }
+
+        private static string PlayableDecision(string sessionId, int fileId, double position) => $$"""
+            {
+              "protocol_version": 3,
+              "server_features": ["playback_plan_v3", "plan_source_duration_v1"],
+              "outcome": "playable",
+              "session_id": "{{sessionId}}",
+              "playback_plan": {
+                "protocol_version": 3,
+                "plan_id": "plan:478677870860e5e5108c18bff749b34b",
+                "plan_attempt_key": "v3:f0144c47fa349e3e",
+                "session_id": "{{sessionId}}",
+                "delivery": "original_http",
+                "stream": { "url": "/stream/{{sessionId}}", "protocol": "http_progressive", "headers": {} },
+                "timeline": { "source_start_seconds": {{position}}, "stream_origin_seconds": 0, "player_start_seconds": {{position}}, "timeline_offset_seconds": 0, "can_seek_anywhere": true },
+                "selected_tracks": { "audio": { "id": "file:{{fileId}}:audio:0", "index": 0 } },
+                "effective_recipe": { "video_codec": "hevc", "audio_codec": "aac" },
+                "subtitle": { "mode": "off", "inventory": [] },
+                "available_qualities": [{ "label": "original", "preserves_source": true }],
+                "degradation_warnings": [],
+                "requested_media_file_id": {{fileId}},
+                "effective_media_file_id": {{fileId}},
+                "source": { "media_file_id": {{fileId}}, "duration_seconds": 3600 }
+              }
+            }
+            """;
     }
 
     private sealed class ReplacementPlaybackHandler : HttpMessageHandler
@@ -324,18 +336,30 @@ public sealed class PlaybackManagerTests
             if (request.Method == HttpMethod.Post && path == "/api/v1/playback/start")
             {
                 var number = Interlocked.Increment(ref _startCount);
+                var fileId = number == 1 ? 123 : 456;
+                var position = number == 1 ? 0 : 120;
                 return JsonResponse($$"""
                     {
+                      "protocol_version": 3,
+                      "outcome": "playable",
                       "session_id": "session-{{number}}",
-                      "media_file_id": {{(number == 1 ? 123 : 456)}},
-                      "play_method": "direct",
-                      "position": {{(number == 1 ? 0 : 120)}},
-                      "is_paused": false,
-                      "stream_url": "/stream/session-{{number}}",
-                      "audio_track_index": 0,
-                      "duration_seconds": 3600,
-                      "subtitle_urls": [],
-                      "playback_info": { "stream_type": "progressive", "transcode_audio": false }
+                      "playback_plan": {
+                        "protocol_version": 3,
+                        "plan_id": "plan:478677870860e5e5108c18bff749b34b",
+                        "plan_attempt_key": "v3:f0144c47fa349e3e",
+                        "session_id": "session-{{number}}",
+                        "delivery": "original_http",
+                        "stream": { "url": "/stream/session-{{number}}", "protocol": "http_progressive" },
+                        "timeline": { "source_start_seconds": {{position}}, "stream_origin_seconds": 0, "player_start_seconds": {{position}}, "timeline_offset_seconds": 0, "can_seek_anywhere": true },
+                        "selected_tracks": {},
+                        "effective_recipe": {},
+                        "subtitle": { "mode": "off", "inventory": [] },
+                        "available_qualities": [],
+                        "degradation_warnings": [],
+                        "requested_media_file_id": {{fileId}},
+                        "effective_media_file_id": {{fileId}},
+                        "source": { "media_file_id": {{fileId}}, "duration_seconds": 3600 }
+                      }
                     }
                     """);
             }

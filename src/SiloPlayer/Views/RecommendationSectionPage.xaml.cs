@@ -3,12 +3,14 @@ using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Controls;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
 public sealed partial class RecommendationSectionPage : Page
 {
     public RecommendationSectionViewModel ViewModel { get; }
+    private readonly UICustomizationService _uiCustomizationService;
 
     private RecommendationSectionNavigationArgs? _args;
     private bool _loaded;
@@ -17,6 +19,7 @@ public sealed partial class RecommendationSectionPage : Page
     public RecommendationSectionPage()
     {
         ViewModel = App.Services.GetRequiredService<RecommendationSectionViewModel>();
+        _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
         LoadingSkeleton.ItemsSource = Enumerable.Range(0, 24).ToArray();
         ViewModel.Items.CollectionChanged += (_, _) => Bindings.Update();
@@ -30,12 +33,14 @@ public sealed partial class RecommendationSectionPage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _uiCustomizationService.Changed += UICustomization_Changed;
         _args = e.Parameter as RecommendationSectionNavigationArgs;
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         ViewModel.CancelLoad();
+        _uiCustomizationService.Changed -= UICustomization_Changed;
         base.OnNavigatedFrom(e);
     }
 
@@ -81,12 +86,20 @@ public sealed partial class RecommendationSectionPage : Page
 
     private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        var width = e.NewSize.Width;
+        ApplyCardLayout(e.NewSize.Width);
+    }
+
+    private void UICustomization_Changed(object? sender, EventArgs e)
+        => DispatcherQueue.TryEnqueue(() => ApplyCardLayout(ActualWidth));
+
+    private void ApplyCardLayout(double width)
+    {
         if (width <= 0) return;
 
         var gutter = width < 640 ? 16d : width < 1024 ? 24d : width < 1280 ? 40d : 48d;
         PageContent.Padding = new Thickness(gutter, width < 640 ? 24 : 32, gutter, 48);
-        var columns = width < 640 ? 3 : width < 768 ? 4 : width < 1024 ? 5 : width < 1280 ? 6 : 7;
+        var contentWidth = Math.Max(280, width - gutter * 2);
+        var columns = _uiCustomizationService.GetPosterColumnCount(contentWidth);
         PageTitleText.FontSize = width < 640 ? 24 : 30;
         _cardWidth = Math.Max(96, Math.Floor((width - gutter * 2 - (columns - 1) * 16) / columns));
         ItemsLayout.MaximumRowsOrColumns = columns;

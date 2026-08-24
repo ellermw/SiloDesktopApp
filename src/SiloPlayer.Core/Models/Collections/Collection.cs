@@ -106,6 +106,9 @@ public class CollectionCapabilitiesResponse
 {
     public List<string> DisplayFilterFields { get; set; } = [];
     public CollectionDisplayFilterPresets DisplayFilterPresets { get; set; } = new();
+    public bool CollectionDefaultSort { get; set; }
+    public bool CollectionSortPreferences { get; set; }
+    public bool EffectiveCollectionSort { get; set; }
 }
 
 public class CollectionDisplayFilterPresets

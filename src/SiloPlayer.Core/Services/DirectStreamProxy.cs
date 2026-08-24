@@ -188,12 +188,37 @@ public sealed class DirectStreamProxy : IDisposable
             if (_supportsRanges)
                 request.Headers.TryGetValue("range", out rangeHeader);
 
-            await _relay.RelayAsync(
-                stream,
-                rangeHeader,
-                (headers, ct) => WriteHeadersAsync(stream, headers, ct),
-                cancellationToken,
-                headOnly: isHead);
+            var responseStarted = false;
+            try
+            {
+                await _relay.RelayAsync(
+                    stream,
+                    rangeHeader,
+                    (headers, ct) =>
+                    {
+                        responseStarted = true;
+                        return WriteHeadersAsync(stream, headers, ct);
+                    },
+                    cancellationToken,
+                    headOnly: isHead);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _log($"Direct stream proxy relay failed: {ex.GetType().Name}: {ex.Message}");
+                if (!responseStarted)
+                {
+                    await WriteSimpleResponseAsync(
+                        stream,
+                        HttpStatusCode.BadGateway,
+                        "Upstream media stream unavailable",
+                        cancellationToken,
+                        headOnly: isHead);
+                }
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

@@ -16,6 +16,23 @@ public class CollectionsApi(SiloApiClient client)
     public Task<CollectionCapabilitiesResponse> GetCollectionCapabilitiesAsync(CancellationToken ct = default)
         => client.GetAsync<CollectionCapabilitiesResponse>("/api/v1/collections/capabilities", ct);
 
+    public Task SetCollectionSortPreferenceAsync(
+        string collectionKind,
+        string collectionId,
+        string field,
+        string order,
+        CancellationToken ct = default)
+        => client.PutNoContentAsync(
+            "/api/v1/collections/sort-preference",
+            new Dictionary<string, object?>
+            {
+                ["collection_kind"] = collectionKind,
+                ["collection_id"] = collectionId,
+                ["field"] = field,
+                ["order"] = order,
+            },
+            ct);
+
     public Task<MDBListDiscoveryResponse> SearchMDBListAsync(string query, CancellationToken ct = default)
         => client.GetAsync<MDBListDiscoveryResponse>($"/api/v1/collections/import/mdblist/search?q={Uri.EscapeDataString(query)}", ct);
 

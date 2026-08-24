@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Home;
@@ -64,14 +65,16 @@ public static class MediaItemMenu
 
         if (item.UserState != null)
         {
-            flyout.Items.Add(BuildItem(
+            MenuFlyoutItem watchedAction = null!;
+            watchedAction = BuildItem(
                 GetWatchedActionLabel(item.Type, isWatched),
                 isWatched ? "\uE711" : "\uE73E",
                 async () =>
                 {
                     try
                     {
-                        if (isWatched)
+                        var currentlyWatched = item.UserState?.Played == true;
+                        if (currentlyWatched)
                         {
                             await catalog.MarkUnwatchedAsync(item.ContentId);
                             MediaItemStateUpdater.SetWatched(item, false);
@@ -89,20 +92,27 @@ public static class MediaItemMenu
                                 MediaSurfaceChangeKind.WatchedMarked, item.ContentId, item.SeriesId));
                             toast.Success(GetWatchedToastMessage(item.Type, true));
                         }
+                        var nowWatched = item.UserState?.Played == true;
+                        watchedAction.Text = GetWatchedActionLabel(item.Type, nowWatched);
+                        watchedAction.Icon = new FontIcon { Glyph = nowWatched ? "\uE711" : "\uE73E" };
+                        AutomationProperties.SetName(watchedAction, watchedAction.Text);
                     }
                     catch (Exception ex) { toast.Error(ex.Message); }
-                }));
+                });
+            flyout.Items.Add(watchedAction);
 
             if (showCollectionActions)
             {
-                flyout.Items.Add(BuildItem(
+                MenuFlyoutItem favoriteAction = null!;
+                favoriteAction = BuildItem(
                     isFavorite ? "Remove from Favorites" : "Add to Favorites",
                     "\uEB52",
                     async () =>
                     {
                         try
                         {
-                            if (isFavorite)
+                            var currentlyFavorite = item.UserState?.IsFavorite == true;
+                            if (currentlyFavorite)
                             {
                                 await catalog.RemoveFavoriteAsync(item.ContentId);
                                 MediaItemStateUpdater.SetFavorite(item, false);
@@ -120,18 +130,25 @@ public static class MediaItemMenu
                                     MediaSurfaceChangeKind.FavoriteAdded, item.ContentId, item.SeriesId));
                                 toast.Success("Added to favorites");
                             }
+                            favoriteAction.Text = item.UserState?.IsFavorite == true
+                                ? "Remove from Favorites"
+                                : "Add to Favorites";
+                            AutomationProperties.SetName(favoriteAction, favoriteAction.Text);
                         }
                         catch (Exception ex) { toast.Error(ex.Message); }
-                    }));
+                    });
+                flyout.Items.Add(favoriteAction);
 
-                flyout.Items.Add(BuildItem(
+                MenuFlyoutItem watchlistAction = null!;
+                watchlistAction = BuildItem(
                     inWatchlist ? "Remove from Watchlist" : "Add to Watchlist",
                     inWatchlist ? "\uE73E" : "\uE710",
                     async () =>
                     {
                         try
                         {
-                            if (inWatchlist)
+                            var currentlyInWatchlist = item.UserState?.InWatchlist == true;
+                            if (currentlyInWatchlist)
                             {
                                 await catalog.RemoveFromWatchlistAsync(item.ContentId);
                                 MediaItemStateUpdater.SetWatchlist(item, false);
@@ -149,20 +166,27 @@ public static class MediaItemMenu
                                     MediaSurfaceChangeKind.WatchlistAdded, item.ContentId, item.SeriesId));
                                 toast.Success("Added to watchlist");
                             }
+                            var nowInWatchlist = item.UserState?.InWatchlist == true;
+                            watchlistAction.Text = nowInWatchlist
+                                ? "Remove from Watchlist"
+                                : "Add to Watchlist";
+                            watchlistAction.Icon = new FontIcon { Glyph = nowInWatchlist ? "\uE73E" : "\uE710" };
+                            AutomationProperties.SetName(watchlistAction, watchlistAction.Text);
                         }
                         catch (Exception ex) { toast.Error(ex.Message); }
-                    }));
+                    });
+                flyout.Items.Add(watchlistAction);
             }
         }
 
-        // Manga uses a file inspector in the WebUI. Until that dedicated
-        // native dialog is available, keep this action scoped to manga and
-        // open the manga detail surface instead of leaking it to all cards.
         if (item.Type == "manga")
         {
-            flyout.Items.Add(BuildItem("View Details", "\uE946", () =>
-                App.Services.GetRequiredService<NavigationService>()
-                    .Navigate<ItemDetailPage>(item.ContentId)));
+            flyout.Items.Add(BuildItem("View Details", "\uE946", async () =>
+            {
+                var root = App.MainWindowInstance?.Content.XamlRoot;
+                if (root == null) return;
+                await new MangaFilesDialog(item.ContentId, item.Title) { XamlRoot = root }.ShowAsync();
+            }));
         }
 
         if (isActingAdmin && adminApi != null)
@@ -243,49 +267,17 @@ public static class MediaItemMenu
         var root = App.MainWindowInstance?.Content.XamlRoot;
         if (root == null) return;
 
-        var content = new StackPanel { Spacing = 10 };
-        content.Children.Add(new TextBlock
-        {
-            Text = "Choose whether to refresh the existing item or rebuild it from the files on disk.",
-            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-        });
-        content.Children.Add(new TextBlock
-        {
-            Text = "Quick Refresh — Keep the current item and refresh metadata using the existing scan scope.",
-            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-        });
-        content.Children.Add(new TextBlock
-        {
-            Text = "Complete Refresh — Clear the current match, re-scan, and rebuild the item from disk context. This can recreate the item with a new ID or type.",
-            TextWrapping = Microsoft.UI.Xaml.TextWrapping.Wrap,
-        });
-
-        var result = await new ContentDialog
-        {
-            XamlRoot = root,
-            Title = "Refresh Metadata",
-            Content = content,
-            PrimaryButtonText = "Quick Refresh",
-            SecondaryButtonText = "Complete Refresh",
-            CloseButtonText = "Cancel",
-        }.ShowAsync();
-
-        var mode = result switch
-        {
-            ContentDialogResult.Primary => "quick",
-            ContentDialogResult.Secondary => "complete",
-            _ => null,
-        };
-        if (mode == null) return;
-
-        try
+        var dialog = new RefreshMetadataDialog(async mode =>
         {
             await adminApi.RefreshItemMetadataAsync(item.ContentId, mode);
             WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                 MediaSurfaceChangeKind.ItemMetadataRefreshed, item.ContentId, item.SeriesId));
             toast.Success(mode == "complete" ? "Complete refresh queued" : "Metadata refresh queued");
-        }
-        catch (Exception ex) { toast.Error(ex.Message); }
+        })
+        {
+            XamlRoot = root,
+        };
+        await dialog.ShowAsync();
     }
 
     private static MenuFlyoutItem BuildItem(string text, string glyph, Action onClick)
@@ -295,6 +287,7 @@ public static class MediaItemMenu
             Text = text,
             Icon = new FontIcon { Glyph = glyph },
         };
+        AutomationProperties.SetName(item, text);
         item.Click += (_, _) => onClick();
         return item;
     }
@@ -306,7 +299,20 @@ public static class MediaItemMenu
             Text = text,
             Icon = new FontIcon { Glyph = glyph },
         };
-        item.Click += async (_, _) => await onClickAsync();
+        AutomationProperties.SetName(item, text);
+        item.Click += async (_, _) =>
+        {
+            if (!item.IsEnabled) return;
+            item.IsEnabled = false;
+            try
+            {
+                await onClickAsync();
+            }
+            finally
+            {
+                item.IsEnabled = true;
+            }
+        };
         return item;
     }
 

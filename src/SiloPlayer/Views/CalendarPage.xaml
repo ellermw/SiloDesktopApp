@@ -182,6 +182,7 @@
                              = 40. Outer radius 20 is exactly half so ends are semicircles.
                              Inner pills at radius 16 nest neatly inside the 4px padding. -->
                         <Border x:Name="PresetPillGroup"
+                            AutomationProperties.Name="Calendar preset"
                             Background="{StaticResource SurfaceRaisedBrush}"
                             BorderBrush="{StaticResource BorderBrush}"
                             BorderThickness="1"
@@ -209,6 +210,7 @@
 
                         <ComboBox
                             x:Name="CompactPresetComboBox"
+                            AutomationProperties.Name="Calendar preset"
                             Style="{StaticResource LibraryComboBoxStyle}"
                             Visibility="Collapsed"
                             SelectionChanged="CompactPresetComboBox_SelectionChanged">

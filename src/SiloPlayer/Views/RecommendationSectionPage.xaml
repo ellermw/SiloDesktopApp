@@ -17,11 +17,9 @@
             <Button
                 Style="{StaticResource GhostButtonStyle}"
                 HorizontalAlignment="Left"
+                AutomationProperties.Name="Go back"
                 Click="BackButton_Click">
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                    <FontIcon Glyph="&#xE72B;" FontSize="14" />
-                    <TextBlock Text="Back" FontSize="13" />
-                </StackPanel>
+                <FontIcon Glyph="&#xE72B;" FontSize="14" />
             </Button>
 
             <StackPanel Margin="0,12,0,0" Spacing="6">

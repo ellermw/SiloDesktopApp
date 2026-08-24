@@ -66,12 +66,13 @@
                     </StackPanel>
                 </Grid>
 
-                <!-- ===== Line-style Tabs: Users / Invite Codes ===== -->
+                <!-- ===== Line-style Tabs: Users / Invitations / Invite Codes ===== -->
                 <StackPanel Spacing="0">
                     <!-- Tab bar -->
                     <Grid>
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="80" />
+                            <ColumnDefinition Width="110" />
                             <ColumnDefinition Width="110" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
@@ -82,7 +83,14 @@
                             <TextBlock x:Name="TabUsersText" Text="Users" FontSize="14" FontWeight="SemiBold"
                                        Foreground="{StaticResource PrimaryTextBrush}" />
                         </Button>
-                        <Button x:Name="TabInviteCodesButton" Grid.Column="1" Click="TabInviteCodes_Click"
+                        <Button x:Name="TabInvitationsButton" Grid.Column="1" Click="TabInvitations_Click"
+                                Background="Transparent" BorderThickness="0"
+                                Padding="16,10" CornerRadius="0" HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Center">
+                            <TextBlock x:Name="TabInvitationsText" Text="Invitations" FontSize="14"
+                                       Foreground="{StaticResource SecondaryTextBrush}" />
+                        </Button>
+                        <Button x:Name="TabInviteCodesButton" Grid.Column="2" Click="TabInviteCodes_Click"
                                 Background="Transparent" BorderThickness="0"
                                 Padding="16,10" CornerRadius="0" HorizontalAlignment="Stretch"
                                 HorizontalContentAlignment="Center">
@@ -95,13 +103,17 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="80" />
                             <ColumnDefinition Width="110" />
+                            <ColumnDefinition Width="110" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
                         <Border Grid.ColumnSpan="3" Background="{StaticResource BorderBrush}" VerticalAlignment="Bottom" Height="1" />
                         <Border x:Name="TabUsersIndicator" Background="{StaticResource AccentBrush}" Height="2"
                                 Grid.Column="0" HorizontalAlignment="Stretch" VerticalAlignment="Bottom" />
-                        <Border x:Name="TabInviteCodesIndicator" Background="{StaticResource AccentBrush}" Height="2"
+                        <Border x:Name="TabInvitationsIndicator" Background="{StaticResource AccentBrush}" Height="2"
                                 Grid.Column="1" HorizontalAlignment="Stretch"
+                                VerticalAlignment="Bottom" Visibility="Collapsed" />
+                        <Border x:Name="TabInviteCodesIndicator" Background="{StaticResource AccentBrush}" Height="2"
+                                Grid.Column="2" HorizontalAlignment="Stretch"
                                 VerticalAlignment="Bottom" Visibility="Collapsed" />
                     </Grid>
                 </StackPanel>
@@ -237,6 +249,45 @@
                         </StackPanel>
                     </Border>
                     </ScrollViewer>
+                </StackPanel>
+
+                <!-- ===== Emailed Invitations Tab Content ===== -->
+                <StackPanel x:Name="InvitationsTabContent" Visibility="Collapsed" Spacing="24">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
+                        <TextBlock
+                            Text="Email someone a personal link. Their access is set here, so all they choose is a password — their email address becomes their username."
+                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                            TextWrapping="Wrap" MaxWidth="620" HorizontalAlignment="Left" />
+                        <Button x:Name="InviteSomeoneButton" Grid.Column="1" Content="Invite someone"
+                                Style="{StaticResource AccentButtonStyle}" Click="InviteSomeone_Click" />
+                    </Grid>
+
+                    <ProgressRing x:Name="InvitationsLoading" IsActive="False" Visibility="Collapsed"
+                                  HorizontalAlignment="Center" Width="36" Height="36" />
+
+                    <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="0">
+                        <StackPanel>
+                            <Grid Padding="20,14" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="100" />
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="96" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Recipient" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="1" Text="Role" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="2" Text="Status" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Grid.Column="3" Text="Sent" FontSize="13" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Grid>
+                            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" />
+                            <StackPanel x:Name="InvitationsPanel" />
+                            <TextBlock x:Name="InvitationsEmptyText"
+                                       Text="No invitations yet. Invite someone to get started."
+                                       Padding="20,32" FontSize="13" TextAlignment="Center"
+                                       Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" />
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
 
                 <!-- ===== Invite Codes Tab Content ===== -->

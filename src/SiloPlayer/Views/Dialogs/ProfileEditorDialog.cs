@@ -68,13 +68,15 @@ public sealed class ProfileEditorDialog
     private readonly ContentDialog _dialog;
     private readonly TextBox _nameBox = new() { PlaceholderText = "Alex" };
     private readonly PasswordBox _pinBox = new() { PlaceholderText = "4 digits", MaxLength = 4 };
-    private readonly ToggleSwitch _clearPinToggle = new() { OffContent = "Keep existing PIN", OnContent = "Remove existing PIN" };
+    private readonly TextBlock _pinLabel = new() { FontSize = 13, FontWeight = FontWeights.SemiBold };
+    private readonly Button _clearPinButton = new() { Content = "Remove PIN", Padding = new Thickness(8, 3, 8, 3) };
     private readonly ToggleSwitch _kidsToggle = new();
     private readonly ComboBox _ratingBox = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly ComboBox _qualityBox = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly ToggleSwitch _restrictLibrariesToggle = new();
     private readonly StackPanel _libraryRows = new() { Spacing = 8 };
-    private readonly ComboBox _avatarStyleBox = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly Grid _avatarStyleGrid = new() { ColumnSpacing = 8, RowSpacing = 8 };
+    private readonly TextBlock _avatarStyleStatus = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap };
     private readonly Grid _avatarPresetGrid = new() { ColumnSpacing = 8, RowSpacing = 8 };
     private readonly Image _avatarPreview = new() { Width = 96, Height = 96, Stretch = Stretch.UniformToFill };
     private readonly TextBlock _avatarFallback = new()
@@ -85,8 +87,9 @@ public sealed class ProfileEditorDialog
         VerticalAlignment = VerticalAlignment.Center,
     };
     private readonly TextBlock _avatarStatus = new() { FontSize = 12 };
+    private readonly TextBlock _avatarNamePreview = new() { FontSize = 13, FontWeight = FontWeights.SemiBold };
     private readonly TextBlock _validationText = new() { FontSize = 12, Visibility = Visibility.Collapsed, TextWrapping = TextWrapping.Wrap };
-    private readonly Dictionary<int, CheckBox> _libraryChecks = [];
+    private readonly Dictionary<int, ToggleSwitch> _libraryChecks = [];
 
     private string _activeAvatarStyle = "identicon";
     private string _selectedAvatarPreset = "";
@@ -96,6 +99,10 @@ public sealed class ProfileEditorDialog
     private string? _avatarContentType;
     private bool _removeUploadedAvatar;
     private bool _saving;
+    private bool _clearPin;
+    private bool _applyingKidsPreset;
+    private bool _contentRatingTouched;
+    private bool _libraryAccessTouched;
 
     private ProfileEditorDialog(
         XamlRoot xamlRoot,
@@ -122,11 +129,16 @@ public sealed class ProfileEditorDialog
         InitializeValues();
         _dialog.Content = BuildContent();
         _dialog.PrimaryButtonClick += SaveButton_Click;
+        _dialog.Closing += (_, args) => args.Cancel = _saving;
     }
 
     public Profile? SavedProfile { get; private set; }
+    public string SubmittedPin { get; private set; } = "";
 
     public static async Task<Profile?> ShowAsync(XamlRoot xamlRoot, Profile? profile)
+        => (await ShowWithContextAsync(xamlRoot, profile)).Profile;
+
+    public static async Task<ProfileEditorResult> ShowWithContextAsync(XamlRoot xamlRoot, Profile? profile)
     {
         var authApi = App.Services.GetRequiredService<AuthApi>();
         var catalogApi = App.Services.GetRequiredService<CatalogApi>();
@@ -142,14 +154,15 @@ public sealed class ProfileEditorDialog
             profileResponse.AvatarUploadEnabled,
             authApi);
         await editor._dialog.ShowAsync();
-        return editor.SavedProfile;
+        return new ProfileEditorResult(editor.SavedProfile, editor.SubmittedPin);
     }
 
     private void InitializeValues()
     {
         _nameBox.Text = _profile?.Name ?? "";
-        _pinBox.PlaceholderText = _profile?.HasPin == true ? "New PIN" : "4 digits";
-        _clearPinToggle.Visibility = _profile?.HasPin == true ? Visibility.Visible : Visibility.Collapsed;
+        _pinBox.PlaceholderText = "4 digits";
+        _pinLabel.Text = _profile?.HasPin == true ? "New PIN" : "PIN (optional)";
+        _clearPinButton.Visibility = _profile?.HasPin == true ? Visibility.Visible : Visibility.Collapsed;
         _kidsToggle.IsOn = _profile?.IsChild ?? false;
         _restrictLibrariesToggle.IsOn = _profile?.LibraryRestrictionsEnabled ?? false;
         _libraryRows.Visibility = _restrictLibrariesToggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
@@ -159,38 +172,38 @@ public sealed class ProfileEditorDialog
             option => string.Equals(option.Value, _profile?.MaxContentRating ?? "", StringComparison.OrdinalIgnoreCase)));
         foreach (var option in QualityOptions) _qualityBox.Items.Add(option.Label);
         _qualityBox.SelectedIndex = CanonicalQualityIndex(_profile?.MaxPlaybackQuality);
-        foreach (var style in AvatarStyles) _avatarStyleBox.Items.Add(style.Label);
-
         _selectedAvatarPreset = ParseAvatarPreset(_profile?.Avatar);
         var avatarParts = _selectedAvatarPreset.Split(':', StringSplitOptions.RemoveEmptyEntries);
         if (avatarParts.Length == 3 && avatarParts[0] == "dicebear")
             _activeAvatarStyle = avatarParts[1];
-        _avatarStyleBox.SelectedIndex = Math.Max(0, Array.FindIndex(AvatarStyles,
-            style => style.Id == _activeAvatarStyle));
-
-        _clearPinToggle.Toggled += (_, _) =>
+        _clearPinButton.Click += (_, _) =>
         {
-            _pinBox.IsEnabled = !_clearPinToggle.IsOn;
-            if (_clearPinToggle.IsOn) _pinBox.Password = "";
+            _clearPin = !_clearPin;
+            _pinBox.IsEnabled = !_clearPin;
+            if (_clearPin) _pinBox.Password = "";
+            _pinLabel.Text = _clearPin ? "PIN will be removed" : "New PIN";
+            _pinBox.PlaceholderText = _clearPin ? "PIN will be removed on save" : "4 digits";
+            _clearPinButton.Content = _clearPin ? "Keep existing PIN" : "Remove PIN";
+            ClearValidation();
         };
         _restrictLibrariesToggle.Toggled += (_, _) =>
         {
             _libraryRows.Visibility = _restrictLibrariesToggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
+            if (!_applyingKidsPreset) _libraryAccessTouched = true;
+            ClearValidation();
         };
         _kidsToggle.Toggled += (_, _) => ApplyKidsPreset();
-        _avatarStyleBox.SelectionChanged += (_, _) =>
+        _ratingBox.SelectionChanged += (_, _) =>
         {
-            if (_avatarStyleBox.SelectedIndex < 0) return;
-            _activeAvatarStyle = AvatarStyles[_avatarStyleBox.SelectedIndex].Id;
-            _avatarBatch = 0;
-            BuildAvatarPresets();
+            if (!_applyingKidsPreset) _contentRatingTouched = true;
         };
-        _nameBox.TextChanged += (_, _) => UpdateAvatarPreview();
+        _nameBox.TextChanged += (_, _) => { UpdateAvatarPreview(); ClearValidation(); };
+        _pinBox.PasswordChanged += (_, _) => ClearValidation();
     }
 
     private FrameworkElement BuildContent()
     {
-        var root = new StackPanel { Width = 720, Spacing = 18 };
+        var root = new StackPanel { MaxWidth = 720, Spacing = 18, HorizontalAlignment = HorizontalAlignment.Stretch };
         root.Children.Add(new TextBlock
         {
             Text = "Set the avatar, name, PIN, and access rules for this profile.",
@@ -204,6 +217,7 @@ public sealed class ProfileEditorDialog
         root.Children.Add(_validationText);
 
         BuildLibraryRows();
+        BuildAvatarStyles();
         BuildAvatarPresets();
         UpdateAvatarPreview();
 
@@ -235,6 +249,8 @@ public sealed class ProfileEditorDialog
         };
         var previewStack = new StackPanel { Spacing = 8, HorizontalAlignment = HorizontalAlignment.Center };
         previewStack.Children.Add(previewBorder);
+        _avatarNamePreview.TextAlignment = TextAlignment.Center;
+        previewStack.Children.Add(_avatarNamePreview);
         _avatarStatus.Foreground = Brush("SecondaryTextBrush");
         _avatarStatus.TextAlignment = TextAlignment.Center;
         previewStack.Children.Add(_avatarStatus);
@@ -243,8 +259,11 @@ public sealed class ProfileEditorDialog
 
         var fields = new StackPanel { Spacing = 12 };
         fields.Children.Add(Field("Name", _nameBox));
-        fields.Children.Add(Field(_profile?.HasPin == true ? "New PIN" : "PIN (optional)", _pinBox));
-        fields.Children.Add(_clearPinToggle);
+        var pinField = new StackPanel { Spacing = 6 };
+        pinField.Children.Add(_pinLabel);
+        pinField.Children.Add(_pinBox);
+        pinField.Children.Add(_clearPinButton);
+        fields.Children.Add(pinField);
         Grid.SetColumn(fields, 1);
         basic.Children.Add(fields);
         body.Children.Add(basic);
@@ -258,10 +277,13 @@ public sealed class ProfileEditorDialog
             TextWrapping = TextWrapping.Wrap,
         });
 
+        body.Children.Add(_avatarStyleGrid);
         var presetHeader = new Grid { ColumnSpacing = 10 };
         presetHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         presetHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        presetHeader.Children.Add(_avatarStyleBox);
+        _avatarStyleStatus.Foreground = Brush("SecondaryTextBrush");
+        _avatarStyleStatus.VerticalAlignment = VerticalAlignment.Center;
+        presetHeader.Children.Add(_avatarStyleStatus);
         var moreButton = new Button { Content = "More options", Padding = new Thickness(12, 6, 12, 6) };
         moreButton.Click += (_, _) => { _avatarBatch++; BuildAvatarPresets(); };
         Grid.SetColumn(moreButton, 1);
@@ -297,12 +319,22 @@ public sealed class ProfileEditorDialog
         panel.Children.Add(Label("Custom upload"));
         if (!_avatarUploadEnabled)
         {
-            panel.Children.Add(new TextBlock
+            var unavailable = new StackPanel { Spacing = 3 };
+            unavailable.Children.Add(new TextBlock { Text = "Custom uploads are unavailable", FontSize = 13, FontWeight = FontWeights.SemiBold });
+            unavailable.Children.Add(new TextBlock
             {
-                Text = "Custom uploads are unavailable. Configure private S3 avatar storage to enable them.",
+                Text = "Configure private S3 avatar storage to enable uploaded profile avatars.",
                 FontSize = 12,
                 Foreground = Brush("SecondaryTextBrush"),
                 TextWrapping = TextWrapping.Wrap,
+            });
+            panel.Children.Add(new Border
+            {
+                BorderBrush = Brush("BorderBrush"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(7),
+                Padding = new Thickness(12, 9, 12, 9),
+                Child = unavailable,
             });
             return panel;
         }
@@ -340,14 +372,91 @@ public sealed class ProfileEditorDialog
         var allowed = (_profile?.AllowedLibraryIds ?? []).ToHashSet();
         foreach (var library in _libraries)
         {
-            var check = new CheckBox
+            var toggle = new ToggleSwitch
             {
-                IsChecked = allowed.Contains(library.Id),
-                Content = $"{library.Name}  ·  {library.Type}",
+                IsOn = allowed.Contains(library.Id),
             };
-            _libraryChecks[library.Id] = check;
-            _libraryRows.Children.Add(check);
+            toggle.Toggled += (_, _) =>
+            {
+                if (!_applyingKidsPreset) _libraryAccessTouched = true;
+                ClearValidation();
+            };
+            _libraryChecks[library.Id] = toggle;
+
+            var labels = new StackPanel { Spacing = 1 };
+            labels.Children.Add(new TextBlock { Text = library.Name, FontSize = 13, FontWeight = FontWeights.SemiBold });
+            labels.Children.Add(new TextBlock
+            {
+                Text = library.Type,
+                FontSize = 11,
+                Foreground = Brush("SecondaryTextBrush"),
+            });
+            var row = new Grid { ColumnSpacing = 12 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.Children.Add(labels);
+            Grid.SetColumn(toggle, 1);
+            row.Children.Add(toggle);
+            _libraryRows.Children.Add(new Border
+            {
+                BorderBrush = Brush("BorderBrush"),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(7),
+                Padding = new Thickness(12, 8, 12, 8),
+                Child = row,
+            });
         }
+    }
+
+    private void BuildAvatarStyles()
+    {
+        _avatarStyleGrid.Children.Clear();
+        _avatarStyleGrid.ColumnDefinitions.Clear();
+        _avatarStyleGrid.RowDefinitions.Clear();
+        for (var column = 0; column < 4; column++)
+            _avatarStyleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        for (var row = 0; row < 2; row++)
+            _avatarStyleGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        for (var index = 0; index < AvatarStyles.Length; index++)
+        {
+            var style = AvatarStyles[index];
+            var content = new StackPanel { Spacing = 3 };
+            content.Children.Add(new TextBlock { Text = style.Label, FontSize = 13, FontWeight = FontWeights.SemiBold });
+            content.Children.Add(new TextBlock
+            {
+                Text = AvatarStyleSummary(style.Id),
+                FontSize = 11,
+                Foreground = Brush("SecondaryTextBrush"),
+                TextWrapping = TextWrapping.Wrap,
+                MaxLines = 2,
+            });
+            var selected = style.Id == _activeAvatarStyle;
+            var button = new Button
+            {
+                Content = content,
+                Tag = style.Id,
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Left,
+                VerticalContentAlignment = VerticalAlignment.Top,
+                MinHeight = 70,
+                Padding = new Thickness(12, 9, 12, 9),
+                BorderThickness = new Thickness(selected ? 2 : 1),
+                BorderBrush = selected ? Brush("AccentBrush") : Brush("BorderBrush"),
+            };
+            button.Click += (_, _) =>
+            {
+                _activeAvatarStyle = style.Id;
+                _avatarBatch = 0;
+                BuildAvatarStyles();
+                BuildAvatarPresets();
+            };
+            Grid.SetColumn(button, index % 4);
+            Grid.SetRow(button, index / 4);
+            _avatarStyleGrid.Children.Add(button);
+        }
+
+        _avatarStyleStatus.Text = $"{AvatarStyleSummary(_activeAvatarStyle)}. Showing 18 options right now.";
     }
 
     private void BuildAvatarPresets()
@@ -437,34 +546,53 @@ public sealed class ProfileEditorDialog
             {
                 Name = _nameBox.Text.Trim(),
                 Avatar = preservingUpload ? null : (_selectedAvatarPreset.Length == 0 ? "" : $"preset:{_selectedAvatarPreset}"),
-                Pin = _clearPinToggle.IsOn ? "" : string.IsNullOrWhiteSpace(_pinBox.Password) ? null : _pinBox.Password,
+                Pin = _clearPin ? "" : string.IsNullOrWhiteSpace(_pinBox.Password) ? null : _pinBox.Password,
                 IsChild = _kidsToggle.IsOn,
                 MaxContentRating = RatingOptions[Math.Max(0, _ratingBox.SelectedIndex)].Value,
                 MaxPlaybackQuality = QualityOptions[Math.Max(0, _qualityBox.SelectedIndex)].Value,
                 LibraryRestrictionsEnabled = _restrictLibrariesToggle.IsOn,
                 AllowedLibraryIds = _restrictLibrariesToggle.IsOn
-                    ? _libraryChecks.Where(pair => pair.Value.IsChecked == true).Select(pair => pair.Key).Order().ToList()
+                    ? _libraryChecks.Where(pair => pair.Value.IsOn).Select(pair => pair.Key).Order().ToList()
                     : [],
             };
 
             var saved = _profile == null
                 ? await _authApi.CreateProfileAsync(request)
                 : await _authApi.UpdateProfileAsync(_profile.Id, request);
+            var toast = App.Services.GetRequiredService<SiloPlayer.Services.ToastService>();
+            toast.Success(_profile == null ? "Profile created" : "Profile updated");
 
             if (_avatarFileBytes != null && _avatarFileName != null)
             {
-                saved = await _authApi.UploadProfileAvatarAsync(
-                    saved.Id,
-                    _avatarFileName,
-                    _avatarFileBytes,
-                    _avatarContentType ?? "application/octet-stream");
+                try
+                {
+                    saved = await _authApi.UploadProfileAvatarAsync(
+                        saved.Id,
+                        _avatarFileName,
+                        _avatarFileBytes,
+                        _avatarContentType ?? "application/octet-stream");
+                    toast.Success("Avatar updated");
+                }
+                catch (Exception ex)
+                {
+                    toast.Error(string.IsNullOrWhiteSpace(ex.Message) ? "Failed to upload avatar" : ex.Message);
+                }
             }
             else if (_profile?.AvatarSource == "upload" && _removeUploadedAvatar && _selectedAvatarPreset.Length == 0)
             {
-                saved = await _authApi.DeleteProfileAvatarAsync(saved.Id);
+                try
+                {
+                    saved = await _authApi.DeleteProfileAvatarAsync(saved.Id);
+                    toast.Success("Avatar removed");
+                }
+                catch (Exception ex)
+                {
+                    toast.Error(string.IsNullOrWhiteSpace(ex.Message) ? "Failed to remove avatar" : ex.Message);
+                }
             }
 
             SavedProfile = saved;
+            SubmittedPin = request.Pin ?? "";
             sender.Hide();
         }
         catch (Exception ex)
@@ -487,12 +615,12 @@ public sealed class ProfileEditorDialog
             ShowValidation("Enter a profile name.");
             return false;
         }
-        if (_pinBox.Password.Length > 0 && (_pinBox.Password.Length != 4 || _pinBox.Password.Any(ch => !char.IsDigit(ch))))
+        if (!_clearPin && _pinBox.Password.Length > 0 && (_pinBox.Password.Length != 4 || _pinBox.Password.Any(ch => !char.IsDigit(ch))))
         {
             ShowValidation("PIN must be exactly 4 digits.");
             return false;
         }
-        if (_restrictLibrariesToggle.IsOn && !_libraryChecks.Values.Any(check => check.IsChecked == true))
+        if (_restrictLibrariesToggle.IsOn && !_libraryChecks.Values.Any(check => check.IsOn))
         {
             ShowValidation("Choose at least one library.");
             return false;
@@ -503,25 +631,36 @@ public sealed class ProfileEditorDialog
 
     private void ApplyKidsPreset()
     {
-        if (_kidsToggle.IsOn)
+        _applyingKidsPreset = true;
+        try
         {
-            if (_ratingBox.SelectedIndex == 0) _ratingBox.SelectedIndex = 2;
-            if (!_restrictLibrariesToggle.IsOn)
+            if (_kidsToggle.IsOn)
             {
-                _restrictLibrariesToggle.IsOn = true;
-                foreach (var check in _libraryChecks.Values) check.IsChecked = false;
+                if (!_contentRatingTouched && _ratingBox.SelectedIndex == 0) _ratingBox.SelectedIndex = 2;
+                if (!_libraryAccessTouched && !_restrictLibrariesToggle.IsOn)
+                {
+                    _restrictLibrariesToggle.IsOn = true;
+                    foreach (var check in _libraryChecks.Values) check.IsOn = false;
+                }
+                return;
             }
-            return;
-        }
 
-        _ratingBox.SelectedIndex = 0;
-        _qualityBox.SelectedIndex = 0;
-        _restrictLibrariesToggle.IsOn = false;
-        foreach (var check in _libraryChecks.Values) check.IsChecked = false;
+            _ratingBox.SelectedIndex = 0;
+            _qualityBox.SelectedIndex = 0;
+            _restrictLibrariesToggle.IsOn = false;
+            foreach (var check in _libraryChecks.Values) check.IsOn = false;
+            _contentRatingTouched = false;
+            _libraryAccessTouched = false;
+        }
+        finally
+        {
+            _applyingKidsPreset = false;
+        }
     }
 
     private void UpdateAvatarPreview()
     {
+        _avatarNamePreview.Text = string.IsNullOrWhiteSpace(_nameBox.Text) ? "Preview" : _nameBox.Text.Trim();
         if (_avatarFileBytes != null) return;
         var selectedParts = _selectedAvatarPreset.Split(':', StringSplitOptions.RemoveEmptyEntries);
         if (selectedParts.Length == 3 && selectedParts[0] == "dicebear")
@@ -552,6 +691,20 @@ public sealed class ProfileEditorDialog
         _validationText.Text = message;
         _validationText.Visibility = Visibility.Visible;
     }
+
+    private void ClearValidation()
+    {
+        _validationText.Visibility = Visibility.Collapsed;
+    }
+
+    private static string AvatarStyleSummary(string style) => style switch
+    {
+        "initials" => "Clean letter-based avatars with bold backgrounds",
+        "bottts-neutral" => "Cute modular robot-style icons",
+        "fun-emoji" => "Big, colorful, instantly readable faces",
+        "pixel-art-neutral" => "Retro pixel faces with lots of variation",
+        _ => "Geometric, technical, high-contrast patterns",
+    };
 
     private static Border Section(string title, string description)
     {
@@ -636,3 +789,5 @@ public sealed class ProfileEditorDialog
     private static string BuildDiceBearUrl(string style, string seed) =>
         $"https://api.dicebear.com/9.x/{Uri.EscapeDataString(style)}/svg?seed={Uri.EscapeDataString(seed)}&size=128&radius=24&backgroundType=gradientLinear";
 }
+
+public sealed record ProfileEditorResult(Profile? Profile, string Pin);

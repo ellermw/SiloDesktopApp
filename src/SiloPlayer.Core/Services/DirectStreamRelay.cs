@@ -124,6 +124,29 @@ public sealed class DirectStreamRelay
                 if (!string.IsNullOrWhiteSpace(responseEntityTag))
                     Volatile.Write(ref _strongEntityTag, responseEntityTag);
 
+                await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
+                var initialByte = -1;
+                if (!_supportsRanges && !headOnly && response.IsSuccessStatusCode)
+                {
+                    initialByte = await ReadInitialByteAsync(
+                        input,
+                        _upstreamIdleTimeout,
+                        cancellationToken);
+                    if (initialByte < 0)
+                    {
+                        if (!headersWritten && bytesWritten == 0 &&
+                            attempts <= Math.Min(_maxRetries, MaxInitialStatusRetries))
+                        {
+                            _log?.Invoke(
+                                $"Direct stream returned no media bytes; retry {attempts}/{Math.Min(_maxRetries, MaxInitialStatusRetries)}.");
+                            await DelayBeforeRetryAsync(attempts, cancellationToken);
+                            continue;
+                        }
+
+                        throw new IOException("Upstream returned a successful response without any media bytes.");
+                    }
+                }
+
                 // An origin is allowed to ignore a client's initial Range request and
                 // return the complete representation with 200. It is not safe to accept
                 // that response after bytes have already been relayed, because doing so
@@ -161,12 +184,15 @@ public sealed class DirectStreamRelay
                     return new DirectStreamRelayResult(firstStatusCode, bytesWritten, attempts);
 
                 var expectedBytes = response.Content.Headers.ContentLength;
-                await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
+                if (initialByte >= 0)
+                    await output.WriteAsync(
+                        new byte[] { (byte)initialByte },
+                        cancellationToken);
                 var bytesThisAttempt = await CopyToAsync(
                     input,
                     output,
                     _upstreamIdleTimeout,
-                    cancellationToken);
+                    cancellationToken) + (initialByte >= 0 ? 1 : 0);
 
                 bytesWritten += bytesThisAttempt;
                 nextOffset += bytesThisAttempt;
@@ -317,6 +343,25 @@ public sealed class DirectStreamRelay
         finally
         {
             ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    private static async Task<int> ReadInitialByteAsync(
+        Stream input,
+        TimeSpan upstreamIdleTimeout,
+        CancellationToken cancellationToken)
+    {
+        var buffer = new byte[1];
+        using var readTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        readTimeout.CancelAfter(upstreamIdleTimeout);
+        try
+        {
+            return await input.ReadAsync(buffer, readTimeout.Token) == 0 ? -1 : buffer[0];
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"Upstream sent no media data for {upstreamIdleTimeout.TotalSeconds:0} seconds.");
         }
     }
 

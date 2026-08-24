@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="SiloPlayer.Views.HouseholdSetupPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:models="using:SiloPlayer.Core.Models.Auth"
+    xmlns:local="using:SiloPlayer.Views"
+    xmlns:converters="using:SiloPlayer.Converters"
+    Background="{StaticResource AppBackgroundBrush}">
+    <Page.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
+        <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
+        <converters:StringToInitialConverter x:Key="Initial" />
+    </Page.Resources>
+
+    <Grid>
+        <Image x:Name="LoginBackgroundImage" Stretch="UniformToFill"
+               Visibility="Collapsed" IsHitTestVisible="False"
+               AutomationProperties.AccessibilityView="Raw" />
+        <Border x:Name="BackgroundScrim" Background="#B3000000"
+                Visibility="Collapsed" IsHitTestVisible="False" />
+
+        <ProgressRing x:Name="LoadingRing" Width="32" Height="32"
+                      HorizontalAlignment="Center" VerticalAlignment="Center" />
+
+        <ScrollViewer x:Name="ContentScroll" Visibility="Collapsed">
+            <StackPanel MaxWidth="672" Padding="16,52,16,48"
+                        HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="0">
+                <StackPanel HorizontalAlignment="Center" Spacing="12" Margin="0,0,0,40">
+                    <TextBlock Text="Who’s watching?" FontSize="38" FontWeight="ExtraBold"
+                               CharacterSpacing="-40" HorizontalAlignment="Center" />
+                    <TextBlock Text="Everyone gets their own history, watchlist, and recommendations. Add the whole household now or later — this is your account either way."
+                               MaxWidth="448" FontSize="14" LineHeight="24" TextAlignment="Center"
+                               TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
+                </StackPanel>
+
+                <ItemsRepeater x:Name="ProfilesRepeater" HorizontalAlignment="Center">
+                    <ItemsRepeater.Layout>
+                        <UniformGridLayout MinItemWidth="120" MinItemHeight="132"
+                                           MinColumnSpacing="24" MinRowSpacing="24"
+                                           ItemsStretch="None" />
+                    </ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate>
+                        <DataTemplate x:DataType="local:HouseholdProfileTile">
+                            <Button Tag="{x:Bind Profile}" Click="ProfileCard_Click"
+                                    Style="{StaticResource GhostButtonStyle}" Padding="0"
+                                    Width="96" HorizontalAlignment="Center"
+                                    AutomationProperties.Name="{x:Bind AccessibleName}">
+                                <StackPanel Width="96" Spacing="8" HorizontalAlignment="Center">
+                                    <Grid Width="80" Height="84" HorizontalAlignment="Center">
+                                        <Border Width="80" Height="80" CornerRadius="16"
+                                                BorderThickness="1" BorderBrush="{StaticResource BorderBrush}"
+                                                Background="{StaticResource SurfaceBrush}"
+                                                Visibility="{x:Bind IsAdd, Converter={StaticResource InverseBoolToVis}}">
+                                            <Grid>
+                                                <TextBlock Text="{x:Bind DisplayName, Converter={StaticResource Initial}}"
+                                                           FontSize="24" FontWeight="Bold"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                <Image Source="{x:Bind Profile.AvatarUrl}" Stretch="UniformToFill" />
+                                            </Grid>
+                                        </Border>
+                                        <Border Width="80" Height="80" CornerRadius="16"
+                                                BorderThickness="1" BorderBrush="{StaticResource BorderBrush}"
+                                                Background="Transparent"
+                                                Visibility="{x:Bind IsAdd, Converter={StaticResource BoolToVis}}">
+                                            <FontIcon Glyph="&#xE710;" FontSize="28"
+                                                      Foreground="{StaticResource SecondaryTextBrush}"
+                                                      HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Border>
+                                        <Border Background="{StaticResource AppBackgroundBrush}"
+                                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                                CornerRadius="4" Padding="5,1"
+                                                HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                                                Visibility="{x:Bind Profile.IsChild, Converter={StaticResource BoolToVis}}">
+                                            <TextBlock Text="KIDS" FontFamily="Consolas" FontSize="9" CharacterSpacing="80" />
+                                        </Border>
+                                        <Border Background="{StaticResource AppBackgroundBrush}"
+                                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                                CornerRadius="4" Padding="5,1"
+                                                HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                                                Visibility="{x:Bind Profile.ShowsPinBadge, Converter={StaticResource BoolToVis}}">
+                                            <TextBlock Text="PIN" FontFamily="Consolas" FontSize="9" CharacterSpacing="80" />
+                                        </Border>
+                                    </Grid>
+                                    <TextBlock Text="{x:Bind DisplayName}" FontSize="14"
+                                               FontWeight="{x:Bind LabelWeight}"
+                                               Foreground="{x:Bind LabelBrush}"
+                                               TextTrimming="CharacterEllipsis" TextAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </DataTemplate>
+                    </ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+
+                <Border x:Name="ErrorPanel" Background="#2DEF6B73" CornerRadius="8"
+                        Padding="12,10" Margin="0,28,0,0" Visibility="Collapsed">
+                    <TextBlock x:Name="ErrorText" Foreground="{StaticResource ErrorBrush}"
+                               TextWrapping="Wrap" TextAlignment="Center" />
+                </Border>
+
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center"
+                            Spacing="12" Margin="0,44,0,0">
+                    <Button x:Name="SkipButton" Content="Just me for now"
+                            Style="{StaticResource GhostButtonStyle}" Click="Finish_Click" />
+                    <Button Content="Continue" Style="{StaticResource AccentButtonStyle}"
+                            Padding="18,9" Click="Finish_Click" />
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</Page>

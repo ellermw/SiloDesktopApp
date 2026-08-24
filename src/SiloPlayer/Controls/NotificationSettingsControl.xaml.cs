@@ -1,14 +1,19 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using SiloPlayer.Core.Models.Notifications;
 using SiloPlayer.ViewModels;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
 
 namespace SiloPlayer.Controls;
 
 public sealed partial class NotificationSettingsControl : UserControl
 {
+    private bool _isReady;
+    private bool _emailEditorOpen;
+
     public NotificationSettingsViewModel ViewModel { get; } =
         App.Services.GetRequiredService<NotificationSettingsViewModel>();
 
@@ -21,14 +26,10 @@ public sealed partial class NotificationSettingsControl : UserControl
 
     private async void NotificationSettingsControl_Loaded(object sender, RoutedEventArgs e)
     {
+        _isReady = false;
         await ViewModel.LoadAsync();
         SyncModeCombos();
-    }
-
-    private async void Refresh_Click(object sender, RoutedEventArgs e)
-    {
-        await ViewModel.LoadAsync();
-        SyncModeCombos();
+        _isReady = true;
     }
 
     private void SyncModeCombos()
@@ -63,21 +64,73 @@ public sealed partial class NotificationSettingsControl : UserControl
         }
     }
 
-    private void EmailModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void EmailModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (EmailModeCombo.SelectedItem is ComboBoxItem { Tag: string mode }) ViewModel.EmailMode = mode;
+        if (!_isReady || EmailModeCombo.SelectedItem is not ComboBoxItem { Tag: string mode } || mode == ViewModel.EmailMode) return;
+        ViewModel.EmailMode = mode;
+        await ViewModel.SaveEmailModeAsync();
     }
 
-    private void DiscordModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void DiscordModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (DiscordModeCombo.SelectedItem is ComboBoxItem { Tag: string mode }) ViewModel.DiscordMode = mode;
+        if (!_isReady || DiscordModeCombo.SelectedItem is not ComboBoxItem { Tag: string mode } || mode == ViewModel.DiscordMode) return;
+        ViewModel.DiscordMode = mode;
+        await ViewModel.SaveDiscordModeAsync();
     }
 
-    private async void SavePreferences_Click(object sender, RoutedEventArgs e) => await ViewModel.SavePreferencesAsync();
-    private async void SaveEmailMode_Click(object sender, RoutedEventArgs e) => await ViewModel.SaveEmailModeAsync();
-    private async void SetEmail_Click(object sender, RoutedEventArgs e) => await ViewModel.RequestEmailAddressAsync();
+    private async void NotificationPreference_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_isReady) await ViewModel.SavePreferencesAsync();
+    }
+
+    private async void EmailEnabled_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (!_isReady || sender is not ToggleSwitch toggle || toggle.IsOn == ViewModel.IsEmailEnabled) return;
+        await ViewModel.SaveEmailEnabledAsync(toggle.IsOn);
+        SyncModeCombos();
+    }
+
+    private async void DiscordEnabled_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (!_isReady || sender is not ToggleSwitch toggle || toggle.IsOn == ViewModel.IsDiscordEnabled) return;
+        await ViewModel.SaveDiscordEnabledAsync(toggle.IsOn);
+        SyncModeCombos();
+    }
+
+    private void ToggleEmailEditor_Click(object sender, RoutedEventArgs e)
+    {
+        SetEmailEditorOpen(!_emailEditorOpen);
+    }
+
+    private void SetEmailEditorOpen(bool open)
+    {
+        _emailEditorOpen = open;
+        EmailAddressEditor.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+        EmailAddressActionButton.Content = open ? "Cancel" : ViewModel.EmailAddressActionText;
+        if (open)
+        {
+            EmailAddressInput.Focus(FocusState.Programmatic);
+            EmailAddressInput.SelectAll();
+        }
+    }
+
+    private async void EmailAddressInput_KeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != Windows.System.VirtualKey.Enter) return;
+        e.Handled = true;
+        await SubmitEmailAddressAsync();
+    }
+
+    private async void SetEmail_Click(object sender, RoutedEventArgs e) => await SubmitEmailAddressAsync();
+
+    private async Task SubmitEmailAddressAsync()
+    {
+        if (string.IsNullOrWhiteSpace(ViewModel.EmailAddressInput)) return;
+        await ViewModel.RequestEmailAddressAsync();
+        if (string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)) SetEmailEditorOpen(false);
+    }
+
     private async void ClearEmail_Click(object sender, RoutedEventArgs e) => await ViewModel.ClearEmailAddressAsync();
-    private async void SaveDiscordMode_Click(object sender, RoutedEventArgs e) => await ViewModel.SaveDiscordModeAsync();
 
     private async void LinkDiscord_Click(object sender, RoutedEventArgs e)
     {
@@ -133,7 +186,7 @@ public sealed partial class NotificationSettingsControl : UserControl
         var content = new StackPanel { Spacing = 12, Width = 470 };
         content.Children.Add(new TextBlock
         {
-            Text = "Discord webhook URLs render as native embeds. Other HTTPS endpoints receive signed JSON.",
+            Text = "Discord webhook URLs render as native embeds. Any other HTTPS endpoint receives signed JSON.",
             TextWrapping = TextWrapping.Wrap,
             Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
         });
@@ -148,18 +201,21 @@ public sealed partial class NotificationSettingsControl : UserControl
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = webhook is null ? "Add webhook" : $"Edit “{webhook.Name}”",
+            Title = webhook is null ? "Add webhook" : $"Edit \"{webhook.Name}\"",
             Content = content,
             PrimaryButtonText = webhook is null ? "Create" : "Save",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
+            IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(name.Text),
+        };
+        name.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(name.Text);
+        dialog.PrimaryButtonClick += (_, args) =>
+        {
+            if (webhook is not null || !string.IsNullOrWhiteSpace(url.Text)) return;
+            args.Cancel = true;
+            ViewModel.ErrorMessage = "A webhook URL is required";
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        if (string.IsNullOrWhiteSpace(name.Text) || (webhook is null && string.IsNullOrWhiteSpace(url.Text)))
-        {
-            ViewModel.ErrorMessage = "A name and webhook URL are required.";
-            return;
-        }
 
         var input = new NotificationWebhookInput
         {
@@ -211,9 +267,10 @@ public sealed partial class NotificationSettingsControl : UserControl
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
-            Title = $"Delete “{webhook.Name}”?",
+            Title = $"Delete \"{webhook.Name}\"?",
             Content = "Notifications will stop posting to this destination. This cannot be undone.",
             PrimaryButtonText = "Delete",
+            PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
         };
@@ -221,9 +278,61 @@ public sealed partial class NotificationSettingsControl : UserControl
             await ViewModel.DeleteWebhookAsync(webhook.Id);
     }
 
-    private Task ShowSecretAsync(string secret) => ShowMessageAsync(
-        "Save this signing secret now",
-        $"The secret is shown only once. Store it securely.\n\n{secret}");
+    private async Task ShowSecretAsync(string secret)
+    {
+        var copyButton = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE8C8", FontSize = 14 },
+            Padding = new Thickness(7),
+        };
+        ToolTipService.SetToolTip(copyButton, "Copy signing secret");
+        copyButton.Click += (_, _) =>
+        {
+            var package = new DataPackage();
+            package.SetText(secret);
+            Clipboard.SetContent(package);
+            copyButton.Content = new FontIcon { Glyph = "\uE73E", FontSize = 14 };
+            ToolTipService.SetToolTip(copyButton, "Copied");
+        };
+
+        var secretRow = new Grid();
+        secretRow.ColumnDefinitions.Add(new ColumnDefinition());
+        secretRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        secretRow.Children.Add(new TextBlock
+        {
+            Text = secret,
+            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        Grid.SetColumn(copyButton, 1);
+        secretRow.Children.Add(copyButton);
+
+        var content = new StackPanel { Spacing = 14, Width = 460 };
+        content.Children.Add(new TextBlock
+        {
+            Text = "Silo signs every delivery with this secret so your receiver can verify it. It is shown only once — store it on the receiving service now. You can rotate it later if it is lost.",
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        });
+        content.Children.Add(new Border
+        {
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["MutedBrush"],
+            CornerRadius = new CornerRadius(8),
+            Padding = new Thickness(12),
+            Child = secretRow,
+        });
+
+        await new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "Save your signing secret",
+            Content = content,
+            PrimaryButtonText = "I've saved it",
+            DefaultButton = ContentDialogButton.Primary,
+        }.ShowAsync();
+    }
 
     private async Task ShowMessageAsync(string title, string message)
     {

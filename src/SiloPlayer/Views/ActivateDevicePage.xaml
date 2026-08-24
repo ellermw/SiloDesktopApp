@@ -17,6 +17,16 @@
 
     <!-- Full-page centered auth shell (matches LoginPage layout) -->
     <Grid HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+        <Image
+            Source="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay}"
+            Stretch="UniformToFill"
+            Visibility="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource NullToVis}}"
+            IsHitTestVisible="False"
+            AutomationProperties.AccessibilityView="Raw" />
+        <Border
+            Background="#B3000000"
+            Visibility="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource NullToVis}}"
+            IsHitTestVisible="False" />
         <StackPanel
             HorizontalAlignment="Center"
             VerticalAlignment="Center"
@@ -30,7 +40,7 @@
                     <StackPanel Spacing="8">
                         <TextBlock
                             x:Name="ServerNameTitle"
-                            Text="Silo"
+                            Text="{x:Bind ViewModel.ServerName, Mode=OneWay}"
                             FontSize="30"
                             FontWeight="ExtraBold"
                             Foreground="{StaticResource PrimaryTextBrush}"
@@ -192,7 +202,7 @@
                                 FontSize="13"
                                 TextWrapping="Wrap" />
                             <Button
-                                Content="Sign in"
+                                Content="Sign in to approve"
                                 Style="{StaticResource AccentButtonStyle}"
                                 HorizontalAlignment="Stretch"
                                 Padding="16,10"

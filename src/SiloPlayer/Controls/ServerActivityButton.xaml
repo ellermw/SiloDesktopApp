@@ -7,6 +7,30 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
+    <UserControl.Resources>
+        <!-- ServerActivity.tsx uses a two-second opacity pulse while activity
+             exists. Keep the animation on the badge only so the trigger stays
+             visually stable and its hit target never moves. -->
+        <Storyboard x:Name="CountBadgePulse" RepeatBehavior="Forever">
+            <DoubleAnimationUsingKeyFrames
+                Storyboard.TargetName="CountBadge"
+                Storyboard.TargetProperty="Opacity"
+                Duration="0:0:2">
+                <LinearDoubleKeyFrame KeyTime="0:0:0" Value="1" />
+                <EasingDoubleKeyFrame KeyTime="0:0:1" Value="0.62">
+                    <EasingDoubleKeyFrame.EasingFunction>
+                        <SineEase EasingMode="EaseInOut" />
+                    </EasingDoubleKeyFrame.EasingFunction>
+                </EasingDoubleKeyFrame>
+                <EasingDoubleKeyFrame KeyTime="0:0:2" Value="1">
+                    <EasingDoubleKeyFrame.EasingFunction>
+                        <SineEase EasingMode="EaseInOut" />
+                    </EasingDoubleKeyFrame.EasingFunction>
+                </EasingDoubleKeyFrame>
+            </DoubleAnimationUsingKeyFrames>
+        </Storyboard>
+    </UserControl.Resources>
+
     <Grid Width="44" Height="44">
         <Button
             x:Name="RootButton"

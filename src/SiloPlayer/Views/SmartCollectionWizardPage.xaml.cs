@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Models.Collections;
+using SiloPlayer.Controls;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 
@@ -35,7 +36,7 @@ public sealed partial class SmartCollectionWizardPage : Page
 
         ViewModel.Saved += OnSaved;
         ViewModel.Rules.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(BuildRulesPanel);
-        ViewModel.PreviewItems.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(BuildPreviewItemsPanel);
+        ViewModel.PreviewMediaItems.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(UpdatePreviewState);
         ViewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName is nameof(ViewModel.IsSaving)
@@ -47,6 +48,7 @@ public sealed partial class SmartCollectionWizardPage : Page
             {
                 Bindings.Update();
                 UpdateContinueState();
+                UpdatePreviewState();
             }
         };
         SizeChanged += SmartCollectionWizardPage_SizeChanged;
@@ -69,7 +71,7 @@ public sealed partial class SmartCollectionWizardPage : Page
         BuildLibrariesPanel();
         BuildProfilesPanel();
         BuildRulesPanel();
-        BuildPreviewItemsPanel();
+        UpdatePreviewState();
         UpdateContinueState();
         WizardTitle.Text = string.IsNullOrWhiteSpace(_args?.CollectionId)
             ? "New Collection"
@@ -158,6 +160,7 @@ public sealed partial class SmartCollectionWizardPage : Page
         SharedToggle.Visibility = ViewModel.IsAdmin ? Visibility.Collapsed : Visibility.Visible;
         IncludeServerToggle.Visibility = ViewModel.IsAdmin ? Visibility.Collapsed : Visibility.Visible;
         FeaturedToggle.Visibility = ViewModel.IsAdmin ? Visibility.Visible : Visibility.Collapsed;
+        DescriptionPanel.Visibility = ViewModel.IsAdmin ? Visibility.Visible : Visibility.Collapsed;
         ProfileAccessSection.Visibility = !ViewModel.IsAdmin && ViewModel.IsShared
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -396,73 +399,24 @@ public sealed partial class SmartCollectionWizardPage : Page
             ? string.Join(", ", values.Cast<object?>().Select(item => item?.ToString()))
             : value?.ToString() ?? "";
 
-    private void BuildPreviewItemsPanel()
+    private void UpdatePreviewState()
     {
-        PreviewItemsPanel.Children.Clear();
-
-        if (ViewModel.PreviewItems.Count == 0)
-        {
-            PreviewItemsPanel.Children.Add(new TextBlock
-            {
-                Text = "No preview loaded yet.",
-                FontSize = 13,
-                Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"]
-            });
-            Bindings.Update();
+        if (PreviewCountTextBlock == null || PreviewEmptyPanel == null || PreviewItemsRepeater == null)
             return;
-        }
 
-        foreach (var item in ViewModel.PreviewItems.Take(24))
-        {
-            var title = new TextBlock
-            {
-                Text = item.Title,
-                FontSize = 13,
-                Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
-                TextTrimming = TextTrimming.CharacterEllipsis
-            };
-            var badge = MakeTypeBadge(item.Type);
-            var grid = new Grid
-            {
-                ColumnSpacing = 8,
-                ColumnDefinitions =
-                {
-                    new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
-                    new ColumnDefinition { Width = GridLength.Auto }
-                }
-            };
-            Grid.SetColumn(title, 0);
-            Grid.SetColumn(badge, 1);
-            grid.Children.Add(title);
-            grid.Children.Add(badge);
-
-            PreviewItemsPanel.Children.Add(new Border
-            {
-                Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(10, 7, 10, 7),
-                Child = grid
-            });
-        }
-
-        Bindings.Update();
-    }
-
-    private static Border MakeTypeBadge(string type)
-    {
-        return new Border
-        {
-            Background = (Brush)Application.Current.Resources["AccentBackgroundBrush"],
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(6, 2, 6, 2),
-            Child = new TextBlock
-            {
-                Text = string.IsNullOrWhiteSpace(type) ? "ITEM" : type.ToUpperInvariant(),
-                FontSize = 10,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)Application.Current.Resources["AccentBrush"]
-            }
-        };
+        PreviewCountTextBlock.Text = ViewModel.IsPreviewing && ViewModel.PreviewMediaItems.Count == 0
+            ? "Loading items…"
+            : $"{ViewModel.PreviewTotal:N0} item{(ViewModel.PreviewTotal == 1 ? "" : "s")}";
+        PreviewEmptyPanel.Visibility = !ViewModel.IsPreviewing && ViewModel.PreviewMediaItems.Count == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        PreviewItemsRepeater.Visibility = ViewModel.PreviewMediaItems.Count > 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        NextSummaryText.Text = ViewModel.PreviewTotal > 0
+            ? $"{ViewModel.PreviewTotal:N0} item{(ViewModel.PreviewTotal == 1 ? "" : "s")} match these filters"
+            : "Choose filters to preview matching titles";
+        UpdateContinueState();
     }
 
     private void MediaScopeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -499,6 +453,15 @@ public sealed partial class SmartCollectionWizardPage : Page
         SchedulePreview();
     }
 
+    private void FiltersButton_Click(object sender, RoutedEventArgs e)
+    {
+        FiltersAdvancedPanel.Visibility = FiltersAdvancedPanel.Visibility == Visibility.Visible
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
+
+    private void LimitTextBox_TextChanged(object sender, TextChangedEventArgs e) => SchedulePreview();
+
     private void UpdateContinueState()
     {
         if (ContinueButton == null) return;
@@ -527,8 +490,9 @@ public sealed partial class SmartCollectionWizardPage : Page
         DetailsStepPanel.Visibility = filtersVisible ? Visibility.Collapsed : Visibility.Visible;
         FiltersStepRulesPanel.Visibility = filtersVisible ? Visibility.Visible : Visibility.Collapsed;
         FiltersStepPreviewPanel.Visibility = filtersVisible ? Visibility.Visible : Visibility.Collapsed;
+        FilterActionBar.Visibility = filtersVisible ? Visibility.Visible : Visibility.Collapsed;
         ContinueButton.Visibility = filtersVisible ? Visibility.Visible : Visibility.Collapsed;
-        CancelButton.Visibility = filtersVisible ? Visibility.Visible : Visibility.Collapsed;
+        CancelButton.Visibility = Visibility.Collapsed;
         BackToFiltersButton.Visibility = filtersVisible ? Visibility.Collapsed : Visibility.Visible;
         SaveButton.Visibility = filtersVisible ? Visibility.Collapsed : Visibility.Visible;
 
@@ -541,6 +505,11 @@ public sealed partial class SmartCollectionWizardPage : Page
             filtersVisible ? "AccentBackgroundBrush" : "SurfaceBrush"];
         DetailsStepBadge.Background = (Brush)Application.Current.Resources[
             filtersVisible ? "SurfaceBrush" : "AccentBackgroundBrush"];
+        FiltersStepText.Text = filtersVisible ? "1  Filters" : "✓  Filters";
+        FiltersStepText.Foreground = (Brush)Application.Current.Resources[
+            filtersVisible ? "AccentBrush" : "SecondaryTextBrush"];
+        DetailsStepText.Foreground = (Brush)Application.Current.Resources[
+            filtersVisible ? "SecondaryTextBrush" : "AccentBrush"];
         UpdateWorkspaceLayout();
     }
 
@@ -660,18 +629,15 @@ public sealed partial class SmartCollectionWizardPage : Page
     private void UpdateWorkspaceLayout()
     {
         var filtersVisible = _currentStep == 1;
-        WizardWorkspaceGrid.ColumnDefinitions[0].Width = _compactLayout
-            ? new GridLength(1, GridUnitType.Star)
-            : new GridLength(1.05, GridUnitType.Star);
-        WizardWorkspaceGrid.ColumnDefinitions[1].Width = _compactLayout
-            ? new GridLength(0)
-            : new GridLength(0.95, GridUnitType.Star);
+        WizardWorkspaceGrid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+        WizardWorkspaceGrid.ColumnDefinitions[1].Width = new GridLength(0);
         Grid.SetColumn(WizardPrimaryPanel, 0);
         Grid.SetRow(WizardPrimaryPanel, 0);
-        Grid.SetColumnSpan(WizardPrimaryPanel, !filtersVisible || _compactLayout ? 2 : 1);
-        Grid.SetColumn(FiltersStepPreviewPanel, _compactLayout ? 0 : 1);
-        Grid.SetRow(FiltersStepPreviewPanel, _compactLayout ? 1 : 0);
-        Grid.SetColumnSpan(FiltersStepPreviewPanel, _compactLayout ? 2 : 1);
+        Grid.SetColumnSpan(WizardPrimaryPanel, 2);
+        FiltersStepPreviewPanel.Visibility = Visibility.Collapsed;
+        DetailsGrid.ColumnDefinitions[1].Width = _compactLayout ? new GridLength(0) : new GridLength(300);
+        Grid.SetColumn(PosterDetailsPanel, _compactLayout ? 0 : 1);
+        Grid.SetRow(PosterDetailsPanel, _compactLayout ? 1 : 0);
     }
 
     private static void SetDescendantControlsEnabled(DependencyObject root, bool enabled)

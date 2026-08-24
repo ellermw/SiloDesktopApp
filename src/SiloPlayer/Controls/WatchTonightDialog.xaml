@@ -7,9 +7,7 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:controls="using:SiloPlayer.Controls"
     mc:Ignorable="d"
-    Title=""
-    CloseButtonText="Close"
-    DefaultButton="Close">
+    Title="">
 
     <Grid Width="480" MinHeight="500">
         <Grid.RowDefinitions>
@@ -18,25 +16,52 @@
         </Grid.RowDefinitions>
 
         <!-- ─── Header (shared across all steps) ─────────────────────────── -->
-        <StackPanel Grid.Row="0" Spacing="6" Margin="0,0,0,18">
-            <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                <FontIcon
-                    Glyph="&#xE734;"
-                    FontSize="18"
-                    Foreground="{StaticResource AccentBrush}"
-                    VerticalAlignment="Center" />
+        <Grid Grid.Row="0" Margin="0,0,0,18">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel Grid.Column="0" Spacing="6">
+                <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <FontIcon
+                        Glyph="&#xE734;"
+                        FontSize="18"
+                        Foreground="{StaticResource AccentBrush}"
+                        VerticalAlignment="Center" />
+                    <TextBlock
+                        Text="Watch Tonight"
+                        FontSize="18"
+                        FontWeight="SemiBold"
+                        Foreground="{StaticResource PrimaryTextBrush}"
+                        VerticalAlignment="Center" />
+                </StackPanel>
                 <TextBlock
-                    Text="Watch Tonight"
-                    FontSize="18"
-                    FontWeight="SemiBold"
-                    Foreground="{StaticResource PrimaryTextBrush}"
-                    VerticalAlignment="Center" />
+                    x:Name="DescriptionText"
+                    FontSize="12"
+                    Foreground="{StaticResource SecondaryTextBrush}" />
             </StackPanel>
-            <TextBlock
-                x:Name="DescriptionText"
-                FontSize="12"
-                Foreground="{StaticResource SecondaryTextBrush}" />
-        </StackPanel>
+            <Button
+                Grid.Column="1"
+                Click="CloseButton_Click"
+                Width="32"
+                Height="32"
+                MinWidth="0"
+                MinHeight="0"
+                Padding="0"
+                Margin="12,-4,-4,0"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Background="Transparent"
+                BorderThickness="0"
+                CornerRadius="6"
+                ToolTipService.ToolTip="Close"
+                AutomationProperties.Name="Close Watch Tonight">
+                <FontIcon
+                    Glyph="&#xE711;"
+                    FontSize="12"
+                    Foreground="{StaticResource SecondaryTextBrush}" />
+            </Button>
+        </Grid>
 
         <!-- ─── Body (one step visible at a time) ────────────────────────── -->
         <Grid Grid.Row="1">
@@ -80,7 +105,7 @@
                             TextAlignment="Center"
                             TextWrapping="Wrap" />
                         <TextBlock
-                            Text="Continue watching or start next episodes"
+                            Text="Continue in-progress titles or start what is next"
                             FontSize="11"
                             Foreground="{StaticResource SecondaryTextBrush}"
                             HorizontalAlignment="Center"

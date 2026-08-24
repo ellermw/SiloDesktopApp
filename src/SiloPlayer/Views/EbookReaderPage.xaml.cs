@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
@@ -78,20 +79,29 @@ public sealed partial class EbookReaderPage : Page
         var requestedFileId = e.Parameter is EbookReaderNavigation nav ? nav.FileId : null;
         if (string.IsNullOrWhiteSpace(_contentId))
         {
-            ShowFailure("This book could not be identified.");
+            ShowFailure("Ebook not found.");
             return;
         }
 
         try
         {
             _item = await _catalogApi.GetItemDetailAsync(_contentId, _lifetime.Token);
+            if (!string.Equals(_item.Type, "ebook", StringComparison.OrdinalIgnoreCase))
+            {
+                ShowFailure("Ebook not found.");
+                return;
+            }
             TitleText.Text = _item.Title;
             if (App.MainWindowInstance is MainWindow window) window.SetDynamicTitle(_item.Title);
             _readerFiles = _item.Versions.Where(EbookReaderFormat.IsSupported).ToList();
             BuildFileSelector();
             await LoadMangaNavigationAsync();
-            var version = ChooseVersion(_readerFiles, requestedFileId)
-                ?? throw new InvalidOperationException("No readable book file is available.");
+            var version = ChooseVersion(_readerFiles, requestedFileId);
+            if (version == null)
+            {
+                ShowFailure("Unsupported ebook format.");
+                return;
+            }
             await ReaderWebView.EnsureCoreWebView2Async();
             ReaderWebView.CoreWebView2.WebMessageReceived += ReaderWebView_WebMessageReceived;
             await LoadPreferencesAsync();
@@ -103,7 +113,7 @@ public sealed partial class EbookReaderPage : Page
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            ShowFailure(ex.Message);
+            ShowFailure(_item == null ? "Ebook not found." : ex.Message);
         }
     }
 
@@ -210,6 +220,8 @@ public sealed partial class EbookReaderPage : Page
             var label = MangaChapterLabel(_nextMangaChapter);
             NextChapterLabel.Text = label;
             EndOfBookNextLabel.Text = $"Next: {label}";
+            AutomationProperties.SetName(NextChapterButton, $"Next chapter: {label}");
+            AutomationProperties.SetName(EndOfBookNextButton, $"Next chapter: {label}");
             NextChapterButton.Visibility = Visibility.Visible;
         }
         catch (ApiException) { }
@@ -620,7 +632,9 @@ public sealed partial class EbookReaderPage : Page
         SideColumn.Width = new GridLength(open ? 320 : 0);
         SidePanel.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
         PanelToggleIcon.Glyph = open ? "\uE89F" : "\uE8A0";
-        ToolTipService.SetToolTip(PanelToggleButton, open ? "Close reader panel" : "Open reader panel");
+        var label = open ? "Close reader panel" : "Open reader panel";
+        ToolTipService.SetToolTip(PanelToggleButton, label);
+        AutomationProperties.SetName(PanelToggleButton, label);
     }
 
     private async void Highlight_Click(object sender, RoutedEventArgs e)
@@ -792,6 +806,9 @@ public sealed partial class EbookReaderPage : Page
     private void UpdateRulerOverlay()
     {
         var visible = !IsComicBook && ReadingRulerCheck.IsChecked == true;
+        AutomationProperties.SetName(
+            ReadingRulerToolbarButton,
+            visible ? "Disable reading ruler" : "Enable reading ruler");
         RulerOverlay.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         RulerDragButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         RulerPositionSection.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;

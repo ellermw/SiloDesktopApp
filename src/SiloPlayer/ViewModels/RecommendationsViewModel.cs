@@ -52,23 +52,21 @@ public partial class RecommendationsViewModel : ObservableObject
 
         try
         {
-            // Match React Query's behavior: retain the mounted result while a
-            // stale refresh runs, then replace the rows in one UI-thread pass.
-            // This avoids flashing an empty page and rebuilding each row twice.
-            var profileTask = GetTasteProfileAsync();
-            var rowsTask = GetDiscoverRowsAsync();
-            await Task.WhenAll(profileTask, rowsTask);
+            // The WebUI treats taste profile and discover rows as independent
+            // queries. Publish the small header card as soon as it is ready;
+            // it must not wait behind the much larger discover response.
+            var profileTask = LoadAndPublishTasteProfileAsync();
+            var rows = await GetDiscoverRowsAsync();
 
-            var profile = await profileTask;
-            var rows = await rowsTask;
-
-            TasteProfile = profile;
             Rows.Clear();
             foreach (var row in rows)
                 Rows.Add(row);
 
             ErrorMessage = null;
             _lastLoadedAt = DateTime.UtcNow;
+            IsLoading = false;
+
+            await profileTask;
         }
         catch (Exception ex)
         {
@@ -80,6 +78,18 @@ public partial class RecommendationsViewModel : ObservableObject
         {
             _loadInProgress = false;
             IsLoading = false;
+            IsTasteProfileLoading = false;
+        }
+    }
+
+    private async Task LoadAndPublishTasteProfileAsync()
+    {
+        try
+        {
+            TasteProfile = await GetTasteProfileAsync();
+        }
+        finally
+        {
             IsTasteProfileLoading = false;
         }
     }

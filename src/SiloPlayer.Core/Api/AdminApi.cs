@@ -12,6 +12,23 @@ file class AdminSensitiveStatusResponse { public List<string> Configured { get; 
 
 public class AdminApi(SiloApiClient client)
 {
+    // ===== Client diagnostics =====
+
+    public Task<DiagnosticStatus> GetDiagnosticsStatusAsync(CancellationToken ct = default)
+        => client.GetAsync<DiagnosticStatus>("/api/v1/diagnostics/status", ct);
+
+    public Task<DiagnosticReportListResponse> GetDiagnosticReportsAsync(string query = "", CancellationToken ct = default)
+        => client.GetAsync<DiagnosticReportListResponse>("/api/v1/admin/diagnostics/reports" + query, ct);
+
+    public Task<DiagnosticReport> GetDiagnosticReportAsync(string id, CancellationToken ct = default)
+        => client.GetAsync<DiagnosticReport>($"/api/v1/admin/diagnostics/reports/{Uri.EscapeDataString(id)}", ct);
+
+    public Task DeleteDiagnosticReportAsync(string id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/diagnostics/reports/{Uri.EscapeDataString(id)}", ct);
+
+    public Task<byte[]> DownloadDiagnosticReportAsync(string id, CancellationToken ct = default)
+        => client.GetBytesAsync($"/api/v1/admin/diagnostics/reports/{Uri.EscapeDataString(id)}/download?proxy=1", ct);
+
     // ===== Stats =====
 
     public Task<AdminStats> GetStatsAsync(CancellationToken ct = default)
@@ -52,6 +69,22 @@ public class AdminApi(SiloApiClient client)
 
     public Task DeleteAccessGroupAsync(long id, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/admin/access-groups/{id}", ct);
+
+    // ===== Emailed Invitations =====
+
+    public Task<List<Invitation>> GetInvitationsAsync(CancellationToken ct = default)
+        => client.GetAsync<List<Invitation>>("/api/v1/admin/invitations", ct);
+
+    public Task<SendInvitationResponse> CreateInvitationAsync(
+        CreateInvitationRequest request,
+        CancellationToken ct = default)
+        => client.PostAsync<SendInvitationResponse>("/api/v1/admin/invitations", request, ct);
+
+    public Task<SendInvitationResponse> ResendInvitationAsync(long id, CancellationToken ct = default)
+        => client.PostAsync<SendInvitationResponse>($"/api/v1/admin/invitations/{id}/resend", new { }, ct);
+
+    public Task RevokeInvitationAsync(long id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/admin/invitations/{id}", ct);
 
     // ===== Devices =====
 
@@ -143,12 +176,13 @@ public class AdminApi(SiloApiClient client)
     public Task<PolicyCapability> GetPolicyCapabilityAsync(CancellationToken ct = default) => client.GetAsync<PolicyCapability>("/api/v1/policy/capability", ct);
     public Task<List<PolicyVendorModule>> GetPolicyVendorAsync(CancellationToken ct = default) => client.GetAsync<List<PolicyVendorModule>>("/api/v1/admin/policy/vendor", ct);
     public Task<List<PolicyDocument>> GetPolicyDocumentsAsync(CancellationToken ct = default) => client.GetAsync<List<PolicyDocument>>("/api/v1/admin/policy/documents", ct);
+    public Task<PolicyDocument> GetPolicyDocumentAsync(long id, CancellationToken ct = default) => client.GetAsync<PolicyDocument>($"/api/v1/admin/policy/documents/{id}", ct);
     public Task<PolicyDocument> CreatePolicyDocumentAsync(string domain, string name, CancellationToken ct = default) => client.PostAsync<PolicyDocument>("/api/v1/admin/policy/documents", new { domain, name }, ct);
     public Task DeletePolicyDocumentAsync(long id, CancellationToken ct = default) => client.DeleteAsync($"/api/v1/admin/policy/documents/{id}", ct);
     public Task<List<PolicyVersionSummary>> GetPolicyVersionsAsync(long id, CancellationToken ct = default) => client.GetAsync<List<PolicyVersionSummary>>($"/api/v1/admin/policy/documents/{id}/versions", ct);
-    public Task<PolicyVersion> GetPolicyVersionAsync(long id, int version, CancellationToken ct = default) => client.GetAsync<PolicyVersion>($"/api/v1/admin/policy/documents/{id}/versions/{version}", ct);
+    public Task<PolicyVersion> GetPolicyVersionAsync(long id, long versionId, CancellationToken ct = default) => client.GetAsync<PolicyVersion>($"/api/v1/admin/policy/documents/{id}/versions/{versionId}", ct);
     public Task<PolicyCreateVersionResult> CreatePolicyVersionAsync(long id, string source, string? comment, CancellationToken ct = default) => client.PostAsync<PolicyCreateVersionResult>($"/api/v1/admin/policy/documents/{id}/versions", new { source, comment }, ct);
-    public Task<PolicyActivateVersionResult> ActivatePolicyVersionAsync(long id, int version, CancellationToken ct = default) => client.PostAsync<PolicyActivateVersionResult>($"/api/v1/admin/policy/documents/{id}/versions/{version}/activate", new { }, ct);
+    public Task<PolicyActivateVersionResult> ActivatePolicyVersionAsync(long id, long versionId, CancellationToken ct = default) => client.PostAsync<PolicyActivateVersionResult>($"/api/v1/admin/policy/documents/{id}/versions/{versionId}/activate", new { }, ct);
     public Task<PolicySetDocumentEnabledResult> SetPolicyDocumentEnabledAsync(long id, bool enabled, CancellationToken ct = default) => client.PostAsync<PolicySetDocumentEnabledResult>($"/api/v1/admin/policy/documents/{id}/enabled", new { enabled }, ct);
     public Task<PolicyValidateResult> ValidatePolicyAsync(string domain, string source, CancellationToken ct = default) => client.PostAsync<PolicyValidateResult>("/api/v1/admin/policy/validate", new { domain, source }, ct);
     public Task<PolicySimulateResult> SimulatePolicyAsync(string domain, string? source, object input, CancellationToken ct = default) => client.PostAsync<PolicySimulateResult>("/api/v1/admin/policy/simulate", new { domain, source, input }, ct);
@@ -267,6 +301,9 @@ public class AdminApi(SiloApiClient client)
 
     public Task<Dictionary<string, object>> GetHWAccelInfoAsync(CancellationToken ct = default)
         => client.GetAsync<Dictionary<string, object>>("/api/v1/admin/system/hw-accel", ct);
+
+    public Task<AdminHWAccelInfo> GetHWAccelDetectionAsync(CancellationToken ct = default)
+        => client.GetAsync<AdminHWAccelInfo>("/api/v1/admin/system/hw-accel", ct);
 
     // ===== Admin Jobs (long-running: library_refresh, catalog_import, etc.) =====
 
@@ -426,6 +463,12 @@ public class AdminApi(SiloApiClient client)
 
     public Task DeleteCollectionAsync(string id, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/admin/collections/{Uri.EscapeDataString(id)}", ct);
+
+    public Task AddCollectionItemAsync(string collectionId, string itemId, CancellationToken ct = default)
+        => client.PutNoContentAsync(
+            $"/api/v1/admin/collections/{Uri.EscapeDataString(collectionId)}/items/{Uri.EscapeDataString(itemId)}",
+            null,
+            ct);
 
     public Task<LibraryCollectionSyncRun> SyncCollectionAsync(string id, CancellationToken ct = default)
         => client.PostAsync<LibraryCollectionSyncRun>($"/api/v1/admin/collections/{Uri.EscapeDataString(id)}/sync", new { }, ct);

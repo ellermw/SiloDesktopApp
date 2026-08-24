@@ -17,9 +17,21 @@
         <converters:InverseBoolConverter x:Key="InverseBool" />
     </Page.Resources>
 
-    <!-- Full-page centered auth shell -->
-    <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
-                  HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
+    <!-- Full-page centered auth shell. The server-controlled login artwork is
+         rendered behind the same 70% readability scrim used by the WebUI. -->
+    <Grid>
+        <Image
+            Source="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay}"
+            Stretch="UniformToFill"
+            Visibility="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource NullToVis}}"
+            IsHitTestVisible="False"
+            AutomationProperties.AccessibilityView="Raw" />
+        <Border
+            Background="#B3000000"
+            Visibility="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource NullToVis}}"
+            IsHitTestVisible="False" />
+        <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
+                      HorizontalContentAlignment="Stretch" VerticalContentAlignment="Center">
         <StackPanel
             HorizontalAlignment="Center"
             VerticalAlignment="Center"
@@ -260,5 +272,6 @@
                 HorizontalAlignment="Center"
                 Click="BackButton_Click" />
         </StackPanel>
-    </ScrollViewer>
+        </ScrollViewer>
+    </Grid>
 </Page>

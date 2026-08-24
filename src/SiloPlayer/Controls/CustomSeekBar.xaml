@@ -31,8 +31,16 @@
             <Border x:Name="IntroRegion" Background="#40E8B86E" CornerRadius="2"
                     HorizontalAlignment="Left" Width="0" Visibility="Collapsed" />
 
+            <!-- Recap region tint (violet) -->
+            <Border x:Name="RecapRegion" Background="#40A78BFA" CornerRadius="2"
+                    HorizontalAlignment="Left" Width="0" Visibility="Collapsed" />
+
             <!-- Credits region tint (muted cyan) -->
             <Border x:Name="CreditsRegion" Background="#4078AEFC" CornerRadius="2"
+                    HorizontalAlignment="Left" Width="0" Visibility="Collapsed" />
+
+            <!-- Preview region tint (emerald) -->
+            <Border x:Name="PreviewRegion" Background="#4034D399" CornerRadius="2"
                     HorizontalAlignment="Left" Width="0" Visibility="Collapsed" />
 
             <!-- Progress fill (accent) — left-anchored, width varies. -->
@@ -42,6 +50,32 @@
 
         <!-- Chapter markers layer — overlays the full width. Populated by code-behind. -->
         <Canvas x:Name="ChapterMarkersLayer" Height="24" Background="Transparent" IsHitTestVisible="False" />
+
+        <!-- The WebUI exposes two white timeline handles for the active marker
+             while marker editing is open. Their 24px hit targets remain usable
+             on touch even though the visible grip is intentionally narrow. -->
+        <Border x:Name="MarkerStartHandle" Width="24" Height="24"
+                HorizontalAlignment="Left" VerticalAlignment="Center"
+                Background="Transparent" Visibility="Collapsed" Tag="start"
+                PointerPressed="MarkerHandle_PointerPressed"
+                PointerMoved="MarkerHandle_PointerMoved"
+                PointerReleased="MarkerHandle_PointerReleased"
+                PointerCaptureLost="MarkerHandle_PointerCaptureLost">
+            <Border Width="6" Height="18" CornerRadius="3" Background="White"
+                    BorderBrush="#33000000" BorderThickness="1"
+                    HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Border>
+        <Border x:Name="MarkerEndHandle" Width="24" Height="24"
+                HorizontalAlignment="Left" VerticalAlignment="Center"
+                Background="Transparent" Visibility="Collapsed" Tag="end"
+                PointerPressed="MarkerHandle_PointerPressed"
+                PointerMoved="MarkerHandle_PointerMoved"
+                PointerReleased="MarkerHandle_PointerReleased"
+                PointerCaptureLost="MarkerHandle_PointerCaptureLost">
+            <Border Width="6" Height="18" CornerRadius="3" Background="White"
+                    BorderBrush="#33000000" BorderThickness="1"
+                    HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Border>
 
         <!-- Scrub thumb (visible on hover / during drag) -->
         <Ellipse x:Name="ScrubThumb" Width="12" Height="12" Fill="White"

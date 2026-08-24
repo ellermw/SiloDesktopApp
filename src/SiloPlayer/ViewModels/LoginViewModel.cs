@@ -15,12 +15,18 @@ public partial class LoginViewModel : ObservableObject
     private readonly AuthService _authService;
     private readonly AuthApi _authApi;
     private readonly SettingsApi _settingsApi;
+    private readonly SiloApiClient _apiClient;
 
-    public LoginViewModel(AuthService authService, AuthApi authApi, SettingsApi settingsApi)
+    public LoginViewModel(
+        AuthService authService,
+        AuthApi authApi,
+        SettingsApi settingsApi,
+        SiloApiClient apiClient)
     {
         _authService = authService;
         _authApi = authApi;
         _settingsApi = settingsApi;
+        _apiClient = apiClient;
     }
 
     [ObservableProperty]
@@ -43,6 +49,9 @@ public partial class LoginViewModel : ObservableObject
 
     [ObservableProperty]
     private string _loginSubtitle = "Sign in with an existing account.";
+
+    [ObservableProperty]
+    private string? _loginBackgroundUrl;
 
     // ===== Auth Providers =====
 
@@ -114,11 +123,13 @@ public partial class LoginViewModel : ObservableObject
             LoginSubtitle = string.IsNullOrWhiteSpace(branding.LoginSubtitle)
                 ? "Sign in with an existing account."
                 : branding.LoginSubtitle;
+            LoginBackgroundUrl = _apiClient.ResolveServerUrl(branding.LoginBackgroundUrl);
         }
         catch
         {
             if (string.IsNullOrWhiteSpace(ServerName)) ServerName = "Silo";
             LoginSubtitle = "Sign in with an existing account.";
+            LoginBackgroundUrl = null;
         }
     }
 

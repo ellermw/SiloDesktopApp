@@ -20,6 +20,7 @@ public readonly record struct ProfileVerificationContext(
 public class SiloApiClient
 {
     public const string DefaultClientName = "Silo for Windows";
+    public const string ClientFamily = "desktop";
 
     private static readonly HttpRequestOptionsKey<long> AuthenticationGenerationOption =
         new("SiloPlayer.AuthenticationGeneration");
@@ -105,6 +106,21 @@ public class SiloApiClient
     public string BaseUrl
     {
         get { lock (_authStateGate) return _baseUrl; }
+    }
+
+    /// <summary>Resolves a server-returned absolute or root-relative asset URL.</summary>
+    public string? ResolveServerUrl(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var trimmed = value.Trim();
+        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var absolute))
+            return absolute.ToString();
+
+        string baseUrl;
+        lock (_authStateGate) baseUrl = _baseUrl;
+        if (!Uri.TryCreate(baseUrl.TrimEnd('/') + "/", UriKind.Absolute, out var origin))
+            return null;
+        return Uri.TryCreate(origin, trimmed, out var resolved) ? resolved.ToString() : null;
     }
 
     public void SetAccessToken(string? token)
@@ -530,6 +546,12 @@ public class SiloApiClient
     private void AddDeviceHeadersUnsafe(HttpRequestMessage request)
     {
         request.Headers.TryAddWithoutValidation("X-Silo-Client", _clientName);
+        // Silo's typed settings contract never infers the like-client family
+        // from the free-form platform string.  Native Windows belongs to the
+        // desktop family, so advertise that identity on every request.  This
+        // lets effective settings resolve profile_client values and makes
+        // writes such as nav.primary_menu unambiguous.
+        request.Headers.TryAddWithoutValidation("X-Silo-Client-Family", ClientFamily);
         if (!string.IsNullOrWhiteSpace(_clientVersion))
             request.Headers.TryAddWithoutValidation("X-Silo-Client-Version", _clientVersion);
         if (!string.IsNullOrWhiteSpace(_deviceId)) request.Headers.Add("X-Silo-Device-Id", _deviceId);
@@ -563,7 +585,10 @@ public class SiloApiClient
             out var requestContextGeneration)
                 ? requestContextGeneration
                 : GetRequestContextSnapshot().RequestContextGeneration;
-        var response = await _http.SendAsync(request, ct).ConfigureAwait(false);
+        var response = await _http.SendAsync(
+            request,
+            HttpCompletionOption.ResponseHeadersRead,
+            ct).ConfigureAwait(false);
 
         // On 401, try refreshing the token and retry once
         if (allowTokenRefresh &&
@@ -612,7 +637,10 @@ public class SiloApiClient
                     retry.Content.Headers.ContentType = contentType;
                 }
                 response.Dispose();
-                response = await _http.SendAsync(retry, ct).ConfigureAwait(false);
+                response = await _http.SendAsync(
+                    retry,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    ct).ConfigureAwait(false);
             }
         }
 

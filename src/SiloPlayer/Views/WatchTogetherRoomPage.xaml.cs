@@ -41,9 +41,15 @@ public sealed partial class WatchTogetherRoomPage : Page
             || string.IsNullOrEmpty(args.RoomId)
             || string.IsNullOrEmpty(args.RoomAccessToken))
         {
-            ViewModel.ErrorMessage = "Room token is required.";
+            ShowTerminalState(
+                "This invite link is incomplete",
+                "The link is missing its access token, so the room can't be opened. Ask the host for a fresh invite, or join with a room code instead.",
+                "Join with a code");
             return;
         }
+
+        RoomContent.Visibility = Visibility.Visible;
+        TerminalStatePanel.Visibility = Visibility.Collapsed;
 
         if (!_subscribed)
         {
@@ -280,12 +286,26 @@ public sealed partial class WatchTogetherRoomPage : Page
     {
         var reason = ViewModel.ClosedReason;
         if (string.IsNullOrEmpty(reason)) return;
-        ClosedReasonText.Text = reason switch
+        var title = reason switch
         {
             "host_left" or "room_closed" => "The room has ended.",
             "not_found" => "Room not found.",
             _ => "The room is unavailable.",
         };
+        ShowTerminalState(
+            title,
+            "Start a new watch party or join another room to keep watching together.",
+            "Start a new party");
+    }
+
+    private void ShowTerminalState(string title, string description, string action)
+    {
+        RoomContent.Visibility = Visibility.Collapsed;
+        TerminalStateTitle.Text = title;
+        TerminalStateDescription.Text = description;
+        TerminalStateAction.Content = action;
+        TerminalStatePanel.Visibility = Visibility.Visible;
+        TerminalStateAction.Focus(FocusState.Programmatic);
     }
 
     private void UpdateSuggestionsUi()
@@ -316,17 +336,66 @@ public sealed partial class WatchTogetherRoomPage : Page
 
     private async void EndButton_Click(object sender, RoutedEventArgs e)
     {
+        var errorText = new TextBlock
+        {
+            Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed,
+        };
+        var content = new StackPanel
+        {
+            Spacing = 10,
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = "End the watch party for everyone?",
+                    TextWrapping = TextWrapping.Wrap,
+                },
+                errorText,
+            },
+        };
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = "End watch party?",
-            Content = "This closes the room for everyone. This action cannot be undone.",
-            PrimaryButtonText = "End watch party",
+            Content = content,
+            PrimaryButtonText = "End Party",
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close,
+            PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
         };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-            await ViewModel.CloseRoomCommand.ExecuteAsync(null);
+
+        dialog.PrimaryButtonClick += async (_, args) =>
+        {
+            args.Cancel = true;
+            var deferral = args.GetDeferral();
+            try
+            {
+                dialog.IsPrimaryButtonEnabled = false;
+                dialog.PrimaryButtonText = "Ending…";
+                errorText.Visibility = Visibility.Collapsed;
+                await ViewModel.CloseRoomCommand.ExecuteAsync(null);
+                if (ViewModel.ClosedReason == "host_left")
+                {
+                    args.Cancel = false;
+                }
+                else
+                {
+                    errorText.Text = ViewModel.ErrorMessage ?? "The watch party could not be ended.";
+                    errorText.Visibility = Visibility.Visible;
+                    dialog.PrimaryButtonText = "End Party";
+                    dialog.IsPrimaryButtonEnabled = true;
+                }
+            }
+            finally
+            {
+                deferral.Complete();
+            }
+        };
+
+        await dialog.ShowAsync();
     }
 
     private void LeaveButton_Click(object sender, RoutedEventArgs e)
@@ -479,7 +548,9 @@ public sealed partial class WatchTogetherRoomPage : Page
         HostSearchResults.Visibility = Visibility.Collapsed;
         DrillDownPanel.Visibility = Visibility.Visible;
         CandidateSpotlight.Visibility = Visibility.Collapsed;
-        DrillDownTitle.Text = $"{series.Title} — Seasons";
+        DrillDownTitle.Text = series.Title;
+        DrillDownSubtitle.Text = "Pick a season";
+        DrillDownSubtitle.Visibility = Visibility.Visible;
         DrillDownBackText.Text = "Back to results";
         _showingEpisodes = false;
 
@@ -505,6 +576,7 @@ public sealed partial class WatchTogetherRoomPage : Page
     {
         if (string.IsNullOrWhiteSpace(_drillDownSeriesId)) return;
         DrillDownTitle.Text = season.Title;
+        DrillDownSubtitle.Visibility = Visibility.Collapsed;
         DrillDownBackText.Text = "Back to seasons";
         _showingEpisodes = true;
         try

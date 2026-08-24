@@ -11,6 +11,36 @@
     Loaded="Page_Loaded"
     SizeChanged="Page_SizeChanged">
 
+    <Page.Resources>
+        <!-- WebUI: h-10 rounded-xl, white primary button, 45% opacity while disabled. -->
+        <Style x:Key="RequestSearchButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="{StaticResource PrimaryTextBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource AppBackgroundBrush}" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="CornerRadius" Value="12" />
+            <Setter Property="Height" Value="40" />
+            <Setter Property="Padding" Value="20,0" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root" Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Content="{TemplateBinding Content}" />
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal" />
+                                    <VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="Root.Opacity" Value="0.88" /></VisualState.Setters></VisualState>
+                                    <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="Root.Opacity" Value="0.72" /></VisualState.Setters></VisualState>
+                                    <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="Root.Opacity" Value="0.45" /></VisualState.Setters></VisualState>
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Page.Resources>
+
     <ScrollViewer x:Name="PageScrollViewer" VerticalScrollBarVisibility="Auto">
         <StackPanel x:Name="PageContent" Padding="40,28,40,48" Spacing="28">
             <StackPanel Spacing="12" MaxWidth="760" HorizontalAlignment="Left">
@@ -34,33 +64,44 @@
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />
                     </Grid.ColumnDefinitions>
-                    <ComboBox x:Name="MediaTypeComboBox" Grid.Column="0" SelectionChanged="MediaType_Changed">
+                    <ComboBox x:Name="MediaTypeComboBox" Grid.Column="0" Height="40" CornerRadius="12" SelectionChanged="MediaType_Changed">
                         <ComboBoxItem Content="All" Tag="all" IsSelected="True" />
                         <ComboBoxItem Content="Movies" Tag="movie" />
                         <ComboBoxItem Content="Series" Tag="series" />
                     </ComboBox>
                     <Grid x:Name="SearchInputGrid" Grid.Column="1">
-                        <TextBox x:Name="SearchBox" PlaceholderText="Search TMDB by title…" Padding="36,8,38,8" KeyDown="SearchBox_KeyDown" TextChanged="SearchBox_TextChanged" />
+                        <TextBox x:Name="SearchBox" Height="40" CornerRadius="12" PlaceholderText="Search TMDB by title…" Padding="36,8,38,8" KeyDown="SearchBox_KeyDown" TextChanged="SearchBox_TextChanged" />
                         <FontIcon Glyph="&#xE721;" FontSize="15" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="12,0,0,0" IsHitTestVisible="False" />
                         <Button x:Name="ClearSearchButton" Style="{StaticResource GhostButtonStyle}" Width="30" Height="30" Padding="0" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,4,0" Click="ClearSearch_Click" Visibility="Collapsed" AutomationProperties.Name="Clear search"><FontIcon Glyph="&#xE711;" FontSize="12" /></Button>
                     </Grid>
-                    <Button x:Name="SearchButton" Grid.Column="2" Content="Search" Style="{StaticResource AccentButtonStyle}" Padding="20,8" Click="Search_Click" IsEnabled="False" />
+                    <Button x:Name="SearchButton" Grid.Column="2" Content="Search" Style="{StaticResource RequestSearchButtonStyle}" Click="Search_Click" IsEnabled="False" />
                 </Grid>
             </Border>
 
             <TextBlock x:Name="ErrorText" FontSize="13" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" Visibility="Collapsed" />
 
-            <StackPanel Orientation="Horizontal" Spacing="4" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
-                <Button x:Name="DiscoverTabButton" Tag="discover" Click="RequestTab_Click" Style="{StaticResource GhostButtonStyle}" Padding="12,9">
-                    <TextBlock Text="Discover" FontSize="13" />
-                </Button>
-                <Button x:Name="YoursTabButton" Tag="yours" Click="RequestTab_Click" Style="{StaticResource GhostButtonStyle}" Padding="12,9">
-                    <StackPanel Orientation="Horizontal" Spacing="7">
-                        <TextBlock Text="Yours" FontSize="13" />
-                        <Border x:Name="YoursCountBadge" Background="{StaticResource SurfaceRaisedBrush}" CornerRadius="10" Padding="6,2" Visibility="Collapsed"><TextBlock x:Name="YoursCountText" FontSize="10" FontWeight="SemiBold" /></Border>
-                    </StackPanel>
-                </Button>
-            </StackPanel>
+            <!-- The current WebUI line tabs divide the full content width evenly. -->
+            <Grid BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Grid Grid.Column="0">
+                    <Button x:Name="DiscoverTabButton" Tag="discover" Click="RequestTab_Click" Style="{StaticResource GhostButtonStyle}" Padding="12,9" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center">
+                        <TextBlock Text="Discover" FontSize="13" />
+                    </Button>
+                    <Border x:Name="DiscoverTabUnderline" Height="2" Background="{StaticResource PrimaryTextBrush}" VerticalAlignment="Bottom" IsHitTestVisible="False" />
+                </Grid>
+                <Grid Grid.Column="1">
+                    <Button x:Name="YoursTabButton" Tag="yours" Click="RequestTab_Click" Style="{StaticResource GhostButtonStyle}" Padding="12,9" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Spacing="7">
+                            <TextBlock Text="Yours" FontSize="13" />
+                            <Border x:Name="YoursCountBadge" Background="{StaticResource SurfaceRaisedBrush}" CornerRadius="10" Padding="6,2" Visibility="Collapsed"><TextBlock x:Name="YoursCountText" FontSize="10" FontWeight="SemiBold" /></Border>
+                        </StackPanel>
+                    </Button>
+                    <Border x:Name="YoursTabUnderline" Height="2" Background="{StaticResource PrimaryTextBrush}" VerticalAlignment="Bottom" Visibility="Collapsed" IsHitTestVisible="False" />
+                </Grid>
+            </Grid>
 
             <StackPanel x:Name="LoadingSkeleton" Spacing="34">
                 <StackPanel Spacing="10"><controls:SkeletonText Width="170" Height="20" HorizontalAlignment="Left" /><StackPanel Orientation="Horizontal" Spacing="12"><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster /></StackPanel></StackPanel>

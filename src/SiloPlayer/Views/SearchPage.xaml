@@ -188,8 +188,8 @@
                     <ComboBoxItem Content="All Media" Tag="all" />
                 </ComboBox>
                 <ComboBox x:Name="ResultSortCombo" Width="180" SelectionChanged="ResultSort_Changed">
-                    <ComboBoxItem Content="Relevance" Tag="relevance" IsSelected="True" />
-                    <ComboBoxItem Content="Date Added" Tag="added_at" />
+                    <ComboBoxItem Content="Relevance" Tag="relevance" />
+                    <ComboBoxItem Content="Date Added" Tag="added_at" IsSelected="True" />
                     <ComboBoxItem Content="Title" Tag="title" />
                     <ComboBoxItem Content="Release Date" Tag="release_date" />
                     <ComboBoxItem Content="Latest Episode Air Date" Tag="last_air_date" />
@@ -334,15 +334,60 @@
                                   HorizontalAlignment="Center" Width="24" Height="24" Margin="0,16" />
 
                     <StackPanel x:Name="RequestResultsSection" Visibility="Collapsed" Margin="0,36,0,0" Spacing="12">
-                        <TextBlock Text="Discover · Outside your library" FontSize="11" CharacterSpacing="140" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
-                        <TextBlock Text="Request to Add" FontSize="{StaticResource FontSizeTitle}" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+                        <Grid>
+                            <StackPanel Spacing="7">
+                                <TextBlock x:Name="RequestResultsEyebrow" Text="Discover · Outside your library" FontSize="11" CharacterSpacing="140" FontWeight="SemiBold" Foreground="#FFD8B46A" />
+                                <TextBlock x:Name="RequestResultsTitle" Text="Request to Add" FontSize="{StaticResource FontSizeTitle}" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+                            </StackPanel>
+                            <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" CornerRadius="12"
+                                    BorderBrush="#26F59E0B" BorderThickness="1" Background="#0FF59E0B" Padding="10,4">
+                                <TextBlock x:Name="RequestResultsCount" FontSize="11" Foreground="#CCFDE7B0" />
+                            </Border>
+                        </Grid>
                             <ItemsRepeater x:Name="RequestResultsRepeater">
                                 <ItemsRepeater.Layout><UniformGridLayout MinItemWidth="170" MinColumnSpacing="12" MinRowSpacing="16" ItemsStretch="Fill" /></ItemsRepeater.Layout>
                                 <ItemsRepeater.ItemTemplate>
                                     <DataTemplate x:DataType="requests:RequestMediaResult">
-                                        <Button Tag="{x:Bind}" Click="RequestResult_Click" Padding="0" Background="Transparent" BorderThickness="0" HorizontalAlignment="Stretch">
-                                            <StackPanel Spacing="6"><Border Height="240" CornerRadius="8" Background="{StaticResource CardBackgroundBrush}"><Image Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" /></Border><TextBlock Text="{x:Bind Title}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="{x:Bind YearText}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
-                                        </Button>
+                                        <Grid PointerEntered="RequestCard_PointerEntered"
+                                              PointerExited="RequestCard_PointerExited"
+                                              GotFocus="RequestCard_GotFocus"
+                                              LostFocus="RequestCard_LostFocus">
+                                            <Button Tag="{x:Bind}" Click="RequestResult_Click" Padding="0" Background="Transparent" BorderThickness="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                                                <StackPanel Spacing="6">
+                                                    <Border Height="240" CornerRadius="8" Background="{StaticResource CardBackgroundBrush}">
+                                                        <Image Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" />
+                                                    </Border>
+                                                    <TextBlock Text="{x:Bind Title}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{x:Bind DisplayMeta}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Border Tag="request-overlay"
+                                                    Height="240"
+                                                    VerticalAlignment="Top"
+                                                    Opacity="0"
+                                                    IsHitTestVisible="False"
+                                                    Visibility="{x:Bind Request.Requestable, Converter={StaticResource BoolToVis}}">
+                                                <Border.Background>
+                                                    <LinearGradientBrush StartPoint="0.5,0" EndPoint="0.5,1">
+                                                        <GradientStop Color="#00000000" Offset="0" />
+                                                        <GradientStop Color="#73000000" Offset="0.6" />
+                                                        <GradientStop Color="#E6000000" Offset="1" />
+                                                    </LinearGradientBrush>
+                                                </Border.Background>
+                                                <Button Tag="{x:Bind}" Click="RequestNow_Click"
+                                                        Content="Request"
+                                                        HorizontalAlignment="Center" VerticalAlignment="Bottom"
+                                                        Margin="0,0,0,14" Padding="14,6"
+                                                        CornerRadius="16" FontSize="12" FontWeight="SemiBold"
+                                                        Background="White" BorderThickness="0" Foreground="Black" />
+                                            </Border>
+                                            <Border HorizontalAlignment="Right" VerticalAlignment="Top"
+                                                    Margin="0,8,8,0" Padding="8,3" CornerRadius="10"
+                                                    Background="#CC2A2112" BorderBrush="#33FFFFFF" BorderThickness="1"
+                                                    Visibility="{x:Bind Request.Requestable, Converter={StaticResource InverseBoolToVis}}">
+                                                <TextBlock Text="{x:Bind RequestLabel}" FontSize="10" FontWeight="SemiBold" Foreground="#CCFFFFFF" />
+                                            </Border>
+                                        </Grid>
                                     </DataTemplate>
                                 </ItemsRepeater.ItemTemplate>
                             </ItemsRepeater>

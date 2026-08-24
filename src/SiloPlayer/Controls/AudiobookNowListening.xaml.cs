@@ -1,5 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media.Imaging;
+using SiloPlayer.Core.Models;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
 
@@ -39,6 +41,7 @@ public sealed partial class AudiobookNowListening : UserControl
         var config = _settings.Load();
         SkipBackText.Text = config.AudiobookSkipBackSeconds.ToString();
         SkipForwardText.Text = config.AudiobookSkipForwardSeconds.ToString();
+        UpdateSkipButtonLabels(config);
         BuildFlyouts();
         UpdatePresentation();
         UpdatePlayback();
@@ -102,7 +105,15 @@ public sealed partial class AudiobookNowListening : UserControl
             _ => FormatTime(duration),
         };
         PlayPauseIcon.Glyph = _player.IsPaused ? "\uE768" : "\uE769";
+        var playPauseLabel = _player.IsPaused ? "Play" : "Pause";
+        AutomationProperties.SetName(PlayPauseButton, playPauseLabel);
+        ToolTipService.SetToolTip(PlayPauseButton, $"{playPauseLabel} (space)");
         var chapter = _player.CurrentAudiobookChapter;
+        var hasChapters = _player.AudiobookChapters.Count > 0;
+        PreviousChapterButton.Visibility = hasChapters ? Visibility.Visible : Visibility.Collapsed;
+        NextChapterButton.Visibility = hasChapters ? Visibility.Visible : Visibility.Collapsed;
+        ChaptersButton.Visibility = hasChapters ? Visibility.Visible : Visibility.Collapsed;
+        NextChapterButton.IsEnabled = chapter != null && chapter.Index + 1 < _player.AudiobookChapters.Count;
         ChapterPanel.Visibility = chapter == null ? Visibility.Collapsed : Visibility.Visible;
         if (chapter != null)
         {
@@ -214,6 +225,7 @@ public sealed partial class AudiobookNowListening : UserControl
                 _settings.Save(config);
                 SkipBackText.Text = config.AudiobookSkipBackSeconds.ToString();
                 SkipForwardText.Text = config.AudiobookSkipForwardSeconds.ToString();
+                UpdateSkipButtonLabels(config);
                 BuildFlyouts();
             };
             submenu.Items.Add(item);
@@ -269,6 +281,19 @@ public sealed partial class AudiobookNowListening : UserControl
         VolumeIcon.Glyph = _player.IsMuted || VolumeSlider.Value <= 0
             ? "\uE74F"
             : VolumeSlider.Value < 50 ? "\uE993" : "\uE767";
+        var label = _player.IsMuted || VolumeSlider.Value <= 0 ? "Unmute" : "Mute";
+        AutomationProperties.SetName(MuteButton, label);
+        ToolTipService.SetToolTip(MuteButton, label);
+    }
+
+    private void UpdateSkipButtonLabels(AppSettings settings)
+    {
+        var back = Math.Clamp(settings.AudiobookSkipBackSeconds, 5, 120);
+        var forward = Math.Clamp(settings.AudiobookSkipForwardSeconds, 5, 120);
+        AutomationProperties.SetName(SkipBackButton, $"Back {back} seconds");
+        AutomationProperties.SetName(SkipForwardButton, $"Forward {forward} seconds");
+        ToolTipService.SetToolTip(SkipBackButton, $"Back {back} seconds (Left)");
+        ToolTipService.SetToolTip(SkipForwardButton, $"Forward {forward} seconds (Right)");
     }
 
     private static string FormatTime(double seconds)

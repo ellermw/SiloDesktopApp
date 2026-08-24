@@ -83,7 +83,7 @@
                     </Border>
                     <Border Grid.Column="2" Background="{StaticResource SurfaceBrush}" CornerRadius="12" Padding="16">
                         <StackPanel Spacing="6">
-                            <TextBlock Text="ROOM AND INVITES"
+                            <TextBlock Text="ROOM &amp; INVITES"
                                        FontSize="10" FontWeight="SemiBold" CharacterSpacing="240"
                                        Foreground="{StaticResource SecondaryTextBrush}" />
                             <TextBlock Text="Share the room code or invite link to let others join. If the host disconnects the room stays open for 15 seconds — if they don't reconnect, the party ends automatically."
@@ -206,7 +206,7 @@
                                 MinHeight="44"
                                 Padding="16,12"
                                 Command="{x:Bind ViewModel.JoinByCodeCommand}"
-                                IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay, Converter={StaticResource InverseBool}}" />
+                                IsEnabled="{x:Bind ViewModel.CanJoin, Mode=OneWay}" />
                         </StackPanel>
                     </Border>
                 </Grid>

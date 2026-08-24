@@ -3,21 +3,27 @@ namespace SiloPlayer.Tests;
 public sealed class CurrentSettingsParitySourceTests
 {
     [Fact]
-    public void SettingsShellMatchesCurrentWideSearchableFourGroupNavigation()
+    public void SettingsShellMatchesCurrentWideSearchableFiveGroupDirectory()
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml");
         var code = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml.cs");
 
         Assert.Contains("MaxWidth=\"1424\"", xaml);
         Assert.Contains("x:Name=\"SettingsSearchBox\"", xaml);
-        Assert.Contains("14 settings sections", xaml);
+        Assert.Contains("17 settings sections", xaml);
+        Assert.Contains("x:Name=\"SettingsOverviewPanel\"", xaml);
+        Assert.Contains("Home & Discovery", code);
+        Assert.Contains("Connections", code);
+        Assert.Contains("Account", code);
         Assert.Contains("x:Name=\"AppearanceNavGroup\"", xaml);
-        Assert.Matches("AppearanceNavGroup[\\s\\S]+CardOverlaysTab[\\s\\S]+PersonalizeTab[\\s\\S]+LibraryDataNavGroup", xaml);
+        Assert.Matches("AppearanceNavGroup[\\s\\S]+InterfaceTab[\\s\\S]+CardOverlaysTab[\\s\\S]+AccessibilityTab[\\s\\S]+ThemeEditorTab[\\s\\S]+HomeDiscoveryNavGroup[\\s\\S]+PersonalizeTab[\\s\\S]+ConnectionsNavGroup[\\s\\S]+WebhookSyncTab[\\s\\S]+ImportTab[\\s\\S]+AccountNavGroup", xaml);
         Assert.Contains("SettingsSearchBox_TextChanged", code);
         Assert.Contains("SettingsPage_SizeChanged", code);
         Assert.Contains("e.NewSize.Width < 1024", code);
         Assert.Contains("SettingsNavigationGroups.Orientation", code);
         Assert.Contains("SettingsContentPanel.MaxWidth", code);
+        Assert.Contains("x:Name=\"DevicesTab\"", xaml);
+        Assert.Contains("x:Name=\"ConnectAppsTab\"", xaml);
     }
 
     [Fact]
@@ -49,6 +55,54 @@ public sealed class CurrentSettingsParitySourceTests
     }
 
     [Fact]
+    public void PersonalizeSettingsCanReplayTheCurrentServerDrivenFeatureTour()
+    {
+        var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml");
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml.cs");
+        var dialog = ReadRepoFile("src", "SiloPlayer", "Views", "Dialogs", "FeatureTourDialog.cs");
+        var api = ReadRepoFile("src", "SiloPlayer.Core", "Api", "SettingsApi.cs");
+
+        Assert.Contains("Replay the feature tour", xaml);
+        Assert.Contains("Start the tour", xaml);
+        Assert.Contains("GetOnboardingFlowAsync(\"web\")", page);
+        Assert.Contains("KnownKinds", dialog);
+        Assert.Contains("setting_choice", dialog);
+        Assert.Contains("Skip tour", dialog);
+        Assert.Contains("ReportOnboardingProgressAsync", dialog);
+        Assert.Contains("/api/v1/onboarding/flow?surface=", api);
+        Assert.Contains("/api/v1/onboarding/progress", api);
+    }
+
+    [Fact]
+    public void ConnectAppsWithholdsInvalidCompatCredentialsLikeCurrentWebUi()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.Account.cs");
+        var api = ReadRepoFile("src", "SiloPlayer.Core", "Api", "SettingsApi.cs");
+
+        Assert.Contains("PasswordLoginAvailable == false", page);
+        Assert.Contains("PendingRestart", page);
+        Assert.Contains("IsLoopbackUrl", page);
+        Assert.Contains("contains a #, which Jellyfin apps can't sign in with", page);
+        Assert.Contains("Every profile at a glance", page);
+        Assert.Contains("A Jellyfin app says my username or password is wrong", page);
+        Assert.Contains("public bool? PasswordLoginAvailable", api);
+    }
+
+    [Fact]
+    public void DeviceSettingsRespectHouseholdPermissionsAndProfileOwnership()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.Account.cs");
+
+        Assert.Contains("if (_canManageProfiles)", page);
+        Assert.Contains("PlaceholderText = \"All profiles\"", page);
+        Assert.Contains("selectedProfileId", page);
+        Assert.Contains("You're changing {device.ProfileName}'s settings, not your own.", page);
+        Assert.Contains("will see these changes on this device", page);
+        Assert.Contains("Use {ownerLabel} setting", page);
+        Assert.Contains("This device picks up the changes the next time it's used.", page);
+    }
+
+    [Fact]
     public void CardOverlaySettingsPersistFullCurrentV2Document()
     {
         var service = ReadRepoFile("src", "SiloPlayer", "Services", "CardOverlayService.cs");
@@ -62,7 +116,8 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("public async Task SaveAsync(CardOverlayPrefs", service);
         Assert.Contains("minimal\" or \"classic\" or \"vibrant\" or \"pill\" or \"square", service);
         Assert.Contains("OverlayAccentOptions", page);
-        Assert.Contains("CardOverlayPresetCombo_SelectionChanged", page);
+        Assert.Contains("BuildCardOverlayPresetCards", page);
+        Assert.Contains("BuildCardOverlayAccentFlyout", page);
         Assert.Contains("case \"minimal\"", poster);
         Assert.Contains("case \"vibrant\"", poster);
         Assert.Contains("case \"pill\"", poster);
@@ -94,8 +149,8 @@ public sealed class CurrentSettingsParitySourceTests
 
         Assert.Contains("TextOutlineColor", model);
         Assert.Contains("xxlarge", model);
-        Assert.Contains("PutDeviceSettingAsync(\"subtitle_appearance\"", viewModel);
-        Assert.Contains("DeleteDeviceSettingAsync(\"subtitle_appearance\"", viewModel);
+        Assert.Contains("SetContractSettingValueAsync(\"playback.subtitle_appearance\", \"profile_device\"", viewModel);
+        Assert.Contains("DeleteContractSettingValueAsync(\"playback.subtitle_appearance\", \"profile_device\"", viewModel);
         Assert.Contains("DiscardSubtitleAppearance", viewModel);
         Assert.Contains("Lower Third", xaml);
         Assert.Contains("XX-Large", xaml);
@@ -151,7 +206,8 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("ui.library_page_state", page);
         Assert.Contains("HomeSectionsCountText", xaml);
         Assert.DoesNotContain("Click=\"HomeSectionsSave_Click\"", xaml);
-        Assert.Matches("MoveSectionUp\\(section\\);[\\s\\S]{0,160}SaveHomeSectionsCommand", page);
+        Assert.Contains("ViewModel.HomeSections.Move(oldIndex, newIndex)", page);
+        Assert.Matches("HomeSections\\.Move\\(oldIndex, newIndex\\);[\\s\\S]{0,160}SaveHomeSectionsCommand", page);
         Assert.Matches("ToggleSectionVisibility\\(section\\);[\\s\\S]{0,160}SaveHomeSectionsCommand", page);
     }
 
@@ -221,6 +277,62 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("/api/v1/notifications/discord-preferences", api);
         Assert.Contains("/api/v1/notifications/webhooks", api);
         Assert.Contains("/api/v1/notifications/web-push/subscriptions", api);
+    }
+
+    [Fact]
+    public void NotificationSettingsMatchCurrentWebUiOrderAndImmediateSaveLifecycle()
+    {
+        var control = ReadRepoFile("src", "SiloPlayer", "Controls", "NotificationSettingsControl.xaml");
+        var code = ReadRepoFile("src", "SiloPlayer", "Controls", "NotificationSettingsControl.xaml.cs");
+
+        var episode = control.IndexOf("New Episode Notifications", StringComparison.Ordinal);
+        var browser = control.IndexOf("Browser Notifications", StringComparison.Ordinal);
+        var email = control.IndexOf("Email Notifications", StringComparison.Ordinal);
+        var discord = control.IndexOf("Discord Notifications", StringComparison.Ordinal);
+        var webhooks = control.IndexOf("Webhooks", StringComparison.Ordinal);
+        Assert.True(episode < browser && browser < email && email < discord && discord < webhooks);
+
+        Assert.Contains("Email this profile's notifications", control);
+        Assert.Contains("Link your Discord account", control);
+        Assert.Contains("Master switch for this profile", control);
+        Assert.Contains("NotificationPreference_Toggled", control);
+        Assert.Contains("await ViewModel.SavePreferencesAsync()", code);
+        Assert.Contains("await ViewModel.SaveEmailModeAsync()", code);
+        Assert.Contains("await ViewModel.SaveDiscordModeAsync()", code);
+        Assert.DoesNotContain("Save preferences", control);
+        Assert.DoesNotContain("Save frequency", control);
+    }
+
+    [Fact]
+    public void HomeSectionRecipeFlowExposesCurrentGalleryAndConfigurationFields()
+    {
+        var settings = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml.cs");
+        var dialog = ReadRepoFile("src", "SiloPlayer", "Views", "Dialogs", "RecipeGalleryDialog.cs");
+
+        Assert.Contains("RecipeGalleryDialog.ShowAsync", settings);
+        Assert.Contains("Search recipes...", dialog);
+        Assert.Contains("Library staples", dialog);
+        Assert.Contains("Hand-picked", dialog);
+        Assert.Contains("Back to gallery", dialog);
+        Assert.Contains("Show as featured hero", dialog);
+        Assert.Contains("continue_type", dialog);
+        Assert.Contains("filter_library_ids", dialog);
+        Assert.Contains("enabled_themes", dialog);
+        Assert.Contains("rotation_cadence", dialog);
+        Assert.Contains("anchor_item_id", dialog);
+        Assert.Contains("user_collection_id", dialog);
+        Assert.Contains("Choose a synced collection before adding this section.", dialog);
+    }
+
+    [Fact]
+    public void WebhookSigningSecretUsesCurrentOneTimeRevealDialog()
+    {
+        var code = ReadRepoFile("src", "SiloPlayer", "Controls", "NotificationSettingsControl.xaml.cs");
+
+        Assert.Contains("Save your signing secret", code);
+        Assert.Contains("It is shown only once", code);
+        Assert.Contains("Clipboard.SetContent", code);
+        Assert.Contains("I've saved it", code);
     }
 
     [Fact]

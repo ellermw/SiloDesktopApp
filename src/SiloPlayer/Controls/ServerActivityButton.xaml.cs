@@ -40,6 +40,7 @@ public sealed partial class ServerActivityButton : UserControl
     private bool _hostVisibilityAllowed = true;
     private bool _isLoaded;
     private DateTime _lastEventPollAt = DateTime.MinValue;
+    private bool _badgePulseRunning;
 
     // Cached snapshot for popover rebuilds
     private List<AdminSession> _lastSessions = [];
@@ -351,9 +352,20 @@ public sealed partial class ServerActivityButton : UserControl
             AutomationProperties.SetName(
                 RootButton,
                 $"Server activity: {total} active");
+            if (!_badgePulseRunning)
+            {
+                CountBadgePulse.Begin();
+                _badgePulseRunning = true;
+            }
         }
         else
         {
+            if (_badgePulseRunning)
+            {
+                CountBadgePulse.Stop();
+                CountBadge.Opacity = 1;
+                _badgePulseRunning = false;
+            }
             CountBadge.Visibility = Visibility.Collapsed;
             ActivityIcon.Stroke = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
             AutomationProperties.SetName(RootButton, "Server activity");

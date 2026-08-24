@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using CommunityToolkit.Mvvm.Messaging;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Imaging;
@@ -13,6 +14,7 @@ using SiloPlayer.Core.Services;
 using SiloPlayer.Controls;
 using SiloPlayer.Helpers;
 using SiloPlayer.Messaging;
+using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 
 namespace SiloPlayer.Views;
@@ -21,7 +23,11 @@ public sealed partial class LibraryPage : Page,
     IRecipient<MediaSurfaceChanged>,
     IRecipient<PlaybackProgressUpdated>
 {
-    public sealed record NavigationArgs(Library Library, string? InitialTab = null);
+    private readonly UICustomizationService _uiCustomizationService;
+    public sealed record NavigationArgs(
+        Library Library,
+        string? InitialTab = null,
+        string? InitialGenre = null);
 
     private static readonly (string Label, string Value)[] AdvancedRuleFields =
     [
@@ -163,6 +169,7 @@ public sealed partial class LibraryPage : Page,
     public LibraryPage()
     {
         ViewModel = App.Services.GetRequiredService<LibraryViewModel>();
+        _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Required;
         AttachViewModelEvents();
@@ -277,15 +284,33 @@ public sealed partial class LibraryPage : Page,
     {
         base.OnNavigatedTo(e);
         _isNavigated = true;
+        _uiCustomizationService.Changed += UICustomization_Changed;
         AttachViewModelEvents();
         RegisterMediaMessages();
 
         var library = e.Parameter as Library;
         string? requestedTab = null;
+        string? requestedGenre = null;
         if (e.Parameter is NavigationArgs navigationArgs)
         {
             library = navigationArgs.Library;
             requestedTab = navigationArgs.InitialTab;
+            requestedGenre = navigationArgs.InitialGenre;
+        }
+
+        LibraryUnavailableState.Visibility = library == null
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        if (library == null)
+        {
+            HeaderGrid.Visibility = Visibility.Collapsed;
+            FilterBar.Visibility = Visibility.Collapsed;
+            ActiveFiltersBar.Visibility = Visibility.Collapsed;
+            LibraryContentArea.Visibility = Visibility.Collapsed;
+            RecommendedPanel.Visibility = Visibility.Collapsed;
+            CollectionsPanel.Visibility = Visibility.Collapsed;
+            AudiobookGroupsPanel.Visibility = Visibility.Collapsed;
+            return;
         }
 
         if (library != null)
@@ -324,6 +349,12 @@ public sealed partial class LibraryPage : Page,
             state ??= new LibraryViewState();
             if (requestedTab is "Recommended" or "Library" or "Collections")
                 state.Tab = requestedTab;
+            if (!string.IsNullOrWhiteSpace(requestedGenre))
+            {
+                state.Tab = "Library";
+                state.Genre = requestedGenre;
+                state.Genres = [requestedGenre];
+            }
 
             _suppressFilterEvents = true;
             UpdateSortOptions(library.Type, state.Sort, state.MediaType);
@@ -417,10 +448,14 @@ public sealed partial class LibraryPage : Page,
         }
     }
 
+    private void ManageLibraryVisibility_Click(object sender, RoutedEventArgs e)
+        => App.Services.GetRequiredService<NavigationService>().Navigate<SettingsPage>("Libraries");
+
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
         _isNavigated = false;
+        _uiCustomizationService.Changed -= UICustomization_Changed;
         UnregisterMediaMessages();
         _visibleRangeDebounceTimer?.Stop();
         _cardBindTimer?.Stop();
@@ -434,6 +469,17 @@ public sealed partial class LibraryPage : Page,
         _pendingCardBindSet.Clear();
         ViewModel.SuspendCatalogLoads();
         DetachViewModelEvents();
+    }
+
+    private void UICustomization_Changed(object? sender, EventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_isNavigated) return;
+            ClearVirtualCards();
+            QueueRenderVirtualGrid(force: true);
+            if (_collectionsLoaded) BuildCollectionCards();
+        });
     }
 
     private void AttachViewModelEvents()
@@ -2335,19 +2381,32 @@ public sealed partial class LibraryPage : Page,
         var availableWidth = Math.Max(
             120,
             GetLibraryViewportWidth());
-        var columns = availableWidth switch
+        var columns = _uiCustomizationService.CardPresentation.PosterSize switch
         {
-            >= 1000 => 8,
-            >= 744 => 7,
-            >= 508 => 5,
-            >= 380 => 4,
-            _ => 3,
+            "compact" => availableWidth switch
+            {
+                >= 1280 => 10, >= 1024 => 8, >= 768 => 6, >= 640 => 5, _ => 3,
+            },
+            "large" => availableWidth switch
+            {
+                >= 1280 => 6, >= 1024 => 5, >= 768 => 4, >= 640 => 3, _ => 2,
+            },
+            _ => availableWidth switch
+            {
+                >= 1280 => 8, >= 1024 => 7, >= 768 => 5, >= 640 => 4, _ => 3,
+            },
         };
         columns = Math.Max(1, Math.Min(columns, (int)Math.Floor((availableWidth + columnGap) / (100 + columnGap))));
         var itemWidth = Math.Max(100, (availableWidth - columnGap * (columns - 1)) / columns);
         var isAudiobook = ViewModel.Library?.Type is "audiobook" or "audiobooks";
         var posterHeight = isAudiobook ? itemWidth : itemWidth * 1.5;
-        var itemHeight = posterHeight + 56;
+        var captionHeight = _uiCustomizationService.CardPresentation.Caption switch
+        {
+            "artwork" => 0,
+            "title" => 36,
+            _ => 56,
+        };
+        var itemHeight = posterHeight + captionHeight;
         return new GridLayoutInfo(
             Columns: columns,
             AvailableWidth: availableWidth,
@@ -2979,10 +3038,14 @@ public sealed partial class LibraryPage : Page,
         var content = new StackPanel
         {
             Width = cardWidth,
-            Children = { posterGrid, titleText }
+            Children = { posterGrid }
         };
 
-        if (collection.IsUserCollection)
+        var cardCaption = _uiCustomizationService.CardPresentation.Caption;
+        if (cardCaption != "artwork")
+            content.Children.Add(titleText);
+
+        if (collection.IsUserCollection && cardCaption == "title_metadata")
         {
             content.Children.Add(new TextBlock
             {
@@ -2996,9 +3059,19 @@ public sealed partial class LibraryPage : Page,
         var card = new Grid
         {
             Width = cardWidth,
-            Children = { content },
             Tag = collection
         };
+        var openButton = new Button
+        {
+            Padding = new Thickness(0),
+            Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Content = content,
+        };
+        AutomationProperties.SetName(openButton, $"Open {collection.Title}");
+        card.Children.Add(openButton);
 
         Button? pinButton = null;
         FontIcon? pinIcon = null;
@@ -3052,7 +3125,7 @@ public sealed partial class LibraryPage : Page,
         // B41: navigate to a standalone collection browse page instead of
         // mutating the library tab items in place. Preserves back navigation
         // and mirrors the webui /catalog?source=library_collection route.
-        card.Tapped += (s, _) =>
+        openButton.Click += (s, _) =>
         {
             var nav = App.Services.GetRequiredService<NavigationService>();
             nav.Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs
@@ -3072,13 +3145,20 @@ public sealed partial class LibraryPage : Page,
     {
         var viewportWidth = Math.Max(360, CollectionsPanel.ActualWidth);
         var contentWidth = Math.Min(1320, Math.Max(300, viewportWidth - 80));
-        var columns = contentWidth switch
+        var columns = _uiCustomizationService.CardPresentation.PosterSize switch
         {
-            >= 1020 => 8,
-            >= 764 => 7,
-            >= 508 => 5,
-            >= 380 => 4,
-            _ => 3,
+            "compact" => contentWidth switch
+            {
+                >= 1280 => 10, >= 1024 => 8, >= 768 => 6, >= 640 => 5, _ => 3,
+            },
+            "large" => contentWidth switch
+            {
+                >= 1280 => 6, >= 1024 => 5, >= 768 => 4, >= 640 => 3, _ => 2,
+            },
+            _ => contentWidth switch
+            {
+                >= 1280 => 8, >= 1024 => 7, >= 768 => 5, >= 640 => 4, _ => 3,
+            },
         };
         return Math.Max(96, (contentWidth - (columns - 1) * 12) / columns);
     }

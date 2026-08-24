@@ -56,6 +56,7 @@
                     BorderThickness="0"
                     Padding="0"
                     Visibility="Collapsed"
+                    AutomationProperties.Name="View section"
                     Click="TitleLink_Click">
                     <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                         <TextBlock
@@ -82,15 +83,16 @@
                     <FontIcon x:Name="PinSectionIcon" Glyph="&#xE840;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
                 </Button>
             </StackPanel>
-            <Button
-                x:Name="ExploreAllBtn"
+                <Button
+                    x:Name="ExploreAllBtn"
                 HorizontalAlignment="Right"
                 VerticalAlignment="Center"
                 Background="Transparent"
                 BorderThickness="0"
                 Padding="0"
-                Visibility="Collapsed"
-                Click="ExploreAll_Click">
+                    Visibility="Collapsed"
+                    AutomationProperties.Name="Explore all items in section"
+                    Click="ExploreAll_Click">
                 <TextBlock
                     Text="EXPLORE ALL"
                     FontSize="12"
@@ -184,6 +186,8 @@
                     Background="Transparent"
                     BorderThickness="0"
                     IsEnabled="False"
+                    ToolTipService.ToolTip="Previous items"
+                    AutomationProperties.Name="Previous items"
                     Click="ScrollLeft_Click">
                     <FontIcon Glyph="&#xE76B;" FontSize="24" Foreground="{StaticResource PrimaryTextBrush}" />
                 </Button>
@@ -198,6 +202,8 @@
                     Background="Transparent"
                     BorderThickness="0"
                     IsEnabled="False"
+                    ToolTipService.ToolTip="Next items"
+                    AutomationProperties.Name="Next items"
                     Click="ScrollRight_Click">
                     <FontIcon Glyph="&#xE76C;" FontSize="24" Foreground="{StaticResource PrimaryTextBrush}" />
                 </Button>

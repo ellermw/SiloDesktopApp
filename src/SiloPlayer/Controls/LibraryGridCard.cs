@@ -17,6 +17,7 @@ public sealed class LibraryGridCard : Canvas
     private readonly Border _hoverBrighten;
     private readonly CompositeTransform _cardHoverTransform;
     private readonly CompositeTransform _posterHoverTransform;
+    private readonly UICustomizationService _uiCustomizationService;
     private readonly TextBlock _fallbackTitle;
     private readonly TextBlock _titleText;
     private readonly TextBlock _episodeTitleText;
@@ -39,6 +40,7 @@ public sealed class LibraryGridCard : Canvas
 
     public LibraryGridCard()
     {
+        _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         var cardWidth = (double)Application.Current.Resources["PosterCardWidth"];
         var posterHeight = (double)Application.Current.Resources["PosterCardHeight"];
         var cardHeight = (double)Application.Current.Resources["PosterCardTotalHeight"];
@@ -217,6 +219,7 @@ public sealed class LibraryGridCard : Canvas
         _episodeTitleText.Visibility = episodeTitle is null ? Visibility.Collapsed : Visibility.Visible;
         _subtitleText.Text = MediaItemDisplayText.BuildSubtitle(item, sortKey);
         SetTop(_subtitleText, _posterHeight + (episodeTitle is null ? 34 : 56));
+        ApplyCardPresentation();
         UpdateOverlays(item);
 
         var imageUrl = !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
@@ -233,12 +236,29 @@ public sealed class LibraryGridCard : Canvas
     {
         if (MediaItem is not { } item) return;
         _subtitleText.Text = MediaItemDisplayText.BuildSubtitle(item, SortKey);
+        ApplyCardPresentation();
         UpdateOverlays(item);
+    }
+
+    public void ApplyCardPresentation()
+    {
+        var caption = _uiCustomizationService.CardPresentation.Caption;
+        var showCaption = caption != "artwork";
+        var showMetadata = caption == "title_metadata";
+        _titleText.Visibility = showCaption ? Visibility.Visible : Visibility.Collapsed;
+        _episodeTitleText.Visibility = showMetadata && !string.IsNullOrWhiteSpace(_episodeTitleText.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        _subtitleText.Visibility = showMetadata && !string.IsNullOrWhiteSpace(_subtitleText.Text)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     public void SetLayout(double cardWidth, double posterHeight, double cardHeight)
     {
-        if (Math.Abs(Width - cardWidth) < 0.5 && Math.Abs(_posterHeight - posterHeight) < 0.5)
+        if (Math.Abs(Width - cardWidth) < 0.5 &&
+            Math.Abs(_posterHeight - posterHeight) < 0.5 &&
+            Math.Abs(Height - cardHeight) < 0.5)
             return;
 
         Width = cardWidth;

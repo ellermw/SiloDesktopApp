@@ -13,6 +13,21 @@ public sealed class RequestDetailCurrentParitySourceTests
         Assert.DoesNotContain("button.Content = ex.Message", source);
     }
 
+    [Fact]
+    public void RequestDetailKeepsNavigationAndCurrentWebUiStatePresentation()
+    {
+        var markup = ReadRepoFile("src", "SiloPlayer", "Views", "RequestDetailPage.xaml");
+        var source = ReadRepoFile("src", "SiloPlayer", "Views", "RequestDetailPage.xaml.cs");
+
+        Assert.Contains("x:Name=\"LoadingBackButton\"", markup);
+        Assert.Contains("AutomationProperties.Name=\"Go back\"", markup);
+        Assert.Contains("openDetail.Click += Recommendation_Click", source);
+        Assert.Contains("Open {item.Title} request details", source);
+        Assert.Contains("StatusTone(item.Request.Status)", source);
+        Assert.Contains("FormatVoteCount(item.VoteCount.Value)", source);
+        Assert.Contains("(item.Genres ?? []).Take(4)", source);
+    }
+
     private static string ReadRepoFile(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

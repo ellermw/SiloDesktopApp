@@ -4,6 +4,8 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
@@ -15,9 +17,11 @@ using SiloPlayer.Core.Models.Plugins;
 using SiloPlayer.Core.Models.Settings;
 using SiloPlayer.Core.Models.WatchProviders;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Controls;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
+using SiloPlayer.Views.Dialogs;
 using Windows.Storage.Pickers;
 using Windows.ApplicationModel.DataTransfer;
 
@@ -27,16 +31,26 @@ public sealed partial class SettingsPage : Page
 {
     public SettingsViewModel ViewModel { get; }
     private readonly CardOverlayService _cardOverlayService;
+    private readonly UICustomizationService _uiCustomizationService;
+    private readonly List<PrimaryMenuItem> _interfaceMenuDraft = [];
+    private bool _interfaceMenuDirty;
+    private bool _suppressInterfaceEvents;
     private CardOverlayPrefs? _cardOverlayDraft;
     private string _cardOverlayPreviewVariant = "movie";
-    private bool _suppressOverlayEvents;
     private CancellationTokenSource? _overlaySaveCts;
     private CancellationTokenSource? _themeCssSaveCts;
     private bool _themeCssLoaded;
     private bool _rememberLibraryPagesLoaded;
     private bool _pageInitialized;
     private int _profilesLoadGeneration;
+    private int _householdSessionsLoadGeneration;
+    private DispatcherTimer? _householdSessionsTimer;
+    private bool _householdSessionsLoading;
+    private IReadOnlyList<AdminSession> _householdSessions = [];
     private DateTime _loadedAtUtc;
+    private bool _showingSettingsOverview;
+    private bool _canManageProfiles;
+    private readonly List<SettingsOverviewCard> _settingsOverviewCards = [];
     // Start suppressed — handlers that fire during XAML parse (before all sibling
     // x:Name fields are assigned) would otherwise null-ref on their forward references
     // and surface as a cryptic "Failed to assign to RangeBase.Value" XamlParseException.
@@ -94,6 +108,7 @@ public sealed partial class SettingsPage : Page
     {
         ViewModel = App.Services.GetRequiredService<SettingsViewModel>();
         _cardOverlayService = App.Services.GetRequiredService<CardOverlayService>();
+        _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Required;
         PopulateProfileLanguageChoices();
@@ -141,7 +156,7 @@ public sealed partial class SettingsPage : Page
             : HorizontalAlignment.Right;
 
         SettingsLayoutGrid.ColumnDefinitions[0].Width = isCompact
-            ? new GridLength(1, GridUnitType.Star)
+            ? new GridLength(0)
             : new GridLength(220);
         SettingsLayoutGrid.ColumnDefinitions[1].Width = isCompact
             ? new GridLength(0)
@@ -149,10 +164,15 @@ public sealed partial class SettingsPage : Page
 
         Grid.SetRow(SettingsNavigationScroller, 0);
         Grid.SetColumn(SettingsNavigationScroller, 0);
-        Grid.SetColumnSpan(SettingsNavigationScroller, isCompact ? 2 : 1);
-        Grid.SetRow(SettingsContentPanel, isCompact ? 1 : 0);
+        Grid.SetColumnSpan(SettingsNavigationScroller, 1);
+        Grid.SetRow(SettingsContentPanel, 0);
         Grid.SetColumn(SettingsContentPanel, isCompact ? 0 : 1);
         Grid.SetColumnSpan(SettingsContentPanel, isCompact ? 2 : 1);
+
+        SettingsNavigationScroller.Visibility = isCompact ? Visibility.Collapsed : Visibility.Visible;
+        SettingsAllSettingsButton.Visibility = isCompact && !_showingSettingsOverview
+            ? Visibility.Visible
+            : Visibility.Collapsed;
 
         SettingsNavigationScroller.VerticalScrollBarVisibility = isCompact
             ? ScrollBarVisibility.Disabled
@@ -167,17 +187,18 @@ public sealed partial class SettingsPage : Page
             ? (Brush)Application.Current.Resources["CardBackgroundBrush"]
             : new SolidColorBrush(Colors.Transparent);
 
-        SettingsNavigationGroups.Orientation = isCompact ? Orientation.Horizontal : Orientation.Vertical;
-        SettingsNavigationGroups.Spacing = isCompact ? 4 : 20;
-        SetSettingsNavigationGroupLayout(PlaybackNavGroup, isCompact);
-        SetSettingsNavigationGroupLayout(AppearanceNavGroup, isCompact);
-        SetSettingsNavigationGroupLayout(LibraryDataNavGroup, isCompact);
-        SetSettingsNavigationGroupLayout(AccountNavGroup, isCompact);
+        SettingsNavigationGroups.Orientation = Orientation.Vertical;
+        SettingsNavigationGroups.Spacing = 20;
+        SetSettingsNavigationGroupLayout(PlaybackNavGroup, false);
+        SetSettingsNavigationGroupLayout(AppearanceNavGroup, false);
+        SetSettingsNavigationGroupLayout(HomeDiscoveryNavGroup, false);
+        SetSettingsNavigationGroupLayout(ConnectionsNavGroup, false);
+        SetSettingsNavigationGroupLayout(AccountNavGroup, false);
 
         SettingsContentPanel.Padding = isCompact
-            ? new Thickness(0, 32, 0, 0)
+            ? new Thickness(0)
             : new Thickness(40, 0, 0, 0);
-        SettingsContentPanel.MaxWidth = isCompact ? double.PositiveInfinity : 808;
+        SettingsContentPanel.MaxWidth = double.PositiveInfinity;
     }
 
     private static void SetSettingsNavigationGroupLayout(StackPanel group, bool isCompact)
@@ -191,8 +212,18 @@ public sealed partial class SettingsPage : Page
     private void PopulateProfileLanguageChoices()
     {
         PopulateLanguageCombo(SpokenLanguageComboBox, "No preference");
-        PopulateLanguageCombo(MetadataLanguageComboBox, "Library default");
+        PopulateMetadataLanguageCombo();
         PopulateLanguageCombo(SubtitleLanguageComboBox, "None");
+    }
+
+    private void PopulateMetadataLanguageCombo()
+    {
+        MetadataLanguageComboBox.Items.Clear();
+        MetadataLanguageComboBox.Items.Add(new ComboBoxItem { Content = "Library default", Tag = "" });
+        MetadataLanguageComboBox.Items.Add(new ComboBoxItem { Content = "Original language", Tag = "original" });
+        foreach (var language in MediaLanguageCatalog.All)
+            MetadataLanguageComboBox.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
+        MetadataLanguageComboBox.SelectedIndex = 0;
     }
 
     private static void PopulateLanguageCombo(ComboBox combo, string emptyLabel)
@@ -211,9 +242,11 @@ public sealed partial class SettingsPage : Page
         var stale = !_pageInitialized || DateTime.UtcNow - _loadedAtUtc > TimeSpan.FromMinutes(2);
         if (stale)
         {
+            ShowLibraryLoadingState();
             var rememberLibraryPagesTask = LoadRememberLibraryPagesAsync();
             await ViewModel.LoadCommand.ExecuteAsync(null);
             await rememberLibraryPagesTask;
+            RebuildLibraryCards();
             SyncComboBoxes();
             SyncSubtitleAppearanceControls();
             BuildThemeCards();
@@ -229,30 +262,40 @@ public sealed partial class SettingsPage : Page
             _loadedAtUtc = DateTime.UtcNow;
         }
 
+        BuildSettingsOverview();
         if (e.Parameter is string requestedTab)
         {
-            var button = requestedTab switch
-            {
-                "Playback" => PlaybackTab,
-                "Subtitles" or "SubtitleAppearance" => SubtitlesTab,
-                "Appearance" => AppearanceTab,
-                "ThemeEditor" => ThemeEditorTab,
-                "Accessibility" => AccessibilityTab,
-                "HomeScreen" => HomeScreenTab,
-                "CardOverlays" => CardOverlaysTab,
-                "Personalize" => PersonalizeTab,
-                "Libraries" => LibrariesTab,
-                "Import" or "HistoryImport" => ImportTab,
-                "WebhookSync" => WebhookSyncTab,
-                "WatchProviders" => WatchProvidersTab,
-                "Notifications" or "NotificationsSettings" => NotificationsSettingsTab,
-                "Profiles" => ProfilesTab,
-                _ => null,
-            };
+            var button = ResolveSettingsTabButton(requestedTab);
             if (button is not null)
-                Tab_Click(button, new RoutedEventArgs());
+                ShowSettingsDetail(button);
+        }
+        else
+        {
+            ShowSettingsOverview();
         }
     }
+
+    private Button? ResolveSettingsTabButton(string requestedTab) => requestedTab switch
+    {
+        "Playback" => PlaybackTab,
+        "Subtitles" or "SubtitleAppearance" => SubtitlesTab,
+        "Appearance" => AppearanceTab,
+        "Interface" or "NavigationCards" => InterfaceTab,
+        "ThemeEditor" => ThemeEditorTab,
+        "Accessibility" => AccessibilityTab,
+        "HomeScreen" => HomeScreenTab,
+        "CardOverlays" => CardOverlaysTab,
+        "Personalize" => PersonalizeTab,
+        "Libraries" => LibrariesTab,
+        "Import" or "HistoryImport" => ImportTab,
+        "WebhookSync" => WebhookSyncTab,
+        "WatchProviders" => WatchProvidersTab,
+        "Devices" => DevicesTab,
+        "Notifications" or "NotificationsSettings" => NotificationsSettingsTab,
+        "ConnectApps" => ConnectAppsTab,
+        "Profiles" => ProfilesTab,
+        _ => null,
+    };
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
@@ -265,6 +308,7 @@ public sealed partial class SettingsPage : Page
         _webhookPlexAuthCts?.Dispose();
         _webhookPlexAuthCts = null;
         _webhookRefreshTimer?.Stop();
+        _householdSessionsTimer?.Stop();
         base.OnNavigatedFrom(e);
     }
 
@@ -273,14 +317,99 @@ public sealed partial class SettingsPage : Page
         _suppressEvents = true;
 
         SelectComboBoxByTag(QualityComboBox, ViewModel.QualityPreference);
+        SelectComboBoxByTag(MaxBitrateComboBox, ViewModel.MaxBitrateKbps);
         SelectComboBoxByTag(SubtitleLanguageComboBox, ViewModel.SubtitleLanguage);
         SelectComboBoxByTag(SubtitleModeComboBox, ViewModel.SubtitleMode);
         SelectComboBoxByTag(NextUpModeComboBox, ViewModel.NextUpMode);
 
         SelectComboBoxByTag(SpokenLanguageComboBox, ViewModel.AudioLanguage);
         SelectComboBoxByTag(MetadataLanguageComboBox, ViewModel.PreferredMetadataLanguage);
+        BuildMetadataLanguageExceptions();
 
         _suppressEvents = false;
+    }
+
+    private void BuildMetadataLanguageExceptions()
+    {
+        MetadataLanguageExceptionsPanel.Children.Clear();
+        MetadataExceptionSourceComboBox.Items.Clear();
+
+        foreach (var pair in ViewModel.MetadataLanguageOverrides)
+        {
+            var row = new Grid { ColumnSpacing = 8, Padding = new Thickness(0, 8, 0, 8) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.35, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            var source = new TextBlock
+            {
+                Text = MediaLanguageCatalog.Label(pair.Key),
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+            var target = CreateMetadataTargetCombo(pair.Key, pair.Value);
+            var remove = new Button
+            {
+                Content = new FontIcon { Glyph = "\uE74D", FontSize = 14 },
+                Style = (Style)Application.Current.Resources["TransparentButtonStyle"],
+                Width = 36,
+                Height = 36,
+                Tag = pair.Key,
+            };
+            ToolTipService.SetToolTip(remove, $"Remove {MediaLanguageCatalog.Label(pair.Key)} exception");
+            remove.Click += RemoveMetadataLanguageException_Click;
+            Grid.SetColumn(source, 0);
+            Grid.SetColumn(target, 1);
+            Grid.SetColumn(remove, 2);
+            row.Children.Add(source);
+            row.Children.Add(target);
+            row.Children.Add(remove);
+            MetadataLanguageExceptionsPanel.Children.Add(row);
+        }
+
+        foreach (var language in MediaLanguageCatalog.All.Where(language =>
+                     !ViewModel.MetadataLanguageOverrides.ContainsKey(language.Code)))
+            MetadataExceptionSourceComboBox.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
+
+        MetadataExceptionSourceComboBox.SelectedItem = null;
+        AddMetadataLanguageExceptionButton.IsEnabled = false;
+    }
+
+    private void MetadataExceptionSourceComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        AddMetadataLanguageExceptionButton.IsEnabled =
+            MetadataExceptionSourceComboBox.SelectedItem is ComboBoxItem { Tag: string };
+    }
+
+    private ComboBox CreateMetadataTargetCombo(string sourceLanguage, string selectedValue)
+    {
+        var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, Tag = sourceLanguage };
+        combo.Items.Add(new ComboBoxItem { Content = "Original language", Tag = "original" });
+        foreach (var language in MediaLanguageCatalog.All)
+            combo.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
+        SelectComboBoxByTag(combo, selectedValue);
+        combo.SelectionChanged += MetadataLanguageTarget_SelectionChanged;
+        return combo;
+    }
+
+    private async void AddMetadataLanguageException_Click(object sender, RoutedEventArgs e)
+    {
+        if (MetadataExceptionSourceComboBox.SelectedItem is not ComboBoxItem { Tag: string source }) return;
+        await ViewModel.SetMetadataLanguageOverrideAsync(source, "original");
+        BuildMetadataLanguageExceptions();
+    }
+
+    private async void RemoveMetadataLanguageException_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string source }) return;
+        await ViewModel.SetMetadataLanguageOverrideAsync(source, null);
+        BuildMetadataLanguageExceptions();
+    }
+
+    private async void MetadataLanguageTarget_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressEvents || sender is not ComboBox { Tag: string source, SelectedItem: ComboBoxItem { Tag: string target } }) return;
+        await ViewModel.SetMetadataLanguageOverrideAsync(source, target);
     }
 
     private void AudioPassthroughToggle_Toggled(object sender, RoutedEventArgs e)
@@ -716,12 +845,247 @@ public sealed partial class SettingsPage : Page
     }
 
     // ===== Tab switching =====
+    private void BuildSettingsOverview()
+    {
+        SettingsOverviewGroups.Children.Clear();
+        _settingsOverviewCards.Clear();
+
+        var auth = App.Services.GetRequiredService<AuthService>();
+        var profile = auth.SelectedProfile;
+        var profileName = string.IsNullOrWhiteSpace(profile?.Name) ? "Your profile" : profile.Name;
+        var avatarHost = new Border
+        {
+            Width = 40,
+            Height = 40,
+            CornerRadius = new CornerRadius(20),
+            Background = (Brush)Application.Current.Resources["AccentBackgroundBrush"],
+        };
+        if (!string.IsNullOrWhiteSpace(profile?.AvatarUrl) &&
+            Uri.TryCreate(profile.AvatarUrl, UriKind.Absolute, out var avatarUri))
+        {
+            avatarHost.Child = new Image
+            {
+                Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(avatarUri),
+                Stretch = Stretch.UniformToFill,
+            };
+        }
+        else
+        {
+            avatarHost.Child = new TextBlock
+            {
+                Text = profileName[..1].ToUpperInvariant(),
+                FontSize = 17,
+                FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+        }
+        var profileText = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        profileText.Children.Add(new TextBlock
+        {
+            Text = "Current profile",
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+        profileText.Children.Add(new TextBlock
+        {
+            Text = profileName,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        var profileContent = new Grid { ColumnSpacing = 12 };
+        profileContent.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        profileContent.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        profileContent.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        profileContent.Children.Add(avatarHost);
+        Grid.SetColumn(profileText, 1);
+        profileContent.Children.Add(profileText);
+        var profileChevron = new FontIcon
+        {
+            Glyph = "\uE76C",
+            FontSize = 13,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(profileChevron, 2);
+        profileContent.Children.Add(profileChevron);
+        SettingsCurrentProfileButton.Content = profileContent;
+        AutomationProperties.SetName(SettingsCurrentProfileButton, $"Current profile: {profileName}");
+
+        _canManageProfiles = AuthorizationPolicy.IsActingAdmin(auth) || profile?.IsPrimary == true;
+        ProfilesTab.Visibility = _canManageProfiles ? Visibility.Visible : Visibility.Collapsed;
+        var groups = new (string Label, (string Tag, string Label, string Description, string Glyph, string Search)[] Items)[]
+        {
+            ("Playback",
+            [
+                ("Playback", "Playback", "Quality, languages, skipping, and what plays next.", "\uE768", "video quality bitrate bandwidth spoken metadata language auto skip intros credits recaps preview auto play next up"),
+                ("Subtitles", "Subtitles", "Subtitle language, when they appear, and how they look.", "\uED1E", "subtitle forced captions font size color background position"),
+                ("Devices", "Your Devices", "Per-device quality, HDR, and audio or subtitle sync.", "\uE7F4", "devices tv phone tablet browser hdr dolby vision sound delay lip sync"),
+            ]),
+            ("Appearance",
+            [
+                ("Appearance", "Appearance", "Theme, interface tone, and date and time formats.", "\uE790", "theme dark light custom date time clock"),
+                ("Interface", "Navigation & Cards", "Your primary menu, poster size, and card captions.", "\uE7F8", "navigation menu poster size card captions title year artwork preset"),
+                ("CardOverlays", "Card Overlays", "Badges drawn on poster cards, and where they sit.", "\uE81E", "poster badges overlay accent color preset icon position"),
+                ("Accessibility", "Accessibility", "Text size, weight, and contrast for easier reading.", "\uE7F3", "contrast readability motion transparency text size weight"),
+                ("ThemeEditor", "Theme Editor", "Fine-tune theme colors and add your own CSS.", "\uE771", "design tokens token overrides custom css community themes"),
+            ]),
+            ("Home & Discovery",
+            [
+                ("HomeScreen", "Home Screen", "Which rows appear on Home, and in what order.", "\uECA5", "sections rows continue watching next up recently added library order"),
+                ("Personalize", "Personalize", "Re-tune the taste profile behind your recommendations.", "\uE735", "taste profile recommendations ratings likes dislikes"),
+                ("Libraries", "Libraries", "Which libraries you see, their order, and per-library audio.", "\uE8F1", "library visibility access disabled order playback spoken subtitle"),
+            ]),
+            ("Connections",
+            [
+                ("ConnectApps", "Connect Apps", "Sign-in details for Silo and Jellyfin-compatible apps.", "\uE839", "jellyfin infuse swiftfin jellycon findroid sign in login server username password pin"),
+                ("WatchProviders", "Watch Providers", "Trakt watch history, favorites, and scrobbling.", "\uE823", "trakt import export scrobble favorites watch history"),
+                ("WebhookSync", "Webhook Sync", "Take progress from Plex, Emby, and Jellyfin webhooks.", "\uE968", "plex emby jellyfin webhook progress watched"),
+                ("HistoryImport", "History Import", "Bring an existing Emby watch history into Silo.", "\uE8B5", "emby watched history import mapping sync"),
+            ]),
+            ("Account",
+            [
+                ("Profiles", "Profiles", "Household profile names, PINs, and library access.", "\uE77B", "profile name pin access primary household library create delete"),
+                ("NotificationsSettings", "Notifications", "New-episode alerts by email, Discord, push, or webhook.", "\uEA8F", "new episodes email discord browser push webhooks alerts digest url"),
+            ]),
+        };
+
+        foreach (var group in groups)
+        {
+            var section = new StackPanel { Spacing = 12 };
+            section.Children.Add(new TextBlock
+            {
+                Text = group.Label,
+                FontSize = 20,
+                FontWeight = FontWeights.SemiBold,
+            });
+            var cards = new WrapPanel { HorizontalSpacing = 12, VerticalSpacing = 12 };
+            section.Children.Add(cards);
+            foreach (var entry in group.Items)
+            {
+                if (entry.Tag == "Profiles" && !_canManageProfiles) continue;
+                var card = BuildSettingsOverviewCard(entry.Tag, entry.Label, entry.Description, entry.Glyph);
+                cards.Children.Add(card);
+                _settingsOverviewCards.Add(new SettingsOverviewCard(
+                    card,
+                    section,
+                    $"{entry.Label} {entry.Description} {entry.Search}"));
+            }
+            if (cards.Children.Count > 0)
+                SettingsOverviewGroups.Children.Add(section);
+        }
+    }
+
+    private Button BuildSettingsOverviewCard(string tag, string label, string description, string glyph)
+    {
+        var text = new StackPanel { Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(new TextBlock { Text = label, FontSize = 15, FontWeight = FontWeights.SemiBold });
+        text.Children.Add(new TextBlock
+        {
+            Text = description,
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+            MaxLines = 2,
+        });
+        var content = new Grid { ColumnSpacing = 12 };
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        content.Children.Add(new FontIcon
+        {
+            Glyph = glyph,
+            FontSize = 19,
+            Foreground = (Brush)Application.Current.Resources["AccentBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        Grid.SetColumn(text, 1);
+        content.Children.Add(text);
+        var chevron = new FontIcon
+        {
+            Glyph = "\uE76C",
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(chevron, 2);
+        content.Children.Add(chevron);
+        var button = new Button
+        {
+            Tag = tag,
+            Width = 330,
+            MinHeight = 92,
+            Padding = new Thickness(16, 13, 14, 13),
+            CornerRadius = new CornerRadius(18),
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Stretch,
+            Style = (Style)Application.Current.Resources["SecondaryButtonStyle"],
+            Content = content,
+        };
+        button.Click += SettingsOverviewCard_Click;
+        AutomationProperties.SetName(button, $"{label}. {description}");
+        return button;
+    }
+
+    private void ShowSettingsOverview()
+    {
+        _showingSettingsOverview = true;
+        SettingsHeaderSubtitle.Text = "Make Silo work the way you like.";
+        SettingsOverviewPanel.Visibility = Visibility.Visible;
+        SettingsLayoutGrid.Visibility = Visibility.Collapsed;
+        SettingsAllSettingsButton.Visibility = Visibility.Collapsed;
+        SettingsSearchBox_TextChanged(SettingsSearchBox, null!);
+    }
+
+    private void ShowSettingsDetail(Button button)
+    {
+        _showingSettingsOverview = false;
+        SettingsHeaderSubtitle.Text = "Manage your playback preferences, libraries, and display options.";
+        SettingsOverviewPanel.Visibility = Visibility.Collapsed;
+        SettingsLayoutGrid.Visibility = Visibility.Visible;
+        SettingsAllSettingsButton.Visibility = ActualWidth < 1024
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        Tab_Click(button, new RoutedEventArgs());
+    }
+
+    private void SettingsOverviewCard_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string tag } && ResolveSettingsTabButton(tag) is Button target)
+            ShowSettingsDetail(target);
+    }
+
+    private void SettingsCurrentProfile_Click(object sender, RoutedEventArgs e)
+        => App.Services.GetRequiredService<NavigationService>().Navigate<ProfileSelectPage>();
+
+    private void SettingsAllSettings_Click(object sender, RoutedEventArgs e) => ShowSettingsOverview();
+
     private void SettingsSearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (SettingsSearchBox is null || SettingsSearchStatus is null)
             return;
 
         var query = SettingsSearchBox.Text.Trim();
+        var tokens = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (_showingSettingsOverview)
+        {
+            foreach (var entry in _settingsOverviewCards)
+                entry.Button.Visibility = tokens.Length == 0 || tokens.All(token =>
+                    entry.SearchText.Contains(token, StringComparison.OrdinalIgnoreCase))
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            foreach (var section in _settingsOverviewCards.Select(entry => entry.Section).Distinct())
+                section.Visibility = _settingsOverviewCards.Any(entry =>
+                    ReferenceEquals(entry.Section, section) && entry.Button.Visibility == Visibility.Visible)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+            var overviewMatches = _settingsOverviewCards.Count(entry => entry.Button.Visibility == Visibility.Visible);
+            SettingsSearchStatus.Text = tokens.Length == 0
+                ? $"{_settingsOverviewCards.Count} settings sections"
+                : overviewMatches == 0 ? "No matching settings" : $"{overviewMatches} {(overviewMatches == 1 ? "match" : "matches")}";
+            return;
+        }
         var entries = new (Button Button, string SearchText)[]
         {
             (PlaybackTab, "playback quality language skipping video spoken metadata auto skip intros credits recaps preview auto play next up episodes"),
@@ -736,40 +1100,54 @@ public sealed partial class SettingsPage : Page
             (ImportTab, "history import emby jellyfin plex watched mapping sync fetched matched unmatched progress skipped"),
             (WebhookSyncTab, "webhook sync plex emby jellyfin intake progress watched connections deliveries server url token"),
             (WatchProvidersTab, "watch providers trakt import export scrobble favorites history progress removals"),
+            (DevicesTab, "your devices device tv phone tablet browser this device forget hdr dolby vision frame rate fill screen audio subtitle sync offset"),
             (NotificationsSettingsTab, "notifications new episodes email discord browser push webhooks per episode alerts digest url"),
+            (ConnectAppsTab, "connect apps silo jellyfin compatible infuse swiftfin jellycon findroid sign in login server address username password pin"),
             (ProfilesTab, "profiles profile names pin access rules primary household library create delete"),
         };
 
-        var tokens = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var matches = 0;
         foreach (var entry in entries)
         {
+            if (ReferenceEquals(entry.Button, ProfilesTab) && !_canManageProfiles)
+            {
+                entry.Button.Visibility = Visibility.Collapsed;
+                continue;
+            }
             var visible = tokens.Length == 0 || tokens.All(token =>
                 entry.SearchText.Contains(token, StringComparison.OrdinalIgnoreCase));
             entry.Button.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             if (visible) matches++;
         }
 
-        PlaybackNavGroup.Visibility = PlaybackTab.Visibility == Visibility.Visible || SubtitlesTab.Visibility == Visibility.Visible
+        PlaybackNavGroup.Visibility = new[] { PlaybackTab, SubtitlesTab, DevicesTab }
+            .Any(button => button.Visibility == Visibility.Visible)
             ? Visibility.Visible : Visibility.Collapsed;
-        AppearanceNavGroup.Visibility = new[] { AppearanceTab, ThemeEditorTab, AccessibilityTab, HomeScreenTab, CardOverlaysTab, PersonalizeTab }
+        AppearanceNavGroup.Visibility = new[] { AppearanceTab, InterfaceTab, CardOverlaysTab, AccessibilityTab, ThemeEditorTab }
             .Any(button => button.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
-        LibraryDataNavGroup.Visibility = new[] { LibrariesTab, ImportTab, WebhookSyncTab, WatchProvidersTab }
+        HomeDiscoveryNavGroup.Visibility = new[] { HomeScreenTab, PersonalizeTab, LibrariesTab }
             .Any(button => button.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
-        AccountNavGroup.Visibility = NotificationsSettingsTab.Visibility == Visibility.Visible || ProfilesTab.Visibility == Visibility.Visible
+        ConnectionsNavGroup.Visibility = new[] { ConnectAppsTab, WatchProvidersTab, WebhookSyncTab, ImportTab }
+            .Any(button => button.Visibility == Visibility.Visible)
+            ? Visibility.Visible : Visibility.Collapsed;
+        AccountNavGroup.Visibility = new[] { ProfilesTab, NotificationsSettingsTab }
+            .Any(button => button.Visibility == Visibility.Visible)
             ? Visibility.Visible : Visibility.Collapsed;
 
+        var availableSettingsCount = _canManageProfiles ? 17 : 16;
         SettingsSearchStatus.Text = tokens.Length == 0
-            ? "14 settings sections"
+            ? $"{availableSettingsCount} settings sections"
             : matches == 0 ? "No matching settings" : $"{matches} {(matches == 1 ? "match" : "matches")}";
     }
+
+    private sealed record SettingsOverviewCard(Button Button, FrameworkElement Section, string SearchText);
 
     private void Tab_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
             return;
 
-        var tabs = new[] { AppearanceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, CardOverlaysTab, PersonalizeTab, ImportTab, WebhookSyncTab, WatchProvidersTab, NotificationsSettingsTab, ProfilesTab, ThemeEditorTab, AccessibilityTab, PluginsTab, SessionsTab };
+        var tabs = new[] { AppearanceTab, InterfaceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, CardOverlaysTab, PersonalizeTab, ImportTab, WebhookSyncTab, WatchProvidersTab, DevicesTab, NotificationsSettingsTab, ConnectAppsTab, ProfilesTab, ThemeEditorTab, AccessibilityTab, PluginsTab, SessionsTab };
         foreach (var tab in tabs)
         {
             tab.Style = (Style)Resources["InactiveTabStyle"];
@@ -778,6 +1156,7 @@ public sealed partial class SettingsPage : Page
         clickedButton.Style = (Style)Resources["ActiveTabStyle"];
 
         AppearancePanel.Visibility = tag == "Appearance" ? Visibility.Visible : Visibility.Collapsed;
+        InterfacePanel.Visibility = tag == "Interface" ? Visibility.Visible : Visibility.Collapsed;
         PlaybackPanel.Visibility = tag == "Playback" ? Visibility.Visible : Visibility.Collapsed;
         LibrariesPanel.Visibility = tag == "Libraries" ? Visibility.Visible : Visibility.Collapsed;
         SubtitlesPanel.Visibility = tag == "Subtitles" ? Visibility.Visible : Visibility.Collapsed;
@@ -790,14 +1169,22 @@ public sealed partial class SettingsPage : Page
         WebhookSyncPanel.Visibility = tag == "WebhookSync" ? Visibility.Visible : Visibility.Collapsed;
         WatchProvidersPanel.Visibility = tag == "WatchProviders" ? Visibility.Visible : Visibility.Collapsed;
         NotificationsSettingsPanel.Visibility = tag == "NotificationsSettings" ? Visibility.Visible : Visibility.Collapsed;
+        DevicesPanel.Visibility = tag == "Devices" ? Visibility.Visible : Visibility.Collapsed;
+        ConnectAppsPanel.Visibility = tag == "ConnectApps" ? Visibility.Visible : Visibility.Collapsed;
         ThemeEditorPanel.Visibility = tag == "ThemeEditor" ? Visibility.Visible : Visibility.Collapsed;
         AccessibilityPanel.Visibility = tag == "Accessibility" ? Visibility.Visible : Visibility.Collapsed;
         SessionsPanel.Visibility = tag == "Sessions" ? Visibility.Visible : Visibility.Collapsed;
         if (tag != "WebhookSync") _webhookRefreshTimer?.Stop();
+        if (tag != "Profiles") _householdSessionsTimer?.Stop();
 
-        if (tag == "Profiles")
+        if (tag == "Interface")
+        {
+            _ = LoadInterfaceCustomizationAsync();
+        }
+        else if (tag == "Profiles")
         {
             _ = LoadProfilesAsync();
+            StartHouseholdSessionsPolling();
         }
 
         if (tag == "Sessions")
@@ -837,11 +1224,428 @@ public sealed partial class SettingsPage : Page
         {
             _ = LoadPersonalizeSummaryAsync();
         }
+        else if (tag == "Devices")
+        {
+            _ = LoadDevicesAsync();
+        }
+        else if (tag == "ConnectApps")
+        {
+            _ = LoadConnectAppsAsync();
+        }
         else if (tag == "NotificationsSettings" && NotificationsSettingsHost.Content is null)
         {
             NotificationsSettingsHost.Content = new global::SiloPlayer.Controls.NotificationSettingsControl();
         }
     }
+
+    private sealed record InterfaceMenuChoice(string Label, PrimaryMenuItem Item)
+    {
+        public override string ToString() => Label;
+    }
+
+    private async Task LoadInterfaceCustomizationAsync()
+    {
+        InterfaceControls.IsHitTestVisible = false;
+        InterfaceControls.Opacity = 0.55;
+        InterfaceStatusCard.Visibility = Visibility.Visible;
+        InterfaceStatusTitle.Text = "Checking server support…";
+        InterfaceStatusText.Text = "Loading the current desktop navigation and card layout.";
+        try
+        {
+            await _uiCustomizationService.RefreshAsync();
+            if (_uiCustomizationService.IsUnavailable)
+            {
+                ShowInterfaceUnavailable(
+                    "Customization unavailable",
+                    "Saved navigation and card settings could not be loaded. Editing stays disabled to protect your existing choices.");
+                return;
+            }
+            if (!_uiCustomizationService.IsSupported)
+            {
+                ShowInterfaceUnavailable(
+                    "Server upgrade required",
+                    "This server does not support synchronized navigation and card customization yet.");
+                return;
+            }
+
+            InterfaceStatusCard.Visibility = Visibility.Collapsed;
+            InterfaceControls.IsHitTestVisible = true;
+            InterfaceControls.Opacity = 1;
+            _interfaceMenuDraft.Clear();
+            _interfaceMenuDraft.AddRange(
+                (_uiCustomizationService.PrimaryMenu?.Items ?? UICustomizationService.DefaultDesktopMenu())
+                .Select(item => item.Clone()));
+            _interfaceMenuDirty = false;
+            SyncInterfaceControls();
+        }
+        catch (Exception ex)
+        {
+            ShowInterfaceUnavailable("Customization unavailable", ex.Message);
+        }
+    }
+
+    private void ShowInterfaceUnavailable(string title, string message)
+    {
+        InterfaceStatusCard.Visibility = Visibility.Visible;
+        InterfaceStatusTitle.Text = title;
+        InterfaceStatusText.Text = message;
+        InterfaceControls.IsHitTestVisible = false;
+        InterfaceControls.Opacity = 0.55;
+    }
+
+    private void SyncInterfaceControls()
+    {
+        var presentation = _uiCustomizationService.CardPresentation;
+        _suppressInterfaceEvents = true;
+        SelectComboBoxByTag(InterfacePosterSizeCombo, presentation.PosterSize);
+        SelectComboBoxByTag(InterfaceCaptionCombo, presentation.Caption);
+        _suppressInterfaceEvents = false;
+
+        var cardDeviceOverride = string.Equals(
+            _uiCustomizationService.CardPresentationSource,
+            "profile_device",
+            StringComparison.OrdinalIgnoreCase);
+        var menuDeviceOverride = string.Equals(
+            _uiCustomizationService.PrimaryMenuSource,
+            "profile_device",
+            StringComparison.OrdinalIgnoreCase);
+        InterfaceCardDeviceOverrideNotice.Visibility = cardDeviceOverride ? Visibility.Visible : Visibility.Collapsed;
+        InterfaceMenuDeviceOverrideNotice.Visibility = menuDeviceOverride ? Visibility.Visible : Visibility.Collapsed;
+        InterfacePosterSizeCombo.IsEnabled = !cardDeviceOverride;
+        InterfaceCaptionCombo.IsEnabled = !cardDeviceOverride;
+        BalancedCardPreset.IsEnabled = !cardDeviceOverride;
+        CompactCardPreset.IsEnabled = !cardDeviceOverride;
+        CinemaCardPreset.IsEnabled = !cardDeviceOverride;
+        ArtworkCardPreset.IsEnabled = !cardDeviceOverride;
+
+        UpdateInterfacePresetVisuals();
+        BuildInterfaceCardPreview();
+        BuildInterfacePrimaryMenu();
+        BuildInterfaceAddMenuChoices();
+        InterfacePrimaryMenuHost.IsHitTestVisible = !menuDeviceOverride;
+        InterfacePrimaryMenuHost.Opacity = menuDeviceOverride ? 0.55 : 1;
+        InterfaceAddMenuCombo.IsEnabled = !menuDeviceOverride;
+        SaveInterfaceMenuButton.IsEnabled = _interfaceMenuDirty && !menuDeviceOverride;
+        ResetDesktopCardLayoutButton.Visibility = string.Equals(
+            _uiCustomizationService.CardPresentationSource,
+            "profile_client",
+            StringComparison.OrdinalIgnoreCase)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+    }
+
+    private async void CardPreset_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string value }) return;
+        var parts = value.Split(':');
+        if (parts.Length != 2) return;
+        await SaveInterfaceCardPresentationAsync(new CardPresentation
+        {
+            PosterSize = parts[0],
+            Caption = parts[1],
+        });
+    }
+
+    private async void InterfaceCardOption_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressInterfaceEvents ||
+            InterfacePosterSizeCombo.SelectedItem is not ComboBoxItem { Tag: string posterSize } ||
+            InterfaceCaptionCombo.SelectedItem is not ComboBoxItem { Tag: string caption })
+            return;
+        await SaveInterfaceCardPresentationAsync(new CardPresentation
+        {
+            PosterSize = posterSize,
+            Caption = caption,
+        });
+    }
+
+    private async Task SaveInterfaceCardPresentationAsync(CardPresentation presentation)
+    {
+        InterfaceControls.IsHitTestVisible = false;
+        try
+        {
+            await _uiCustomizationService.SaveCardPresentationAsync(presentation);
+            SyncInterfaceControls();
+            App.Services.GetRequiredService<ToastService>().Success("Desktop card layout saved");
+        }
+        catch (Exception ex)
+        {
+            App.Services.GetRequiredService<ToastService>().Error($"Could not save card layout: {ex.Message}");
+        }
+        finally
+        {
+            InterfaceControls.IsHitTestVisible = true;
+        }
+    }
+
+    private async void ResetDesktopCardLayout_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _uiCustomizationService.ResetCardPresentationAsync();
+            SyncInterfaceControls();
+            App.Services.GetRequiredService<ToastService>().Success("Desktop card layout reset");
+        }
+        catch (Exception ex)
+        {
+            App.Services.GetRequiredService<ToastService>().Error($"Could not reset card layout: {ex.Message}");
+        }
+    }
+
+    private async void ClearInterfaceCardDeviceOverride_Click(object sender, RoutedEventArgs e)
+    {
+        await ClearInterfaceDeviceOverrideAsync(UICustomizationSettingKeys.CardPresentation, "Card layout");
+    }
+
+    private async void ClearInterfaceMenuDeviceOverride_Click(object sender, RoutedEventArgs e)
+    {
+        await ClearInterfaceDeviceOverrideAsync(UICustomizationSettingKeys.PrimaryMenu, "Navigation");
+    }
+
+    private async Task ClearInterfaceDeviceOverrideAsync(string key, string label)
+    {
+        try
+        {
+            await _uiCustomizationService.ClearDeviceOverrideAsync(key);
+            _interfaceMenuDraft.Clear();
+            _interfaceMenuDraft.AddRange(
+                (_uiCustomizationService.PrimaryMenu?.Items ?? UICustomizationService.DefaultDesktopMenu())
+                .Select(item => item.Clone()));
+            _interfaceMenuDirty = false;
+            SyncInterfaceControls();
+            App.Services.GetRequiredService<ToastService>().Success($"{label} now follows the desktop-family preference");
+        }
+        catch (Exception ex)
+        {
+            App.Services.GetRequiredService<ToastService>().Error($"Could not clear {label.ToLowerInvariant()}: {ex.Message}");
+        }
+    }
+
+    private void UpdateInterfacePresetVisuals()
+    {
+        var current = $"{_uiCustomizationService.CardPresentation.PosterSize}:{_uiCustomizationService.CardPresentation.Caption}";
+        foreach (var button in new[] { BalancedCardPreset, CompactCardPreset, CinemaCardPreset, ArtworkCardPreset })
+        {
+            var active = string.Equals(button.Tag as string, current, StringComparison.Ordinal);
+            button.Opacity = active ? 1 : 0.72;
+            button.BorderThickness = active ? new Thickness(2) : new Thickness(1);
+            button.BorderBrush = (Brush)Application.Current.Resources[active ? "SidebarAccentBrush" : "BorderBrush"];
+        }
+    }
+
+    private void BuildInterfaceCardPreview()
+    {
+        InterfaceCardPreview.Children.Clear();
+        var presentation = _uiCustomizationService.CardPresentation;
+        var widths = presentation.PosterSize switch
+        {
+            "compact" => new[] { 46d, 46d, 46d, 46d },
+            "large" => new[] { 72d, 72d },
+            _ => new[] { 58d, 58d, 58d },
+        };
+        foreach (var width in widths)
+        {
+            var stack = new StackPanel { Width = width, Spacing = 6 };
+            stack.Children.Add(new Border
+            {
+                Width = width,
+                Height = width * 1.5,
+                CornerRadius = new CornerRadius(7),
+                Background = (Brush)Application.Current.Resources["SidebarAccentBrush"],
+            });
+            if (presentation.Caption != "artwork")
+            {
+                stack.Children.Add(new Border
+                {
+                    Height = 6,
+                    Width = width * 0.8,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    CornerRadius = new CornerRadius(3),
+                    Background = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+                    Opacity = 0.7,
+                });
+                if (presentation.Caption == "title_metadata")
+                {
+                    stack.Children.Add(new Border
+                    {
+                        Height = 4,
+                        Width = width * 0.5,
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        CornerRadius = new CornerRadius(2),
+                        Background = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                        Opacity = 0.55,
+                    });
+                }
+            }
+            InterfaceCardPreview.Children.Add(stack);
+        }
+    }
+
+    private void BuildInterfacePrimaryMenu()
+    {
+        InterfacePrimaryMenuHost.Children.Clear();
+        for (var index = 0; index < _interfaceMenuDraft.Count; index++)
+        {
+            var item = _interfaceMenuDraft[index];
+            var row = new Grid { ColumnSpacing = 8, Padding = new Thickness(10, 7, 8, 7) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(30) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            row.Children.Add(new TextBlock
+            {
+                Text = (index + 1).ToString(),
+                Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+            var label = new TextBlock
+            {
+                Text = InterfaceMenuLabel(item),
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(label, 1);
+            row.Children.Add(label);
+
+            var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2 };
+            actions.Children.Add(CreateInterfaceMenuAction("\uE74A", $"Move {label.Text} up", index, -1, index == 0));
+            actions.Children.Add(CreateInterfaceMenuAction("\uE74B", $"Move {label.Text} down", index, 1, index == _interfaceMenuDraft.Count - 1));
+            var home = item.Type == "builtin" && item.Destination == "home";
+            actions.Children.Add(CreateInterfaceMenuAction("\uE74D", home ? "Home cannot be removed" : $"Remove {label.Text}", index, 0, home));
+            Grid.SetColumn(actions, 2);
+            row.Children.Add(actions);
+
+            InterfacePrimaryMenuHost.Children.Add(new Border
+            {
+                Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
+                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(10),
+                Child = row,
+            });
+        }
+    }
+
+    private Button CreateInterfaceMenuAction(string glyph, string name, int index, int direction, bool disabled)
+    {
+        var button = new Button
+        {
+            Content = new FontIcon { Glyph = glyph, FontSize = 14 },
+            Width = 34,
+            Height = 34,
+            Padding = new Thickness(0),
+            IsEnabled = !disabled,
+            Tag = (index, direction),
+        };
+        AutomationProperties.SetName(button, name);
+        button.Click += InterfaceMenuAction_Click;
+        return button;
+    }
+
+    private void InterfaceMenuAction_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: ValueTuple<int, int> action }) return;
+        var (index, direction) = action;
+        if (index < 0 || index >= _interfaceMenuDraft.Count) return;
+        if (direction == 0)
+        {
+            _interfaceMenuDraft.RemoveAt(index);
+        }
+        else
+        {
+            var target = index + direction;
+            if (target < 0 || target >= _interfaceMenuDraft.Count) return;
+            (_interfaceMenuDraft[index], _interfaceMenuDraft[target]) =
+                (_interfaceMenuDraft[target], _interfaceMenuDraft[index]);
+        }
+        _interfaceMenuDirty = true;
+        SyncInterfaceControls();
+    }
+
+    private void BuildInterfaceAddMenuChoices()
+    {
+        InterfaceAddMenuCombo.Items.Clear();
+        var current = _interfaceMenuDraft.Select(item => item.SemanticKey).ToHashSet(StringComparer.Ordinal);
+        var candidates = new List<PrimaryMenuItem>
+        {
+            PrimaryMenuItem.Builtin("for_you"),
+            PrimaryMenuItem.Builtin("calendar"),
+        };
+        candidates.AddRange(ViewModel.LibraryCards.Select(card => new PrimaryMenuItem
+        {
+            Type = "library",
+            LibraryId = card.LibraryId,
+            Label = card.LibraryName,
+        }));
+        candidates.AddRange(_uiCustomizationService.Shortcuts.Items.Select(item => item.Clone()));
+
+        foreach (var item in candidates
+                     .Where(item => !current.Contains(item.SemanticKey))
+                     .DistinctBy(item => item.SemanticKey, StringComparer.Ordinal))
+        {
+            InterfaceAddMenuCombo.Items.Add(new ComboBoxItem
+            {
+                Content = InterfaceMenuLabel(item),
+                Tag = new InterfaceMenuChoice(InterfaceMenuLabel(item), item),
+            });
+        }
+        InterfaceAddMenuCombo.SelectedItem = null;
+    }
+
+    private void AddInterfaceMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (InterfaceAddMenuCombo.SelectedItem is not ComboBoxItem { Tag: InterfaceMenuChoice choice }) return;
+        if (_interfaceMenuDraft.Count >= 64) return;
+        _interfaceMenuDraft.Add(choice.Item.Clone());
+        _interfaceMenuDirty = true;
+        SyncInterfaceControls();
+    }
+
+    private async void SaveInterfaceMenu_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _uiCustomizationService.SavePrimaryMenuAsync(_interfaceMenuDraft);
+            _interfaceMenuDirty = false;
+            SyncInterfaceControls();
+            App.Services.GetRequiredService<ToastService>().Success("Desktop navigation saved");
+        }
+        catch (Exception ex)
+        {
+            App.Services.GetRequiredService<ToastService>().Error($"Could not save navigation: {ex.Message}");
+        }
+    }
+
+    private async void ResetInterfaceMenu_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            await _uiCustomizationService.ResetPrimaryMenuAsync();
+            _interfaceMenuDraft.Clear();
+            _interfaceMenuDraft.AddRange(UICustomizationService.DefaultDesktopMenu());
+            _interfaceMenuDirty = false;
+            SyncInterfaceControls();
+            App.Services.GetRequiredService<ToastService>().Success("Desktop navigation reset");
+        }
+        catch (Exception ex)
+        {
+            App.Services.GetRequiredService<ToastService>().Error($"Could not reset navigation: {ex.Message}");
+        }
+    }
+
+    private static string InterfaceMenuLabel(PrimaryMenuItem item) => item.Type switch
+    {
+        "builtin" when item.Destination == "home" => "Home",
+        "builtin" when item.Destination == "for_you" => "For You",
+        "builtin" when item.Destination == "calendar" => "Calendar",
+        "builtin" => item.Destination ?? "Destination",
+        "library" => $"{item.Label} · Library",
+        "section" => $"{item.Label} · Section",
+        "collection" => $"{item.Label} · Collection",
+        _ => item.Label ?? "Destination",
+    };
 
     private async Task LoadPersonalizeSummaryAsync()
     {
@@ -865,6 +1669,27 @@ public sealed partial class SettingsPage : Page
     private void OpenTasteSeed_Click(object sender, RoutedEventArgs e)
         => Frame.Navigate(typeof(TasteSeedPage), true);
 
+    private async void StartFeatureTour_Click(object sender, RoutedEventArgs e)
+    {
+        StartFeatureTourButton.IsEnabled = false;
+        try
+        {
+            var flow = await App.Services.GetRequiredService<SettingsApi>()
+                .GetOnboardingFlowAsync("web");
+            var dialog = new FeatureTourDialog(flow) { XamlRoot = XamlRoot };
+            await dialog.ShowAsync();
+        }
+        catch (Exception ex)
+        {
+            App.Services.GetRequiredService<ToastService>()
+                .Error($"Couldn’t start the feature tour: {ex.Message}");
+        }
+        finally
+        {
+            StartFeatureTourButton.IsEnabled = true;
+        }
+    }
+
     private async Task LoadCardOverlaySettingsAsync()
     {
         try
@@ -874,12 +1699,10 @@ public sealed partial class SettingsPage : Page
             CardOverlaysDisabledBanner.Visibility = _cardOverlayService.Enabled
                 ? Visibility.Collapsed
                 : Visibility.Visible;
-            CardOverlayControlsContainer.Opacity = _cardOverlayService.Enabled ? 1 : 0.5;
-            CardOverlayControlsContainer.IsHitTestVisible = _cardOverlayService.Enabled;
-            _suppressOverlayEvents = true;
-            SelectComboBoxByTag(CardOverlayPresetCombo, _cardOverlayDraft.Preset);
-            _suppressOverlayEvents = false;
+            CardOverlaysContentHost.Opacity = _cardOverlayService.Enabled ? 1 : 0.5;
+            CardOverlaysContentHost.IsHitTestVisible = _cardOverlayService.Enabled;
             BuildCardOverlayControls();
+            BuildCardOverlayPresetCards();
             UpdateCardOverlayPreview();
         }
         catch (Exception ex)
@@ -897,7 +1720,7 @@ public sealed partial class SettingsPage : Page
         ("Metadata", "Year, runtime, language, studio, and network context.",
             ["year", "runtime", "original_language", "studio", "network"]),
         ("Ribbons", "Show status, awards, and chart recognition.",
-            ["show_status", "imdb_top_250", "rt_certified_fresh"]),
+            ["show_status"]),
     ];
 
     private static readonly (string Label, string? Value)[] OverlayAccentOptions =
@@ -972,19 +1795,51 @@ public sealed partial class SettingsPage : Page
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             TextWrapping = TextWrapping.Wrap,
         });
+        var suppressed = initial.Enabled && _cardOverlayDraft is not null &&
+            OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, _cardOverlayDraft.Items);
+        var hint = suppressed
+            ? "Hidden while the combined Resolution + HDR badge is enabled."
+            : OverlayAvailabilityNote(definition.Id);
+        if (!string.IsNullOrWhiteSpace(hint))
+        {
+            label.Children.Add(new TextBlock
+            {
+                Text = hint,
+                FontSize = 11,
+                FontStyle = Windows.UI.Text.FontStyle.Italic,
+                Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
         grid.Children.Add(label);
 
         var controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-        var iconToggle = new ToggleSwitch { Header = "Icon", IsOn = initial.ShowIcon ?? (_cardOverlayDraft?.Preset is "vibrant" or "pill") };
-        var accent = new ComboBox { Width = 105, PlaceholderText = "Accent" };
-        var accentIndex = 0;
-        for (var index = 0; index < OverlayAccentOptions.Length; index++)
+        var iconVisible = initial.ShowIcon ?? (_cardOverlayDraft?.Preset is "vibrant" or "pill");
+        var iconButton = new Button
         {
-            var option = OverlayAccentOptions[index];
-            accent.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Value });
-            if (string.Equals(option.Value, initial.AccentColor, StringComparison.OrdinalIgnoreCase)) accentIndex = index;
-        }
-        accent.SelectedIndex = accentIndex;
+            Width = 30,
+            Height = 30,
+            Padding = new Thickness(0),
+            Content = new FontIcon { Glyph = iconVisible ? "\uE91B" : "\uEB9F", FontSize = 15 },
+            IsEnabled = initial.Enabled,
+            Visibility = OverlaySupportsIcon(definition.Id) ? Visibility.Visible : Visibility.Collapsed,
+        };
+        ToolTipService.SetToolTip(iconButton, iconVisible ? "Hide icon" : "Show icon");
+
+        var selectedAccent = initial.AccentColor;
+        var accentButton = new Button
+        {
+            Width = 28,
+            Height = 28,
+            Padding = new Thickness(0),
+            CornerRadius = new CornerRadius(14),
+            BorderThickness = new Thickness(1),
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            IsEnabled = initial.Enabled,
+            Background = ParseCardOverlayAccent(selectedAccent ?? OverlayDefaultAccent(definition.Id)),
+        };
+        ToolTipService.SetToolTip(accentButton,
+            selectedAccent is null ? "Default accent" : $"Accent: {selectedAccent}");
 
         var position = new ComboBox { Width = 130 };
         var positions = new[]
@@ -999,17 +1854,33 @@ public sealed partial class SettingsPage : Page
 
         void Apply()
         {
-            if (_suppressOverlayEvents || _cardOverlayDraft is null) return;
-            var selectedAccent = (accent.SelectedItem as ComboBoxItem)?.Tag as string;
+            if (_cardOverlayDraft is null) return;
             var selectedPosition = (position.SelectedItem as ComboBoxItem)?.Tag is OverlayPosition pos ? pos : initial.Position;
-            UpdateCardOverlayItem(definition.Id, new OverlayItemConfig(enabled.IsOn, selectedPosition, selectedAccent, iconToggle.IsOn));
+            iconButton.IsEnabled = enabled.IsOn;
+            accentButton.IsEnabled = enabled.IsOn;
+            UpdateCardOverlayItem(definition.Id, new OverlayItemConfig(enabled.IsOn, selectedPosition, selectedAccent, iconVisible));
         }
-        iconToggle.Toggled += (_, _) => Apply();
-        accent.SelectionChanged += (_, _) => Apply();
+        iconButton.Click += (_, _) =>
+        {
+            iconVisible = !iconVisible;
+            iconButton.Content = new FontIcon { Glyph = iconVisible ? "\uE91B" : "\uEB9F", FontSize = 15 };
+            ToolTipService.SetToolTip(iconButton, iconVisible ? "Hide icon" : "Show icon");
+            Apply();
+        };
+        accentButton.Flyout = BuildCardOverlayAccentFlyout(
+            definition.Id,
+            () => selectedAccent,
+            value =>
+            {
+                selectedAccent = value;
+                accentButton.Background = ParseCardOverlayAccent(value ?? OverlayDefaultAccent(definition.Id));
+                ToolTipService.SetToolTip(accentButton, value is null ? "Default accent" : $"Accent: {value}");
+                Apply();
+            });
         position.SelectionChanged += (_, _) => Apply();
         enabled.Toggled += (_, _) => Apply();
-        controls.Children.Add(iconToggle);
-        controls.Children.Add(accent);
+        controls.Children.Add(iconButton);
+        controls.Children.Add(accentButton);
         controls.Children.Add(position);
         controls.Children.Add(enabled);
         Grid.SetColumn(controls, 1);
@@ -1027,12 +1898,180 @@ public sealed partial class SettingsPage : Page
         ScheduleCardOverlaySave();
     }
 
-    private void CardOverlayPresetCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private static SolidColorBrush ParseCardOverlayAccent(string? value)
     {
-        if (_suppressOverlayEvents || _cardOverlayDraft is null ||
-            CardOverlayPresetCombo.SelectedItem is not ComboBoxItem { Tag: string preset }) return;
+        if (value is { Length: 7 } && value[0] == '#' && value[1..].All(Uri.IsHexDigit))
+        {
+            return new SolidColorBrush(ColorHelper.FromArgb(
+                255,
+                Convert.ToByte(value.Substring(1, 2), 16),
+                Convert.ToByte(value.Substring(3, 2), 16),
+                Convert.ToByte(value.Substring(5, 2), 16)));
+        }
+        return new SolidColorBrush(ColorHelper.FromArgb(255, 148, 163, 184));
+    }
+
+    private Flyout BuildCardOverlayAccentFlyout(
+        string overlayId,
+        Func<string?> current,
+        Action<string?> selected)
+    {
+        var flyout = new Flyout
+        {
+            Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedRight,
+        };
+        var stack = new StackPanel { Spacing = 8, Width = 200 };
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Accent color",
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            CharacterSpacing = 50,
+        });
+        var swatches = new Grid { ColumnSpacing = 6, RowSpacing = 6 };
+        for (var column = 0; column < 6; column++)
+            swatches.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        swatches.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        swatches.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        for (var index = 1; index < OverlayAccentOptions.Length; index++)
+        {
+            var option = OverlayAccentOptions[index];
+            var button = new Button
+            {
+                Width = 28,
+                Height = 28,
+                Padding = new Thickness(0),
+                CornerRadius = new CornerRadius(14),
+                BorderThickness = string.Equals(current(), option.Value, StringComparison.OrdinalIgnoreCase)
+                    ? new Thickness(2)
+                    : new Thickness(1),
+                BorderBrush = (Brush)Application.Current.Resources[
+                    string.Equals(current(), option.Value, StringComparison.OrdinalIgnoreCase)
+                        ? "PrimaryTextBrush"
+                        : "BorderBrush"],
+                Background = ParseCardOverlayAccent(option.Value),
+                Tag = option.Value,
+            };
+            ToolTipService.SetToolTip(button, option.Label);
+            button.Click += (_, _) =>
+            {
+                selected(option.Value);
+                flyout.Hide();
+            };
+            Grid.SetColumn(button, (index - 1) % 6);
+            Grid.SetRow(button, (index - 1) / 6);
+            swatches.Children.Add(button);
+        }
+        stack.Children.Add(swatches);
+        var reset = new Button
+        {
+            Content = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 6,
+                Children =
+                {
+                    new FontIcon { Glyph = "\uE711", FontSize = 12 },
+                    new TextBlock { Text = "Reset to default", FontSize = 12 },
+                },
+            },
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            Background = new SolidColorBrush(Colors.Transparent),
+        };
+        reset.Click += (_, _) =>
+        {
+            selected(null);
+            flyout.Hide();
+        };
+        stack.Children.Add(reset);
+        flyout.Content = stack;
+        return flyout;
+    }
+
+    private static bool OverlaySupportsIcon(string id) => id is not
+        ("year" or "container" or "release_type" or "edition");
+
+    private static string? OverlayDefaultAccent(string id) => id switch
+    {
+        "rating_imdb" => "#f5c518",
+        "rating_tmdb" => "#01b4e4",
+        "rating_rt" => "#fa320a",
+        "rating_rt_audience" => "#fa6400",
+        _ => null,
+    };
+
+    private static readonly (string Id, string Label, string Description)[] CardOverlayPresets =
+    [
+        ("minimal", "Minimal", "Near-invisible. Tiny text, no background."),
+        ("classic", "Classic", "Semi-transparent dark pill with a white border. The default."),
+        ("vibrant", "Vibrant", "Opaque, accent-colored badges. High contrast."),
+        ("pill", "Pill", "Larger pill with more padding. Works well with icons."),
+        ("square", "Square", "Blocky, high-density. Plex-inspired."),
+    ];
+
+    private void BuildCardOverlayPresetCards()
+    {
+        CardOverlayPresetHost.Children.Clear();
+        if (_cardOverlayDraft is null) return;
+        foreach (var preset in CardOverlayPresets)
+        {
+            var active = string.Equals(_cardOverlayDraft.Preset, preset.Id, StringComparison.Ordinal);
+            var sampleConfig = new OverlayItemConfig(true, OverlayPosition.TopLeft,
+                preset.Id == "vibrant" ? "#f5c518" : null);
+            var content = new StackPanel { Spacing = 7 };
+            var preview = new Border
+            {
+                Height = 48,
+                CornerRadius = new CornerRadius(6),
+                Background = new LinearGradientBrush
+                {
+                    StartPoint = new Windows.Foundation.Point(0, 0),
+                    EndPoint = new Windows.Foundation.Point(1, 1),
+                    GradientStops =
+                    {
+                        new GradientStop { Color = ColorHelper.FromArgb(255, 51, 65, 85), Offset = 0 },
+                        new GradientStop { Color = ColorHelper.FromArgb(255, 15, 23, 42), Offset = 1 },
+                    },
+                },
+                Child = global::SiloPlayer.Controls.PosterCard.BuildBadge("Sample", "resolution", sampleConfig, preset.Id),
+            };
+            content.Children.Add(preview);
+            content.Children.Add(new TextBlock { Text = preset.Label, FontSize = 14, FontWeight = FontWeights.SemiBold });
+            content.Children.Add(new TextBlock
+            {
+                Text = preset.Description,
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+            var card = new Button
+            {
+                Width = 172,
+                MinHeight = 124,
+                Padding = new Thickness(12),
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                VerticalContentAlignment = VerticalAlignment.Top,
+                Background = active
+                    ? (Brush)Application.Current.Resources["AccentBackgroundBrush"]
+                    : new SolidColorBrush(Colors.Transparent),
+                BorderBrush = (Brush)Application.Current.Resources[active ? "AccentBrush" : "BorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Content = content,
+                Tag = preset.Id,
+            };
+            card.Click += (_, _) => SetCardOverlayPreset(preset.Id);
+            CardOverlayPresetHost.Children.Add(card);
+        }
+    }
+
+    private void SetCardOverlayPreset(string preset)
+    {
+        if (_cardOverlayDraft is null || _cardOverlayDraft.Preset == preset) return;
         _cardOverlayDraft = _cardOverlayDraft with { Preset = preset };
         BuildCardOverlayControls();
+        BuildCardOverlayPresetCards();
         UpdateCardOverlayPreview();
         ScheduleCardOverlaySave();
     }
@@ -1113,33 +2152,35 @@ public sealed partial class SettingsPage : Page
 
     private static string OverlayDescription(string id) => id switch
     {
-        "resolution" => "Video resolution, such as 4K or 1080p.",
-        "hdr" => "HDR format, including HDR10 and Dolby Vision.",
-        "resolution_hdr" => "Combined resolution and HDR badge; suppresses the standalone pair.",
-        "audio" => "Primary audio format, including Atmos where available.",
-        "audio_channels" => "Channel layout such as 5.1 or 7.1.",
-        "video_codec" => "Video codec such as HEVC, AV1, or H.264.",
-        "container" => "Media container such as MKV or MP4.",
-        "aspect_ratio" => "Encoded display aspect ratio.",
-        "release_type" => "Release source such as Remux or WEB-DL.",
-        "edition" => "Edition label when the title has one.",
-        "multi_audio" => "Shows when multiple audio tracks are available.",
-        "multi_sub" => "Shows when subtitle tracks are available.",
-        "rating_imdb" => "IMDb community rating.",
-        "rating_tmdb" => "TMDB community rating.",
-        "rating_rt" => "Rotten Tomatoes critic score.",
-        "rating_rt_audience" => "Rotten Tomatoes audience score.",
-        "content_rating" => "Age or content classification.",
-        "year" => "Release year.",
-        "runtime" => "Movie or episode runtime.",
-        "original_language" => "Original spoken language.",
-        "studio" => "Primary production studio.",
-        "network" => "Original television network.",
-        "show_status" => "Current series production status.",
-        "imdb_top_250" => "IMDb Top 250 recognition when available.",
-        "rt_certified_fresh" => "Certified Fresh recognition when available.",
+        "resolution" => "Video resolution (4K, 1080p, 720p, etc.)",
+        "hdr" => "Dynamic range format (HDR10, DV, HLG)",
+        "resolution_hdr" => "Single badge combining resolution and dynamic range (e.g. \"4K DV\", \"1080p HDR\")",
+        "audio" => "Audio codec (Atmos, DTS-HD, TrueHD, etc.)",
+        "audio_channels" => "Channel layout (Stereo, 5.1, 7.1)",
+        "video_codec" => "Video codec (H.264, H.265, AV1)",
+        "container" => "File container (MKV, MP4, etc.)",
+        "aspect_ratio" => "Display aspect ratio (16:9, 2.39:1, etc.)",
+        "release_type" => "Source format (REMUX, BluRay, WEB-DL, etc.)",
+        "edition" => "Edition label from the best available media version",
+        "multi_audio" => "Shown when the file has audio in 2+ languages",
+        "multi_sub" => "Shown when the file has any subtitle track",
+        "rating_imdb" => "IMDb score out of 10",
+        "rating_tmdb" => "TMDB score out of 10",
+        "rating_rt" => "Rotten Tomatoes critic score",
+        "rating_rt_audience" => "Rotten Tomatoes audience score",
+        "content_rating" => "Content rating (PG-13, TV-MA, R, etc.)",
+        "year" => "Release year",
+        "runtime" => "Item runtime in hours and minutes",
+        "original_language" => "Original language of the content",
+        "studio" => "Primary production studio (movies)",
+        "network" => "Primary network (series)",
+        "show_status" => "Series lifecycle: Returning, Ended, Cancelled",
         _ => "Poster card badge.",
     };
+
+    private static string? OverlayAvailabilityNote(string id) => id == "show_status"
+        ? "Populated by metadata plugins (TMDB/TVDB updates pending)"
+        : null;
 
     // ===== Theme cards =====
     private void BuildThemeCards()
@@ -1179,7 +2220,7 @@ public sealed partial class SettingsPage : Page
         };
     }
 
-    private Border BuildThemeCard(string themeId, string displayName, string description,
+    private Button BuildThemeCard(string themeId, string displayName, string description,
         string accentHex, string bgHex, bool isActive)
     {
         var accentColor = ColorFromHex(accentHex);
@@ -1307,11 +2348,24 @@ public sealed partial class SettingsPage : Page
         card.Child = outerStack;
 
         var themeService = App.Services.GetRequiredService<ThemeService>();
-        card.PointerEntered += (_, _) => themeService.PreviewTheme(themeId);
-        card.PointerExited += (_, _) => themeService.CancelThemePreview();
+        var button = new Button
+        {
+            Padding = new Thickness(0),
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Content = card,
+        };
+        AutomationProperties.SetName(button,
+            isActive ? $"{displayName} theme, selected" : $"Select {displayName} theme");
+        button.PointerEntered += (_, _) => themeService.PreviewTheme(themeId);
+        button.PointerExited += (_, _) => themeService.CancelThemePreview();
+        button.GotFocus += (_, _) => themeService.PreviewTheme(themeId);
+        button.LostFocus += (_, _) => themeService.CancelThemePreview();
 
         // Click handler
-        card.Tapped += (_, _) =>
+        button.Click += (_, _) =>
         {
             themeService.CommitThemePreview(themeId);
             ViewModel.UiTheme = themeId;
@@ -1320,7 +2374,7 @@ public sealed partial class SettingsPage : Page
             UpdateCurrentThemeDisplay();
         };
 
-        return card;
+        return button;
     }
 
     private void UpdateCurrentThemeDisplay()
@@ -1413,18 +2467,45 @@ public sealed partial class SettingsPage : Page
         {
             var emptyText = new TextBlock
             {
-                Text = "No libraries found.",
+                Text = "No libraries are available for this account right now.",
                 Style = (Style)Application.Current.Resources["SecondaryTextStyle"],
                 Margin = new Thickness(0, 8, 0, 0),
             };
             LibraryCardsContainer.Children.Add(emptyText);
+            LibraryVisibilitySummary.Visibility = Visibility.Collapsed;
             return;
         }
+
+        if (!ViewModel.HasSelectedProfile)
+        {
+            LibraryCardsContainer.Children.Add(new TextBlock
+            {
+                Text = "Choose a profile to manage libraries.",
+                Style = (Style)Application.Current.Resources["SecondaryTextStyle"],
+                Margin = new Thickness(0, 8, 0, 0),
+            });
+            LibraryVisibilitySummary.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        LibraryVisibilitySummary.Visibility = Visibility.Visible;
 
         foreach (var card in ViewModel.LibraryCards)
         {
             LibraryCardsContainer.Children.Add(BuildLibraryCard(card));
         }
+    }
+
+    private void ShowLibraryLoadingState()
+    {
+        LibraryVisibilitySummary.Visibility = Visibility.Collapsed;
+        LibraryCardsContainer.Children.Clear();
+        LibraryCardsContainer.Children.Add(new TextBlock
+        {
+            Text = "Loading libraries...",
+            Style = (Style)Application.Current.Resources["SecondaryTextStyle"],
+            Margin = new Thickness(0, 8, 0, 0),
+        });
     }
 
     private Border BuildLibraryCard(LibraryCardViewModel vm)
@@ -1445,17 +2526,51 @@ public sealed partial class SettingsPage : Page
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var reorderPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 2, Margin = new Thickness(0, 0, 10, 0) };
-        var moveUp = new Button { Content = new FontIcon { Glyph = "\uE70E", FontSize = 12 }, Padding = new Thickness(6), MinWidth = 28 };
-        var moveDown = new Button { Content = new FontIcon { Glyph = "\uE70D", FontSize = 12 }, Padding = new Thickness(6), MinWidth = 28 };
-        ToolTipService.SetToolTip(moveUp, "Move library up");
-        ToolTipService.SetToolTip(moveDown, "Move library down");
-        moveUp.Click += async (_, _) => await ViewModel.MoveLibraryAsync(vm.LibraryId, -1);
-        moveDown.Click += async (_, _) => await ViewModel.MoveLibraryAsync(vm.LibraryId, 1);
-        reorderPanel.Children.Add(moveUp);
-        reorderPanel.Children.Add(moveDown);
-        Grid.SetColumn(reorderPanel, 0);
-        headerGrid.Children.Add(reorderPanel);
+        var dragHandle = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE700", FontSize = 15 },
+            Padding = new Thickness(6),
+            MinWidth = 28,
+            Margin = new Thickness(0, 0, 10, 0),
+            CanDrag = true,
+        };
+        AutomationProperties.SetName(dragHandle, $"Drag to reorder {vm.LibraryName}");
+        ToolTipService.SetToolTip(dragHandle, "Drag to reorder");
+        dragHandle.DragStarting += (_, args) =>
+        {
+            args.Data.SetText(vm.LibraryId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            args.Data.RequestedOperation = DataPackageOperation.Move;
+        };
+        dragHandle.KeyDown += async (_, args) =>
+        {
+            if (args.Key == Windows.System.VirtualKey.Up)
+            {
+                args.Handled = true;
+                await ViewModel.MoveLibraryAsync(vm.LibraryId, -1);
+            }
+            else if (args.Key == Windows.System.VirtualKey.Down)
+            {
+                args.Handled = true;
+                await ViewModel.MoveLibraryAsync(vm.LibraryId, 1);
+            }
+        };
+        Grid.SetColumn(dragHandle, 0);
+        headerGrid.Children.Add(dragHandle);
+
+        cardBorder.AllowDrop = true;
+        cardBorder.DragOver += (_, args) =>
+        {
+            args.AcceptedOperation = DataPackageOperation.Move;
+            args.DragUIOverride.Caption = $"Move before {vm.LibraryName}";
+        };
+        cardBorder.Drop += async (_, args) =>
+        {
+            if (!args.DataView.Contains(StandardDataFormats.Text)) return;
+            var value = await args.DataView.GetTextAsync();
+            if (!int.TryParse(value, out var sourceId) || sourceId == vm.LibraryId) return;
+            var targetIndex = ViewModel.LibraryCards.ToList().FindIndex(card => card.LibraryId == vm.LibraryId);
+            await ViewModel.MoveLibraryToAsync(sourceId, targetIndex);
+        };
 
         var headerRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
 
@@ -1717,6 +2832,16 @@ public sealed partial class SettingsPage : Page
         }
     }
 
+    private void MaxBitrateComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressEvents) return;
+        if (MaxBitrateComboBox.SelectedItem is ComboBoxItem item && item.Tag is string value)
+        {
+            ViewModel.MaxBitrateKbps = value;
+            _ = ViewModel.SaveMaxBitrateKbpsCommand.ExecuteAsync(null);
+        }
+    }
+
     private void SpokenLanguageComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressEvents) return;
@@ -1793,16 +2918,27 @@ public sealed partial class SettingsPage : Page
                 Background = new SolidColorBrush(color),
                 BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x40, 255, 255, 255)),
                 BorderThickness = new Thickness(1),
-                Tag = hex,
             };
-            ToolTipService.SetToolTip(swatch, label);
-            swatch.Tapped += (_, _) =>
+            var button = new Button
+            {
+                Width = 32,
+                Height = 32,
+                Padding = new Thickness(2),
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(16),
+                Tag = hex,
+                Content = swatch,
+            };
+            AutomationProperties.SetName(button, label);
+            ToolTipService.SetToolTip(button, label);
+            button.Click += (_, _) =>
             {
                 setter(hex);
                 UpdateSubtitleColorSelection();
                 UpdateSubtitlePreview();
             };
-            host.Children.Add(swatch);
+            host.Children.Add(button);
         }
     }
 
@@ -1817,13 +2953,14 @@ public sealed partial class SettingsPage : Page
     {
         foreach (var child in host.Children)
         {
-            if (child is Border border && border.Tag is string hex)
+            if (child is Button { Tag: string hex, Content: Border border } button)
             {
                 var isSelected = hex.Equals(selected, StringComparison.OrdinalIgnoreCase);
                 border.BorderThickness = new Thickness(isSelected ? 3 : 1);
                 border.BorderBrush = isSelected
                     ? (Brush)Application.Current.Resources["AccentBrush"]
                     : new SolidColorBrush(Windows.UI.Color.FromArgb(0x40, 255, 255, 255));
+                AutomationProperties.SetHelpText(button, isSelected ? "Selected" : "Not selected");
             }
         }
     }
@@ -2016,30 +3153,60 @@ public sealed partial class SettingsPage : Page
         var row = new Border
         {
             Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(16, 12, 16, 12),
+            CornerRadius = new CornerRadius(19),
+            Padding = new Thickness(12),
+            AllowDrop = ViewModel.CanEditHomeSections,
         };
 
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // grip icon
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }); // title + type
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto }); // actions
+        var grid = new Grid { ColumnSpacing = 8 };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        // Grip icon
-        var gripIcon = new FontIcon
+        var grip = new Button
         {
-            Glyph = "\uE700",
-            FontSize = 14,
-            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 12, 0),
+            Content = new FontIcon { Glyph = "\uE700", FontSize = 14 },
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Padding = new Thickness(6),
+            VerticalAlignment = VerticalAlignment.Top,
+            CanDrag = ViewModel.CanEditHomeSections,
+            IsEnabled = ViewModel.CanEditHomeSections,
         };
-        Grid.SetColumn(gripIcon, 0);
-        grid.Children.Add(gripIcon);
+        AutomationProperties.SetName(grip, $"Drag {section.Title}");
+        grip.DragStarting += (_, args) =>
+        {
+            args.Data.SetText(section.Id);
+            args.Data.RequestedOperation = DataPackageOperation.Move;
+        };
+        grid.Children.Add(grip);
 
-        // Title + type badge
-        var titleStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-        titleStack.Children.Add(new TextBlock
+        var visBtn = new Button
+        {
+            Content = new FontIcon
+            {
+                Glyph = section.Hidden ? "\uED1A" : "\uE7B3",
+                FontSize = 14,
+                Foreground = (Brush)Application.Current.Resources[section.Hidden ? "SecondaryTextBrush" : "PrimaryTextBrush"],
+            },
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Padding = new Thickness(6),
+            VerticalAlignment = VerticalAlignment.Top,
+            IsEnabled = ViewModel.CanEditHomeSections,
+        };
+        AutomationProperties.SetName(visBtn, $"{(section.Hidden ? "Show" : "Hide")} {section.Title}");
+        visBtn.Click += async (_, _) =>
+        {
+            ViewModel.ToggleSectionVisibility(section);
+            await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
+        };
+        Grid.SetColumn(visBtn, 1);
+        grid.Children.Add(visBtn);
+
+        var info = new StackPanel { Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
+        var titleRow = new WrapPanel { HorizontalSpacing = 6, VerticalSpacing = 4 };
+        titleRow.Children.Add(new TextBlock
         {
             Text = section.Title,
             FontSize = 14,
@@ -2048,113 +3215,117 @@ public sealed partial class SettingsPage : Page
                 ? (Brush)Application.Current.Resources["SecondaryTextBrush"]
                 : (Brush)Application.Current.Resources["PrimaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
+            TextDecorations = section.Hidden ? Windows.UI.Text.TextDecorations.Strikethrough : Windows.UI.Text.TextDecorations.None,
         });
-
-        var typeBadge = new Border
+        titleRow.Children.Add(BuildHomeSectionBadge(HomeSectionTypeLabel(section.SectionType), false));
+        if (section.Featured) titleRow.Children.Add(BuildHomeSectionBadge("Featured", true));
+        titleRow.Children.Add(BuildHomeSectionBadge(section.Hidden ? "Hidden" : "Visible", false));
+        info.Children.Add(titleRow);
+        info.Children.Add(new TextBlock
         {
-            Background = (Brush)Application.Current.Resources["SurfaceHoverBrush"],
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(6, 2, 6, 2),
-        };
-        typeBadge.Child = new TextBlock
-        {
-            Text = section.SectionType,
-            FontSize = 10,
+            Text = $"{HomeSectionTypeLabel(section.SectionType)} · {section.ItemLimit} items",
+            FontSize = 13,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-        };
-        titleStack.Children.Add(typeBadge);
+        });
+        Grid.SetColumn(info, 2);
+        grid.Children.Add(info);
 
-        Grid.SetColumn(titleStack, 1);
-        grid.Children.Add(titleStack);
-
-        // Action buttons
-        var actionStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-
-        // Move up
-        var upBtn = new Button
+        var editBtn = new Button
         {
-            Content = new FontIcon { Glyph = "\uE70E", FontSize = 12 },
+            Content = new FontIcon { Glyph = "\uE70F", FontSize = 13 },
             Style = (Style)Application.Current.Resources["GhostButtonStyle"],
             Padding = new Thickness(6),
+            IsEnabled = ViewModel.CanEditHomeSections,
         };
-        upBtn.Click += async (_, _) =>
-        {
-            ViewModel.MoveSectionUp(section);
-            await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
-        };
-        actionStack.Children.Add(upBtn);
+        AutomationProperties.SetName(editBtn, $"Edit {section.Title}");
+        ToolTipService.SetToolTip(editBtn, "Edit section");
+        editBtn.Click += async (_, _) => await EditHomeSectionAsync(section);
+        Grid.SetColumn(editBtn, 3);
+        grid.Children.Add(editBtn);
 
-        // Move down
-        var downBtn = new Button
+        var delBtn = new Button
         {
-            Content = new FontIcon { Glyph = "\uE70D", FontSize = 12 },
+            Content = new FontIcon { Glyph = "\uE74D", FontSize = 14, Foreground = (Brush)Application.Current.Resources["ErrorBrush"] },
             Style = (Style)Application.Current.Resources["GhostButtonStyle"],
             Padding = new Thickness(6),
+            IsEnabled = ViewModel.CanEditHomeSections,
         };
-        downBtn.Click += async (_, _) =>
+        AutomationProperties.SetName(delBtn, $"Delete {section.Title}");
+        delBtn.Click += async (_, _) =>
         {
-            ViewModel.MoveSectionDown(section);
-            await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
-        };
-        actionStack.Children.Add(downBtn);
-
-        // Visibility toggle
-        var eyeIcon = section.Hidden ? "\uED1A" : "\uE7B3"; // Eye off : Eye
-        var visBtn = new Button
-        {
-            Content = new FontIcon { Glyph = eyeIcon, FontSize = 14 },
-            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            Padding = new Thickness(6),
-        };
-        visBtn.Click += async (_, _) =>
-        {
-            ViewModel.ToggleSectionVisibility(section);
-            await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
-        };
-        actionStack.Children.Add(visBtn);
-
-        // Delete (only custom sections)
-        // B58: Confirm before destructive removal. Web copy distinguishes
-        // "Delete custom section?" from "Remove section?" — only IsCustom
-        // sections expose this button so we use the "Delete custom section" copy.
-        // Both custom and server-default rows can be removed from the active scope.
-        {
-            var delBtn = new Button
+            var dialog = new ContentDialog
             {
-                Content = new FontIcon { Glyph = "\uE74D", FontSize = 14, Foreground = (Brush)Application.Current.Resources["ErrorBrush"] },
-                Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-                Padding = new Thickness(6),
+                Title = section.IsCustom ? "Delete custom section?" : "Remove section?",
+                Content = section.IsCustom ? "Delete this custom section?" : "Remove this section from your home screen?",
+                PrimaryButtonText = section.IsCustom ? "Delete" : "Remove",
+                PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
+                CloseButtonText = "Cancel",
+                XamlRoot = XamlRoot,
+                DefaultButton = ContentDialogButton.Close,
             };
-            delBtn.Click += async (_, _) =>
-            {
-                var dialog = new ContentDialog
-                {
-                    Title = section.IsCustom ? "Delete custom section" : "Remove section",
-                    Content = section.IsCustom
-                        ? $"Delete \"{section.Title}\"? This action cannot be undone."
-                        : $"Remove \"{section.Title}\" from this screen? You can restore it by resetting to defaults.",
-                    PrimaryButtonText = section.IsCustom ? "Delete" : "Remove",
-                    CloseButtonText = "Cancel",
-                    XamlRoot = this.XamlRoot,
-                    DefaultButton = ContentDialogButton.Close,
-                };
-
-                var result = await dialog.ShowAsync();
-                if (result == ContentDialogResult.Primary)
-                {
-                    ViewModel.RemoveSection(section);
-                    await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
-                }
-            };
-            actionStack.Children.Add(delBtn);
-        }
-
-        Grid.SetColumn(actionStack, 2);
-        grid.Children.Add(actionStack);
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            ViewModel.RemoveSection(section);
+            await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
+        };
+        Grid.SetColumn(delBtn, 4);
+        grid.Children.Add(delBtn);
 
         row.Child = grid;
+        row.DragOver += (_, args) =>
+        {
+            if (!args.DataView.Contains(StandardDataFormats.Text)) return;
+            args.AcceptedOperation = DataPackageOperation.Move;
+            args.DragUIOverride.Caption = $"Move before {section.Title}";
+        };
+        row.Drop += async (_, args) =>
+        {
+            if (!args.DataView.Contains(StandardDataFormats.Text)) return;
+            var sourceId = await args.DataView.GetTextAsync();
+            var source = ViewModel.HomeSections.FirstOrDefault(candidate => candidate.Id == sourceId);
+            if (source is null || ReferenceEquals(source, section)) return;
+            var oldIndex = ViewModel.HomeSections.IndexOf(source);
+            var newIndex = ViewModel.HomeSections.IndexOf(section);
+            if (oldIndex < 0 || newIndex < 0) return;
+            ViewModel.HomeSections.Move(oldIndex, newIndex);
+            await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
+        };
         return row;
     }
+
+    private static Border BuildHomeSectionBadge(string text, bool accent) => new()
+    {
+        Background = (Brush)Application.Current.Resources[accent ? "AccentBackgroundBrush" : "SurfaceHoverBrush"],
+        BorderBrush = (Brush)Application.Current.Resources[accent ? "AccentBrush" : "BorderBrush"],
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(8),
+        Padding = new Thickness(7, 2, 7, 2),
+        Child = new TextBlock
+        {
+            Text = text,
+            FontSize = 10,
+            Foreground = (Brush)Application.Current.Resources[accent ? "AccentBrush" : "SecondaryTextBrush"],
+        },
+    };
+
+    private static string HomeSectionTypeLabel(string type) => type switch
+    {
+        "recently_added" => "Recently Added",
+        "recently_released" => "Recently Released",
+        "genre" => "Genre",
+        "custom_filter" => "Custom Filter",
+        "random" => "Random",
+        "continue_watching" => "Continue Watching",
+        "recommended_for_you" => "Recommended For You",
+        "because_you_watched" => "Because You Watched",
+        "similar_users_liked" => "Profiles Like You Enjoyed",
+        "taste_match" => "Top Picks Today",
+        "next_up" => "On Deck",
+        "next_in_series" => "Next in Series",
+        "watchlist" => "Watchlist",
+        "favorites" => "Favorites",
+        "collection" => "Collection",
+        _ => type.Replace('_', ' '),
+    };
 
     private void HomeSectionsSave_Click(object sender, RoutedEventArgs e)
     {
@@ -2163,16 +3334,10 @@ public sealed partial class SettingsPage : Page
 
     private async void HomeSectionsAdd_Click(object sender, RoutedEventArgs e)
     {
-        IReadOnlyList<RecipeChoice> allChoices;
+        RecipeCatalogResponse catalog;
         try
         {
-            var catalog = await App.Services.GetRequiredService<SettingsApi>().GetRecipeCatalogAsync();
-            allChoices = catalog.Categories
-                .SelectMany(category => category.Value)
-                .Where(definition => !definition.AdminOnly)
-                .SelectMany(definition => definition.Presets.Select(preset => new RecipeChoice(definition, preset)))
-                .OrderBy(choice => choice.DisplayName, StringComparer.CurrentCultureIgnoreCase)
-                .ToList();
+            catalog = await App.Services.GetRequiredService<SettingsApi>().GetRecipeCatalogAsync();
         }
         catch (Exception ex)
         {
@@ -2180,69 +3345,78 @@ public sealed partial class SettingsPage : Page
             return;
         }
 
-        var search = new TextBox { PlaceholderText = "Search recipes…" };
-        var list = new ListView { Height = 290, SelectionMode = ListViewSelectionMode.Single, DisplayMemberPath = nameof(RecipeChoice.DisplayName) };
-        list.ItemsSource = allChoices;
-        var description = new TextBlock { Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], TextWrapping = TextWrapping.Wrap };
-        var title = new TextBox { Header = "Section title", PlaceholderText = "Section title" };
-        var itemLimit = new NumberBox { Header = "Items", Minimum = 1, Maximum = 100, Value = 20, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline };
-        var featured = new CheckBox { Content = "Featured section" };
-        var content = new StackPanel { Spacing = 12, Width = 600 };
-        content.Children.Add(search);
-        content.Children.Add(list);
-        content.Children.Add(description);
-        content.Children.Add(title);
-        content.Children.Add(itemLimit);
-        content.Children.Add(featured);
-
-        var dialog = new ContentDialog
-        {
-            Title = "Add a section",
-            Content = content,
-            PrimaryButtonText = "Add",
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Primary,
-            IsPrimaryButtonEnabled = false,
-            XamlRoot = XamlRoot
-        };
-        list.SelectionChanged += (_, _) =>
-        {
-            if (list.SelectedItem is not RecipeChoice choice) return;
-            dialog.IsPrimaryButtonEnabled = true;
-            description.Text = choice.Description;
-            title.Text = choice.DisplayName;
-        };
-        search.TextChanged += (_, _) =>
-        {
-            var query = search.Text.Trim();
-            list.ItemsSource = string.IsNullOrWhiteSpace(query) ? allChoices : allChoices
-                .Where(choice => choice.DisplayName.Contains(query, StringComparison.CurrentCultureIgnoreCase) || choice.Description.Contains(query, StringComparison.CurrentCultureIgnoreCase))
-                .ToList();
-        };
-
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary || list.SelectedItem is not RecipeChoice selected)
+        var selected = await RecipeGalleryDialog.ShowAsync(XamlRoot, catalog);
+        if (selected is null)
             return;
 
         ViewModel.AddHomeSection(new SettingsSectionEntry
         {
             Id = Guid.NewGuid().ToString(),
-            SectionType = selected.Definition.Type,
-            Title = string.IsNullOrWhiteSpace(title.Text) ? selected.DisplayName : title.Text.Trim(),
-            Featured = featured.IsChecked == true,
-            ItemLimit = double.IsNaN(itemLimit.Value) ? 20 : (int)itemLimit.Value,
+            SectionType = selected.SectionType,
+            Title = selected.Title,
+            Featured = selected.Featured,
+            ItemLimit = selected.ItemLimit,
             Hidden = false,
             IsCustom = true,
             Customized = true,
             Position = ViewModel.HomeSections.Count,
-            Config = new Dictionary<string, object>(selected.Preset.DefaultParams)
+            Config = selected.Config,
         });
         await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
     }
 
-    private sealed record RecipeChoice(RecipeDefinition Definition, GalleryPreset Preset)
+    private async void HomeSectionsAddCustom_Click(object sender, RoutedEventArgs e)
     {
-        public string DisplayName => Preset.DisplayName;
-        public string Description => Preset.DescriptionLong ?? Preset.DescriptionShort;
+        RecipeCatalogResponse catalog;
+        try
+        {
+            catalog = await App.Services.GetRequiredService<SettingsApi>().GetRecipeCatalogAsync();
+        }
+        catch (Exception ex)
+        {
+            App.Services.GetRequiredService<ToastService>().Error($"Could not load section types: {ex.Message}");
+            return;
+        }
+        var configured = await RecipeGalleryDialog.ShowEditorAsync(XamlRoot, catalog, null);
+        if (configured is null) return;
+        ViewModel.AddHomeSection(new SettingsSectionEntry
+        {
+            Id = Guid.NewGuid().ToString(),
+            SectionType = configured.SectionType,
+            Title = configured.Title,
+            Featured = configured.Featured,
+            ItemLimit = configured.ItemLimit,
+            Hidden = false,
+            IsCustom = true,
+            Customized = true,
+            Position = ViewModel.HomeSections.Count,
+            Config = configured.Config,
+        });
+        await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
+    }
+
+    private async Task EditHomeSectionAsync(SettingsSectionEntry section)
+    {
+        RecipeCatalogResponse catalog;
+        try
+        {
+            catalog = await App.Services.GetRequiredService<SettingsApi>().GetRecipeCatalogAsync();
+        }
+        catch (Exception ex)
+        {
+            App.Services.GetRequiredService<ToastService>().Error($"Could not load section editor: {ex.Message}");
+            return;
+        }
+        var configured = await RecipeGalleryDialog.ShowEditorAsync(XamlRoot, catalog, section);
+        if (configured is null) return;
+        section.SectionType = configured.SectionType;
+        section.Title = configured.Title;
+        section.Featured = configured.Featured;
+        section.ItemLimit = configured.ItemLimit;
+        section.Config = configured.Config;
+        section.Customized = true;
+        RebuildHomeSectionItems();
+        await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
     }
 
     // B57: Confirm before destructive reset of all section customizations.
@@ -2341,11 +3515,21 @@ public sealed partial class SettingsPage : Page
         ImportPlexSavedPanel.Visibility   = (source == "plex" && ViewModel.ImportPlexMode == "saved")   ? Visibility.Visible : Visibility.Collapsed;
         ImportJellyfinPanel.Visibility    = source == "jellyfin" ? Visibility.Visible : Visibility.Collapsed;
 
+        // Saved-source panels mirror the WebUI's explicit loading and empty states.
+        EmbySavedSourcesLoadingText.Visibility = ViewModel.IsLoadingImportSources ? Visibility.Visible : Visibility.Collapsed;
+        EmbySavedSourcesEmptyNotice.Visibility = !ViewModel.IsLoadingImportSources && ViewModel.EmbySavedSources.Count == 0
+            ? Visibility.Visible : Visibility.Collapsed;
+        EmbySavedSourcesFields.Visibility = !ViewModel.IsLoadingImportSources && ViewModel.EmbySavedSources.Count > 0
+            ? Visibility.Visible : Visibility.Collapsed;
+        PlexSavedSourcesLoadingText.Visibility = ViewModel.IsLoadingImportSources ? Visibility.Visible : Visibility.Collapsed;
+        PlexSavedSourcesEmptyNotice.Visibility = !ViewModel.IsLoadingImportSources && ViewModel.PlexSavedSources.Count == 0
+            ? Visibility.Visible : Visibility.Collapsed;
+        PlexSavedSourcesFields.Visibility = !ViewModel.IsLoadingImportSources && ViewModel.PlexSavedSources.Count > 0
+            ? Visibility.Visible : Visibility.Collapsed;
+
         // Plex OAuth sub-states
         PlexAuthPendingPanel.Visibility = ViewModel.PlexAuthPending ? Visibility.Visible : Visibility.Collapsed;
-        PlexAuthPendingText.Text = string.IsNullOrEmpty(ViewModel.PlexAuthStatus)
-            ? "Waiting for approval in browser..."
-            : ViewModel.PlexAuthStatus;
+        PlexAuthPendingText.Text = "Finishing Plex sign-in…";
         PlexAuthErrorPanel.Visibility = !string.IsNullOrEmpty(ViewModel.PlexAuthError) ? Visibility.Visible : Visibility.Collapsed;
         PlexAuthErrorText.Text = ViewModel.PlexAuthError ?? "";
 
@@ -2516,7 +3700,7 @@ public sealed partial class SettingsPage : Page
 
     /// <summary>Build one card for the Import history list. Click selects the run
     /// for display in the summary card above.</summary>
-    private Border BuildHistoryRunCard(HistoryImportRun run)
+    private Button BuildHistoryRunCard(HistoryImportRun run)
     {
         var isActive = ViewModel.SelectedRunId == run.Id;
 
@@ -2587,13 +3771,24 @@ public sealed partial class SettingsPage : Page
         row.Children.Add(badge);
 
         card.Child = row;
-        card.Tapped += (_, _) =>
+        var button = new Button
+        {
+            Padding = new Thickness(0),
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Content = card,
+        };
+        AutomationProperties.SetName(button,
+            $"Open {CapitalizeSource(run.SourceType)} import from {FormatRelativeTime(run.CreatedAt)}, {run.Status}");
+        button.Click += (_, _) =>
         {
             ViewModel.SelectRunForDisplay(run);
             RebuildRunSummaryCard();
             RebuildImportRunCards(); // re-render to highlight active
         };
-        return card;
+        return button;
     }
 
     private Border BuildRunStatusBadge(string status)
@@ -2852,7 +4047,9 @@ public sealed partial class SettingsPage : Page
         if (_importTabInitialized) return;
         _importTabInitialized = true;
 
-        await ViewModel.LoadImportTabCommand.ExecuteAsync(null);
+        var loadTask = ViewModel.LoadImportTabCommand.ExecuteAsync(null);
+        UpdateImportPanelVisibility();
+        await loadTask;
         RebuildImportSourcesCombos();
         RebuildImportProfilesCombo();
         RebuildRunSummaryCard();
@@ -3391,22 +4588,7 @@ public sealed partial class SettingsPage : Page
         var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Top };
         if (showAuth || showApiKey)
         {
-            var cancel = new Button
-            {
-                Content = "Cancel",
-                Style = (Style)Application.Current.Resources["SecondaryButtonStyle"],
-                Padding = new Thickness(12, 7, 12, 7),
-                FontSize = 13,
-                IsEnabled = !vm.IsBusy,
-            };
-            cancel.Click += (_, _) =>
-            {
-                vm.AuthSession = null;
-                vm.ApiKey = "";
-                vm.ApiKeyPromptVisible = false;
-                RebuildWatchProviderCards();
-            };
-            actions.Children.Add(cancel);
+            // The active auth block owns its close action, matching the WebUI.
         }
         else if (vm.Connected)
         {
@@ -3438,7 +4620,6 @@ public sealed partial class SettingsPage : Page
                 var dialog = new ContentDialog
                 {
                     Title = $"Disconnect {displayName}?",
-                    Content = "Silo will stop importing history, syncing progress, and scrobbling playback for this provider.",
                     PrimaryButtonText = "Disconnect",
                     PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
                     CloseButtonText = "Cancel",
@@ -3541,20 +4722,41 @@ public sealed partial class SettingsPage : Page
         };
 
         var stack = new StackPanel { Spacing = 12 };
-        stack.Children.Add(new TextBlock
+        var heading = new Grid { ColumnSpacing = 12 };
+        heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var headingCopy = new StackPanel { Spacing = 2 };
+        headingCopy.Children.Add(new TextBlock
         {
             Text = "Copy this code first",
             FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
         });
-        stack.Children.Add(new TextBlock
+        headingCopy.Children.Add(new TextBlock
         {
             Text = $"{vm.DisplayName} will ask for it after the activation page opens.",
             FontSize = 12,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             TextWrapping = TextWrapping.Wrap,
         });
+        heading.Children.Add(headingCopy);
+        var cancel = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE711", FontSize = 13 },
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Padding = new Thickness(6),
+            IsEnabled = !vm.IsBusy,
+        };
+        AutomationProperties.SetName(cancel, "Cancel activation");
+        cancel.Click += (_, _) =>
+        {
+            vm.AuthSession = null;
+            RebuildWatchProviderCards();
+        };
+        Grid.SetColumn(cancel, 1);
+        heading.Children.Add(cancel);
+        stack.Children.Add(heading);
 
         var codeRow = new Grid { ColumnSpacing = 8 };
         codeRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -3649,20 +4851,42 @@ public sealed partial class SettingsPage : Page
         };
 
         var stack = new StackPanel { Spacing = 12 };
-        stack.Children.Add(new TextBlock
+        var heading = new Grid { ColumnSpacing = 12 };
+        heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var headingCopy = new StackPanel { Spacing = 2 };
+        headingCopy.Children.Add(new TextBlock
         {
             Text = $"Paste your {vm.DisplayName} API key",
             FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
         });
-        stack.Children.Add(new TextBlock
+        headingCopy.Children.Add(new TextBlock
         {
             Text = $"Find it under your account settings on the {vm.DisplayName} site.",
             FontSize = 12,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             TextWrapping = TextWrapping.Wrap,
         });
+        heading.Children.Add(headingCopy);
+        var cancel = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE711", FontSize = 13 },
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Padding = new Thickness(6),
+            IsEnabled = !vm.IsBusy,
+        };
+        AutomationProperties.SetName(cancel, "Cancel connection");
+        cancel.Click += (_, _) =>
+        {
+            vm.ApiKey = "";
+            vm.ApiKeyPromptVisible = false;
+            RebuildWatchProviderCards();
+        };
+        Grid.SetColumn(cancel, 1);
+        heading.Children.Add(cancel);
+        stack.Children.Add(heading);
 
         var row = new Grid { ColumnSpacing = 8 };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -3677,7 +4901,6 @@ public sealed partial class SettingsPage : Page
             CornerRadius = new CornerRadius(8),
             MinWidth = 260,
         };
-        keyBox.PasswordChanged += (_, _) => vm.ApiKey = keyBox.Password;
         row.Children.Add(keyBox);
 
         var connect = new Button
@@ -3686,7 +4909,12 @@ public sealed partial class SettingsPage : Page
             Style = (Style)Application.Current.Resources["AccentButtonStyle"],
             Padding = new Thickness(12, 8, 12, 8),
             FontSize = 13,
-            IsEnabled = !vm.IsBusy,
+            IsEnabled = !vm.IsBusy && !string.IsNullOrWhiteSpace(vm.ApiKey),
+        };
+        keyBox.PasswordChanged += (_, _) =>
+        {
+            vm.ApiKey = keyBox.Password;
+            connect.IsEnabled = !vm.IsBusy && !string.IsNullOrWhiteSpace(keyBox.Password);
         };
         connect.Click += async (_, _) =>
         {
@@ -3831,7 +5059,7 @@ public sealed partial class SettingsPage : Page
     private static string GetWatchProviderSubtitle(WatchProviderCardViewModel vm)
     {
         if (vm.AuthSession != null && !vm.Connected)
-            return "Waiting for you to enter the activation code.";
+            return "Waiting for you to enter the code below.";
 
         if (vm.ApiKeyPromptVisible && vm.UsesApiKey && !vm.Connected)
             return $"Paste your {vm.DisplayName} API key to finish connecting.";
@@ -3909,6 +5137,9 @@ public sealed partial class SettingsPage : Page
     {
         WebhookConnectionsPanel.Children.Clear();
         _webhookConnectionCards.Clear();
+        NoConnectionsText.Text = "Loading connections...";
+        NoConnectionsText.HorizontalAlignment = HorizontalAlignment.Left;
+        NoConnectionsText.Visibility = Visibility.Visible;
         try
         {
             if (_webhookProfiles.Count == 0)
@@ -3921,9 +5152,12 @@ public sealed partial class SettingsPage : Page
                 SelectComboBoxByTag(WebhookDefaultProfileCombo, activeProfileId ?? "");
                 if (WebhookDefaultProfileCombo.SelectedIndex < 0 && WebhookDefaultProfileCombo.Items.Count > 0)
                     WebhookDefaultProfileCombo.SelectedIndex = 0;
+                UpdateWebhookCreateButtonState();
             }
             var api = App.Services.GetRequiredService<WebhookSyncApi>();
             var connections = await api.GetConnectionsAsync();
+            NoConnectionsText.Text = "No webhook connections yet. Create one above to generate a provider-specific endpoint.";
+            NoConnectionsText.HorizontalAlignment = HorizontalAlignment.Left;
             NoConnectionsText.Visibility = connections.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
             if (connections.Count == 0) WebhookConnectionDetail.Visibility = Visibility.Collapsed;
             foreach (var connection in connections)
@@ -4055,6 +5289,21 @@ public sealed partial class SettingsPage : Page
         WebhookPlexAuthPanel.Visibility = isPlex ? Visibility.Visible : Visibility.Collapsed;
         WebhookManualServerPanel.Visibility = isPlex ? Visibility.Collapsed : Visibility.Visible;
         WebhookManualServerName.PlaceholderText = provider == "emby" ? "My Emby Server" : "My Jellyfin Server";
+        UpdateWebhookCreateButtonState();
+    }
+
+    private void WebhookCreateField_Changed(object sender, RoutedEventArgs e) => UpdateWebhookCreateButtonState();
+
+    private void UpdateWebhookCreateButtonState()
+    {
+        if (WebhookCreateConnectionButton == null) return;
+        var provider = (WebhookProviderCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "plex";
+        var profileId = (WebhookDefaultProfileCombo.SelectedItem as ComboBoxItem)?.Tag as string;
+        var canCreate = !string.IsNullOrWhiteSpace(profileId) &&
+            (provider == "plex"
+                ? WebhookPlexServerCombo.SelectedItem is ComboBoxItem { Tag: PlexBrowserResource }
+                : !string.IsNullOrWhiteSpace(WebhookManualServerName.Text));
+        WebhookCreateConnectionButton.IsEnabled = canCreate;
     }
 
     private async void WebhookPlexSignIn_Click(object sender, RoutedEventArgs e)
@@ -4092,6 +5341,7 @@ public sealed partial class SettingsPage : Page
                 ? "Plex sign-in succeeded, but no media servers were found."
                 : $"{_webhookPlexServers.Count} server{(_webhookPlexServers.Count == 1 ? "" : "s")} available";
             WebhookPlexSignInButton.Content = "Re-authenticate";
+            UpdateWebhookCreateButtonState();
         }
         catch (OperationCanceledException)
         {
@@ -4159,53 +5409,6 @@ public sealed partial class SettingsPage : Page
         }
     }
 
-    private async void AddConnectionBtn_Click(object sender, RoutedEventArgs e)
-    {
-        try { _webhookProfiles = (await App.Services.GetRequiredService<AuthApi>().GetProfilesAsync()).Profiles; }
-        catch (Exception ex) { ViewModel.ErrorMessage = $"Could not load profiles: {ex.Message}"; return; }
-
-        var provider = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-        provider.Items.Add(new ComboBoxItem { Content = "Plex", Tag = "plex" });
-        provider.Items.Add(new ComboBoxItem { Content = "Emby", Tag = "emby" });
-        provider.Items.Add(new ComboBoxItem { Content = "Jellyfin", Tag = "jellyfin" });
-        provider.SelectedIndex = 0;
-        var name = new TextBox { PlaceholderText = "Server name" };
-        var serverId = new TextBox { PlaceholderText = "Plex server ID" };
-        var baseUrl = new TextBox { PlaceholderText = "https://plex.example.com" };
-        var token = new PasswordBox { PlaceholderText = "Plex access token" };
-        var profile = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, PlaceholderText = "Default Silo profile" };
-        foreach (var p in _webhookProfiles) profile.Items.Add(new ComboBoxItem { Content = p.Name, Tag = p.Id });
-        if (profile.Items.Count > 0) profile.SelectedIndex = 0;
-        var plexFields = new StackPanel { Spacing = 10 };
-        plexFields.Children.Add(serverId); plexFields.Children.Add(baseUrl); plexFields.Children.Add(token);
-        var form = new StackPanel { Width = 440, Spacing = 10 };
-        form.Children.Add(provider); form.Children.Add(name); form.Children.Add(plexFields); form.Children.Add(profile);
-        provider.SelectionChanged += (_, _) => plexFields.Visibility = (provider.SelectedItem as ComboBoxItem)?.Tag as string == "plex" ? Visibility.Visible : Visibility.Collapsed;
-
-        var dialog = new ContentDialog { Title = "Add a connection", PrimaryButtonText = "Create", CloseButtonText = "Cancel", XamlRoot = XamlRoot, Content = form };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        var providerValue = (provider.SelectedItem as ComboBoxItem)?.Tag as string ?? "plex";
-        var profileId = (profile.SelectedItem as ComboBoxItem)?.Tag as string;
-        if (string.IsNullOrWhiteSpace(name.Text) || string.IsNullOrWhiteSpace(profileId)) { ViewModel.ErrorMessage = "Server name and profile are required."; return; }
-        var body = new Dictionary<string, object?>
-        {
-            ["provider"] = providerValue, ["server_name"] = name.Text.Trim(), ["default_profile_id"] = profileId,
-        };
-        if (providerValue == "plex")
-        {
-            body["server_id"] = serverId.Text.Trim(); body["base_url"] = baseUrl.Text.Trim(); body["access_token"] = token.Password;
-        }
-        try
-        {
-            var created = await App.Services.GetRequiredService<WebhookSyncApi>().CreateConnectionAsync(body);
-            await LoadWebhookConnectionsAsync();
-            await SelectWebhookConnectionAsync(created.Connection);
-            WebhookUrlBox.Text = created.WebhookUrl;
-            ViewModel.StatusMessage = "Webhook connection created";
-        }
-        catch (Exception ex) { ViewModel.ErrorMessage = $"Failed to create webhook connection: {ex.Message}"; }
-    }
-
     private async Task SelectWebhookConnectionAsync(WebhookSyncConnection connection)
     {
         _selectedWebhookConnection = connection;
@@ -4214,9 +5417,10 @@ public sealed partial class SettingsPage : Page
                 pair.Key == connection.Id ? "SidebarAccentBrush" : "SurfaceBrush"];
         WebhookConnectionDetail.Visibility = Visibility.Visible;
         WebhookDetailName.Text = connection.ServerName;
-        WebhookDetailHealth.Text = !string.IsNullOrWhiteSpace(connection.LastWebhookErrorMessage) && WebhookHealth(connection) == "Needs attention"
-            ? $"{FormatWebhookProvider(connection.Provider)} webhook endpoint · {connection.LastWebhookErrorMessage}"
-            : $"{FormatWebhookProvider(connection.Provider)} webhook endpoint · Ready to receive webhook traffic";
+        WebhookDetailHealth.Text = $"{FormatWebhookProvider(connection.Provider)} webhook endpoint";
+        WebhookDetailStatus.Text = !string.IsNullOrWhiteSpace(connection.LastWebhookErrorMessage) && WebhookHealth(connection) == "Needs attention"
+            ? connection.LastWebhookErrorMessage
+            : "Ready to receive webhook traffic";
         WebhookUrlBox.Text = connection.WebhookUrl ?? "";
         WebhookConnectionNameBox.Text = connection.ServerName;
         WebhookConnectionProfileCombo.Items.Clear();
@@ -4227,6 +5431,18 @@ public sealed partial class SettingsPage : Page
         if (WebhookConnectionProfileCombo.SelectedIndex < 0) WebhookConnectionProfileCombo.SelectedIndex = 0;
         WebhookActorsHost.Children.Clear();
         WebhookEventsHost.Children.Clear();
+        WebhookActorsHost.Children.Add(new TextBlock
+        {
+            Text = "Loading users...",
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        });
+        WebhookEventsHost.Children.Add(new TextBlock
+        {
+            Text = "Loading deliveries...",
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+        });
         BuildWebhookSetupInstructions(connection.Provider);
         try
         {
@@ -4246,6 +5462,7 @@ public sealed partial class SettingsPage : Page
     private void BuildWebhookActors(WebhookSyncProfileMappingsResponse response)
     {
         _webhookActorSelectors.Clear();
+        WebhookActorsHost.Children.Clear();
         var actors = response.Mappings.Select(mapping => (ExternalActorId: mapping.ExternalUserId, ExternalActorName: mapping.ExternalUserName, ProfileId: mapping.SiloProfileId))
             .Concat(response.DiscoveredUsers
                 .Where(actor => response.Mappings.All(mapping => mapping.ExternalUserId != actor.ExternalUserId))
@@ -4409,6 +5626,35 @@ public sealed partial class SettingsPage : Page
             : name ?? id ?? "Unknown user";
     }
 
+    private static string WebhookEventAttributeLabel(string key) => key switch
+    {
+        "event_kind" => "Event kind",
+        "action" => "Action",
+        "external_user_id" => "External user ID",
+        "external_user_name" => "External user",
+        "external_item_id" => "External item ID",
+        "media_kind" => "Media kind",
+        "matched_media_item_id" => "Matched item ID",
+        "matched_media_item_title" => "Matched item",
+        "profile_id" => "Profile ID",
+        "client_ip" => "Client IP",
+        "content_type" => "Content type",
+        "user_agent" => "User agent",
+        "path_pattern" => "Path pattern",
+        _ => key.Replace('_', ' '),
+    };
+
+    private static bool TryFormatWebhookEventAttribute(JsonElement value, out string text)
+    {
+        text = value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString() ?? "",
+            JsonValueKind.Null or JsonValueKind.Undefined => "",
+            _ => value.GetRawText(),
+        };
+        return !string.IsNullOrWhiteSpace(text);
+    }
+
     private void BuildWebhookSetupInstructions(string provider)
     {
         WebhookSetupInstructionsHost.Children.Clear();
@@ -4425,20 +5671,28 @@ public sealed partial class SettingsPage : Page
         {
             AddStep("1. In Plex, open Settings → Webhooks (Plex Pass required).");
             AddStep("2. Click Add Webhook and paste the URL above.");
-            AddStep("3. Save. Plex sends events automatically—there are no per-event toggles to configure.");
+            AddStep("3. Save. Plex sends events automatically — no per-event toggles to configure.");
         }
         else if (string.Equals(provider, "emby", StringComparison.OrdinalIgnoreCase))
         {
             AddStep("1. In the Emby dashboard, open Notifications and add a Webhooks notification.");
-            AddStep("2. Paste the URL above and set Request content type to application/json.");
-            AddStep("3. Required: Playback → Stop. Recommended: favorites and mark played/unplayed. Skip start, pause, and unpause events.");
+            AddStep("2. Paste the URL above into Url, and set Request content type to application/json.");
+            AddStep("3. Enable the events listed below, then save.");
+            AddStep("REQUIRED");
+            AddStep("Playback → Stop — Records watch progress and completion.");
+            AddStep("RECOMMENDED");
+            AddStep("Users → Add to Favorites, Remove from Favorites — Syncs favorites to the mapped Silo profile.");
+            AddStep("Users → Mark Played, Mark Unplayed — Needed only if your household manually marks items watched without playing them. Mark Played will duplicate Stop for normal completions, but the result is the same.");
+            AddStep("SKIP");
+            AddStep("Playback → Start, Pause, Unpause — Silo only records completion, not in-progress state.");
         }
         else
         {
-            AddStep("1. Install Jellyfin's official Webhook plugin and restart Jellyfin.");
-            AddStep("2. Add a Generic Destination and paste the URL above into Webhook Url.");
-            AddStep("3. Enable Playback Stop only. Leave Playback Progress and User Data Saved disabled.");
-            AddStep("4. Paste the payload template below and save.");
+            AddStep("1. Install the official Webhook plugin from Dashboard → Plugins → Catalog and restart Jellyfin.");
+            AddStep("2. Open Dashboard → Plugins → Webhook and add a Generic Destination.");
+            AddStep("3. Paste the URL above into Webhook Url.");
+            AddStep("4. Under Notification Type, enable only Playback Stop. Leave Playback Progress and User Data Saved off — Silo ignores them and they generate heavy traffic.");
+            AddStep("5. Paste the template below into Template and save.");
             var template = """
             {
               "provider": "jellyfin",
@@ -4495,20 +5749,122 @@ public sealed partial class SettingsPage : Page
 
     private async Task ShowWebhookEventDetailAsync(WebhookSyncEventLog item)
     {
-        var content = new StackPanel { Width = 500, Spacing = 10 };
-        content.Children.Add(BuildWebhookOutcomeBadge(item.Outcome));
-        content.Children.Add(new TextBlock { Text = $"{DateTimeDisplay.FormatDateTime(item.ReceivedAt)} · HTTP {item.HttpStatus}", FontSize = 12, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        var secondaryBrush = (Brush)Application.Current.Resources["SecondaryTextBrush"];
+        var content = new StackPanel { Width = 500, Spacing = 16 };
+
+        content.Children.Add(new TextBlock
+        {
+            Text = $"{DateTimeDisplay.FormatDateTime(item.ReceivedAt)} · HTTP {item.HttpStatus}",
+            FontSize = 12,
+            Foreground = secondaryBrush,
+        });
+
+        var outcomeRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+        };
+        outcomeRow.Children.Add(BuildWebhookOutcomeBadge(item.Outcome));
+        var matchedItem = WebhookEventAttribute(item, "matched_media_item_title");
+        if (!string.IsNullOrWhiteSpace(matchedItem))
+        {
+            outcomeRow.Children.Add(new TextBlock
+            {
+                Text = matchedItem,
+                FontSize = 14,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 390,
+            });
+        }
+        content.Children.Add(outcomeRow);
+
         if (!string.IsNullOrWhiteSpace(item.ErrorMessage))
-            content.Children.Add(new TextBlock { Text = item.ErrorMessage, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["ErrorBrush"] });
+        {
+            content.Children.Add(new TextBlock
+            {
+                Text = item.ErrorMessage,
+                FontSize = 14,
+                TextWrapping = TextWrapping.Wrap,
+                Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+            });
+        }
+
         if (item.Attrs is { Count: > 0 })
         {
-            var attrs = new StackPanel { Spacing = 4 };
-            foreach (var pair in item.Attrs.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
-                attrs.Children.Add(new TextBlock { Text = $"{pair.Key.Replace('_', ' ')}: {pair.Value}", FontSize = 11, TextWrapping = TextWrapping.Wrap });
-            content.Children.Add(attrs);
+            var formattedAttrs = item.Attrs
+                .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                .Select(pair => TryFormatWebhookEventAttribute(pair.Value, out var value)
+                    ? (pair.Key, Value: value)
+                    : (Key: "", Value: ""))
+                .Where(pair => pair.Key.Length > 0)
+                .ToList();
+            if (formattedAttrs.Count > 0)
+            {
+                var attrsSection = new StackPanel { Spacing = 6 };
+                attrsSection.Children.Add(new TextBlock
+                {
+                    Text = "Attributes",
+                    FontSize = 12,
+                    Foreground = secondaryBrush,
+                });
+                var attrsGrid = new Grid { ColumnSpacing = 24, RowSpacing = 6 };
+                attrsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                attrsGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                for (var index = 0; index < formattedAttrs.Count; index++)
+                {
+                    var row = index / 2;
+                    var column = index % 2;
+                    while (attrsGrid.RowDefinitions.Count <= row)
+                        attrsGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                    var pair = formattedAttrs[index];
+                    var cell = new StackPanel { MinWidth = 0, Spacing = 1 };
+                    cell.Children.Add(new TextBlock
+                    {
+                        Text = WebhookEventAttributeLabel(pair.Key),
+                        FontSize = 11,
+                        Foreground = secondaryBrush,
+                    });
+                    cell.Children.Add(new TextBlock
+                    {
+                        Text = pair.Value,
+                        FontSize = 12,
+                        TextTrimming = TextTrimming.CharacterEllipsis,
+                        TextWrapping = TextWrapping.Wrap,
+                    });
+                    Grid.SetRow(cell, row);
+                    Grid.SetColumn(cell, column);
+                    attrsGrid.Children.Add(cell);
+                }
+                attrsSection.Children.Add(attrsGrid);
+                content.Children.Add(attrsSection);
+            }
         }
+
         if (!string.IsNullOrWhiteSpace(item.BodyExcerpt))
-            content.Children.Add(new TextBox { Header = "Request excerpt", Text = item.BodyExcerpt, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 180, FontFamily = new FontFamily("Consolas"), FontSize = 11 });
+        {
+            content.Children.Add(new TextBox
+            {
+                Header = "Body excerpt",
+                Text = item.BodyExcerpt,
+                IsReadOnly = true,
+                AcceptsReturn = true,
+                TextWrapping = TextWrapping.Wrap,
+                MaxHeight = 180,
+                FontFamily = new FontFamily("Consolas"),
+                FontSize = 11,
+            });
+        }
+        if (!string.IsNullOrWhiteSpace(item.RequestId))
+        {
+            content.Children.Add(new TextBlock
+            {
+                Text = $"Request ID: {item.RequestId}",
+                FontSize = 11,
+                Foreground = secondaryBrush,
+                TextWrapping = TextWrapping.Wrap,
+            });
+        }
 
         var dialog = new ContentDialog
         {
@@ -4535,33 +5891,6 @@ public sealed partial class SettingsPage : Page
              WebhookEventUserLabel(item).Contains(query, StringComparison.CurrentCultureIgnoreCase)));
         _webhookEventsPage = Math.Max(0, (int)Math.Ceiling(count / (double)pageSize) - 1);
         BuildWebhookEvents();
-    }
-
-    private async void WebhookEdit_Click(object sender, RoutedEventArgs e)
-    {
-        if (_selectedWebhookConnection == null) return;
-        var name = new TextBox { Text = _selectedWebhookConnection.ServerName };
-        var profile = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-        foreach (var p in _webhookProfiles) profile.Items.Add(new ComboBoxItem { Content = p.Name, Tag = p.Id });
-        SelectComboBoxByTag(profile, _selectedWebhookConnection.DefaultProfileId);
-        var form = new StackPanel { Width = 400, Spacing = 10 };
-        form.Children.Add(new TextBlock { Text = "Server name" }); form.Children.Add(name);
-        form.Children.Add(new TextBlock { Text = "Default profile" }); form.Children.Add(profile);
-        var dialog = new ContentDialog { Title = "Edit connection", Content = form, PrimaryButtonText = "Save", CloseButtonText = "Cancel", XamlRoot = XamlRoot };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        try
-        {
-            var updated = await App.Services.GetRequiredService<WebhookSyncApi>().UpdateConnectionAsync(_selectedWebhookConnection.Id,
-                new Dictionary<string, object?>
-                {
-                    ["server_name"] = name.Text.Trim(),
-                    ["default_profile_id"] = (profile.SelectedItem as ComboBoxItem)?.Tag as string,
-                });
-            await LoadWebhookConnectionsAsync();
-            await SelectWebhookConnectionAsync(updated);
-            ViewModel.StatusMessage = "Webhook connection updated";
-        }
-        catch (Exception ex) { ViewModel.ErrorMessage = $"Could not update connection: {ex.Message}"; }
     }
 
     private async void WebhookSaveConnection_Click(object sender, RoutedEventArgs e)
@@ -4617,17 +5946,24 @@ public sealed partial class SettingsPage : Page
     private async void WebhookDelete_Click(object sender, RoutedEventArgs e)
     {
         if (_selectedWebhookConnection == null) return;
-        var dialog = new ContentDialog { Title = "Delete connection?", Content = $"Delete {_selectedWebhookConnection.ServerName} and its routing history?", PrimaryButtonText = "Delete", CloseButtonText = "Cancel", XamlRoot = XamlRoot };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+        var connection = _selectedWebhookConnection;
+        WebhookDeleteConnectionButton.IsEnabled = false;
+        var previousContent = WebhookDeleteConnectionButton.Content;
+        WebhookDeleteConnectionButton.Content = "Deleting…";
         try
         {
-            await App.Services.GetRequiredService<WebhookSyncApi>().DeleteConnectionAsync(_selectedWebhookConnection.Id);
+            await App.Services.GetRequiredService<WebhookSyncApi>().DeleteConnectionAsync(connection.Id);
             _selectedWebhookConnection = null;
             WebhookConnectionDetail.Visibility = Visibility.Collapsed;
             await LoadWebhookConnectionsAsync();
             ViewModel.StatusMessage = "Webhook connection deleted";
         }
         catch (Exception ex) { ViewModel.ErrorMessage = $"Could not delete connection: {ex.Message}"; }
+        finally
+        {
+            WebhookDeleteConnectionButton.Content = previousContent;
+            WebhookDeleteConnectionButton.IsEnabled = true;
+        }
     }
 
     private async void WebhookSaveActors_Click(object sender, RoutedEventArgs e)
@@ -4653,7 +5989,7 @@ public sealed partial class SettingsPage : Page
     private async Task LoadProfilesAsync()
     {
         var generation = Interlocked.Increment(ref _profilesLoadGeneration);
-        _ = LoadHouseholdSessionsAsync();
+        _ = LoadHouseholdSessionsAsync(showLoading: HouseholdStreamsPanel.Children.Count == 0);
         try
         {
             var authApi = App.Services.GetRequiredService<AuthApi>();
@@ -4669,7 +6005,7 @@ public sealed partial class SettingsPage : Page
             }
             NoProfilesText.Visibility = Visibility.Collapsed;
 
-            var activeProfileId = App.Services.GetRequiredService<SiloPlayer.Core.Services.SettingsService>().Load().LastProfileId;
+            var activeProfileId = App.Services.GetRequiredService<SiloPlayer.Core.Services.AuthService>().SelectedProfileId;
 
             foreach (var profile in profiles)
             {
@@ -4685,8 +6021,6 @@ public sealed partial class SettingsPage : Page
                 var row = new Grid { ColumnSpacing = 8 };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
                 // Avatar
@@ -4781,7 +6115,6 @@ public sealed partial class SettingsPage : Page
                     Visibility = isActive ? Visibility.Collapsed : Visibility.Visible,
                 };
                 useBtn.Click += async (_, _) => await UseProfileAsync(profile);
-                Grid.SetColumn(useBtn, 2);
 
                 // Edit button — opens the profile editor dialog. Visible to
                 // admins, to the user's own active profile, and to primary
@@ -4805,12 +6138,15 @@ public sealed partial class SettingsPage : Page
                 ToolTipService.SetToolTip(editBtn, "Edit profile");
                 var profileForEdit = profile;
                 editBtn.Click += async (_, _) => await ShowEditProfileDialogAsync(profileForEdit);
-                Grid.SetColumn(editBtn, 3);
 
                 // Delete button (blocked for active AND primary profiles).
                 // Upstream c3f2da5: primary profiles can only be removed by
                 // deleting the account.
                 var deleteBlocked = profiles.Count <= 1 || isActive || profile.IsPrimary;
+                var deleteGuardReason = profiles.Count <= 1 ? "At least one profile is required."
+                    : profile.IsPrimary ? "The primary profile can only be removed by deleting the account."
+                    : isActive ? "Switch to another profile before deleting this one."
+                    : null;
                 var deleteBtn = new Button
                 {
                     Padding = new Thickness(11, 5, 11, 5),
@@ -4828,38 +6164,100 @@ public sealed partial class SettingsPage : Page
                     IsEnabled = !deleteBlocked,
                     Opacity = deleteBlocked ? 0.3 : 1.0,
                 };
-                ToolTipService.SetToolTip(deleteBtn,
-                    profiles.Count <= 1 ? "At least one profile is required."
-                    : profile.IsPrimary ? "The primary profile can only be removed by deleting the account."
-                    : isActive ? "Can't delete active profile"
-                    : "Delete profile");
+                ToolTipService.SetToolTip(deleteBtn, deleteGuardReason ?? "Delete profile");
                 var capturedProfile = profile;
                 deleteBtn.Click += async (_, _) =>
                 {
+                    var error = new TextBlock
+                    {
+                        Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+                        FontSize = 12,
+                        TextWrapping = TextWrapping.Wrap,
+                        Visibility = Visibility.Collapsed,
+                    };
+                    var dialogContent = new StackPanel
+                    {
+                        Spacing = 10,
+                        Children =
+                        {
+                            new TextBlock
+                            {
+                                Text = $"Delete profile \"{capturedProfile.Name}\"? This action cannot be undone.",
+                                TextWrapping = TextWrapping.Wrap,
+                            },
+                            error,
+                        },
+                    };
                     var dialog = new ContentDialog
                     {
-                        Title = "Delete profile", Content = $"Delete \"{capturedProfile.Name}\"?",
+                        Title = "Delete profile",
+                        Content = dialogContent,
                         PrimaryButtonText = "Delete", PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
                         CloseButtonText = "Cancel", XamlRoot = this.XamlRoot, DefaultButton = ContentDialogButton.Close
                     };
-                    if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+
+                    dialog.PrimaryButtonClick += async (_, args) =>
                     {
+                        args.Cancel = true;
+                        var deferral = args.GetDeferral();
                         try
                         {
+                            dialog.IsPrimaryButtonEnabled = false;
+                            dialog.PrimaryButtonText = "Deleting...";
+                            error.Visibility = Visibility.Collapsed;
                             var deleteApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.AuthApi>();
                             await deleteApi.DeleteProfileAsync(capturedProfile.Id);
-                            await LoadProfilesAsync();
+                            args.Cancel = false;
                         }
-                        catch { }
-                    }
+                        catch (Exception ex)
+                        {
+                            error.Text = $"Couldn't delete profile: {ex.Message}";
+                            error.Visibility = Visibility.Visible;
+                            dialog.PrimaryButtonText = "Delete";
+                            dialog.IsPrimaryButtonEnabled = true;
+                        }
+                        finally
+                        {
+                            deferral.Complete();
+                        }
+                    };
+
+                    if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+                        await LoadProfilesAsync();
                 };
-                Grid.SetColumn(deleteBtn, 4);
+                var actionButtons = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 8,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                };
+                actionButtons.Children.Add(useBtn);
+                actionButtons.Children.Add(editBtn);
+                actionButtons.Children.Add(deleteBtn);
+                var actions = new StackPanel
+                {
+                    Spacing = 6,
+                    HorizontalAlignment = HorizontalAlignment.Right,
+                    VerticalAlignment = VerticalAlignment.Center,
+                    Children = { actionButtons },
+                };
+                if (deleteGuardReason != null)
+                {
+                    actions.Children.Add(new TextBlock
+                    {
+                        Text = deleteGuardReason,
+                        FontSize = 11,
+                        Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                        TextAlignment = TextAlignment.Right,
+                        TextWrapping = TextWrapping.Wrap,
+                        MaxWidth = 300,
+                    });
+                }
+                Grid.SetColumn(actions, 2);
 
                 row.Children.Add(avatar);
                 row.Children.Add(info);
-                row.Children.Add(useBtn);
-                row.Children.Add(editBtn);
-                row.Children.Add(deleteBtn);
+                row.Children.Add(actions);
                 card.Child = row;
                 ProfileCardsPanel.Children.Add(card);
             }
@@ -4903,20 +6301,88 @@ public sealed partial class SettingsPage : Page
         string? profileToken = null;
         if (profile.HasPin)
         {
-            var pin = new PasswordBox { PlaceholderText = "Enter 4-digit PIN", MaxLength = 4 };
-            var dialog = new ContentDialog { Title = profile.Name, Content = pin, PrimaryButtonText = "Confirm", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Primary, XamlRoot = XamlRoot };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-            try
+            var pin = new PasswordBox
             {
-                var result = await App.Services.GetRequiredService<AuthApi>().VerifyPinAsync(profile.Id, pin.Password);
-                if (!result.Valid) throw new InvalidOperationException("Incorrect PIN.");
-                profileToken = result.ProfileToken;
-            }
-            catch (Exception ex)
+                PlaceholderText = "Enter 4-digit PIN",
+                MaxLength = 4,
+                PasswordRevealMode = PasswordRevealMode.Hidden,
+                InputScope = new InputScope
+                {
+                    Names = { new InputScopeName(InputScopeNameValue.Number) },
+                },
+            };
+            var error = new TextBlock
             {
-                App.Services.GetRequiredService<ToastService>().Error(ex.Message);
-                return;
-            }
+                Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                Visibility = Visibility.Collapsed,
+            };
+            var content = new StackPanel
+            {
+                Width = 280,
+                Spacing = 8,
+                Children =
+                {
+                    new TextBlock { Text = "PIN", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold },
+                    pin,
+                    error,
+                },
+            };
+            var dialog = new ContentDialog
+            {
+                Title = $"Enter PIN for {profile.Name}",
+                Content = content,
+                PrimaryButtonText = "Confirm",
+                CloseButtonText = "Cancel",
+                DefaultButton = ContentDialogButton.Primary,
+                IsPrimaryButtonEnabled = false,
+                XamlRoot = XamlRoot,
+            };
+            var verified = false;
+            pin.PasswordChanged += (_, _) =>
+                dialog.IsPrimaryButtonEnabled = pin.Password.Length > 0;
+            dialog.Opened += (_, _) => pin.Focus(FocusState.Programmatic);
+            dialog.PrimaryButtonClick += async (sender, args) =>
+            {
+                args.Cancel = true;
+                var deferral = args.GetDeferral();
+                try
+                {
+                    sender.IsPrimaryButtonEnabled = false;
+                    sender.PrimaryButtonText = "Verifying...";
+                    error.Visibility = Visibility.Collapsed;
+                    var result = await App.Services.GetRequiredService<AuthApi>()
+                        .VerifyPinAsync(profile.Id, pin.Password);
+                    if (result.Valid && !string.IsNullOrWhiteSpace(result.ProfileToken))
+                    {
+                        profileToken = result.ProfileToken;
+                        verified = true;
+                        args.Cancel = false;
+                        return;
+                    }
+
+                    error.Text = "Incorrect PIN";
+                    error.Visibility = Visibility.Visible;
+                    pin.Password = "";
+                    pin.Focus(FocusState.Programmatic);
+                }
+                catch
+                {
+                    error.Text = "Verification failed";
+                    error.Visibility = Visibility.Visible;
+                    pin.Focus(FocusState.Programmatic);
+                }
+                finally
+                {
+                    sender.PrimaryButtonText = "Confirm";
+                    sender.IsPrimaryButtonEnabled = pin.Password.Length > 0;
+                    deferral.Complete();
+                }
+            };
+
+            await dialog.ShowAsync();
+            if (!verified) return;
         }
 
         var auth = App.Services.GetRequiredService<SiloPlayer.Core.Services.AuthService>();
@@ -4930,84 +6396,95 @@ public sealed partial class SettingsPage : Page
         App.MainWindowInstance?.NavigateToHome();
     }
 
-    private async Task LoadHouseholdSessionsAsync()
+    private void StartHouseholdSessionsPolling()
     {
+        if (_householdSessionsTimer == null)
+        {
+            _householdSessionsTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(10) };
+            _householdSessionsTimer.Tick += async (_, _) =>
+            {
+                if (ProfilesPanel.Visibility == Visibility.Visible)
+                    await LoadHouseholdSessionsAsync(showLoading: false);
+            };
+        }
+
+        _householdSessionsTimer.Stop();
+        _householdSessionsTimer.Start();
+    }
+
+    private async Task LoadHouseholdSessionsAsync(bool showLoading)
+    {
+        if (_householdSessionsLoading) return;
+        _householdSessionsLoading = true;
+        var generation = Interlocked.Increment(ref _householdSessionsLoadGeneration);
+
+        HouseholdStreamsPanel.Visibility = Visibility.Visible;
         HouseholdStreamsPanel.Children.Clear();
+        if (showLoading && _householdSessions.Count == 0)
+            HouseholdStreamsPanel.Children.Add(BuildHouseholdStreamsLoadingCard());
+        else
+            HouseholdStreamsPanel.Children.Add(BuildHouseholdStreamsCard(_householdSessions, refreshing: true));
 
         try
         {
             var authApi = App.Services.GetRequiredService<AuthApi>();
             var sessions = await authApi.GetHouseholdSessionsAsync();
-            HouseholdStreamsPanel.Visibility = Visibility.Visible;
-            HouseholdStreamsPanel.Children.Add(BuildHouseholdStreamsCard(sessions));
+            if (generation != Volatile.Read(ref _householdSessionsLoadGeneration)) return;
+            _householdSessions = sessions;
+            HouseholdStreamsPanel.Children.Clear();
+            HouseholdStreamsPanel.Children.Add(BuildHouseholdStreamsCard(sessions, refreshing: false));
         }
         catch (ApiException ex) when (ex.StatusCode is 403 or 404)
         {
+            // Older servers did not expose this account-scoped route. Do not
+            // leave a permanently empty error card on those versions.
             HouseholdStreamsPanel.Visibility = Visibility.Collapsed;
         }
         catch
         {
-            HouseholdStreamsPanel.Visibility = Visibility.Collapsed;
+            // React Query keeps the last successful result during a failed
+            // refetch. Match that behavior and avoid making the panel flash.
+            HouseholdStreamsPanel.Children.Clear();
+            HouseholdStreamsPanel.Children.Add(BuildHouseholdStreamsCard(_householdSessions, refreshing: false));
+        }
+        finally
+        {
+            _householdSessionsLoading = false;
         }
     }
 
-    private Border BuildHouseholdStreamsCard(IReadOnlyList<AdminSession> sessions)
+    private Border BuildHouseholdStreamsLoadingCard()
     {
-        var card = new Border
+        var card = CreateHouseholdStreamsCard();
+        var content = new StackPanel { Spacing = 12 };
+        content.Children.Add(BuildHouseholdStreamsHeader([], refreshing: true));
+        for (var index = 0; index < 2; index++)
         {
-            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
-            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(16),
-        };
-
-        var stack = new StackPanel { Spacing = 12 };
-
-        var header = new Grid();
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var titleStack = new StackPanel { Spacing = 2 };
-        titleStack.Children.Add(new TextBlock
-        {
-            Text = "Active streams",
-            FontSize = 16,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
-        });
-        titleStack.Children.Add(new TextBlock
-        {
-            Text = "Playback currently running across this Silo household.",
-            FontSize = 12,
-            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-        });
-        Grid.SetColumn(titleStack, 0);
-        header.Children.Add(titleStack);
-
-        var countBadge = new Border
-        {
-            Background = (Brush)Application.Current.Resources[sessions.Count > 0 ? "AccentBackgroundBrush" : "SurfaceBrush"],
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(10, 4, 10, 4),
-            VerticalAlignment = VerticalAlignment.Top,
-            Child = new TextBlock
+            content.Children.Add(new Border
             {
-                Text = sessions.Count.ToString(),
-                FontSize = 12,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)Application.Current.Resources[sessions.Count > 0 ? "AccentBrush" : "SecondaryTextBrush"],
-            },
-        };
-        Grid.SetColumn(countBadge, 1);
-        header.Children.Add(countBadge);
-        stack.Children.Add(header);
+                Height = 80,
+                Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(6),
+                Opacity = 0.62,
+            });
+        }
+        card.Child = content;
+        return card;
+    }
+
+    private Border BuildHouseholdStreamsCard(IReadOnlyList<AdminSession> sessions, bool refreshing)
+    {
+        var card = CreateHouseholdStreamsCard();
+        var stack = new StackPanel { Spacing = 12 };
+        stack.Children.Add(BuildHouseholdStreamsHeader(sessions, refreshing));
 
         if (sessions.Count == 0)
         {
             stack.Children.Add(new TextBlock
             {
-                Text = "No active household streams.",
+                Text = "No one is streaming right now.",
                 FontSize = 13,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             });
@@ -5022,114 +6499,171 @@ public sealed partial class SettingsPage : Page
         return card;
     }
 
-    private FrameworkElement BuildHouseholdStreamRow(AdminSession session)
+    private static Border CreateHouseholdStreamsCard() => new()
     {
-        var row = new Grid
-        {
-            ColumnSpacing = 12,
-            Margin = new Thickness(0, 6, 0, 0),
-        };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
+        BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(6),
+        Padding = new Thickness(16),
+    };
 
-        row.Children.Add(new FontIcon
-        {
-            Glyph = session.IsPaused ? "\uE769" : "\uE768",
-            FontSize = 16,
-            Foreground = (Brush)Application.Current.Resources["AccentBrush"],
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(0, 3, 0, 0),
-        });
+    private FrameworkElement BuildHouseholdStreamsHeader(IReadOnlyList<AdminSession> sessions, bool refreshing)
+    {
+        var header = new Grid { ColumnSpacing = 12 };
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var textStack = new StackPanel { Spacing = 3 };
-        var title = string.IsNullOrWhiteSpace(session.SeriesName) ? session.MediaTitle : session.SeriesName!;
-        textStack.Children.Add(new TextBlock
+        var titleStack = new StackPanel { Spacing = 4 };
+        var titleRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        titleRow.Children.Add(new TextBlock
         {
-            Text = string.IsNullOrWhiteSpace(title) ? "Unknown media" : title,
+            Text = "Active streams",
             FontSize = 14,
             FontWeight = FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis,
+            VerticalAlignment = VerticalAlignment.Center,
         });
-
-        var subtitleParts = new List<string>();
-        var episodeLabel = FormatEpisodeLabel(session);
-        if (!string.IsNullOrWhiteSpace(episodeLabel)) subtitleParts.Add(episodeLabel);
-        var profileLabel = string.IsNullOrWhiteSpace(session.ProfileName) ? session.Username : session.ProfileName!;
-        if (!string.IsNullOrWhiteSpace(profileLabel)) subtitleParts.Add(profileLabel);
-        if (!string.IsNullOrWhiteSpace(session.ClientIp)) subtitleParts.Add(session.ClientIp!);
-
-        textStack.Children.Add(new TextBlock
+        if (sessions.Count > 0)
         {
-            Text = subtitleParts.Count == 0 ? "Playback session" : string.Join("  |  ", subtitleParts),
-            FontSize = 12,
+            var live = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
+            live.Children.Add(new FontIcon { Glyph = "\uE720", FontSize = 10, VerticalAlignment = VerticalAlignment.Center });
+            live.Children.Add(new TextBlock { Text = $"{sessions.Count} live", FontSize = 10, FontWeight = FontWeights.SemiBold });
+            titleRow.Children.Add(new Border
+            {
+                Background = (Brush)Application.Current.Resources["AccentBackgroundBrush"],
+                CornerRadius = new CornerRadius(7),
+                Padding = new Thickness(7, 2, 7, 2),
+                Child = live,
+            });
+        }
+        titleStack.Children.Add(titleRow);
+        titleStack.Children.Add(new TextBlock
+        {
+            Text = "Playback happening on any profile in this account.",
+            FontSize = 13,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        });
+        header.Children.Add(titleStack);
+
+        if (refreshing)
+        {
+            var progress = new ProgressRing { Width = 16, Height = 16, IsActive = true, VerticalAlignment = VerticalAlignment.Top };
+            Grid.SetColumn(progress, 1);
+            header.Children.Add(progress);
+        }
+        return header;
+    }
+
+    private FrameworkElement BuildHouseholdStreamRow(AdminSession session)
+    {
+        var row = new Border
+        {
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(12),
+        };
+        var layout = new Grid { ColumnSpacing = 12 };
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(40) });
+        layout.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var poster = new Border
+        {
+            Width = 40,
+            Height = 56,
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            CornerRadius = new CornerRadius(4),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
+        if (!string.IsNullOrWhiteSpace(session.PosterUrl) && Uri.TryCreate(session.PosterUrl, UriKind.Absolute, out var posterUri))
+            poster.Child = new Image { Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(posterUri), Stretch = Stretch.UniformToFill };
+        layout.Children.Add(poster);
+
+        var content = new StackPanel { Spacing = 6 };
+        var badgeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        badgeRow.Children.Add(ProfileBadge(string.IsNullOrWhiteSpace(session.ProfileName) ? "Profile" : session.ProfileName.Trim()));
+        badgeRow.Children.Add(ProfileBadge(session.IsPaused ? "\u23F8  Paused" : "\u25B6  Playing"));
+        var method = session.PlayMethod?.Trim().ToLowerInvariant() switch
+        {
+            "direct" => "Direct play",
+            "remux" => "Remux",
+            "transcode" or "hls" => "Transcode",
+            _ => "Unknown",
+        };
+        var bitrate = SiloPlayer.ViewModels.Admin.AdminActivityViewModel.FormatSessionBitrate(session.StreamBitrateKbps);
+        badgeRow.Children.Add(new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(bitrate) ? method : $"{method} · {bitrate}",
+            FontSize = 11,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        if (session.IsJellyfinClient) badgeRow.Children.Add(ProfileBadge("JF"));
+        content.Children.Add(badgeRow);
+
+        var title = SiloPlayer.ViewModels.Admin.AdminActivityViewModel.GetDisplayTitle(session);
+        if (!string.IsNullOrWhiteSpace(session.ContentId) && session.MediaFileId > 0)
+        {
+            var contentId = session.ContentId;
+            var fileId = session.MediaFileId;
+            var titleLink = new HyperlinkButton
+            {
+                Content = title,
+                Padding = new Thickness(0),
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+            };
+            titleLink.Click += (_, _) => _ = App.Services.GetRequiredService<PlayerService>().PlayAsync(contentId, fileId: fileId);
+            content.Children.Add(titleLink);
+        }
+        else
+        {
+            content.Children.Add(new TextBlock
+            {
+                Text = title,
+                FontSize = 13,
+                FontWeight = FontWeights.SemiBold,
+                Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+        }
+
+        var subtitle = SiloPlayer.ViewModels.Admin.AdminActivityViewModel.GetDisplaySubtitle(session);
+        if (!string.IsNullOrWhiteSpace(subtitle))
+            content.Children.Add(new TextBlock { Text = subtitle, FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], TextTrimming = TextTrimming.CharacterEllipsis });
+
+        var meta = new[]
+        {
+            FormatHouseholdStreamElapsed(session.StartedAt),
+            SiloPlayer.ViewModels.Admin.AdminActivityViewModel.GetSessionClientLabel(session),
+            session.ClientIp?.Trim() ?? "",
+            session.NodeDisplayName?.Trim() ?? "",
+        }.Where(value => !string.IsNullOrWhiteSpace(value));
+        content.Children.Add(new TextBlock
+        {
+            Text = string.Join(" · ", meta),
+            FontSize = 11,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis,
         });
-
-        var metaParts = new List<string>();
-        if (!string.IsNullOrWhiteSpace(session.PlayMethod)) metaParts.Add(Labelize(session.PlayMethod));
-        if (!string.IsNullOrWhiteSpace(session.SourceVideoResolution)) metaParts.Add(session.SourceVideoResolution!);
-        if (!string.IsNullOrWhiteSpace(session.SourceVideoCodec)) metaParts.Add(session.SourceVideoCodec!);
-        if (session.FileDuration is > 0) metaParts.Add(FormatStreamDuration(session.FileDuration.Value));
-        metaParts.Add(session.HasPlaybackControl != false ? "Controllable" : "Viewing only");
-
-        textStack.Children.Add(new TextBlock
-        {
-            Text = string.Join("  |  ", metaParts),
-            FontSize = 11,
-            Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis,
-        });
-        Grid.SetColumn(textStack, 1);
-        row.Children.Add(textStack);
-
-        var statusBadge = new Border
-        {
-            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(9, 3, 9, 3),
-            VerticalAlignment = VerticalAlignment.Top,
-            Child = new TextBlock
-            {
-                Text = session.IsPaused ? "Paused" : "Playing",
-                FontSize = 11,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-            },
-        };
-        Grid.SetColumn(statusBadge, 2);
-        row.Children.Add(statusBadge);
+        Grid.SetColumn(content, 1);
+        layout.Children.Add(content);
+        row.Child = layout;
 
         return row;
     }
 
-    private static string FormatEpisodeLabel(AdminSession session)
+    private static string FormatHouseholdStreamElapsed(string startedAt)
     {
-        var number = session.SeasonNumber.HasValue && session.EpisodeNumber.HasValue
-            ? $"S{session.SeasonNumber.Value:00}E{session.EpisodeNumber.Value:00}"
-            : "";
-        var episodeName = string.IsNullOrWhiteSpace(session.EpisodeName) ? session.MediaTitle : session.EpisodeName!;
-        if (string.IsNullOrWhiteSpace(episodeName)) return number;
-        return string.IsNullOrWhiteSpace(number) ? episodeName : $"{number} - {episodeName}";
-    }
-
-    private static string FormatStreamDuration(double seconds)
-    {
-        var duration = TimeSpan.FromSeconds(Math.Max(0, seconds));
-        return duration.TotalHours >= 1
-            ? $"{(int)duration.TotalHours}h {duration.Minutes}m"
-            : $"{duration.Minutes}m";
-    }
-
-    private static string Labelize(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return "";
-        var normalized = value.Replace('_', ' ').Trim().ToLowerInvariant();
-        return normalized.Length == 1
-            ? normalized.ToUpperInvariant()
-            : char.ToUpperInvariant(normalized[0]) + normalized[1..];
+        if (!DateTimeOffset.TryParse(startedAt, out var started)) return "";
+        var minutes = Math.Max(0, (int)Math.Floor((DateTimeOffset.UtcNow - started.ToUniversalTime()).TotalMinutes));
+        if (minutes < 60) return $"{minutes}m";
+        var hours = minutes / 60;
+        var remainder = minutes % 60;
+        return remainder > 0 ? $"{hours}h {remainder}m" : $"{hours}h";
     }
 
     private async void AddProfileButton_Click(object sender, RoutedEventArgs e)
@@ -5147,8 +6681,45 @@ public sealed partial class SettingsPage : Page
     {
         try
         {
-            var saved = await Dialogs.ProfileEditorDialog.ShowAsync(XamlRoot, profile);
+            var result = await Dialogs.ProfileEditorDialog.ShowWithContextAsync(XamlRoot, profile);
+            var saved = result.Profile;
             if (saved == null) return;
+
+            var auth = App.Services.GetRequiredService<SiloPlayer.Core.Services.AuthService>();
+            if (string.Equals(saved.Id, auth.SelectedProfileId, StringComparison.Ordinal))
+            {
+                var profileToken = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>().ProfileToken;
+                if (string.IsNullOrWhiteSpace(profileToken) &&
+                    !string.IsNullOrWhiteSpace(result.Pin) &&
+                    saved.HasPin)
+                {
+                    try
+                    {
+                        var verification = await App.Services.GetRequiredService<SiloPlayer.Core.Api.AuthApi>()
+                            .VerifyPinAsync(saved.Id, result.Pin);
+                        if (verification.Valid && !string.IsNullOrWhiteSpace(verification.ProfileToken))
+                        {
+                            profileToken = verification.ProfileToken;
+                        }
+                        else
+                        {
+                            App.Services.GetRequiredService<SiloPlayer.Services.ToastService>()
+                                .Error("Profile saved, but PIN verification failed");
+                            await LoadProfilesAsync();
+                            return;
+                        }
+                    }
+                    catch
+                    {
+                        App.Services.GetRequiredService<SiloPlayer.Services.ToastService>()
+                            .Error("Profile saved, but PIN verification failed");
+                        await LoadProfilesAsync();
+                        return;
+                    }
+                }
+
+                auth.SelectProfile(saved.Id, profileToken, saved);
+            }
             await LoadProfilesAsync();
         }
         catch (Exception ex)

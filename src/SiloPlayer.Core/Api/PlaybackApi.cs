@@ -10,6 +10,21 @@ public class PlaybackApi(SiloApiClient client)
     public Task<PlaybackStartResponse> StartPlaybackAsync(PlaybackStartRequest request, CancellationToken ct = default)
         => client.PostAsync<PlaybackStartResponse>("/api/v1/playback/start", request, ct);
 
+    public Task<PlaybackDecisionResponseV3> StartPlaybackV3Async(PlaybackStartRequestV3 request, CancellationToken ct = default)
+        => client.PostAsync<PlaybackDecisionResponseV3>("/api/v1/playback/start", request, ct);
+
+    public Task<PlaybackCapabilityV3> GetPlaybackCapabilityAsync(CancellationToken ct = default)
+        => client.GetAsync<PlaybackCapabilityV3>("/api/v1/playback/capability", ct);
+
+    public Task<PlaybackDecisionResponseV3> ReplanPlaybackV3Async(
+        string sessionId,
+        PlaybackReplanRequestV3 request,
+        CancellationToken ct = default)
+        => client.PostAsync<PlaybackDecisionResponseV3>(
+            $"/api/v1/playback/{Uri.EscapeDataString(sessionId)}/replan",
+            request,
+            ct);
+
     public Task ReportProgressAsync(string sessionId, double position, bool isPaused, CancellationToken ct = default)
         => client.PostNoContentAsync($"/api/v1/playback/{sessionId}/progress",
             new Dictionary<string, object?>
@@ -38,6 +53,14 @@ public class PlaybackApi(SiloApiClient client)
     public Task<FileMarkersResponse> GetItemMarkersAsync(string itemId, CancellationToken ct = default)
         => client.GetAsync<FileMarkersResponse>($"/api/v1/markers/items/{Uri.EscapeDataString(itemId)}", ct);
 
+    public Task<MarkerEditAuditResponse> GetItemMarkerHistoryAsync(
+        string itemId,
+        int limit = 25,
+        CancellationToken ct = default)
+        => client.GetAsync<MarkerEditAuditResponse>(
+            $"/api/v1/admin/markers/items/{Uri.EscapeDataString(itemId)}/history?limit={Math.Clamp(limit, 1, 250)}",
+            ct);
+
     public Task<FileMarkersResponse> SetItemMarkersAsync(
         string itemId,
         IReadOnlyDictionary<string, object?> changes,
@@ -49,6 +72,9 @@ public class PlaybackApi(SiloApiClient client)
 
     public Task<SubtitleAiStatus> GetSubtitleAiStatusAsync(CancellationToken ct = default)
         => client.GetAsync<SubtitleAiStatus>("/api/v1/subtitles/ai/status", ct);
+
+    public Task<SubtitleProviderStatus> GetSubtitleProviderStatusAsync(CancellationToken ct = default)
+        => client.GetAsync<SubtitleProviderStatus>("/api/v1/subtitles/providers/status", ct);
 
     public Task<SubtitleAiStartResponse> StartSubtitleAiAsync(SubtitleAiRequest request, CancellationToken ct = default)
         => client.PostAsync<SubtitleAiStartResponse>("/api/v1/subtitles/ai/translate", request, ct);
@@ -97,6 +123,9 @@ public class PlaybackApi(SiloApiClient client)
             body["show_forced_subtitles"] = request.ShowForcedSubtitles.Value;
         return client.PutNoContentAsync($"/api/v1/subtitle-prefs/{Uri.EscapeDataString(seriesId)}", body, ct);
     }
+
+    public Task DeleteSubtitlePrefsAsync(string seriesId, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v1/subtitle-prefs/{Uri.EscapeDataString(seriesId)}", ct);
 
     // ===== Home Dismissals =====
 

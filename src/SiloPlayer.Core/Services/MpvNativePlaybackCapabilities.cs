@@ -8,6 +8,9 @@ namespace SiloPlayer.Core.Services;
 /// </summary>
 public static class MpvNativePlaybackCapabilities
 {
+    public const string ClientManagedDynamicRangeClaim = "client_managed_dynamic_range_v1";
+    public const string ClientSelectedAudioTrackClaim = "client_selected_audio_track_v1";
+
     public const string VerifiedMpvVersion = "mpv v0.41.0-243-g05fac7f21";
     public const string VerifiedFfmpegVersion = "N-123079-ge869426a8";
 
@@ -98,6 +101,118 @@ public static class MpvNativePlaybackCapabilities
             DolbyVisionProfiles = [.. profile.HdrDetails.DolbyVisionProfiles],
         };
         request.AudioPassthrough = SanitizeVerifiedPassthrough(verifiedPassthrough);
+    }
+
+    /// <summary>
+    /// Builds the evidence and delivery declarations required by Silo playback
+    /// protocol v3. libmpv is a native, general-purpose decoder rather than a
+    /// Windows Media Foundation inventory, so the honest evidence tier is
+    /// <c>declared</c>; fabricating exact profile/level limits would let the
+    /// server select routes the active mpv output cannot actually prove.
+    /// </summary>
+    public static (PlaybackClientCapabilitiesV3 Capabilities, PlaybackClientContextV3 Context)
+        CreateProtocolV3Profile(string appVersion, AudioPassthroughCapabilities? verifiedPassthrough = null)
+    {
+        var profile = CreateProfile();
+        var passthrough = SanitizeVerifiedPassthrough(verifiedPassthrough);
+        var subtitleCapabilities = new PlaybackSubtitleCapabilitiesV3
+        {
+            EmbeddedText = true,
+            SidecarText = true,
+            AssStyling = true,
+            EmbeddedBitmap = true,
+            SidecarBitmap = true,
+            // The app does not currently fetch the separate v3 font bundle.
+            FontAttachments = false,
+        };
+
+        PlaybackDeliveryCapabilityV3 Delivery(
+            IEnumerable<string> containers,
+            params string[] validatedClaims) => new()
+        {
+            Enabled = true,
+            SupportedOnDevice = true,
+            Containers = [.. containers],
+            VideoCodecs = [.. profile.VideoCodecs],
+            AudioDecodeCodecs = [.. profile.AudioCodecs],
+            AudioPassthroughCodecs = passthrough?.PassthroughCodecs.ToList() ?? [],
+            MaxChannels = passthrough?.MaxChannels,
+            HdrDetails = new HdrCapabilityDetails
+            {
+                Hdr10 = profile.HdrDetails.Hdr10,
+                Hdr10Plus = profile.HdrDetails.Hdr10Plus,
+                Hlg = profile.HdrDetails.Hlg,
+                DolbyVisionProfiles = [.. profile.HdrDetails.DolbyVisionProfiles],
+            },
+            Subtitles = subtitleCapabilities,
+            AuthHeaderRefresh = true,
+            ValidatedClaims = [.. validatedClaims],
+        };
+
+        var capabilities = new PlaybackClientCapabilitiesV3
+        {
+            VideoEvidence = "declared",
+            AudioEvidence = "declared",
+            CodecsVideo = [.. profile.VideoCodecs],
+            // On the declared tier this is a capability declaration rather
+            // than an exact MediaCodec-style hardware inventory.
+            CodecsVideoHardware = [.. profile.VideoCodecs],
+            CodecsAudio = [.. profile.AudioCodecs],
+            Containers = [.. profile.Containers],
+            MaxResolution = profile.MaxResolution,
+            Hdr = profile.Hdr,
+            HdrDetails = new HdrCapabilityDetails
+            {
+                Hdr10 = profile.HdrDetails.Hdr10,
+                Hdr10Plus = profile.HdrDetails.Hdr10Plus,
+                Hlg = profile.HdrDetails.Hlg,
+                DolbyVisionProfiles = [.. profile.HdrDetails.DolbyVisionProfiles],
+            },
+            AudioPassthrough = passthrough == null ? null : new AudioPassthroughCapabilitiesV3
+            {
+                PassthroughCodecs = [.. passthrough.PassthroughCodecs],
+                MaxChannels = passthrough.MaxChannels,
+                SpatializerEnabled = passthrough.SpatializerEnabled,
+            },
+        };
+
+        var context = new PlaybackClientContextV3
+        {
+            ProtocolVersion = 3,
+            FormFactor = "desktop",
+            AppVersion = string.IsNullOrWhiteSpace(appVersion) ? "unknown" : appVersion[..Math.Min(64, appVersion.Length)],
+            AppChannel = "qa",
+            Device = new PlaybackDeviceContextV3
+            {
+                Platform = "windows",
+                OsVersion = Environment.OSVersion.VersionString[..Math.Min(128, Environment.OSVersion.VersionString.Length)],
+                PlatformDetails = new Dictionary<string, string>
+                {
+                    ["architecture"] = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant(),
+                    ["player"] = "libmpv",
+                },
+            },
+            Output = new PlaybackOutputContextV3
+            {
+                HdrDetails = capabilities.HdrDetails,
+            },
+            Deliveries = new Dictionary<string, PlaybackDeliveryCapabilityV3>
+            {
+                // libmpv probes the original file itself, selects the requested
+                // source audio stream, and maps HDR/Dolby Vision to the active
+                // Windows output. These current Silo claims keep those jobs on
+                // the native player instead of forcing a server remux merely
+                // because the source is DV7 or uses a non-default audio track.
+                ["original_http"] = Delivery(
+                    profile.Containers,
+                    ClientManagedDynamicRangeClaim,
+                    ClientSelectedAudioTrackClaim),
+                ["progressive"] = Delivery(profile.Containers),
+                ["hls"] = Delivery(["hls"]),
+            },
+        };
+
+        return (capabilities, context);
     }
 
     /// <summary>

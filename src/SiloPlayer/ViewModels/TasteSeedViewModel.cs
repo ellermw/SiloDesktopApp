@@ -183,4 +183,7 @@ public partial class TasteSeedItemViewModel(MediaItem item, bool selected) : Obs
     public string Title => Item.Title;
     public bool WasFavorite { get; } = item.UserState?.IsFavorite == true;
     [ObservableProperty] private bool _isSelected = selected;
+    public string AccessibleName => $"{(IsSelected ? "Deselect" : "Select")} {Title}";
+
+    partial void OnIsSelectedChanged(bool value) => OnPropertyChanged(nameof(AccessibleName));
 }

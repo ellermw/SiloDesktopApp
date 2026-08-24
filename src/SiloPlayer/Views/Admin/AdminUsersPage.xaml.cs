@@ -4,7 +4,9 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using System.Collections.Specialized;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.UI;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.ViewModels.Admin;
@@ -16,6 +18,9 @@ public sealed partial class AdminUsersPage : Page
 {
     public AdminUsersViewModel ViewModel { get; }
     public AdminInviteCodesViewModel InviteCodesViewModel { get; }
+    private readonly AdminApi _adminApi;
+    private readonly List<Invitation> _invitations = [];
+    private bool _invitationsLoaded;
     private bool _inviteCodesLoaded;
     private bool _updatingSignupToggle;
     private bool _usersSubscribed;
@@ -32,6 +37,7 @@ public sealed partial class AdminUsersPage : Page
     {
         ViewModel = App.Services.GetRequiredService<AdminUsersViewModel>();
         InviteCodesViewModel = App.Services.GetRequiredService<AdminInviteCodesViewModel>();
+        _adminApi = App.Services.GetRequiredService<AdminApi>();
         this.InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Enabled;
         SizeChanged += AdminUsersPage_SizeChanged;
@@ -123,25 +129,58 @@ public sealed partial class AdminUsersPage : Page
     private void TabUsers_Click(object sender, RoutedEventArgs e)
     {
         UsersTabContent.Visibility = Visibility.Visible;
+        InvitationsTabContent.Visibility = Visibility.Collapsed;
         InviteCodesTabContent.Visibility = Visibility.Collapsed;
         TabUsersIndicator.Visibility = Visibility.Visible;
+        TabInvitationsIndicator.Visibility = Visibility.Collapsed;
         TabInviteCodesIndicator.Visibility = Visibility.Collapsed;
         TabUsersText.Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"];
         TabUsersText.FontWeight = FontWeights.SemiBold;
         TabInviteCodesText.Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
         TabInviteCodesText.FontWeight = FontWeights.Normal;
+        TabInvitationsText.Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
+        TabInvitationsText.FontWeight = FontWeights.Normal;
+        AddUserButton.Visibility = Visibility.Visible;
+        AccessGroupsButton.Visibility = Visibility.Visible;
+    }
+
+    private async void TabInvitations_Click(object sender, RoutedEventArgs e)
+    {
+        UsersTabContent.Visibility = Visibility.Collapsed;
+        InvitationsTabContent.Visibility = Visibility.Visible;
+        InviteCodesTabContent.Visibility = Visibility.Collapsed;
+        TabUsersIndicator.Visibility = Visibility.Collapsed;
+        TabInvitationsIndicator.Visibility = Visibility.Visible;
+        TabInviteCodesIndicator.Visibility = Visibility.Collapsed;
+        TabInvitationsText.Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"];
+        TabInvitationsText.FontWeight = FontWeights.SemiBold;
+        TabUsersText.Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
+        TabUsersText.FontWeight = FontWeights.Normal;
+        TabInviteCodesText.Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
+        TabInviteCodesText.FontWeight = FontWeights.Normal;
+        AddUserButton.Visibility = Visibility.Collapsed;
+        AccessGroupsButton.Visibility = Visibility.Collapsed;
+
+        if (!_invitationsLoaded)
+            await LoadInvitationsAsync();
     }
 
     private async void TabInviteCodes_Click(object sender, RoutedEventArgs e)
     {
         UsersTabContent.Visibility = Visibility.Collapsed;
+        InvitationsTabContent.Visibility = Visibility.Collapsed;
         InviteCodesTabContent.Visibility = Visibility.Visible;
         TabUsersIndicator.Visibility = Visibility.Collapsed;
+        TabInvitationsIndicator.Visibility = Visibility.Collapsed;
         TabInviteCodesIndicator.Visibility = Visibility.Visible;
         TabInviteCodesText.Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"];
         TabInviteCodesText.FontWeight = FontWeights.SemiBold;
         TabUsersText.Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
         TabUsersText.FontWeight = FontWeights.Normal;
+        TabInvitationsText.Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"];
+        TabInvitationsText.FontWeight = FontWeights.Normal;
+        AddUserButton.Visibility = Visibility.Collapsed;
+        AccessGroupsButton.Visibility = Visibility.Collapsed;
 
         if (!_inviteCodesLoaded)
         {
@@ -162,6 +201,453 @@ public sealed partial class AdminUsersPage : Page
             SignupEnabledText.Text = InviteCodesViewModel.SignupEnabled ? "Enabled" : "Disabled";
             _updatingSignupToggle = false;
         }
+    }
+
+    // ===== Emailed invitations =====
+
+    private sealed record InvitationOption(string Label, object? Value)
+    {
+        public override string ToString() => Label;
+    }
+
+    private async Task LoadInvitationsAsync()
+    {
+        InvitationsLoading.IsActive = true;
+        InvitationsLoading.Visibility = Visibility.Visible;
+        InviteSomeoneButton.IsEnabled = false;
+        try
+        {
+            var invitations = await _adminApi.GetInvitationsAsync();
+            _invitations.Clear();
+            _invitations.AddRange(invitations);
+            _invitationsLoaded = true;
+            BuildInvitationRows();
+        }
+        catch (Exception ex)
+        {
+            ShowError($"Failed to load invitations: {ex.Message}");
+        }
+        finally
+        {
+            InvitationsLoading.IsActive = false;
+            InvitationsLoading.Visibility = Visibility.Collapsed;
+            InviteSomeoneButton.IsEnabled = true;
+        }
+    }
+
+    private void BuildInvitationRows()
+    {
+        InvitationsPanel.Children.Clear();
+        InvitationsEmptyText.Visibility = _invitations.Count == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+        foreach (var invitation in _invitations)
+        {
+            if (InvitationsPanel.Children.Count > 0)
+                InvitationsPanel.Children.Add(new Border
+                {
+                    BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                    BorderThickness = new Thickness(0, 1, 0, 0),
+                });
+
+            var row = new Grid { Padding = new Thickness(20, 12, 20, 12), ColumnSpacing = 12 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(96) });
+
+            var recipient = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+            recipient.Children.Add(new TextBlock
+            {
+                Text = invitation.Email,
+                FontSize = 13,
+                FontWeight = FontWeights.Medium,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+            if (!string.IsNullOrWhiteSpace(invitation.InvitedByName))
+                recipient.Children.Add(new TextBlock
+                {
+                    Text = $"Invited by {invitation.InvitedByName}",
+                    FontSize = 11,
+                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                });
+            row.Children.Add(recipient);
+
+            var role = new TextBlock
+            {
+                Text = invitation.Role,
+                FontSize = 13,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(role, 1);
+            row.Children.Add(role);
+
+            var statusPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
+            var statusLabel = invitation.Status switch
+            {
+                "pending" => "Sent",
+                "accepted" => "Accepted",
+                "expired" => "Expired",
+                "revoked" => "Revoked",
+                _ => invitation.Status,
+            };
+            statusPanel.Children.Add(new Border
+            {
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(6, 3, 6, 3),
+                Background = invitation.Status == "pending"
+                    ? (Brush)Application.Current.Resources["AccentBackgroundBrush"]
+                    : new SolidColorBrush(Colors.Transparent),
+                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                BorderThickness = invitation.Status == "pending" ? new Thickness(0) : new Thickness(1),
+                Child = new TextBlock
+                {
+                    Text = statusLabel,
+                    FontSize = 11,
+                    FontWeight = FontWeights.SemiBold,
+                    Foreground = invitation.Status == "pending"
+                        ? (Brush)Application.Current.Resources["AccentBrush"]
+                        : (Brush)Application.Current.Resources["PrimaryTextBrush"],
+                },
+            });
+            if (invitation.Status == "pending")
+                statusPanel.Children.Add(new TextBlock
+                {
+                    Text = $"expires {FormatInvitationDate(invitation.ExpiresAt)}",
+                    FontSize = 11,
+                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
+            Grid.SetColumn(statusPanel, 2);
+            row.Children.Add(statusPanel);
+
+            var sent = new TextBlock
+            {
+                Text = FormatInvitationDate(invitation.CreatedAt),
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(sent, 3);
+            row.Children.Add(sent);
+
+            var actions = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Spacing = 4,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            if (invitation.Status is "pending" or "expired")
+            {
+                var resend = MakeInvitationActionButton("\uE72C", "Resend with a fresh link");
+                resend.Click += async (_, _) => await ResendInvitationAsync(invitation, resend);
+                actions.Children.Add(resend);
+            }
+            if (invitation.Status == "pending")
+            {
+                var revoke = MakeInvitationActionButton("\uE74D", "Revoke this link");
+                revoke.Click += async (_, _) => await RevokeInvitationAsync(invitation);
+                actions.Children.Add(revoke);
+            }
+            Grid.SetColumn(actions, 4);
+            row.Children.Add(actions);
+            InvitationsPanel.Children.Add(row);
+        }
+    }
+
+    private static Button MakeInvitationActionButton(string glyph, string tooltip)
+    {
+        var button = new Button
+        {
+            Width = 32,
+            Height = 32,
+            Padding = new Thickness(0),
+            Background = new SolidColorBrush(Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            Content = new FontIcon { Glyph = glyph, FontSize = 14 },
+        };
+        ToolTipService.SetToolTip(button, tooltip);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, tooltip);
+        return button;
+    }
+
+    private static string FormatInvitationDate(DateTimeOffset value)
+        => SiloPlayer.Helpers.DateTimeDisplay.FormatDate(value, medium: true);
+
+    private async void InviteSomeone_Click(object sender, RoutedEventArgs e)
+    {
+        IReadOnlyList<AccessGroup> accessGroups;
+        try
+        {
+            accessGroups = await _adminApi.GetAccessGroupsAsync();
+            if (ViewModel.Libraries.Count == 0)
+            {
+                foreach (var library in await _adminApi.GetAdminLibrariesAsync())
+                    ViewModel.Libraries.Add(library);
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowError($"Invitation options could not be loaded: {ex.Message}");
+            return;
+        }
+
+        var email = new TextBox { PlaceholderText = "them@example.com", HorizontalAlignment = HorizontalAlignment.Stretch };
+        var role = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+        role.Items.Add(new InvitationOption("User", "user"));
+        role.Items.Add(new InvitationOption("Admin", "admin"));
+        role.SelectedIndex = 0;
+
+        var accessGroup = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
+        var defaultGroup = accessGroups.FirstOrDefault(group => group.IsDefault);
+        accessGroup.Items.Add(new InvitationOption(
+            defaultGroup is null ? "Server default" : $"{defaultGroup.Name} (default)", null));
+        foreach (var group in accessGroups.Where(group => !group.IsDefault))
+            accessGroup.Items.Add(new InvitationOption(group.Name, group.Id));
+        accessGroup.SelectedIndex = 0;
+
+        var libraryChecks = new List<(int Id, CheckBox Check)>();
+        var libraryList = new StackPanel { Spacing = 4, Visibility = Visibility.Collapsed };
+        foreach (var library in ViewModel.Libraries.DistinctBy(candidate => candidate.Id))
+        {
+            var check = new CheckBox { Content = library.Name, IsChecked = true };
+            libraryChecks.Add((library.Id, check));
+            libraryList.Children.Add(check);
+        }
+        var allLibraries = new ToggleSwitch
+        {
+            Header = "Library access",
+            OnContent = "All libraries",
+            OffContent = "Selected libraries",
+            IsOn = true,
+        };
+        allLibraries.Toggled += (_, _) => libraryList.Visibility = allLibraries.IsOn
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+
+        var note = new TextBox
+        {
+            PlaceholderText = "Hey — set yourself up whenever.",
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            MinHeight = 64,
+        };
+        var createProfile = new ToggleSwitch
+        {
+            Header = "Create their first profile",
+            OnContent = "Yes",
+            OffContent = "No",
+            IsOn = true,
+        };
+        var showTour = new ToggleSwitch
+        {
+            Header = "Show the feature tour on first sign-in",
+            OnContent = "Yes",
+            OffContent = "No",
+            IsOn = true,
+        };
+        var error = new TextBlock
+        {
+            Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed,
+        };
+
+        var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Invite someone" };
+        var root = new StackPanel { Spacing = 16, MinWidth = 500 };
+        root.Children.Add(new TextBlock
+        {
+            Text = "They get an email with a link. Their username is their email address, so all they pick is a password.",
+            FontSize = 13,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        });
+        root.Children.Add(MakeInvitationField("Email address", email,
+            "This becomes both the destination and their sign-in username."));
+        var twoColumns = new Grid { ColumnSpacing = 12 };
+        twoColumns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        twoColumns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        var groupField = MakeInvitationField("Access group", accessGroup);
+        var roleField = MakeInvitationField("Role", role);
+        Grid.SetColumn(roleField, 1);
+        twoColumns.Children.Add(groupField);
+        twoColumns.Children.Add(roleField);
+        root.Children.Add(twoColumns);
+        root.Children.Add(allLibraries);
+        root.Children.Add(new ScrollViewer { Content = libraryList, MaxHeight = 160, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+        root.Children.Add(MakeInvitationField("Personal note (optional)", note, "Appears in the email. Plain text."));
+        root.Children.Add(createProfile);
+        root.Children.Add(showTour);
+        root.Children.Add(error);
+
+        var footer = new Grid { ColumnDefinitions = { new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }, new ColumnDefinition { Width = GridLength.Auto } } };
+        footer.Children.Add(new TextBlock
+        {
+            Text = "Link expires in 7 days · single use",
+            FontSize = 11,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        var cancel = new Button { Content = "Cancel", Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+        var send = new Button { Content = "Send invite", Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+        cancel.Click += (_, _) => dialog.Hide();
+        send.Click += async (_, _) =>
+        {
+            if (string.IsNullOrWhiteSpace(email.Text))
+            {
+                error.Text = "Email address is required.";
+                error.Visibility = Visibility.Visible;
+                return;
+            }
+
+            send.IsEnabled = false;
+            send.Content = "Sending...";
+            error.Visibility = Visibility.Collapsed;
+            try
+            {
+                var response = await _adminApi.CreateInvitationAsync(new CreateInvitationRequest
+                {
+                    Email = email.Text.Trim(),
+                    Role = (role.SelectedItem as InvitationOption)?.Value as string ?? "user",
+                    AccessGroupId = (accessGroup.SelectedItem as InvitationOption)?.Value as long?,
+                    LibraryIds = allLibraries.IsOn
+                        ? null
+                        : libraryChecks.Where(item => item.Check.IsChecked == true).Select(item => item.Id).ToList(),
+                    CreateProfile = createProfile.IsOn,
+                    ShowTour = showTour.IsOn,
+                    Note = string.IsNullOrWhiteSpace(note.Text) ? null : note.Text.Trim(),
+                });
+                ShowInvitationClaimResult(dialog, root, response, freshLink: false);
+                await LoadInvitationsAsync();
+            }
+            catch (Exception ex)
+            {
+                error.Text = ex.Message;
+                error.Visibility = Visibility.Visible;
+                send.IsEnabled = true;
+                send.Content = "Send invite";
+            }
+        };
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(send);
+        Grid.SetColumn(buttons, 1);
+        footer.Children.Add(buttons);
+        root.Children.Add(footer);
+        dialog.Content = new ScrollViewer { Content = root, MaxHeight = 650, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        await dialog.ShowAsync();
+    }
+
+    private static StackPanel MakeInvitationField(string label, Control field, string? help = null)
+    {
+        var panel = new StackPanel { Spacing = 6 };
+        panel.Children.Add(new TextBlock { Text = label, FontSize = 12, FontWeight = FontWeights.SemiBold });
+        panel.Children.Add(field);
+        if (!string.IsNullOrWhiteSpace(help))
+            panel.Children.Add(new TextBlock
+            {
+                Text = help,
+                FontSize = 11,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+                TextWrapping = TextWrapping.Wrap,
+            });
+        return panel;
+    }
+
+    private void ShowInvitationClaimResult(
+        ContentDialog dialog,
+        StackPanel root,
+        SendInvitationResponse response,
+        bool freshLink)
+    {
+        dialog.Title = freshLink ? "Fresh invitation link" : "Invite someone";
+        root.Children.Clear();
+        root.Children.Add(new TextBlock
+        {
+            Text = freshLink
+                ? response.EmailSent
+                    ? $"Emailed to {response.Invitation.Email}. You can also copy the link and send it to them directly."
+                    : "Email isn't configured on this server, so nothing was sent — deliver this link yourself."
+                : response.EmailSent
+                    ? "Invitation emailed. You can also copy the link and send it to them directly:"
+                    : "Email isn't configured on this server, so nothing was sent. The invitation was created — deliver this link yourself:",
+            FontSize = 13,
+            TextWrapping = TextWrapping.Wrap,
+        });
+        var claimUrl = response.ClaimUrl ?? "";
+        root.Children.Add(new Border
+        {
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10),
+            Child = new TextBlock { Text = claimUrl, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis },
+        });
+        root.Children.Add(new TextBlock
+        {
+            Text = freshLink
+                ? "The link works once; any previous link for this invitation has stopped working."
+                : "The link works once and expires in 7 days. Resending later mints a fresh link and kills this one.",
+            FontSize = 11,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextWrapping = TextWrapping.Wrap,
+        });
+        var footer = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right };
+        var copy = new Button { Content = "Copy link", Style = (Style)Application.Current.Resources["SecondaryButtonStyle"] };
+        copy.Click += (_, _) =>
+        {
+            var package = new DataPackage();
+            package.SetText(claimUrl);
+            Clipboard.SetContent(package);
+            ShowStatus("Copied to clipboard");
+        };
+        var done = new Button { Content = "Done", Style = (Style)Application.Current.Resources["AccentButtonStyle"] };
+        done.Click += (_, _) => dialog.Hide();
+        footer.Children.Add(copy);
+        footer.Children.Add(done);
+        root.Children.Add(footer);
+    }
+
+    private async Task ResendInvitationAsync(Invitation invitation, Button button)
+    {
+        button.IsEnabled = false;
+        try
+        {
+            var response = await _adminApi.ResendInvitationAsync(invitation.Id);
+            var dialog = new ContentDialog { XamlRoot = XamlRoot, Title = "Fresh invitation link" };
+            var root = new StackPanel { Spacing = 16, MinWidth = 460 };
+            ShowInvitationClaimResult(dialog, root, response, freshLink: true);
+            dialog.Content = root;
+            await LoadInvitationsAsync();
+            await dialog.ShowAsync();
+        }
+        catch (Exception ex) { ShowError($"Failed to resend invitation: {ex.Message}"); }
+        finally { button.IsEnabled = true; }
+    }
+
+    private async Task RevokeInvitationAsync(Invitation invitation)
+    {
+        var confirm = new ContentDialog
+        {
+            XamlRoot = XamlRoot,
+            Title = "Revoke invitation",
+            Content = $"Revoke the invitation for {invitation.Email}? Their link will stop working immediately.",
+            PrimaryButtonText = "Revoke",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+        };
+        if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+        try
+        {
+            await _adminApi.RevokeInvitationAsync(invitation.Id);
+            ShowStatus("Invitation revoked");
+            await LoadInvitationsAsync();
+        }
+        catch (Exception ex) { ShowError($"Failed to revoke invitation: {ex.Message}"); }
     }
 
     private async void SignupEnabledToggle_Toggled(object sender, RoutedEventArgs e)

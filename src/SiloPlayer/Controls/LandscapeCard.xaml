@@ -213,31 +213,40 @@
         <!-- Text below image — B32: text click navigates to details -->
         <StackPanel Grid.Row="1" Margin="2,10,2,0" Spacing="2" Background="Transparent">
             <!-- Title -->
-            <TextBlock
-                x:Name="TitleText"
-                FontSize="13"
-                FontWeight="SemiBold"
-                Foreground="{StaticResource PrimaryTextBrush}"
-                TextTrimming="CharacterEllipsis"
-                MaxLines="1"
-                Tapped="OnHeadingTapped" />
+            <Button x:Name="HeadingButton" Click="OnHeadingClick"
+                    Padding="0" MinWidth="0" MinHeight="0" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0">
+                <TextBlock
+                    x:Name="TitleText"
+                    FontSize="13"
+                    FontWeight="SemiBold"
+                    Foreground="{StaticResource PrimaryTextBrush}"
+                    TextTrimming="CharacterEllipsis"
+                    MaxLines="1" />
+            </Button>
             <!-- Episode context: "Series Title · S1 E3" -->
-            <TextBlock
-                x:Name="SubtitleText"
-                FontSize="12"
-                Foreground="{StaticResource SecondaryTextBrush}"
-                TextTrimming="CharacterEllipsis"
-                MaxLines="1"
-                Visibility="Collapsed"
-                Tapped="OnMetadataTapped" />
-            <TextBlock
-                x:Name="TimeLeftText"
-                FontSize="12"
-                Foreground="{StaticResource SecondaryTextBrush}"
-                TextTrimming="CharacterEllipsis"
-                MaxLines="1"
-                Visibility="Collapsed"
-                Tapped="OnMetadataTapped" />
+            <Button x:Name="SubtitleButton" Click="OnMetadataClick"
+                    Padding="0" MinWidth="0" MinHeight="0" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0"
+                    Visibility="Collapsed">
+                <TextBlock
+                    x:Name="SubtitleText"
+                    FontSize="12"
+                    Foreground="{StaticResource SecondaryTextBrush}"
+                    TextTrimming="CharacterEllipsis"
+                    MaxLines="1" />
+            </Button>
+            <Button x:Name="TimeLeftButton" Click="OnMetadataClick"
+                    Padding="0" MinWidth="0" MinHeight="0" HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0"
+                    Visibility="Collapsed">
+                <TextBlock
+                    x:Name="TimeLeftText"
+                    FontSize="12"
+                    Foreground="{StaticResource SecondaryTextBrush}"
+                    TextTrimming="CharacterEllipsis"
+                    MaxLines="1" />
+            </Button>
             <!-- Badge row (e.g. "SEASON PREMIERE") — WebUI parity with ContinueWatchingCard.
                  Uses a rounded-full pill with emerald accent. Visible only when the server
                  attaches a badge string to the section item. -->

@@ -7,6 +7,7 @@ using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -20,6 +21,10 @@ namespace SiloPlayer.Views;
 public sealed partial class CollectionBrowsePage : Page
 {
     private readonly CatalogApi _catalogApi;
+    private readonly CollectionsApi _collectionsApi;
+    private readonly UICustomizationService _uiCustomizationService;
+    private readonly SemaphoreSlim _sortPreferenceGate = new(1, 1);
+    private int _sortPreferenceGeneration;
 
     /// <summary>Parameter passed via NavigationService.Navigate.</summary>
     public sealed class NavArgs
@@ -39,6 +44,7 @@ public sealed partial class CollectionBrowsePage : Page
     private string? _sort;
     private string? _order;
     private string? _mediaScope;
+    private bool _explicitSourceOrder;
     private int _total;
     private bool _hasMore;
     private bool _isLoadingMore;
@@ -49,6 +55,8 @@ public sealed partial class CollectionBrowsePage : Page
     public CollectionBrowsePage()
     {
         _catalogApi = App.Services.GetRequiredService<CatalogApi>();
+        _collectionsApi = App.Services.GetRequiredService<CollectionsApi>();
+        _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
         PosterRepeater.ItemsSource = _items;
         LoadingPosterRepeater.ItemsSource = Enumerable.Range(0, 24).ToArray();
@@ -61,6 +69,7 @@ public sealed partial class CollectionBrowsePage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _uiCustomizationService.Changed += UICustomization_Changed;
         if (e.Parameter is not NavArgs args) return;
 
         _currentArgs = args;
@@ -87,6 +96,7 @@ public sealed partial class CollectionBrowsePage : Page
         try
         {
             var response = await LoadPageAsync(0, loadCts.Token);
+            ApplyServerEffectiveSort(response);
             foreach (var item in response.Items) _items.Add(item);
             _total = response.Total > 0 ? response.Total : _items.Count;
             _hasMore = response.HasMore || _items.Count < _total;
@@ -178,11 +188,13 @@ public sealed partial class CollectionBrowsePage : Page
         _sort = SortCombo.SelectedItem is ComboBoxItem { Tag: string value } && !string.IsNullOrWhiteSpace(value)
             ? value
             : null;
+        _explicitSourceOrder = _sort == null;
         _order = _sort is "title" or "content_rating" or "author" or "narrator" or "series" ? "asc" : "desc";
         OrderCombo.IsEnabled = _sort != null;
         _suppressSortEvents = true;
         OrderCombo.SelectedIndex = _order == "asc" ? 1 : 0;
         _suppressSortEvents = false;
+        await RememberCollectionSortAsync();
         await LoadFirstPageAsync();
     }
 
@@ -190,7 +202,68 @@ public sealed partial class CollectionBrowsePage : Page
     {
         if (_suppressSortEvents || _sort == null || _currentArgs == null) return;
         _order = OrderCombo.SelectedItem is ComboBoxItem { Tag: string order } ? order : "desc";
+        await RememberCollectionSortAsync();
         await LoadFirstPageAsync();
+    }
+
+    private void ApplyServerEffectiveSort(CatalogResponse response)
+    {
+        if (_sort != null || _explicitSourceOrder || string.IsNullOrWhiteSpace(response.EffectiveSort?.Field)) return;
+
+        _sort = response.EffectiveSort.Field;
+        _order = response.EffectiveSort.Order is "asc" or "desc"
+            ? response.EffectiveSort.Order
+            : DefaultSortOrder(_sort);
+        _suppressSortEvents = true;
+        try
+        {
+            SelectComboTag(SortCombo, _sort);
+            SelectComboTag(OrderCombo, _order);
+            OrderCombo.IsEnabled = true;
+        }
+        finally
+        {
+            _suppressSortEvents = false;
+        }
+    }
+
+    private async Task RememberCollectionSortAsync()
+    {
+        if (_currentArgs is not { } args) return;
+        var generation = Interlocked.Increment(ref _sortPreferenceGeneration);
+        await _sortPreferenceGate.WaitAsync();
+        try
+        {
+            if (generation != _sortPreferenceGeneration) return;
+            await _collectionsApi.SetCollectionSortPreferenceAsync(
+                args.IsUserCollection ? "user" : "library",
+                args.CollectionId,
+                _sort ?? "",
+                _sort == null ? "" : (_order ?? DefaultSortOrder(_sort)));
+        }
+        catch (Exception ex)
+        {
+            App.Services.GetRequiredService<ToastService>().Error($"Could not remember collection sort: {ex.Message}");
+        }
+        finally
+        {
+            _sortPreferenceGate.Release();
+        }
+    }
+
+    private static string DefaultSortOrder(string field)
+        => field is "title" or "content_rating" or "author" or "narrator" or "series" ? "asc" : "desc";
+
+    private static void SelectComboTag(ComboBox combo, string? value)
+    {
+        foreach (var candidate in combo.Items.OfType<ComboBoxItem>())
+        {
+            if (string.Equals(candidate.Tag as string ?? "", value ?? "", StringComparison.OrdinalIgnoreCase))
+            {
+                combo.SelectedItem = candidate;
+                return;
+            }
+        }
     }
 
     private async void MediaScopeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -395,16 +468,12 @@ public sealed partial class CollectionBrowsePage : Page
 
     private void UpdateCatalogGridLayout(double viewportWidth, double gutter)
     {
-        var columns = viewportWidth >= 1280 ? 8
-            : viewportWidth >= 1024 ? 7
-            : viewportWidth >= 768 ? 5
-            : viewportWidth >= 640 ? 4
-            : 3;
         var contentWidth = Math.Max(320, Math.Min(1400, viewportWidth - (gutter * 2)));
+        var columns = _uiCustomizationService.GetPosterColumnCount(contentWidth);
         _catalogCardWidth = Math.Max(96, (contentWidth - (12 * (columns - 1))) / columns);
         PosterGridLayout.MaximumRowsOrColumns = columns;
         PosterGridLayout.MinItemWidth = _catalogCardWidth;
-        PosterGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + 56;
+        PosterGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight;
 
         for (var index = 0; index < _items.Count; index++)
             if (PosterRepeater.TryGetElement(index) is SiloPlayer.Controls.PosterCard card)
@@ -419,11 +488,20 @@ public sealed partial class CollectionBrowsePage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        _uiCustomizationService.Changed -= UICustomization_Changed;
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = null;
         base.OnNavigatedFrom(e);
     }
+
+    private void UICustomization_Changed(object? sender, EventArgs e)
+        => DispatcherQueue.TryEnqueue(() =>
+        {
+            var width = Math.Max(320, ActualWidth);
+            var gutter = width < 640 ? 16d : width < 1024 ? 24d : 40d;
+            UpdateCatalogGridLayout(width, gutter);
+        });
 
     private void BackButton_Click(object sender, RoutedEventArgs e)
     {

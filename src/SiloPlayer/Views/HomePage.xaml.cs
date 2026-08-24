@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Navigation;
+using System.Text.Json;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
@@ -21,10 +22,15 @@ public sealed partial class HomePage : Page
     private bool _layoutChangedWhileRefreshing;
     private string? _failedHeroSectionId;
     private int _lastRenderedRevision = -1;
+    private readonly EventChannelClient _eventChannel;
+    private readonly AuthService _authService;
+    private IDisposable? _realtimeSubscription;
 
     public HomePage()
     {
         ViewModel = App.Services.GetRequiredService<HomeViewModel>();
+        _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
+        _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
         // Reuse the mounted home surface instead of reconstructing its hero,
         // section rows, and cards on every top-level navigation.
@@ -37,6 +43,8 @@ public sealed partial class HomePage : Page
         try
         {
             AttachViewModelEvents();
+            AttachRealtimeEvents();
+            ViewModel.SetActive(true);
 
             _layoutChangedWhileRefreshing = false;
             _isRefreshingLayout = true;
@@ -70,6 +78,47 @@ public sealed partial class HomePage : Page
         ViewModel.FeaturedSections.CollectionChanged += OnSectionsChanged;
         ViewModel.Sections.CollectionChanged += OnSectionsChanged;
         ViewModel.PropertyChanged += OnViewModelPropertyChanged;
+    }
+
+    private void AttachRealtimeEvents()
+    {
+        if (_realtimeSubscription != null) return;
+
+        // Current WebUI subscribes these channels globally. Home responds by
+        // invalidating mounted section queries and re-fetching them in place;
+        // do the same without requiring a navigation round trip.
+        _eventChannel.EventReceived += OnRealtimeEvent;
+        _realtimeSubscription = _eventChannel.Subscribe("catalog", "user_state");
+    }
+
+    private void DetachRealtimeEvents()
+    {
+        _eventChannel.EventReceived -= OnRealtimeEvent;
+        _realtimeSubscription?.Dispose();
+        _realtimeSubscription = null;
+    }
+
+    private void OnRealtimeEvent(string channel, string eventName, JsonElement data)
+    {
+        if (string.Equals(channel, "catalog", StringComparison.OrdinalIgnoreCase))
+        {
+            ViewModel.QueueRealtimeRefresh($"catalog:{eventName}");
+            return;
+        }
+
+        if (!string.Equals(channel, "user_state", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        if (data.TryGetProperty("profile_id", out var profileElement)
+            && profileElement.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(profileElement.GetString())
+            && !string.IsNullOrWhiteSpace(_authService.SelectedProfileId)
+            && !string.Equals(profileElement.GetString(), _authService.SelectedProfileId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        ViewModel.QueueRealtimeRefresh($"user_state:{eventName}");
     }
 
     private void HomePage_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -453,6 +502,9 @@ public sealed partial class HomePage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+
+        ViewModel.SetActive(false);
+        DetachRealtimeEvents();
 
         if (_eventsAttached)
         {

@@ -20,7 +20,8 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <Grid Grid.Column="0" Width="200" Height="112" Margin="0,10"
-                      Tapped="VideoThumbnail_Tapped" Background="Transparent" CornerRadius="6" />
+                      Tapped="VideoThumbnail_Tapped" Background="Transparent" CornerRadius="6"
+                      AutomationProperties.Name="Expand player" />
                 <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
                     <TextBlock x:Name="TitleText" FontSize="13" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}"
@@ -29,28 +30,32 @@
                                Foreground="{StaticResource SecondaryTextBrush}"
                                TextTrimming="CharacterEllipsis" MaxLines="1" />
                     <Slider x:Name="SeekSlider" Minimum="0" Maximum="1" Height="28"
-                            ValueChanged="SeekSlider_ValueChanged" />
+                            ValueChanged="SeekSlider_ValueChanged" AutomationProperties.Name="Playback position" />
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Click="Expand_Click" Background="Transparent" BorderThickness="0" Padding="10,8"
-                            ToolTipService.ToolTip="Expand player">
+                            ToolTipService.ToolTip="Expand player" AutomationProperties.Name="Expand player">
                         <FontIcon Glyph="&#xE740;" FontSize="16" Foreground="{StaticResource AccentBrush}" />
                     </Button>
-                    <Button Click="PlayPause_Click" Background="Transparent" BorderThickness="0" Padding="10,8">
+                    <Button x:Name="VideoPlayPauseButton" Click="PlayPause_Click" Background="Transparent" BorderThickness="0" Padding="10,8"
+                            ToolTipService.ToolTip="Pause" AutomationProperties.Name="Pause">
                         <FontIcon x:Name="PlayPauseIcon" Glyph="&#xE768;" FontSize="18"
                                   Foreground="{StaticResource PrimaryTextBrush}" />
                     </Button>
                 </StackPanel>
                 <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
-                    <Button Click="Mute_Click" Background="Transparent" BorderThickness="0" Padding="6">
+                    <Button x:Name="VideoMuteButton" Click="Mute_Click" Background="Transparent" BorderThickness="0" Padding="6"
+                            ToolTipService.ToolTip="Mute" AutomationProperties.Name="Mute">
                         <FontIcon x:Name="VolumeIcon" Glyph="&#xE767;" FontSize="12"
                                   Foreground="{StaticResource SecondaryTextBrush}" />
                     </Button>
                     <Slider x:Name="VolumeSlider" Width="60" Minimum="0" Maximum="100" Value="100"
-                            VerticalAlignment="Center" ValueChanged="VolumeSlider_ValueChanged" />
+                            VerticalAlignment="Center" ValueChanged="VolumeSlider_ValueChanged"
+                            AutomationProperties.Name="Volume" />
                 </StackPanel>
                 <Button Grid.Column="4" Click="Close_Click" Background="Transparent" BorderThickness="0"
-                        Padding="10,8" VerticalAlignment="Center" ToolTipService.ToolTip="Stop playback">
+                        Padding="10,8" VerticalAlignment="Center" ToolTipService.ToolTip="Stop playback"
+                        AutomationProperties.Name="Stop playback">
                     <FontIcon Glyph="&#xE711;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
                 </Button>
             </Grid>
@@ -67,7 +72,8 @@
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <Slider x:Name="AudiobookSeekSlider" Grid.Row="0" Minimum="0" Maximum="1"
-                        Height="24" Margin="-4,0" ValueChanged="AudiobookSeekSlider_ValueChanged" />
+                        Height="24" Margin="-4,0" ValueChanged="AudiobookSeekSlider_ValueChanged"
+                        AutomationProperties.Name="Playback position" />
 
                 <Grid Grid.Row="1" ColumnSpacing="18">
                     <Grid.ColumnDefinitions>
@@ -79,7 +85,8 @@
                     <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
                         <Button Width="56" Height="56" Padding="0" BorderThickness="0"
                                 Background="{StaticResource CardBackgroundBrush}" Click="Expand_Click"
-                                ToolTipService.ToolTip="Open Now Listening">
+                                ToolTipService.ToolTip="Open Now Listening"
+                                AutomationProperties.Name="Open Now Listening">
                             <Grid CornerRadius="8">
                                 <FontIcon x:Name="AudiobookCoverPlaceholder" Glyph="&#xE82D;" FontSize="24"
                                           Foreground="{StaticResource SecondaryTextBrush}"
@@ -100,54 +107,61 @@
                     </StackPanel>
 
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
-                        <Button Style="{StaticResource SubtleButtonStyle}" Width="34" Height="34" Padding="0"
-                                Click="PreviousChapter_Click" ToolTipService.ToolTip="Previous chapter (P)">
+                        <Button x:Name="AudiobookPreviousChapterButton" Style="{StaticResource SubtleButtonStyle}" Width="34" Height="34" Padding="0"
+                                Click="PreviousChapter_Click" ToolTipService.ToolTip="Previous chapter (P)"
+                                AutomationProperties.Name="Previous chapter">
                             <FontIcon Glyph="&#xE892;" FontSize="15" />
                         </Button>
-                        <Button Style="{StaticResource SubtleButtonStyle}" Width="38" Height="38" Padding="0"
-                                Click="AudiobookSkipBack_Click" ToolTipService.ToolTip="Back 15 seconds (Left)">
+                        <Button x:Name="AudiobookSkipBackButton" Style="{StaticResource SubtleButtonStyle}" Width="38" Height="38" Padding="0"
+                                Click="AudiobookSkipBack_Click" ToolTipService.ToolTip="Back 15 seconds (Left)"
+                                AutomationProperties.Name="Back 15 seconds">
                             <Grid><FontIcon Glyph="&#xE777;" FontSize="23"/><TextBlock x:Name="SkipBackText" Text="15" FontSize="8" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/></Grid>
                         </Button>
-                        <Button Width="46" Height="46" Padding="0" CornerRadius="23" BorderThickness="0"
-                                Background="{StaticResource AccentBrush}" Click="PlayPause_Click">
+                        <Button x:Name="AudiobookPlayPauseButton" Width="46" Height="46" Padding="0" CornerRadius="23" BorderThickness="0"
+                                Background="{StaticResource AccentBrush}" Click="PlayPause_Click"
+                                ToolTipService.ToolTip="Pause (space)" AutomationProperties.Name="Pause">
                             <FontIcon x:Name="AudiobookPlayPauseIcon" Glyph="&#xE769;" FontSize="20" Foreground="White" />
                         </Button>
-                        <Button Style="{StaticResource SubtleButtonStyle}" Width="38" Height="38" Padding="0"
-                                Click="AudiobookSkipForward_Click" ToolTipService.ToolTip="Forward 30 seconds (Right)">
+                        <Button x:Name="AudiobookSkipForwardButton" Style="{StaticResource SubtleButtonStyle}" Width="38" Height="38" Padding="0"
+                                Click="AudiobookSkipForward_Click" ToolTipService.ToolTip="Forward 30 seconds (Right)"
+                                AutomationProperties.Name="Forward 30 seconds">
                             <Grid><FontIcon Glyph="&#xE777;" FontSize="23"/><TextBlock x:Name="SkipForwardText" Text="30" FontSize="8" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/></Grid>
                         </Button>
-                        <Button Style="{StaticResource SubtleButtonStyle}" Width="34" Height="34" Padding="0"
-                                Click="NextChapter_Click" ToolTipService.ToolTip="Next chapter (N)">
+                        <Button x:Name="AudiobookNextChapterButton" Style="{StaticResource SubtleButtonStyle}" Width="34" Height="34" Padding="0"
+                                Click="NextChapter_Click" ToolTipService.ToolTip="Next chapter (N)"
+                                AutomationProperties.Name="Next chapter">
                             <FontIcon Glyph="&#xE893;" FontSize="15" />
                         </Button>
                     </StackPanel>
 
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2"
                                 HorizontalAlignment="Right" VerticalAlignment="Center">
-                        <Button Click="Mute_Click" Style="{StaticResource SubtleButtonStyle}" Padding="7">
+                        <Button x:Name="AudiobookMuteButton" Click="Mute_Click" Style="{StaticResource SubtleButtonStyle}" Padding="7"
+                                ToolTipService.ToolTip="Mute" AutomationProperties.Name="Mute">
                             <FontIcon x:Name="AudiobookVolumeIcon" Glyph="&#xE767;" FontSize="14" />
                         </Button>
                         <Slider x:Name="AudiobookVolumeSlider" Width="72" Minimum="0" Maximum="100" Value="100"
-                                ValueChanged="AudiobookVolumeSlider_ValueChanged" />
+                                ValueChanged="AudiobookVolumeSlider_ValueChanged" AutomationProperties.Name="Volume" />
                         <Button x:Name="AudiobookSleepButton" Style="{StaticResource SubtleButtonStyle}" Padding="8"
-                                ToolTipService.ToolTip="Sleep timer">
+                                ToolTipService.ToolTip="Sleep timer" AutomationProperties.Name="Sleep timer">
                             <StackPanel Orientation="Horizontal" Spacing="5">
                                 <FontIcon Glyph="&#xE823;" FontSize="14" />
                                 <TextBlock x:Name="AudiobookSleepText" Text="Sleep" FontSize="12" />
                             </StackPanel>
                         </Button>
                         <Button x:Name="AudiobookChaptersButton" Style="{StaticResource SubtleButtonStyle}" Padding="8"
-                                ToolTipService.ToolTip="Chapters">
+                                ToolTipService.ToolTip="Chapters" AutomationProperties.Name="Chapters">
                             <FontIcon Glyph="&#xE8A9;" FontSize="14" />
                         </Button>
                         <Button x:Name="AudiobookSpeedButton" Style="{StaticResource SubtleButtonStyle}" Padding="8,6"
-                                Content="1×" FontSize="12" ToolTipService.ToolTip="Playback speed" />
+                                Content="1×" FontSize="12" ToolTipService.ToolTip="Playback speed"
+                                AutomationProperties.Name="Playback speed" />
                         <Button x:Name="AudiobookSettingsButton" Style="{StaticResource SubtleButtonStyle}" Padding="8"
-                                ToolTipService.ToolTip="Audiobook settings">
+                                ToolTipService.ToolTip="Audiobook settings" AutomationProperties.Name="Audiobook settings">
                             <FontIcon Glyph="&#xE713;" FontSize="14" />
                         </Button>
                         <Button Click="Close_Click" Style="{StaticResource SubtleButtonStyle}" Padding="8"
-                                ToolTipService.ToolTip="Close player">
+                                ToolTipService.ToolTip="Close player" AutomationProperties.Name="Close player">
                             <FontIcon Glyph="&#xE711;" FontSize="14" />
                         </Button>
                     </StackPanel>

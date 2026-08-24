@@ -16,6 +16,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- Search input row -->
@@ -31,14 +32,14 @@
             <TextBox
                 Grid.Column="1"
                 x:Name="SearchBox"
-                PlaceholderText="Search movies, series…"
+                PlaceholderText="Search library..."
                 BorderThickness="0"
                 Background="Transparent"
                 FontSize="15"
                 TextChanged="SearchBox_TextChanged"
                 KeyDown="SearchBox_KeyDown" />
             <TextBlock Grid.Column="2"
-                       Text="Esc"
+                       Text="ESC"
                        FontSize="11"
                        Foreground="{StaticResource TertiaryTextBrush}"
                        CharacterSpacing="120"
@@ -66,18 +67,28 @@
                         HorizontalAlignment="Center" VerticalAlignment="Center"
                         Padding="0,20,0,20" Visibility="Collapsed">
                 <ProgressRing IsActive="True" Width="18" Height="18" />
-                <TextBlock Text="Searching…" FontSize="13"
+                <TextBlock Text="Searching..." FontSize="13"
                            Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
             </StackPanel>
 
             <!-- Empty -->
             <TextBlock x:Name="EmptyText"
-                       Text="No results found."
+                       Text="No matches"
                        FontSize="13"
                        HorizontalAlignment="Center"
                        Padding="0,20,0,20"
                        Foreground="{StaticResource SecondaryTextBrush}"
                        Visibility="Collapsed" />
         </Grid>
+
+        <Border Grid.Row="3" x:Name="SearchFooter" Visibility="Collapsed"
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0"
+                Padding="12,8">
+            <TextBlock x:Name="SearchFooterText"
+                       Text="Press Enter to open the full search page."
+                       HorizontalAlignment="Center"
+                       FontSize="12"
+                       Foreground="{StaticResource SecondaryTextBrush}" />
+        </Border>
     </Grid>
 </ContentDialog>

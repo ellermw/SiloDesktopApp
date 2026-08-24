@@ -117,6 +117,12 @@ public sealed class MainWindowSourceTests
         Assert.Contains("<Setter Property=\"FontSize\" Value=\"18\" />", xaml);
         Assert.Contains("<Setter Property=\"MinHeight\" Value=\"42\" />", xaml);
         Assert.Contains("x:Name=\"SidebarBrandHost\" Height=\"96\"", xaml);
+        Assert.Contains("Tapped=\"SidebarBrandHost_Tapped\"", xaml);
+        Assert.Contains("KeyDown=\"SidebarBrandHost_KeyDown\"", xaml);
+        Assert.Contains("AutomationProperties.Name=\"Go to home\"", xaml);
+        Assert.Contains("private void SidebarBrandHost_Tapped", code);
+        Assert.Contains("private void SidebarBrandHost_KeyDown", code);
+        Assert.Contains("NavigateToHome();", code);
         Assert.Contains("Margin=\"14,30,0,30\"", xaml);
         Assert.Contains("<ScalarTransition Duration=\"0:0:0.3\" />", xaml);
         Assert.Contains("x:Name=\"LibrariesCompactDividerIcon\"", xaml);

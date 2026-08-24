@@ -66,10 +66,21 @@ public sealed class ItemMetadataEditorCurrentParityTests
         Assert.Contains("_item.Type != \"season\"", source);
         Assert.Contains("locked_fields", source);
         Assert.Contains("Reset to Provider", source);
+        Assert.Contains("Reset & Refresh", source);
+        Assert.Contains("This will unlock all fields and refresh metadata from your providers.", source);
+        Assert.Contains("Any manual edits will be overwritten on the next refresh.", source);
+        Assert.Contains("_tagline.PlaceholderText = \"No tagline\"", source);
+        Assert.Contains("Add genre...", source);
+        Assert.Contains("Add studio...", source);
+        Assert.Contains("Add network...", source);
+        Assert.Contains("Add country...", source);
         Assert.Contains("Translate with AI", source);
         Assert.Contains("IncludeChildren = _item.Type == \"series\"", source);
         Assert.Contains("GetItemMetadataTranslationJobsAsync", source);
         Assert.Contains("TimeSpan.FromMilliseconds(1500)", source);
+        Assert.Contains("BuildChangedPayload()", source);
+        Assert.Contains("if (payload.Count == 0)", source);
+        Assert.Contains("PayloadValuesEqual", source);
     }
 
     [Fact]

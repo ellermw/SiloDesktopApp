@@ -98,19 +98,32 @@
             HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,24,120"
             Padding="20,10" Style="{StaticResource AccentButtonStyle}" Click="SkipCredits_Click" />
 
-        <!-- Stats overlay (top left) -->
-        <Border x:Name="StatsOverlay" Visibility="Collapsed" Background="#CC000000"
-            CornerRadius="8" Padding="16" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16">
-            <StackPanel Spacing="4">
-                <TextBlock Text="Video Stats" Foreground="#78AEFC" FontSize="13" FontWeight="SemiBold" />
-                <TextBlock x:Name="StatsResolution" Foreground="White" FontSize="12" FontFamily="Consolas" />
-                <TextBlock x:Name="StatsCodec" Foreground="White" FontSize="12" FontFamily="Consolas" />
-                <TextBlock x:Name="StatsPlayMethod" Foreground="White" FontSize="12" FontFamily="Consolas" />
-                <TextBlock x:Name="StatsBitrate" Foreground="White" FontSize="12" FontFamily="Consolas" />
-                <TextBlock x:Name="StatsHdr" Foreground="#78AEFC" FontSize="12" FontFamily="Consolas" />
-                <TextBlock x:Name="StatsPosition" Foreground="White" FontSize="12" FontFamily="Consolas" />
-                <TextBlock x:Name="StatsSession" Foreground="#666666" FontSize="11" FontFamily="Consolas" />
-            </StackPanel>
+        <!-- Current WebUI PlaybackInfoOverlay: grouped label/value rows in a
+             compact, scrollable black glass panel. -->
+        <Border x:Name="StatsOverlay" Visibility="Collapsed" Background="#D9000000"
+                CornerRadius="8" Width="320" MaxHeight="620"
+                HorizontalAlignment="Left" VerticalAlignment="Top" Margin="16,48,0,0"
+                Canvas.ZIndex="50">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <Grid Padding="16,10,10,6">
+                    <TextBlock Text="Playback Info" Foreground="#E6FFFFFF" FontSize="14"
+                               FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <Button HorizontalAlignment="Right" Width="28" Height="28" Padding="0"
+                            Background="Transparent" BorderThickness="0" Click="StatsClose_Click"
+                            ToolTipService.ToolTip="Close playback info"
+                            AutomationProperties.Name="Close playback info">
+                        <FontIcon Glyph="&#xE711;" FontSize="12" Foreground="#B3FFFFFF" />
+                    </Button>
+                </Grid>
+                <ScrollViewer Grid.Row="1" MaxHeight="560" VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="StatsSectionsPanel" Padding="16,0,16,12" Spacing="12" />
+                </ScrollViewer>
+            </Grid>
         </Border>
 
         <!-- Top-right window chrome (minimize / close) — desktop-only since
@@ -119,14 +132,89 @@
                     HorizontalAlignment="Right" VerticalAlignment="Top"
                     Margin="0,16,16,0">
             <Button Style="{StaticResource PlayerUtilityBtnStyle}" Click="Minimize_Click"
-                    ToolTipService.ToolTip="Minimize to mini bar">
+                    ToolTipService.ToolTip="Minimize to mini bar"
+                    AutomationProperties.Name="Minimize to mini bar">
                 <FontIcon Glyph="&#xE921;" FontSize="13" />
             </Button>
             <Button Style="{StaticResource PlayerUtilityBtnStyle}" Click="ClosePlayer_Click"
-                    ToolTipService.ToolTip="Close">
+                    ToolTipService.ToolTip="Close player"
+                    AutomationProperties.Name="Close player">
                 <FontIcon Glyph="&#xE711;" FontSize="13" />
             </Button>
         </StackPanel>
+
+        <!-- Current WebUI MarkerEditPanel: stays inside the active player so
+             playback, fullscreen, tracks, and the seek surface remain intact. -->
+        <Border x:Name="MarkerEditorPanel" Visibility="Collapsed"
+                Width="352" MaxHeight="470"
+                HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                Margin="24,0,0,150" Padding="0"
+                Background="#F2111114" BorderBrush="#1AFFFFFF" BorderThickness="1"
+                CornerRadius="16" Canvas.ZIndex="70">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+                <Grid x:Name="MarkerEditorDragHeader" Padding="14,12,10,10"
+                      PointerPressed="MarkerEditorHeader_PointerPressed"
+                      PointerMoved="MarkerEditorHeader_PointerMoved"
+                      PointerReleased="MarkerEditorHeader_PointerReleased"
+                      PointerCaptureLost="MarkerEditorHeader_PointerCaptureLost">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon Glyph="&#xE700;" FontSize="14" Foreground="#4DFFFFFF"
+                              Margin="0,2,9,0" VerticalAlignment="Top" />
+                    <StackPanel Grid.Column="1" Spacing="2">
+                        <TextBlock Text="Edit markers" FontSize="14" FontWeight="SemiBold" Foreground="White" />
+                        <TextBlock Text="Drag the timeline handles, or set points to the playhead."
+                                   FontSize="11" Foreground="#66FFFFFF" TextWrapping="Wrap" />
+                    </StackPanel>
+                    <Button Grid.Column="2" Width="30" Height="30" Padding="0"
+                            Background="Transparent" BorderThickness="0"
+                            CornerRadius="6" Click="MarkerEditorCancel_Click"
+                            ToolTipService.ToolTip="Close marker editor"
+                            AutomationProperties.Name="Close marker editor">
+                        <FontIcon Glyph="&#xE711;" FontSize="13" Foreground="#8CFFFFFF" />
+                    </Button>
+                </Grid>
+                <ScrollViewer Grid.Row="1" MaxHeight="300"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="MarkerRowsPanel" Padding="8,0,8,8" Spacing="4" />
+                </ScrollViewer>
+                <TextBlock x:Name="MarkerEditorError" Grid.Row="2" Visibility="Collapsed"
+                           Margin="16,0,16,8" Padding="10,6"
+                           TextWrapping="Wrap" FontSize="11" Foreground="#FFFCA5A5" />
+                <Grid Grid.Row="3" Padding="14,10" Background="#33000000">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="MarkerEditorCurrentTime" Text="0:00"
+                               FontFamily="Consolas" FontSize="11" Foreground="#66FFFFFF"
+                               VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
+                        <Button x:Name="MarkerEditorResetAllButton" Content="↶  Reset all"
+                                Visibility="Collapsed" Click="MarkerEditorResetAll_Click"
+                                Background="Transparent" BorderThickness="0"
+                                Foreground="#99FFFFFF" Padding="10,6" FontSize="12" />
+                        <Button Content="Cancel" Click="MarkerEditorCancel_Click"
+                                Background="Transparent" BorderThickness="0"
+                                Foreground="#B3FFFFFF" Padding="10,6" FontSize="12" />
+                        <Button x:Name="MarkerEditorSaveButton" Content="Save" IsEnabled="False"
+                                Click="MarkerEditorSave_Click" Background="White" Foreground="#FF111111"
+                                BorderThickness="0" CornerRadius="8" Padding="14,6"
+                                FontSize="12" FontWeight="SemiBold" />
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </Border>
 
         <!-- Bottom HUD (3-column: title/time left · centered cluster · utility rail right) -->
         <Grid x:Name="ControlsOverlay" VerticalAlignment="Bottom">
@@ -190,6 +278,7 @@
                         <Button x:Name="PrevEpisodeButton"
                                 Style="{StaticResource PlayerDiscSecondaryStyle}"
                                 ToolTipService.ToolTip="Previous episode"
+                                AutomationProperties.Name="Previous episode"
                                 Click="PrevEpisode_Click"
                                 Visibility="Collapsed">
                             <FontIcon Glyph="&#xE100;" FontSize="14" />
@@ -202,7 +291,8 @@
                         <!-- Back 10s — curved arrow + "10" overlay -->
                         <Button Style="{StaticResource PlayerDiscSecondaryStyle}"
                                 Click="SkipBack_Click"
-                                ToolTipService.ToolTip="Back 10s (←)">
+                                ToolTipService.ToolTip="Back 10s (←)"
+                                AutomationProperties.Name="Back 10 seconds">
                             <Grid Width="28" Height="28">
                                 <FontIcon Glyph="&#xE72C;" FontSize="26" Foreground="#EBFFFFFF" />
                                 <TextBlock Text="10"
@@ -217,14 +307,17 @@
                         <!-- Primary play/pause disc -->
                         <Button x:Name="PlayPauseButton"
                                 Style="{StaticResource PlayerDiscPrimaryStyle}"
-                                Click="PlayPause_Click">
+                                Click="PlayPause_Click"
+                                ToolTipService.ToolTip="Pause"
+                                AutomationProperties.Name="Pause">
                             <FontIcon x:Name="PlayPauseIcon" Glyph="&#xE768;" FontSize="24" Foreground="#0A0A0B" />
                         </Button>
 
                         <!-- Forward 30s — mirrored curved arrow + "30" overlay -->
                         <Button Style="{StaticResource PlayerDiscSecondaryStyle}"
                                 Click="SkipForward_Click"
-                                ToolTipService.ToolTip="Forward 30s (→)">
+                                ToolTipService.ToolTip="Forward 30s (→)"
+                                AutomationProperties.Name="Forward 30 seconds">
                             <Grid Width="28" Height="28">
                                 <FontIcon Glyph="&#xE72C;" FontSize="26" Foreground="#EBFFFFFF"
                                           RenderTransformOrigin="0.5,0.5">
@@ -249,6 +342,7 @@
                                 Style="{StaticResource PlayerDiscSecondaryStyle}"
                                 Click="NextEpisode_Click"
                                 ToolTipService.ToolTip="Next episode"
+                                AutomationProperties.Name="Next episode"
                                 Visibility="Collapsed">
                             <FontIcon Glyph="&#xE101;" FontSize="14" />
                         </Button>
@@ -258,11 +352,13 @@
                     <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="2"
                                 HorizontalAlignment="Right" VerticalAlignment="Center">
                         <!-- Volume -->
-                        <Button Style="{StaticResource PlayerUtilityBtnStyle}" Click="Mute_Click">
+                        <Button x:Name="VolumeButton" Style="{StaticResource PlayerUtilityBtnStyle}" Click="Mute_Click"
+                                ToolTipService.ToolTip="Mute" AutomationProperties.Name="Mute">
                             <FontIcon x:Name="VolumeIcon" Glyph="&#xE767;" FontSize="14" />
                         </Button>
                         <Slider x:Name="VolumeSlider" Width="80" Minimum="0" Maximum="100" Value="100"
                                 VerticalAlignment="Center" Margin="2,0,4,0"
+                                AutomationProperties.Name="Volume"
                                 ValueChanged="VolumeSlider_ValueChanged" />
 
                         <!-- Divider (vertical thin line, fades at top/bottom) -->
@@ -278,63 +374,107 @@
                         </Border>
 
                         <!-- Audio -->
-                        <Button x:Name="AudioButton" Style="{StaticResource PlayerUtilityBtnStyle}">
+                        <Button x:Name="AudioButton" Style="{StaticResource PlayerUtilityBtnStyle}"
+                                ToolTipService.ToolTip="Audio" AutomationProperties.Name="Audio">
                             <FontIcon Glyph="&#xE8D6;" FontSize="14" />
                             <Button.Flyout>
-                                <MenuFlyout x:Name="AudioFlyout" />
+                                <Flyout x:Name="AudioFlyout" Placement="Top" Opening="AudioFlyout_Opening">
+                                    <Border Background="#F0000000" CornerRadius="8" Padding="0,6" MinWidth="280" MaxWidth="360">
+                                        <ScrollViewer MaxHeight="420" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                            <StackPanel x:Name="AudioListPanel" />
+                                        </ScrollViewer>
+                                    </Border>
+                                </Flyout>
                             </Button.Flyout>
                         </Button>
 
                         <!-- Chapters (hidden if no chapters; populated in code-behind) -->
-                        <Button x:Name="ChaptersButton" Style="{StaticResource PlayerUtilityBtnStyle}" Visibility="Collapsed">
+                        <Button x:Name="ChaptersButton" Style="{StaticResource PlayerUtilityBtnStyle}" Visibility="Collapsed"
+                                ToolTipService.ToolTip="Chapters" AutomationProperties.Name="Chapters">
                             <FontIcon Glyph="&#xE8FD;" FontSize="14" />
                             <Button.Flyout>
-                                <Flyout x:Name="ChaptersFlyout" Placement="Top">
-                                    <ScrollViewer MaxHeight="420" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                                        <StackPanel x:Name="ChaptersListPanel" Spacing="2" MinWidth="320" />
-                                    </ScrollViewer>
+                                <Flyout x:Name="ChaptersFlyout" Placement="Top" Opening="ChaptersFlyout_Opening">
+                                    <Border Background="#F0000000" CornerRadius="8" Padding="0,6" MinWidth="280" MaxWidth="360">
+                                        <ScrollViewer MaxHeight="460" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                            <StackPanel x:Name="ChaptersListPanel" Spacing="2" />
+                                        </ScrollViewer>
+                                    </Border>
                                 </Flyout>
                             </Button.Flyout>
                         </Button>
 
                         <!-- Subtitles -->
-                        <Button Style="{StaticResource PlayerUtilityBtnStyle}">
+                        <Button x:Name="SubtitleButton" Style="{StaticResource PlayerUtilityBtnStyle}"
+                                ToolTipService.ToolTip="Enable captions"
+                                AutomationProperties.Name="Enable captions">
                             <FontIcon Glyph="&#xED1E;" FontSize="14" />
                             <Button.Flyout>
-                                <MenuFlyout x:Name="SubtitleFlyout" />
+                                <Flyout x:Name="SubtitleFlyout" Placement="Top" Opening="SubtitleFlyout_Opening">
+                                    <Border Background="#F0000000" CornerRadius="8" Padding="0,6" MinWidth="300" MaxWidth="380">
+                                        <ScrollViewer MaxHeight="460" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                            <StackPanel x:Name="SubtitleListPanel" />
+                                        </ScrollViewer>
+                                    </Border>
+                                </Flyout>
                             </Button.Flyout>
                         </Button>
 
                         <!-- Quality -->
-                        <Button Style="{StaticResource PlayerUtilityBtnStyle}">
-                            <FontIcon Glyph="&#xE9E9;" FontSize="14" />
+                        <Button x:Name="QualityButton" Style="{StaticResource PlayerUtilityBtnStyle}"
+                                ToolTipService.ToolTip="Quality" AutomationProperties.Name="Quality">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE9E9;" FontSize="14" />
+                                <TextBlock x:Name="QualityButtonText" Text="Quality" FontSize="11" FontWeight="SemiBold" />
+                            </StackPanel>
                             <Button.Flyout>
-                                <MenuFlyout x:Name="QualityFlyout" />
+                                <Flyout x:Name="QualityFlyout" Placement="Top" Opening="QualityFlyout_Opening">
+                                    <Border Background="#F0000000" CornerRadius="8" Padding="0,6" MinWidth="220" MaxWidth="340">
+                                        <ScrollViewer MaxHeight="420" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                            <StackPanel x:Name="QualityListPanel" />
+                                        </ScrollViewer>
+                                    </Border>
+                                </Flyout>
                             </Button.Flyout>
                         </Button>
 
                         <!-- Playback speed -->
                         <Button x:Name="SpeedButton" Style="{StaticResource PlayerUtilityBtnStyle}"
-                                ToolTipService.ToolTip="Playback speed">
+                                ToolTipService.ToolTip="Playback speed" AutomationProperties.Name="Playback speed">
                             <TextBlock x:Name="SpeedButtonText" Text="1×" FontSize="12" />
-                            <Button.Flyout><MenuFlyout x:Name="SpeedFlyout" /></Button.Flyout>
+                            <Button.Flyout>
+                                <Flyout x:Name="SpeedFlyout" Placement="Top" Opening="SpeedFlyout_Opening">
+                                    <Border Background="#F0000000" CornerRadius="8" Padding="0,6" MinWidth="100">
+                                        <StackPanel x:Name="SpeedListPanel" />
+                                    </Border>
+                                </Flyout>
+                            </Button.Flyout>
                         </Button>
 
                         <!-- Sleep timer -->
                         <Button x:Name="SleepButton" Style="{StaticResource PlayerUtilityBtnStyle}"
-                                ToolTipService.ToolTip="Sleep timer">
-                            <FontIcon Glyph="&#xE708;" FontSize="14" />
-                            <Button.Flyout><MenuFlyout x:Name="SleepFlyout" /></Button.Flyout>
+                                ToolTipService.ToolTip="Sleep timer" AutomationProperties.Name="Sleep timer">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE708;" FontSize="14" />
+                                <TextBlock x:Name="SleepButtonText" Text="Sleep" FontSize="12" />
+                            </StackPanel>
+                            <Button.Flyout>
+                                <Flyout x:Name="SleepFlyout" Placement="Top" Opening="SleepFlyout_Opening">
+                                    <Border Background="#F0000000" CornerRadius="8" Padding="0,6" MinWidth="160">
+                                        <StackPanel x:Name="SleepListPanel" />
+                                    </Border>
+                                </Flyout>
+                            </Button.Flyout>
                         </Button>
 
                         <!-- Info (stats toggle) — active state uses amber dot underline -->
                         <Button x:Name="MarkerEditButton" Style="{StaticResource PlayerUtilityBtnStyle}"
-                                Click="MarkerEdit_Click" ToolTipService.ToolTip="Edit markers" Visibility="Collapsed">
+                                Click="MarkerEdit_Click" ToolTipService.ToolTip="Edit markers"
+                                AutomationProperties.Name="Edit markers" Visibility="Collapsed">
                             <FontIcon Glyph="&#xE70F;" FontSize="14" />
                         </Button>
 
                         <Button x:Name="InfoButton" Style="{StaticResource PlayerUtilityBtnStyle}" Click="Stats_Click"
-                                ToolTipService.ToolTip="Playback info (I)">
+                                ToolTipService.ToolTip="Playback info (I)" AutomationProperties.Name="Playback info">
                             <Grid>
                                 <FontIcon Glyph="&#xE946;" FontSize="14" />
                                 <Ellipse x:Name="InfoActiveDot"
@@ -350,13 +490,15 @@
                              always-on-top 16:9 window while playback continues. -->
                         <Button x:Name="PipButton" Style="{StaticResource PlayerUtilityBtnStyle}"
                                 ToolTipService.ToolTip="Picture in Picture (P)"
+                                AutomationProperties.Name="Picture in Picture"
                                 Click="PipButton_Click">
                             <FontIcon Glyph="&#xE7ED;" FontSize="14" />
                         </Button>
 
                         <!-- Fullscreen -->
-                        <Button Style="{StaticResource PlayerUtilityBtnStyle}" Click="Fullscreen_Click"
-                                ToolTipService.ToolTip="Fullscreen (F)">
+                        <Button x:Name="FullscreenButton" Style="{StaticResource PlayerUtilityBtnStyle}" Click="Fullscreen_Click"
+                                ToolTipService.ToolTip="Enter fullscreen (F)"
+                                AutomationProperties.Name="Enter fullscreen">
                             <FontIcon x:Name="FullscreenIcon" Glyph="&#xE740;" FontSize="14" />
                         </Button>
                     </StackPanel>

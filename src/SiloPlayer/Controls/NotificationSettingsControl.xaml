@@ -10,147 +10,195 @@
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
     </UserControl.Resources>
-    <StackPanel Spacing="20">
-        <Grid ColumnSpacing="16">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-            <StackPanel Spacing="6">
-                <TextBlock Text="Notifications" FontSize="24" FontWeight="SemiBold" />
-                <TextBlock Text="Choose new-episode alerts and delivery channels for this profile." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-            </StackPanel>
-            <Button Grid.Column="1" Content="Refresh" Style="{StaticResource SecondaryButtonStyle}" Click="Refresh_Click" />
-        </Grid>
-        <ProgressRing Width="30" Height="30" HorizontalAlignment="Center" IsActive="{Binding IsLoading}" Visibility="{Binding IsLoading, Converter={StaticResource BoolToVis}}" />
-        <TextBlock Text="{Binding ErrorMessage}" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" Visibility="{Binding ErrorMessage, Converter={StaticResource NullToVis}}" />
-        <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource SuccessBrush}" TextWrapping="Wrap" Visibility="{Binding StatusMessage, Converter={StaticResource NullToVis}}" />
+
+    <StackPanel Spacing="24">
+        <TextBlock Text="Notifications" FontSize="30" FontWeight="SemiBold" />
+        <ProgressRing Width="30" Height="30" HorizontalAlignment="Center"
+                      IsActive="{Binding IsLoading}" Visibility="{Binding IsLoading, Converter={StaticResource BoolToVis}}" />
+        <TextBlock Text="{Binding ErrorMessage}" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap"
+                   Visibility="{Binding ErrorMessage, Converter={StaticResource NullToVis}}" />
+        <TextBlock Text="{Binding StatusMessage}" Foreground="{StaticResource SuccessBrush}" TextWrapping="Wrap"
+                   Visibility="{Binding StatusMessage, Converter={StaticResource NullToVis}}" />
 
         <Border Style="{StaticResource SettingsGroupStyle}">
-            <StackPanel Spacing="12">
+            <StackPanel Spacing="14">
                 <TextBlock Text="New Episode Notifications" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Text="Choose which series relationships notify this profile when a new episode arrives." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                <ToggleSwitch Header="Enable notifications" OffContent="Master switch off" OnContent="Master switch on" IsOn="{Binding NotificationsEnabled, Mode=TwoWay}" />
-                <ToggleSwitch Header="Favorites" IsOn="{Binding NotifyFavorites, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" />
-                <ToggleSwitch Header="Watchlist" IsOn="{Binding NotifyWatchlist, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" />
-                <ToggleSwitch Header="Continue Watching" IsOn="{Binding NotifyContinueWatching, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" />
-                <ToggleSwitch Header="Next Up" IsOn="{Binding NotifyNextUp, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" />
-                <Button Content="Save preferences" Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Left" Click="SavePreferences_Click" />
-            </StackPanel>
-        </Border>
-
-        <Border Style="{StaticResource SettingsGroupStyle}" Visibility="{Binding HasEmail, Converter={StaticResource BoolToVis}}">
-            <StackPanel Spacing="12">
-                <TextBlock Text="Email Notifications" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Text="Per profile: each profile verifies its own address and picks its own frequency." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                <StackPanel Orientation="Horizontal" Spacing="5">
-                    <TextBlock Text="Deliver to:" FontSize="13" />
-                    <TextBlock Text="{Binding EmailPreferences.CustomEmail}" FontSize="13" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="5" Visibility="{Binding EmailPreferences.PendingEmail, Converter={StaticResource NullToVis}}">
-                    <TextBlock Text="Verification pending:" Foreground="#F59E0B" FontSize="12" />
-                    <TextBlock Text="{Binding EmailPreferences.PendingEmail}" Foreground="#F59E0B" FontSize="12" />
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" Spacing="8" Visibility="{Binding EmailPreferences.CanEditAddress, Converter={StaticResource BoolToVis}}">
-                    <TextBox Width="280" PlaceholderText="name@example.com" Text="{Binding EmailAddressInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                    <Button Content="Send verification" Style="{StaticResource SecondaryButtonStyle}" Click="SetEmail_Click" />
-                    <Button Content="Remove" Style="{StaticResource SecondaryButtonStyle}" Click="ClearEmail_Click" />
-                </StackPanel>
-                <TextBlock Text="Child profiles can't receive email notifications." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" Visibility="{Binding EmailPreferences.CanEditAddress, Converter={StaticResource InverseBoolToVis}}" />
-                <StackPanel Orientation="Horizontal" Spacing="10">
-                    <ComboBox x:Name="EmailModeCombo" Width="240" SelectionChanged="EmailModeCombo_SelectionChanged">
-                        <ComboBoxItem Content="Off" Tag="off" />
-                        <ComboBoxItem Content="Daily digest" Tag="daily_digest" />
-                        <ComboBoxItem Content="Every episode" Tag="per_episode" />
-                        <ComboBoxItem Content="Every episode + daily digest" Tag="per_episode_and_digest" />
-                    </ComboBox>
-                    <Button Content="Save frequency" Style="{StaticResource AccentButtonStyle}" Click="SaveEmailMode_Click" />
-                </StackPanel>
-                <TextBlock Text="{Binding EmailDigestDescription}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" />
-            </StackPanel>
-        </Border>
-
-        <Border Style="{StaticResource SettingsGroupStyle}" Visibility="{Binding HasDiscord, Converter={StaticResource BoolToVis}}">
-            <StackPanel Spacing="12">
-                <TextBlock Text="Discord Notifications" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Text="Account-wide: the Silo bot sends direct messages covering every profile on this account." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                <StackPanel Visibility="{Binding DiscordPreferences.Linked, Converter={StaticResource InverseBoolToVis}}">
-                    <Button Content="Link Discord" Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Left" Click="LinkDiscord_Click" />
-                </StackPanel>
-                <StackPanel Spacing="10" Visibility="{Binding DiscordPreferences.Linked, Converter={StaticResource BoolToVis}}">
-                    <StackPanel Orientation="Horizontal" Spacing="5">
-                        <TextBlock Text="Linked as" FontWeight="SemiBold" />
-                        <TextBlock Text="{Binding DiscordPreferences.DiscordUsername}" FontWeight="SemiBold" />
+                <TextBlock Text="Choose which series relationships notify this profile when a new episode arrives."
+                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Enable notifications" FontWeight="SemiBold" />
+                        <TextBlock Text="Master switch for this profile" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <ComboBox x:Name="DiscordModeCombo" Width="240" SelectionChanged="DiscordModeCombo_SelectionChanged">
-                            <ComboBoxItem Content="Off" Tag="off" />
-                            <ComboBoxItem Content="Daily digest" Tag="daily_digest" />
-                            <ComboBoxItem Content="Every episode" Tag="per_episode" />
-                            <ComboBoxItem Content="Every episode + daily digest" Tag="per_episode_and_digest" />
-                        </ComboBox>
-                        <Button Content="Save frequency" Style="{StaticResource AccentButtonStyle}" Click="SaveDiscordMode_Click" />
-                        <Button Content="Unlink" Style="{StaticResource DestructiveButtonStyle}" Click="UnlinkDiscord_Click" />
-                    </StackPanel>
-                    <TextBlock Text="{Binding DiscordDigestDescription}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" />
-                    <TextBlock Text="{Binding DiscordPreferences.LinkFailure}" Foreground="#F59E0B" FontSize="12" Visibility="{Binding DiscordPreferences.LinkFailure, Converter={StaticResource NullToVis}}" />
-                </StackPanel>
+                    <ToggleSwitch Grid.Column="1" IsOn="{Binding NotificationsEnabled, Mode=TwoWay}" Toggled="NotificationPreference_Toggled" />
+                </Grid>
+                <Grid><TextBlock Text="Favorites" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyFavorites, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
+                <Grid><TextBlock Text="Watchlist" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyWatchlist, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
+                <Grid><TextBlock Text="Continue Watching" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyContinueWatching, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
+                <Grid><TextBlock Text="Next Up" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyNextUp, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
             </StackPanel>
         </Border>
 
         <Border Style="{StaticResource SettingsGroupStyle}" Visibility="{Binding HasWebPush, Converter={StaticResource BoolToVis}}">
-            <StackPanel Spacing="12">
+            <StackPanel Spacing="14">
                 <TextBlock Text="Browser Notifications" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Text="Manage browser push subscriptions registered to this profile. New browser subscriptions are created from Silo's WebUI." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                <TextBlock Text="No browser subscriptions." Foreground="{StaticResource SecondaryTextBrush}" Visibility="{Binding HasWebPushSubscriptions, Converter={StaticResource InverseBoolToVis}}" />
+                <TextBlock Text="Get notified even when Silo is closed. Notifications are encrypted end-to-end — the browser vendor's push service never sees their content."
+                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                <TextBlock Text="Browser subscriptions are enabled from Silo's WebUI. This Windows app can review and remove the browsers registered to this profile."
+                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                <TextBlock Text="No browser subscriptions." Foreground="{StaticResource SecondaryTextBrush}"
+                           Visibility="{Binding HasWebPushSubscriptions, Converter={StaticResource InverseBoolToVis}}" />
                 <ItemsControl ItemsSource="{Binding WebPushSubscriptions}" Visibility="{Binding HasWebPushSubscriptions, Converter={StaticResource BoolToVis}}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="models:WebPushSubscriptionView">
-                            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,3">
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                    <StackPanel Spacing="3">
-                                        <TextBlock Text="{x:Bind DeviceName}" FontWeight="SemiBold" />
-                                        <TextBlock Text="{x:Bind Endpoint}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
-                                    </StackPanel>
-                                    <Button Grid.Column="1" Content="Remove" Tag="{x:Bind Id}" Style="{StaticResource SecondaryButtonStyle}" Click="RemovePush_Click" />
-                                </Grid>
-                            </Border>
+                            <Grid ColumnSpacing="12" Padding="0,7">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="3">
+                                    <TextBlock Text="{x:Bind DeviceName}" FontWeight="SemiBold" />
+                                    <TextBlock Text="{x:Bind Endpoint}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Remove" Tag="{x:Bind Id}" Style="{StaticResource SecondaryButtonStyle}" Click="RemovePush_Click" />
+                            </Grid>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
             </StackPanel>
         </Border>
 
+        <Border Style="{StaticResource SettingsGroupStyle}" Visibility="{Binding HasEmail, Converter={StaticResource BoolToVis}}">
+            <StackPanel Spacing="14">
+                <TextBlock Text="Email Notifications" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="Per profile: each profile verifies its own address and picks its own frequency."
+                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Email this profile's notifications" FontWeight="SemiBold" />
+                        <TextBlock Text="Notifications you'd see in the inbox, delivered by email" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                    <ToggleSwitch x:Name="EmailEnabledToggle" Grid.Column="1" IsOn="{Binding IsEmailEnabled}" IsEnabled="{Binding CanToggleEmail}" Toggled="EmailEnabled_Toggled" />
+                </Grid>
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Deliver to" />
+                        <TextBlock Text="{Binding EmailDestinationText}" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" Visibility="{Binding EmailPreferences.CanEditAddress, Converter={StaticResource BoolToVis}}">
+                        <Button Content="Remove" Style="{StaticResource SecondaryButtonStyle}" Click="ClearEmail_Click"
+                                Visibility="{Binding HasVerifiedEmail, Converter={StaticResource BoolToVis}}" />
+                        <Button x:Name="EmailAddressActionButton" Content="{Binding EmailAddressActionText}" Style="{StaticResource SecondaryButtonStyle}" Click="ToggleEmailEditor_Click" />
+                    </StackPanel>
+                </Grid>
+                <StackPanel x:Name="EmailAddressEditor" Orientation="Horizontal" Spacing="8" Visibility="Collapsed">
+                    <TextBox x:Name="EmailAddressInput" Width="280" PlaceholderText="name@example.com" Text="{Binding EmailAddressInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" KeyDown="EmailAddressInput_KeyDown" />
+                    <Button Content="Send verification" Style="{StaticResource AccentButtonStyle}" Click="SetEmail_Click" />
+                </StackPanel>
+                <TextBlock Text="{Binding EmailPendingText}" Foreground="#F59E0B" FontSize="12" TextWrapping="Wrap"
+                           Visibility="{Binding HasPendingEmail, Converter={StaticResource BoolToVis}}" />
+                <TextBlock Text="Child profiles can't receive email notifications." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
+                           Visibility="{Binding EmailPreferences.CanEditAddress, Converter={StaticResource InverseBoolToVis}}" />
+                <Grid ColumnSpacing="16" Visibility="{Binding IsEmailEnabled, Converter={StaticResource BoolToVis}}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="220" /></Grid.ColumnDefinitions>
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Frequency" />
+                        <TextBlock Text="{Binding EmailDigestDescription}" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                    <ComboBox x:Name="EmailModeCombo" Grid.Column="1" SelectionChanged="EmailModeCombo_SelectionChanged">
+                        <ComboBoxItem Content="Daily digest" Tag="daily_digest" />
+                        <ComboBoxItem Content="Every episode" Tag="per_episode" />
+                        <ComboBoxItem Content="Every episode + daily digest" Tag="per_episode_and_digest" />
+                    </ComboBox>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource SettingsGroupStyle}" Visibility="{Binding HasDiscord, Converter={StaticResource BoolToVis}}">
+            <StackPanel Spacing="14">
+                <TextBlock Text="Discord Notifications" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="Account-wide: the Silo bot sends direct messages covering every profile on this account. You must share a Discord server with the bot."
+                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                <Grid ColumnSpacing="16" Visibility="{Binding DiscordPreferences.Linked, Converter={StaticResource InverseBoolToVis}}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <StackPanel Spacing="2">
+                        <TextBlock Text="Link your Discord account" FontWeight="SemiBold" />
+                        <TextBlock Text="Authorize on Discord so the bot knows who to message" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="Link Discord" Style="{StaticResource AccentButtonStyle}" Click="LinkDiscord_Click" />
+                </Grid>
+                <StackPanel Spacing="14" Visibility="{Binding DiscordPreferences.Linked, Converter={StaticResource BoolToVis}}">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="{Binding DiscordPreferences.DiscordUsername}" FontWeight="SemiBold" />
+                            <TextBlock Text="Notifications you'd see in the inbox, delivered as a DM" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                            <ToggleSwitch x:Name="DiscordEnabledToggle" IsOn="{Binding IsDiscordEnabled}" Toggled="DiscordEnabled_Toggled" />
+                            <Button Content="Unlink" Style="{StaticResource DestructiveButtonStyle}" Click="UnlinkDiscord_Click" />
+                        </StackPanel>
+                    </Grid>
+                    <Grid ColumnSpacing="16" Visibility="{Binding IsDiscordEnabled, Converter={StaticResource BoolToVis}}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="220" /></Grid.ColumnDefinitions>
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Frequency" />
+                            <TextBlock Text="{Binding DiscordDigestDescription}" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                        </StackPanel>
+                        <ComboBox x:Name="DiscordModeCombo" Grid.Column="1" SelectionChanged="DiscordModeCombo_SelectionChanged">
+                            <ComboBoxItem Content="Daily digest" Tag="daily_digest" />
+                            <ComboBoxItem Content="Every episode" Tag="per_episode" />
+                            <ComboBoxItem Content="Every episode + daily digest" Tag="per_episode_and_digest" />
+                        </ComboBox>
+                    </Grid>
+                    <TextBlock Text="{Binding DiscordPreferences.LinkFailure}" Foreground="#F59E0B" FontSize="12"
+                               Visibility="{Binding DiscordPreferences.LinkFailure, Converter={StaticResource NullToVis}}" />
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
         <Border Style="{StaticResource SettingsGroupStyle}" Visibility="{Binding HasWebhooks, Converter={StaticResource BoolToVis}}">
-            <StackPanel Spacing="12">
+            <StackPanel Spacing="14">
                 <TextBlock Text="Webhooks" FontSize="18" FontWeight="SemiBold" />
-                <TextBlock Text="Send this profile's notifications to a webhook URL. Discord URLs render as native embeds; other URLs receive signed JSON." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                <TextBlock Text="No webhooks yet." Foreground="{StaticResource SecondaryTextBrush}" Visibility="{Binding HasWebhookEntries, Converter={StaticResource InverseBoolToVis}}" />
+                <TextBlock Text="Send this profile's notifications to a webhook URL. Discord URLs render as native embeds; other URLs receive signed JSON."
+                           FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                <TextBlock Text="No webhooks yet." Foreground="{StaticResource SecondaryTextBrush}"
+                           Visibility="{Binding HasWebhookEntries, Converter={StaticResource InverseBoolToVis}}" />
                 <ItemsControl ItemsSource="{Binding Webhooks}" Visibility="{Binding HasWebhookEntries, Converter={StaticResource BoolToVis}}">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate x:DataType="models:NotificationWebhook">
                             <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="14" Margin="0,4">
-                                <StackPanel Spacing="8">
+                                <StackPanel Spacing="9">
                                     <Grid ColumnSpacing="10">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                         <StackPanel Orientation="Horizontal" Spacing="8">
                                             <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" />
-                                            <TextBlock Text="{x:Bind Type}" Foreground="{StaticResource SecondaryTextBrush}" />
+                                            <TextBlock Text="{x:Bind TypeLabel}" Foreground="{StaticResource SecondaryTextBrush}" />
                                             <TextBlock Text="{x:Bind UrlHost}" Foreground="{StaticResource SecondaryTextBrush}" />
+                                            <TextBlock Text="{x:Bind StateLabel}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" />
                                         </StackPanel>
                                         <ToggleSwitch Grid.Column="1" IsOn="{x:Bind Enabled}" Tag="{x:Bind}" Toggled="WebhookEnabled_Toggled" />
                                     </Grid>
+                                    <TextBlock Text="{x:Bind EnabledReasonsText}" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBlock Text="{x:Bind DeliveryStatusText}" Foreground="#F59E0B" FontSize="11" TextWrapping="Wrap"
+                                               Visibility="{x:Bind DeliveryStatusText, Converter={StaticResource NullToVis}}" />
                                     <StackPanel Orientation="Horizontal" Spacing="7">
                                         <Button Content="Test" Tag="{x:Bind Id}" Style="{StaticResource SecondaryButtonStyle}" Click="TestWebhook_Click" />
                                         <Button Content="Edit" Tag="{x:Bind}" Style="{StaticResource SecondaryButtonStyle}" Click="EditWebhook_Click" />
-                                        <Button Content="Rotate secret" Tag="{x:Bind}" Style="{StaticResource SecondaryButtonStyle}" Click="RotateSecret_Click" />
+                                        <Button Content="Rotate secret" Tag="{x:Bind}" Style="{StaticResource SecondaryButtonStyle}" Click="RotateSecret_Click"
+                                                Visibility="{x:Bind CanRotateSecret, Converter={StaticResource BoolToVis}}" />
                                         <Button Content="Delete" Tag="{x:Bind}" Style="{StaticResource DestructiveButtonStyle}" Click="DeleteWebhook_Click" />
                                     </StackPanel>
-                                    <TextBlock Text="{x:Bind DisabledReason}" Foreground="#F59E0B" FontSize="11" Visibility="{x:Bind DisabledReason, Converter={StaticResource NullToVis}}" />
                                 </StackPanel>
                             </Border>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <Button Content="＋  Add webhook" Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Left" IsEnabled="{Binding CanAddWebhook}" Click="AddWebhook_Click" />
+                <StackPanel Orientation="Horizontal" Spacing="10">
+                    <Button Content="＋  Add webhook" Style="{StaticResource SecondaryButtonStyle}" IsEnabled="{Binding CanAddWebhook}" Click="AddWebhook_Click" />
+                    <TextBlock Text="{Binding WebhookLimitText}" VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
+                               Visibility="{Binding IsWebhookLimitReached, Converter={StaticResource BoolToVis}}" />
+                </StackPanel>
             </StackPanel>
         </Border>
     </StackPanel>

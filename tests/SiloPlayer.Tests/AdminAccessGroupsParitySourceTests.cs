@@ -67,7 +67,7 @@ public sealed class AdminAccessGroupsParitySourceTests
     {
         var shell = ReadRepoFile("src", "SiloPlayer", "Views", "Admin", "AdminShellPage.xaml.cs");
 
-        Assert.Contains("AddNavGroup(\"OVERVIEW\", NavDashboard, NavActivity, NavLogs)", shell);
+        Assert.Contains("AddNavGroup(\"OVERVIEW\", NavDashboard, NavActivity, NavLogs, NavDiagnostics)", shell);
         Assert.Contains("AddNavGroup(\"CONTENT\", NavLibraries, NavCollections, NavSections, NavRequests)", shell);
         Assert.Contains("AddNavGroup(\"AUTOMATION\", NavAutoscan, NavScheduledTasks, NavSubtitles, NavMarkerHistory, NavRecommendations)", shell);
         Assert.Contains("AddNavGroup(\"USERS\", NavUsers, NavAccessGroups, NavDevices, NavPlaybackHistory, NavHistoryImport)", shell);

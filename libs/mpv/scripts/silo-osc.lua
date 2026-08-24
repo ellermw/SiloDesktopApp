@@ -335,6 +335,39 @@ local function visible_quality_tiers()
     local result = {}
     local resolution = state.media_info and state.media_info.resolution or ""
     local native_height = quality_resolution_height[resolution] or 0
+    local server_qualities = state.quality_info and state.quality_info.qualities
+    if type(server_qualities) == "table" and #server_qualities > 0 then
+        for _, quality in ipairs(server_qualities) do
+            local id = quality.id or quality.label or ""
+            if id ~= "" then
+                local label = quality.label or id
+                if id == "original" and resolution ~= "" then
+                    label = "Original (" .. (resolution == "2160p" and "4K" or resolution) .. ")"
+                end
+                local details = {}
+                local bitrate = tonumber(quality.bitrate_kbps) or 0
+                if bitrate > 0 then
+                    if bitrate >= 1000 then
+                        local mbps = bitrate / 1000
+                        table.insert(details, mbps % 1 == 0
+                            and string.format("%d Mbps", mbps)
+                            or string.format("%.1f Mbps", mbps))
+                    else
+                        table.insert(details, string.format("%d kbps", bitrate))
+                    end
+                end
+                if id == "original" and state.play_method_str and state.play_method_str ~= "" then
+                    table.insert(details, 1, state.play_method_str)
+                end
+                table.insert(result, {
+                    id = id,
+                    label = label,
+                    sublabel = table.concat(details, " · "),
+                })
+            end
+        end
+        return result
+    end
     for _, tier in ipairs(quality_tiers) do
         local copy = { id = tier.id, label = tier.label, sublabel = tier.sublabel }
         if tier.id == "original" and resolution ~= "" then
@@ -2350,7 +2383,7 @@ local function render_osc()
             draw_text(ass, confirm_x + math.floor(18 * sc), confirm_y + math.floor(28 * sc),
                 "End watch party?", math.floor(17 * sc), config.text_color, "00", ma, 4, nil, true)
             draw_text(ass, confirm_x + math.floor(18 * sc), confirm_y + math.floor(57 * sc),
-                "This disconnects everyone in the room.", math.floor(12 * sc),
+                "End the watch party for everyone?", math.floor(12 * sc),
                 config.text_color, "72", ma, 4, nil, false)
             local button_y = confirm_y + math.floor(92 * sc)
             local button_h = math.floor(32 * sc)
@@ -4395,6 +4428,11 @@ local function activate_keyboard_menu_item()
 end
 
 local function close_keyboard_surface()
+    if state.watch_party_end_confirm then
+        state.watch_party_end_confirm = false
+        request_tick()
+        return true
+    end
     local kind = current_keyboard_menu()
     if kind then
         close_transport_menus(nil)
@@ -5492,6 +5530,27 @@ local function observe_properties()
             render_chapter_menu()
         end
         request_tick()
+    end)
+
+    -- Chapter thumbnails may be generated after playback begins. Patch the
+    -- URL in place when the server's chapter_thumbnail_ready event arrives;
+    -- replacing the complete chapter list would discard every already-decoded
+    -- BGRA preview and make the menu flash back to placeholders.
+    mp.register_script_message("osc-patch-chapter-thumbnail-url", function(index, url)
+        local chapter_index = tonumber(index) or -1
+        if chapter_index < 0 or not url or url == "" then return end
+        for _, chapter in ipairs(state.chapters or {}) do
+            if tonumber(chapter.index) == chapter_index then
+                chapter.thumbnail_url = url
+                state.chapter_thumbnail_requested[chapter_index] = nil
+                if state.chapter_menu_visible then
+                    render_chapter_menu()
+                else
+                    render_osc()
+                end
+                return
+            end
+        end
     end)
 
     mp.register_script_message("osc-clear-chapter-thumbnail", function()

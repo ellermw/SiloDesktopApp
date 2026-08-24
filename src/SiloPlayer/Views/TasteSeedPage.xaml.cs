@@ -11,6 +11,7 @@ namespace SiloPlayer.Views;
 public sealed partial class TasteSeedPage : Page
 {
     public TasteSeedViewModel ViewModel { get; } = App.Services.GetRequiredService<TasteSeedViewModel>();
+    public IReadOnlyList<int> SkeletonItems { get; } = Enumerable.Range(0, 24).ToArray();
     private bool _returningFromSettings;
 
     public TasteSeedPage()

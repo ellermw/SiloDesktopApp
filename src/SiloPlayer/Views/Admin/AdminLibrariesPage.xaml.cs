@@ -39,7 +39,9 @@ public sealed partial class AdminLibrariesPage : Page
     private const int ScanUiRefreshMs = 300;
     private const int ScanLibraryRowsRefreshMs = 1500;
     private const int ScanLibraryReloadMs = 10000;
-    private const int MaxScanRowsInPopover = 25;
+    private const int CollapsedScanRowLimit = 4;
+    private readonly HashSet<int> _expandedInlineScanLibraries = [];
+    private readonly HashSet<int> _expandedScanQueueLibraries = [];
     private int _staleCurrentPage;
     private string _unmatchedFilter = "";
     private string _staleFilter = "";
@@ -788,7 +790,9 @@ public sealed partial class AdminLibrariesPage : Page
             workPanel.Children.Add(refreshRow);
         }
 
-        foreach (var scan in scans)
+        var scansExpanded = _expandedInlineScanLibraries.Contains(lib.Id);
+        var visibleScans = scansExpanded ? scans : scans.Take(CollapsedScanRowLimit).ToList();
+        foreach (var scan in visibleScans)
         {
             // WebUI LibraryScanTaskRow: stop control, scan glyph, then the
             // status/detail/progress copy.  Keeping this hierarchy also makes
@@ -869,6 +873,50 @@ public sealed partial class AdminLibrariesPage : Page
             Grid.SetColumn(copy, 2);
             scanRow.Children.Add(copy);
             workPanel.Children.Add(scanRow);
+        }
+
+        if (scans.Count > CollapsedScanRowLimit)
+        {
+            var toggleScans = new Button
+            {
+                Padding = new Thickness(4, 2, 4, 2),
+                MinHeight = 24,
+                MinWidth = 0,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Background = new SolidColorBrush(Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                Content = new StackPanel
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 4,
+                    Children =
+                    {
+                        new TextBlock
+                        {
+                            Text = scansExpanded ? "Show less" : $"Show all {scans.Count}",
+                            FontSize = 10,
+                            Foreground = _tertiaryText,
+                        },
+                        new FontIcon
+                        {
+                            Glyph = scansExpanded ? "\uE70E" : "\uE70D",
+                            FontSize = 10,
+                            Foreground = _tertiaryText,
+                        },
+                    },
+                },
+            };
+            toggleScans.Click += (_, _) =>
+            {
+                if (!_expandedInlineScanLibraries.Add(lib.Id))
+                    _expandedInlineScanLibraries.Remove(lib.Id);
+                BuildLibraryRows();
+            };
+            workPanel.Children.Add(toggleScans);
+        }
+        else
+        {
+            _expandedInlineScanLibraries.Remove(lib.Id);
         }
 
         return new Border
@@ -1174,19 +1222,13 @@ public sealed partial class AdminLibrariesPage : Page
             .ToList();
 
         var groupsPanel = new StackPanel { Spacing = 4, Padding = new Thickness(12, 8, 12, 8) };
-        var visibleRows = 0;
-        var hiddenRows = 0;
 
         foreach (var group in groups)
         {
-            if (visibleRows >= MaxScanRowsInPopover)
-            {
-                hiddenRows += group.Scans.Count;
-                continue;
-            }
-
-            var visibleScans = group.Scans.Take(MaxScanRowsInPopover - visibleRows).ToList();
-            hiddenRows += group.Scans.Count - visibleScans.Count;
+            var scansExpanded = _expandedScanQueueLibraries.Contains(group.LibraryId);
+            var visibleScans = scansExpanded
+                ? group.Scans
+                : group.Scans.Take(CollapsedScanRowLimit).ToList();
 
             // Library header
             var libHeader = new Grid { Padding = new Thickness(0, 6, 0, 6) };
@@ -1305,20 +1347,56 @@ public sealed partial class AdminLibrariesPage : Page
                 }
 
                 groupsPanel.Children.Add(scanRow);
-                visibleRows++;
             }
-        }
 
-        if (hiddenRows > 0)
-        {
-            groupsPanel.Children.Add(new TextBlock
+            if (group.Scans.Count > CollapsedScanRowLimit)
             {
-                Text = $"+{hiddenRows} more scans",
-                FontSize = 11,
-                Foreground = _tertiaryText,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 8, 0, 4),
-            });
+                var hiddenCount = group.Scans.Count - visibleScans.Count;
+                var queuedCount = group.Scans.Count(scan => scan.Status != "running");
+                var toggle = new Button
+                {
+                    Padding = new Thickness(10, 4, 10, 4),
+                    MinHeight = 24,
+                    MinWidth = 0,
+                    HorizontalAlignment = HorizontalAlignment.Left,
+                    Background = new SolidColorBrush(Colors.Transparent),
+                    BorderThickness = new Thickness(0),
+                    Content = new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        Spacing = 4,
+                        Children =
+                        {
+                            new TextBlock
+                            {
+                                Text = scansExpanded
+                                    ? "Show less"
+                                    : $"+ {hiddenCount} more{(hiddenCount <= queuedCount ? " queued" : "")}",
+                                FontSize = 10,
+                                Foreground = _tertiaryText,
+                            },
+                            new FontIcon
+                            {
+                                Glyph = scansExpanded ? "\uE70E" : "\uE70D",
+                                FontSize = 10,
+                                Foreground = _tertiaryText,
+                            },
+                        },
+                    },
+                };
+                var capturedLibraryId = group.LibraryId;
+                toggle.Click += (_, _) =>
+                {
+                    if (!_expandedScanQueueLibraries.Add(capturedLibraryId))
+                        _expandedScanQueueLibraries.Remove(capturedLibraryId);
+                    BuildScanQueuePopover(forceContent: true);
+                };
+                groupsPanel.Children.Add(toggle);
+            }
+            else
+            {
+                _expandedScanQueueLibraries.Remove(group.LibraryId);
+            }
         }
 
         ScanQueueFlyoutContent.Children.Add(groupsPanel);

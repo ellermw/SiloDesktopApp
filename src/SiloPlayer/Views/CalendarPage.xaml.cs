@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -275,26 +276,26 @@ public sealed partial class CalendarPage : Page
             var hasEvents = datesWithEvents.Contains(dateStr);
             var selected = dateStr == activeSelectedDay;
 
-            var cell = new Border
+            var cellSurface = new Border
             {
                 Style = (Style)Resources["WeekDayCellBorderStyle"],
             };
             if (selected)
             {
-                cell.Background = (Brush)Application.Current.Resources["AccentBrush"];
-                cell.BorderBrush = (Brush)Application.Current.Resources["AccentBrush"];
-                cell.BorderThickness = new Thickness(1);
+                cellSurface.Background = (Brush)Application.Current.Resources["AccentBrush"];
+                cellSurface.BorderBrush = (Brush)Application.Current.Resources["AccentBrush"];
+                cellSurface.BorderThickness = new Thickness(1);
             }
             else if (today)
             {
                 // Highlight today with a subtle accent background (web: bg-primary/15 ring)
-                cell.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent)
+                cellSurface.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent)
                 {
                     Opacity = 1
                 };
-                cell.Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"];
-                cell.BorderBrush = (Brush)Application.Current.Resources["AccentBrush"];
-                cell.BorderThickness = new Thickness(1);
+                cellSurface.Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"];
+                cellSurface.BorderBrush = (Brush)Application.Current.Resources["AccentBrush"];
+                cellSurface.BorderThickness = new Thickness(1);
             }
 
             var stack = new StackPanel
@@ -346,8 +347,22 @@ public sealed partial class CalendarPage : Page
             }
             stack.Children.Add(dotContainer);
 
-            cell.Child = stack;
-            cell.Tapped += (_, _) => SelectDay(dateStr, hasEvents);
+            cellSurface.Child = stack;
+            var cell = new Button
+            {
+                Content = cellSurface,
+                Padding = new Thickness(0),
+                Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+                BorderThickness = new Thickness(0),
+                HorizontalAlignment = HorizontalAlignment.Stretch,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                CornerRadius = new CornerRadius(12),
+            };
+            AutomationProperties.SetName(
+                cell,
+                $"{CalendarViewModel.FormatDayHeading(dateStr)}{(hasEvents ? ", scheduled releases" : ", nothing scheduled")}");
+            AutomationProperties.SetHelpText(cell, selected ? "Selected day" : "Select day");
+            cell.Click += (_, _) => SelectDay(dateStr, hasEvents);
             Grid.SetColumn(cell, dayIndex);
             WeekStripPanel.Children.Add(cell);
         }
@@ -561,7 +576,7 @@ public sealed partial class CalendarPage : Page
             });
         }
 
-        var airTime = FormatAirTime(ev.AirTime);
+        var airTime = FormatAirTime(ev.AirTime, ev.AirAt);
         if (!string.IsNullOrEmpty(airTime))
         {
             textStack.Children.Add(new TextBlock
@@ -576,8 +591,30 @@ public sealed partial class CalendarPage : Page
         Grid.SetRow(textStack, 1);
         root.Children.Add(textStack);
 
-        // --- Click → item detail (web: /item/{content_id} for movies, /item/{series_id} otherwise) ---
-        root.Tapped += (_, _) =>
+        // Use an actual button rather than a mouse-only tapped Grid. This keeps
+        // CalendarEventCard parity for keyboard, controller, and accessibility
+        // clients while retaining the exact visual card surface.
+        var cardButton = new Button
+        {
+            Content = root,
+            Width = cardWidth,
+            Padding = new Thickness(0),
+            Margin = new Thickness(0),
+            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            BorderThickness = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            VerticalContentAlignment = VerticalAlignment.Top,
+            CornerRadius = new CornerRadius(12),
+        };
+        var accessibleSubtitle = FormatSubtitle(ev);
+        var accessibleTime = FormatAirTime(ev.AirTime, ev.AirAt);
+        AutomationProperties.SetName(cardButton, string.Join(", ", new[]
+        {
+            ev.Title,
+            accessibleSubtitle,
+            accessibleTime,
+        }.Where(value => !string.IsNullOrWhiteSpace(value))));
+        cardButton.Click += (_, _) =>
         {
             var nav = App.Services.GetRequiredService<NavigationService>();
             var targetId = ev.Type == "movie"
@@ -590,7 +627,7 @@ public sealed partial class CalendarPage : Page
         // Load the poster asynchronously (don't block UI on dozens of simultaneous decodes)
         _ = LoadEventPosterAsync(posterImage, ev);
 
-        return root;
+        return cardButton;
     }
 
     private Border BuildBadgePill(string badge)
@@ -612,7 +649,7 @@ public sealed partial class CalendarPage : Page
         if (isPremiere)
         {
             background = (Brush)Application.Current.Resources["AccentBrush"];
-            foreground = new SolidColorBrush(Microsoft.UI.Colors.White);
+            foreground = (Brush)Application.Current.Resources["AccentForegroundBrush"];
         }
         else if (isFinale)
         {
@@ -670,13 +707,17 @@ public sealed partial class CalendarPage : Page
     }
 
     /// <summary>Mirrors <c>formatUpcomingTime</c> — HH:MM[:SS] → localized h:mm.</summary>
-    private static string? FormatAirTime(string? airTime)
+    private static string? FormatAirTime(string? airTime, string? airAt)
     {
+        if (!string.IsNullOrWhiteSpace(airAt) &&
+            DateTimeOffset.TryParse(airAt, System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.AllowWhiteSpaces, out var instant))
+            return DateTimeDisplay.FormatTime(instant);
         if (string.IsNullOrEmpty(airTime)) return null;
         if (TimeSpan.TryParse(airTime, out var ts))
         {
             var dt = DateTime.Today.Add(ts);
-            return dt.ToString("h:mm tt");
+            return DateTimeDisplay.FormatTime(new DateTimeOffset(dt, TimeZoneInfo.Local.GetUtcOffset(dt)));
         }
         return null;
     }

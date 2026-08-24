@@ -158,7 +158,7 @@ public partial class AdminActivityViewModel : ObservableObject
                 (s.MediaTitle?.Contains(SearchText, StringComparison.OrdinalIgnoreCase) == true) ||
                 (s.SeriesName?.Contains(SearchText, StringComparison.OrdinalIgnoreCase) == true) ||
                 (s.EpisodeName?.Contains(SearchText, StringComparison.OrdinalIgnoreCase) == true) ||
-                GetSessionClientLabel(s).Contains(SearchText, StringComparison.OrdinalIgnoreCase) ||
+                GetSessionClientLabelFull(s).Contains(SearchText, StringComparison.OrdinalIgnoreCase) ||
                 (s.ClientUserAgent?.Contains(SearchText, StringComparison.OrdinalIgnoreCase) == true) ||
                 (s.ClientIp?.Contains(SearchText, StringComparison.OrdinalIgnoreCase) == true));
         }
@@ -398,6 +398,16 @@ public partial class AdminActivityViewModel : ObservableObject
             return $"{session.ClientName.Trim()} {session.ClientVersion.Trim()}";
         return session.ClientName?.Trim() ?? "";
     }
+
+    /// <summary>
+    /// Exact client identity for expanded details and tooltips. Current servers
+    /// provide this separately so compact activity rows do not become wider as
+    /// version, build, and non-release channel metadata is added.
+    /// </summary>
+    public static string GetSessionClientLabelFull(AdminSession session) =>
+        !string.IsNullOrWhiteSpace(session.ClientLabelFull)
+            ? session.ClientLabelFull.Trim()
+            : GetSessionClientLabel(session);
 
     public static string NormalizeContainerDecision(string? playMethod) => playMethod?.Trim() switch
     {

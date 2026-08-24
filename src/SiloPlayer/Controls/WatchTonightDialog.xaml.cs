@@ -75,6 +75,7 @@ public sealed partial class WatchTonightDialog : ContentDialog
         _api = App.Services.GetRequiredService<RecommendationsApi>();
         this.InitializeComponent();
         this.Opened += OnOpened;
+        this.Closed += OnClosed;
         this.KeyDown += OnKeyDown;
     }
 
@@ -83,6 +84,24 @@ public sealed partial class WatchTonightDialog : ContentDialog
         BuildGenreChips();
         GoToStep(Step.ModeSelect);
     }
+
+    private void OnClosed(ContentDialog sender, ContentDialogClosedEventArgs args)
+    {
+        _mode = "discover";
+        _selectedGenres.Clear();
+        _cards.Clear();
+        _topIndex = 0;
+        _hasMore = false;
+        _prefetchTriggered = false;
+        CardStackHost.Children.Clear();
+        _stackCards.Clear();
+        _cardState.Clear();
+        foreach (var (_, button) in _genreChips)
+            StyleChip(button, false);
+        UpdateGenreGoButtonLabel();
+    }
+
+    private void CloseButton_Click(object sender, RoutedEventArgs e) => Hide();
 
     // ─── Step navigation ────────────────────────────────────────────────
 
@@ -1093,13 +1112,35 @@ public sealed partial class WatchTonightDialog : ContentDialog
         PlayTopCard();
     }
 
-    private void PlayTopCard()
+    private async void PlayTopCard()
     {
         if (_topIndex >= _cards.Count) return;
         var card = _cards[_topIndex];
         this.Hide();
         var nav = App.Services.GetRequiredService<NavigationService>();
-        nav.Navigate<ItemDetailPage>(card.ContentId);
+        try
+        {
+            switch (card.Type.Trim().ToLowerInvariant())
+            {
+                case "movie":
+                case "episode":
+                case "audiobook":
+                    await App.Services.GetRequiredService<Services.PlayerService>()
+                        .PlayAsync(card.ContentId);
+                    break;
+                case "ebook":
+                    nav.Navigate<EbookReaderPage>(new EbookReaderNavigation(card.ContentId));
+                    break;
+                default:
+                    nav.Navigate<ItemDetailPage>(card.ContentId);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            App.Services.GetRequiredService<Services.ToastService>()
+                .Error($"Could not start playback: {ex.Message}");
+        }
     }
 
     private void SkipButton_Click(object sender, RoutedEventArgs e)

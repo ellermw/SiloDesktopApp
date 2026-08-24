@@ -5,6 +5,7 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Plugins;
+using SiloPlayer.Core.Models.Settings;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
@@ -39,6 +40,7 @@ public sealed partial class MainWindow : Window
     private readonly EventChannelClient _eventChannel;
     private readonly PlayerService _playerService;
     private readonly ThemeService _themeService;
+    private readonly UICustomizationService _uiCustomizationService;
     private bool _notificationsAvailable = true;
     private int _notificationUnreadCount;
     private bool _isNarrowShell;
@@ -53,6 +55,8 @@ public sealed partial class MainWindow : Window
     private IDisposable? _notificationSubscription;
     private string? _notificationSubscriptionShellKey;
     private CancellationTokenSource? _shellHydrationCts;
+    private string? _pendingActivationArgument;
+    private bool _navigationHostLoaded;
 
     public MainWindow()
     {
@@ -95,6 +99,8 @@ public sealed partial class MainWindow : Window
         _notificationsApi = App.Services.GetRequiredService<NotificationsApi>();
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _themeService = App.Services.GetRequiredService<ThemeService>();
+        _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
+        _uiCustomizationService.Changed += OnUICustomizationChanged;
 
         NavView.PaneOpening += NavView_PaneOpening;
         NavView.PaneOpened += NavView_PaneOpened;
@@ -424,6 +430,7 @@ public sealed partial class MainWindow : Window
         _eventChannel.SnapshotReceived -= OnShellEventSnapshot;
         _eventChannel.EventReceived -= OnShellEvent;
         _playerService.StateChanged -= OnPlayerStateChanged;
+        _uiCustomizationService.Changed -= OnUICustomizationChanged;
         _authService.LoggedOut -= OnAuthLoggedOut;
         _authService.UserChanged -= OnAuthUserChanged;
         _authService.ProfileVerificationRequired -= OnProfileVerificationRequired;
@@ -925,6 +932,9 @@ public sealed partial class MainWindow : Window
         args.Handled = true;
         try
         {
+            if (ContentFrame.Content is Views.Admin.AdminShellPage adminShell &&
+                await adminShell.TryShowAdminCommandPaletteAsync())
+                return;
             var dlg = new Controls.GlobalSearchDialog { XamlRoot = this.Content.XamlRoot };
             await dlg.ShowAsync();
         }
@@ -947,7 +957,55 @@ public sealed partial class MainWindow : Window
 
     private async void NavView_Loaded(object sender, RoutedEventArgs e)
     {
+        _navigationHostLoaded = true;
+        if (TryConsumePendingActivation())
+            return;
         await TryAutoLoginAsync();
+    }
+
+    private void SidebarBrandHost_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
+    {
+        e.Handled = true;
+        NavigateToHome();
+    }
+
+    private void SidebarBrandHost_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key is not (Windows.System.VirtualKey.Enter or Windows.System.VirtualKey.Space)) return;
+        e.Handled = true;
+        NavigateToHome();
+    }
+
+    /// <summary>
+    /// Receives custom-protocol activations from App. Initial activation is
+    /// held until the frame is loaded; later activations are handled in-place.
+    /// </summary>
+    public void ActivateFromArgument(string? argument)
+    {
+        if (string.IsNullOrWhiteSpace(argument)) return;
+        _pendingActivationArgument = argument;
+        if (_navigationHostLoaded) TryConsumePendingActivation();
+        Activate();
+    }
+
+    private bool TryConsumePendingActivation()
+    {
+        var argument = Interlocked.Exchange(ref _pendingActivationArgument, null);
+        if (!InviteDeepLink.TryParse(argument, out var invitation)) return false;
+
+        // The WebUI does not let an invitation replace an existing signed-in
+        // session. Preserve that account and take it home rather than silently
+        // clearing credentials or accepting as the wrong user.
+        if (_authService.IsLoggedIn)
+        {
+            if (!string.IsNullOrWhiteSpace(_authService.SelectedProfileId))
+                _navigationService.Navigate<HomePage>();
+            return true;
+        }
+
+        HideMainNavigation();
+        _navigationService.Navigate<InviteClaimPage>(invitation);
+        return true;
     }
 
     private bool _autoLoginAttempted;
@@ -1193,6 +1251,7 @@ public sealed partial class MainWindow : Window
             CancelShellHydration();
             _shellHydrationCts = new CancellationTokenSource();
             _notificationUnreadCount = 0;
+            ResetShellBranding();
             UpdateSidebarPanePresentation(NavView.IsPaneOpen);
         }
 
@@ -1234,10 +1293,24 @@ public sealed partial class MainWindow : Window
             var shellToken = _shellHydrationCts!.Token;
             var cardOverlayService = App.Services.GetRequiredService<CardOverlayService>();
             cardOverlayService.Invalidate();
+            _uiCustomizationService.Invalidate();
             _ = RunShellWorkAsync(
                 "card_overlay_settings",
                 () => cardOverlayService.EnsureLoadedAsync(shellToken));
+            _ = RunShellWorkAsync(
+                "ui_customization",
+                async () =>
+                {
+                    await _uiCustomizationService.EnsureLoadedAsync(shellToken);
+                    if (!IsCurrentShellHydration(shellKey, shellToken)) return;
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        if (IsCurrentShellHydration(shellKey, shellToken))
+                            ApplyPrimaryMenuCustomization();
+                    });
+                });
             _ = RunShellWorkAsync("profile_display", () => UpdateProfileDisplayAsync(shellKey, shellToken));
+            _ = RunShellWorkAsync("server_branding", () => LoadShellBrandingAsync(shellKey, shellToken));
             _ = RunShellWorkAsync(
                 "user_navigation_capabilities",
                 () => RefreshUserNavigationCapabilitiesAsync(shellKey, shellToken));
@@ -2335,6 +2408,46 @@ public sealed partial class MainWindow : Window
         TryShellAction("theme_switcher_refresh", BuildThemeDots);
     }
 
+    private void ResetShellBranding()
+    {
+        var defaultWordmark = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(
+            new Uri("ms-appx:///Assets/silo-wordmark-sidebar.png"));
+        var defaultMark = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(
+            new Uri("ms-appx:///Assets/silo-mark-transparent.png"));
+        SiloWordmarkImage.Source = defaultWordmark;
+        MobileSiloWordmarkImage.Source = defaultWordmark;
+        SiloMarkImage.Source = defaultMark;
+        DocumentTitle.SetServerName("Silo");
+    }
+
+    private async Task LoadShellBrandingAsync(
+        string shellKey,
+        CancellationToken cancellationToken)
+    {
+        var branding = await _settingsApi.GetServerBrandingAsync(cancellationToken);
+        if (!IsCurrentShellHydration(shellKey, cancellationToken)) return;
+
+        var wordmarkUrl = _apiClient.ResolveServerUrl(branding.WordmarkUrl);
+        var markUrl = _apiClient.ResolveServerUrl(branding.MarkUrl);
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!IsCurrentShellHydration(shellKey, cancellationToken)) return;
+
+            if (Uri.TryCreate(wordmarkUrl, UriKind.Absolute, out var wordmarkUri))
+            {
+                var source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(wordmarkUri);
+                SiloWordmarkImage.Source = source;
+                MobileSiloWordmarkImage.Source = source;
+            }
+            if (Uri.TryCreate(markUrl, UriKind.Absolute, out var markUri))
+                SiloMarkImage.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(markUri);
+
+            DocumentTitle.SetServerName(branding.ServerName);
+            if (AppWindow != null && ContentFrame.CurrentSourcePageType != null)
+                AppWindow.Title = DocumentTitle.FromPageType(ContentFrame.CurrentSourcePageType);
+        });
+    }
+
     public void UpdateLibraryNavItems()
     {
         // Find the LibrariesHeader index
@@ -2415,7 +2528,112 @@ public sealed partial class MainWindow : Window
             NavView.MenuItems.Insert(insertIndex++, navItem);
         }
 
+        ApplyPrimaryMenuCustomization();
         ResynchronizeSelectedNavigationItem();
+    }
+
+    private sealed record PrimaryMenuNavTag(PrimaryMenuItem Item);
+
+    private void OnUICustomizationChanged(object? sender, EventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            ApplyPrimaryMenuCustomization();
+            ResynchronizeSelectedNavigationItem();
+        });
+    }
+
+    /// <summary>
+    /// Applies the current desktop-family primary menu while retaining the
+    /// complete library tree and fixed Discover/Your Stuff areas below it.
+    /// This mirrors AppSidebar.tsx: a customized primary menu replaces the
+    /// default Home/Recommendations/Calendar shortcuts, not the safe browsing
+    /// fallbacks.
+    /// </summary>
+    private void ApplyPrimaryMenuCustomization()
+    {
+        var headerIndex = NavView.MenuItems.IndexOf(LibrariesHeader);
+        if (headerIndex < 0) return;
+
+        for (var index = headerIndex - 1; index >= 0; index--)
+        {
+            if (NavView.MenuItems[index] is NavigationViewItem { Tag: PrimaryMenuNavTag })
+            {
+                NavView.MenuItems.RemoveAt(index);
+                headerIndex--;
+            }
+        }
+
+        var customMenu = _uiCustomizationService.IsSupported
+            ? _uiCustomizationService.PrimaryMenu
+            : null;
+        var customized = customMenu is { Items.Count: > 0 };
+        HomeNavItem.Visibility = customized ? Visibility.Collapsed : Visibility.Visible;
+        RecommendationsNavItem.Visibility = customized ? Visibility.Collapsed : Visibility.Visible;
+        CalendarNavItem.Visibility = customized ? Visibility.Collapsed : Visibility.Visible;
+        if (!customized || !CanExposeAuthenticatedNavigation) return;
+
+        foreach (var menuItem in customMenu!.Items)
+        {
+            var resolved = ResolvePrimaryMenuItem(menuItem);
+            if (resolved is null) continue;
+            NavView.MenuItems.Insert(headerIndex++, resolved);
+        }
+    }
+
+    private NavigationViewItem? ResolvePrimaryMenuItem(PrimaryMenuItem source)
+    {
+        string label;
+        string icon;
+        if (source.Type == "builtin")
+        {
+            (label, icon) = source.Destination switch
+            {
+                "home" => ("Home", "\uE80F"),
+                "for_you" => ("For You", "\uE735"),
+                "calendar" => ("Calendar", "\uE787"),
+                // Global media-family routes are not available yet. Match the
+                // WebUI by omitting them instead of silently choosing a library.
+                _ => ("", ""),
+            };
+            if (label.Length == 0) return null;
+        }
+        else if (source.Type == "library" && source.LibraryId is int libraryId)
+        {
+            var library = _viewModel.Libraries.FirstOrDefault(candidate => candidate.Id == libraryId);
+            if (library is null) return null;
+            label = string.IsNullOrWhiteSpace(source.Label) ? library.Name : source.Label!;
+            icon = library.Type switch
+            {
+                "movies" => "\uE8B2",
+                "series" => "\uE7F4",
+                _ => "\uE8F1",
+            };
+        }
+        else if (source.Type == "section" && source.LibraryId > 0 && !string.IsNullOrWhiteSpace(source.SectionId))
+        {
+            if (!_viewModel.Libraries.Any(candidate => candidate.Id == source.LibraryId)) return null;
+            label = source.Label ?? "Section";
+            icon = "\uE8A5";
+        }
+        else if (source.Type == "collection" && !string.IsNullOrWhiteSpace(source.CollectionId))
+        {
+            if (source.LibraryId is int ownerId && !_viewModel.Libraries.Any(candidate => candidate.Id == ownerId))
+                return null;
+            label = source.Label ?? "Collection";
+            icon = "\uE8F0";
+        }
+        else
+        {
+            return null;
+        }
+
+        return new NavigationViewItem
+        {
+            Content = label,
+            Tag = new PrimaryMenuNavTag(source.Clone()),
+            Icon = new FontIcon { Glyph = icon },
+        };
     }
 
     private void RemoveDynamicLibraryNavItems()
@@ -2633,6 +2851,18 @@ public sealed partial class MainWindow : Window
     public Library? FindLibrary(int libraryId)
         => _viewModel.Libraries.FirstOrDefault(library => library.Id == libraryId);
 
+    public Library? FindLibraryByType(string mediaType)
+    {
+        static string Normalize(string value)
+        {
+            var normalized = value.Trim().TrimEnd('s').ToLowerInvariant();
+            return normalized is "manga" or "comic" ? "comic" : normalized;
+        }
+        var singular = Normalize(mediaType);
+        return _viewModel.Libraries.FirstOrDefault(library =>
+            Normalize(library.Type).Equals(singular, StringComparison.OrdinalIgnoreCase));
+    }
+
     public async Task<bool> ToggleSidebarPinAsync(
         int libraryId,
         string pinType,
@@ -2793,10 +3023,26 @@ public sealed partial class MainWindow : Window
             return;
         }
 
+        ToggleLibrariesSection();
+        e.Handled = true;
+    }
+
+    private void LibrariesHeader_KeyDown(object sender, Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
+    {
+        if (e.Key is not (Windows.System.VirtualKey.Enter or Windows.System.VirtualKey.Space)) return;
+        e.Handled = true;
+        if (!NavView.IsPaneOpen) return;
+        ToggleLibrariesSection();
+    }
+
+    private void ToggleLibrariesSection()
+    {
         _librariesExpanded = !_librariesExpanded;
         LibrariesChevron.Glyph = _librariesExpanded ? "\uE972" : "\uE974"; // down : right
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(
+            LibrariesHeader,
+            _librariesExpanded ? "Collapse libraries" : "Expand libraries");
         UpdateLibraryNavigationVisibility(isOpen: true);
-        e.Handled = true;
     }
 
     private void UpdateLibraryNavigationVisibility(bool isOpen)
@@ -2912,7 +3158,17 @@ public sealed partial class MainWindow : Window
 
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
+        DismissProfileFlyout();
         _navigationService.Navigate<SettingsPage>();
+    }
+
+    private void DismissProfileFlyout()
+    {
+        ProfileFooterFlyout.Hide();
+        // Flyout presenters live in a separate popup root. A navigation in the
+        // same routed event can otherwise leave that root painted over the new
+        // page until the next pointer action.
+        DispatcherQueue.TryEnqueue(() => ProfileFooterFlyout.Hide());
     }
 
     private void Admin_Click(object sender, RoutedEventArgs e)
@@ -2984,6 +3240,11 @@ public sealed partial class MainWindow : Window
             {
                 _navigationService.Navigate<LibraryPage>(library);
             }
+            else if (args.InvokedItemContainer is NavigationViewItem primaryItem &&
+                     primaryItem.Tag is PrimaryMenuNavTag primaryTag)
+            {
+                NavigatePrimaryMenuItem(primaryTag.Item);
+            }
             else if (args.InvokedItemContainer is NavigationViewItem pinItem && pinItem.Tag is SidebarPinNavTag pinTag)
             {
                 if (string.Equals(pinTag.PinType, "section", StringComparison.OrdinalIgnoreCase))
@@ -3026,15 +3287,60 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private void NavigatePrimaryMenuItem(PrimaryMenuItem item)
+    {
+        if (item.Type == "builtin")
+        {
+            switch (item.Destination)
+            {
+                case "home": _navigationService.Navigate<HomePage>(); return;
+                case "for_you": _navigationService.Navigate<RecommendationsPage>(); return;
+                case "calendar": _navigationService.Navigate<CalendarPage>(); return;
+            }
+        }
+
+        if (item.Type == "library" && item.LibraryId is int libraryId)
+        {
+            var library = _viewModel.Libraries.FirstOrDefault(candidate => candidate.Id == libraryId);
+            if (library != null) _navigationService.Navigate<LibraryPage>(library);
+            return;
+        }
+
+        if (item.Type == "section" && item.LibraryId is int sectionLibraryId &&
+            !string.IsNullOrWhiteSpace(item.SectionId))
+        {
+            _navigationService.Navigate<CatalogPage>(new CatalogNavigation(
+                Source: "section",
+                Title: item.Label ?? "Section",
+                Scope: "library",
+                SectionId: item.SectionId,
+                LibraryId: sectionLibraryId));
+            return;
+        }
+
+        if (item.Type == "collection" && !string.IsNullOrWhiteSpace(item.CollectionId))
+        {
+            _navigationService.Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs
+            {
+                CollectionId = item.CollectionId,
+                Title = item.Label ?? "Collection",
+                IsUserCollection = item.LibraryId is null,
+                LibraryId = item.LibraryId,
+            });
+        }
+    }
+
     private void SwitchProfile_Click(object sender, RoutedEventArgs e)
     {
         // Navigate to profile select, keeping existing auth
+        DismissProfileFlyout();
         HideMainNavigation();
         _navigationService.Navigate<ProfileSelectPage>("switch");
     }
 
     private async void Logout_Click(object sender, RoutedEventArgs e)
     {
+        DismissProfileFlyout();
         try
         {
             await _playerService.CloseAsync();

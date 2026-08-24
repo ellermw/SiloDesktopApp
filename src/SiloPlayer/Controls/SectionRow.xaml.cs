@@ -1,12 +1,15 @@
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Animation;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Services;
 using Windows.System;
 
 namespace SiloPlayer.Controls;
 
 public sealed partial class SectionRow : UserControl
 {
+    private readonly UICustomizationService _uiCustomizationService;
     public static readonly DependencyProperty SectionProperty =
         DependencyProperty.Register(
             nameof(Section),
@@ -102,10 +105,23 @@ public sealed partial class SectionRow : UserControl
     public SectionRow()
     {
         this.InitializeComponent();
+        _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         UpdateThemeFadeColors();
-        Loaded += (_, _) => ObserveItems(Section?.Items);
-        Unloaded += (_, _) => ObserveItems(null);
+        Loaded += (_, _) =>
+        {
+            ObserveItems(Section?.Items);
+            _uiCustomizationService.Changed += UICustomization_Changed;
+            ApplyResponsiveCardWidths(ActualWidth);
+        };
+        Unloaded += (_, _) =>
+        {
+            ObserveItems(null);
+            _uiCustomizationService.Changed -= UICustomization_Changed;
+        };
     }
+
+    private void UICustomization_Changed(object? sender, EventArgs e)
+        => DispatcherQueue.TryEnqueue(() => ApplyResponsiveCardWidths(ActualWidth));
 
     private static void OnSectionChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
@@ -149,6 +165,21 @@ public sealed partial class SectionRow : UserControl
         var isSameSection = string.Equals(_lastRenderedSectionId, section.Id, StringComparison.Ordinal);
         SectionTitle.Text = section.Title;
         TitleLinkTitle.Text = section.Title;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            TitleLinkBtn,
+            $"View {section.Title}");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            ExploreAllBtn,
+            $"Explore all {section.Title}");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            CardsScrollViewer,
+            $"{section.Title} carousel");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            ScrollLeftBtn,
+            $"Previous items in {section.Title}");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+            ScrollRightBtn,
+            $"Next items in {section.Title}");
 
         UpdateNavigationPresentation();
         UpdatePinAvailability();
@@ -516,16 +547,23 @@ public sealed partial class SectionRow : UserControl
     private void SectionRow_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         UpdateThemeFadeColors();
-        var width = e.NewSize.Width;
+        ApplyResponsiveCardWidths(e.NewSize.Width);
+    }
+
+    private void ApplyResponsiveCardWidths(double width)
+    {
         if (width <= 0) return;
 
         var gutter = width < 640 ? 16d
             : width < 1024 ? 24d
             : width < 1280 ? 40d
             : 48d;
-        var posterWidth = width < 640 ? 140d
-            : width < 1024 ? 160d
-            : 185d;
+        var posterWidth = _uiCustomizationService.CardPresentation.PosterSize switch
+        {
+            "compact" => width < 640 ? 120d : width < 1024 ? 140d : 160d,
+            "large" => width < 640 ? 170d : width < 1024 ? 195d : 220d,
+            _ => width < 640 ? 140d : width < 1024 ? 160d : 185d,
+        };
         var landscapeWidth = width < 640 ? 260d : 315d;
 
         var edgeMargin = new Thickness(gutter, 0, gutter, 0);

@@ -20,6 +20,7 @@ public partial class NotificationsViewModel : ObservableObject
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private string? _preferencesErrorMessage;
+    [ObservableProperty] private bool _hasLoadedPreferences;
     [ObservableProperty] private string _statusMessage = "";
     [ObservableProperty] private int _unreadCount;
     [ObservableProperty] private NotificationPreferences _preferences = new();
@@ -113,6 +114,7 @@ public partial class NotificationsViewModel : ObservableObject
                 {
                     Preferences = preferencesResult.Value;
                     PreferencesErrorMessage = null;
+                    HasLoadedPreferences = true;
                 }
                 else
                 {
@@ -170,6 +172,22 @@ public partial class NotificationsViewModel : ObservableObject
         try { return (await _notificationsApi.GetPreferencesAsync(ct), null); }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch (Exception ex) { return (null, $"Couldn't load preferences: {ex.Message}"); }
+    }
+
+    [RelayCommand]
+    private async Task RetryPreferencesAsync()
+    {
+        var result = await TryLoadPreferencesAsync();
+        if (result.Value != null)
+        {
+            Preferences = result.Value;
+            PreferencesErrorMessage = null;
+            HasLoadedPreferences = true;
+        }
+        else
+        {
+            PreferencesErrorMessage = result.Error;
+        }
     }
 
     [RelayCommand]

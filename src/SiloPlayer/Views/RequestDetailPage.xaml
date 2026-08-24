@@ -43,6 +43,12 @@
                 </StackPanel>
             </StackPanel>
             <Grid x:Name="LoadingLayer" Grid.RowSpan="2" Background="{StaticResource AppBackgroundBrush}">
+                <Button x:Name="LoadingBackButton"
+                        VerticalAlignment="Top" HorizontalAlignment="Left" Margin="24"
+                        Width="44" Height="44" Click="Back_Click"
+                        AutomationProperties.Name="Go back">
+                    <FontIcon Glyph="&#xE72B;" />
+                </Button>
                 <Grid x:Name="DetailSkeleton" Margin="54,105,54,50" VerticalAlignment="Center" ColumnSpacing="34" RowSpacing="24">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="210" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>

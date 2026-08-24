@@ -29,7 +29,10 @@ public class AdminSession
     public string? ClientIp { get; set; }
     public string? ClientName { get; set; }
     public string? ClientVersion { get; set; }
+    public string? ClientBuild { get; set; }
+    public string? ClientChannel { get; set; }
     public string? ClientLabel { get; set; }
+    public string? ClientLabelFull { get; set; }
     public string? ClientUserAgent { get; set; }
     public bool IsJellyfinClient { get; set; }
     public bool IsNativeSiloClient { get; set; }

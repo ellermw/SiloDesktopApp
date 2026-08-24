@@ -69,6 +69,15 @@ public sealed partial class CollectionEditorPage : Page
         {
             // Editing existing collection
             await ViewModel.LoadExistingCommand.ExecuteAsync(collectionId);
+            if (string.Equals(ViewModel.ErrorMessage, "Collection not found.", StringComparison.Ordinal))
+            {
+                CollectionNotFoundState.Visibility = Visibility.Visible;
+                CollectionEditorScroll.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            CollectionNotFoundState.Visibility = Visibility.Collapsed;
+            CollectionEditorScroll.Visibility = Visibility.Visible;
             PageTitle.Text = ViewModel.IsImportedCollection
                 ? ViewModel.Name
                 : $"Edit {ViewModel.Name}";
@@ -77,7 +86,7 @@ public sealed partial class CollectionEditorPage : Page
                 : ViewModel.CollectionType == "manual"
                     ? "Manual collections are curated by adding titles directly."
                     : "Tune the collection settings and preview its matching titles.";
-            SaveButtonText.Text = "Save Collection";
+            SaveButtonText.Text = "Save changes";
             // Disable type switching when editing
             ManualTypeButton.IsEnabled = false;
             SmartTypeButton.IsEnabled = false;
@@ -90,6 +99,7 @@ public sealed partial class CollectionEditorPage : Page
         }
         else
         {
+            CollectionNotFoundState.Visibility = Visibility.Collapsed;
             await ViewModel.LoadReferenceDataCommand.ExecuteAsync(null);
             BuildImportedOptionsUI();
             UpdateEditorSummary();
@@ -103,6 +113,23 @@ public sealed partial class CollectionEditorPage : Page
             var nav = App.Services.GetRequiredService<NavigationService>();
             nav.GoBack();
         });
+    }
+
+    private async void Discard_Click(object sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(ViewModel.CollectionId))
+        {
+            App.Services.GetRequiredService<NavigationService>().GoBack();
+            return;
+        }
+
+        await ViewModel.LoadExistingCommand.ExecuteAsync(ViewModel.CollectionId);
+        UpdateTypeToggleUI();
+        UpdateSectionVisibility();
+        BuildImportedOptionsUI();
+        ApplyReadOnlyState();
+        UpdateSourceBanner();
+        UpdateEditorSummary();
     }
 
     // ===== Type Toggle =====
@@ -147,14 +174,29 @@ public sealed partial class CollectionEditorPage : Page
 
     private void UpdateSectionVisibility()
     {
+        var imported = ViewModel.IsImportedCollection;
         ManualItemsSection.Visibility = ViewModel.CollectionType == "manual" ? Visibility.Visible : Visibility.Collapsed;
         SmartRulesSection.Visibility = ViewModel.CollectionType == "smart" ? Visibility.Visible : Visibility.Collapsed;
-        ImportedSourceSection.Visibility = ViewModel.IsImportedCollection ? Visibility.Visible : Visibility.Collapsed;
-        ImportedSourceBanner.Visibility = ViewModel.IsImportedCollection ? Visibility.Visible : Visibility.Collapsed;
-        TypeSection.Visibility = ViewModel.IsImportedCollection ? Visibility.Collapsed : Visibility.Visible;
-        BasicInfoTitle.Text = ViewModel.IsImportedCollection ? "Display" : "Basics";
+        ImportedSourceSection.Visibility = imported ? Visibility.Visible : Visibility.Collapsed;
+        ImportedSourceBanner.Visibility = imported ? Visibility.Visible : Visibility.Collapsed;
+        ImportedDisplayOptions.Visibility = imported ? Visibility.Visible : Visibility.Collapsed;
+        ImportedSharingSection.Visibility = imported ? Visibility.Visible : Visibility.Collapsed;
+        ImportedVisibilitySection.Visibility = imported ? Visibility.Visible : Visibility.Collapsed;
+        ImportedPosterSection.Visibility = imported && !ViewModel.IsReadOnly ? Visibility.Visible : Visibility.Collapsed;
+        DeleteCollectionButton.Visibility = imported && !ViewModel.IsReadOnly ? Visibility.Visible : Visibility.Collapsed;
+        TypeSection.Visibility = imported ? Visibility.Collapsed : Visibility.Visible;
+        PosterSection.Visibility = imported ? Visibility.Collapsed : Visibility.Visible;
+        SharingSection.Visibility = imported ? Visibility.Collapsed : Visibility.Visible;
+        ImportedProfileAccessSection.Visibility = imported
+            ? Visibility.Collapsed
+            : ViewModel.IsShared ? Visibility.Visible : Visibility.Collapsed;
+        DisplaySectionNumber.Visibility = imported ? Visibility.Visible : Visibility.Collapsed;
+        BasicInfoTitle.Text = imported ? "Display" : "Basics";
         SourceUrlTextBox.IsEnabled = ViewModel.CollectionType == "mdblist";
         SourceUrlSection.Visibility = ViewModel.CollectionType == "mdblist"
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        SourcePresetSection.Visibility = imported && ViewModel.CollectionType != "mdblist"
             ? Visibility.Visible
             : Visibility.Collapsed;
         UpdateEditorSummary();
@@ -177,26 +219,39 @@ public sealed partial class CollectionEditorPage : Page
         }
 
         ImportedProfilesPanel.Children.Clear();
+        ImportedProfilesPanel2.Children.Clear();
         foreach (var profile in ViewModel.AvailableProfiles)
         {
-            var check = new CheckBox
+            CheckBox BuildProfileCheck() => new()
             {
                 Content = profile.IsPrimary ? $"{profile.Name} · Primary" : profile.Name,
                 Tag = profile.Id,
                 IsChecked = ViewModel.AllowedProfileIds.Contains(profile.Id)
             };
-            check.Checked += ImportedProfile_Checked;
-            check.Unchecked += ImportedProfile_Checked;
-            ImportedProfilesPanel.Children.Add(check);
+            var legacyCheck = BuildProfileCheck();
+            legacyCheck.Checked += ImportedProfile_Checked;
+            legacyCheck.Unchecked += ImportedProfile_Checked;
+            ImportedProfilesPanel.Children.Add(legacyCheck);
+            var importedCheck = BuildProfileCheck();
+            importedCheck.Checked += ImportedProfile_Checked;
+            importedCheck.Unchecked += ImportedProfile_Checked;
+            ImportedProfilesPanel2.Children.Add(importedCheck);
         }
 
         SelectByTag(WatchFilterCombo, ViewModel.WatchFilter);
         SelectByTag(MediaFilterCombo, ViewModel.MediaFilter);
+        SelectByTag(ImportedDefaultSortCombo, ViewModel.DefaultSortValue);
         LastSyncSummaryText.Text = ViewModel.LastSyncSummary ?? "Not synced yet";
         RemovePosterButton.Visibility = string.IsNullOrWhiteSpace(ViewModel.CurrentPosterUrl)
             ? Visibility.Collapsed
             : Visibility.Visible;
-        ImportedProfileAccessSection.Visibility = ViewModel.IsShared ? Visibility.Visible : Visibility.Collapsed;
+        ImportedRemovePosterButton.Visibility = RemovePosterButton.Visibility;
+        ImportedProfileAccessSection.Visibility = !ViewModel.IsImportedCollection && ViewModel.IsShared
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        ImportedProfileAccessSection2.Visibility = ViewModel.IsImportedCollection && ViewModel.IsShared
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         UpdateSourceBanner();
         UpdateEditorSummary();
     }
@@ -204,6 +259,31 @@ public sealed partial class CollectionEditorPage : Page
     private void UpdateEditorSummary()
     {
         if (SummaryModeText == null) return;
+        if (ViewModel.IsImportedCollection)
+        {
+            SidebarTitle.Text = "Source details";
+            SidebarSubtitle.Text = "Captured when the collection was imported.";
+            SummaryModeLabel.Text = $"{ViewModel.SourceProviderLabel} preset";
+            SummaryModeText.Text = ViewModel.SourcePresetSummary;
+            SummaryLibrariesLabel.Text = "Items";
+            SummaryLibrariesText.Text = ViewModel.SourceItemCountText;
+            SummarySharedLabel.Text = "Last note";
+            SummarySharedText.Text = ViewModel.LastSyncSummary ?? "Not synced yet";
+            SummaryProfilesLabel.Text = "Created";
+            SummaryProfilesText.Text = ViewModel.CreatedDisplayText;
+            SummaryLibraryTabLabel.Visibility = Visibility.Collapsed;
+            SummaryLibraryTabText.Visibility = Visibility.Collapsed;
+            SummaryCollectionLabel.Visibility = Visibility.Collapsed;
+            SummaryCollectionText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        SidebarTitle.Text = "Collection Summary";
+        SidebarSubtitle.Text = "Preview and sharing stay visible while you edit.";
+        SummaryLibraryTabLabel.Visibility = Visibility.Visible;
+        SummaryLibraryTabText.Visibility = Visibility.Visible;
+        SummaryCollectionLabel.Visibility = Visibility.Visible;
+        SummaryCollectionText.Visibility = Visibility.Visible;
         SummaryModeText.Text = ViewModel.CollectionType switch
         {
             "smart" => "Smart",
@@ -239,10 +319,13 @@ public sealed partial class CollectionEditorPage : Page
         };
         SourceBrandLabel.Text = label;
         SourceBrandInitials.Text = initials;
-        SourcePresetLabel.Text = ViewModel.Name;
+        SourcePresetLabel.Text = ViewModel.SourcePresetSummary;
+        SourcePresetHeader.Text = $"{label} PRESET";
+        SourcePresetReadoutText.Text = ViewModel.SourcePresetSummary;
+        SourcePresetLockText.Text = label;
         SourceBannerDescription.Text = $"Synced from {tagline} — items, posters, and ordering are managed by the source.";
         SourceBannerSyncStatus.Text = ViewModel.LastSyncSummary ?? "Not yet synced";
-        OpenSourceButton.Visibility = Uri.TryCreate(ViewModel.SourceUrl, UriKind.Absolute, out _)
+        OpenSourceButton.Visibility = source == "mdblist" && Uri.TryCreate(ViewModel.SourceUrl, UriKind.Absolute, out _)
             ? Visibility.Visible
             : Visibility.Collapsed;
     }
@@ -258,6 +341,9 @@ public sealed partial class CollectionEditorPage : Page
         var editable = !ViewModel.IsReadOnly;
         SetDescendantControlsEnabled(BasicInfoSection, editable);
         SetDescendantControlsEnabled(ImportedSourceSection, editable);
+        SetDescendantControlsEnabled(ImportedSharingSection, editable);
+        SetDescendantControlsEnabled(ImportedVisibilitySection, editable);
+        SetDescendantControlsEnabled(ImportedPosterSection, editable);
         SetDescendantControlsEnabled(ManualItemsSection, editable);
         SetDescendantControlsEnabled(SmartRulesSection, editable);
         SaveButton.IsEnabled = editable;
@@ -310,10 +396,26 @@ public sealed partial class CollectionEditorPage : Page
         if (MediaFilterCombo.SelectedItem is ComboBoxItem { Tag: string value }) ViewModel.MediaFilter = value;
     }
 
+    private void ImportedDefaultSort_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (ImportedDefaultSortCombo.SelectedItem is ComboBoxItem { Tag: string value })
+            ViewModel.DefaultSortValue = value;
+    }
+
     private void SharedToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (ImportedProfileAccessSection != null)
-            ImportedProfileAccessSection.Visibility = SharedToggle.IsOn ? Visibility.Visible : Visibility.Collapsed;
+            ImportedProfileAccessSection.Visibility = !ViewModel.IsImportedCollection && SharedToggle.IsOn
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+    }
+
+    private void ImportedSharedToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (ImportedProfileAccessSection2 != null)
+            ImportedProfileAccessSection2.Visibility = ImportedSharedToggle.IsOn
+                ? Visibility.Visible
+                : Visibility.Collapsed;
     }
 
     private async void SyncNow_Click(object sender, RoutedEventArgs e)
@@ -337,47 +439,134 @@ public sealed partial class CollectionEditorPage : Page
             if (properties.Size > 20 * 1024 * 1024)
             {
                 PosterFileStatusText.Text = "Image must be smaller than 20 MB.";
+                ImportedPosterFileStatusText.Text = PosterFileStatusText.Text;
                 return;
             }
             var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
             var bytes = System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.ToArray(buffer);
             ViewModel.SetPosterFile(file.Name, bytes, file.ContentType);
             PosterSourceUrlTextBox.Text = "";
+            ImportedPosterSourceUrlTextBox.Text = "";
             PosterFileStatusText.Text = file.Name;
+            ImportedPosterFileStatusText.Text = file.Name;
         }
-        catch (Exception ex) { PosterFileStatusText.Text = ex.Message; }
+        catch (Exception ex)
+        {
+            PosterFileStatusText.Text = ex.Message;
+            ImportedPosterFileStatusText.Text = ex.Message;
+        }
     }
 
     private async void RemovePoster_Click(object sender, RoutedEventArgs e)
     {
+        var content = new StackPanel { Spacing = 10 };
+        content.Children.Add(new TextBlock
+        {
+            Text = "The collection will return to its generated artwork.",
+            TextWrapping = TextWrapping.Wrap
+        });
+        var error = new TextBlock
+        {
+            Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed
+        };
+        content.Children.Add(error);
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = "Remove poster?",
-            Content = "The collection will return to its generated artwork.",
+            Content = content,
             PrimaryButtonText = "Remove",
+            PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        await ViewModel.RemovePosterCommand.ExecuteAsync(null);
-        RemovePosterButton.Visibility = Visibility.Collapsed;
-        PosterFileStatusText.Text = "Poster removed";
+        dialog.PrimaryButtonClick += async (_, args) =>
+        {
+            args.Cancel = true;
+            var deferral = args.GetDeferral();
+            try
+            {
+                dialog.IsPrimaryButtonEnabled = false;
+                dialog.PrimaryButtonText = "Removing...";
+                error.Visibility = Visibility.Collapsed;
+                await ViewModel.RemovePosterCommand.ExecuteAsync(null);
+                if (string.IsNullOrWhiteSpace(ViewModel.ErrorMessage) && ViewModel.CurrentPosterUrl == null)
+                {
+                    RemovePosterButton.Visibility = Visibility.Collapsed;
+                    ImportedRemovePosterButton.Visibility = Visibility.Collapsed;
+                    PosterFileStatusText.Text = "Poster removed";
+                    ImportedPosterFileStatusText.Text = "Poster removed";
+                    args.Cancel = false;
+                    return;
+                }
+
+                error.Text = ViewModel.ErrorMessage ?? "The poster could not be removed.";
+                error.Visibility = Visibility.Visible;
+            }
+            finally
+            {
+                dialog.PrimaryButtonText = "Remove";
+                dialog.IsPrimaryButtonEnabled = true;
+                deferral.Complete();
+            }
+        };
+        await dialog.ShowAsync();
     }
 
     private async void DeleteCollection_Click(object sender, RoutedEventArgs e)
     {
+        var content = new StackPanel { Spacing = 10 };
+        content.Children.Add(new TextBlock
+        {
+            Text = $"Delete collection \"{ViewModel.Name}\"? This action cannot be undone.",
+            TextWrapping = TextWrapping.Wrap
+        });
+        var error = new TextBlock
+        {
+            Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed
+        };
+        content.Children.Add(error);
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = "Delete collection",
-            Content = $"Delete collection \"{ViewModel.Name}\"? This action cannot be undone.",
+            Content = content,
             PrimaryButtonText = "Delete",
+            PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close
         };
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
-            await ViewModel.DeleteCommand.ExecuteAsync(null);
+        dialog.PrimaryButtonClick += async (_, args) =>
+        {
+            args.Cancel = true;
+            var deferral = args.GetDeferral();
+            try
+            {
+                dialog.IsPrimaryButtonEnabled = false;
+                dialog.PrimaryButtonText = "Deleting...";
+                error.Visibility = Visibility.Collapsed;
+                await ViewModel.DeleteCommand.ExecuteAsync(null);
+                if (string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+                {
+                    args.Cancel = false;
+                    return;
+                }
+
+                error.Text = ViewModel.ErrorMessage;
+                error.Visibility = Visibility.Visible;
+            }
+            finally
+            {
+                dialog.PrimaryButtonText = "Delete";
+                dialog.IsPrimaryButtonEnabled = true;
+                deferral.Complete();
+            }
+        };
+        await dialog.ShowAsync();
     }
 
     // ===== Navigation =====

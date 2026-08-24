@@ -85,7 +85,12 @@
                             </StackPanel>
                             <Button.Flyout>
                                 <Flyout x:Name="ScanQueueFlyout" Placement="Bottom">
-                                    <StackPanel x:Name="ScanQueueFlyoutContent" Width="400" Spacing="0" />
+                                    <ScrollViewer MaxHeight="360"
+                                                  HorizontalScrollMode="Disabled"
+                                                  HorizontalScrollBarVisibility="Disabled"
+                                                  VerticalScrollBarVisibility="Auto">
+                                        <StackPanel x:Name="ScanQueueFlyoutContent" Width="400" Spacing="0" />
+                                    </ScrollViewer>
                                 </Flyout>
                             </Button.Flyout>
                         </Button>

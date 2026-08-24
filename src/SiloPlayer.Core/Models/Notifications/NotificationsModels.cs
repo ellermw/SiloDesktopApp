@@ -60,7 +60,7 @@ public sealed class AppNotification
                 var code = SeasonNumber.HasValue && EpisodeNumber.HasValue
                     ? $"S{SeasonNumber.Value}E{EpisodeNumber.Value}"
                     : null;
-                var text = string.Join(" - ", new[] { code, EpisodeTitle }.Where(value => !string.IsNullOrWhiteSpace(value)));
+                var text = string.Join(" — ", new[] { code, EpisodeTitle }.Where(value => !string.IsNullOrWhiteSpace(value)));
                 return string.IsNullOrWhiteSpace(text) ? "New episode available" : text;
             }
             if (Type == "request.fulfilled")
@@ -74,7 +74,7 @@ public sealed class AppNotification
             if (Type == "request.declined")
                 return string.IsNullOrWhiteSpace(ReasonFlags.Reason)
                     ? "Your request was declined"
-                    : $"Your request was declined - {ReasonFlags.Reason}";
+                    : $"Your request was declined — {ReasonFlags.Reason}";
             return Type;
         }
     }
@@ -232,6 +232,63 @@ public sealed class NotificationWebhook
     public int? LastFailureStatus { get; set; }
     public string? LastFailureMessage { get; set; }
     public string? SigningSecret { get; set; }
+
+    [JsonIgnore]
+    public string TypeLabel => string.Equals(Type, "generic", StringComparison.OrdinalIgnoreCase)
+        ? "Generic"
+        : "Discord";
+
+    [JsonIgnore]
+    public string StateLabel => Enabled ? "Enabled" : "Disabled";
+
+    [JsonIgnore]
+    public string EnabledReasonsText
+    {
+        get
+        {
+            var values = new List<string>();
+            if (NotifyFavorites) values.Add("Favorites");
+            if (NotifyWatchlist) values.Add("Watchlist");
+            if (NotifyContinueWatching) values.Add("Continue Watching");
+            if (NotifyNextUp) values.Add("Next Up");
+            if (NotifyRequests) values.Add("Requests");
+            if (values.Count == 5) return "All reasons";
+            return values.Count == 0 ? "No reasons selected" : string.Join(" · ", values);
+        }
+    }
+
+    [JsonIgnore]
+    public string? DeliveryStatusText
+    {
+        get
+        {
+            if (!string.IsNullOrWhiteSpace(DisabledReason)) return $"Disabled: {DisabledReason}";
+            if (!string.IsNullOrWhiteSpace(LastFailureAt) || ConsecutiveFailures > 0)
+            {
+                var detail = !string.IsNullOrWhiteSpace(LastFailureMessage)
+                    ? LastFailureMessage
+                    : LastFailureStatus is int status ? $"HTTP {status}" : "Delivery failed";
+                return $"Last failure: {detail}. Check the destination URL.";
+            }
+            return !string.IsNullOrWhiteSpace(LastSuccessAt)
+                ? $"Last success: {FormatRelativeTime(LastSuccessAt)}"
+                : null;
+        }
+    }
+
+    [JsonIgnore]
+    public bool CanRotateSecret => string.Equals(Type, "generic", StringComparison.OrdinalIgnoreCase);
+
+    private static string FormatRelativeTime(string value)
+    {
+        if (!DateTimeOffset.TryParse(value, out var timestamp)) return value;
+        var age = DateTimeOffset.UtcNow - timestamp;
+        if (age < TimeSpan.FromMinutes(1)) return "just now";
+        if (age < TimeSpan.FromHours(1)) return $"{Math.Max(1, (int)Math.Round(age.TotalMinutes))}m ago";
+        if (age < TimeSpan.FromDays(1)) return $"{Math.Max(1, (int)Math.Round(age.TotalHours))}h ago";
+        if (age < TimeSpan.FromDays(7)) return $"{Math.Max(1, (int)Math.Round(age.TotalDays))}d ago";
+        return timestamp.LocalDateTime.ToString("MMM d");
+    }
 }
 
 public sealed class NotificationWebhookInput

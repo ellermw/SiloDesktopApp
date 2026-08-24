@@ -5,6 +5,7 @@ using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Collections;
+using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.ViewModels;
@@ -44,6 +45,7 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
     public ObservableCollection<int> SelectedLibraryIds { get; } = [];
     public ObservableCollection<QueryRule> Rules { get; } = [];
     public ObservableCollection<CollectionPreviewItem> PreviewItems { get; } = [];
+    public ObservableCollection<MediaItem> PreviewMediaItems { get; } = [];
     public ObservableCollection<Profile> Profiles { get; } = [];
     public ObservableCollection<string> AllowedProfileIds { get; } = [];
 
@@ -55,7 +57,7 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
     [ObservableProperty] private string? _statusMessage;
     [ObservableProperty] private string _title = "";
     [ObservableProperty] private string? _description;
-    [ObservableProperty] private string _mediaScope = "movie";
+    [ObservableProperty] private string _mediaScope = "";
     [ObservableProperty] private string _matchMode = "all";
     [ObservableProperty] private string _sortField = "added_at";
     [ObservableProperty] private string _sortOrder = "desc";
@@ -115,6 +117,24 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
             SelectedLibraryIds.Clear();
             if (args?.LibraryId is int libraryId)
                 SelectedLibraryIds.Add(libraryId);
+
+            if (string.IsNullOrWhiteSpace(_collectionId))
+            {
+                Title = "";
+                Description = null;
+                MediaScope = "";
+                MatchMode = "all";
+                SortField = "added_at";
+                SortOrder = "desc";
+                LimitText = "100";
+                IsShared = false;
+                Featured = false;
+                IncludeInServerCollections = true;
+                PosterSourceUrl = null;
+                BackdropSourceUrl = null;
+                Visibility = "visible";
+                Rules.Clear();
+            }
 
             if (!IsAdmin && !string.IsNullOrWhiteSpace(_collectionId))
             {
@@ -195,20 +215,32 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         IsPreviewing = true;
         ErrorMessage = null;
         PreviewItems.Clear();
+        PreviewMediaItems.Clear();
 
         try
         {
-            var response = await _collectionsApi.PreviewCollectionAsync(
-                new CollectionPreviewRequest
-                {
-                    QueryDefinition = BuildQueryDefinition(),
-                    Limit = 24
-                },
-                ct);
+            var query = BuildQueryDefinition();
+            var pageSize = Math.Clamp(query.Limit ?? 100, 1, 100);
+            var response = await _catalogApi.GetCatalogAsync(
+                libraryId: query.LibraryIds.FirstOrDefault() is > 0 ? query.LibraryIds[0] : null,
+                sort: query.Sort?.Field,
+                order: query.Sort?.Order,
+                type: string.IsNullOrWhiteSpace(query.MediaScope) || query.MediaScope == "video"
+                    ? null
+                    : query.MediaScope,
+                limit: pageSize,
+                offset: 0,
+                includeTotal: true,
+                source: "query",
+                queryGroups: query.Groups,
+                queryGroupsMatch: query.Match,
+                ct: ct);
 
-            PreviewTotal = response.Total;
+            PreviewTotal = query.Limit is > 0
+                ? Math.Min(response.Total, query.Limit.Value)
+                : response.Total;
             foreach (var item in response.Items)
-                PreviewItems.Add(item);
+                PreviewMediaItems.Add(item);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -340,7 +372,7 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
             })
             .ToList();
 
-        if (cleanRules.Count == 0)
+        if (cleanRules.Count == 0 && !string.IsNullOrWhiteSpace(MediaScope))
             cleanRules.Add(new QueryRule { Field = "type", Op = "is", Value = MediaScope });
 
         return new QueryDefinition
@@ -357,7 +389,7 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
                 }
             ],
             Sort = new QuerySort { Field = SortField, Order = SortOrder },
-            Limit = int.TryParse(LimitText, out var limit) && limit > 0 ? limit : null
+            Limit = int.TryParse(LimitText, out var limit) ? Math.Clamp(limit, 1, 500) : 100
         };
     }
 

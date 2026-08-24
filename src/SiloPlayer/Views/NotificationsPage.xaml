@@ -31,15 +31,21 @@
                 <StackPanel Orientation="Horizontal" Spacing="7"><FontIcon Glyph="&#xE713;" FontSize="15" /><TextBlock Text="Preferences" /></StackPanel>
                 <Button.Flyout>
                     <Flyout Placement="BottomEdgeAlignedRight">
-                        <StackPanel Width="300" Spacing="14" Padding="4">
-                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Notifications" FontWeight="SemiBold" /><TextBlock Text="Master switch for this profile" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel><ToggleSwitch x:Name="NotificationsEnabledToggle" Grid.Column="1" Toggled="Preference_Toggled" /></Grid>
+                        <Grid Width="300" Padding="4">
+                            <StackPanel x:Name="PreferenceControlsPanel" Spacing="14">
+                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Notifications" FontWeight="SemiBold" /><TextBlock Text="Master switch for this profile" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel><ToggleSwitch x:Name="NotificationsEnabledToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Notifications" /></Grid>
                             <Border Height="1" Background="{StaticResource BorderBrush}" />
-                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Favorites" FontWeight="SemiBold" /><TextBlock Text="New episodes of favorited series" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel><ToggleSwitch x:Name="FavoritesToggle" Grid.Column="1" Toggled="Preference_Toggled" /></Grid>
-                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Watchlist" FontWeight="SemiBold" /><TextBlock Text="New episodes of watchlisted series" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel><ToggleSwitch x:Name="WatchlistToggle" Grid.Column="1" Toggled="Preference_Toggled" /></Grid>
-                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Continue Watching" FontWeight="SemiBold" /><TextBlock Text="Series you are actively watching" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel><ToggleSwitch x:Name="ContinueWatchingToggle" Grid.Column="1" Toggled="Preference_Toggled" /></Grid>
-                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Next Up" FontWeight="SemiBold" /><TextBlock Text="The next episode after your progress" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel><ToggleSwitch x:Name="NextUpToggle" Grid.Column="1" Toggled="Preference_Toggled" /></Grid>
-                            <TextBlock x:Name="PreferenceErrorText" Foreground="{StaticResource ErrorBrush}" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" />
-                        </StackPanel>
+                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Favorites" FontWeight="SemiBold" /><TextBlock Text="New episodes of favorited series" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel><ToggleSwitch x:Name="FavoritesToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Favorites" /></Grid>
+                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Watchlist" FontWeight="SemiBold" /><TextBlock Text="New episodes of watchlisted series" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel><ToggleSwitch x:Name="WatchlistToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Watchlist" /></Grid>
+                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Continue Watching" FontWeight="SemiBold" /><TextBlock Text="Series you are actively watching" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel><ToggleSwitch x:Name="ContinueWatchingToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Continue Watching" /></Grid>
+                            <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Next Up" FontWeight="SemiBold" /><TextBlock Text="The next episode after your progress" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel><ToggleSwitch x:Name="NextUpToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Next Up" /></Grid>
+                            <TextBlock x:Name="PreferenceErrorText" Foreground="{StaticResource ErrorBrush}" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" />
+                            </StackPanel>
+                            <StackPanel x:Name="PreferenceLoadFailedPanel" Spacing="12" Visibility="Collapsed">
+                                <TextBlock Text="Couldn’t load preferences." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <Button Content="Retry" HorizontalAlignment="Left" Style="{StaticResource OutlineButtonStyle}" Click="RetryPreferences_Click" />
+                            </StackPanel>
+                        </Grid>
                     </Flyout>
                 </Button.Flyout>
             </Button>
@@ -58,14 +64,14 @@
                             <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <Border Width="44" Height="64" CornerRadius="6" Background="{StaticResource SurfaceBrush}"><Image Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" /></Border>
                             <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-                                <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><Ellipse Width="8" Height="8" Fill="{StaticResource AccentBrush}" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" VerticalAlignment="Center" /><TextBlock Grid.Column="1" Text="{x:Bind DisplayTitle}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{x:Bind RelativeTime}" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></Grid>
+                                <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><Ellipse Width="8" Height="8" Fill="{StaticResource AccentBrush}" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" VerticalAlignment="Center" /><TextBlock x:Name="NotificationTitleText" Grid.Column="1" Text="{x:Bind DisplayTitle}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{x:Bind RelativeTime}" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></Grid>
                                 <TextBlock Text="{x:Bind Subtitle}" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
                                 <ItemsControl ItemsSource="{x:Bind ReasonLabels}">
                                     <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="4" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemTemplate><DataTemplate><Border Padding="7,2" CornerRadius="10" Background="{StaticResource SurfaceBrush}"><TextBlock Text="{Binding}" FontSize="10" Foreground="{StaticResource SecondaryTextBrush}" /></Border></DataTemplate></ItemsControl.ItemTemplate>
                                 </ItemsControl>
                             </StackPanel>
-                            <Button x:Name="InlineMarkReadButton" Grid.Column="2" Tag="{x:Bind}" Click="MarkRead_Click" Tapped="MarkRead_Tapped" Width="32" Height="32" Padding="0" VerticalAlignment="Bottom" Opacity="0" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" ToolTipService.ToolTip="Mark as read"><FontIcon Glyph="&#xE73E;" FontSize="14" /></Button>
+                            <Button x:Name="InlineMarkReadButton" Grid.Column="2" Tag="{x:Bind}" Click="MarkRead_Click" Tapped="MarkRead_Tapped" GotFocus="InlineMarkReadButton_GotFocus" LostFocus="InlineMarkReadButton_LostFocus" Width="32" Height="32" Padding="0" VerticalAlignment="Bottom" Opacity="0" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" ToolTipService.ToolTip="Mark as read" AutomationProperties.Name="Mark as read"><FontIcon Glyph="&#xE73E;" FontSize="14" /></Button>
                         </Grid>
                     </DataTemplate>
                 </ListView.ItemTemplate>
@@ -87,7 +93,7 @@
 
         <StackPanel Grid.Row="3" Spacing="8" HorizontalAlignment="Center">
             <Button x:Name="LoadMoreButton" Content="Load more" Click="LoadMore_Click" Style="{StaticResource OutlineButtonStyle}" Visibility="Collapsed" />
-            <TextBlock x:Name="ErrorText" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" TextAlignment="Center" />
+            <TextBlock x:Name="ErrorText" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" TextAlignment="Center" AutomationProperties.LiveSetting="Polite" />
         </StackPanel>
     </Grid>
 </Page>

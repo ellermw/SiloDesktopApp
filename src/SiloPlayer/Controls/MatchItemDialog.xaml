@@ -7,12 +7,50 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
     Title="Match Item"
-    PrimaryButtonText="Apply"
     CloseButtonText="Cancel"
-    DefaultButton="Primary"
-    IsPrimaryButtonEnabled="False">
+    DefaultButton="None">
 
-    <StackPanel Width="520" Spacing="16">
+    <Grid MinWidth="320" MaxWidth="640" MaxHeight="720" RowSpacing="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Spacing="16" Padding="0,0,4,0">
+        <!-- Current item summary. The WebUI keeps this visible above the
+             search form so an administrator cannot accidentally match the
+             wrong item after opening more than one detail surface. -->
+        <Border
+            Background="{StaticResource SurfaceRaisedBrush}"
+            CornerRadius="8"
+            Padding="12,9">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock
+                    x:Name="CurrentTitleText"
+                    FontSize="14"
+                    FontWeight="SemiBold"
+                    Foreground="{StaticResource PrimaryTextBrush}"
+                    TextTrimming="CharacterEllipsis"
+                    MaxWidth="450" />
+                <TextBlock
+                    x:Name="CurrentYearText"
+                    FontSize="13"
+                    Foreground="{StaticResource SecondaryTextBrush}"
+                    VerticalAlignment="Center" />
+                <Border
+                    Background="{StaticResource CardBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="10"
+                    Padding="8,2">
+                    <TextBlock
+                        x:Name="CurrentTypeText"
+                        FontSize="10"
+                        Foreground="{StaticResource SecondaryTextBrush}" />
+                </Border>
+            </StackPanel>
+        </Border>
+
         <!-- Local media section (admin-only): folder/file paths for each version
              (movies) or library roots (series). Mirrors webui MediaLocations +
              FolderPathsList used inside MatchItemDialog. -->
@@ -25,30 +63,119 @@
                        Visibility="Collapsed" />
         </StackPanel>
 
-        <!-- Search row -->
-        <Grid ColumnSpacing="8">
+        <!-- The current WebUI exposes title/year and provider identifiers as
+             independent fields. Keeping them separate avoids guessing whether
+             a numeric query means TMDB, TVDB, ISBN, or another provider. -->
+        <Grid x:Name="VideoSearchFields" ColumnSpacing="12" RowSpacing="10">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
             <TextBox
-                x:Name="SearchBox"
-                Grid.Column="0"
-                PlaceholderText="Search by title, IMDB ID, TMDB ID..."
+                x:Name="TitleBox"
+                Grid.Row="0"
+                Grid.ColumnSpan="2"
+                Header="Title"
+                PlaceholderText="Title"
                 FontSize="13"
                 CornerRadius="8"
-                KeyDown="SearchBox_KeyDown" />
-            <Button
-                x:Name="SearchButton"
+                KeyDown="SearchField_KeyDown" />
+            <TextBox
+                x:Name="YearBox"
+                Grid.Row="1"
+                Grid.Column="0"
+                Header="Year"
+                PlaceholderText="Year"
+                InputScope="Number"
+                FontSize="13"
+                CornerRadius="8"
+                KeyDown="SearchField_KeyDown" />
+            <TextBox
+                x:Name="ImdbIdBox"
+                Grid.Row="1"
                 Grid.Column="1"
-                Style="{StaticResource AccentButtonStyle}"
-                Click="SearchButton_Click">
-                <StackPanel Orientation="Horizontal" Spacing="6">
-                    <FontIcon Glyph="&#xE721;" FontSize="13" />
-                    <TextBlock Text="Search" />
-                </StackPanel>
-            </Button>
+                Header="IMDb ID"
+                PlaceholderText="tt1234567"
+                FontSize="13"
+                CornerRadius="8"
+                KeyDown="SearchField_KeyDown" />
+            <TextBox
+                x:Name="TmdbIdBox"
+                Grid.Row="2"
+                Grid.Column="0"
+                Header="TMDB ID"
+                PlaceholderText="12345"
+                FontSize="13"
+                CornerRadius="8"
+                KeyDown="SearchField_KeyDown" />
+            <TextBox
+                x:Name="TvdbIdBox"
+                Grid.Row="2"
+                Grid.Column="1"
+                Header="TVDB ID"
+                PlaceholderText="12345"
+                FontSize="13"
+                CornerRadius="8"
+                KeyDown="SearchField_KeyDown" />
         </Grid>
+
+        <StackPanel x:Name="GenericSearchFields" Spacing="10" Visibility="Collapsed">
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="2*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <TextBox
+                    x:Name="GenericTitleBox"
+                    Grid.Column="0"
+                    Header="Title"
+                    PlaceholderText="Title"
+                    FontSize="13"
+                    CornerRadius="8"
+                    KeyDown="SearchField_KeyDown" />
+                <TextBox
+                    x:Name="GenericYearBox"
+                    Grid.Column="1"
+                    Header="Year"
+                    PlaceholderText="Year"
+                    InputScope="Number"
+                    FontSize="13"
+                    CornerRadius="8"
+                    KeyDown="SearchField_KeyDown" />
+            </Grid>
+            <TextBlock Text="Provider IDs" FontSize="12"
+                       Foreground="{StaticResource SecondaryTextBrush}" />
+            <StackPanel x:Name="ProviderIdsPanel" Spacing="8" />
+            <Button
+                x:Name="AddProviderIdButton"
+                Width="36"
+                Height="36"
+                Padding="0"
+                HorizontalAlignment="Left"
+                Style="{StaticResource SecondaryButtonStyle}"
+                Click="AddProviderId_Click"
+                AutomationProperties.Name="Add provider ID"
+                ToolTipService.ToolTip="Add provider ID">
+                <FontIcon Glyph="&#xE710;" FontSize="12" />
+            </Button>
+        </StackPanel>
+
+        <Button
+            x:Name="SearchButton"
+            HorizontalAlignment="Stretch"
+            HorizontalContentAlignment="Center"
+            Style="{StaticResource AccentButtonStyle}"
+            Click="SearchButton_Click">
+            <StackPanel Orientation="Horizontal" Spacing="7">
+                <FontIcon x:Name="SearchIcon" Glyph="&#xE721;" FontSize="13" />
+                <TextBlock x:Name="SearchButtonText" Text="Search" />
+            </StackPanel>
+        </Button>
 
         <!-- Loading -->
         <ProgressRing
@@ -59,9 +186,13 @@
             HorizontalAlignment="Center" />
 
         <!-- Results list -->
-        <ScrollViewer MaxHeight="400" VerticalScrollBarVisibility="Auto">
-            <StackPanel x:Name="ResultsPanel" Spacing="4" />
-        </ScrollViewer>
+        <StackPanel x:Name="ResultsSection" Spacing="8" Visibility="Collapsed">
+            <TextBlock Text="Results" FontSize="12" FontWeight="SemiBold"
+                       Foreground="{StaticResource PrimaryTextBrush}" />
+            <ScrollViewer MaxHeight="360" VerticalScrollBarVisibility="Auto">
+                <StackPanel x:Name="ResultsPanel" Spacing="4" />
+            </ScrollViewer>
+        </StackPanel>
 
         <!-- Empty / no results text -->
         <TextBlock
@@ -71,5 +202,26 @@
             Foreground="{StaticResource SecondaryTextBrush}"
             HorizontalAlignment="Center"
             Visibility="Collapsed" />
-    </StackPanel>
+
+        <TextBlock
+            x:Name="ApplyStatusText"
+            Text=""
+            FontSize="12"
+            Foreground="{StaticResource ErrorBrush}"
+            TextWrapping="Wrap"
+            Visibility="Collapsed"
+            AutomationProperties.LiveSetting="Assertive" />
+        </StackPanel>
+        </ScrollViewer>
+
+        <Button
+            x:Name="ApplyMatchButton"
+            Grid.Row="1"
+            HorizontalAlignment="Stretch"
+            HorizontalContentAlignment="Center"
+            Style="{StaticResource AccentButtonStyle}"
+            Content="Apply Match"
+            Visibility="Collapsed"
+            Click="ApplyMatch_Click" />
+    </Grid>
 </ContentDialog>

@@ -57,7 +57,8 @@
                         </StackPanel>
                         <controls:WrapPanel x:Name="RoomHeaderActions" Grid.Column="1" HorizontalSpacing="8" VerticalSpacing="8">
                             <Button x:Name="CopyInviteButton" Style="{StaticResource OutlineButtonStyle}"
-                                    Padding="12,8" FontSize="13" Click="CopyInviteButton_Click" Visibility="Collapsed">
+                                    Padding="12,8" FontSize="13" Click="CopyInviteButton_Click" Visibility="Collapsed"
+                                    AutomationProperties.Name="Copy invite link">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon Glyph="&#xE71B;" FontSize="12" />
                                     <TextBlock Text="Invite" />
@@ -95,15 +96,6 @@
                     <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
                                Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" FontSize="13" />
                 </Border>
-                <Border Background="#2DEF6B73" CornerRadius="8" Padding="14,10"
-                        Visibility="{x:Bind ViewModel.ClosedReason, Mode=OneWay, Converter={StaticResource NullToVis}}">
-                    <StackPanel HorizontalAlignment="Center" Spacing="8">
-                        <TextBlock x:Name="ClosedReasonText" Text="The room has ended."
-                                   Foreground="{StaticResource ErrorBrush}" FontSize="15" />
-                        <Button Content="Back to Watch Parties" Click="LeaveButton_Click" />
-                    </StackPanel>
-                </Border>
-
                 <!-- Current WebUI Now Playing hero. -->
                 <Border x:Name="NowPlayingPanel" Visibility="Collapsed"
                         BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12">
@@ -224,7 +216,11 @@
                                 <TextBlock x:Name="DrillDownBackText" Text="Back to results" FontSize="13" />
                             </StackPanel>
                         </Button>
-                        <TextBlock x:Name="DrillDownTitle" FontSize="18" FontWeight="SemiBold" />
+                        <StackPanel Spacing="3">
+                            <TextBlock x:Name="DrillDownTitle" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock x:Name="DrillDownSubtitle" FontSize="13"
+                                       Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" />
+                        </StackPanel>
                         <ItemsRepeater x:Name="DrillDownItems">
                             <ItemsRepeater.Layout>
                                 <UniformGridLayout MinItemWidth="220" MinItemHeight="76"
@@ -336,6 +332,21 @@
                         </ItemsRepeater>
                     </StackPanel>
                 </Border>
+            </StackPanel>
+
+            <!-- Current WebUI RoomTerminalState. Terminal failures replace the
+                 room rather than leaving unusable room chrome on screen. -->
+            <StackPanel x:Name="TerminalStatePanel" MaxWidth="560" HorizontalAlignment="Center"
+                        VerticalAlignment="Center" Spacing="14" Visibility="Collapsed">
+                <FontIcon Glyph="&#xE783;" FontSize="34" HorizontalAlignment="Center"
+                          Foreground="{StaticResource SecondaryTextBrush}" />
+                <TextBlock x:Name="TerminalStateTitle" FontSize="26" FontWeight="SemiBold"
+                           TextAlignment="Center" TextWrapping="Wrap" />
+                <TextBlock x:Name="TerminalStateDescription" FontSize="14"
+                           Foreground="{StaticResource SecondaryTextBrush}" TextAlignment="Center"
+                           TextWrapping="Wrap" />
+                <Button x:Name="TerminalStateAction" HorizontalAlignment="Center"
+                        Style="{StaticResource AccentButtonStyle}" Click="LeaveButton_Click" />
             </StackPanel>
         </Grid>
     </ScrollViewer>

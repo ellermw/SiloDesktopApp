@@ -11,6 +11,7 @@ public partial class AdminPolicyViewModel(AdminApi api) : ObservableObject
     public ObservableCollection<PolicyDocument> Documents { get; } = [];
     public ObservableCollection<PolicyVendorModule> VendorModules { get; } = [];
     public ObservableCollection<PolicyVersionSummary> Versions { get; } = [];
+    public ObservableCollection<PolicyCompileIssue> CompileIssues { get; } = [];
     public ObservableCollection<PolicyDecisionEntry> Decisions { get; } = [];
     [ObservableProperty] private PolicyCapability? _capability;
     [ObservableProperty] private PolicyDocument? _selectedDocument;
@@ -29,6 +30,11 @@ public partial class AdminPolicyViewModel(AdminApi api) : ObservableObject
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private string? _statusMessage;
+    private string _seedSource = "";
+    private bool _seedIsActive;
+    private string? _validatedSource;
+    private string? _savedSource;
+    private PolicyVersionSummary? _activationTarget;
     public bool IsAvailable => Capability?.Enabled == true && Capability.EditorAvailable;
     private readonly List<string> _decisionCursorStack = [];
     private string? _decisionCursor;
@@ -48,13 +54,97 @@ public partial class AdminPolicyViewModel(AdminApi api) : ObservableObject
     }
     public async Task SelectDocumentAsync(PolicyDocument document)
     {
-        SelectedDocument = document; Source = document.ActiveVersion?.Source ?? "";
+        SelectedDocument = document;
         Replace(Versions, await api.GetPolicyVersionsAsync(document.Id));
-        if (string.IsNullOrEmpty(Source) && document.ActiveVersion is { VersionNumber: var n }) Source = (await api.GetPolicyVersionAsync(document.Id, n)).Source ?? "";
+        var seedSummary = document.ActiveVersionId is long activeId
+            ? Versions.FirstOrDefault(version => version.Id == activeId)
+            : Versions.FirstOrDefault();
+        var seed = document.ActiveVersion?.Source is not null
+            ? document.ActiveVersion
+            : seedSummary is not null
+                ? await api.GetPolicyVersionAsync(document.Id, seedSummary.Id)
+                : null;
+        _seedSource = seed?.Source ?? "";
+        _seedIsActive = seed is not null && seed.Id == document.ActiveVersionId;
+        _validatedSource = null;
+        _savedSource = null;
+        _activationTarget = !_seedIsActive && seedSummary?.CompiledOk == true ? seedSummary : null;
+        CompileIssues.Clear();
+        Comment = "";
+        Source = _seedSource;
+        StatusMessage = null;
     }
     public async Task CreateDocumentAsync(string domain, string name) => await Busy(async () => { var d = await api.CreatePolicyDocumentAsync(domain, name); Documents.Add(d); await SelectDocumentAsync(d); });
-    public async Task SaveVersionAsync() => await Busy(async () => { if (SelectedDocument is null) return; var valid = await api.ValidatePolicyAsync(SelectedDocument.Domain, Source); if (!valid.CompiledOk) throw new InvalidOperationException(string.Join(Environment.NewLine, valid.Errors.Select(e => $"{e.Row}:{e.Col} {e.Message}"))); var created = await api.CreatePolicyVersionAsync(SelectedDocument.Id, Source, Comment); await api.ActivatePolicyVersionAsync(SelectedDocument.Id, created.VersionNumber); StatusMessage = $"Version {created.VersionNumber} saved and activated."; await SelectDocumentAsync(SelectedDocument); });
-    public async Task ActivateAsync(PolicyVersionSummary version) => await Busy(async () => { if (SelectedDocument is null) return; var result = await api.ActivatePolicyVersionAsync(SelectedDocument.Id, version.VersionNumber); SelectedDocument.ActiveVersionId = result.ActiveVersionId; StatusMessage = $"Version {version.VersionNumber} activated."; await SelectDocumentAsync(SelectedDocument); });
+    public string EditorStep
+    {
+        get
+        {
+            if (_seedIsActive && Source == _seedSource && _activationTarget is null) return "live";
+            if (_activationTarget is not null && (_savedSource == Source || Source == _seedSource)) return "activate";
+            return _validatedSource == Source ? "save" : "validate";
+        }
+    }
+
+    public PolicyVersionSummary? ActivationTarget => _activationTarget;
+
+    partial void OnSourceChanged(string value)
+    {
+        CompileIssues.Clear();
+        StatusMessage = null;
+        if (_savedSource != value && value != _seedSource) _activationTarget = null;
+        OnPropertyChanged(nameof(EditorStep));
+        OnPropertyChanged(nameof(ActivationTarget));
+    }
+
+    public async Task ValidateDraftAsync() => await Busy(async () =>
+    {
+        if (SelectedDocument is null) return;
+        CompileIssues.Clear();
+        var result = await api.ValidatePolicyAsync(SelectedDocument.Domain, Source);
+        Replace(CompileIssues, result.Errors);
+        _validatedSource = result.CompiledOk ? Source : null;
+        StatusMessage = result.CompiledOk ? "Validation passed — the draft compiles." : null;
+        if (!result.CompiledOk && result.Errors.Count == 0)
+            throw new InvalidOperationException("Validation failed.");
+        OnPropertyChanged(nameof(EditorStep));
+    });
+
+    public async Task SaveVersionAsync() => await Busy(async () =>
+    {
+        if (SelectedDocument is null || _validatedSource != Source) return;
+        var created = await api.CreatePolicyVersionAsync(SelectedDocument.Id, Source,
+            string.IsNullOrWhiteSpace(Comment) ? null : Comment.Trim());
+        Replace(Versions, await api.GetPolicyVersionsAsync(SelectedDocument.Id));
+        _activationTarget = Versions.FirstOrDefault(version => version.Id == created.Id)
+            ?? new PolicyVersionSummary
+            {
+                Id = created.Id,
+                DocumentId = SelectedDocument.Id,
+                VersionNumber = created.VersionNumber,
+                CompiledOk = created.CompiledOk,
+            };
+        _savedSource = Source;
+        Comment = "";
+        StatusMessage = $"Saved v{created.VersionNumber}";
+        OnPropertyChanged(nameof(EditorStep));
+        OnPropertyChanged(nameof(ActivationTarget));
+    });
+
+    public async Task ActivateDraftAsync()
+    {
+        if (_activationTarget is not { } target) return;
+        await ActivateAsync(target);
+    }
+
+    public async Task ActivateAsync(PolicyVersionSummary version) => await Busy(async () =>
+    {
+        if (SelectedDocument is null) return;
+        var documentId = SelectedDocument.Id;
+        await api.ActivatePolicyVersionAsync(documentId, version.Id);
+        var refreshed = await api.GetPolicyDocumentAsync(documentId);
+        await SelectDocumentAsync(refreshed);
+        StatusMessage = $"v{version.VersionNumber} is now live";
+    });
     public async Task ToggleEnabledAsync(bool enabled) => await Busy(async () => { if (SelectedDocument is not null) { await api.SetPolicyDocumentEnabledAsync(SelectedDocument.Id, enabled); SelectedDocument.Enabled = enabled; } });
     public async Task ToggleDocumentEnabledAsync(PolicyDocument document, bool enabled) => await Busy(async () => { await api.SetPolicyDocumentEnabledAsync(document.Id, enabled); document.Enabled = enabled; });
     public async Task DeleteAsync() => await Busy(async () => { if (SelectedDocument is null) return; await api.DeletePolicyDocumentAsync(SelectedDocument.Id); Documents.Remove(SelectedDocument); SelectedDocument = null; Versions.Clear(); Source = ""; });

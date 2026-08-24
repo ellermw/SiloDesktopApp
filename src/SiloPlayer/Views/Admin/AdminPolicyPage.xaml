@@ -101,21 +101,55 @@
                                     </Grid>
 
                                     <StackPanel Orientation="Horizontal" Spacing="6">
-                                        <Border Background="#1834D399" CornerRadius="12" Padding="9,4"><TextBlock Text="✓ Draft" FontSize="11" Foreground="#FF6EE7B7" /></Border>
+                                        <Border x:Name="DraftStageBadge" CornerRadius="12" Padding="9,4"><TextBlock x:Name="DraftStageText" Text="Draft" FontSize="11" /></Border>
                                         <TextBlock Text="—" Foreground="{StaticResource TertiaryTextBrush}" />
-                                        <Border Background="#1834D399" CornerRadius="12" Padding="9,4"><TextBlock Text="Validated" FontSize="11" Foreground="#FF6EE7B7" /></Border>
+                                        <Border x:Name="ValidatedStageBadge" CornerRadius="12" Padding="9,4"><TextBlock x:Name="ValidatedStageText" Text="Validated" FontSize="11" /></Border>
                                         <TextBlock Text="—" Foreground="{StaticResource TertiaryTextBrush}" />
-                                        <Border Background="#1834D399" CornerRadius="12" Padding="9,4"><TextBlock Text="Saved" FontSize="11" Foreground="#FF6EE7B7" /></Border>
+                                        <Border x:Name="SavedStageBadge" CornerRadius="12" Padding="9,4"><TextBlock x:Name="SavedStageText" Text="Saved" FontSize="11" /></Border>
                                         <TextBlock Text="—" Foreground="{StaticResource TertiaryTextBrush}" />
-                                        <Border Background="{StaticResource AccentBackgroundBrush}" CornerRadius="12" Padding="9,4"><TextBlock x:Name="LiveVersionText" Text="Live" FontSize="11" Foreground="{StaticResource AccentBrush}" /></Border>
+                                        <Border x:Name="LiveStageBadge" CornerRadius="12" Padding="9,4"><TextBlock x:Name="LiveVersionText" Text="Live" FontSize="11" /></Border>
                                     </StackPanel>
 
-                                    <TextBox Header="Rego source" Text="{Binding Source, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                    <TextBlock x:Name="LiveSourceExplanation"
+                                               Text="This source is what the live policy runs today. Edit it to start a new draft — nothing changes until you activate the result."
+                                               FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="DisabledOverrideExplanation" Visibility="Collapsed"
+                                               Text="This override is disabled: the Silo baseline applies unchanged until it is re-enabled from the overrides list."
+                                               FontSize="12" Foreground="#FFFBBF24" TextWrapping="Wrap" />
+
+                                    <TextBox x:Name="PolicySourceBox" Header="Rego source" Text="{Binding Source, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                              AcceptsReturn="True" FontFamily="Consolas" MinHeight="390" TextWrapping="NoWrap"
+                                             TextChanged="PolicySourceBox_TextChanged"
                                              ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto" />
-                                    <TextBox Header="Version comment" Text="{Binding Comment, Mode=TwoWay}" PlaceholderText="Describe this change" />
+
+                                    <Border x:Name="CompileIssuesPanel" Visibility="Collapsed" Background="#20EF4444" BorderBrush="#66EF4444" BorderThickness="1" CornerRadius="8" Padding="12">
+                                        <StackPanel Spacing="6">
+                                            <TextBlock Text="Compile issues" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource ErrorBrush}" />
+                                            <ItemsControl ItemsSource="{Binding CompileIssues}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock FontSize="12" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap">
+                                                            <Run Text="{Binding Row}" /><Run Text=":" /><Run Text="{Binding Col}" /><Run Text="  " /><Run Text="{Binding Message}" />
+                                                        </TextBlock>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </Border>
+
+                                    <TextBox x:Name="VersionCommentBox" Header="Policy version comment"
+                                             Text="{Binding Comment, Mode=TwoWay}"
+                                             PlaceholderText="What changed? (optional, shown in history)"
+                                             Visibility="Collapsed" />
                                     <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Button Content="Validate, save &amp; activate" Click="Save_Click" Style="{StaticResource AccentButtonStyle}" />
+                                        <Button x:Name="RevalidateButton" Content="Re-validate" Click="Validate_Click"
+                                                Style="{StaticResource GhostButtonStyle}" Visibility="Collapsed" />
+                                        <Button x:Name="ValidateDraftButton" Content="Validate draft" Click="Validate_Click"
+                                                Style="{StaticResource AccentButtonStyle}" />
+                                        <Button x:Name="SaveVersionButton" Content="Save as version" Click="Save_Click"
+                                                Style="{StaticResource AccentButtonStyle}" Visibility="Collapsed" />
+                                        <Button x:Name="ActivateVersionButton" Content="Activate" Click="ActivateDraft_Click"
+                                                Style="{StaticResource AccentButtonStyle}" Visibility="Collapsed" />
                                         <Button Content="Delete override" Click="Delete_Click" Style="{StaticResource DestructiveButtonStyle}" />
                                     </StackPanel>
                                 </StackPanel>

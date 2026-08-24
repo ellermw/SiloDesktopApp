@@ -2,6 +2,11 @@ namespace SiloPlayer.Core.Models.Playback;
 
 public class PlaybackStartResponse
 {
+    public int ProtocolVersion { get; set; }
+    public string? PlaybackAttemptId { get; set; }
+    public string? PlanId { get; set; }
+    public string? PlanAttemptKey { get; set; }
+    public string? Delivery { get; set; }
     public string SessionId { get; set; } = "";
     public int MediaFileId { get; set; }
     public string PlayMethod { get; set; } = "";
@@ -12,10 +17,21 @@ public class PlaybackStartResponse
     public double? DurationSeconds { get; set; }
     public List<SubtitleTrackInfo> SubtitleUrls { get; set; } = [];
     public PlaybackInfo? PlaybackInfo { get; set; }
+    public double StreamOriginSeconds { get; set; }
+    public double PlayerStartSeconds { get; set; }
+    public double TimelineOffsetSeconds { get; set; }
+    public bool CanSeekAnywhere { get; set; } = true;
+    public string? SelectedSubtitleTrackId { get; set; }
+    public string SubtitleMode { get; set; } = "off";
+    public string? SelectedSubtitleArtifactUrl { get; set; }
+    public double SubtitleTimingOriginSeconds { get; set; }
+    public string ActiveQuality { get; set; } = "original";
+    public List<PlaybackQualityV3> AvailableQualities { get; set; } = [];
 }
 
 public class SubtitleTrackInfo
 {
+    public string? TrackId { get; set; }
     public int? Id { get; set; }
     public int Index { get; set; }
     public int MediaFileId { get; set; }
@@ -24,6 +40,7 @@ public class SubtitleTrackInfo
     public string Label { get; set; } = "";
     public string? Source { get; set; }
     public string Url { get; set; } = "";
+    public string? Delivery { get; set; }
     public string? FontBundleUrl { get; set; }
     public bool Forced { get; set; }
     public bool HearingImpaired { get; set; }

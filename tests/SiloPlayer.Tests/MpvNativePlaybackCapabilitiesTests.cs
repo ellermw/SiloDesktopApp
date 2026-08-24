@@ -83,6 +83,20 @@ public sealed class MpvNativePlaybackCapabilitiesTests
     }
 
     [Fact]
+    public void ProtocolV3_OriginalDeliveryLetsLibMpvManageHdrAndAudioSelection()
+    {
+        var (_, context) = MpvNativePlaybackCapabilities.CreateProtocolV3Profile("test");
+
+        var original = context.Deliveries["original_http"];
+        Assert.Contains(MpvNativePlaybackCapabilities.ClientManagedDynamicRangeClaim,
+            original.ValidatedClaims);
+        Assert.Contains(MpvNativePlaybackCapabilities.ClientSelectedAudioTrackClaim,
+            original.ValidatedClaims);
+        Assert.Empty(context.Deliveries["progressive"].ValidatedClaims);
+        Assert.Empty(context.Deliveries["hls"].ValidatedClaims);
+    }
+
+    [Fact]
     public void ApplyTo_UsesFreshCollectionsAndDoesNotClaimPassthroughByDefault()
     {
         var first = new PlaybackStartRequest();

@@ -6,6 +6,13 @@ public sealed class SubtitleAiStatus
     public bool TranscribeEnabled { get; set; }
 }
 
+public sealed class SubtitleProviderStatus
+{
+    public int SchemaVersion { get; set; }
+    public bool Enabled { get; set; }
+    public List<string> Providers { get; set; } = [];
+}
+
 public sealed class SubtitleAiRequest
 {
     public int MediaFileId { get; set; }

@@ -19,16 +19,18 @@ public sealed class RecommendationSectionCurrentParitySourceTests
     {
         var markup = ReadRepoFile("src", "SiloPlayer", "Views", "RecommendationSectionPage.xaml");
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "RecommendationSectionPage.xaml.cs");
+        var customization = ReadRepoFile("src", "SiloPlayer", "Services", "UICustomizationService.cs");
 
         Assert.Contains("SizeChanged=\"Page_SizeChanged\"", markup);
         Assert.Contains("x:Name=\"ItemsLayout\"", markup);
         Assert.Contains("x:Name=\"LoadingLayout\"", markup);
         Assert.Contains("ElementPrepared=\"ItemsGrid_ElementPrepared\"", markup);
         Assert.Contains("ElementPrepared=\"LoadingSkeleton_ElementPrepared\"", markup);
-        Assert.Contains("width < 640 ? 3", page);
-        Assert.Contains("width < 768 ? 4", page);
-        Assert.Contains("width < 1024 ? 5", page);
-        Assert.Contains("width < 1280 ? 6 : 7", page);
+        Assert.Contains("_uiCustomizationService.GetPosterColumnCount(contentWidth)", page);
+        Assert.Contains("public int GetPosterColumnCount(double contentWidth)", customization);
+        Assert.Contains("\"compact\" => contentWidth >= 1280 ? 10", customization);
+        Assert.Contains("\"large\" => contentWidth >= 1280 ? 6", customization);
+        Assert.Contains("_ => contentWidth >= 1280 ? 8", customization);
         Assert.Contains("card.SetCatalogGridLayout(_cardWidth)", page);
         Assert.Contains("poster.Height = _cardWidth * 1.5", page);
         Assert.Contains("PageTitleText.FontSize = width < 640 ? 24 : 30", page);

@@ -16,13 +16,27 @@ public partial class ActivateDeviceViewModel : ObservableObject
 {
     private readonly AuthApi _authApi;
     private readonly AuthService _authService;
+    private readonly SettingsApi _settingsApi;
+    private readonly SiloApiClient _apiClient;
     private CancellationTokenSource? _loadCts;
 
-    public ActivateDeviceViewModel(AuthApi authApi, AuthService authService)
+    public ActivateDeviceViewModel(
+        AuthApi authApi,
+        AuthService authService,
+        SettingsApi settingsApi,
+        SiloApiClient apiClient)
     {
         _authApi = authApi;
         _authService = authService;
+        _settingsApi = settingsApi;
+        _apiClient = apiClient;
     }
+
+    [ObservableProperty]
+    private string _serverName = "Silo";
+
+    [ObservableProperty]
+    private string? _loginBackgroundUrl;
 
     // ---- Code entry ----
 
@@ -182,9 +196,29 @@ public partial class ActivateDeviceViewModel : ObservableObject
         {
             CodeInput = ActiveCode;
         }
+        var brandingTask = LoadBrandingAsync();
         if (HasActiveRequest)
         {
-            await LoadDetailsAsync();
+            await Task.WhenAll(LoadDetailsAsync(), brandingTask);
+        }
+        else
+        {
+            await brandingTask;
+        }
+    }
+
+    private async Task LoadBrandingAsync()
+    {
+        try
+        {
+            var branding = await _settingsApi.GetServerBrandingAsync();
+            ServerName = string.IsNullOrWhiteSpace(branding.ServerName) ? "Silo" : branding.ServerName;
+            LoginBackgroundUrl = _apiClient.ResolveServerUrl(branding.LoginBackgroundUrl);
+        }
+        catch
+        {
+            ServerName = "Silo";
+            LoginBackgroundUrl = null;
         }
     }
 

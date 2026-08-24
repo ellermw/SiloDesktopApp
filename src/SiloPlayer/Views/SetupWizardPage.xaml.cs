@@ -371,7 +371,29 @@ public sealed partial class SetupWizardPage : Page
         var entries = new StackPanel { Spacing = 3 };
         var up = new Button { Content = "Up" };
         var go = new Button { Content = "Browse" };
+        var refresh = new Button
+        {
+            Content = new FontIcon { Glyph = "\uE72C", FontSize = 14 },
+            Padding = new Thickness(8),
+        };
+        ToolTipService.SetToolTip(refresh, "Refresh current folder");
+        var resolvedPathText = new TextBlock
+        {
+            Text = currentPath,
+            FontFamily = new Microsoft.UI.Xaml.Media.FontFamily("Consolas"),
+            FontSize = 12,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        var selectionText = new TextBlock
+        {
+            Text = "Select folders or use current",
+            FontSize = 12,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
+            VerticalAlignment = VerticalAlignment.Center,
+        };
         ContentDialog? dialog = null;
+        var loadGeneration = 0;
 
         void UpdateButton()
         {
@@ -380,20 +402,42 @@ public sealed partial class SetupWizardPage : Page
                 ? "Use Current Folder"
                 : $"Add {selected.Count} Folder{(selected.Count == 1 ? "" : "s")}";
             dialog.IsPrimaryButtonEnabled = selected.Count > 0 || !existing.Contains(currentPath);
+            selectionText.Text = selected.Count == 0
+                ? "Select folders or use current"
+                : $"{selected.Count} folder{(selected.Count == 1 ? "" : "s")} selected";
         }
 
         async Task LoadAsync(string path)
         {
+            path = path.Trim();
+            if (!path.StartsWith('/'))
+            {
+                status.Text = "Use an absolute path that starts with /.";
+                status.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ErrorBrush"];
+                return;
+            }
+
+            var generation = ++loadGeneration;
             status.Text = "Loading server folders...";
+            status.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];
             entries.Children.Clear();
+            go.IsEnabled = false;
+            refresh.IsEnabled = false;
             try
             {
                 var response = await api.BrowseFilesystemAsync(path);
+                if (generation != loadGeneration) return;
                 currentPath = response.Path;
                 pathBox.Text = currentPath;
+                resolvedPathText.Text = currentPath;
+                ToolTipService.SetToolTip(resolvedPathText, currentPath);
                 up.Tag = response.Parent;
                 up.IsEnabled = response.Parent != response.Path;
-                status.Text = response.Entries.Count == 0 ? "No subfolders found here." : "";
+                status.Text = existing.Contains(currentPath)
+                    ? "This folder is already listed on the library."
+                    : response.Entries.Count == 0
+                        ? "No subfolders found here."
+                        : "";
                 foreach (var entry in response.Entries)
                 {
                     var row = new Grid { ColumnSpacing = 6 };
@@ -429,24 +473,47 @@ public sealed partial class SetupWizardPage : Page
             }
             catch (Exception ex)
             {
+                if (generation != loadGeneration) return;
                 status.Text = ex.Message;
+                status.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ErrorBrush"];
+            }
+            finally
+            {
+                if (generation == loadGeneration)
+                {
+                    go.IsEnabled = true;
+                    refresh.IsEnabled = true;
+                }
             }
         }
 
         go.Click += async (_, _) => await LoadAsync(pathBox.Text.Trim());
+        pathBox.KeyDown += async (_, args) =>
+        {
+            if (args.Key != Windows.System.VirtualKey.Enter) return;
+            args.Handled = true;
+            await LoadAsync(pathBox.Text);
+        };
         up.Click += async (_, _) => { if (up.Tag is string parent) await LoadAsync(parent); };
+        refresh.Click += async (_, _) => await LoadAsync(currentPath);
         var pathRow = new Grid { ColumnSpacing = 8 };
         pathRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         pathRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         Grid.SetColumn(go, 1);
         pathRow.Children.Add(pathBox);
         pathRow.Children.Add(go);
-        var toolbar = new Grid();
+        var toolbar = new Grid { ColumnSpacing = 8 };
         toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        toolbar.Children.Add(new TextBlock { Text = "Select folders or navigate into one.", FontSize = 11, VerticalAlignment = VerticalAlignment.Center });
+        toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var currentFolder = new StackPanel { Spacing = 2 };
+        currentFolder.Children.Add(new TextBlock { Text = "Current folder", FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+        currentFolder.Children.Add(resolvedPathText);
+        toolbar.Children.Add(currentFolder);
         Grid.SetColumn(up, 1);
         toolbar.Children.Add(up);
+        Grid.SetColumn(refresh, 2);
+        toolbar.Children.Add(refresh);
         var content = new StackPanel { Width = 620, Spacing = 9 };
         content.Children.Add(pathRow);
         content.Children.Add(status);
@@ -459,6 +526,7 @@ public sealed partial class SetupWizardPage : Page
             CornerRadius = new CornerRadius(8),
             Child = new ScrollViewer { Content = entries },
         });
+        content.Children.Add(selectionText);
         dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,

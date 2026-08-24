@@ -237,6 +237,14 @@ public sealed partial class LandscapeCard : UserControl
         }
         RemainingBadge.Visibility = Visibility.Collapsed;
 
+        SubtitleButton.Visibility = SubtitleText.Visibility;
+        TimeLeftButton.Visibility = TimeLeftText.Visibility;
+        SubtitleText.Visibility = Visibility.Visible;
+        TimeLeftText.Visibility = Visibility.Visible;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(HeadingButton, $"Open {TitleText.Text}");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(SubtitleButton, $"Open {SubtitleText.Text}");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(TimeLeftButton, $"Open {TimeLeftText.Text}");
+
         UpdateBadges(item);
         var overlayService = App.Services.GetRequiredService<Services.CardOverlayService>();
         if (!overlayService.IsLoaded)
@@ -435,6 +443,8 @@ public sealed partial class LandscapeCard : UserControl
 
     private void OnCardKeyDown(object sender, KeyRoutedEventArgs e)
     {
+        if (!ReferenceEquals(FocusManager.GetFocusedElement(XamlRoot), this))
+            return;
         if (e.Key is not (Windows.System.VirtualKey.Enter or Windows.System.VirtualKey.Space)
             || MediaItem == null)
             return;
@@ -470,22 +480,21 @@ public sealed partial class LandscapeCard : UserControl
         nav.Navigate<ItemDetailPage>(MediaItem.ContentId);
     }
 
-    private void OnHeadingTapped(object sender, TappedRoutedEventArgs e)
+    private void OnHeadingClick(object sender, RoutedEventArgs e)
     {
         if (MediaItem == null) return;
-        e.Handled = true;
         var nav = App.Services.GetRequiredService<NavigationService>();
-        var headingIsSeries = !string.IsNullOrWhiteSpace(MediaItem.SeriesId)
+        var headingIsSeries = MediaItem.ItemSource != "episode_carousel"
+            && !string.IsNullOrWhiteSpace(MediaItem.SeriesId)
             && !string.IsNullOrWhiteSpace(MediaItem.SeriesTitle)
             && (MediaItem.SeasonNumber.HasValue && MediaItem.EpisodeNumber.HasValue
                 || MediaItem.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase));
         nav.Navigate<ItemDetailPage>(headingIsSeries ? MediaItem.SeriesId! : MediaItem.ContentId);
     }
 
-    private void OnMetadataTapped(object sender, TappedRoutedEventArgs e)
+    private void OnMetadataClick(object sender, RoutedEventArgs e)
     {
         if (MediaItem == null) return;
-        e.Handled = true;
         var nav = App.Services.GetRequiredService<NavigationService>();
         var isMangaChapter = MediaItem.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase)
             && !string.IsNullOrWhiteSpace(MediaItem.SeriesId);

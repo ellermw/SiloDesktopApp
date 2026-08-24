@@ -792,5 +792,31 @@
                 </Grid>
             </controls:SlideSheet.SheetContent>
         </controls:SlideSheet>
+
+        <!-- LibraryPage.tsx returns this state when the route no longer maps to
+             a library visible to the active profile. Keep it above every tab so
+             a stale/deep-linked route cannot expose the previous cached page. -->
+        <StackPanel
+            x:Name="LibraryUnavailableState"
+            Grid.RowSpan="4"
+            Canvas.ZIndex="100"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Spacing="12"
+            Padding="24"
+            Visibility="Collapsed">
+            <TextBlock
+                Text="This library is hidden or unavailable for your account."
+                Foreground="{StaticResource SecondaryTextBrush}"
+                FontSize="14"
+                TextAlignment="Center"
+                TextWrapping="Wrap" />
+            <Button
+                Content="Manage library visibility in Settings"
+                Style="{StaticResource GhostButtonStyle}"
+                Foreground="{StaticResource AccentBrush}"
+                HorizontalAlignment="Center"
+                Click="ManageLibraryVisibility_Click" />
+        </StackPanel>
     </Grid>
 </Page>

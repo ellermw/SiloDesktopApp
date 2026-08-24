@@ -451,39 +451,64 @@ public sealed partial class HistoryPage : Page
         if (selected.Count == 0) return;
 
         var isShow = selected.Count == 1 && selected[0].Type is "series" or "season";
+        var description = selected.Count > 1
+            ? $"{selected.Count} selected items will have their watch history, watched status, and resume progress cleared for this profile."
+            : isShow
+                ? "This clears the show's watch history, watched episodes, and resume progress for this profile."
+                : "This clears the item's watch history, watched status, and resume progress for this profile.";
+        var error = new TextBlock
+        {
+            Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed,
+        };
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = selected.Count > 1 ? "Remove selected watch data?" : isShow ? "Remove show watch data?" : "Remove watch data?",
-            Content = selected.Count > 1
-                ? $"{selected.Count} selected items will have their watch history, watched status, and resume progress cleared for this profile."
-                : isShow
-                    ? "This clears the show's watch history, watched episodes, and resume progress for this profile."
-                    : "This clears the item's watch history, watched status, and resume progress for this profile.",
+            Content = new StackPanel
+            {
+                Spacing = 10,
+                Children =
+                {
+                    new TextBlock { Text = description, TextWrapping = TextWrapping.Wrap },
+                    error,
+                },
+            },
             PrimaryButtonText = "Remove",
+            PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-
-        RemoveSelectedButton.IsEnabled = false;
-        try
+        dialog.PrimaryButtonClick += async (_, args) =>
         {
-            await ViewModel.RemoveHistoryAsync(selected);
-            EndSelection();
-        }
-        catch (Exception ex)
-        {
-            var errorDialog = new ContentDialog
+            args.Cancel = true;
+            var deferral = args.GetDeferral();
+            try
             {
-                XamlRoot = XamlRoot,
-                Title = "Could not remove watch data",
-                Content = ex.Message,
-                CloseButtonText = "Close"
-            };
-            await errorDialog.ShowAsync();
-            UpdateSelectionState();
-        }
+                dialog.IsPrimaryButtonEnabled = false;
+                dialog.PrimaryButtonText = "Removing...";
+                RemoveSelectedButton.IsEnabled = false;
+                error.Visibility = Visibility.Collapsed;
+                await ViewModel.RemoveHistoryAsync(selected);
+                EndSelection();
+                args.Cancel = false;
+            }
+            catch (Exception ex)
+            {
+                error.Text = ex.Message;
+                error.Visibility = Visibility.Visible;
+                dialog.PrimaryButtonText = "Remove";
+                dialog.IsPrimaryButtonEnabled = true;
+                UpdateSelectionState();
+            }
+            finally
+            {
+                deferral.Complete();
+            }
+        };
+        await dialog.ShowAsync();
     }
 
     private void ActionButton_Click(object sender, RoutedEventArgs e)

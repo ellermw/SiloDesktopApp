@@ -4,6 +4,9 @@ using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
+using System.IO.Pipes;
+using System.Net;
+using System.Text;
 
 namespace SiloPlayer;
 
@@ -15,6 +18,9 @@ public partial class App : Application
     private long _lastUiLagTick;
     private int _uiLagSample;
     private Mutex? _singleInstanceMutex;
+    private CancellationTokenSource? _activationPipeCts;
+    private Task? _activationPipeTask;
+    private const string ActivationPipeName = "SiloDesktopPlayer-Activation-6F4EE0EA";
 
     public static IServiceProvider Services =>
         _services ?? throw new InvalidOperationException("Service provider not initialized.");
@@ -43,7 +49,8 @@ public partial class App : Application
             createdNew: out var isPrimaryInstance);
         if (!isPrimaryInstance)
         {
-            LocalLog.AppendLine("auth_startup.txt", "secondary_instance_blocked");
+            ForwardActivationToPrimary(e.Arguments);
+            LocalLog.AppendLine("auth_startup.txt", "secondary_instance_blocked | activation_forwarded");
             _singleInstanceMutex.Dispose();
             _singleInstanceMutex = null;
             Exit();
@@ -91,9 +98,72 @@ public partial class App : Application
 
         _window = new MainWindow();
         MainWindowInstance = (MainWindow)_window;
+        MainWindowInstance.ActivateFromArgument(e.Arguments);
         _window.Activate();
+        StartActivationPipeListener();
+        _window.Closed += (_, _) =>
+        {
+            _activationPipeCts?.Cancel();
+            _activationPipeCts?.Dispose();
+            _activationPipeCts = null;
+        };
 
         StartUiThreadLagDetector();
+    }
+
+    private static void ForwardActivationToPrimary(string? argument)
+    {
+        if (string.IsNullOrWhiteSpace(argument)) return;
+        try
+        {
+            using var pipe = new NamedPipeClientStream(
+                ".", ActivationPipeName, PipeDirection.Out, PipeOptions.Asynchronous);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            pipe.ConnectAsync(timeout.Token).GetAwaiter().GetResult();
+            using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: false)
+            {
+                AutoFlush = true,
+            };
+            writer.WriteLine(Convert.ToBase64String(Encoding.UTF8.GetBytes(argument)));
+        }
+        catch (Exception ex)
+        {
+            LocalLog.AppendLine("auth_startup.txt", $"activation_forward_failed | type={ex.GetType().Name}");
+        }
+    }
+
+    private void StartActivationPipeListener()
+    {
+        _activationPipeCts = new CancellationTokenSource();
+        _activationPipeTask = ListenForActivationsAsync(_activationPipeCts.Token);
+    }
+
+    private async Task ListenForActivationsAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try
+            {
+                await using var pipe = new NamedPipeServerStream(
+                    ActivationPipeName,
+                    PipeDirection.In,
+                    1,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous);
+                await pipe.WaitForConnectionAsync(ct);
+                using var reader = new StreamReader(pipe, Encoding.UTF8, leaveOpen: true);
+                var encoded = await reader.ReadLineAsync(ct);
+                if (string.IsNullOrWhiteSpace(encoded)) continue;
+                var argument = Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
+                MainWindowInstance?.DispatcherQueue.TryEnqueue(
+                    () => MainWindowInstance?.ActivateFromArgument(argument));
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (Exception ex)
+            {
+                LocalLog.AppendLine("auth_startup.txt", $"activation_receive_failed | type={ex.GetType().Name}");
+            }
+        }
     }
 
     public static string PerfBreadcrumb { get; private set; } = "";
@@ -140,7 +210,27 @@ public partial class App : Application
         services.AddSingleton<ICredentialStore>(sp => sp.GetRequiredService<CredentialStore>());
 
         // HTTP client and API
-        services.AddSingleton<HttpClient>(_ => new HttpClient());
+        services.AddSingleton<HttpClient>(_ =>
+        {
+            // Browser fetch automatically negotiates compressed responses and
+            // modern HTTP versions. Match that transport behavior so large
+            // catalog/search payloads are not downloaded uncompressed or
+            // serialized behind an HTTP/1.1 connection.
+            var handler = new SocketsHttpHandler
+            {
+                AutomaticDecompression = DecompressionMethods.All,
+                ConnectTimeout = TimeSpan.FromSeconds(10),
+                PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+                PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+                MaxConnectionsPerServer = 16,
+                EnableMultipleHttp2Connections = true,
+            };
+            return new HttpClient(handler)
+            {
+                DefaultRequestVersion = HttpVersion.Version20,
+                DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower,
+            };
+        });
         services.AddSingleton<SiloApiClient>(sp =>
         {
             var http = sp.GetRequiredService<HttpClient>();
@@ -218,6 +308,7 @@ public partial class App : Application
         // Card overlay prefs (kill switch + admin defaults + user override).
         // Populated lazily on first PosterCard bind.
         services.AddSingleton<CardOverlayService>();
+        services.AddSingleton<UICustomizationService>();
 
         // Player service (owns mpv lifecycle, not tied to page navigation)
         services.AddSingleton<PlayerService>();
@@ -232,6 +323,7 @@ public partial class App : Application
         services.AddTransient<ServerSelectViewModel>();
         services.AddTransient<LoginViewModel>();
         services.AddTransient<SignupViewModel>();
+        services.AddTransient<InviteClaimViewModel>();
         services.AddTransient<ActivateDeviceViewModel>();
         services.AddTransient<SetupWizardViewModel>();
         services.AddTransient<ProfileSelectViewModel>();

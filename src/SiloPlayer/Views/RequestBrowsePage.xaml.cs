@@ -3,6 +3,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Media.Imaging;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Shapes;
 using Microsoft.UI.Xaml.Input;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Requests;
@@ -90,7 +92,11 @@ public sealed partial class RequestBrowsePage : Page
         {
             Fail($"{(_navigation.Kind == "studio" ? "Studio" : _navigation.Kind == "network" ? "Network" : "Genre")} not found.");
         }
-        catch (Exception ex) { Fail(ex.Message); }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Request browse load failed: {ex}");
+            Fail("Could not load this browse page. Try a different sort or media type.");
+        }
         finally
         {
             Interlocked.CompareExchange(ref _loadCts, null, owner);
@@ -102,6 +108,12 @@ public sealed partial class RequestBrowsePage : Page
     private async void Previous_Click(object sender, RoutedEventArgs e) { if (_page <= 1) return; _page--; await LoadAsync(); ResultsGrid.StartBringIntoView(); }
     private async void Next_Click(object sender, RoutedEventArgs e) { if (_page >= _totalPages) return; _page++; await LoadAsync(); ResultsGrid.StartBringIntoView(); }
     private void ResultsGrid_ItemClick(object sender, ItemClickEventArgs e) { if (e.ClickedItem is RequestMediaResult item) App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(item.MediaType, item.TmdbId)); }
+
+    private void OpenLibrary_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string contentId } && !string.IsNullOrWhiteSpace(contentId))
+            App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(contentId);
+    }
 
     private async void Request_Click(object sender, RoutedEventArgs e)
     {
@@ -133,15 +145,64 @@ public sealed partial class RequestBrowsePage : Page
     private void ResultCard_PointerExited(object sender, PointerRoutedEventArgs e)
     {
         if (sender is FrameworkElement card && card.FindName("InlineRequestButton") is Button button)
-            button.Opacity = 0;
+            button.Opacity = button.FocusState == FocusState.Unfocused ? 0 : 1;
     }
 
-    private void InlineRequest_Tapped(object sender, TappedRoutedEventArgs e) => e.Handled = true;
+    private void InlineAction_Tapped(object sender, TappedRoutedEventArgs e) => e.Handled = true;
+
+    private void InlineRequest_GotFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button) button.Opacity = 1;
+    }
+
+    private void InlineRequest_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button) button.Opacity = 0;
+    }
 
     private void ResultsGrid_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
     {
         if (!args.InRecycleQueue && args.ItemContainer.ContentTemplateRoot is Grid card)
+        {
             SizeResultCard(card);
+            if (args.Item is RequestMediaResult item)
+            {
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
+                    args.ItemContainer,
+                    $"Open {item.Title} request details");
+                if (card.FindName("InlineRequestButton") is Button requestButton)
+                    Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(requestButton, $"Request {item.Title}");
+                ApplyStatusRibbon(card, item);
+            }
+        }
+    }
+
+    private static void ApplyStatusRibbon(Grid card, RequestMediaResult item)
+    {
+        if (card.FindName("StatusRibbon") is not Border ribbon ||
+            card.FindName("StatusDot") is not Ellipse dot ||
+            card.FindName("StatusRibbonText") is not TextBlock text)
+            return;
+
+        var tone = item.Request.Status switch
+        {
+            "pending" => "amber",
+            "queued" or "downloading" => "sky",
+            "approved" or "completed" => "emerald",
+            _ when item.Availability == "available" => "emerald",
+            _ => "zinc",
+        };
+        var (background, foreground, border, dotColor) = tone switch
+        {
+            "amber" => (Microsoft.UI.ColorHelper.FromArgb(191, 69, 26, 3), Microsoft.UI.ColorHelper.FromArgb(255, 254, 243, 199), Microsoft.UI.ColorHelper.FromArgb(77, 251, 191, 36), Microsoft.UI.ColorHelper.FromArgb(255, 252, 211, 77)),
+            "sky" => (Microsoft.UI.ColorHelper.FromArgb(191, 8, 47, 73), Microsoft.UI.ColorHelper.FromArgb(255, 224, 242, 254), Microsoft.UI.ColorHelper.FromArgb(89, 56, 189, 248), Microsoft.UI.ColorHelper.FromArgb(255, 125, 211, 252)),
+            "emerald" => (Microsoft.UI.ColorHelper.FromArgb(204, 2, 44, 34), Microsoft.UI.ColorHelper.FromArgb(255, 209, 250, 229), Microsoft.UI.ColorHelper.FromArgb(77, 52, 211, 153), Microsoft.UI.ColorHelper.FromArgb(255, 110, 231, 183)),
+            _ => (Microsoft.UI.ColorHelper.FromArgb(204, 24, 24, 27), Microsoft.UI.ColorHelper.FromArgb(255, 228, 228, 231), Microsoft.UI.ColorHelper.FromArgb(26, 255, 255, 255), Microsoft.UI.ColorHelper.FromArgb(255, 161, 161, 170)),
+        };
+        ribbon.Background = new SolidColorBrush(background);
+        ribbon.BorderBrush = new SolidColorBrush(border);
+        dot.Fill = new SolidColorBrush(dotColor);
+        text.Foreground = new SolidColorBrush(foreground);
     }
 
     private void SizeResultCard(Grid card)

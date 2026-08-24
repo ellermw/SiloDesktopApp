@@ -18,7 +18,13 @@ public static class PlaybackTransportPlanner
     public static PlaybackTransportPlan Plan(PlaybackStartResponse response)
     {
         ArgumentNullException.ThrowIfNull(response);
-        return Plan(response.PlayMethod, response.StreamUrl, response.PlaybackInfo?.StreamType);
+        var plan = Plan(response.PlayMethod, response.StreamUrl, response.PlaybackInfo?.StreamType);
+        // Protocol v3 plans contain an executable stream URL. Legacy HLS
+        // responses were descriptors that required a second client-authored
+        // /transcode/start recipe; v3 explicitly forbids that route choice.
+        return response.ProtocolVersion >= 3 && plan.IsHls
+            ? plan with { RequiresTranscodeStartPreparation = false }
+            : plan;
     }
 
     public static PlaybackTransportPlan Plan(

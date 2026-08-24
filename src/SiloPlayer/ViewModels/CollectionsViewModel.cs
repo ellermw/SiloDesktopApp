@@ -461,6 +461,9 @@ public partial class CollectionsViewModel : ObservableObject
                         SyncSchedule = request.SyncSchedule,
                         IsShared = request.IsShared,
                         LibraryIds = request.LibraryIds,
+                        PosterUrl = request.PosterUrl,
+                        DisplayQueryDefinition = request.DisplayQueryDefinition,
+                        SortConfig = request.SortConfig,
                         Url = mdblistUrl
                     });
                     break;
@@ -480,6 +483,9 @@ public partial class CollectionsViewModel : ObservableObject
                         SyncSchedule = request.SyncSchedule,
                         IsShared = request.IsShared,
                         LibraryIds = request.LibraryIds,
+                        PosterUrl = request.PosterUrl,
+                        DisplayQueryDefinition = request.DisplayQueryDefinition,
+                        SortConfig = request.SortConfig,
                         Preset = template.Tmdb.Preset,
                         MediaType = template.Tmdb.MediaType,
                         TimeWindow = template.Tmdb.TimeWindow
@@ -501,6 +507,9 @@ public partial class CollectionsViewModel : ObservableObject
                         SyncSchedule = request.SyncSchedule,
                         IsShared = request.IsShared,
                         LibraryIds = request.LibraryIds,
+                        PosterUrl = request.PosterUrl,
+                        DisplayQueryDefinition = request.DisplayQueryDefinition,
+                        SortConfig = request.SortConfig,
                         Preset = template.Trakt.Preset,
                         MediaType = template.Trakt.MediaType
                     });
@@ -541,7 +550,10 @@ public partial class CollectionsViewModel : ObservableObject
                 ? null
                 : draft.SyncSchedule,
             IsShared = draft.IsShared,
-            LibraryIds = draft.LibraryIds.Count == 0 ? null : [.. draft.LibraryIds]
+            LibraryIds = draft.LibraryIds.Count == 0 ? null : [.. draft.LibraryIds],
+            PosterUrl = string.IsNullOrWhiteSpace(draft.PosterUrl) ? null : draft.PosterUrl.Trim(),
+            DisplayQueryDefinition = draft.DisplayQueryDefinition,
+            SortConfig = draft.SortConfig,
         };
     }
 
@@ -572,4 +584,7 @@ public sealed class TemplateImportDraft
     public bool IsShared { get; set; }
     public List<int> LibraryIds { get; set; } = [];
     public string? MDBListUrl { get; set; }
+    public string? PosterUrl { get; set; }
+    public DisplayQueryDefinition? DisplayQueryDefinition { get; set; }
+    public Dictionary<string, object>? SortConfig { get; set; }
 }

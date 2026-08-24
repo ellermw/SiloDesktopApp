@@ -2,6 +2,8 @@ using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Plugins;
+using SiloPlayer.Core.Models.Settings;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace SiloPlayer.Core.Api;
@@ -265,6 +267,87 @@ public class EffectiveSettingEntry
     public string? DevicePlatform { get; set; }
 }
 
+/// <summary>
+/// One value resolved through Silo's typed settings contract.  Unlike the
+/// legacy settings endpoint, <see cref="Value"/> retains its JSON type.
+/// </summary>
+public sealed class ContractEffectiveSettingEntry
+{
+    [JsonPropertyName("key")] public string Key { get; set; } = "";
+    [JsonPropertyName("value")] public JsonElement Value { get; set; }
+    [JsonPropertyName("source")] public string Source { get; set; } = "default";
+    [JsonPropertyName("stored_value")] public JsonElement? StoredValue { get; set; }
+    [JsonPropertyName("constrained")] public bool Constrained { get; set; }
+    [JsonPropertyName("constraint_kind")] public string? ConstraintKind { get; set; }
+    [JsonPropertyName("suggested_values")] public List<string> SuggestedValues { get; set; } = [];
+    [JsonPropertyName("scope")] public string? Scope { get; set; }
+    [JsonPropertyName("device_id")] public string? DeviceId { get; set; }
+    [JsonPropertyName("client_family")] public string? ClientFamily { get; set; }
+    [JsonPropertyName("library_id")] public int? LibraryId { get; set; }
+    [JsonPropertyName("series_id")] public string? SeriesId { get; set; }
+}
+
+public sealed class SettingsContractCapabilities
+{
+    [JsonPropertyName("api_version")] public int ApiVersion { get; set; }
+    [JsonPropertyName("revision")] public int Revision { get; set; }
+    [JsonPropertyName("contract_etag")] public string ContractEtag { get; set; } = "";
+    [JsonPropertyName("definition_count")] public int DefinitionCount { get; set; }
+    [JsonPropertyName("scopes")] public List<string> Scopes { get; set; } = [];
+    [JsonPropertyName("client_families")] public List<string> ClientFamilies { get; set; } = [];
+    [JsonPropertyName("supports_batched_effective")] public bool SupportsBatchedEffective { get; set; }
+    [JsonPropertyName("supports_idempotent_writes")] public bool SupportsIdempotentWrites { get; set; }
+    [JsonPropertyName("supports_atomic_shortcuts")] public bool SupportsAtomicShortcuts { get; set; }
+
+    public bool SupportsRevision5Customization =>
+        ApiVersion == 1 && Revision >= 5 &&
+        SupportsBatchedEffective && SupportsIdempotentWrites &&
+        ClientFamilies.Contains(SiloApiClient.ClientFamily, StringComparer.OrdinalIgnoreCase);
+}
+
+public sealed class ContractEffectiveSettingsResponse
+{
+    [JsonPropertyName("settings")] public List<ContractEffectiveSettingEntry> Settings { get; set; } = [];
+    [JsonPropertyName("revision")] public long Revision { get; set; }
+}
+
+public sealed class UserDevice
+{
+    [JsonPropertyName("device_id")] public string DeviceId { get; set; } = "";
+    [JsonPropertyName("device_name")] public string DeviceName { get; set; } = "";
+    [JsonPropertyName("device_platform")] public string DevicePlatform { get; set; } = "";
+    [JsonPropertyName("last_seen_at")] public string LastSeenAt { get; set; } = "";
+    [JsonPropertyName("profile_id")] public string ProfileId { get; set; } = "";
+    [JsonPropertyName("profile_name")] public string ProfileName { get; set; } = "";
+    [JsonPropertyName("is_current_device")] public bool IsCurrentDevice { get; set; }
+    [JsonPropertyName("changed_count")] public int ChangedCount { get; set; }
+}
+
+public sealed class UserDeviceListResponse
+{
+    [JsonPropertyName("devices")] public List<UserDevice> Devices { get; set; } = [];
+}
+
+public sealed class CompatConnectInfo
+{
+    [JsonPropertyName("jellyfin")] public CompatJellyfinConnectInfo Jellyfin { get; set; } = new();
+    [JsonPropertyName("account")] public CompatAccountConnectInfo Account { get; set; } = new();
+}
+
+public sealed class CompatJellyfinConnectInfo
+{
+    [JsonPropertyName("enabled")] public bool Enabled { get; set; }
+    [JsonPropertyName("pending_restart")] public bool PendingRestart { get; set; }
+    [JsonPropertyName("public_url")] public string PublicUrl { get; set; } = "";
+    [JsonPropertyName("server_name")] public string ServerName { get; set; } = "";
+}
+
+public sealed class CompatAccountConnectInfo
+{
+    // Older servers omit this field; the WebUI treats omission as available.
+    [JsonPropertyName("password_login_available")] public bool? PasswordLoginAvailable { get; set; }
+}
+
 public class OverlayConfigResponse
 {
     /// <summary>Server-wide kill switch. When false, no overlays render for any user.</summary>
@@ -307,6 +390,9 @@ public class ThemeFileResponse
 
 public class SettingsApi(SiloApiClient client)
 {
+    public Task<SettingsContractCapabilities> GetContractCapabilitiesAsync(CancellationToken ct = default)
+        => client.GetAsync<SettingsContractCapabilities>("/api/v1/settings/contract/capabilities", ct);
+
     public Task<ServerBrandingResponse> GetServerBrandingAsync(CancellationToken ct = default)
         => client.GetUnauthenticatedAsync<ServerBrandingResponse>("/api/v1/theme/branding", ct);
 
@@ -409,6 +495,74 @@ public class SettingsApi(SiloApiClient client)
     public Task DeleteDeviceSettingAsync(string key, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/settings/device/{Uri.EscapeDataString(key)}", ct);
 
+    public Task<ContractEffectiveSettingsResponse> GetContractEffectiveSettingsAsync(
+        IEnumerable<string> keys,
+        string? deviceId = null,
+        string? profileId = null,
+        CancellationToken ct = default)
+    {
+        var query = new List<string>();
+        var joinedKeys = string.Join(",", keys.Where(key => !string.IsNullOrWhiteSpace(key)).Distinct());
+        if (!string.IsNullOrWhiteSpace(joinedKeys))
+            query.Add($"keys={Uri.EscapeDataString(joinedKeys)}");
+        if (!string.IsNullOrWhiteSpace(deviceId))
+            query.Add($"device_id={Uri.EscapeDataString(deviceId)}");
+        if (!string.IsNullOrWhiteSpace(profileId))
+            query.Add($"profile_id={Uri.EscapeDataString(profileId)}");
+        var suffix = query.Count == 0 ? "" : "?" + string.Join("&", query);
+        return client.GetAsync<ContractEffectiveSettingsResponse>($"/api/v1/settings/values/effective{suffix}", ct);
+    }
+
+    public Task SetContractSettingValueAsync(
+        string key,
+        string scope,
+        object? value,
+        string? deviceId = null,
+        string? profileId = null,
+        CancellationToken ct = default)
+        => client.PutAsync<ContractEffectiveSettingEntry>(
+            BuildContractSettingPath(key, scope, deviceId, profileId),
+            new Dictionary<string, object?> { ["value"] = value }, ct);
+
+    public Task DeleteContractSettingValueAsync(
+        string key,
+        string scope,
+        string? deviceId = null,
+        string? profileId = null,
+        CancellationToken ct = default)
+        => client.DeleteAsync(BuildContractSettingPath(key, scope, deviceId, profileId), ct);
+
+    public Task<UserDeviceListResponse> GetUserDevicesAsync(bool household = false, CancellationToken ct = default)
+        => client.GetAsync<UserDeviceListResponse>(
+            household ? "/api/v1/devices?scope=household" : "/api/v1/devices", ct);
+
+    public Task ClearUserDeviceSettingsAsync(string deviceId, string? profileId = null, CancellationToken ct = default)
+        => client.DeleteAsync(BuildDevicePath(deviceId, "/settings", profileId), ct);
+
+    public Task ForgetUserDeviceAsync(string deviceId, string? profileId = null, CancellationToken ct = default)
+        => client.DeleteAsync(BuildDevicePath(deviceId, "", profileId), ct);
+
+    public Task<CompatConnectInfo> GetCompatConnectInfoAsync(CancellationToken ct = default)
+        => client.GetAsync<CompatConnectInfo>("/api/v1/compat/connect-info", ct);
+
+    private static string BuildContractSettingPath(string key, string scope, string? deviceId, string? profileId)
+    {
+        var query = new List<string> { $"scope={Uri.EscapeDataString(scope)}" };
+        if (!string.IsNullOrWhiteSpace(deviceId))
+            query.Add($"device_id={Uri.EscapeDataString(deviceId)}");
+        if (!string.IsNullOrWhiteSpace(profileId))
+            query.Add($"profile_id={Uri.EscapeDataString(profileId)}");
+        return $"/api/v1/settings/values/{Uri.EscapeDataString(key)}?{string.Join("&", query)}";
+    }
+
+    private static string BuildDevicePath(string deviceId, string suffix, string? profileId)
+    {
+        var path = $"/api/v1/devices/{Uri.EscapeDataString(deviceId)}{suffix}";
+        return string.IsNullOrWhiteSpace(profileId)
+            ? path
+            : $"{path}?profile_id={Uri.EscapeDataString(profileId)}";
+    }
+
     public Task<ThemeCatalogResponse> GetThemeCatalogAsync(CancellationToken ct = default)
         => client.GetAsync<ThemeCatalogResponse>("/api/v1/theme/catalog", ct);
 
@@ -430,6 +584,24 @@ public class SettingsApi(SiloApiClient client)
 
     public Task<ProfilesResponse> GetProfilesAsync(CancellationToken ct = default)
         => client.GetAsync<ProfilesResponse>("/api/v1/profiles", ct);
+
+    public Task<OnboardingFlow> GetOnboardingFlowAsync(string surface = "web", CancellationToken ct = default)
+        => client.GetAsync<OnboardingFlow>(
+            $"/api/v1/onboarding/flow?surface={Uri.EscapeDataString(surface)}", ct);
+
+    public Task ReportOnboardingProgressAsync(
+        string tourId,
+        string? lastStep = null,
+        bool? completed = null,
+        bool? skipped = null,
+        CancellationToken ct = default)
+        => client.PostNoContentAsync("/api/v1/onboarding/progress", new Dictionary<string, object?>
+        {
+            ["tour_id"] = tourId,
+            ["last_step"] = lastStep,
+            ["completed"] = completed,
+            ["skipped"] = skipped,
+        }, ct);
 
     // ===== Library Playback Preferences =====
 

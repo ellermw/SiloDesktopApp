@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
@@ -11,6 +12,7 @@ using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -20,13 +22,15 @@ public sealed record CatalogNavigation(
     string? Subtitle = null,
     string? Scope = null,
     string? SectionId = null,
-    int? LibraryId = null);
+    int? LibraryId = null,
+    string? Genre = null);
 
 public sealed partial class CatalogPage : Page,
     IRecipient<MediaSurfaceChanged>,
     IRecipient<PlaybackProgressUpdated>
 {
     private readonly CatalogApi _api = App.Services.GetRequiredService<CatalogApi>();
+    private readonly UICustomizationService _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
     private readonly ObservableCollection<MediaItem> _items = [];
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _navigationCts;
@@ -35,6 +39,7 @@ public sealed partial class CatalogPage : Page,
     private bool _hasMore;
     private bool _loading;
     private bool _initializing = true;
+    private bool _personalDefaultOrderTouched;
     private long _loadGeneration;
     private bool _selectionMode;
     private double _catalogCardWidth = 154;
@@ -42,6 +47,7 @@ public sealed partial class CatalogPage : Page,
     private string? _scope;
     private string? _sectionId;
     private int? _fixedLibraryId;
+    private string? _initialGenre;
     private string? _snapshot;
     private readonly HashSet<string> _selectedIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<QueryRule> _advancedRules = [];
@@ -78,10 +84,12 @@ public sealed partial class CatalogPage : Page,
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _uiCustomizationService.Changed += UICustomization_Changed;
         _navigationCts?.Cancel();
         _navigationCts?.Dispose();
         _navigationCts = new CancellationTokenSource();
         var navigationToken = _navigationCts.Token;
+        _personalDefaultOrderTouched = false;
         RegisterMediaMessages();
         if (e.Parameter is CatalogNavigation navigation)
         {
@@ -89,10 +97,13 @@ public sealed partial class CatalogPage : Page,
             _scope = navigation.Scope;
             _sectionId = navigation.SectionId;
             _fixedLibraryId = navigation.LibraryId;
+            _initialGenre = navigation.Genre;
             PageTitleText.Text = navigation.Title ?? (_source == "history" ? "History" : "Catalog");
             PageSubtitleText.Text = navigation.Subtitle ?? (_source == "history"
                 ? "Everything you've recently watched."
                 : "Refine the archive by library, type, era, rating, or genre.");
+            if (App.MainWindowInstance is MainWindow window)
+                window.SetDynamicTitle(PageTitleText.Text);
         }
 
         if (_source is "history" or "favorites" or "watchlist")
@@ -100,9 +111,23 @@ public sealed partial class CatalogPage : Page,
             SortCombo.Items.Insert(0, new ComboBoxItem
             {
                 Content = _source == "watchlist" ? "List Order" : "Date Added",
+                // The current WebUI presents these labels while preserving the
+                // server-defined personal-list order. Sending an explicit
+                // added_at sort changes the history resolver path and can show
+                // the wrong catalog instead of the profile's visible history.
                 Tag = ""
             });
             SortCombo.SelectedIndex = 0;
+            if (_source is "favorites" or "history")
+                OrderCombo.SelectedIndex = 0; // current WebUI defaults these recency lists to Descending
+
+            // The live WebUI treats watchlist order as a single, server-owned
+            // "List Order" control.  Showing a second Ascending/Descending
+            // selector here both diverges visually and can accidentally turn
+            // the personal ordering into an added-at sort.
+            OrderCombo.Visibility = _source == "watchlist"
+                ? Visibility.Collapsed
+                : Visibility.Visible;
         }
         if (_source == "history") HistoryActions.Visibility = Visibility.Visible;
         if (_source == "section")
@@ -113,19 +138,45 @@ public sealed partial class CatalogPage : Page,
             FilterPanel.Visibility = Visibility.Collapsed;
             LockedFiltersPanel.Visibility = Visibility.Visible;
         }
+        Task? initialCatalogLoad = null;
         try
         {
             ShowInitialLoadingState();
+
+            // Personal shelves do not depend on the supplementary filter
+            // metadata.  The WebUI paints their result/empty state immediately
+            // while that metadata is fetched in parallel.  Waiting for the
+            // (potentially very large) filter response left an empty watchlist
+            // showing skeleton cards indefinitely on real servers.
+            if (_source is "favorites" or "watchlist" or "history")
+                initialCatalogLoad = LoadAsync(true);
+
             await InitializeFiltersAsync(navigationToken);
             navigationToken.ThrowIfCancellationRequested();
             _initializing = false;
             UpdateFilterCount();
-            await LoadAsync(true);
+            if (initialCatalogLoad != null)
+                await initialCatalogLoad;
+            else
+                await LoadAsync(true);
         }
         catch (OperationCanceledException) when (navigationToken.IsCancellationRequested)
         {
             // A newer route owns the frame. Do not paint stale filters or an
             // error state over the page the user has already opened.
+        }
+        catch (Exception ex)
+        {
+            // Filter metadata is supplementary. A malformed or temporarily
+            // unavailable filter response must never crash the app or leave a
+            // catalog surface permanently displaying skeletons.
+            _initializing = false;
+            System.Diagnostics.Debug.WriteLine($"Catalog filter metadata unavailable: {ex}");
+            UpdateFilterCount();
+            if (initialCatalogLoad != null)
+                await initialCatalogLoad;
+            else
+                await LoadAsync(true);
         }
     }
 
@@ -136,8 +187,17 @@ public sealed partial class CatalogPage : Page,
         _loadCts?.Cancel();
         _debounce?.Stop();
         UnregisterMediaMessages();
+        _uiCustomizationService.Changed -= UICustomization_Changed;
         base.OnNavigatedFrom(e);
     }
+
+    private void UICustomization_Changed(object? sender, EventArgs e)
+        => DispatcherQueue.TryEnqueue(() =>
+        {
+            var width = Math.Min(Math.Max(ActualWidth, 320), 1400);
+            var gutter = width < 640 ? 16d : width < 1024 ? 24d : 40d;
+            ApplyCatalogCardLayout(width, gutter);
+        });
 
     private void RegisterMediaMessages()
     {
@@ -235,6 +295,18 @@ public sealed partial class CatalogPage : Page,
         LibraryCombo.SelectedIndex = Math.Max(0, fixedLibraryIndex);
         LibraryCombo.IsEnabled = _fixedLibraryId is not > 0;
         Fill(GenreCombo, "All genres", filtersTask.Result.Genres);
+        if (!string.IsNullOrWhiteSpace(_initialGenre))
+        {
+            for (var index = 0; index < GenreCombo.Items.Count; index++)
+            {
+                if (GenreCombo.Items[index] is ComboBoxItem { Tag: string value } &&
+                    value.Equals(_initialGenre, StringComparison.OrdinalIgnoreCase))
+                {
+                    GenreCombo.SelectedIndex = index;
+                    break;
+                }
+            }
+        }
         Fill(RatingCombo, "All ratings", filtersTask.Result.ContentRatings);
         Fill(ResolutionCombo, "All resolutions", filtersTask.Result.Resolutions);
         Fill(CountryCombo, "All countries", filtersTask.Result.Countries);
@@ -247,10 +319,12 @@ public sealed partial class CatalogPage : Page,
         Fill(SeriesCombo, "All series", filtersTask.Result.Series);
     }
 
-    private static void Fill(ComboBox combo, string all, IEnumerable<string> values)
+    private static void Fill(ComboBox combo, string all, IEnumerable<string>? values)
     {
         combo.Items.Add(new ComboBoxItem { Content = all, Tag = "" });
-        foreach (var value in values) combo.Items.Add(new ComboBoxItem { Content = value, Tag = value });
+        foreach (var value in values ?? [])
+            if (!string.IsNullOrWhiteSpace(value))
+                combo.Items.Add(new ComboBoxItem { Content = value, Tag = value });
         combo.SelectedIndex = 0;
     }
 
@@ -277,6 +351,9 @@ public sealed partial class CatalogPage : Page,
         try
         {
             var sort = SelectedTag(SortCombo);
+            var requestSort = sort;
+            if (requestSort == null && _personalDefaultOrderTouched && _source is "favorites" or "watchlist" or "history")
+                requestSort = "added_at";
             var isSection = _source == "section";
             var useGuidedFilters = !isSection && !_advancedMode;
             var queryRules = isSection
@@ -286,8 +363,8 @@ public sealed partial class CatalogPage : Page,
                     : BuildGuidedRules();
             var response = await _api.GetCatalogAsync(
                 isSection ? _fixedLibraryId : SelectedLibrary(),
-                sort: isSection ? null : sort,
-                order: isSection || sort == null ? null : SelectedTag(OrderCombo),
+                sort: isSection ? null : requestSort,
+                order: isSection || requestSort == null ? null : SelectedTag(OrderCombo),
                 genre: useGuidedFilters ? SelectedTag(GenreCombo) : null,
                 studio: useGuidedFilters ? SelectedTag(StudioCombo) : null,
                 contentRating: useGuidedFilters ? SelectedTag(RatingCombo) : null,
@@ -360,6 +437,8 @@ public sealed partial class CatalogPage : Page,
     private void Filter_Changed(object sender, object e)
     {
         if (_initializing) return;
+        if (ReferenceEquals(sender, OrderCombo) && _source is "favorites" or "watchlist" or "history")
+            _personalDefaultOrderTouched = true;
         UpdateFilterCount();
         _debounce?.Stop();
         _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(sender is TextBox ? 300 : 40) };
@@ -371,7 +450,10 @@ public sealed partial class CatalogPage : Page,
     {
         if (OrderCombo == null) return;
         var sort = SelectedTag(SortCombo);
-        OrderCombo.Visibility = sort == null ? Visibility.Collapsed : Visibility.Visible;
+        var isPersonalDefault = sort == null && _source is "favorites" or "watchlist" or "history";
+        OrderCombo.Visibility = _source == "watchlist" || (sort == null && !isPersonalDefault)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
         if (!_initializing && sort != null)
         {
             var ascendingByDefault = sort is "title" or "content_rating" or "author" or "narrator" or "series";
@@ -455,41 +537,75 @@ public sealed partial class CatalogPage : Page,
         var selected = _items.Where(item => _selectedIds.Contains(item.ContentId)).ToList();
         if (selected.Count == 0) return;
 
+        var description = selected.Count > 1
+            ? $"{selected.Count} selected items will have their watch history, watched status, and resume progress cleared for this profile."
+            : selected[0].Type is "series" or "season"
+                ? "This clears the show's watch history, watched episodes, and resume progress for this profile."
+                : "This clears the item's watch history, watched status, and resume progress for this profile.";
+        var error = new TextBlock
+        {
+            Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            Visibility = Visibility.Collapsed,
+        };
+        var content = new StackPanel
+        {
+            Spacing = 10,
+            Children =
+            {
+                new TextBlock { Text = description, TextWrapping = TextWrapping.Wrap },
+                error,
+            },
+        };
         var dialog = new ContentDialog
         {
             XamlRoot = XamlRoot,
             Title = selected.Count > 1
                 ? "Remove selected watch data?"
                 : selected[0].Type is "series" or "season" ? "Remove show watch data?" : "Remove watch data?",
-            Content = selected.Count > 1
-                ? $"{selected.Count} selected items will have their watch history, watched status, and resume progress cleared for this profile."
-                : selected[0].Type is "series" or "season"
-                    ? "This clears the show's watch history, watched episodes, and resume progress for this profile."
-                    : "This clears the item's watch history, watched status, and resume progress for this profile.",
+            Content = content,
             PrimaryButtonText = "Remove",
+            PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Close
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-
-        RemoveSelectedButton.IsEnabled = false;
-        try
+        dialog.PrimaryButtonClick += async (_, args) =>
         {
-            await _api.RemoveHistoryAsync(selected.Select(item => new HistoryRemovalTarget
+            args.Cancel = true;
+            var deferral = args.GetDeferral();
+            try
             {
-                ContentId = item.ContentId,
-                Scope = item.Type is "series" or "season" ? "show" : "item"
-            }));
-            _selectionMode = false;
-            _selectedIds.Clear();
-            await LoadAsync(true);
-        }
-        finally
-        {
-            RemoveSelectedButton.IsEnabled = true;
-            RefreshRealizedSelection();
-            UpdateSelectionUi();
-        }
+                dialog.IsPrimaryButtonEnabled = false;
+                dialog.PrimaryButtonText = "Removing...";
+                RemoveSelectedButton.IsEnabled = false;
+                error.Visibility = Visibility.Collapsed;
+                await _api.RemoveHistoryAsync(selected.Select(item => new HistoryRemovalTarget
+                {
+                    ContentId = item.ContentId,
+                    Scope = item.Type is "series" or "season" ? "show" : "item"
+                }));
+                _selectionMode = false;
+                _selectedIds.Clear();
+                await LoadAsync(true);
+                args.Cancel = false;
+            }
+            catch (Exception ex)
+            {
+                error.Text = ex.Message;
+                error.Visibility = Visibility.Visible;
+                dialog.PrimaryButtonText = "Remove";
+                dialog.IsPrimaryButtonEnabled = true;
+            }
+            finally
+            {
+                RemoveSelectedButton.IsEnabled = true;
+                RefreshRealizedSelection();
+                UpdateSelectionUi();
+                deferral.Complete();
+            }
+        };
+        await dialog.ShowAsync();
     }
 
     private void RefreshRealizedSelection()
@@ -803,12 +919,18 @@ public sealed partial class CatalogPage : Page,
         Grid.SetColumn(HistoryButtonsPanel, compactHistory ? 0 : 1);
         Grid.SetColumnSpan(HistoryButtonsPanel, compactHistory ? 2 : 1);
 
-        var columns = width < 640 ? 3 : width < 768 ? 4 : width < 1024 ? 5 : width < 1280 ? 7 : 8;
+        ApplyCatalogCardLayout(width, gutter);
+    }
+
+    private void ApplyCatalogCardLayout(double width, double gutter)
+    {
+        var contentWidth = Math.Max(280, width - gutter * 2);
+        var columns = _uiCustomizationService.GetPosterColumnCount(contentWidth);
         _catalogCardWidth = Math.Max(96, Math.Floor((width - gutter * 2 - (columns - 1) * 12) / columns));
         CatalogGridLayout.MinItemWidth = _catalogCardWidth;
-        CatalogGridLayout.MinItemHeight = _catalogCardWidth * 1.5 + 56;
+        CatalogGridLayout.MinItemHeight = _catalogCardWidth * 1.5 + _uiCustomizationService.CardCaptionHeight;
         CatalogLoadingGridLayout.MinItemWidth = _catalogCardWidth;
-        CatalogLoadingGridLayout.MinItemHeight = _catalogCardWidth * 1.5 + 56;
+        CatalogLoadingGridLayout.MinItemHeight = _catalogCardWidth * 1.5 + _uiCustomizationService.CardCaptionHeight;
         for (var i = 0; i < _items.Count; i++)
             if (ItemsRepeater.TryGetElement(i) is PosterCard card)
                 card.SetCatalogGridLayout(_catalogCardWidth);

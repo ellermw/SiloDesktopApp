@@ -96,6 +96,18 @@ public class AuthApi(SiloApiClient client)
     public Task<SignupStatusResponse> GetSignupStatusAsync(CancellationToken ct = default)
         => client.GetUnauthenticatedAsync<SignupStatusResponse>("/api/v1/auth/signup", ct);
 
+    // ===== Emailed invitations =====
+
+    public Task<InvitationLookupResponse> GetInvitationAsync(string token, CancellationToken ct = default)
+        => client.GetUnauthenticatedAsync<InvitationLookupResponse>(
+            $"/api/v1/invitations/{Uri.EscapeDataString(token)}", ct);
+
+    public Task<LoginResponse> AcceptInvitationAsync(string token, string password, CancellationToken ct = default)
+        => client.PostUnauthenticatedAsync<LoginResponse>(
+            $"/api/v1/invitations/{Uri.EscapeDataString(token)}/accept",
+            new AcceptInvitationRequest { Password = password },
+            ct);
+
     // ===== Setup =====
 
     public Task<LoginResponse> SetupAsync(SetupRequest request, CancellationToken ct = default)

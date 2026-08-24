@@ -28,7 +28,11 @@ public class CalendarEvent
     public int? EpisodeNumber { get; set; }
     public string AirDate { get; set; } = "";
     public string? AirTime { get; set; }
+    public string? AirAt { get; set; }
+    public string? AirTimezone { get; set; }
+    public string LocalAirDate { get; set; } = "";
     public string? PosterUrl { get; set; }
     public string? PosterThumbhash { get; set; }
+    public bool Watched { get; set; }
     public List<string> Badges { get; set; } = [];
 }

@@ -409,11 +409,14 @@ public class CatalogApi(SiloApiClient client)
         string end,
         string filter = "all",
         int? libraryId = null,
+        string? timezone = null,
         CancellationToken ct = default)
     {
         var query = $"/api/v1/calendar?start={Uri.EscapeDataString(start)}" +
                     $"&end={Uri.EscapeDataString(end)}" +
                     $"&filter={Uri.EscapeDataString(filter)}";
+        if (!string.IsNullOrWhiteSpace(timezone))
+            query += $"&timezone={Uri.EscapeDataString(timezone)}";
         if (libraryId.HasValue)
             query += $"&library_id={libraryId.Value}";
         return client.GetAsync<CalendarResponse>(query, ct);

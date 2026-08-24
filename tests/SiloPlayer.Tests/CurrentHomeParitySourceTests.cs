@@ -258,6 +258,29 @@ public sealed class CurrentHomeParitySourceTests
     }
 
     [Fact]
+    public void MountedHomeRefreshesFromCurrentCatalogAndUserStateRealtimeSignals()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml.cs");
+        var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "HomeViewModel.cs");
+        var webProvider = ReadWebUiFile("web", "src", "components", "RealtimeEventsProvider.tsx");
+        var webHome = ReadWebUiFile("web", "src", "pages", "Home.tsx");
+        var webApp = ReadWebUiFile("web", "src", "App.tsx");
+
+        Assert.Contains("useEventChannel(\"catalog\")", webApp);
+        Assert.Contains("useEventChannel(\"user_state\")", webApp);
+        Assert.Contains("bumpHomeRefreshSignal(queryClient)", webProvider);
+        Assert.Contains("[homeRefreshSignal, layout, layoutResetKey, queryClient]", webHome);
+
+        Assert.Contains("_eventChannel.Subscribe(\"catalog\", \"user_state\")", page);
+        Assert.Contains("ViewModel.QueueRealtimeRefresh($\"catalog:{eventName}\")", page);
+        Assert.Contains("ViewModel.QueueRealtimeRefresh($\"user_state:{eventName}\")", page);
+        Assert.Contains("profile_id", page);
+        Assert.Contains("public void QueueRealtimeRefresh(string reason)", viewModel);
+        Assert.Contains("await FetchSectionItemsInBatchesAsync(generation, _sectionLoadCts.Token)", viewModel);
+        Assert.Contains("QueueRealtimeRefresh(message.Completed ? \"playback_completed\" : \"playback_progress\")", viewModel);
+    }
+
+    [Fact]
     public void ContinueWatchingCardsUseCurrentWideMenuOverlayAndMetadataLayout()
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Controls", "LandscapeCard.xaml");

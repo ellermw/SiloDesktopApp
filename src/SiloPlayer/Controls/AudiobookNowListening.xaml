@@ -14,14 +14,17 @@
 
         <Grid Padding="24,16">
             <Button HorizontalAlignment="Left" Style="{StaticResource SubtleButtonStyle}"
-                    Padding="10,7" Click="Collapse_Click">
+                    Padding="10,7" Click="Collapse_Click"
+                    AutomationProperties.Name="Back to player">
                 <StackPanel Orientation="Horizontal" Spacing="7">
                     <FontIcon Glyph="&#xE70D;" FontSize="16" />
                     <TextBlock Text="Back to player" FontSize="14" FontWeight="SemiBold" />
                 </StackPanel>
             </Button>
             <Button x:Name="SettingsButton" HorizontalAlignment="Right"
-                    Style="{StaticResource SubtleButtonStyle}" Padding="9">
+                    Style="{StaticResource SubtleButtonStyle}" Padding="9"
+                    ToolTipService.ToolTip="Audiobook settings"
+                    AutomationProperties.Name="Audiobook settings">
                 <FontIcon Glyph="&#xE713;" FontSize="16" />
             </Button>
         </Grid>
@@ -63,58 +66,66 @@
 
                     <StackPanel Spacing="5">
                         <Slider x:Name="SeekSlider" Minimum="0" Maximum="1" Height="28"
-                                Margin="-4,0" ValueChanged="SeekSlider_ValueChanged" />
+                                Margin="-4,0" ValueChanged="SeekSlider_ValueChanged"
+                                AutomationProperties.Name="Playback position" />
                         <Grid>
                             <TextBlock x:Name="CurrentTimeText" FontSize="12" FontFamily="Consolas"
                                        Foreground="{StaticResource SecondaryTextBrush}" />
                             <Button x:Name="RightTimeButton" HorizontalAlignment="Right"
                                     Style="{StaticResource SubtleButtonStyle}" Padding="4,1"
-                                    FontSize="12" FontFamily="Consolas" Click="RightTime_Click" />
+                                    FontSize="12" FontFamily="Consolas" Click="RightTime_Click"
+                                    ToolTipService.ToolTip="Toggle total, remaining, or remaining at current speed"
+                                    AutomationProperties.Name="Toggle time display" />
                         </Grid>
                     </StackPanel>
 
                     <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
-                        <Button Style="{StaticResource SubtleButtonStyle}" Width="40" Height="40" Padding="0"
-                                Click="PreviousChapter_Click" ToolTipService.ToolTip="Previous chapter (P)">
+                        <Button x:Name="PreviousChapterButton" Style="{StaticResource SubtleButtonStyle}" Width="40" Height="40" Padding="0"
+                                Click="PreviousChapter_Click" ToolTipService.ToolTip="Previous chapter (P)"
+                                AutomationProperties.Name="Previous chapter">
                             <FontIcon Glyph="&#xE892;" FontSize="17" />
                         </Button>
-                        <Button Style="{StaticResource SubtleButtonStyle}" Width="48" Height="48" Padding="0"
+                        <Button x:Name="SkipBackButton" Style="{StaticResource SubtleButtonStyle}" Width="48" Height="48" Padding="0"
                                 Click="SkipBack_Click" ToolTipService.ToolTip="Skip back">
                             <Grid><FontIcon Glyph="&#xE777;" FontSize="28"/><TextBlock x:Name="SkipBackText" Text="15" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/></Grid>
                         </Button>
-                        <Button Width="64" Height="64" Padding="0" CornerRadius="32" BorderThickness="0"
-                                Background="{StaticResource AccentBrush}" Click="PlayPause_Click">
+                        <Button x:Name="PlayPauseButton" Width="64" Height="64" Padding="0" CornerRadius="32" BorderThickness="0"
+                                Background="{StaticResource AccentBrush}" Click="PlayPause_Click"
+                                ToolTipService.ToolTip="Pause (space)" AutomationProperties.Name="Pause">
                             <FontIcon x:Name="PlayPauseIcon" Glyph="&#xE769;" FontSize="29" Foreground="White" />
                         </Button>
-                        <Button Style="{StaticResource SubtleButtonStyle}" Width="48" Height="48" Padding="0"
+                        <Button x:Name="SkipForwardButton" Style="{StaticResource SubtleButtonStyle}" Width="48" Height="48" Padding="0"
                                 Click="SkipForward_Click" ToolTipService.ToolTip="Skip forward">
                             <Grid><FontIcon Glyph="&#xE777;" FontSize="28"/><TextBlock x:Name="SkipForwardText" Text="30" FontSize="9" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/></Grid>
                         </Button>
-                        <Button Style="{StaticResource SubtleButtonStyle}" Width="40" Height="40" Padding="0"
-                                Click="NextChapter_Click" ToolTipService.ToolTip="Next chapter (N)">
+                        <Button x:Name="NextChapterButton" Style="{StaticResource SubtleButtonStyle}" Width="40" Height="40" Padding="0"
+                                Click="NextChapter_Click" ToolTipService.ToolTip="Next chapter (N)"
+                                AutomationProperties.Name="Next chapter">
                             <FontIcon Glyph="&#xE893;" FontSize="17" />
                         </Button>
                     </StackPanel>
 
                     <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Center">
-                        <Button Click="Mute_Click" Style="{StaticResource SubtleButtonStyle}" Padding="8">
+                        <Button x:Name="MuteButton" Click="Mute_Click" Style="{StaticResource SubtleButtonStyle}" Padding="8"
+                                ToolTipService.ToolTip="Mute" AutomationProperties.Name="Mute">
                             <FontIcon x:Name="VolumeIcon" Glyph="&#xE767;" FontSize="15" />
                         </Button>
                         <Slider x:Name="VolumeSlider" Width="94" Minimum="0" Maximum="100" Value="100"
-                                ValueChanged="VolumeSlider_ValueChanged" />
+                                ValueChanged="VolumeSlider_ValueChanged" AutomationProperties.Name="Volume" />
                         <Button x:Name="SleepButton" Style="{StaticResource SubtleButtonStyle}" Padding="8"
-                                ToolTipService.ToolTip="Sleep timer">
+                                ToolTipService.ToolTip="Sleep timer" AutomationProperties.Name="Sleep timer">
                             <StackPanel Orientation="Horizontal" Spacing="5">
                                 <FontIcon Glyph="&#xE823;" FontSize="15" />
                                 <TextBlock x:Name="SleepTimerText" Text="Sleep" FontSize="13" />
                             </StackPanel>
                         </Button>
                         <Button x:Name="ChaptersButton" Style="{StaticResource SubtleButtonStyle}" Padding="8"
-                                ToolTipService.ToolTip="Chapters">
+                                ToolTipService.ToolTip="Chapters" AutomationProperties.Name="Chapters">
                             <FontIcon Glyph="&#xE8A9;" FontSize="15" />
                         </Button>
                         <Button x:Name="SpeedButton" Style="{StaticResource SubtleButtonStyle}"
-                                Padding="9,7" Content="1×" FontSize="13" />
+                                Padding="9,7" Content="1×" FontSize="13"
+                                ToolTipService.ToolTip="Playback speed" AutomationProperties.Name="Playback speed" />
                     </StackPanel>
                 </StackPanel>
             </Grid>

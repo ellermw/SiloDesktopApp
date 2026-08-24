@@ -234,6 +234,7 @@ public sealed class ServerContractSourceTests
         var root = FindRepositoryRoot();
         var playbackWebSocket = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlaybackWebSocket.cs"));
         var playbackRequest = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Models", "Playback", "PlaybackStartRequest.cs"));
+        var playbackV3 = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Models", "Playback", "PlaybackProtocolV3.cs"));
         var playbackResponse = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Models", "Playback", "PlaybackStartResponse.cs"));
         var playbackManager = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Services", "PlaybackManager.cs"));
         var adminApi = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Api", "AdminApi.cs"));
@@ -247,7 +248,13 @@ public sealed class ServerContractSourceTests
         Assert.Contains("PreserveDirectAudioSelection", playbackRequest);
         Assert.Contains("AudioPassthroughCapabilities", playbackRequest);
         Assert.Contains("HdrCapabilityDetails", playbackRequest);
-        Assert.Contains("PreserveDirectAudioSelection = true", playbackManager);
+        Assert.Contains("public sealed class PlaybackStartRequestV3", playbackV3);
+        Assert.Contains("public int ProtocolVersion { get; set; } = 3", playbackV3);
+        Assert.Contains("public string? AudioTrackId", playbackV3);
+        Assert.Contains("public int? AudioTrackIndex", playbackV3);
+        Assert.Contains("MpvNativePlaybackCapabilities.CreateProtocolV3Profile", playbackManager);
+        Assert.Contains("StartPlaybackV3Async(request", playbackManager);
+        Assert.DoesNotContain("PreserveDirectAudioSelection = true", playbackManager);
         Assert.Contains("FontBundleUrl", playbackResponse);
 
         Assert.Contains("Task<AdminSettingUpdateResponse> UpdateAdminSettingAsync", adminApi);
@@ -635,10 +642,11 @@ public sealed class ServerContractSourceTests
         Assert.DoesNotContain("private static readonly Dictionary<string, string> LanguageNames", settingsViewModel);
         Assert.Contains("(\"original\", \"Original Language\")", settingsCode);
         Assert.Contains("SaveAudioLanguageCommand", settingsCode);
-        Assert.Contains("SaveProfileFieldAsync(\"language\", AudioLanguage)", settingsViewModel);
-        Assert.Contains("preferred_metadata_language", settingsViewModel);
+        Assert.Contains("SaveContractProfileSettingAsync(PlaybackAudioLanguageSettingKey", settingsViewModel);
+        Assert.Contains("catalog.metadata_language", settingsViewModel);
+        Assert.Contains("catalog.metadata_language_overrides", settingsViewModel);
         Assert.Contains("Metadata language", settingsXaml);
-        Assert.DoesNotContain("Preferred audio language", settingsXaml + settingsCode);
+        Assert.Contains("Preferred audio language", File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "SettingsPage.Account.cs")));
     }
 
     [Fact]

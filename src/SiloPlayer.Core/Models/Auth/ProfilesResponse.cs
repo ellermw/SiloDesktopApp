@@ -13,6 +13,12 @@ public class Profile
     public string? AvatarSource { get; set; }
     public bool HasPin { get; set; }
     public bool IsChild { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool ShowsPinBadge => HasPin && !IsChild;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string EditProfileAccessibleName => $"Edit profile {Name}";
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string SelectProfileAccessibleName => HasPin ? $"{Name} (PIN protected)" : Name;
     /// <summary>
     /// Upstream commit c3f2da5: household primary profile. First profile per
     /// user is auto-flagged; can manage sibling profiles without server-admin

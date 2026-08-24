@@ -36,7 +36,44 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
 
     public string EmailDigestDescription => $"Daily digest around {Capability.Email.DigestHour:00}:00 server time.";
     public string DiscordDigestDescription => $"Daily digest around {Capability.Discord.DigestHour:00}:00 server time.";
+    public bool IsEmailEnabled => !string.Equals(EmailMode, "off", StringComparison.Ordinal);
+    public bool IsDiscordEnabled => !string.Equals(DiscordMode, "off", StringComparison.Ordinal);
+    public bool HasVerifiedEmail => !string.IsNullOrWhiteSpace(EmailPreferences.CustomEmail);
+    public bool HasPendingEmail => !string.IsNullOrWhiteSpace(EmailPreferences.PendingEmail);
+    public bool CanToggleEmail => IsEmailEnabled || HasVerifiedEmail;
+    public string EmailAddressActionText => HasVerifiedEmail ? "Change" : "Add address";
+    public string EmailDestinationText => HasVerifiedEmail
+        ? EmailPreferences.CustomEmail
+        : "No address set — verify one to receive emails";
+    public string EmailPendingText => HasPendingEmail
+        ? $"Verification email sent to {EmailPreferences.PendingEmail} — it becomes active once the link in it is opened."
+        : "";
     public bool CanAddWebhook => HasWebhooks && Webhooks.Count < MaxWebhooks;
+    public bool IsWebhookLimitReached => HasWebhooks && !CanAddWebhook;
+    public string WebhookLimitText => $"Limit of {MaxWebhooks} webhooks reached";
+
+    partial void OnEmailModeChanged(string value)
+    {
+        OnPropertyChanged(nameof(IsEmailEnabled));
+        OnPropertyChanged(nameof(CanToggleEmail));
+    }
+    partial void OnDiscordModeChanged(string value) => OnPropertyChanged(nameof(IsDiscordEnabled));
+    partial void OnEmailPreferencesChanged(NotificationEmailPreferences value)
+    {
+        OnPropertyChanged(nameof(HasVerifiedEmail));
+        OnPropertyChanged(nameof(HasPendingEmail));
+        OnPropertyChanged(nameof(CanToggleEmail));
+        OnPropertyChanged(nameof(EmailAddressActionText));
+        OnPropertyChanged(nameof(EmailDestinationText));
+        OnPropertyChanged(nameof(EmailPendingText));
+    }
+
+    partial void OnMaxWebhooksChanged(int value)
+    {
+        OnPropertyChanged(nameof(CanAddWebhook));
+        OnPropertyChanged(nameof(IsWebhookLimitReached));
+        OnPropertyChanged(nameof(WebhookLimitText));
+    }
 
     public async Task LoadAsync()
     {
@@ -121,6 +158,20 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
             NotifyNextUp = Preferences.NotifyNextUp;
             StatusMessage = "Notification preferences saved.";
         });
+
+    public async Task SaveEmailEnabledAsync(bool enabled)
+    {
+        if (enabled && !HasVerifiedEmail) return;
+        EmailMode = enabled ? "daily_digest" : "off";
+        await SaveEmailModeAsync();
+    }
+
+    public async Task SaveDiscordEnabledAsync(bool enabled)
+    {
+        if (!DiscordPreferences.Linked) return;
+        DiscordMode = enabled ? "daily_digest" : "off";
+        await SaveDiscordModeAsync();
+    }
 
     public async Task SaveEmailModeAsync()
         => await RunAsync(async () =>
@@ -241,6 +292,7 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
         HasWebPushSubscriptions = WebPushSubscriptions.Count > 0;
         HasWebhookEntries = Webhooks.Count > 0;
         OnPropertyChanged(nameof(CanAddWebhook));
+        OnPropertyChanged(nameof(IsWebhookLimitReached));
     }
 
     private async Task RunAsync(Func<Task> action)

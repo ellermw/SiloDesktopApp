@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.UI.Text;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Input;
@@ -93,10 +95,32 @@ public sealed partial class NotificationsPage : Page
 
     private void UpdatePreferenceError()
     {
-        PreferenceErrorText.Text = ViewModel.PreferencesErrorMessage ?? "";
-        PreferenceErrorText.Visibility = string.IsNullOrWhiteSpace(ViewModel.PreferencesErrorMessage)
+        PreferenceControlsPanel.Visibility = ViewModel.HasLoadedPreferences
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        PreferenceLoadFailedPanel.Visibility = ViewModel.HasLoadedPreferences
             ? Visibility.Collapsed
             : Visibility.Visible;
+        PreferenceErrorText.Text = ViewModel.PreferencesErrorMessage ?? "";
+        PreferenceErrorText.Visibility = ViewModel.HasLoadedPreferences &&
+            !string.IsNullOrWhiteSpace(ViewModel.PreferencesErrorMessage)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+    }
+
+    private async void RetryPreferences_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button retryButton) retryButton.IsEnabled = false;
+        try
+        {
+            await ViewModel.RetryPreferencesCommand.ExecuteAsync(null);
+            SyncPreferenceControls();
+            UpdatePreferenceError();
+        }
+        finally
+        {
+            if (sender is Button completedButton) completedButton.IsEnabled = true;
+        }
     }
 
     private void SyncPreferenceControls()
@@ -143,6 +167,11 @@ public sealed partial class NotificationsPage : Page
     private void NotificationRow_Loaded(object sender, RoutedEventArgs e)
     {
         if (sender is not Grid { DataContext: AppNotification notification } row) return;
+        AutomationProperties.SetName(row,
+            string.Join(", ", new[] { notification.DisplayTitle, notification.Subtitle, notification.RelativeTime }
+                .Where(value => !string.IsNullOrWhiteSpace(value))));
+        if (row.FindName("NotificationTitleText") is TextBlock title)
+            title.FontWeight = notification.IsUnread ? FontWeights.SemiBold : FontWeights.Medium;
         if (notification.IsUnread && Application.Current.Resources["SurfaceBrush"] is SolidColorBrush surface)
             row.Background = new SolidColorBrush(surface.Color) { Opacity = 0.3 };
         else
@@ -162,6 +191,16 @@ public sealed partial class NotificationsPage : Page
     }
 
     private void MarkRead_Tapped(object sender, TappedRoutedEventArgs e) => e.Handled = true;
+
+    private void InlineMarkReadButton_GotFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button) button.Opacity = 1;
+    }
+
+    private void InlineMarkReadButton_LostFocus(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button button) button.Opacity = 0;
+    }
 
     private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
     {

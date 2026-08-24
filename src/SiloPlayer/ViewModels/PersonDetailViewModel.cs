@@ -17,6 +17,7 @@ public partial class PersonDetailViewModel : ObservableObject
 
     private CancellationTokenSource? _pageCts;
     private CancellationTokenSource? _filmographyCts;
+    private CancellationTokenSource? _metadataRefreshCts;
 
     public PersonDetailViewModel(PeopleApi peopleApi, AdminApi adminApi, CatalogApi catalogApi, AuthService authService)
     {
@@ -173,8 +174,13 @@ public partial class PersonDetailViewModel : ObservableObject
             OnPropertyChanged(nameof(BirthDateDisplay));
             OnPropertyChanged(nameof(DeathDateDisplay));
             OnPropertyChanged(nameof(IsAdmin));
+            StartIncompleteMetadataRefresh(personId);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
+        catch (ApiException ex) when (ex.StatusCode == 404)
+        {
+            if (ReferenceEquals(_pageCts, cts)) ErrorMessage = "Person not found.";
+        }
         catch (Exception ex)
         {
             if (ReferenceEquals(_pageCts, cts)) ErrorMessage = $"Failed to load person: {ex.Message}";
@@ -296,8 +302,66 @@ public partial class PersonDetailViewModel : ObservableObject
         page?.Cancel();
         page?.Dispose();
         CancelFilmographyLoad();
+        var metadataRefresh = Interlocked.Exchange(ref _metadataRefreshCts, null);
+        metadataRefresh?.Cancel();
+        metadataRefresh?.Dispose();
         IsLoading = false;
     }
+
+    private void StartIncompleteMetadataRefresh(string personId)
+    {
+        var previous = Interlocked.Exchange(ref _metadataRefreshCts, null);
+        previous?.Cancel();
+        previous?.Dispose();
+        if (Person is null || !IsMetadataIncomplete(Person)) return;
+
+        var cts = new CancellationTokenSource();
+        _metadataRefreshCts = cts;
+        _ = RefreshIncompleteMetadataAsync(personId, cts);
+    }
+
+    private async Task RefreshIncompleteMetadataAsync(string personId, CancellationTokenSource owner)
+    {
+        try
+        {
+            // Current WebUI requests one refresh, then refetches the person at
+            // three-second intervals for a bounded thirty-second window.
+            if (IsAdmin)
+                Person = await _adminApi.RefreshPersonAsync(personId, owner.Token);
+            else
+                await _peopleApi.RefreshPersonAsync(personId, owner.Token);
+
+            var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
+            while (!owner.IsCancellationRequested && DateTimeOffset.UtcNow < deadline)
+            {
+                if (Person is not null && !IsMetadataIncomplete(Person)) break;
+                await Task.Delay(TimeSpan.FromSeconds(3), owner.Token);
+                var refreshed = await _peopleApi.GetPersonAsync(personId, owner.Token);
+                if (!ReferenceEquals(_metadataRefreshCts, owner)) return;
+                Person = refreshed;
+                OnPropertyChanged(nameof(AgeDisplay));
+                OnPropertyChanged(nameof(DatesDisplay));
+                OnPropertyChanged(nameof(BirthDateDisplay));
+                OnPropertyChanged(nameof(DeathDateDisplay));
+            }
+        }
+        catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
+        catch
+        {
+            // Automatic enrichment is best effort; the explicit Refresh button
+            // remains available and reports errors to the viewer.
+        }
+        finally
+        {
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _metadataRefreshCts, null, owner), owner))
+                owner.Dispose();
+        }
+    }
+
+    private static bool IsMetadataIncomplete(Person person)
+        => string.IsNullOrWhiteSpace(person.Bio) ||
+           string.IsNullOrWhiteSpace(person.PhotoUrl) ||
+           string.IsNullOrWhiteSpace(person.BirthDate);
 
     private void CancelFilmographyLoad()
     {

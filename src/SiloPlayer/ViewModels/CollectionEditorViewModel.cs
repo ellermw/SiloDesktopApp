@@ -17,6 +17,7 @@ public partial class CollectionEditorViewModel : ObservableObject
     private readonly SettingsApi _settingsApi;
     private readonly SiloPlayer.Core.Services.AuthService _authService;
     private readonly HashSet<string> _originalManualItemIds = new(StringComparer.Ordinal);
+    private string _initialDefaultSortValue = "";
 
     public CollectionEditorViewModel(
         CollectionsApi collectionsApi,
@@ -106,7 +107,22 @@ public partial class CollectionEditorViewModel : ObservableObject
     private string _mediaFilter = "all";
 
     [ObservableProperty]
+    private string _defaultSortValue = "";
+
+    [ObservableProperty]
     private string? _lastSyncSummary;
+
+    [ObservableProperty]
+    private string _sourcePresetSummary = "Source-managed collection";
+
+    [ObservableProperty]
+    private string _sourceProviderLabel = "SOURCE";
+
+    [ObservableProperty]
+    private string _sourceItemCountText = "0";
+
+    [ObservableProperty]
+    private string _createdDisplayText = "Unknown";
 
     public ObservableCollection<Library> AvailableLibraries { get; } = [];
     public ObservableCollection<Profile> AvailableProfiles { get; } = [];
@@ -187,6 +203,10 @@ public partial class CollectionEditorViewModel : ObservableObject
             PosterSourceUrl = "";
             CurrentPosterUrl = collection.PosterUrl;
             LastSyncSummary = BuildLastSyncSummary(collection);
+            SourceProviderLabel = CollectionType.ToUpperInvariant();
+            SourcePresetSummary = BuildSourcePresetSummary(collection);
+            SourceItemCountText = collection.ItemCount.ToString("N0");
+            CreatedDisplayText = FormatCreatedAt(collection.CreatedAt);
 
             AvailableLibraries.Clear();
             foreach (var library in librariesTask.Result) AvailableLibraries.Add(library);
@@ -198,6 +218,8 @@ public partial class CollectionEditorViewModel : ObservableObject
             AllowedProfileIds.Clear();
             foreach (var id in collection.AllowedProfileIds) AllowedProfileIds.Add(id);
             ReadDisplayFilters(collection.DisplayQueryDefinition);
+            DefaultSortValue = ReadCollectionSortValue(collection.SortConfig);
+            _initialDefaultSortValue = DefaultSortValue;
 
             // Load rules from query definition
             if (collection.QueryDefinition?.Groups?.Count > 0)
@@ -281,6 +303,8 @@ public partial class CollectionEditorViewModel : ObservableObject
                     request.IncludeInServerCollections = IncludeInServerCollections;
                     request.LibraryIds = [.. SelectedLibraryIds];
                     request.DisplayQueryDefinition = BuildDisplayQueryDefinition();
+                    if (!string.Equals(DefaultSortValue, _initialDefaultSortValue, StringComparison.Ordinal))
+                        request.SortConfig = BuildCollectionSortConfig(DefaultSortValue);
                 }
 
                 if (PosterFileBytes is { Length: > 0 } poster && !string.IsNullOrWhiteSpace(PosterFileName))
@@ -347,6 +371,39 @@ public partial class CollectionEditorViewModel : ObservableObject
         }
     }
 
+    private static string ReadCollectionSortValue(Dictionary<string, object>? config)
+    {
+        if (config == null || !config.TryGetValue("field", out var fieldValue)) return "";
+        var field = JsonValueText(fieldValue).Trim();
+        if (field.Length == 0) return "";
+        var order = config.TryGetValue("order", out var orderValue)
+            ? JsonValueText(orderValue).Trim().ToLowerInvariant()
+            : "";
+        if (order is not ("asc" or "desc"))
+            order = field is "title" or "content_rating" or "author" or "narrator" or "series" ? "asc" : "desc";
+        return $"{field}:{order}";
+    }
+
+    private static Dictionary<string, object> BuildCollectionSortConfig(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return [];
+        var parts = value.Split(':', 2);
+        if (parts.Length == 0 || string.IsNullOrWhiteSpace(parts[0])) return [];
+        var order = parts.Length > 1 && parts[1] is "asc" or "desc"
+            ? parts[1]
+            : parts[0] is "title" or "content_rating" or "author" or "narrator" or "series" ? "asc" : "desc";
+        return new Dictionary<string, object>
+        {
+            ["field"] = parts[0],
+            ["order"] = order,
+        };
+    }
+
+    private static string JsonValueText(object? value)
+        => value is JsonElement element
+            ? element.ValueKind == JsonValueKind.String ? element.GetString() ?? "" : element.ToString()
+            : value?.ToString() ?? "";
+
     private async Task SaveManualItemsAsync(string collectionId)
     {
         var currentIds = ManualItems
@@ -404,6 +461,7 @@ public partial class CollectionEditorViewModel : ObservableObject
     private async Task RemovePosterAsync()
     {
         if (IsReadOnly || string.IsNullOrWhiteSpace(CollectionId)) return;
+        ErrorMessage = null;
         try
         {
             await _collectionsApi.DeleteCollectionImageAsync(CollectionId);
@@ -627,6 +685,26 @@ public partial class CollectionEditorViewModel : ObservableObject
             ? $"{status} · {collection.LastSyncAt}"
             : $"{status} · {collection.LastSyncMessage}";
     }
+
+    private static string BuildSourcePresetSummary(Collection collection)
+    {
+        var preset = ReadSourceConfigValue(collection.SourceConfig, "preset");
+        var mediaType = ReadSourceConfigValue(collection.SourceConfig, "media_type");
+        var timeWindow = ReadSourceConfigValue(collection.SourceConfig, "time_window");
+        var parts = new List<string>();
+        if (!string.IsNullOrWhiteSpace(preset))
+            parts.Add(System.Globalization.CultureInfo.InvariantCulture.TextInfo.ToTitleCase(preset.Replace('_', ' ')));
+        if (!string.IsNullOrWhiteSpace(mediaType))
+            parts.Add(mediaType switch { "all" => "Movies + TV", "movie" => "Movies", "tv" or "series" => "TV", _ => mediaType });
+        if (!string.IsNullOrWhiteSpace(timeWindow))
+            parts.Add(timeWindow switch { "day" => "this day", "week" => "this week", _ => timeWindow });
+        return parts.Count > 0 ? string.Join(" · ", parts) : collection.Name;
+    }
+
+    private static string FormatCreatedAt(string? value)
+        => DateTimeOffset.TryParse(value, out var created)
+            ? SiloPlayer.Helpers.DateTimeDisplay.FormatDate(created.ToLocalTime())
+            : "Unknown";
 
     private static string FormatSyncSchedule(string? schedule)
     {

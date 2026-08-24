@@ -52,25 +52,45 @@ public sealed class SearchRuntimeRegressionTests
     }
 
     [Fact]
-    public void PrimarySearchDoesNotCompeteWithAnUnscopedFacetScanOrForceDateSorting()
+    public void PrimarySearchMatchesWebUiDefaultSortAndDefersFacetScanUntilFiltersOpen()
     {
+        var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml");
         var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "SearchViewModel.cs");
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml.cs");
         var initialize = Slice(page, "private async Task InitializeAsync()", "private void UpdateResultsState()");
         var fetch = Slice(viewModel, "private Task<CatalogResponse> FetchCatalogPageAsync", "private async Task<List<RequestMediaResult>> SearchOutsideLibraryAsync");
         var debounce = Slice(page, "private void SearchBox_TextChanged", "private void ShowResultsShellForCurrentQuery");
+        var enter = Slice(page, "private async void SearchBox_KeyDown", "private void PersonCard_Click");
+        var openFilters = Slice(page, "private async void OpenResultFilters_Click", "private void CloseResultFilters_Click");
 
         Assert.DoesNotContain("LoadFiltersAsync", initialize);
         Assert.Contains("await ViewModel.LoadMediaScopeAsync();", initialize);
-        Assert.Contains("_ = EnsureSearchFiltersLoadedAsync();", debounce);
+        Assert.DoesNotContain("EnsureSearchFiltersLoadedAsync", debounce);
+        Assert.DoesNotContain("EnsureSearchFiltersLoadedAsync", enter);
+        Assert.Contains("await EnsureSearchFiltersLoadedAsync();", openFilters);
         Assert.Contains("ViewModel.LoadFiltersAsync(query, mediaType)", page);
         Assert.Contains("q: normalizedQuery", viewModel);
         Assert.Contains("type: normalizedType", viewModel);
-        Assert.Contains("private string _sortField = \"relevance\"", viewModel);
-        Assert.Contains("sort: SortField", fetch);
-        Assert.Contains("order: SortOrder", fetch);
-        Assert.DoesNotContain("sort: \"added_at\"", fetch);
+        Assert.Contains("private string _sortField = \"added_at\"", viewModel);
+        Assert.Contains("Content=\"Date Added\" Tag=\"added_at\" IsSelected=\"True\"", xaml);
+        Assert.Contains("Content=\"Relevance\" Tag=\"relevance\"", xaml);
+        Assert.Contains("var requestSort = GetRequestSortField();", fetch);
+        Assert.Contains("sort: requestSort", fetch);
+        Assert.Contains("order: requestSort == null ? null : SortOrder", fetch);
+        Assert.Contains("string.Equals(SortField, \"added_at\"", viewModel);
         Assert.Contains("search_timing.txt", viewModel);
+    }
+
+    [Fact]
+    public void DesktopApiTransportMatchesBrowserCompressionAndStreamsJsonResponses()
+    {
+        var app = ReadRepoFile("src", "SiloPlayer", "App.xaml.cs");
+        var apiClient = ReadRepoFile("src", "SiloPlayer.Core", "Api", "SiloApiClient.cs");
+
+        Assert.Contains("AutomaticDecompression = DecompressionMethods.All", app);
+        Assert.Contains("DefaultRequestVersion = HttpVersion.Version20", app);
+        Assert.Contains("DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower", app);
+        Assert.Contains("HttpCompletionOption.ResponseHeadersRead", apiClient);
     }
 
     [Fact]
@@ -173,6 +193,34 @@ public sealed class SearchRuntimeRegressionTests
         Assert.Contains("ResultsScroll.VerticalOffset > 24", source);
         Assert.Contains("Avoid firing an automatic \"load more\" while the initial result grid", source);
         Assert.Contains("if (!_resultsScrollUserScrolled", source);
+    }
+
+    [Fact]
+    public void DiscoveryResultsMatchTheCurrentWebUiVariants()
+    {
+        var pageXaml = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml");
+        var pageCode = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml.cs");
+        var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "SearchViewModel.cs");
+        var dialog = ReadRepoFile("src", "SiloPlayer", "Controls", "GlobalSearchDialog.xaml.cs");
+        var web = ReadWebUiFile("web", "src", "components", "RequestToAddSection.tsx");
+
+        Assert.Contains("const DIALOG_LIMIT = 4", web);
+        Assert.Contains("const GRID_LIMIT = 20", web);
+        Assert.Contains(".Take(20)", viewModel);
+        Assert.Contains("x:Name=\"RequestResultsEyebrow\"", pageXaml);
+        Assert.Contains("x:Name=\"RequestResultsTitle\"", pageXaml);
+        Assert.Contains("x:Name=\"RequestResultsCount\"", pageXaml);
+        Assert.Contains("Click=\"RequestNow_Click\"", pageXaml);
+        Assert.Contains("CreateAsync(new CreateMediaRequestInput", pageCode);
+        Assert.Contains("button.Content = \"Requesting…\"", pageCode);
+
+        Assert.Contains(".Take(4)", dialog);
+        Assert.Contains("Text = \"REQUEST TO ADD\"", dialog);
+        Assert.Contains("Text = \"Not in your library, but you can request:\"", dialog);
+        Assert.Contains("Width = 40, Height = 56", dialog);
+        Assert.Contains("metadata.Add(TypeLabel(item.MediaType))", dialog);
+        Assert.DoesNotContain("Request to add\", FontSize = 11", dialog);
+        Assert.Contains("Navigate<RequestDetailPage>", dialog);
     }
 
     [Fact]

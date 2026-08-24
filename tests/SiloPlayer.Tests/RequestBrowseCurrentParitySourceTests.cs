@@ -25,6 +25,21 @@ public sealed class RequestBrowseCurrentParitySourceTests
         Assert.Contains("ToastService>().Error", page);
     }
 
+    [Fact]
+    public void BrowseCardsExposeCurrentWebUiStatusAndKeyboardActions()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "RequestBrowsePage.xaml.cs");
+        var markup = ReadRepoFile("src", "SiloPlayer", "Views", "RequestBrowsePage.xaml");
+
+        Assert.Contains("x:Name=\"StatusRibbon\"", markup);
+        Assert.Contains("x:Name=\"LibraryButton\"", markup);
+        Assert.Contains("GotFocus=\"InlineRequest_GotFocus\"", markup);
+        Assert.Contains("Open {item.Title} request details", page);
+        Assert.Contains("ApplyStatusRibbon(card, item)", page);
+        Assert.Contains("Could not load this browse page. Try a different sort or media type.", page);
+        Assert.DoesNotContain("catch (Exception ex) { Fail(ex.Message); }", page);
+    }
+
     private static string ReadRepoFile(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

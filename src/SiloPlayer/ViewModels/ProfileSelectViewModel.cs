@@ -127,16 +127,16 @@ public partial class ProfileSelectViewModel : ObservableObject
             }
             else
             {
-                PinErrorMessage = "Incorrect PIN. Please try again.";
+                PinErrorMessage = "Incorrect PIN";
             }
         }
-        catch (ApiException ex)
+        catch (ApiException)
         {
-            PinErrorMessage = ex.Message;
+            PinErrorMessage = "Verification failed";
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            PinErrorMessage = $"Failed to verify PIN: {ex.Message}";
+            PinErrorMessage = "Verification failed";
         }
         finally
         {
