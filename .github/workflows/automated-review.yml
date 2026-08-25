@@ -354,8 +354,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git add -N -- .
-          git diff --binary --full-index HEAD -- . > .codex-automation/remediation.patch
+          git add -N -- . ':(exclude).codex-automation/**'
+          git diff --binary --full-index HEAD -- . ':(exclude).codex-automation/**' \
+            > .codex-automation/remediation.patch
           if [[ "$HAS_FIX" == "true" ]]; then
             test -s .codex-automation/remediation.patch
             echo "has_patch=true" >> "$GITHUB_OUTPUT"

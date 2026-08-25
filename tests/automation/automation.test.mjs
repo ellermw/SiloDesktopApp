@@ -134,3 +134,15 @@ test("workflow and remediation prompt use the same structured report path", () =
   assert.match(prompt, /\.codex-automation\/review-report\.json/u);
   assert.doesNotMatch(prompt, /coderabbit-report\.json/u);
 });
+
+test("remediation patch excludes private automation evidence", () => {
+  const workflow = fs.readFileSync(
+    path.join(repositoryRoot, ".github", "workflows", "automated-review.yml"),
+    "utf8",
+  );
+  assert.match(workflow, /git add -N -- \. ':\(exclude\)\.codex-automation\/\*\*'/u);
+  assert.match(
+    workflow,
+    /git diff --binary --full-index HEAD -- \. ':\(exclude\)\.codex-automation\/\*\*'/u,
+  );
+});
