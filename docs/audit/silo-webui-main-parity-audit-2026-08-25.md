@@ -24,6 +24,7 @@ The highest-priority current risks are:
 4. **Failure observability is weak:** 163 compact empty `catch { }` sites exist. Many are valid best-effort cancellation/disposal paths, but others surround page loads, admin refreshes, image work, and player operations where silent failure can turn real regressions into blank or stale UI.
 5. **Maintainability is limiting auditability:** major pages and services are extremely large code-behind units. `ItemDetailPage.xaml.cs`, `SettingsPage.xaml.cs`, `PlayerService.cs`, and several admin pages combine transport, mapping, state, view creation, and interaction logic. This increases regression probability and makes meaningful parity review harder.
 6. **Visual drift remains plausible:** the desktop uses 343 literal XAML colors in addition to shared resources, while the WebUI is theme-token driven. Literal values are not automatically wrong, but they create a large surface that will not follow upstream theme/token changes.
+7. **Two trust-boundary hardening gaps are confirmed:** server-supplied activation URLs are shell-opened without an HTTP(S) allowlist, and active EPUB content runs in a broadly mapped WebView origin without explicit navigation/origin restrictions.
 
 No new confirmed credential disclosure, command injection, path traversal, or authorization bypass was found in this source-only pass. That is not a penetration-test result.
 
@@ -276,6 +277,8 @@ Settings and some redirected WebUI routes are consolidated or relocated in deskt
 
 The WebUI primarily derives colors, radii and surfaces from CSS variables and component variants. Desktop has a shared `DarkTheme.xaml`, but 343 literal XAML colors remain. Audit each literal into one of:
 
+The canonical desktop `cobalt-studio` resource values were compared directly with the WebUI theme block. The core background, foreground, card, popover, primary, secondary, muted, accent, destructive, border, input, ring, chart, sidebar and surface hex values match exactly (case aside); both use Outfit and a 12px base radius. The desktop user shell is 260px/64px, matching WebUI, and its admin shell is 240px, matching `AdminLayout`/`AdminSidebar`. This is strong token/geometry evidence for the base theme—not proof that each control consumes the correct resource or that hover/focus/animation states render identically.
+
 1. required semantic/status color;
 2. media-specific branding color;
 3. exact upstream token snapshot;
@@ -429,6 +432,168 @@ No simple `TODO`/`FIXME` marker identifies an obviously abandoned current featur
 - desktop-only navigation pages whose semantics overlap redirected WebUI filters.
 
 Do not delete compatibility routes or native pages based only on apparent duplication. First instrument usage and confirm server notification/deep-link behavior. Documentation referring to prohibited source-of-truth locations should be corrected promptly.
+
+## Exhaustive source-surface ledger
+
+This ledger closes the ambiguity in the earlier route summary. Every one of the 217 non-test modules under current `web/src/pages` was inventoried. A **mapped** disposition means the behavior is represented in current desktop source; it does not mean screenshot/runtime parity has been proven.
+
+### Entry, setup and library surfaces
+
+| WebUI modules reviewed | Desktop evidence | Disposition |
+|---|---|---|
+| `ActivateDevice`, `Login`, `OAuthComplete`, `Signup`, `InviteClaim`, `HouseholdSetup` | corresponding pages/view models; `AuthApi`; `AuthService`; native callback handling | Mapped; auth recovery and browser/device flows need Windows integration tests |
+| `SetupWizard`; `StepIndicator`; `WizardContext`; `setupStorage`; `AccountStep`; `ProfileStep`; `ServerStorageStep`; `IntegrationsStep`; `DownloadsStep`; `RecommendationsStep`; `LibraryStep`; `NodesFinishStep`; `useWizardSteps` | `SetupWizardPage`, `SetupWizardViewModel` | All current steps map in the same runtime order; visual/error-state validation remains |
+| `Profiles`, `TasteSeed`, `ProfileCustomizeHome` | profile/taste pages and view models; Settings Home Screen/Personalize/Profile sections | Mapped; Taste/Home customization is intentionally relocated |
+| `Home`; `homeSectionCache`; `homeSectionQueue`; `homeSectionState`; `homeSurfaceRefresh` | `HomePage`, `HomeViewModel`, `HeroCarousel`, `SectionRow`, shared event channel | Mapped, including incremental section loading and refresh; runtime card/image timing remains |
+| `Catalog`, `catalogSearchParams` | `CatalogPage`, catalog API/view model | Mapped; query/deep-link and dense-result runtime validation remains |
+| `LibraryPage`, `LibraryBrowse`, `LibraryCollections`, `LibraryRecommended`; `libraryPageSearchParams`; `librarySectionLayout` | `LibraryPage`, library modes, filters, virtual range/card binding, recommendation and collection tabs | Mapped but not cleared: the documented scrolling freeze is a release blocker |
+| `Collections`, `CollectionEditor`, `SmartCollectionWizard`, `ImportedCollectionEditor`, `userCollectionsShared` | collection list/detail/editor/wizard; imported-provider and template flows | Broad mapping; invalid rules, provider failures, scheduling and artwork need end-to-end testing |
+| `Calendar` | `CalendarPage`, calendar models/API | Mapped; locale/timezone/dense layout runtime validation remains |
+
+### Item detail, requests and recommendations
+
+| WebUI modules reviewed | Desktop evidence | Disposition |
+|---|---|---|
+| `ItemDetail/index`, `MovieContent`, `SeriesContent`, `SeasonContent`, `EpisodeContent`, `AudiobookContent`, `EbookContent`, `MangaContent`, `DetailHero` | `ItemDetailPage`, `ItemDetailViewModel`, `CatalogApi`, native audiobook/reader entry | Every media subtype maps; complex runtime and exact layout remain unproven |
+| `ActionBar`, `DetailBreadcrumb`, `HeroCrewLine`, `MetadataBadges`, `QualityBadges`, `ScoreRow`, `SectionSkeletons` | item-detail action/hero/crew/rating/quality/loading builders | Mapped; visual state-by-state comparison required |
+| `AudioTracksPopover`, `SubtitlesPopover`, `SubtitleSearchDialog`, `VersionDropdown`, `VersionFlyout` | version/edition/audio/subtitle menus, subtitle search/download and pre-play selection | Mapped; mixed-edition and server-error cases need integration tests |
+| `EpisodeCarousel`, `SeasonCarousel`, `SeasonEpisodeGrid` | season/episode/sibling navigation and grids | Mapped; navigation restoration and long-series performance remain |
+| `ExtrasSection`, `TrailersSection`, `TrailerModal`, `MediaInfoDialog` | extras/trailers/media-info dialogs and actions | Mapped; YouTube thumbnail loading bypasses shared image policy |
+| `mediaSpecSections`, `prePlaySelection`, `selectedMediaSummary`, `versionFormatUtils`, `versionRankingUtils`, `versionSubtitleInventory`, `itemDetailLayout`, `watchedState` | native media-spec mapping, ranking, selection summary, watched-state refresh | Mapped; contract fixtures are incomplete |
+| `Requests`, `RequestBrowse`, `RequestDetail`, `requestExclusivity`, `requestIntegrationMediaTypes` | request list/browse/detail, router/provider forms and target states | Mapped; several high-cardinality images bypass the shared loader |
+| `Recommendations`, `RecommendationsSection` | recommendation page/section view models and API | Mapped; ranking/seed/empty/pagination runtime cases remain |
+| `PersonDetail` | `PersonDetailPage`, `PersonDetailViewModel` | Mapped; empty biography/credits and filmography grouping need runtime comparison |
+| `Notifications` | `NotificationsPage`, notification API/view model, shell badge/event handling | Mapped; reconnect/pagination/read-state integration remains |
+
+### Playback, audiobook, reader and Watch Together
+
+| WebUI modules reviewed | Desktop evidence | Disposition |
+|---|---|---|
+| `WatchRoute`, `watchRouteHelpers` | `WatchPage`, `PlayerService`, `PlaybackManager`, transport planner | Broad mapping; known 4K HDR stop/pause risk prevents parity sign-off |
+| `AudiobookPlayer`, `CoverExpandTile`, `MiniBar`, `NowListening`, `PlayerSettingsMenu`, `SkipIcon`, `SpeedControl` | audiobook mini/expanded controls, now-listening hero, speed/sleep/skip/preferences | Mapped; long-form progress and interruption recovery need runtime tests |
+| `audiobookPlaybackContext`, `smartRewind`, `useAudiobookKeyboardShortcuts`, `useAudiobookPlayback`, `useAudiobookPrefs`, `playerTestUtils` | native audiobook state/preferences, smart rewind and keyboard transport | Behavioral mapping present; cross-device preference and resume tests remain |
+| `ChaptersSection`, `NarratorCard`, `NarratorPicker`, `RelatedRail` | item detail chapters/narrator/related surfaces | Mapped; imagery, focus and empty-state comparison remains |
+| `EbookReader` | `EbookReaderPage`, `EbookPackageExtractor` | EPUB/PDF/FB2/comic/native reader support is broad; sandbox, format and rendering tests remain |
+| `WatchTogetherJoin`, `WatchTogetherRoomPage`, `WatchTogetherSuggestionPanel` | join/room pages, room view model, coordinator and dedicated WebSocket | Mapped; multi-client sync/reconnect/host-transfer is runtime-only |
+
+### User settings modules
+
+| WebUI modules reviewed | Desktop evidence | Disposition |
+|---|---|---|
+| `SettingsLayout`; `AppearanceSettings`; `InterfaceSettings`; `ThemeEditorSettings`; `AccessibilitySettings` | consolidated Settings workspace, theme service/editor and accessibility service | Mapped; native IA difference is intentional |
+| `PlaybackSettings`; `libraryPlaybackPreferences`; `SubtitleAppearanceSettings` | Playback, Libraries and Subtitle sections/dialogs | Mapped; device/player integration remains |
+| `ProfilesSettings`; `LibrarySettings`; `HomeScreenSettings`; `CardOverlaySettings`; `PersonalizeSettings` | corresponding Settings sections and controls | Mapped, including current `edition` overlay |
+| `HistoryImportSettings`, `HistoryImportSettings.utils` | source auth, mappings, runs and realtime status | Mapped; provider/reconnect integration remains |
+| `WebhookSyncSettings` | connections, Plex auth, profiles/mappings, filters, events, setup, secret rotation/deletion | Broad mapping; lifecycle and destructive-state testing remains |
+| `WatchProvidersSettings`, `watchProviderConnectionConfig` | provider cards, device/API flows, connections and sync runs | Mapped; external activation URL handling needs hardening |
+| `NotificationsSettings` | relationship, email, Discord, browser-registration management and webhooks | Mapped; browser enrollment itself is correctly browser-only |
+| `DeviceSettings`; `ConnectAppsSettings`, `connectApps`; `PluginSettings` | Your Devices, Connect Apps, Sessions and Plugins sections | Mapped with native extensions; capability/deep-link tests remain |
+
+### Admin top-level modules
+
+| WebUI modules reviewed | Desktop evidence | Disposition |
+|---|---|---|
+| `AdminDashboard`, `AdminStats`, `adminActivityPresentation` | Dashboard page/view model; Stats is only a Web redirect | Broad, but README explicitly says visual parity is incomplete |
+| `AdminActivity` | activity page, event-channel subscription, sessions/jobs/details/actions | Broad; realtime recovery/table geometry need Windows validation |
+| `AdminLogs` | logs page and dedicated `AdminLogStreamClient` | Mapped; reconnect/filter/detail behavior needs integration tests |
+| `AdminDiagnostics` | diagnostics page/API | Mapped; uploads/redaction/error cases remain |
+| `AdminLibraries`, `adminLibraryOrder` | libraries page, scan/queue/diagnostics/unmatched controls | Broad but known Scan All stall and visual incompleteness remain blockers |
+| `AdminCollections`, `AdminCollectionEditor`, `adminCollectionsShared` | collections page/editor, provider/template/artwork/sync actions | Broad; provider/template/schedule runtime edges remain |
+| `AdminSections`, `adminSectionOrder` | section list/editor/preview/order/recipe controls | Broad; exact recipe schemas/drawer geometry need runtime validation |
+| `AdminRequests` | router/provider configuration, schema controls and request table/actions | Broad; plugin-schema and target-failure integration remains |
+| `AdminAutoscan` | Autoscan Sources/Activity plus native Connections/Settings organization | Behavior maps; tab placement is an intentional native IA difference |
+| `AdminTasks`, `AdminTaskDetail` | task list/detail/run/cancel/history and event/poll fallback | Mapped; cancellation/reconnect/task-specific payloads remain |
+| `AdminSubtitles` | subtitle table/search/paging/actions | Mapped; dense/narrow table validation remains |
+| `AdminMarkerHistory`, `AdminPlaybackHistory` | corresponding pages, filters, paging and links | Mapped; deep-link and long-history behavior remains |
+| `AdminRecommendations` | provider/capability/jobs/settings page | Mapped; provider connection/job failure cases remain |
+| `AdminUsers`, `AdminUserDetail` | user list/detail, invites/profiles/access/session controls | Broad; destructive/permission behavior needs end-to-end tests |
+| `AdminAccessGroups` | access-group page/view model | Mapped; inherited/default policy semantics need contract tests |
+| `AdminDevices` | device console/detail/saved views/actions | Broad; very-wide layout and override/action recovery remain |
+| `AdminHistoryImport` | source/mapping/run/detail and event-channel page | Mapped; provider auth/reconnect integration remains |
+| `AdminPlugins` | installed/catalog/settings/routes/update/remove pages | Broad; schema rollback and WebView navigation boundaries need hardening |
+| `AdminNodes` | node status/capacity/toggle/actions | Mapped; stale-event and command-failure behavior remains |
+| `AdminApiKeys` | key list/create/reveal/copy/revoke | Mapped; secret lifetime, role and paging tests remain |
+| `AdminMaintenance` | maintenance operations, confirmations and progress/event handling | Mapped; destructive idempotency/cancellation needs integration tests |
+
+### Admin policy, settings and Autoscan nested modules
+
+| WebUI modules reviewed | Desktop evidence | Disposition |
+|---|---|---|
+| `AdminPolicyLayout`; `PolicyDocumentList`; `PolicyEditorPanel`; `PolicySimulatePanel`; `PolicyVendorViewer`; `PolicyVersionHistory`; `PolicyDecisionLogTable`; `policyExamples`; `policyPageUtils`; `policyPresentation`; `policyTestUtils`; `vendorBaseline` | `AdminPolicyPage` capability gate, documents/editor/draft validation/activation, simulation, vendor view, versions and decision log | Broad mapping; OPA/vendor/capability/error output needs current-server testing |
+| `AdminSettingsLayout`; `GeneralSettings`; `BrandingSettings`; `ThemeSettings`; `OverlaySettings` | admin settings shell/detail for general, branding, theme variables/CSS and overlays | Mapped; live preview/reset and asset upload states remain |
+| `ScannerSettings`; `SearchSettings`; `IntroSettings`; `SubtitlesSettings`; `AIServicesSettings` | corresponding admin settings groups | Mapped; provider/model and long-running validation remains |
+| `PlaybackSettings`, `playbackSettings.utils`; `DownloadSettings`; `WatchProvidersSettings` | corresponding admin setting groups and typed adapters | Mapped; playback/provider integration remains |
+| `IntegrationsSettings`; `EmailSettings`; `NotificationsAdminSettings`; `ServerNotificationChannels` | integrations/email/notification/channel editors and test actions | Mapped; credential and send-test failure cases remain |
+| `CompatibilityProxiesSettings`; `RateLimitSettings`; `DatabaseSettings`, `databaseSettingOptions`; `StorageSettings`; `LogRetentionSettings`, `logRetentionPolicy` | corresponding admin settings groups | Mapped; validation/restart/retention edge cases remain |
+| `InvitationsTab`; `InviteCodesTab`; `CredentialStatus`; `FieldGroup`; `SettingField`; `SaveBar`; `RestartServerButton`; `recommendationsSettings` | shared dynamic controls and admin-user/settings surfaces | Mapped; focus, permission and partial-save behavior remains |
+| `ActivityPanel`; `ConnectionsPanel`; `SourcesPanel`; `ChoiceCard`; `InlineConnectionPicker`; `SourceConfigForm`; `WebhookSetupStep`; `sourceDescriptor`; `sourceTargets`; `webhookSetup` | `AdminAutoscanPage` sources/connections/activity/setup/config rendering | Broad mapping; exact grouping differs natively, high-volume event tests remain |
+
+Every basename from the 217-module inventory is explicitly named above. Shared components outside `web/src/pages` were also sampled where they determine shell, cards, dialogs, themes, activity and player behavior; they are not included in the 217 count.
+
+## Realtime and lifecycle contract ledger
+
+### HTTP client inventory
+
+The desktop has 19 focused API wrappers plus the shared client. Static extraction found 453 literal API-path occurrences (including duplicates and interpolated variants), distributed across Admin (223), Settings (51), Catalog (45), Playback (40), Auth (33), Notifications (30), Collections (28), Requests (25), Plugins (22), Recommendations (14), Ebooks (9), Watch Providers (9), History Import (7), Downloads (6), Home (5), API Keys (3), People (3), Plex browser auth (3), and Webhook Sync (1; most webhook methods live in `SettingsApi`). This count is an inventory, not a claim that 453 distinct server endpoints exist.
+
+| Contract family | Desktop client(s) | Disposition |
+|---|---|---|
+| auth, setup, device activation, OAuth, profiles, impersonation | `AuthApi`, `AuthService`, shared client | Broad mapping; generation-safe refresh verified; live identity-provider flows remain |
+| home, catalog, libraries, search, item/person metadata | `HomeApi`, `CatalogApi`, `PeopleApi` | Broad mapping; payload drift fixtures remain incomplete |
+| playback decision/session/progress/stop, tracks, markers, subtitles, downloads and reader files | `PlaybackApi`, `DownloadsApi`, `EbooksApi` | Broad mapping; real-media protocol sequence remains a blocker |
+| collections, requests, recommendations | `CollectionsApi`, `RequestsApi`, `RecommendationsApi` | Broad mapping; provider/plugin schemas need current-server integration |
+| effective/user/admin settings, devices, notifications, webhook sync, watch providers | `SettingsApi`, `NotificationsApi`, `WebhookSyncApi`, `WatchProvidersApi` | Broad mapping; external-provider and optional-field drift remain |
+| plugins, API keys, history import/Plex | `PluginsApi`, `ApiKeysApi`, `HistoryImportApi`, `PlexBrowserAuthApi` | Broad mapping; schema/secret/auth edge cases remain |
+| complete admin suite | `AdminApi` | Broad route coverage; one very large client increases drift and review risk |
+
+Literal path comparison against server router source was deliberately not treated as a missing-endpoint detector: the server composes router prefixes while the client interpolates IDs/query strings, producing false deltas. Reliable closure requires route-expanded server manifests or request/response fixtures, not text `comm` output.
+
+| Concern | WebUI behavior represented | Desktop owner | Audit result |
+|---|---|---|---|
+| Shared server events | multiplexed authenticated `/events/ws` subscriptions | singleton `EventChannelClient` with subscription handles, reconnect/backoff and state events | Structurally present; stale-result/reconnect behavior needs live-server tests |
+| Home state refresh | event-triggered section refresh | `HomePage` subscription and section queue/cache | Present |
+| Admin activity/dashboard/scans/tasks/imports/maintenance | event stream with polling fallback where applicable | each page owns subscription handle and timers; singleton transport | Present; verify unload always stops page timers/subscriptions |
+| Admin logs | filtered app/audit stream | dedicated per-page `AdminLogStreamClient` | Present with visible connection state/reconnect |
+| Playback session | session progress/stop plus playback WebSocket | `PlaybackManager`, `PlaybackWebSocket`, `PlayerService` | Present; known playback regression prevents clearance |
+| Watch Together | room-scoped bidirectional WebSocket | `WatchTogetherRoomViewModel` and coordinator | Present; multi-client correctness not source-provable |
+| Settings history import | active-run updates | Settings-owned subscription to shared event channel | Present |
+| Webhook sync and sessions | periodic refresh | Settings-owned 15s/10s timers | Present; page lifecycle and overlap need runtime validation |
+| Search/filter input | debounce/cancellation | per-page timers/CTS in Search, Library, admin tables | Broadly present; cancellation is inconsistent across older code-behind |
+
+## Additional confirmed security findings
+
+#### S5 — server-provided external URLs are shell-opened without scheme validation (medium)
+
+Watch-provider `VerificationUrl` and Plex history-import `AuthUrl` values are passed to `Process.Start(... UseShellExecute = true)` without requiring `http` or `https`. The values originate from the configured server, so exploitation requires a malicious/compromised server or response, but custom URI schemes and local handlers expand impact beyond opening a web page. Parse with `Uri.TryCreate`, allow only `http`/`https`, show the destination host, and fail visibly. Add tests for `file:`, `javascript:`, custom schemes, malformed URLs and control characters.
+
+#### S6 — ebook WebView trusts active package content too broadly (medium)
+
+Archive paths are correctly contained with `Path.GetFullPath`, and generated FB2 text is escaped. However, EPUB HTML is mapped through `silo-reader.local` using `CoreWebView2HostResourceAccessKind.Allow`; navigation is not restricted, scripts in package content are not removed, and messages from the document are accepted based only on JSON shape. A crafted book can execute in its reader origin, load remote resources and send allowed host messages. There is no exposed native host object in current source, limiting direct host compromise, but privacy/network and future-bridge risk remain. Use the narrowest host-resource access, block top-level/external navigation and new windows, disable unnecessary permissions, validate `Source`/origin for messages, and define whether active EPUB scripting is intentionally supported.
+
+#### S7 — invalid configured server schemes are normalized but not rejected (low)
+
+`ServerUrlIdentity.Normalize` canonicalizes `http`/`https`, but returns other absolute schemes or invalid input unchanged. Later HTTP APIs generally fail rather than execute a shell command, so this is primarily validation/diagnostic and credential-scope hardening. Reject anything that is not an absolute HTTP(S) origin before saving or configuring it; prohibit embedded user info and strip query/fragment consistently. Add negative tests.
+
+### Security controls verified in current source
+
+- ZIP/RAR ebook extraction checks normalized output paths remain inside the cache root.
+- Plugin route path segments reject `.`/`..` and are escaped.
+- Plugin WebView authorization/profile headers are attached only to requests matching the configured server-origin filter; arbitrary external requests do not receive those headers.
+- HLS proxying permits only HTTP(S), scopes bearer credentials to the configured origin, and uses loopback route tokens.
+- API retry logic snapshots authentication/profile generations so a 401 from an old session cannot be replayed under a replacement user.
+- `LocalLog` includes bearer and credential-bearing URL redaction patterns; tests should continue to guard every newly introduced signed query parameter.
+
+## Test-evidence disposition
+
+- Static inventory found **741** `[Fact]`/`[Theory]` cases.
+- At least **516** source reads/assertions occur in the suite. These validate labels, route strings, XAML/source structure and previously fixed regressions, but they do not execute WinUI binding, layout, focus, WebView, image virtualization or live-server behavior.
+- Stronger behavioral coverage exists for auth generation, authorization policy, API path encoding, serialization converters, playback planning/timeline/recovery/stall detection, stream proxies, image service, subtitle selection, version ranking, calendar, notifications, requests and collection helpers.
+- There is no executable test here for a full current server contract, an installed visual snapshot, WebView isolation, multi-client Watch Together, long playback, or the known library/scan UI stalls.
+- This Ubuntu VM has no `dotnet` executable and cannot build the Windows App SDK project. No new build or test pass is claimed by this audit.
+
+## CodeRabbit execution record
+
+CodeRabbit CLI `0.7.5` was authenticated in agent mode as the repository owner. A fresh synthetic full-tree comparison against an empty baseline was attempted three times during this audit (including with unrestricted network access). Each attempt reached `connecting_to_review_service` and then failed with `Connection failed: WebSocket closed` / `TRPCWebSocketClosedError`. CodeRabbit returned no review issues. The findings in this document are the direct source comparison described above and are not represented as CodeRabbit output.
 
 ## Required Windows runtime audit matrix
 
