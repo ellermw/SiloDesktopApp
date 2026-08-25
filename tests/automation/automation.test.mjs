@@ -12,6 +12,7 @@ import { parseReview, renderSummary } from "../../scripts/automation/parse-coder
 import { validateRemediation } from "../../scripts/automation/validate-remediation.mjs";
 
 const fixtureDirectory = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures");
+const repositoryRoot = path.resolve(fixtureDirectory, "..", "..", "..");
 const fixture = (name) => fs.readFileSync(path.join(fixtureDirectory, name), "utf8");
 
 const validContext = {
@@ -118,4 +119,18 @@ test("requires one remediation decision per finding", () => {
     () => validateRemediation(report, { status: "fixed", summary: "Incomplete", decisions: [] }),
     /one decision per finding/u,
   );
+});
+
+test("workflow and remediation prompt use the same structured report path", () => {
+  const workflow = fs.readFileSync(
+    path.join(repositoryRoot, ".github", "workflows", "automated-review.yml"),
+    "utf8",
+  );
+  const prompt = fs.readFileSync(
+    path.join(repositoryRoot, ".github", "codex", "remediation-prompt.md"),
+    "utf8",
+  );
+  assert.match(workflow, /path: \.codex-automation/u);
+  assert.match(prompt, /\.codex-automation\/review-report\.json/u);
+  assert.doesNotMatch(prompt, /coderabbit-report\.json/u);
 });

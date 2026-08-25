@@ -123,7 +123,7 @@ jobs:
           clean: true
 
       - name: Set up .NET 8
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: 8.0.x
 
@@ -146,7 +146,7 @@ jobs:
 
       - name: Run complete test suite
         shell: pwsh
-        run: dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release --no-restore -nologo
+        run: dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo
 
   review:
     name: CodeRabbit review
@@ -208,7 +208,7 @@ jobs:
             "$RUNNER_TEMP/review-summary.md"
 
       - name: Upload structured review
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: coderabbit-review-${{ github.run_id }}
           path: |
@@ -230,7 +230,7 @@ jobs:
     steps:
       - name: Download successful review
         if: needs.review.result == 'success'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: coderabbit-review-${{ github.run_id }}
           path: review
@@ -317,7 +317,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Download structured review
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: coderabbit-review-${{ github.run_id }}
           path: .codex-automation
@@ -364,7 +364,7 @@ jobs:
           fi
 
       - name: Upload remediation evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: codex-remediation-${{ github.run_id }}
           path: |
@@ -393,7 +393,7 @@ jobs:
           clean: true
 
       - name: Download generated patch
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           name: codex-remediation-${{ github.run_id }}
           path: remediation
