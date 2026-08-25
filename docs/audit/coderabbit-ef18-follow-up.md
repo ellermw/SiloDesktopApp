@@ -16,6 +16,37 @@ The highest-priority remaining defects are a possible duplicate collection on re
 
 The original full-audit document is structurally complete: all 184 entries contain a decision, evidence, and validation field. However, 173 entries use the same generic evidence sentence. The document therefore proves that every entry was dispositioned, but it does not independently demonstrate each fix in meaningful detail.
 
+## Remediation result — 2026-08-25
+
+Remediation was performed against this report after fetching the authoritative GitHub source. Official `Silo-Server/silo-server` `origin/main` resolved to `20ae82ae05edcfef151a02738e323cf1a97034ef`. The verified remediation commit is `2b48cd6c601fbc27311b3c8f97e5f4b681ea81c7`.
+
+| # | Disposition | Concrete evidence |
+|---|---|---|
+| 1 | Fixed | `CollectionEditorViewModel.cs:340` enters edit mode and clears the persisted baseline immediately after durable creation; each successful item addition is tracked before reorder. `CodeRabbitFollowUpRegressionTests.CollectionCreationBecomesRetrySafeBeforePostCreateItemWork` covers the ordering. |
+| 2 | Fixed | `LibraryViewModel.cs:320` captures `_hasExactTotal`, and the sort reset restores that value rather than forcing exactness. Covered by `LetterJumpPreservesWhetherTheRetainedCatalogTotalIsExact`. |
+| 3 | Fixed | `EventChannelClient.cs:218` restarts on `UserChanged` only when the run was suppressed, absent, or completed; `TokenRefreshed` remains the forced credential reconnect. Covered by `UserChangedDoesNotReconnectAnAlreadyRunningEventChannelAfterTokenRefresh`. |
+| 4 | Fixed | `audit-scan.ps1` always fetches validated official `origin/main` and records/diffs the fetched remote commit, even without `-Pull`. |
+| 5 | Fixed | `audit-common.ps1:2` defines fully anchored accepted HTTPS and SSH origin forms; all three audit scripts share that policy. |
+| 6 | Fixed | `audit-delta.ps1:60` validates the exact origin before the optional fetch/merge block. |
+| 7 | Fixed | `audit-bump.ps1:47` requires a clean checkout, fetches official main, verifies fast-forward ancestry, merges with `--ff-only`, and only then records the commit. |
+| 8 | Addressed | `SearchRuntimeRegressionTests.cs:6` compares the desktop contract with `Fixtures/SiloWebUi/20ae82ae05edcfef151a02738e323cf1a97034ef/search-contract.json`, which records the official repository, commit, source files, debounce, input-focus, scope, and result-limit behavior. |
+| 9 | Intentionally unchanged | `SiloInstaller.iss:80` retains the previously required checked `--quiet --force` invocation. The follow-up itself requires installer-specific authoritative validation before changing this policy; no contrary authoritative evidence was supplied. |
+| 10 | Confirmed no-op | `Package.appxmanifest:12` already contains the exact publisher `CN=ellermw Silo Desktop Player Local Testing`. |
+| 11 | Strengthened | `DownloadsCurrentParityTests.cs:62` now rejects `token` in any query-string position and asserts the complete GET-request/Bearer-header/path-building contract. |
+| 12 | Fixed | `UrlToImageSourceConverter.cs:31` removes a dead entry on lookup and triggers an atomic matching-entry prune every 64 conversions. Covered by `ImageSourceCacheRemovesDeadKeysAndPeriodicallyPrunes`. |
+| 13 | Strengthened | `AdminUsersParitySourceTests.cs:82` extracts each non-null guard block and proves its success call is inside that block. |
+| 14 | Fixed | `CollectionBrowsePage.xaml.cs:311` uses one `TryReadMinimumRating` parser for both the applied rule and visible badge. Invalid raw text produces neither. |
+| 15 | Fixed | Both maximum-profile editors now use minimum `1` and default `5`, including the defaults form at `AdminUsersPage.xaml.cs:1649`. This matches official WebUI default `5` and server validation requiring at least `1` at upstream commit `20ae82ae`. |
+| 16 | Fixed | `HistoryViewModel.cs:194` resolves duration once and uses it for both `DurationSeconds` and `ProgressPercent`. |
+| 17 | Fixed | `AdminNodesPage.xaml.cs:232` suppresses recursive toggle events, disables the control during mutation, and restores the last server-backed value on either a command error or exception. |
+
+### Fresh Windows validation
+
+- `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release --no-restore -nologo` — **811 passed, 0 failed, 0 skipped**.
+- `dotnet publish src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` — **exit code 0**, no compiler warnings or errors; output produced under `src/SiloPlayer/bin/Release/net8.0-windows10.0.22621.0/win-x64/publish/`.
+- PowerShell AST parse checks passed for `audit-common.ps1`, `audit-scan.ps1`, `audit-delta.ps1`, and `audit-bump.ps1`.
+- Focused tests were observed failing before their corresponding production fixes and passing afterward for findings 1–7, 12, and 14–17.
+
 ## Major findings
 
 ### 1. Manual collection retry can create a duplicate
