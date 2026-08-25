@@ -140,9 +140,12 @@ test("remediation patch excludes private automation evidence", () => {
     path.join(repositoryRoot, ".github", "workflows", "automated-review.yml"),
     "utf8",
   );
-  assert.match(workflow, /git add -N -- \. ':\(exclude\)\.codex-automation\/\*\*'/u);
   assert.match(
     workflow,
-    /git diff --binary --full-index HEAD -- \. ':\(exclude\)\.codex-automation\/\*\*'/u,
+    /git add -N -- \. ':\(exclude\)\.codex-automation\/\*\*' ':\(exclude\)\.github\/workflows\/\*\*'/u,
+  );
+  assert.match(
+    workflow,
+    /git diff --binary --full-index HEAD -- \. ':\(exclude\)\.codex-automation\/\*\*'[\s\\]+':\(exclude\)\.github\/workflows\/\*\*'/u,
   );
 });

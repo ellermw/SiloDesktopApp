@@ -53,10 +53,12 @@ jobs:
       cycle: ${{ steps.guard.outputs.cycle }}
       max_cycles: ${{ steps.guard.outputs.max_cycles }}
     steps:
-      - name: Check out workflow guard
+      - name: Check out trusted workflow guard
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # The one-time bootstrap branch has no guard on main yet and cannot
+          # remediate itself. All operational runs load guard code from main.
+          ref: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'automation/review-remediation-loop' && github.event.pull_request.head.sha) || github.event.pull_request.base.sha || github.sha }}
           persist-credentials: false
           clean: true
 
@@ -93,6 +95,14 @@ jobs:
         run: |
           echo "Automation request rejected: $REASON" >&2
           exit 1
+
+      - name: Check out exact pull request head for validation
+        if: steps.guard.outputs.eligible == 'true'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ steps.guard.outputs.head_sha }}
+          persist-credentials: false
+          clean: true
 
       - name: Run automation fixture tests
         if: steps.guard.outputs.eligible == 'true'
@@ -266,9 +276,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          comment_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
-            --paginate --jq '.[] | select(.body | contains("<!-- silo-automated-review -->")) | .id' \
-            | head -n 1)"
+          mapfile -t comment_ids < <(gh api \
+            "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --paginate \
+            --jq '.[] | select(.body | contains("<!-- silo-automated-review -->")) | .id')
+          comment_id="${comment_ids[0]:-}"
           if [[ -n "$comment_id" ]]; then
             gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
               -F body=@comment.md > /dev/null
@@ -354,8 +366,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git add -N -- . ':(exclude).codex-automation/**'
+          git add -N -- . ':(exclude).codex-automation/**' ':(exclude).github/workflows/**'
           git diff --binary --full-index HEAD -- . ':(exclude).codex-automation/**' \
+            ':(exclude).github/workflows/**' \
             > .codex-automation/remediation.patch
           if [[ "$HAS_FIX" == "true" ]]; then
             test -s .codex-automation/remediation.patch
