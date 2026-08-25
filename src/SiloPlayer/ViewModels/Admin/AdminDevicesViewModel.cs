@@ -336,8 +336,9 @@ public partial class AdminDevicesViewModel(AdminApi adminApi) : ObservableObject
             query = query.Where(d => _recencyFilters.Contains(RecencyBucket(d)));
         if (RecencyFilter != "Any activity")
         {
-            var days = RecencyFilter switch { "Last 24 hours" => 1, "Last 7 days" => 7, "Last 30 days" => 30, _ => int.MaxValue };
-            query = query.Where(d => d.LastUpdated is { } when && DateTimeOffset.UtcNow - when < TimeSpan.FromDays(days));
+            int? days = RecencyFilter switch { "Last 24 hours" => 1, "Last 7 days" => 7, "Last 30 days" => 30, _ => null };
+            if (days is { } window)
+                query = query.Where(d => d.LastUpdated is { } when && DateTimeOffset.UtcNow - when < TimeSpan.FromDays(window));
         }
         Devices.Clear();
         foreach (var device in query.OrderByDescending(d => d.LastUpdated))

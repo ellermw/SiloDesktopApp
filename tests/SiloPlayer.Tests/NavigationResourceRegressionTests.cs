@@ -32,8 +32,9 @@ public sealed class NavigationResourceRegressionTests
         var root = FindRepositoryRoot();
         var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "MainWindow.xaml.cs"));
         var start = source.IndexOf("private void NavView_ItemInvoked", StringComparison.Ordinal);
+        Assert.True(start >= 0, "NavView_ItemInvoked was not found in MainWindow.xaml.cs.");
         var end = source.IndexOf("private void SwitchProfile_Click", start, StringComparison.Ordinal);
-        Assert.True(start >= 0 && end > start);
+        Assert.True(end > start, "SwitchProfile_Click was not found after NavView_ItemInvoked.");
 
         var method = source[start..end];
         Assert.Contains("catch (Exception ex)", method, StringComparison.Ordinal);

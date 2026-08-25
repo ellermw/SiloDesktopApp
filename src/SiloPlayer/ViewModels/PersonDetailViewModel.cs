@@ -74,7 +74,7 @@ public partial class PersonDetailViewModel : ObservableObject
                 : DateTime.Today;
 
             int age = endDate.Year - birth.Year;
-            if (endDate.DayOfYear < birth.DayOfYear) age--;
+            if (endDate.Month < birth.Month || (endDate.Month == birth.Month && endDate.Day < birth.Day)) age--;
 
             if (!string.IsNullOrEmpty(Person.DeathDate)) return "";
             return age > 0 ? $"{age} years old" : "";
@@ -138,7 +138,7 @@ public partial class PersonDetailViewModel : ObservableObject
     {
         if (!DateTime.TryParse(birthDate, out var birth) || !DateTime.TryParse(endDate, out var end)) return 0;
         var age = end.Year - birth.Year;
-        if (end.DayOfYear < birth.DayOfYear) age--;
+        if (end.Month < birth.Month || (end.Month == birth.Month && end.Day < birth.Day)) age--;
         return age;
     }
 

@@ -267,6 +267,7 @@ public partial class CollectionEditorViewModel : ObservableObject
 
         IsSaving = true;
         ErrorMessage = null;
+        var keepEditorOpen = false;
 
         try
         {
@@ -339,27 +340,39 @@ public partial class CollectionEditorViewModel : ObservableObject
                 // For manual collections, add items after creation
                 if (CollectionType == "manual" && ManualItems.Count > 0)
                 {
+                    var addedIds = new List<string>(ManualItems.Count);
+                    var failed = 0;
                     foreach (var item in ManualItems)
                     {
                         try
                         {
                             await _collectionsApi.AddCollectionItemAsync(created.Id, item.MediaItemId);
+                            addedIds.Add(item.MediaItemId);
                         }
                         catch
                         {
-                            // Continue adding remaining items even if one fails
+                            failed++;
                         }
                     }
 
-                    await _collectionsApi.ReorderCollectionItemsAsync(
-                        created.Id,
-                        ManualItems.Select(item => item.MediaItemId).ToList());
+                    if (addedIds.Count > 0)
+                        await _collectionsApi.ReorderCollectionItemsAsync(created.Id, addedIds);
+                    if (failed > 0)
+                    {
+                        CollectionId = created.Id;
+                        IsEditing = true;
+                        _originalManualItemIds.Clear();
+                        foreach (var id in addedIds) _originalManualItemIds.Add(id);
+                        ErrorMessage = $"{failed} item(s) could not be added to the collection. Retry to add the remaining items.";
+                        keepEditorOpen = true;
+                    }
                 }
             }
 
             PosterFileBytes = null;
             PosterFileName = null;
-            Saved?.Invoke();
+            if (!keepEditorOpen)
+                Saved?.Invoke();
         }
         catch (Exception ex)
         {

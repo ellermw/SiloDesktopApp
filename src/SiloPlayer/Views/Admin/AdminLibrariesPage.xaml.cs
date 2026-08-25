@@ -3922,6 +3922,7 @@ public sealed partial class AdminLibrariesPage : Page
                         ShowStatus("Library poster removed.");
                     }
                     catch (Exception ex) { ShowStatus($"Poster removal failed: {ex.Message}"); }
+                    finally { removePosterBtn.IsEnabled = true; }
                 };
                 posterRow.Children.Add(removePosterBtn);
             }

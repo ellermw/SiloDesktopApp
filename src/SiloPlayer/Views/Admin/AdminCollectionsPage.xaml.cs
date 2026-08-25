@@ -36,6 +36,7 @@ public sealed partial class AdminCollectionsPage : Page
     private Func<(byte[]? Bytes, string? Name, string? ContentType)>? _editorGetBackdropFile;
     private readonly Dictionary<string, string> _groupViewModes = [];
     private readonly HashSet<string> _selectedCollectionIds = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Grid> _selectionRows = new(StringComparer.Ordinal);
     private string? _selectionAnchorId;
     private string? _selectionSectionId;
     private bool _selectionIsUserCollection;
@@ -286,6 +287,7 @@ public sealed partial class AdminCollectionsPage : Page
 
     private void BuildCollectionRows()
     {
+        _selectionRows.Clear();
         CreateGroupButton.Visibility = ViewModel.SelectedLibraryId.HasValue ? Visibility.Visible : Visibility.Collapsed;
         CollectionsPanel.Children.Clear();
 
@@ -638,6 +640,8 @@ public sealed partial class AdminCollectionsPage : Page
             BorderThickness = showReorder ? new Thickness(1) : new Thickness(0),
             CornerRadius = showReorder ? new CornerRadius(6) : new CornerRadius(0)
         };
+        if (showReorder)
+            _selectionRows[col.Id] = row;
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = showReorder ? new GridLength(18) : new GridLength(0) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -812,6 +816,7 @@ public sealed partial class AdminCollectionsPage : Page
         IReadOnlyList<LibraryCollection> sectionCollections,
         bool isUserCollection)
     {
+        var previouslySelected = _selectedCollectionIds.ToHashSet(StringComparer.Ordinal);
         var controlDown = IsKeyDown(VirtualKey.Control);
         var shiftDown = IsKeyDown(VirtualKey.Shift);
         if (_selectedCollectionIds.Count > 0 && _selectionIsUserCollection != isUserCollection)
@@ -843,7 +848,15 @@ public sealed partial class AdminCollectionsPage : Page
         }
 
         _selectionIsUserCollection = isUserCollection;
-        BuildCollectionRows();
+        foreach (var id in previouslySelected.Concat(_selectedCollectionIds).Distinct(StringComparer.Ordinal))
+        {
+            if (_selectionRows.TryGetValue(id, out var row))
+            {
+                row.Background = _selectedCollectionIds.Contains(id)
+                    ? new SolidColorBrush(Color.FromArgb(34, 99, 102, 241))
+                    : (Brush)Application.Current.Resources["CardBackgroundBrush"];
+            }
+        }
     }
 
     private void ClearCollectionSelection()

@@ -130,6 +130,7 @@ public sealed class LibraryGridCard : Canvas
             BorderBrush = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(48, 255, 255, 255)),
             BorderThickness = new Thickness(1),
             Opacity = 0,
+            IsHitTestVisible = false,
             Content = new FontIcon
             {
                 Glyph = "\uE712",
@@ -296,6 +297,7 @@ public sealed class LibraryGridCard : Canvas
         _subtitleText.Text = "";
         _posterBackground.Background = Brush("CardBackgroundBrush");
         _moreButton.Opacity = 0;
+        _moreButton.IsHitTestVisible = false;
         ResetHoverVisuals();
         ClearOverlays();
     }
@@ -316,6 +318,7 @@ public sealed class LibraryGridCard : Canvas
         _subtitleText.Text = "";
         _posterBackground.Background = Brush("CardBackgroundBrush");
         _moreButton.Opacity = 0;
+        _moreButton.IsHitTestVisible = false;
         ResetHoverVisuals();
         ClearOverlays();
     }
@@ -406,6 +409,7 @@ public sealed class LibraryGridCard : Canvas
         _cardHoverTransform.TranslateY = -4;
         _hoverBrighten.Opacity = 1;
         _moreButton.Opacity = 1;
+        _moreButton.IsHitTestVisible = true;
     }
 
     private void OnPointerExited(object sender, PointerRoutedEventArgs e)
@@ -413,6 +417,7 @@ public sealed class LibraryGridCard : Canvas
         CancelPlaybackPrefetch();
         ResetHoverVisuals();
         _moreButton.Opacity = 0;
+        _moreButton.IsHitTestVisible = false;
     }
 
     private async void QueuePlaybackPrefetch()

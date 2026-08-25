@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
+using System.ComponentModel;
 
 namespace SiloPlayer.Helpers;
 
@@ -23,6 +24,8 @@ public class BulkObservableCollection<T> : ObservableCollection<T>
         foreach (T item in newItems)
             Items.Add(item); // Protected Items list — no per-item notification
 
+        OnPropertyChanged(new PropertyChangedEventArgs(nameof(Count)));
+        OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
         // Single ranged Add: ItemsRepeater adds new elements without touching existing ones
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(
             NotifyCollectionChangedAction.Add, newItems, startIndex));
@@ -46,6 +49,8 @@ public class BulkObservableCollection<T> : ObservableCollection<T>
             Items.RemoveAt(0);
         }
 
+        OnPropertyChanged(new PropertyChangedEventArgs(nameof(Count)));
+        OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
         OnCollectionChanged(new NotifyCollectionChangedEventArgs(
             NotifyCollectionChangedAction.Remove, removed, 0));
     }

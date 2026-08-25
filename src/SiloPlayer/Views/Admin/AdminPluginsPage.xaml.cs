@@ -222,7 +222,10 @@ public sealed partial class AdminPluginsPage : Page
         InstalledCards.Children.Clear();
         if (ViewModel.Installations.Count == 0)
         {
+            InstalledEmptyText.Text = "No plugins installed.";
             InstalledEmpty.Visibility = Visibility.Visible;
+            InstalledMatchText.Text = "";
+            InstalledPager.Visibility = Visibility.Collapsed;
             return;
         }
         var filtered = ViewModel.Installations.Where(p => PluginMatches(
@@ -232,10 +235,12 @@ public sealed partial class AdminPluginsPage : Page
             : $"{filtered.Count} of {ViewModel.Installations.Count}";
         if (filtered.Count == 0)
         {
+            InstalledEmptyText.Text = "No installed plugins match the search.";
             InstalledEmpty.Visibility = Visibility.Visible;
             InstalledPager.Visibility = Visibility.Collapsed;
             return;
         }
+        InstalledEmptyText.Text = "No plugins installed.";
         InstalledEmpty.Visibility = Visibility.Collapsed;
         var pageCount = Math.Max(1, (int)Math.Ceiling(filtered.Count / (double)InstalledPageSize));
         _installedPage = Math.Min(_installedPage, pageCount - 1);
@@ -1272,7 +1277,7 @@ public sealed partial class AdminPluginsPage : Page
         });
         if (repository is null)
         {
-            SurfaceViewModelMutationResult("Repository added.");
+            ShowStatus(ViewModel.ErrorMessage ?? "Could not add the repository.", isError: true);
             return;
         }
         RepoNameBox.Text = "";

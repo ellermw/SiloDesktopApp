@@ -121,8 +121,9 @@ public sealed partial class DownloadsPage : Page
 
         var statusBadge = new Border
         {
-            Background = statusColor,
-            Opacity = 0.15,
+            Background = statusColor is Microsoft.UI.Xaml.Media.SolidColorBrush solidStatusColor
+                ? new Microsoft.UI.Xaml.Media.SolidColorBrush(solidStatusColor.Color) { Opacity = 0.15 }
+                : statusColor,
             CornerRadius = new CornerRadius(4),
             Padding = new Thickness(6, 2, 6, 2),
             Child = new TextBlock
@@ -256,11 +257,16 @@ public sealed partial class DownloadsPage : Page
             var apiClient = App.Services.GetRequiredService<SiloApiClient>();
             var downloadPath = DownloadsApi.GetDownloadFilePath(downloadId);
             var url = $"{apiClient.BaseUrl}{downloadPath}";
-            if (apiClient.AccessToken != null)
-            url += $"?token={Uri.EscapeDataString(apiClient.AccessToken)}";
 
             var httpClient = App.Services.GetRequiredService<HttpClient>();
-            using var response = await httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            using var request = new HttpRequestMessage(HttpMethod.Get, url);
+            if (!string.IsNullOrWhiteSpace(apiClient.AccessToken))
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
+                    "Bearer",
+                    apiClient.AccessToken);
+            using var response = await httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead);
             response.EnsureSuccessStatusCode();
 
             using var sourceStream = await response.Content.ReadAsStreamAsync();

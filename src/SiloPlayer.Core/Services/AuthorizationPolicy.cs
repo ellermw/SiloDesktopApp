@@ -18,9 +18,6 @@ public static class AuthorizationPolicy
             auth.SelectedProfile,
             !string.IsNullOrWhiteSpace(auth.SelectedProfileId));
 
-    public static bool IsActingAdmin(UserInfo? user, Profile? profile)
-        => IsActingAdmin(user, profile, profile != null);
-
     /// <summary>
     /// The explicit selected-profile flag mirrors the WebUI's fail-closed
     /// hasSelectedProfile check. A persisted profile id whose profile record
@@ -35,8 +32,12 @@ public static class AuthorizationPolicy
         => IsActingAdmin(auth)
            || (auth.CurrentUser?.Permissions?.Contains(permission, StringComparer.OrdinalIgnoreCase) ?? false);
 
-    public static bool HasPermission(UserInfo? user, Profile? profile, string permission)
-        => IsActingAdmin(user, profile)
+    public static bool HasPermission(
+        UserInfo? user,
+        Profile? profile,
+        bool hasSelectedProfile,
+        string permission)
+        => IsActingAdmin(user, profile, hasSelectedProfile)
            || (user?.Permissions?.Contains(permission, StringComparer.OrdinalIgnoreCase) ?? false);
 
     public static bool CanCurateMetadata(AuthService auth)

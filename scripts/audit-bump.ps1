@@ -1,5 +1,5 @@
 # scripts/audit-bump.ps1
-# Mark an area as re-audited against the current continuum-server HEAD and bump
+# Mark an area as re-audited against the current official Silo server HEAD and bump
 # the top-level baseline SHA. Run after finishing a desktop rebuild.
 #
 # Usage:
@@ -12,11 +12,18 @@ param(
     [ValidateSet('full', 'partial', 'rebuilding', 'missing', 'desktop-only')]
     [string]$Parity,
     [switch]$All,
-    [string]$ServerPath = "F:\continuum-server",
+    [string]$ServerPath = (Join-Path (Join-Path $PSScriptRoot "..") ".codex-tmp\silo-server-current"),
     [string]$BaselinePath = (Join-Path (Join-Path $PSScriptRoot "..") "docs\audit-baseline.json")
 )
 
 $ErrorActionPreference = "Stop"
+
+function Invoke-GitChecked {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    $output = & git @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "git $($Arguments -join ' ') failed with exit code $LASTEXITCODE." }
+    return $output
+}
 
 if (-not $Area -and -not $All) {
     Write-Error "Specify -Area <name> (e.g., settings/history-import) or -All to bump the root SHA without changing any area parity."
@@ -34,9 +41,13 @@ if (-not (Test-Path $BaselinePath)) {
 
 Push-Location $ServerPath
 try {
-    $headSha = (git rev-parse HEAD).Trim()
-    $headShort = (git rev-parse --short HEAD).Trim()
-    $headMsg = (git log -1 --format="%s" HEAD).Trim()
+    $originUrl = (Invoke-GitChecked @("remote", "get-url", "origin")).Trim()
+    if ($originUrl -notmatch 'github\.com[/:]Silo-Server/silo-server(?:\.git)?$') {
+        throw "Refusing to audit unexpected origin '$originUrl'; expected the official Silo GitHub repository."
+    }
+    $headSha = (Invoke-GitChecked @("rev-parse", "HEAD")).Trim()
+    $headShort = (Invoke-GitChecked @("rev-parse", "--short", "HEAD")).Trim()
+    $headMsg = (Invoke-GitChecked @("log", "-1", "--format=%s", "HEAD")).Trim()
 }
 finally {
     Pop-Location
@@ -60,11 +71,14 @@ if ($Area) {
 
     # Refresh line counts for every web_source / server_source.
     $allSources = @($areaObj.web_sources) + @($areaObj.server_sources)
+    $refreshed = 0
+    $missing = @()
     foreach ($src in $allSources) {
         if (-not $src) { continue }
         $full = Join-Path $ServerPath ($src -replace '/', '\')
         if (Test-Path $full) {
             $lineCount = (Get-Content $full | Measure-Object -Line).Lines
+            $refreshed++
             if (-not $areaObj.line_counts) {
                 $areaObj | Add-Member -NotePropertyName line_counts -NotePropertyValue ([pscustomobject]@{}) -Force
             }
@@ -73,6 +87,8 @@ if ($Area) {
             } else {
                 $areaObj.line_counts | Add-Member -NotePropertyName $src -NotePropertyValue $lineCount -Force
             }
+        } else {
+            $missing += $src
         }
     }
 
@@ -83,7 +99,10 @@ if ($Area) {
     Write-Host ""
     Write-Host "  Bumped area '$Area'"
     if ($Parity) { Write-Host "    parity → $Parity" }
-    Write-Host "    line counts refreshed for $($allSources.Count) source file(s)"
+    Write-Host "    line counts refreshed for $refreshed of $($allSources.Count) source file(s)"
+    foreach ($missingSource in $missing) {
+        Write-Warning "    missing source: $missingSource"
+    }
 }
 
 # Write baseline back with stable formatting.

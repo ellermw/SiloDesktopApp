@@ -76,8 +76,9 @@ public sealed partial class SubtitleAiDialog : ContentDialog
         UpdateMode();
     }
 
-    private void UpdateMode()
+    private void UpdateMode(bool preserveSourceSelection = false)
     {
+        var previousSourceIndex = preserveSourceSelection ? SourceComboBox.SelectedIndex : -1;
         var fromAudio = _mode == "audio";
         DialogTitleText.Text = fromAudio
             ? "Generate subtitles with AI"
@@ -129,7 +130,10 @@ public sealed partial class SubtitleAiDialog : ContentDialog
             }
         }
         if (SourceComboBox.Items.Count > 0)
-            SourceComboBox.SelectedIndex = 0;
+            SourceComboBox.SelectedIndex = previousSourceIndex >= 0
+                && previousSourceIndex < SourceComboBox.Items.Count
+                    ? previousSourceIndex
+                    : 0;
 
         var quotaExhausted = fromAudio && _quota?.Limited == true && _quota.Remaining <= 0;
         QuotaText.Visibility = fromAudio && _quota?.Limited == true
@@ -216,7 +220,7 @@ public sealed partial class SubtitleAiDialog : ContentDialog
             ? "Starting…"
             : _mode == "audio" ? "Generate" : "Translate";
         if (!submitting)
-            UpdateMode();
+            UpdateMode(preserveSourceSelection: true);
         else
             SubmitButton.IsEnabled = false;
     }

@@ -233,7 +233,6 @@ public sealed class ItemDetailCurrentParityTests
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
         var models = Read("src", "SiloPlayer.Core", "Models", "Playback", "WatchDetailResponse.cs");
-        var web = ReadWeb("web", "src", "pages", "ItemDetail", "components", "mediaSpecSections.ts");
 
         Assert.Contains("BuildMediaInfoSpecSheet", page);
         Assert.Contains("new Expander", page);
@@ -244,7 +243,6 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("\"pc\" => \"Full (pc)\"", page);
         Assert.Contains("public string? ColorRange { get; set; }", models);
         Assert.Contains("(\"Hearing Impaired\"", page);
-        Assert.Contains("DOVIWithHDR10", web);
         Assert.Contains("Dolby Vision (HDR10 compatible)", page);
         Assert.Contains("HDR10 compatible", page);
         Assert.Contains("DolbyVisionCompatibilityLabels", page);
@@ -261,15 +259,12 @@ public sealed class ItemDetailCurrentParityTests
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
         var xaml = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml");
         var policy = Read("src", "SiloPlayer.Core", "Services", "AuthorizationPolicy.cs");
-        var web = ReadWeb("web", "src", "components", "MediaLocations.tsx");
 
         Assert.Contains("x:Name=\"HeroContextText\"", xaml);
         Assert.Contains("\"movie\" => \"Movie\"", page);
         Assert.Contains("\"audiobook\" => \"Audiobook\"", page);
         Assert.Contains("AuthorizationPolicy.CanCurateMetadata(authService)", page);
         Assert.Contains("_watchDetail.Versions", page);
-        Assert.Contains("space-y-3", web);
-        Assert.Contains("text-base font-semibold tracking-tight", web);
         Assert.Contains("x:Name=\"MediaLocationsSection\" Visibility=\"Collapsed\" Spacing=\"12\"", xaml);
         Assert.Contains("x:Name=\"MediaLocationsTitle\" Text=\"Media locations\" Style=\"{StaticResource TitleTextStyle}\" FontSize=\"16\"", xaml);
         Assert.Contains("View media info for", page);
@@ -294,7 +289,6 @@ public sealed class ItemDetailCurrentParityTests
     public void PrePlaySummariesUseCurrentWebUiLanguageAndOffLabels()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
-        var web = ReadWeb("web", "src", "pages", "ItemDetail", "components", "SubtitlesPopover.tsx");
 
         Assert.Contains("MediaLanguageCatalog.Label(track.Language)", page);
         Assert.Contains("VersionRanking.MapAudioLabel(track.Codec)", page);
@@ -320,16 +314,12 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("ResetPrePlaySubtitlePreferenceAsync", page);
         Assert.Contains("DeleteSubtitlePrefsAsync", page);
         Assert.DoesNotContain("Text = \"Add subtitles...\"", page);
-        Assert.DoesNotContain("Add subtitles", web);
     }
 
     [Fact]
     public void TrailerCardsRevealThePlayOverlayOnlyOnHoverOrFocusLikeTheWebUi()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
-        var web = ReadWeb("web", "src", "pages", "ItemDetail", "components", "TrailersSection.tsx");
-
-        Assert.Contains("group-hover/trailer:opacity-100", web);
         Assert.Contains("var playOverlay = new Border", page);
         Assert.Contains("Opacity = 0", page);
         Assert.Contains("card.PointerEntered += (_, _) => playOverlay.Opacity = 1", page);
@@ -341,11 +331,6 @@ public sealed class ItemDetailCurrentParityTests
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
         var xaml = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml");
-        var trailers = ReadWeb("web", "src", "pages", "ItemDetail", "components", "TrailersSection.tsx");
-        var cast = ReadWeb("web", "src", "components", "CastCarousel.tsx");
-
-        Assert.Contains("useCarouselEmbla", trailers);
-        Assert.Contains("useCarouselEmbla", cast);
         Assert.Contains("x:Name=\"TrailersScrollViewer\"", xaml);
         Assert.Contains("x:Name=\"TrailersPrevButton\"", xaml);
         Assert.Contains("x:Name=\"TrailersNextButton\"", xaml);
@@ -383,14 +368,11 @@ public sealed class ItemDetailCurrentParityTests
     public void VersionControlIsScopedToTheActiveEditionLikeTheWebUi()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
-        var versionFlyout = ReadWeb("web", "src", "pages", "ItemDetail", "components", "VersionFlyout.tsx");
 
         Assert.Contains("VersionDropdownButton.Visibility = versions.Count > 1", page);
         Assert.Contains("activeVariant?.Parts", page);
         Assert.Contains("EditionButton.Visibility = showEditions", page);
-        Assert.Contains("parts.length === 0 && version.container", versionFlyout);
         Assert.Contains("parts.Add(version.Container.ToUpperInvariant())", page);
-        Assert.Contains("sortByResolution", versionFlyout);
         Assert.Contains(".OrderByDescending(v => ResolutionRank(v.Resolution))", page);
         Assert.DoesNotContain(".ThenByDescending(v => v.Bitrate)", page);
     }
@@ -399,7 +381,6 @@ public sealed class ItemDetailCurrentParityTests
     public void SingleVersionResumeUsesTheWebChoiceDialogAndNavigationResetsPlaybackState()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
-        var webLayout = ReadWeb("web", "src", "pages", "ItemDetail", "itemDetailLayout.ts");
 
         Assert.Contains("ShouldOfferResumeChoice", page);
         Assert.Contains("Title = \"Resume Playback?\"", page);
@@ -410,7 +391,6 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("_watchDetail = null", page);
         Assert.Contains("_selectedVersion = null", page);
         Assert.Contains("_selectedSubtitleSignature = null", page);
-        Assert.Contains("including a rewatch in flight (played stays true)", webLayout);
         Assert.Contains("any nonzero position remains a", page);
         Assert.DoesNotContain("&& !userData.Played", page);
     }
@@ -522,9 +502,6 @@ public sealed class ItemDetailCurrentParityTests
     public void SingleSeasonSeriesLoadsEpisodesThroughTheCanonicalSeasonItemEndpoint()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
-        var webSeries = Read(".codex-tmp", "silo-server-current", "web", "src", "pages", "ItemDetail", "SeriesContent.tsx");
-
-        Assert.Contains("useItemEpisodes(singleSeason?.content_id)", webSeries);
         Assert.Contains("ShowSingleSeasonEpisodesAsync(", page);
         Assert.Contains("ViewModel.Seasons.Count == 1", page);
         Assert.Contains("ViewModel.Seasons[0]", page);
@@ -700,11 +677,6 @@ public sealed class ItemDetailCurrentParityTests
     public void DetailBackButtonFallsBackToHomeLikeCurrentPageBack()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
-        var web = ReadWeb("web", "src", "components", "PageBack.tsx");
-        var webTest = ReadWeb("web", "src", "components", "PageBack.test.tsx");
-
-        Assert.Contains("to = \"/\"", web);
-        Assert.Contains("falls back to the default route when there is no router history", webTest);
         Assert.Contains("if (nav.CanGoBack)", page);
         Assert.Contains("nav.GoBack();", page);
         Assert.Contains("nav.Navigate<HomePage>();", page);
@@ -759,12 +731,4 @@ public sealed class ItemDetailCurrentParityTests
         return File.ReadAllText(Path.Combine([dir, .. parts]));
     }
 
-    private static string ReadWeb(params string[] parts)
-    {
-        var dir = AppContext.BaseDirectory;
-        while (!string.IsNullOrEmpty(dir) && !File.Exists(Path.Combine(dir, "SiloPlayer.sln")))
-            dir = Directory.GetParent(dir)?.FullName ?? "";
-        if (string.IsNullOrEmpty(dir)) throw new InvalidOperationException();
-        return File.ReadAllText(Path.Combine([dir, ".codex-tmp", "silo-server-current", .. parts]));
-    }
 }

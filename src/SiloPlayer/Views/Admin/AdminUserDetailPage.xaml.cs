@@ -1583,7 +1583,7 @@ public sealed partial class AdminUserDetailPage : Page
         profilesGroup.Children.Add(maxProfilesBox);
         profilesGroup.Children.Add(new TextBlock
         {
-            Text = "0 = unlimited",
+            Text = "Minimum 1 profile",
             FontSize = 11,
             Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
         });

@@ -149,8 +149,8 @@ public sealed class CurrentItemCardParityTests
         var watched = code.IndexOf("GetWatchedActionLabel", StringComparison.Ordinal);
         var history = code.IndexOf("View Play History", StringComparison.Ordinal);
         var dismiss = code.IndexOf("var canDismiss", StringComparison.Ordinal);
-        Assert.True(restart >= 0 && restart < watched);
-        Assert.True(watched < history && history < dismiss);
+        Assert.True(restart >= 0 && watched > restart);
+        Assert.True(history > watched && dismiss > history);
     }
 
     [Fact]

@@ -580,7 +580,7 @@ public class SettingsApi(SiloApiClient client)
         => client.GetAsync<OverlayConfigResponse>("/api/v1/settings/overlay-config", ct);
 
     public Task<Profile> UpdateProfileAsync(string profileId, object updates, CancellationToken ct = default)
-        => client.PutAsync<Profile>($"/api/v1/profiles/{profileId}", updates, ct);
+        => client.PutAsync<Profile>($"/api/v1/profiles/{Uri.EscapeDataString(profileId)}", updates, ct);
 
     public Task<ProfilesResponse> GetProfilesAsync(CancellationToken ct = default)
         => client.GetAsync<ProfilesResponse>("/api/v1/profiles", ct);

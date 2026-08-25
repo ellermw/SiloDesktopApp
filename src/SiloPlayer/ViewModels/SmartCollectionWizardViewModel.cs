@@ -88,6 +88,12 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         StatusMessage = null;
         IsAdmin = args?.IsAdmin == true;
         _collectionId = args?.CollectionId;
+        if (IsAdmin && !string.IsNullOrWhiteSpace(_collectionId))
+        {
+            ErrorMessage = "Editing an existing admin smart collection is not supported here.";
+            IsLoading = false;
+            return;
+        }
 
         try
         {
@@ -257,6 +263,12 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
 
     public async Task SaveAsync(CancellationToken ct = default)
     {
+        if (IsAdmin && !string.IsNullOrWhiteSpace(_collectionId))
+        {
+            ErrorMessage = "Editing an existing admin smart collection is not supported here.";
+            return;
+        }
+
         if (IsReadOnly)
         {
             ErrorMessage = "Only the profile that created this collection can edit it.";

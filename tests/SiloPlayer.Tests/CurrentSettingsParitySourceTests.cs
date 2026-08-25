@@ -223,10 +223,14 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("GetServerBrandingAsync", service);
         Assert.Contains("GetSettingAsync(\"ui_custom_theme_vars\"", service);
         var transitionStart = window.IndexOf("public bool TryEnterAuthenticatedPage", StringComparison.Ordinal);
+        Assert.True(transitionStart >= 0, "MainWindow.xaml.cs no longer defines TryEnterAuthenticatedPage.");
         var transitionEnd = window.IndexOf("public void UpdateLibraryNavItems", transitionStart, StringComparison.Ordinal);
+        Assert.True(transitionEnd > transitionStart, "MainWindow.xaml.cs no longer defines UpdateLibraryNavItems after TryEnterAuthenticatedPage.");
         var transition = window[transitionStart..transitionEnd];
         var shellStart = window.IndexOf("public void ShowMainNavigation()", StringComparison.Ordinal);
+        Assert.True(shellStart >= 0, "MainWindow.xaml.cs no longer defines ShowMainNavigation.");
         var shellEnd = window.IndexOf("private async Task LoadShellNavigationAsync", shellStart, StringComparison.Ordinal);
+        Assert.True(shellEnd > shellStart, "MainWindow.xaml.cs no longer defines LoadShellNavigationAsync after ShowMainNavigation.");
         var shell = window[shellStart..shellEnd];
         Assert.Contains("ShowMainNavigation();", transition);
         Assert.DoesNotContain("RunShellWorkAsync(\"theme_sync\"", transition);
@@ -290,6 +294,8 @@ public sealed class CurrentSettingsParitySourceTests
         var email = control.IndexOf("Email Notifications", StringComparison.Ordinal);
         var discord = control.IndexOf("Discord Notifications", StringComparison.Ordinal);
         var webhooks = control.IndexOf("Webhooks", StringComparison.Ordinal);
+        Assert.All(new[] { episode, browser, email, discord, webhooks },
+            index => Assert.True(index >= 0, "A notification section heading is missing."));
         Assert.True(episode < browser && browser < email && email < discord && discord < webhooks);
 
         Assert.Contains("Email this profile's notifications", control);

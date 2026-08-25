@@ -75,8 +75,21 @@ public class AdminUsersParitySourceTests
     public void InviteMutationsOnlyReportSuccessAfterApiSuccess()
     {
         Assert.Contains("InviteCodesViewModel.ErrorMessage", CodeBehind, StringComparison.Ordinal);
-        Assert.Contains("var created = await InviteCodesViewModel.CreateInviteCodeAsync", CodeBehind, StringComparison.Ordinal);
+        var createCall = CodeBehind.IndexOf("var created = await InviteCodesViewModel.CreateInviteCodeAsync", StringComparison.Ordinal);
+        Assert.True(createCall >= 0, "Expected the invite creation API call.");
+        var createValidated = CodeBehind.IndexOf("if (created != null)", createCall, StringComparison.Ordinal);
+        Assert.True(createValidated > createCall, "Expected invite creation to validate its API result.");
+        var createSuccess = CodeBehind.IndexOf("ShowStatus(InviteCodesViewModel.StatusMessage", createValidated, StringComparison.Ordinal);
+        Assert.True(createSuccess > createValidated,
+            "Invite creation must report success only after a non-null API result.");
         Assert.Contains("Title = \"Top Up Invite Code\"", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("PrimaryButtonText = \"Add Uses\"", CodeBehind, StringComparison.Ordinal);
+        var topUpCall = CodeBehind.IndexOf("var updated = await InviteCodesViewModel.TopUpInviteCodeAsync", StringComparison.Ordinal);
+        Assert.True(topUpCall >= 0, "Expected the invite top-up API call.");
+        var topUpValidated = CodeBehind.IndexOf("if (updated != null)", topUpCall, StringComparison.Ordinal);
+        Assert.True(topUpValidated > topUpCall, "Expected invite top-up to validate its API result.");
+        var topUpSuccess = CodeBehind.IndexOf("ShowStatus(InviteCodesViewModel.StatusMessage", topUpValidated, StringComparison.Ordinal);
+        Assert.True(topUpSuccess > topUpValidated,
+            "Invite top-up must report success only after a non-null API result.");
     }
 }

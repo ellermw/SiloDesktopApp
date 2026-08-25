@@ -8,7 +8,8 @@ namespace SiloPlayer.Views;
 
 /// <summary>
 /// Watch Party lobby — create a new room or join an existing one via code / invite token.
-/// Shadow of continuum-server/web/src/pages/WatchTogetherJoin.tsx.
+/// Mirrors the current public Silo WebUI at github.com/Silo-Server/silo-server,
+/// main commit 20ae82ae05edcfef151a02738e323cf1a97034ef.
 ///
 /// Navigation parameters:
 ///   null         → blank create-or-join form

@@ -388,8 +388,6 @@ Historical release notes for Silo Desktop Player. The current installer and proj
 - Updated loading, buffering, error, subtitle-delay, quality-label, and marker-editor behavior toward the current WebUI.
 - Expanded regression coverage; this release passes 379 tests and a zero-warning x64 build.
 
-## 1.1.41
-
 - Re-audited Settings, Plugins, Nodes, API Keys, Maintenance, Access Groups, and Devices against public Silo Server commit `28c6ddc237b9a3ef0102a9ec7514e5654865a3fe` and the signed-in live WebUI.
 - Replaced the obsolete Devices card list with the current fleet console, including saved views, facet filters, grouping pivots, grouped rows, and an in-place detail editor.
 - Aligned Access Group cards and editor toggle rows, API-key page geometry and pagination, and Maintenance job counts/result formatting with their current WebUI counterparts.

@@ -14,7 +14,7 @@ public sealed class DirectStreamRelayTests
         var handler = new SequenceHandler(_ =>
         {
             calls++;
-            var bytes = calls < 3 ? [] : media;
+            byte[] bytes = calls < 3 ? [] : media;
             return CreateResponse(
                 HttpStatusCode.OK,
                 new MemoryStream(bytes),
@@ -93,8 +93,6 @@ public sealed class DirectStreamRelayTests
                 return initial;
             }
 
-            Assert.Equal(256, request.Headers.Range?.Ranges.Single().From);
-            Assert.Equal("\"revision-a\"", request.Headers.GetValues("If-Range").Single());
             return CreateResponse(
                 HttpStatusCode.PartialContent,
                 new MemoryStream(bytes[256..]),
@@ -115,6 +113,8 @@ public sealed class DirectStreamRelayTests
         Assert.Equal(bytes, output.ToArray());
         Assert.Equal(bytes.Length, result.BytesWritten);
         Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(256, handler.Requests[1].Headers.Range?.Ranges.Single().From);
+        Assert.Equal("\"revision-a\"", handler.Requests[1].Headers.GetValues("If-Range").Single());
         Assert.All(handler.Requests, request =>
         {
             Assert.Equal("Bearer", request.Headers.Authorization?.Scheme);
@@ -142,8 +142,6 @@ public sealed class DirectStreamRelayTests
                 return initial;
             }
 
-            Assert.Equal(128, request.Headers.Range?.Ranges.Single().From);
-            Assert.Equal("\"revision-a\"", request.Headers.GetValues("If-Range").Single());
             var changed = CreateResponse(
                 HttpStatusCode.OK,
                 new MemoryStream(replacement),
@@ -168,23 +166,20 @@ public sealed class DirectStreamRelayTests
         Assert.Contains("source changed", error.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(original[..128], output.ToArray());
         Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(128, handler.Requests[1].Headers.Range?.Ranges.Single().From);
+        Assert.Equal("\"revision-a\"", handler.Requests[1].Headers.GetValues("If-Range").Single());
     }
 
     [Fact]
     public async Task RelayAsync_ForwardsClientRange_OnFirstUpstreamRequest()
     {
         var bytes = Enumerable.Range(0, 128).Select(i => (byte)i).ToArray();
-        var handler = new SequenceHandler(request =>
-        {
-            Assert.Equal(100, request.Headers.Range?.Ranges.Single().From);
-            Assert.Null(request.Headers.Range?.Ranges.Single().To);
-
-            return CreateResponse(
+        var handler = new SequenceHandler(_ =>
+            CreateResponse(
                 HttpStatusCode.PartialContent,
                 new MemoryStream(bytes[100..]),
                 bytes.Length - 100,
-                new ContentRangeHeaderValue(100, bytes.Length - 1, bytes.Length));
-        });
+                new ContentRangeHeaderValue(100, bytes.Length - 1, bytes.Length)));
 
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
@@ -199,6 +194,8 @@ public sealed class DirectStreamRelayTests
         Assert.Equal(bytes[100..], output.ToArray());
         Assert.Equal(HttpStatusCode.PartialContent, result.StatusCode);
         Assert.Single(handler.Requests);
+        Assert.Equal(100, handler.Requests[0].Headers.Range?.Ranges.Single().From);
+        Assert.Null(handler.Requests[0].Headers.Range?.Ranges.Single().To);
     }
 
     [Fact]
@@ -211,7 +208,6 @@ public sealed class DirectStreamRelayTests
             calls++;
 
             var start = request.Headers.Range?.Ranges.Single().From ?? 0;
-            Assert.Equal((calls - 1) * 128, start);
 
             var remaining = bytes[(int)start..];
             var statusCode = start == 0 ? HttpStatusCode.OK : HttpStatusCode.PartialContent;
@@ -248,6 +244,8 @@ public sealed class DirectStreamRelayTests
         Assert.Equal(bytes.Length, result.BytesWritten);
         Assert.Equal(7, handler.Requests.Count);
         Assert.Equal(7, result.UpstreamAttempts);
+        for (var index = 0; index < handler.Requests.Count; index++)
+            Assert.Equal(index * 128, handler.Requests[index].Headers.Range?.Ranges.SingleOrDefault()?.From ?? 0);
     }
 
     [Fact]
@@ -255,15 +253,12 @@ public sealed class DirectStreamRelayTests
     {
         var bytes = Enumerable.Range(0, 64).Select(i => (byte)i).ToArray();
         DirectStreamRelayHeaders? relayedHeaders = null;
-        var handler = new SequenceHandler(request =>
-        {
-            Assert.Null(request.Headers.Range);
-            return CreateResponse(
+        var handler = new SequenceHandler(_ =>
+            CreateResponse(
                 HttpStatusCode.OK,
                 new MemoryStream(bytes),
                 bytes.Length,
-                contentRange: null);
-        });
+                contentRange: null));
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
             new Uri("https://example.test/api/v1/stream/session?seek=90"),
@@ -286,6 +281,7 @@ public sealed class DirectStreamRelayTests
         Assert.NotNull(relayedHeaders);
         Assert.False(relayedHeaders.AcceptRanges);
         Assert.Null(relayedHeaders.ContentRange);
+        Assert.All(handler.Requests, request => Assert.Null(request.Headers.Range));
     }
 
     [Fact]
@@ -305,7 +301,6 @@ public sealed class DirectStreamRelayTests
                     contentRange: null);
             }
 
-            Assert.Equal(128, request.Headers.Range?.Ranges.Single().From);
             if (calls == 2)
                 throw new HttpRequestException("Simulated reconnect failure.");
 
@@ -330,6 +325,8 @@ public sealed class DirectStreamRelayTests
 
         Assert.Equal(bytes, output.ToArray());
         Assert.Equal(3, result.UpstreamAttempts);
+        Assert.Equal(128, handler.Requests[1].Headers.Range?.Ranges.Single().From);
+        Assert.Equal(128, handler.Requests[2].Headers.Range?.Ranges.Single().From);
     }
 
     [Fact]
@@ -349,7 +346,6 @@ public sealed class DirectStreamRelayTests
                     contentRange: null);
             }
 
-            Assert.Equal(128, request.Headers.Range?.Ranges.Single().From);
             return CreateResponse(
                 HttpStatusCode.PartialContent,
                 new MemoryStream(bytes[128..]),
@@ -372,6 +368,7 @@ public sealed class DirectStreamRelayTests
 
         Assert.Equal(bytes, output.ToArray());
         Assert.Equal(2, result.UpstreamAttempts);
+        Assert.Equal(128, handler.Requests[1].Headers.Range?.Ranges.Single().From);
     }
 
     [Fact]
@@ -402,15 +399,12 @@ public sealed class DirectStreamRelayTests
     [Fact]
     public async Task RelayAsync_HeadUsesHeadUpstreamAndDoesNotCopyResponseBody()
     {
-        var handler = new SequenceHandler(request =>
-        {
-            Assert.Equal(HttpMethod.Head, request.Method);
-            return CreateResponse(
+        var handler = new SequenceHandler(_ =>
+            CreateResponse(
                 HttpStatusCode.OK,
                 new MemoryStream(new byte[] { 1, 2, 3 }),
                 contentLength: 3,
-                contentRange: null);
-        });
+                contentRange: null));
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
             new Uri("https://example.test/api/v1/stream/session"),
@@ -427,6 +421,7 @@ public sealed class DirectStreamRelayTests
         Assert.Empty(output.ToArray());
         Assert.Equal(0, result.BytesWritten);
         Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Head, handler.Requests[0].Method);
     }
 
     [Fact]

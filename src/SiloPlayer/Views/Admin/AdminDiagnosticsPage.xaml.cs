@@ -83,6 +83,8 @@ public sealed partial class AdminDiagnosticsPage : Page
             FilterGrid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
             FilterGrid.ColumnDefinitions[1].Width = new GridLength(1, GridUnitType.Star);
             FilterGrid.ColumnDefinitions[2].Width = new GridLength(1, GridUnitType.Star);
+            for (var i = 3; i < FilterGrid.ColumnDefinitions.Count; i++)
+                FilterGrid.ColumnDefinitions[i].Width = new GridLength(0);
             for (var i = 0; i < FilterGrid.Children.Count; i++)
             {
                 var child = (FrameworkElement)FilterGrid.Children[i];
@@ -99,6 +101,10 @@ public sealed partial class AdminDiagnosticsPage : Page
             FilterGrid.ColumnDefinitions[0].Width = new GridLength(100);
             FilterGrid.ColumnDefinitions[1].Width = new GridLength(1, GridUnitType.Star);
             FilterGrid.ColumnDefinitions[2].Width = new GridLength(1, GridUnitType.Star);
+            FilterGrid.ColumnDefinitions[3].Width = new GridLength(1.25, GridUnitType.Star);
+            FilterGrid.ColumnDefinitions[4].Width = new GridLength(1.25, GridUnitType.Star);
+            FilterGrid.ColumnDefinitions[5].Width = new GridLength(1, GridUnitType.Star);
+            FilterGrid.ColumnDefinitions[6].Width = GridLength.Auto;
             for (var i = 0; i < FilterGrid.Children.Count; i++)
             {
                 var child = (FrameworkElement)FilterGrid.Children[i];
@@ -340,8 +346,8 @@ public sealed partial class AdminDiagnosticsPage : Page
     private async void Download_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: DiagnosticReport report } button) return;
-        var picker = new Windows.Storage.Pickers.FileSavePicker { SuggestedFileName = $"silo-diagnostics-{(string.IsNullOrWhiteSpace(report.ShortId) ? report.Id : report.ShortId)}.tar" };
-        picker.FileTypeChoices.Add("Compressed diagnostic bundle", [".gz"]);
+        var picker = new Windows.Storage.Pickers.FileSavePicker { SuggestedFileName = $"silo-diagnostics-{(string.IsNullOrWhiteSpace(report.ShortId) ? report.Id : report.ShortId)}" };
+        picker.FileTypeChoices.Add("Compressed diagnostic bundle", [".tar.gz"]);
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance!));
         var file = await picker.PickSaveFileAsync();
         if (file is null) return;

@@ -133,7 +133,7 @@ public sealed class CurrentCatalogParitySourceTests
         Assert.Contains("PlaceholderText = \"Filter options...\"", code);
         Assert.Contains("matches.Take(MaxVisibleMultiSelectOptions)", code);
         Assert.Contains("Type to narrow the list.", code);
-        Assert.DoesNotContain("var flyout = new MenuFlyout();\r\n        foreach (var value in values.Where", code);
+        Assert.DoesNotContain("var flyout = new MenuFlyout();\n        foreach (var value in values.Where", code.ReplaceLineEndings("\n"));
     }
 
     [Fact]
@@ -141,7 +141,7 @@ public sealed class CurrentCatalogParitySourceTests
     {
         var code = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
 
-        Assert.DoesNotContain("if (_libraryCatalogLoaded) return;\r\n        _libraryCatalogLoaded = true;", code);
+        Assert.DoesNotContain("if (_libraryCatalogLoaded) return;\n        _libraryCatalogLoaded = true;", code.ReplaceLineEndings("\n"));
         Assert.Contains("_libraryCatalogLoaded = _isNavigated && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);", code);
         Assert.Contains("if (tag == \"Library\" && !_libraryCatalogLoaded)", code);
         Assert.Contains("await EnsureLibraryCatalogLoadedAsync();", code);

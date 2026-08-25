@@ -1,9 +1,11 @@
+using System.Globalization;
+
 namespace SiloPlayer.Core.Helpers;
 
 /// <summary>
 /// Single source of truth for relative-time formatting. WebUI has two formats:
 /// <list type="bullet">
-/// <item><c>FormatAdded</c> mirrors <c>continuum-webui-ref/src/lib/timeAgo.ts</c> —
+/// <item><c>FormatAdded</c> mirrors the current Silo WebUI time display —
 /// "Added 5 minutes ago" with pluralization, returns null past 30 days, used by
 /// ItemCard for "Added X ago" surfaces.</item>
 /// <item><c>FormatShort</c> mirrors the inline <c>formatRelative</c> in
@@ -29,9 +31,9 @@ public static class TimeAgo
     public static string? FormatAdded(string? iso)
     {
         if (string.IsNullOrWhiteSpace(iso)) return null;
-        if (!DateTime.TryParse(iso, out var date)) return null;
+        if (!TryParseServerTime(iso, out var date)) return null;
 
-        var seconds = (long)(DateTime.UtcNow - date.ToUniversalTime()).TotalSeconds;
+        var seconds = (long)(DateTimeOffset.UtcNow - date).TotalSeconds;
         if (seconds < 0) return "Added just now";
 
         if (seconds < MINUTE) return "Added just now";
@@ -63,9 +65,9 @@ public static class TimeAgo
     public static string FormatShort(string? iso)
     {
         if (string.IsNullOrWhiteSpace(iso)) return "";
-        if (!DateTime.TryParse(iso, out var date)) return iso;
+        if (!TryParseServerTime(iso, out var date)) return iso;
 
-        var diffMinutes = Math.Max(0, (long)(DateTime.UtcNow - date.ToUniversalTime()).TotalMinutes);
+        var diffMinutes = Math.Max(0, (long)(DateTimeOffset.UtcNow - date).TotalMinutes);
         if (diffMinutes < 1) return "just now";
         if (diffMinutes < 60) return $"{diffMinutes}m ago";
         var diffHours = diffMinutes / 60;
@@ -73,4 +75,11 @@ public static class TimeAgo
         var diffDays = diffHours / 24;
         return $"{diffDays}d ago";
     }
+
+    private static bool TryParseServerTime(string value, out DateTimeOffset timestamp)
+        => DateTimeOffset.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.AssumeUniversal,
+            out timestamp);
 }

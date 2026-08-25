@@ -198,6 +198,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         var extension = Path.GetExtension(file.Name);
         if (!IsAcceptedSubtitleExtension(extension))
         {
+            UploadFileText.Text = "No file selected";
             UploadStatusText.Text = "Unsupported file type. Use SRT, VTT, ASS, SSA, or SUB.";
             UploadButton.IsEnabled = false;
             return;
@@ -206,6 +207,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         var properties = await file.GetBasicPropertiesAsync();
         if ((long)properties.Size > MaxSubtitleUploadBytes)
         {
+            UploadFileText.Text = "No file selected";
             UploadStatusText.Text = "Subtitle file is larger than 5 MB.";
             UploadButton.IsEnabled = false;
             return;

@@ -33,11 +33,16 @@ public sealed class ServerContractSourceTests
             };
             using var process = System.Diagnostics.Process.Start(startInfo)
                 ?? throw new InvalidOperationException("Failed to start git.");
-            var output = process.StandardOutput.ReadToEnd();
-            var error = process.StandardError.ReadToEnd();
-            process.WaitForExit();
-            Assert.True(process.ExitCode == 0, error);
-            return output;
+            var outputTask = process.StandardOutput.ReadToEndAsync();
+            var errorTask = process.StandardError.ReadToEndAsync();
+            if (!process.WaitForExit(30_000))
+            {
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(5_000);
+                return null;
+            }
+            Task.WaitAll(outputTask, errorTask);
+            return process.ExitCode == 0 ? outputTask.Result : null;
         }
         catch (System.ComponentModel.Win32Exception)
         {

@@ -9,6 +9,7 @@ public sealed partial class FavoritesPage : Page
     public FavoritesViewModel ViewModel { get; }
     private bool _ascending = true;
     private string _sortField = "title";
+    private readonly List<string> _serverOrder = [];
 
     public FavoritesPage()
     {
@@ -27,6 +28,7 @@ public sealed partial class FavoritesPage : Page
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
         await ViewModel.LoadCommand.ExecuteAsync(null);
+        CaptureServerOrder(replace: true);
         ApplySort();
         UpdateCounts();
     }
@@ -42,7 +44,10 @@ public sealed partial class FavoritesPage : Page
         var previousCount = ViewModel.Items.Count;
         await ViewModel.LoadMoreCommand.ExecuteAsync(null);
         if (ViewModel.Items.Count != previousCount)
+        {
+            CaptureServerOrder(replace: false);
             ApplySort();
+        }
     }
 
     private void UpdateCounts()
@@ -89,8 +94,8 @@ public sealed partial class FavoritesPage : Page
                 ? ViewModel.Items.OrderBy(i => i.Year).ToList()
                 : ViewModel.Items.OrderByDescending(i => i.Year).ToList(),
             "added_at" => _ascending
-                ? ViewModel.Items.ToList()     // preserve server order (roughly added_at)
-                : ViewModel.Items.Reverse().ToList(),
+                ? ViewModel.Items.OrderBy(ServerOrderIndex).ToList()
+                : ViewModel.Items.OrderByDescending(ServerOrderIndex).ToList(),
             _ => _ascending
                 ? ViewModel.Items.OrderBy(i => i.Title).ToList()
                 : ViewModel.Items.OrderByDescending(i => i.Title).ToList(),
@@ -99,5 +104,24 @@ public sealed partial class FavoritesPage : Page
         ViewModel.Items.Clear();
         foreach (var item in sorted)
             ViewModel.Items.Add(item);
+    }
+
+    private void CaptureServerOrder(bool replace)
+    {
+        if (replace)
+            _serverOrder.Clear();
+
+        var known = _serverOrder.ToHashSet(StringComparer.Ordinal);
+        foreach (var item in ViewModel.Items)
+        {
+            if (known.Add(item.ContentId))
+                _serverOrder.Add(item.ContentId);
+        }
+    }
+
+    private int ServerOrderIndex(MediaItem item)
+    {
+        var index = _serverOrder.IndexOf(item.ContentId);
+        return index >= 0 ? index : int.MaxValue;
     }
 }

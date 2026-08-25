@@ -156,6 +156,8 @@ public sealed partial class AdminShellPage : Page
 
         void ApplyWidth(double width) => content.Width = Math.Max(0, width);
         ApplyWidth(scrollViewer.ActualWidth);
+        if (scrollViewer.Tag as string == "adminViewportNormalized") return;
+        scrollViewer.Tag = "adminViewportNormalized";
         scrollViewer.SizeChanged += (_, args) => ApplyWidth(args.NewSize.Width);
     }
 

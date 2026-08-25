@@ -19,6 +19,7 @@ public partial class AdminTaskDetailViewModel : ObservableObject
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private TaskInfo? _taskDetail;
     [ObservableProperty] private MetadataRefreshMetrics? _metrics;
+    private int _loadVersion;
 
     public ObservableCollection<ExecutionResult> History { get; } = [];
 
@@ -34,6 +35,7 @@ public partial class AdminTaskDetailViewModel : ObservableObject
     private async System.Threading.Tasks.Task LoadInternalAsync(string taskKey, bool showLoading)
     {
         if (string.IsNullOrWhiteSpace(taskKey)) return;
+        var version = Interlocked.Increment(ref _loadVersion);
 
         if (showLoading) IsLoading = true;
         if (showLoading) ErrorMessage = null;
@@ -42,27 +44,71 @@ public partial class AdminTaskDetailViewModel : ObservableObject
         {
             var infoTask    = _adminApi.GetTaskAsync(taskKey);
             var historyTask = _adminApi.GetTaskHistoryAsync(taskKey, limit: 20);
-            await System.Threading.Tasks.Task.WhenAll(infoTask, historyTask);
+            var metricsTask = taskKey == "refresh_metadata"
+                ? LoadMetricsSafeAsync(taskKey)
+                : System.Threading.Tasks.Task.FromResult<MetadataRefreshMetrics?>(null);
+            await System.Threading.Tasks.Task.WhenAll(infoTask, historyTask, metricsTask);
+            if (version != Volatile.Read(ref _loadVersion)) return;
 
             TaskDetail = infoTask.Result;
-
-            History.Clear();
-            foreach (var h in historyTask.Result) History.Add(h);
-
-            // Load metrics for refresh_metadata task
-            if (taskKey == "refresh_metadata")
-            {
-                try { Metrics = await _adminApi.GetTaskMetricsAsync(taskKey); }
-                catch { Metrics = null; }
-            }
-            else
-            {
-                Metrics = null;
-            }
+            ReplaceHistory(historyTask.Result);
+            Metrics = metricsTask.Result;
         }
-        catch (Exception ex) { if (showLoading) ErrorMessage = ex.Message; }
-        finally { if (showLoading) IsLoading = false; }
+        catch (Exception ex)
+        {
+            if (showLoading && version == Volatile.Read(ref _loadVersion)) ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            if (showLoading && version == Volatile.Read(ref _loadVersion)) IsLoading = false;
+        }
     }
+
+    private async System.Threading.Tasks.Task<MetadataRefreshMetrics?> LoadMetricsSafeAsync(string taskKey)
+    {
+        try { return await _adminApi.GetTaskMetricsAsync(taskKey); }
+        catch { return null; }
+    }
+
+    private void ReplaceHistory(IReadOnlyList<ExecutionResult> incoming)
+    {
+        for (var targetIndex = 0; targetIndex < incoming.Count; targetIndex++)
+        {
+            var next = incoming[targetIndex];
+            var existingIndex = -1;
+            for (var i = targetIndex; i < History.Count; i++)
+            {
+                if (History[i].Id != next.Id) continue;
+                existingIndex = i;
+                break;
+            }
+
+            if (existingIndex < 0)
+            {
+                History.Insert(targetIndex, next);
+                continue;
+            }
+
+            if (existingIndex != targetIndex)
+                History.Move(existingIndex, targetIndex);
+            if (!ExecutionMatches(History[targetIndex], next))
+                History[targetIndex] = next;
+        }
+
+        while (History.Count > incoming.Count)
+            History.RemoveAt(History.Count - 1);
+    }
+
+    private static bool ExecutionMatches(ExecutionResult left, ExecutionResult right) =>
+        left.Id == right.Id &&
+        left.TaskKey == right.TaskKey &&
+        left.StartedAt == right.StartedAt &&
+        left.CompletedAt == right.CompletedAt &&
+        left.Status == right.Status &&
+        left.ErrorMessage == right.ErrorMessage &&
+        left.DurationMs == right.DurationMs &&
+        System.Text.Json.JsonSerializer.Serialize(left.ResultData) ==
+        System.Text.Json.JsonSerializer.Serialize(right.ResultData);
 
     // ===== Run =====
 

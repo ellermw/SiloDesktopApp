@@ -9,9 +9,13 @@ public sealed class WatchTogetherCurrentParityTests
     [Fact]
     public async Task RoomSnapshot_DeserializesCurrentAdditiveMembers()
     {
-        var handler = new DelegateHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        var handler = new DelegateHandler((request, _) =>
         {
-            Content = new StringContent("""
+            Assert.Equal("Bearer", request.Headers.Authorization?.Scheme);
+            Assert.Equal("token", request.Headers.Authorization?.Parameter);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
                 {
                   "room": {
                     "room_id":"room-1",
@@ -26,7 +30,8 @@ public sealed class WatchTogetherCurrentParityTests
                   }
                 }
                 """, Encoding.UTF8, "application/json"),
-        }));
+            });
+        });
         var client = new SiloApiClient(new HttpClient(handler));
         client.SetBaseUrl("https://example.test");
         client.SetAccessToken("token");

@@ -593,6 +593,7 @@ public sealed class ProfileEditorDialog
 
             SavedProfile = saved;
             SubmittedPin = request.Pin ?? "";
+            _saving = false;
             sender.Hide();
         }
         catch (Exception ex)

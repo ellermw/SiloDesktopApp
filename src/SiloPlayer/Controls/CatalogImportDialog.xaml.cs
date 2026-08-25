@@ -89,14 +89,32 @@ public sealed partial class CatalogImportDialog : ContentDialog
 
     private async void RefreshLocalSources_Click(object sender, RoutedEventArgs e)
     {
-        await _vm.RefreshLocalSourcesAsync();
-        PopulateLocalSources();
+        try
+        {
+            ErrorText.Visibility = Visibility.Collapsed;
+            await _vm.RefreshLocalSourcesAsync();
+            PopulateLocalSources();
+        }
+        catch (Exception ex)
+        {
+            ErrorText.Text = ex.Message;
+            ErrorText.Visibility = Visibility.Visible;
+        }
     }
 
     private async void RefreshBucketSources_Click(object sender, RoutedEventArgs e)
     {
-        await _vm.RefreshBucketSourcesAsync();
-        PopulateBucketSources();
+        try
+        {
+            ErrorText.Visibility = Visibility.Collapsed;
+            await _vm.RefreshBucketSourcesAsync();
+            PopulateBucketSources();
+        }
+        catch (Exception ex)
+        {
+            ErrorText.Text = ex.Message;
+            ErrorText.Visibility = Visibility.Visible;
+        }
     }
 
     // ─── Source switcher ─────────────────────────────────────────────────
@@ -216,10 +234,13 @@ public sealed partial class CatalogImportDialog : ContentDialog
         PrimaryButtonText = "Importing...";
         try
         {
+            ErrorText.Visibility = Visibility.Collapsed;
             await _vm.SubmitImportAsync(BuiltRequest);
         }
-        catch
+        catch (Exception ex)
         {
+            ErrorText.Text = ex.Message;
+            ErrorText.Visibility = Visibility.Visible;
             args.Cancel = true;
         }
         finally
@@ -234,8 +255,9 @@ public sealed partial class CatalogImportDialog : ContentDialog
 
     private static string DescribeImportSource(CatalogSeedImportSource src)
     {
-        var label = !string.IsNullOrEmpty(src.LastModified) ? FormatTime(src.LastModified!) : src.Key;
-        return $"{label} • {src.Key}";
+        return string.IsNullOrEmpty(src.LastModified)
+            ? src.Key
+            : $"{FormatTime(src.LastModified!)} • {src.Key}";
     }
 
     private static string DescribeExportJob(AdminJob job)

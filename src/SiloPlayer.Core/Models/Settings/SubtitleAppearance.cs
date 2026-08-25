@@ -80,6 +80,7 @@ public class SubtitleAppearance
         {
             using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return result;
             result.FontSize = ValidString(root, "fontSize", ["small", "medium", "large", "xlarge", "xxlarge"], result.FontSize);
             result.FontFamily = ValidString(root, "fontFamily", ["sans-serif", "serif", "monospace"], result.FontFamily);
             result.FontColor = ValidColor(root, "fontColor", result.FontColor);

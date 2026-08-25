@@ -247,6 +247,11 @@ public sealed partial class RequestDetailPage : Page
             await _api.CreateAsync(new CreateMediaRequestInput { MediaType = item.MediaType, TmdbId = item.TmdbId, Title = item.Title, Year = item.Year, Overview = item.Overview, PosterPath = item.PosterPath, BackdropPath = item.BackdropPath }, _lifetime.Token);
             button.Content = "Requested";
         }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            button.IsEnabled = true;
+            button.Content = "Request";
+        }
         catch (Exception ex)
         {
             button.IsEnabled = true;

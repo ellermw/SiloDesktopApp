@@ -21,7 +21,8 @@ public sealed class ChapterThumbnailRealtimeParitySourceTests
     [Fact]
     public void NativeOsc_PatchesOneChapterWithoutDiscardingLoadedPreviews()
     {
-        var source = File.ReadAllText(SourcePath("libs", "mpv", "scripts", "silo-osc.lua"));
+        var source = File.ReadAllText(SourcePath("libs", "mpv", "scripts", "silo-osc.lua"))
+            .ReplaceLineEndings("\n");
 
         Assert.Contains("osc-patch-chapter-thumbnail-url", source);
         Assert.Contains("chapter.thumbnail_url = url", source);

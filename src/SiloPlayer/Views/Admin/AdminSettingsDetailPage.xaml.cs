@@ -1612,7 +1612,6 @@ public sealed partial class AdminSettingsDetailPage : Page
         ref var slot = ref (key == "ui.admin_theme_vars" ? ref _adminThemeVarsSaveCts : ref _adminThemeCssSaveCts);
         var previous = Interlocked.Exchange(ref slot, owner);
         previous?.Cancel();
-        previous?.Dispose();
         _ = SaveAdminThemeSettingAfterDelayAsync(key, delayMilliseconds, owner);
     }
 

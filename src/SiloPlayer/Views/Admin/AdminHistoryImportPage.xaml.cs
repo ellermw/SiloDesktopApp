@@ -253,6 +253,8 @@ public sealed partial class AdminHistoryImportPage : Page
         Grid.SetColumn(SourceActionsPanel, compact ? 0 : 1);
         Grid.SetColumnSpan(SourceActionsPanel, compact ? 2 : 1);
         SourceActionsPanel.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        Grid.SetRow(ConfiguredTokenRow, compact ? 2 : 1);
+        Grid.SetRow(MissingTokenCallout, compact ? 2 : 1);
         SourceUrlText.Visibility = width < 980 ? Visibility.Collapsed : Visibility.Visible;
         SourceComboBox.Width = narrow ? 190 : 220;
 

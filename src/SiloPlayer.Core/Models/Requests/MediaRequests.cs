@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 
 namespace SiloPlayer.Core.Models.Requests;
@@ -15,8 +17,12 @@ public class RequestState
     public string RequestId { get; set; } = "";
 }
 
-public class RequestMediaResult
+public class RequestMediaResult : INotifyPropertyChanged
 {
+    private RequestState _request = new();
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
     public string MediaType { get; set; } = "";
     public int TmdbId { get; set; }
     public string Title { get; set; } = "";
@@ -29,7 +35,16 @@ public class RequestMediaResult
     public double? VoteAverage { get; set; }
     public string Availability { get; set; } = "";
     public string? LibraryContentId { get; set; }
-    public RequestState Request { get; set; } = new();
+    public RequestState Request
+    {
+        get => _request;
+        set
+        {
+            _request = value ?? new RequestState();
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(RequestLabel));
+        }
+    }
     [JsonIgnore] public string? PosterUrl => string.IsNullOrWhiteSpace(PosterPath) ? null : $"https://image.tmdb.org/t/p/w342{PosterPath}";
     [JsonIgnore] public string YearText => Year is > 0 ? Year.Value.ToString() : "";
     [JsonIgnore] public string DisplayMeta
@@ -44,6 +59,9 @@ public class RequestMediaResult
         }
     }
     [JsonIgnore] public string RequestLabel => Request.Requestable ? "Request" : Request.Status switch { "pending" => "Pending", "approved" => "Approved", "queued" => "Queued", "downloading" => "Downloading", "completed" => "Completed", _ => Availability == "available" ? "Available" : "Unavailable" };
+
+    private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
+        => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
 
 public class RequestMediaPage

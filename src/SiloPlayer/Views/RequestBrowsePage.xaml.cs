@@ -121,8 +121,20 @@ public sealed partial class RequestBrowsePage : Page
         button.IsEnabled = false; button.Content = "Submitting…";
         try
         {
-            await _api.CreateAsync(new CreateMediaRequestInput { MediaType = item.MediaType, TmdbId = item.TmdbId, Title = item.Title, Year = item.Year, Overview = item.Overview, PosterPath = item.PosterPath, BackdropPath = item.BackdropPath }, _lifetime.Token);
-            button.Content = "Requested";
+            var created = await _api.CreateAsync(new CreateMediaRequestInput { MediaType = item.MediaType, TmdbId = item.TmdbId, Title = item.Title, Year = item.Year, Overview = item.Overview, PosterPath = item.PosterPath, BackdropPath = item.BackdropPath }, _lifetime.Token);
+            item.Request = new RequestState
+            {
+                Status = string.IsNullOrWhiteSpace(created.Status) ? "pending" : created.Status,
+                Requestable = false,
+                RequestId = created.Id,
+            };
+            if (ResultsGrid.ContainerFromItem(item) is GridViewItem { ContentTemplateRoot: Grid card })
+                ApplyStatusRibbon(card, item);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            button.Content = item.RequestLabel;
+            button.IsEnabled = item.Request.Requestable;
         }
         catch (Exception ex)
         {

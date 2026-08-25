@@ -1401,7 +1401,7 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
 
-                            <Button x:Name="ImportSourceEmbyCard" Grid.Column="0" Tag="emby"
+                            <Button x:Name="ImportSourceEmbyCard" Grid.Column="0" TabIndex="0" Tag="emby"
                                     Click="ImportSourceCard_Click"
                                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                                     BorderThickness="1" CornerRadius="12" Padding="16,14"

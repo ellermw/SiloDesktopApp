@@ -279,8 +279,17 @@ public partial class AdminSectionsViewModel : ObservableObject
     {
         try
         {
-            var entries = orderedIds.Select((id, index) => new { id, sort_order = index }).ToList();
-            await _adminApi.ReorderSectionsAsync(new { sections = entries });
+            var entries = orderedIds
+                .Select((id, index) => new Dictionary<string, object?>
+                {
+                    ["id"] = id,
+                    ["sort_order"] = index,
+                })
+                .ToList();
+            await _adminApi.ReorderSectionsAsync(new Dictionary<string, object?>
+            {
+                ["sections"] = entries,
+            });
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
     }
@@ -300,8 +309,17 @@ public partial class AdminSectionsViewModel : ObservableObject
         try
         {
             var ids = Sections.Select(s => s.Id).ToList();
-            var entries = ids.Select((id, i) => new { id, sort_order = i }).ToList();
-            await _adminApi.ReorderSectionsAsync(new { sections = entries });
+            var entries = ids
+                .Select((id, i) => new Dictionary<string, object?>
+                {
+                    ["id"] = id,
+                    ["sort_order"] = i,
+                })
+                .ToList();
+            await _adminApi.ReorderSectionsAsync(new Dictionary<string, object?>
+            {
+                ["sections"] = entries,
+            });
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
     }

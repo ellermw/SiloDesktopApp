@@ -54,6 +54,8 @@ public sealed class DownloadsCurrentParityTests
         Assert.Contains("dl.EffectiveQuality", downloadsPage);
         Assert.Contains("dl.DeliveryFormat", downloadsPage);
         Assert.Contains("dl.BytesSent", downloadsPage);
+        Assert.Contains("AuthenticationHeaderValue", downloadsPage);
+        Assert.DoesNotContain("?token=", downloadsPage, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

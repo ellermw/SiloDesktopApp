@@ -301,7 +301,7 @@ public partial class ActivateDeviceViewModel : ObservableObject
 
     private async Task DecideAsync(bool approve)
     {
-        if (!HasActiveRequest) return;
+        if (!HasActiveRequest || IsActing) return;
 
         IsActing = true;
         ErrorMessage = null;

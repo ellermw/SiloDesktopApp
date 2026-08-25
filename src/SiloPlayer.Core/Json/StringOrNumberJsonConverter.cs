@@ -1,5 +1,7 @@
+using System.Buffers;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text;
 
 namespace SiloPlayer.Core.Json;
 
@@ -7,7 +9,7 @@ namespace SiloPlayer.Core.Json;
 /// Deserializes a JSON property into a <see cref="string"/> regardless of
 /// whether the source token is a string OR a number. Writes back as a string.
 ///
-/// Why: the Continuum server returns <c>Person.id</c> as a JSON number
+/// Why: Silo can return <c>Person.id</c> as a JSON number
 /// (<c>int64</c>) but the desktop client models it as a string end-to-end
 /// (cast/crew person_id arrives as a string from a different code path, and
 /// we want the whole pipeline uniform). Without this converter, numeric
@@ -21,7 +23,8 @@ public sealed class StringOrNumberJsonConverter : JsonConverter<string>
         {
             JsonTokenType.String => reader.GetString(),
             JsonTokenType.Number when reader.TryGetInt64(out var l) => l.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            JsonTokenType.Number => reader.GetDouble().ToString("R", System.Globalization.CultureInfo.InvariantCulture),
+            JsonTokenType.Number => Encoding.UTF8.GetString(
+                reader.HasValueSequence ? reader.ValueSequence.ToArray() : reader.ValueSpan),
             JsonTokenType.Null => null,
             JsonTokenType.True => "true",
             JsonTokenType.False => "false",

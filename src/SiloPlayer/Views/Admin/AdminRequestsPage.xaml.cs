@@ -163,10 +163,17 @@ public sealed partial class AdminRequestsPage : Page
         if (showSkeleton) ShowQueueSkeletons();
         ViewModel.StatusFilter = SelectedTag(StatusFilterComboBox, "all");
         ViewModel.OutcomeFilter = SelectedTag(OutcomeFilterComboBox, "all");
-        var queueTask = ViewModel.LoadCommand.ExecuteAsync(null);
-        var usersTask = _users.Count == 0 ? _adminApi.GetUsersAsync() : null;
-        if (usersTask != null) await Task.WhenAll(queueTask, usersTask); else await queueTask;
-        if (usersTask != null) _users = await usersTask;
+        try
+        {
+            var queueTask = ViewModel.LoadCommand.ExecuteAsync(null);
+            var usersTask = _users.Count == 0 ? _adminApi.GetUsersAsync() : null;
+            if (usersTask != null) await Task.WhenAll(queueTask, usersTask); else await queueTask;
+            if (usersTask != null) _users = await usersTask;
+        }
+        catch (Exception ex)
+        {
+            ShowError($"Requests could not be loaded: {ex.Message}");
+        }
         RenderQueue();
     }
 

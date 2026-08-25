@@ -152,16 +152,17 @@ public sealed partial class ServerActivityButton : UserControl
             // Seed from its current state instead of showing a false warning
             // until the next reconnect transition.
             ApplyConnectionState(_events.CurrentState);
+            _subscription = _events.Subscribe("sessions", "tasks", "scans");
             _events.SnapshotReceived += OnSnapshot;
             _events.EventReceived += OnEvent;
             _events.StateChanged += OnWsStateChanged;
-            _subscription = _events.Subscribe("sessions", "tasks", "scans");
             if (_events.TryGetLatestSnapshot("scans", out var cachedScans))
                 OnSnapshot("scans", cachedScans);
         }
         catch
         {
             // Non-admin / transport issue — polling still carries the button.
+            UnsubscribeFromEvents();
         }
     }
 

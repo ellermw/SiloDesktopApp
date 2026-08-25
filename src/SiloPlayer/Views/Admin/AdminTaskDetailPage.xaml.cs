@@ -915,12 +915,32 @@ public sealed partial class AdminTaskDetailPage : Page
                 var selectedType = (typeCombo.SelectedItem as ComboBoxItem)?.Tag as string ?? "interval";
                 var newTrigger = new TriggerConfig { Type = selectedType };
 
-                if (selectedType == "interval" && long.TryParse(valueBox.Text, out var ms))
+                if (selectedType == "interval")
+                {
+                    if (!long.TryParse(valueBox.Text, out var ms) || ms <= 0)
+                    {
+                        valueBox.PlaceholderText = "Enter a positive interval in ms";
+                        valueBox.Focus(FocusState.Programmatic);
+                        return;
+                    }
+
                     newTrigger.IntervalMs = ms;
-                else if (selectedType == "daily")
-                    newTrigger.TimeOfDay = string.IsNullOrWhiteSpace(timeBox.Text) ? "00:00" : timeBox.Text.Trim();
-                else if (selectedType == "weekly")
-                    newTrigger.TimeOfDay = string.IsNullOrWhiteSpace(timeBox.Text) ? "00:00" : timeBox.Text.Trim();
+                }
+                else if (selectedType is "daily" or "weekly")
+                {
+                    var timeText = timeBox.Text.Trim();
+                    if (string.IsNullOrWhiteSpace(timeText)
+                        || !TimeSpan.TryParse(timeText, out var timeOfDay)
+                        || timeOfDay < TimeSpan.Zero
+                        || timeOfDay >= TimeSpan.FromDays(1))
+                    {
+                        timeBox.PlaceholderText = "Enter a valid time (HH:MM)";
+                        timeBox.Focus(FocusState.Programmatic);
+                        return;
+                    }
+
+                    newTrigger.TimeOfDay = timeText;
+                }
 
                 triggerList.Add(newTrigger);
                 RebuildTriggerEditor();

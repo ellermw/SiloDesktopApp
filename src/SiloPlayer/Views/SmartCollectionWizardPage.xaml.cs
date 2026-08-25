@@ -20,6 +20,8 @@ public sealed partial class SmartCollectionWizardPage : Page
     private bool _compactLayout;
     private DispatcherTimer? _previewDebounceTimer;
     private CancellationTokenSource? _previewCts;
+    private Task _previewTask = Task.CompletedTask;
+    private readonly SemaphoreSlim _previewLifecycleGate = new(1, 1);
     private int _currentStep = 1;
 
     public bool CanSave => !ViewModel.IsSaving && !ViewModel.IsLoading
@@ -595,15 +597,51 @@ public sealed partial class SmartCollectionWizardPage : Page
 
     private async Task RunPreviewAsync()
     {
-        _previewCts?.Cancel();
-        _previewCts?.Dispose();
-        _previewCts = new CancellationTokenSource();
+        CancellationTokenSource owner;
+        Task previewTask;
+
+        await _previewLifecycleGate.WaitAsync();
         try
         {
-            await ViewModel.PreviewAsync(_previewCts.Token);
+            var previousCts = _previewCts;
+            var previousTask = _previewTask;
+            try { previousCts?.Cancel(); } catch { }
+            try { await previousTask.ConfigureAwait(true); }
+            catch (OperationCanceledException) { }
+            catch { }
+            previousCts?.Dispose();
+
+            owner = new CancellationTokenSource();
+            previewTask = ViewModel.PreviewAsync(owner.Token);
+            _previewCts = owner;
+            _previewTask = previewTask;
         }
-        catch (OperationCanceledException)
+        finally
         {
+            _previewLifecycleGate.Release();
+        }
+
+        try
+        {
+            await previewTask;
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            await _previewLifecycleGate.WaitAsync();
+            try
+            {
+                if (ReferenceEquals(_previewCts, owner))
+                {
+                    _previewCts = null;
+                    _previewTask = Task.CompletedTask;
+                    owner.Dispose();
+                }
+            }
+            finally
+            {
+                _previewLifecycleGate.Release();
+            }
         }
     }
 
@@ -611,11 +649,30 @@ public sealed partial class SmartCollectionWizardPage : Page
     {
         _previewDebounceTimer?.Stop();
         _previewDebounceTimer = null;
-        _previewCts?.Cancel();
-        _previewCts?.Dispose();
-        _previewCts = null;
+        _ = CancelPreviewAsync();
         ViewModel.Saved -= OnSaved;
         base.OnNavigatedFrom(e);
+    }
+
+    private async Task CancelPreviewAsync()
+    {
+        await _previewLifecycleGate.WaitAsync();
+        try
+        {
+            var cts = _previewCts;
+            var task = _previewTask;
+            _previewCts = null;
+            _previewTask = Task.CompletedTask;
+            try { cts?.Cancel(); } catch { }
+            try { await task.ConfigureAwait(true); }
+            catch (OperationCanceledException) { }
+            catch { }
+            cts?.Dispose();
+        }
+        finally
+        {
+            _previewLifecycleGate.Release();
+        }
     }
 
     private void SmartCollectionWizardPage_SizeChanged(object sender, SizeChangedEventArgs e)

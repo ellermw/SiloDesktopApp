@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Models;
 using SiloPlayer.Core.Models.Auth;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 
@@ -178,7 +179,8 @@ public sealed partial class LoginPage : Page
         var completing = false;
         webView.NavigationStarting += async (_, args) =>
         {
-            if (completing || !TryGetOAuthCompletionCode(args.Uri, out var completionCode))
+            if (completing ||
+                !OAuthCompletionUrl.TryGetCode(args.Uri, ViewModel.ServerUrl, out var completionCode))
                 return;
 
             args.Cancel = true;
@@ -223,28 +225,16 @@ public sealed partial class LoginPage : Page
         dialog.Closed += (_, _) => lifetimeCts.Cancel();
 
         webView.Source = authorizeUri;
-        await dialog.ShowAsync();
-    }
-
-    private static bool TryGetOAuthCompletionCode(string uriText, out string code)
-    {
-        code = "";
-        if (!Uri.TryCreate(uriText, UriKind.Absolute, out var uri))
-            return false;
-        if (!uri.AbsolutePath.TrimEnd('/').EndsWith("/login/oauth-complete", StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        var query = uri.Query.TrimStart('?');
-        foreach (var part in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        try
         {
-            var pieces = part.Split('=', 2);
-            if (pieces.Length != 2 || !string.Equals(Uri.UnescapeDataString(pieces[0]), "code", StringComparison.Ordinal))
-                continue;
-
-            code = Uri.UnescapeDataString(pieces[1].Replace('+', ' '));
-            return !string.IsNullOrWhiteSpace(code);
+            await dialog.ShowAsync();
         }
-
-        return false;
+        finally
+        {
+            lifetimeCts.Cancel();
+            content.Children.Remove(webView);
+            webView.Close();
+        }
     }
+
 }

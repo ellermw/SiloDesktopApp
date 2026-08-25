@@ -181,7 +181,9 @@ public partial class HistoryViewModel : ObservableObject,
             {
                 // Use history endpoint for full watch history
                 var response = await _catalogApi.GetHistoryAsync(limit: PageSize, offset: _offset);
-                TotalCount = response.Total;
+                TotalCount = response.Total > 0
+                    ? response.Total
+                    : (replace ? response.Items.Count : TotalCount + response.Items.Count);
                 HasMore = response.HasMore;
 
                 if (replace)
@@ -196,13 +198,16 @@ public partial class HistoryViewModel : ObservableObject,
                         Year = entry.Year,
                         PosterUrl = entry.PosterUrl,
                         PosterThumbhash = entry.PosterThumbhash,
-                        PositionSeconds = entry.PositionSeconds,
-                        DurationSeconds = entry.DurationSeconds,
-                        Completed = entry.Completed,
+                        PositionSeconds = entry.PositionSeconds ?? 0,
+                        DurationSeconds = entry.DurationSeconds ?? Math.Max(0, entry.Runtime * 60),
+                        Completed = entry.UserState?.Played ?? false,
                         ProgressPercent = entry.DurationSeconds > 0
-                            ? (int)(entry.PositionSeconds / entry.DurationSeconds * 100)
+                            ? (int)((entry.PositionSeconds ?? 0) / entry.DurationSeconds.Value * 100)
                             : 0,
-                        UpdatedAt = entry.WatchedAt,
+                        UpdatedAt = entry.SortMetrics?.ViewedAt
+                            ?? entry.ProgressUpdatedAt
+                            ?? entry.AddedAt
+                            ?? "",
                         Type = entry.Type
                     });
                 }

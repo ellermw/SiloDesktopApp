@@ -224,24 +224,41 @@ public sealed class WatchTogetherCoordinator
 
     private void OnTransportCommandReceived(WatchTogetherTransportCommand cmd)
     {
+        var roomAtReceipt = _activeRoom;
+        var sessionAtReceipt = _attachedSessionId;
+        if (roomAtReceipt == null) return;
         if (!string.IsNullOrEmpty(cmd.SessionId) &&
-            cmd.SessionId != _attachedSessionId) return;
+            cmd.SessionId != sessionAtReceipt) return;
 
         // If the server scheduled this command for a future wall-clock time,
         // defer execution so all clients fire together. <=0ms → execute now.
         int delayMs = ComputeExecuteDelayMs(cmd.ExecuteAt);
         if (delayMs <= 0)
         {
-            _dispatcher.TryEnqueue(() => ApplyCommand(cmd));
+            _dispatcher.TryEnqueue(() => ApplyCommandIfCurrent(cmd, roomAtReceipt, sessionAtReceipt));
         }
         else
         {
             _ = Task.Run(async () =>
             {
                 try { await Task.Delay(delayMs); } catch { }
-                _dispatcher.TryEnqueue(() => ApplyCommand(cmd));
+                _dispatcher.TryEnqueue(() => ApplyCommandIfCurrent(cmd, roomAtReceipt, sessionAtReceipt));
             });
         }
+    }
+
+    private void ApplyCommandIfCurrent(
+        WatchTogetherTransportCommand cmd,
+        WatchTogetherRoomViewModel roomAtReceipt,
+        string? sessionAtReceipt)
+    {
+        if (!ReferenceEquals(_activeRoom, roomAtReceipt)
+            || !string.Equals(_attachedSessionId, sessionAtReceipt, StringComparison.Ordinal)
+            || (!string.IsNullOrEmpty(cmd.SessionId)
+                && !string.Equals(cmd.SessionId, _attachedSessionId, StringComparison.Ordinal)))
+            return;
+
+        ApplyCommand(cmd);
     }
 
     private int ComputeExecuteDelayMs(string? executeAtIso)

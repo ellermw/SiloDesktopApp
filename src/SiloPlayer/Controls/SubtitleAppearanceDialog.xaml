@@ -153,6 +153,7 @@
                         <TextBlock Grid.Column="0" Text="Outline" FontSize="13"
                                    VerticalAlignment="Center" Foreground="{StaticResource PanelRowLabel}" />
                         <ToggleSwitch x:Name="OutlineToggle" Grid.Column="1" OnContent="" OffContent=""
+                                      AutomationProperties.Name="Outline"
                                       Toggled="OutlineToggle_Toggled" />
                     </Grid>
 
@@ -195,6 +196,7 @@
                             </Grid.ColumnDefinitions>
                             <Slider x:Name="OpacitySlider" Grid.Column="0"
                                     Minimum="0" Maximum="100" StepFrequency="5"
+                                    AutomationProperties.Name="Opacity"
                                     ValueChanged="OpacitySlider_ValueChanged"
                                     VerticalAlignment="Center" />
                             <TextBlock x:Name="OpacityValueLabel" Grid.Column="1"

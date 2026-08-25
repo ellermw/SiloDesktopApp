@@ -83,7 +83,12 @@ public sealed class AdminCommandPaletteDialog : ContentDialog
     private static DataTemplate BuildTemplate()
     {
         const string xaml = """
-            <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+            <DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                          xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+              <DataTemplate.Resources>
+                <SolidColorBrush x:Key="SecondaryTextBrush" Color="#B3FFFFFF"/>
+                <SolidColorBrush x:Key="TertiaryTextBrush" Color="#80FFFFFF"/>
+              </DataTemplate.Resources>
               <Grid Padding="10,8" ColumnSpacing="10">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="20"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                 <FontIcon Glyph="&#xE721;" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Top" Margin="0,3,0,0"/>

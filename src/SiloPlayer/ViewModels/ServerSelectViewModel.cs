@@ -61,7 +61,8 @@ public partial class ServerSelectViewModel : ObservableObject
         }
 
         var url = NewServerUrl.Trim();
-        if (!url.StartsWith("http://") && !url.StartsWith("https://"))
+        if (!url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
         {
             url = "https://" + url;
         }

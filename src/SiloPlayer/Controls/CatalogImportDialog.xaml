@@ -14,6 +14,12 @@
     <ScrollViewer MaxHeight="560" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
         <StackPanel Width="560" Spacing="16" Padding="0,4,8,4">
 
+            <TextBlock x:Name="ErrorText"
+                       FontSize="12"
+                       Foreground="#FFFCA5A5"
+                       TextWrapping="Wrap"
+                       Visibility="Collapsed" />
+
             <!-- Import Source -->
             <StackPanel Spacing="6">
                 <TextBlock Text="Import Source" FontSize="13" FontWeight="SemiBold"

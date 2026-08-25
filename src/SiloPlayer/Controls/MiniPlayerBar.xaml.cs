@@ -18,6 +18,7 @@ public sealed partial class MiniPlayerBar : UserControl
     private double _playbackRate = 1;
     private DispatcherTimer? _uiTimer;
     private CancellationTokenSource? _coverCts;
+    private int _coverGeneration;
 
     public MiniPlayerBar()
     {
@@ -68,8 +69,8 @@ public sealed partial class MiniPlayerBar : UserControl
         _uiTimer?.Stop();
         _uiTimer = null;
         try { _coverCts?.Cancel(); } catch { }
-        _coverCts?.Dispose();
         _coverCts = null;
+        ++_coverGeneration;
     }
 
     public void ResetSleepTimer()
@@ -151,6 +152,21 @@ public sealed partial class MiniPlayerBar : UserControl
 
     private void UpdateAudiobookPresentation()
     {
+        if (!_active) return;
+        if (!_playerService.IsAudiobook)
+        {
+            if (VideoBar.Visibility != Visibility.Visible)
+                ActivateVideoMode();
+            return;
+        }
+        if (AudiobookBar.Visibility != Visibility.Visible)
+        {
+            _playbackRate = _playerService.AudiobookPlaybackRate;
+            AudiobookSpeedButton.Content = $"{_playbackRate:0.##}×";
+            ActivateAudiobookMode();
+            return;
+        }
+
         AudiobookTitleText.Text = _playerService.Title;
         var chapter = _playerService.CurrentAudiobookChapter;
         AudiobookChapterText.Text = chapter?.Title ?? _playerService.AudiobookAuthor ?? "";
@@ -160,10 +176,11 @@ public sealed partial class MiniPlayerBar : UserControl
 
     private async Task LoadAudiobookCoverAsync()
     {
-        try { _coverCts?.Cancel(); } catch { }
-        _coverCts?.Dispose();
-        _coverCts = new CancellationTokenSource();
-        var ct = _coverCts.Token;
+        var owner = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _coverCts, owner);
+        try { previous?.Cancel(); } catch { }
+        var generation = ++_coverGeneration;
+        var ct = owner.Token;
         AudiobookCoverImage.Source = null;
         AudiobookCoverPlaceholder.Visibility = Visibility.Visible;
         var url = _playerService.AudiobookPosterUrl;
@@ -173,13 +190,21 @@ public sealed partial class MiniPlayerBar : UserControl
         {
             var path = await App.Services.GetRequiredService<ImageService>().GetImageDiskPathAsync(
                 contentId, "poster", url, App.Services.GetRequiredService<HttpClient>(), ct);
-            if (ct.IsCancellationRequested || string.IsNullOrWhiteSpace(path)) return;
-            if (ct.IsCancellationRequested) return;
+            if (ct.IsCancellationRequested
+                || generation != _coverGeneration
+                || !_active
+                || !string.Equals(contentId, _playerService.ContentId, StringComparison.Ordinal)
+                || string.IsNullOrWhiteSpace(path)) return;
             AudiobookCoverImage.Source = new BitmapImage(new Uri(path)) { DecodePixelWidth = 160 };
             AudiobookCoverPlaceholder.Visibility = Visibility.Collapsed;
         }
         catch (OperationCanceledException) { }
         catch { }
+        finally
+        {
+            Interlocked.CompareExchange(ref _coverCts, null, owner);
+            owner.Dispose();
+        }
     }
 
     private void BuildAudiobookFlyouts()

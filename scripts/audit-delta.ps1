@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
     Incremental parity audit -- identifies which desktop pages need re-auditing
-    after a continuum-server update by cross-referencing changed webui files
+    after a Silo server update by cross-referencing changed WebUI files
     against docs/audit-page-map.json.
 
 .DESCRIPTION
     Instead of deploying 25+ full-audit agents every time the server updates,
     this script:
-    1. Pulls the latest continuum-server (optional -Pull flag)
+    1. Pulls the latest official Silo server (optional -Pull flag)
     2. Diffs from last-verified SHA to HEAD for each page-map entry
     3. Reports which pages have upstream changes (AFFECTED) vs unchanged (SKIP)
     4. For affected pages, shows the specific files + line-count delta
@@ -16,7 +16,7 @@
     Run `git pull` on the continuum-server repo before scanning.
 
 .PARAMETER ServerRepo
-    Path to the continuum-server clone. Default: F:\continuum-server
+    Path to the official Silo server clone.
 
 .PARAMETER PageMap
     Path to the page-map JSON. Default: docs\audit-page-map.json
@@ -28,18 +28,32 @@
 
 param(
     [switch]$Pull,
-    [string]$ServerRepo = "F:\continuum-server",
+    [string]$ServerRepo = (Join-Path (Join-Path $PSScriptRoot "..") ".codex-tmp\silo-server-current"),
     [string]$PageMap = "$PSScriptRoot\..\docs\audit-page-map.json"
 )
 
 $ErrorActionPreference = "Stop"
 
+function Invoke-GitChecked {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    $output = & git @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "git $($Arguments -join ' ') failed with exit code $LASTEXITCODE." }
+    return $output
+}
+
+if (-not (Test-Path $ServerRepo)) {
+    throw "Official Silo server clone not found at '$ServerRepo'."
+}
+
 # --- Pull if requested ---
 if ($Pull) {
-    Write-Host "Pulling latest continuum-server..." -ForegroundColor Cyan
+    Write-Host "Pulling latest Silo server main..." -ForegroundColor Cyan
     Push-Location $ServerRepo
-    git pull --ff-only
-    Pop-Location
+    try {
+        Invoke-GitChecked @("fetch", "origin", "main") | Out-Null
+        Invoke-GitChecked @("merge", "--ff-only", "origin/main") | Out-Null
+    }
+    finally { Pop-Location }
     Write-Host ""
 }
 
@@ -52,9 +66,15 @@ $map = Get-Content $PageMap -Raw | ConvertFrom-Json
 
 # --- Get server HEAD ---
 Push-Location $ServerRepo
-$headSha = (git rev-parse --short HEAD).Trim()
-$headMsg = (git log -1 --format="%s").Trim()
-Pop-Location
+try {
+    $originUrl = (Invoke-GitChecked @("remote", "get-url", "origin")).Trim()
+    if ($originUrl -notmatch 'github\.com[/:]Silo-Server/silo-server(?:\.git)?$') {
+        throw "Refusing to audit unexpected origin '$originUrl'; expected the official Silo GitHub repository."
+    }
+    $headSha = (Invoke-GitChecked @("rev-parse", "--short", "HEAD")).Trim()
+    $headMsg = (Invoke-GitChecked @("log", "-1", "--format=%s")).Trim()
+}
+finally { Pop-Location }
 
 Write-Host "Server HEAD: $headSha ($headMsg)" -ForegroundColor Cyan
 Write-Host ""
@@ -112,19 +132,25 @@ foreach ($section in @("admin", "user")) {
         # Check if any of the webui files changed since last_verified_sha
         $changedFiles = @()
         Push-Location $ServerRepo
-        foreach ($f in $filesToCheck) {
-            # Skip directory entries (trailing /)
-            if ($f.EndsWith("/")) { continue }
-            # Check if file exists in the repo
-            $fullPath = Join-Path $ServerRepo ($f -replace '/', '\')
-            if (-not (Test-Path $fullPath)) { continue }
+        try {
+            foreach ($f in $filesToCheck) {
+                # Skip directory entries (trailing /)
+                if ($f.EndsWith("/")) { continue }
+                # Check if file exists in the repo
+                $fullPath = Join-Path $ServerRepo ($f -replace '/', '\')
+                if (-not (Test-Path $fullPath)) { continue }
 
-            $diffStat = git diff --stat "$lastSha..HEAD" -- $f 2>$null
-            if ($diffStat) {
-                $changedFiles += $f
+                & git cat-file -e "$lastSha^{commit}" 2>$null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Baseline SHA $lastSha for '$webPath' does not exist in the Silo server repository."
+                }
+                $diffStat = Invoke-GitChecked @("diff", "--stat", "$lastSha..HEAD", "--", $f)
+                if ($diffStat) {
+                    $changedFiles += $f
+                }
             }
         }
-        Pop-Location
+        finally { Pop-Location }
 
         if ($changedFiles.Count -gt 0) {
             $affected += [PSCustomObject]@{

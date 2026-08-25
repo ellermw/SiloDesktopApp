@@ -49,12 +49,9 @@ public sealed partial class PluginRoutePage : Page
                 }
             };
 
-            var path = args.RoutePath.EndsWith("/*", StringComparison.Ordinal)
-                ? args.RoutePath[..^2]
-                : args.RoutePath;
-            if (!path.StartsWith('/')) path = "/" + path;
+            var path = NormalizeRoutePath(args.RoutePath);
             var url = $"{apiClient.BaseUrl.TrimEnd('/')}/api/v1/plugins/{args.InstallationId}{path}";
-            url += url.Contains('?') ? "&theme=dark" : "?theme=dark";
+            url += "?theme=dark";
             PluginWebView.Source = new Uri(url);
         }
         catch (Exception ex)
@@ -63,5 +60,19 @@ public sealed partial class PluginRoutePage : Page
             ErrorText.Text = ex.Message;
             ErrorPanel.Visibility = Visibility.Visible;
         }
+    }
+
+    internal static string NormalizeRoutePath(string routePath)
+    {
+        var path = routePath.EndsWith("/*", StringComparison.Ordinal)
+            ? routePath[..^2]
+            : routePath;
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Any(segment => segment is "." or ".."))
+            throw new InvalidOperationException("Plugin route paths cannot contain traversal segments.");
+
+        return segments.Length == 0
+            ? "/"
+            : "/" + string.Join('/', segments.Select(Uri.EscapeDataString));
     }
 }

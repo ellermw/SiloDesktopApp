@@ -10,6 +10,7 @@ public class AuthService : IDisposable
     private readonly SiloApiClient _apiClient;
     private readonly AuthApi _authApi;
     private readonly ICredentialStore? _credentialStore;
+    private readonly Func<TimeSpan, CancellationToken, Task> _delayAsync;
     private readonly object _stateGate = new();
     private readonly object _credentialGate = new();
     private CancellationTokenSource? _refreshScheduleCancellation;
@@ -29,10 +30,20 @@ public class AuthService : IDisposable
         string ReturnPath);
 
     public AuthService(SiloApiClient apiClient, AuthApi authApi, ICredentialStore? credentialStore = null)
+        : this(apiClient, authApi, credentialStore, Task.Delay)
+    {
+    }
+
+    public AuthService(
+        SiloApiClient apiClient,
+        AuthApi authApi,
+        ICredentialStore? credentialStore,
+        Func<TimeSpan, CancellationToken, Task> delayAsync)
     {
         _apiClient = apiClient;
         _authApi = authApi;
         _credentialStore = credentialStore;
+        _delayAsync = delayAsync ?? throw new ArgumentNullException(nameof(delayAsync));
     }
 
     public bool IsLoggedIn => CurrentUser != null;
@@ -712,7 +723,7 @@ public class AuthService : IDisposable
     {
         try
         {
-            await Task.Delay(dueTime, ct).ConfigureAwait(false);
+            await _delayAsync(dueTime, ct).ConfigureAwait(false);
             await TryRefreshAsync(ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)

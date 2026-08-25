@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using Windows.UI;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.ViewModels.Admin;
@@ -12,6 +13,7 @@ public sealed partial class AdminInviteCodesPage : Page
 {
     public AdminInviteCodesViewModel ViewModel { get; }
     private bool _rebuildPending;
+    private bool _loaded;
 
     public AdminInviteCodesPage()
     {
@@ -23,18 +25,37 @@ public sealed partial class AdminInviteCodesPage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
-        ViewModel.InviteCodes.CollectionChanged += (_, _) => ScheduleRebuild();
-        ViewModel.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName == nameof(AdminInviteCodesViewModel.SignupEnabled))
-            {
-                _suppressSignupToggle = true;
-                SignupToggle.IsOn = ViewModel.SignupEnabled;
-                _suppressSignupToggle = false;
-            }
-        };
+        if (_loaded) return;
+        _loaded = true;
+        ViewModel.InviteCodes.CollectionChanged += InviteCodes_CollectionChanged;
+        ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         try { await ViewModel.LoadCommand.ExecuteAsync(null); }
         catch (Exception ex) { ViewModel.ErrorMessage = $"Error: {ex.Message}"; }
+    }
+
+    private void InviteCodes_CollectionChanged(
+        object? sender,
+        System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => ScheduleRebuild();
+
+    private void ViewModel_PropertyChanged(
+        object? sender,
+        System.ComponentModel.PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(AdminInviteCodesViewModel.SignupEnabled))
+        {
+            _suppressSignupToggle = true;
+            SignupToggle.IsOn = ViewModel.SignupEnabled;
+            _suppressSignupToggle = false;
+        }
+    }
+
+    protected override void OnNavigatedFrom(NavigationEventArgs e)
+    {
+        _loaded = false;
+        ViewModel.InviteCodes.CollectionChanged -= InviteCodes_CollectionChanged;
+        ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+        base.OnNavigatedFrom(e);
     }
 
     private async void SignupToggle_Toggled(object sender, RoutedEventArgs e)

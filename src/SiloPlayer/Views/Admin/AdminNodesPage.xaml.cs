@@ -31,9 +31,6 @@ public sealed partial class AdminNodesPage : Page
         ApplyResponsiveLayout();
         ViewModel.ProxyNodes.CollectionChanged += ProxyNodes_CollectionChanged;
         ViewModel.TranscodeNodes.CollectionChanged += TranscodeNodes_CollectionChanged;
-        if (ViewModel.ProxyNodes.Count > 0) RebuildProxyRows();
-        if (ViewModel.TranscodeNodes.Count > 0) RebuildTranscodeRows();
-
         try
         {
             await ViewModel.LoadCommand.ExecuteAsync(null);
@@ -42,6 +39,8 @@ public sealed partial class AdminNodesPage : Page
         {
             ViewModel.ErrorMessage = $"Error: {ex.Message}";
         }
+        RebuildProxyRows();
+        RebuildTranscodeRows();
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
@@ -231,8 +230,15 @@ public sealed partial class AdminNodesPage : Page
         var capturedNode = node;
         toggleSwitch.Toggled += async (_, _) =>
         {
-            await ViewModel.ToggleNodeCommand.ExecuteAsync(capturedNode.Id);
-            if (ViewModel.StatusMessage != null) ShowStatus(ViewModel.StatusMessage);
+            try
+            {
+                await ViewModel.ToggleNodeCommand.ExecuteAsync(capturedNode.Id);
+                if (ViewModel.StatusMessage != null) ShowStatus(ViewModel.StatusMessage);
+            }
+            catch (Exception ex)
+            {
+                ShowStatus($"Could not update node: {ex.Message}");
+            }
         };
         Grid.SetColumn(toggleSwitch, 3);
         row.Children.Add(toggleSwitch);
@@ -382,6 +388,10 @@ public sealed partial class AdminNodesPage : Page
             {
                 await ViewModel.CheckHealthCommand.ExecuteAsync(capturedNode.Id);
                 if (ViewModel.StatusMessage != null) ShowStatus(ViewModel.StatusMessage);
+            }
+            catch (Exception ex)
+            {
+                ShowStatus($"Health check failed: {ex.Message}");
             }
             finally
             {

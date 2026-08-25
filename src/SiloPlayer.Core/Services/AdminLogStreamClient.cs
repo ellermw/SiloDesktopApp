@@ -21,6 +21,7 @@ public sealed class AdminLogStreamClient : IDisposable
     private readonly Func<string?> _accessTokenProvider;
     private ClientWebSocket? _ws;
     private CancellationTokenSource? _readCts;
+    private long _connectionEpoch;
 
     /// <summary>Snapshot received — rows should be replaced.</summary>
     public event Action<List<OperationalLogEntry>, string?>? AppSnapshotReceived;
@@ -35,7 +36,7 @@ public sealed class AdminLogStreamClient : IDisposable
 
     /// <summary>
     /// Constructs a new stream client. <paramref name="httpBaseUrl"/> is the
-    /// HTTP base URL (e.g. <c>https://continuum.taverncdn.com</c>); this
+    /// HTTP base URL (for example, <c>https://silo.example.com</c>); this
     /// class converts it to the equivalent WebSocket scheme.
     /// </summary>
     public AdminLogStreamClient(string httpBaseUrl, string accessToken)
@@ -61,6 +62,7 @@ public sealed class AdminLogStreamClient : IDisposable
     public async Task StartAsync(Stream stream, IReadOnlyDictionary<string, string> filters, CancellationToken ct = default)
     {
         await StopAsync().ConfigureAwait(false);
+        var epoch = Interlocked.Increment(ref _connectionEpoch);
 
         var streamParam = stream == Stream.App ? "app" : "audit";
         var query = new StringBuilder();
@@ -76,25 +78,44 @@ public sealed class AdminLogStreamClient : IDisposable
         query.Append("&token=").Append(Uri.EscapeDataString(accessToken));
         var url = $"{_baseWsUrl}/api/v1/admin/logs/ws?{query}";
 
-        _ws = new ClientWebSocket();
-        _readCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        SetState(ConnectionState.Connecting);
+        var ws = new ClientWebSocket();
+        var readCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        _ws = ws;
+        _readCts = readCts;
+        SetStateIfCurrent(epoch, ConnectionState.Connecting);
 
         try
         {
-            await _ws.ConnectAsync(new Uri(url), _readCts.Token).ConfigureAwait(false);
-            SetState(ConnectionState.Live);
-            _ = Task.Run(() => ReadLoopAsync(stream, _ws, _readCts.Token));
+            await ws.ConnectAsync(new Uri(url), readCts.Token).ConfigureAwait(false);
+            if (!IsCurrent(epoch))
+            {
+                ws.Abort();
+                ws.Dispose();
+                readCts.Dispose();
+                return;
+            }
+
+            SetStateIfCurrent(epoch, ConnectionState.Live);
+            _ = Task.Run(() => ReadLoopAsync(stream, ws, readCts, epoch));
         }
         catch (Exception ex)
         {
-            SetState(ConnectionState.Disconnected);
-            ErrorReceived?.Invoke($"Connect failed: {ex.Message}");
+            try { ws.Abort(); } catch { }
+            ws.Dispose();
+            readCts.Dispose();
+            if (IsCurrent(epoch))
+            {
+                _ws = null;
+                _readCts = null;
+                SetState(ConnectionState.Disconnected);
+                ErrorReceived?.Invoke($"Connect failed: {ex.Message}");
+            }
         }
     }
 
     public Task StopAsync()
     {
+        Interlocked.Increment(ref _connectionEpoch);
         var ws = _ws;
         var cts = _readCts;
         _ws = null;
@@ -119,8 +140,13 @@ public sealed class AdminLogStreamClient : IDisposable
         return Task.CompletedTask;
     }
 
-    private async Task ReadLoopAsync(Stream stream, ClientWebSocket ws, CancellationToken ct)
+    private async Task ReadLoopAsync(
+        Stream stream,
+        ClientWebSocket ws,
+        CancellationTokenSource readCts,
+        long epoch)
     {
+        var ct = readCts.Token;
         var buffer = new byte[32 * 1024];
         var accum = new MemoryStream();
 
@@ -143,7 +169,8 @@ public sealed class AdminLogStreamClient : IDisposable
                 try
                 {
                     accum.Position = 0;
-                    DispatchMessage(stream, accum);
+                    if (IsCurrent(epoch))
+                        DispatchMessage(stream, accum);
                 }
                 catch { /* malformed — skip */ }
             }
@@ -151,11 +178,20 @@ public sealed class AdminLogStreamClient : IDisposable
         catch (OperationCanceledException) { /* normal teardown */ }
         catch (Exception ex)
         {
-            ErrorReceived?.Invoke($"Stream error: {ex.Message}");
+            if (IsCurrent(epoch))
+                ErrorReceived?.Invoke($"Stream error: {ex.Message}");
         }
         finally
         {
-            SetState(ConnectionState.Disconnected);
+            try { ws.Abort(); } catch { }
+            ws.Dispose();
+            readCts.Dispose();
+            if (IsCurrent(epoch))
+            {
+                if (ReferenceEquals(_ws, ws)) _ws = null;
+                if (ReferenceEquals(_readCts, readCts)) _readCts = null;
+                SetState(ConnectionState.Disconnected);
+            }
         }
     }
 
@@ -228,6 +264,14 @@ public sealed class AdminLogStreamClient : IDisposable
         if (State == s) return;
         State = s;
         StateChanged?.Invoke(s);
+    }
+
+    private bool IsCurrent(long epoch) => Volatile.Read(ref _connectionEpoch) == epoch;
+
+    private void SetStateIfCurrent(long epoch, ConnectionState state)
+    {
+        if (IsCurrent(epoch))
+            SetState(state);
     }
 
     public void Dispose()

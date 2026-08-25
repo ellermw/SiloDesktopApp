@@ -20,6 +20,9 @@ public sealed class PlaybackUrlRedactorTests
     [InlineData(
         "http://127.0.0.1:4567/master.m3u8?k=loopback-secret#fragment",
         "http://127.0.0.1:4567/master.m3u8")]
+    [InlineData(
+        "https://access-key:secret-key@node.example/stream/direct/signed-value?X-Amz-Signature=secret",
+        "https://node.example/stream/direct/<redacted>")]
     public void Redact_RemovesPlaybackCredentialsAndQueryValues(string input, string expected)
     {
         Assert.Equal(expected, PlaybackUrlRedactor.Redact(input));

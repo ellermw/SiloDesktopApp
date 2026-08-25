@@ -75,8 +75,8 @@ public partial class AdminInviteCodesViewModel : ObservableObject
         try
         {
             var code = await _adminApi.CreateInviteCodeAsync(request);
-            StatusMessage = $"Invite code \"{code.Code}\" created.";
             await LoadAsync();
+            StatusMessage = $"Invite code \"{code.Code}\" created.";
             return code;
         }
         catch (Exception ex)
@@ -104,8 +104,8 @@ public partial class AdminInviteCodesViewModel : ObservableObject
             {
                 AdditionalUses = additionalUses
             });
-            StatusMessage = $"Added {additionalUses} use{(additionalUses == 1 ? "" : "s")} to \"{updated.Code}\".";
             await LoadAsync();
+            StatusMessage = $"Added {additionalUses} use{(additionalUses == 1 ? "" : "s")} to \"{updated.Code}\".";
             return updated;
         }
         catch (Exception ex)
@@ -128,8 +128,9 @@ public partial class AdminInviteCodesViewModel : ObservableObject
             {
                 Enabled = !code.Enabled
             });
-            StatusMessage = code.Enabled ? "Invite code disabled." : "Invite code enabled.";
+            var disabled = code.Enabled;
             await LoadAsync();
+            StatusMessage = disabled ? "Invite code disabled." : "Invite code enabled.";
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
     }
@@ -144,8 +145,8 @@ public partial class AdminInviteCodesViewModel : ObservableObject
         try
         {
             await _adminApi.DeleteInviteCodeAsync(id);
-            StatusMessage = "Invite code deleted.";
             await LoadAsync();
+            StatusMessage = "Invite code deleted.";
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
     }

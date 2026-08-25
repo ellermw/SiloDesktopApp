@@ -293,10 +293,11 @@ public sealed partial class AdminSubtitlesPage : Page
         }
         AddCell(root, mediaCell, 0);
         AddCell(root, MakeCell(Basename(subtitle.FilePath), fontFamily: "Consolas"), 1);
-        AddCell(root, MakeBadge($"{subtitle.Language.ToUpperInvariant()}  {Services.PlayerService.LanguageCodeToName(subtitle.Language)}"), 2);
+        var language = subtitle.Language ?? "";
+        AddCell(root, MakeBadge($"{language.ToUpperInvariant()}  {Services.PlayerService.LanguageCodeToName(language)}"), 2);
         AddCell(root, MakeBadge(ProviderLabel(subtitle.Provider)), 3);
         AddCell(root, MakeCell(string.IsNullOrWhiteSpace(subtitle.ReleaseName) ? "—" : subtitle.ReleaseName, fontFamily: "Consolas"), 4);
-        AddCell(root, MakeBadge($".{subtitle.Format.TrimStart('.')}") , 5);
+        AddCell(root, MakeBadge($".{(subtitle.Format ?? "srt").TrimStart('.')}") , 5);
         AddCell(root, MakeCell(subtitle.HearingImpaired ? "HI" : ""), 6);
         AddCell(root, MakeCell(string.IsNullOrWhiteSpace(subtitle.UploaderUsername) ? "—" : subtitle.UploaderUsername), 7);
         AddCell(root, MakeCell(FormatRelativeDate(subtitle.CreatedAt)), 8);
@@ -436,7 +437,8 @@ public sealed partial class AdminSubtitlesPage : Page
         var summary = new Border { Padding = new Thickness(12), CornerRadius = new CornerRadius(8), Background = (Brush)Application.Current.Resources["SurfaceBrush"] };
         var summaryContent = new StackPanel { Spacing = 6 };
         summaryContent.Children.Add(new TextBlock { Text = string.IsNullOrWhiteSpace(subtitle.MediaTitle) ? $"Media file {subtitle.MediaFileId}" : subtitle.MediaTitle, FontWeight = FontWeights.SemiBold });
-        summaryContent.Children.Add(new TextBlock { Text = $"{subtitle.Language.ToUpperInvariant()} · {Services.PlayerService.LanguageCodeToName(subtitle.Language)}    {ProviderLabel(subtitle.Provider)}", FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        var displayLanguage = subtitle.Language ?? "";
+        summaryContent.Children.Add(new TextBlock { Text = $"{displayLanguage.ToUpperInvariant()} · {Services.PlayerService.LanguageCodeToName(displayLanguage)}    {ProviderLabel(subtitle.Provider)}", FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
         summary.Child = summaryContent;
 
         var dialog = new ContentDialog
@@ -516,7 +518,7 @@ public sealed partial class AdminSubtitlesPage : Page
         {
             XamlRoot = XamlRoot,
             Title = "Delete subtitle?",
-            Content = $"Remove {ProviderLabel(subtitle.Provider)} {subtitle.Language.ToUpperInvariant()} subtitles for \"{(string.IsNullOrWhiteSpace(subtitle.MediaTitle) ? "this media" : subtitle.MediaTitle)}\"? This deletes the stored file from S3.",
+            Content = $"Remove {ProviderLabel(subtitle.Provider)} {(subtitle.Language ?? "").ToUpperInvariant()} subtitles for \"{(string.IsNullOrWhiteSpace(subtitle.MediaTitle) ? "this media" : subtitle.MediaTitle)}\"? This deletes the stored file from S3.",
             PrimaryButtonText = "Delete",
             PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
             CloseButtonText = "Cancel",

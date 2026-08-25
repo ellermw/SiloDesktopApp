@@ -6,6 +6,8 @@ namespace SiloPlayer.Core.Services;
 
 public class PlaybackManager : IDisposable
 {
+    private static readonly string s_appVersion = ResolveAppVersion();
+
     private readonly PlaybackApi _playbackApi;
     private readonly CatalogApi _catalogApi;
     private readonly AuthService _authService;
@@ -103,9 +105,7 @@ public class PlaybackManager : IDisposable
         string? qualityPreference = null,
         CancellationToken ct = default)
     {
-        var appVersion = System.Diagnostics.FileVersionInfo
-            .GetVersionInfo(Environment.ProcessPath ?? "")
-            .ProductVersion?.Split('+')[0] ?? "unknown";
+        var appVersion = s_appVersion;
         var (capabilities, context) = MpvNativePlaybackCapabilities.CreateProtocolV3Profile(
             appVersion,
             _audioPassthrough);
@@ -163,6 +163,23 @@ public class PlaybackManager : IDisposable
         StreamUrl = url;
         StartProgressReporting();
         return response;
+    }
+
+    private static string ResolveAppVersion()
+    {
+        try
+        {
+            var path = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(path))
+                return "unknown";
+            return System.Diagnostics.FileVersionInfo
+                .GetVersionInfo(path)
+                .ProductVersion?.Split('+')[0] ?? "unknown";
+        }
+        catch
+        {
+            return "unknown";
+        }
     }
 
     private static string NormalizeQualityPreference(string? qualityPreference)

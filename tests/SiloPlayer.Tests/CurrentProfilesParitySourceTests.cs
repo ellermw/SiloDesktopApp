@@ -64,8 +64,9 @@ public sealed class CurrentProfilesParitySourceTests
     {
         var settings = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml.cs");
         var loadStart = settings.IndexOf("private async Task LoadProfilesAsync", StringComparison.Ordinal);
+        Assert.True(loadStart >= 0, "SettingsPage.xaml.cs no longer defines LoadProfilesAsync.");
         var loadEnd = settings.IndexOf("private static Border ProfileBadge", loadStart, StringComparison.Ordinal);
-        Assert.True(loadStart >= 0 && loadEnd > loadStart);
+        Assert.True(loadEnd > loadStart);
         var load = settings[loadStart..loadEnd];
 
         var fetch = load.IndexOf("await authApi.GetProfilesAsync()", StringComparison.Ordinal);

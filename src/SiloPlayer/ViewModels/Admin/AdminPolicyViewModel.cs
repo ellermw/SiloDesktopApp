@@ -73,6 +73,8 @@ public partial class AdminPolicyViewModel(AdminApi api) : ObservableObject
         Comment = "";
         Source = _seedSource;
         StatusMessage = null;
+        OnPropertyChanged(nameof(EditorStep));
+        OnPropertyChanged(nameof(ActivationTarget));
     }
     public async Task CreateDocumentAsync(string domain, string name) => await Busy(async () => { var d = await api.CreatePolicyDocumentAsync(domain, name); Documents.Add(d); await SelectDocumentAsync(d); });
     public string EditorStep

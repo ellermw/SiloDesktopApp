@@ -240,10 +240,12 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
 
         try
         {
-            foreach (var (key, value) in _dirtySettings)
+            foreach (var (key, value) in _dirtySettings.ToArray())
             {
                 var response = await _adminApi.UpdateAdminSettingAsync(key, value);
                 LastSaveRequiresRestart |= response.RestartRequired;
+                _settings[key] = value;
+                _dirtySettings.Remove(key);
             }
 
             if (DirtyRateLimitConfig != null)
@@ -256,6 +258,16 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
 
             // Reload to get fresh values
             _settings = await _adminApi.GetAdminSettingsAsync();
+            try
+            {
+                var (configured, managed) = await _adminApi.GetSensitiveStatusAsync();
+                _sensitiveConfigured = configured;
+                _managedByEnv = managed;
+            }
+            catch
+            {
+                // Saving succeeded; sensitive-status refresh is best effort.
+            }
             _dirtySettings.Clear();
             HasDirtyChanges = false;
             DirtyCount = 0;
@@ -263,6 +275,10 @@ public partial class AdminSettingsDetailViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            try { _settings = await _adminApi.GetAdminSettingsAsync(); }
+            catch { }
+            DirtyCount = _dirtySettings.Count + (_dirtyRateLimitConfig != null ? 1 : 0);
+            HasDirtyChanges = DirtyCount > 0;
             ErrorMessage = $"Failed to save settings: {ex.Message}";
         }
         finally

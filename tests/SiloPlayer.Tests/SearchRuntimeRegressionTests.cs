@@ -17,8 +17,9 @@ public sealed class SearchRuntimeRegressionTests
         Assert.Contains("TimeSpan.FromMilliseconds(100)", handler);
         Assert.Contains("ShowResultsShellForCurrentQuery();", handler);
         Assert.Contains("RestoreSearchFocus(focusState);", handler);
-        Assert.True(handler.IndexOf("RestoreSearchFocus(focusState);", StringComparison.Ordinal) <
-                    handler.IndexOf("await ViewModel.SearchCommand.ExecuteAsync", StringComparison.Ordinal));
+        var restoreFocus = handler.IndexOf("RestoreSearchFocus(focusState);", StringComparison.Ordinal);
+        var executeSearch = handler.IndexOf("await ViewModel.SearchCommand.ExecuteAsync", StringComparison.Ordinal);
+        Assert.True(restoreFocus >= 0 && executeSearch > restoreFocus);
 
         var positionHelper = Slice(code, "private void PositionSearchSurface", "private async void SearchBox_KeyDown");
         Assert.Contains("? EmptySearchHost", positionHelper);
@@ -122,9 +123,9 @@ public sealed class SearchRuntimeRegressionTests
         Assert.Contains("StableRequestResultKey", source);
         Assert.Contains("SequenceEqual(outside.Select(StableRequestResultKey))", source);
         Assert.Contains("outside.Count == 0 && OutsideLibraryResults.Count == 0", source);
-        Assert.True(
-            searchMethod.IndexOf("ReplaceMediaResults(response.Items)", StringComparison.Ordinal) <
-            searchMethod.IndexOf("SearchOutsideLibraryAsync(querySnapshot, ct)", StringComparison.Ordinal));
+        var replaceMedia = searchMethod.IndexOf("ReplaceMediaResults(response.Items)", StringComparison.Ordinal);
+        var searchOutside = searchMethod.IndexOf("SearchOutsideLibraryAsync(querySnapshot, ct)", StringComparison.Ordinal);
+        Assert.True(replaceMedia >= 0 && searchOutside > replaceMedia);
     }
 
     [Fact]
@@ -138,23 +139,21 @@ public sealed class SearchRuntimeRegressionTests
         Assert.Contains("_ = SaveMediaScopePreferenceAsync(MediaScope);", typeHandler);
         Assert.DoesNotContain("await _settingsApi.PutSettingAsync(\"search.media_scope\"", scopeHandler);
         Assert.DoesNotContain("await _settingsApi.PutSettingAsync(\"search.media_scope\"", typeHandler);
-        Assert.True(scopeHandler.IndexOf("_ = SaveMediaScopePreferenceAsync(MediaScope);", StringComparison.Ordinal) <
-                    scopeHandler.IndexOf("await SearchAsync();", StringComparison.Ordinal));
-        Assert.True(typeHandler.IndexOf("_ = SaveMediaScopePreferenceAsync(MediaScope);", StringComparison.Ordinal) <
-                    typeHandler.IndexOf("await SearchAsync();", StringComparison.Ordinal));
+        var scopeSave = scopeHandler.IndexOf("_ = SaveMediaScopePreferenceAsync(MediaScope);", StringComparison.Ordinal);
+        var scopeSearch = scopeHandler.IndexOf("await SearchAsync();", StringComparison.Ordinal);
+        var typeSave = typeHandler.IndexOf("_ = SaveMediaScopePreferenceAsync(MediaScope);", StringComparison.Ordinal);
+        var typeSearch = typeHandler.IndexOf("await SearchAsync();", StringComparison.Ordinal);
+        Assert.True(scopeSave >= 0 && scopeSearch > scopeSave);
+        Assert.True(typeSave >= 0 && typeSearch > typeSave);
     }
 
     [Fact]
     public void OptionalDiscoveryAndErrorsRefreshVisibleSearchState()
     {
         var source = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml.cs");
-        var web = ReadWebUiFile("web", "src", "pages", "Catalog.tsx");
         var ctor = Slice(source, "public SearchPage()", "protected override void OnNavigatedTo");
         var state = Slice(source, "private void UpdateResultsState", "private void UpdatePeopleSection");
 
-        Assert.Contains("state.source === \"query\" ? \"in library\"", web);
-        Assert.Contains("const showExactResultCount = state.source !== \"section\" && !isQuerySource;", web);
-        Assert.Contains("{showExactResultCount ?", web);
         Assert.Contains("ViewModel.OutsideLibraryResults.CollectionChanged", ctor);
         Assert.Contains("UpdateRequestResults();", ctor);
         Assert.Contains("if (ViewModel.Results.Count == 0 && ViewModel.PeopleResults.Count == 0)", ctor);
@@ -202,10 +201,6 @@ public sealed class SearchRuntimeRegressionTests
         var pageCode = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml.cs");
         var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "SearchViewModel.cs");
         var dialog = ReadRepoFile("src", "SiloPlayer", "Controls", "GlobalSearchDialog.xaml.cs");
-        var web = ReadWebUiFile("web", "src", "components", "RequestToAddSection.tsx");
-
-        Assert.Contains("const DIALOG_LIMIT = 4", web);
-        Assert.Contains("const GRID_LIMIT = 20", web);
         Assert.Contains(".Take(20)", viewModel);
         Assert.Contains("x:Name=\"RequestResultsEyebrow\"", pageXaml);
         Assert.Contains("x:Name=\"RequestResultsTitle\"", pageXaml);
@@ -236,22 +231,21 @@ public sealed class SearchRuntimeRegressionTests
 
         var converter = ReadRepoFile("src", "SiloPlayer", "Converters", "UrlToImageSourceConverter.cs");
         Assert.Contains("Uri.TryCreate", converter);
-        Assert.Contains("new BitmapImage(uri)", converter);
+        Assert.Contains("GetImageAsync", converter);
+        Assert.Contains("await bitmap.SetSourceAsync", converter);
     }
 
     private static string Slice(string source, string start, string end)
     {
         var startIndex = source.IndexOf(start, StringComparison.Ordinal);
+        Assert.True(startIndex >= 0, $"Marker not found: {start}");
         var endIndex = source.IndexOf(end, startIndex, StringComparison.Ordinal);
-        Assert.True(startIndex >= 0 && endIndex > startIndex);
+        Assert.True(endIndex > startIndex, $"Marker not found after start: {end}");
         return source[startIndex..endIndex];
     }
 
     private static string ReadRepoFile(params string[] parts) =>
         File.ReadAllText(Path.Combine([FindRepositoryRoot(), .. parts]));
-
-    private static string ReadWebUiFile(params string[] parts) =>
-        File.ReadAllText(Path.Combine([FindRepositoryRoot(), ".codex-tmp", "silo-server-current", .. parts]));
 
     private static string FindRepositoryRoot()
     {

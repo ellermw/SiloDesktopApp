@@ -103,6 +103,11 @@ public sealed partial class AdminPlaybackHistoryPage : Page
         RebuildAll();
 
         // Start a 30-second polling timer (no dedicated event channel for playback history)
+        if (_refreshTimer is not null)
+        {
+            _refreshTimer.Tick -= RefreshTimer_Tick;
+            _refreshTimer.Stop();
+        }
         _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(30) };
         _refreshTimer.Tick += RefreshTimer_Tick;
         _refreshTimer.Start();

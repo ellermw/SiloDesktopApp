@@ -49,11 +49,11 @@ public sealed partial class AdminMaintenancePage : Page
         ViewModel.ExportJobs.CollectionChanged += ExportJobs_CollectionChanged;
         ViewModel.AllJobs.CollectionChanged += AllJobs_CollectionChanged;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
-        if (ViewModel.ImportJobs.Count > 0) RebuildImportJobs();
-        if (ViewModel.ExportJobs.Count > 0) RebuildExportJobs();
-        if (ViewModel.AllJobs.Count > 0) RebuildAllJobs();
         try { await ViewModel.LoadCommand.ExecuteAsync(null); }
         catch (Exception ex) { ViewModel.ErrorMessage = $"Error: {ex.Message}"; }
+        RebuildImportJobs();
+        RebuildExportJobs();
+        RebuildAllJobs();
 
         // Subscribe to realtime job events for live refresh
         try

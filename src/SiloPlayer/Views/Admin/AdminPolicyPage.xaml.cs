@@ -237,7 +237,7 @@ public sealed partial class AdminPolicyPage : Page
         var status = MakeStatusBadge(DocumentStatus(document));
         var updated = new TextBlock
         {
-            Text = $"Updated {document.UpdatedAt.ToLocalTime():g}", FontSize = 11,
+            Text = $"Updated {SiloPlayer.Helpers.DateTimeDisplay.FormatDateTime(document.UpdatedAt)}", FontSize = 11,
             Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
         };

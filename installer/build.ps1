@@ -55,8 +55,9 @@ function Set-LocalCodeSignature {
         -Certificate $SigningCertificate `
         -HashAlgorithm SHA256 `
         -TimestampServer $TimestampServer
-    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
-        throw "Signing failed for '$Path': $($signature.Status) - $($signature.StatusMessage)"
+    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+        -not $signature.TimeStamperCertificate) {
+        throw "Timestamp signing failed for '$Path': $($signature.Status) - $($signature.StatusMessage)"
     }
 }
 
@@ -78,10 +79,16 @@ Write-Host "Using ISCC: $IsccPath"
 
 # Check Windows App SDK runtime installer
 $WinAppSdkInstaller = "$InstallerDir\deps\windowsappruntimeinstall-x64.exe"
+$WinAppSdkInstallerUri = "https://aka.ms/windowsappsdk/1.8/1.8.260317003/windowsappruntimeinstall-x64.exe"
+$WinAppSdkInstallerSha256 = "8E21F22BF1191D7E347F6718BA8251D30B1E1C01775B9943C8E6239B7AF95EA7"
 if (-not (Test-Path $WinAppSdkInstaller)) {
-    Write-Host "Downloading Windows App SDK runtime installer..."
+    Write-Host "Downloading pinned Windows App SDK 1.8.6 runtime installer..."
     $null = New-Item -ItemType Directory -Path "$InstallerDir\deps" -Force
-    Invoke-WebRequest -Uri "https://aka.ms/windowsappsdk/1.8/latest/windowsappruntimeinstall-x64.exe" -OutFile $WinAppSdkInstaller
+    Invoke-WebRequest -Uri $WinAppSdkInstallerUri -OutFile $WinAppSdkInstaller
+}
+$WinAppSdkActualSha256 = (Get-FileHash -LiteralPath $WinAppSdkInstaller -Algorithm SHA256).Hash
+if ($WinAppSdkActualSha256 -ne $WinAppSdkInstallerSha256) {
+    throw "Windows App SDK installer hash mismatch. Expected $WinAppSdkInstallerSha256 but found $WinAppSdkActualSha256."
 }
 
 Write-Host "=== Publishing app ($Configuration, $Runtime) ==="
@@ -227,6 +234,11 @@ if ($SetupExe) {
         if ($setupSignature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
             -not $setupSignature.TimeStamperCertificate) {
             Set-LocalCodeSignature -Path $SetupExe.FullName
+            $setupSignature = Get-AuthenticodeSignature -LiteralPath $SetupExe.FullName
+        }
+        if ($setupSignature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
+            -not $setupSignature.TimeStamperCertificate) {
+            throw "Installer signature validation failed: a valid timestamped signature was not present."
         }
         Write-Host "Verified timestamp-signed installer with $($SigningCertificate.Subject)."
     }

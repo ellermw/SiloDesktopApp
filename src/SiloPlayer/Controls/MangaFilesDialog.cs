@@ -183,7 +183,11 @@ public sealed partial class MangaFilesDialog : ContentDialog
         {
             var token = file.Volume.Trim();
             var match = VolumeToken.Match(token);
-            return match.Success && double.TryParse(match.Groups[1].Value, out var number)
+            return match.Success && double.TryParse(
+                    match.Groups[1].Value,
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out var number)
                 ? $"Volume {number:0.##}"
                 : token;
         }

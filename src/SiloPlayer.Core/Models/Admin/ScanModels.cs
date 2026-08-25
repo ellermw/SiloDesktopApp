@@ -42,7 +42,7 @@ public class UpdateLibraryRequest
 /// <summary>
 /// Active scan run streamed over the <c>scans</c> event channel. No REST endpoint
 /// backs this — snapshot arrives on subscribe, then live events as state changes.
-/// Shape mirrors continuum-server/internal/events/scan_registry.go ScanRun.
+/// This model captures the Silo event payload used to update active scan state.
 /// </summary>
 public class AdminScanRun
 {

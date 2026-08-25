@@ -21,7 +21,7 @@ public class AdminSettingsCurrentParitySourceTests
         Assert.Contains("ScheduleAdminThemeSave(\"ui.admin_theme_vars\", 500)", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("ScheduleAdminThemeSave(\"ui.admin_custom_css\", 1000)", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("SanitizeAdminThemeCss", CodeBehind, StringComparison.Ordinal);
-        Assert.Contains("Silo-Server/silo-themes", CodeBehind, StringComparison.Ordinal);
+        Assert.Contains("https://raw.githubusercontent.com/Silo-Server/silo-themes/main/catalog.json", CodeBehind, StringComparison.Ordinal);
         Assert.DoesNotContain("ContinuumApp/continuum-themes", CodeBehind, StringComparison.Ordinal);
     }
 
@@ -117,6 +117,21 @@ public class AdminSettingsCurrentParitySourceTests
                  })
             Assert.Contains($"\"{legacy}\"", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("GetSettingValue", CodeBehind, StringComparison.Ordinal);
+        foreach (var current in new[]
+                 {
+                     "ai.base_url", "ai.chat_model", "ai.api_key", "ai.asr_model",
+                     "ai.asr_base_url", "ai.asr_api_key", "ai.max_concurrent_jobs"
+                 })
+            Assert.Contains($"\"{current}\"", CodeBehind, StringComparison.Ordinal);
+        var endpointSaveStart = CodeBehind.IndexOf("AddOwnedSettingsSaveButton(endpointCard", StringComparison.Ordinal);
+        Assert.True(endpointSaveStart >= 0, "Expected the AI endpoint save payload.");
+        var endpointSaveEnd = CodeBehind.IndexOf("]);", endpointSaveStart, StringComparison.Ordinal);
+        Assert.True(endpointSaveEnd > endpointSaveStart, "Expected the AI endpoint save payload to terminate.");
+        var endpointSave = CodeBehind[endpointSaveStart..endpointSaveEnd];
+        Assert.DoesNotContain("subtitle_ai.base_url", endpointSave, StringComparison.Ordinal);
+        Assert.DoesNotContain("subtitle_ai.chat_model", endpointSave, StringComparison.Ordinal);
+        Assert.DoesNotContain("subtitle_ai.api_key", endpointSave, StringComparison.Ordinal);
+        Assert.DoesNotContain("subtitle_ai.max_concurrent_jobs", endpointSave, StringComparison.Ordinal);
     }
 
     [Fact]

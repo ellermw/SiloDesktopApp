@@ -110,6 +110,8 @@ public sealed class MpvPlayerSourceTests
         Assert.Contains("RedactCommandArgument", source);
         Assert.Contains("room_token", source);
         Assert.Contains("api_key", source);
+        Assert.Contains("AWSAccessKeyId", source);
+        Assert.Contains("X-Amz-", source);
         Assert.DoesNotContain(@"(?:token|access_token|refresh_token|profile_token)", source);
     }
 
@@ -159,8 +161,8 @@ public sealed class MpvPlayerSourceTests
             "MpvVideoWindow.cs"));
 
         var delayStart = source.IndexOf("Task.Delay(200)", StringComparison.Ordinal);
-        var nextMember = source.IndexOf("        });", delayStart, StringComparison.Ordinal);
         Assert.True(delayStart >= 0);
+        var nextMember = source.IndexOf("        });", delayStart, StringComparison.Ordinal);
         Assert.True(nextMember > delayStart);
 
         var delayedCorrection = source[delayStart..(nextMember + "        });".Length)];

@@ -5,7 +5,7 @@ namespace SiloPlayer.Core.Api;
 public class PlaybackApi(SiloApiClient client)
 {
     public Task<WatchDetailResponse> GetWatchDetailAsync(string contentId, CancellationToken ct = default)
-        => client.GetAsync<WatchDetailResponse>($"/api/v1/watch/{contentId}", ct);
+        => client.GetAsync<WatchDetailResponse>($"/api/v1/watch/{Uri.EscapeDataString(contentId)}", ct);
 
     public Task<PlaybackStartResponse> StartPlaybackAsync(PlaybackStartRequest request, CancellationToken ct = default)
         => client.PostAsync<PlaybackStartResponse>("/api/v1/playback/start", request, ct);
@@ -26,7 +26,7 @@ public class PlaybackApi(SiloApiClient client)
             ct);
 
     public Task ReportProgressAsync(string sessionId, double position, bool isPaused, CancellationToken ct = default)
-        => client.PostNoContentAsync($"/api/v1/playback/{sessionId}/progress",
+        => client.PostNoContentAsync($"/api/v1/playback/{Uri.EscapeDataString(sessionId)}/progress",
             new Dictionary<string, object?>
             {
                 ["position"] = position,
@@ -34,13 +34,13 @@ public class PlaybackApi(SiloApiClient client)
             }, ct);
 
     public Task StopPlaybackAsync(string sessionId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/playback/{sessionId}", ct);
+        => client.DeleteAsync($"/api/v1/playback/{Uri.EscapeDataString(sessionId)}", ct);
 
     public Task<TranscodeStartResponse> StartTranscodeAsync(TranscodeStartRequest request, CancellationToken ct = default)
         => client.PostAsync<TranscodeStartResponse>("/api/v1/playback/transcode/start", request, ct);
 
     public Task<ChangeAudioResponse> ChangeAudioTrackAsync(string sessionId, int trackIndex, double position, CancellationToken ct = default)
-        => client.PatchAsync<ChangeAudioResponse>($"/api/v1/playback/{sessionId}/audio",
+        => client.PatchAsync<ChangeAudioResponse>($"/api/v1/playback/{Uri.EscapeDataString(sessionId)}/audio",
             new Dictionary<string, object?>
             {
                 ["audio_track_index"] = trackIndex,

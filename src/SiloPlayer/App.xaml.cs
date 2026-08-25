@@ -117,7 +117,10 @@ public partial class App : Application
         try
         {
             using var pipe = new NamedPipeClientStream(
-                ".", ActivationPipeName, PipeDirection.Out, PipeOptions.Asynchronous);
+                ".",
+                ActivationPipeName,
+                PipeDirection.Out,
+                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             pipe.ConnectAsync(timeout.Token).GetAwaiter().GetResult();
             using var writer = new StreamWriter(pipe, new UTF8Encoding(false), leaveOpen: false)
@@ -149,7 +152,7 @@ public partial class App : Application
                     PipeDirection.In,
                     1,
                     PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous);
+                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
                 await pipe.WaitForConnectionAsync(ct);
                 using var reader = new StreamReader(pipe, Encoding.UTF8, leaveOpen: true);
                 var encoded = await reader.ReadLineAsync(ct);

@@ -293,7 +293,7 @@ public sealed partial class AdminTasksPage : Page
                 Margin = new Thickness(0, 6, 0, 0)
             };
 
-            double pct = Math.Max(task.Progress, 2.0);
+            double pct = Math.Clamp(Math.Max(task.Progress, 2.0), 0, 100);
             var progressFill = new Border
             {
                 Background = task.State == "cancelling"

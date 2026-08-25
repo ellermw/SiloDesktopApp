@@ -184,7 +184,7 @@ public class CatalogApi(SiloApiClient client)
     }
 
     public Task<MediaItemDetail> GetItemDetailAsync(string contentId, CancellationToken ct = default)
-        => client.GetAsync<MediaItemDetail>($"/api/v1/catalog/items/{contentId}", ct);
+        => client.GetAsync<MediaItemDetail>($"/api/v1/catalog/items/{Uri.EscapeDataString(contentId)}", ct);
 
     public Task<ItemListResponse> GetFavoritesAsync(CancellationToken ct = default)
         => GetFavoritesAsync(limit: 50, offset: 0, ct);
@@ -209,22 +209,22 @@ public class CatalogApi(SiloApiClient client)
         => client.GetAsync<RecommendationsResponse>("/api/v1/recommendations/for-you/rows", ct);
 
     public Task AddFavoriteAsync(string contentId, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/favorites/{contentId}", null, ct);
+        => client.PutNoContentAsync($"/api/v1/favorites/{Uri.EscapeDataString(contentId)}", null, ct);
 
     public Task RemoveFavoriteAsync(string contentId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/favorites/{contentId}", ct);
+        => client.DeleteAsync($"/api/v1/favorites/{Uri.EscapeDataString(contentId)}", ct);
 
     public Task AddToWatchlistAsync(string contentId, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/watchlist/{contentId}", null, ct);
+        => client.PutNoContentAsync($"/api/v1/watchlist/{Uri.EscapeDataString(contentId)}", null, ct);
 
     public Task RemoveFromWatchlistAsync(string contentId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/watchlist/{contentId}", ct);
+        => client.DeleteAsync($"/api/v1/watchlist/{Uri.EscapeDataString(contentId)}", ct);
 
     public Task<SeasonsResponse> GetSeasonsAsync(string seriesId, CancellationToken ct = default)
-        => client.GetAsync<SeasonsResponse>($"/api/v1/catalog/series/{seriesId}/seasons", ct);
+        => client.GetAsync<SeasonsResponse>($"/api/v1/catalog/series/{Uri.EscapeDataString(seriesId)}/seasons", ct);
 
     public Task<EpisodesResponse> GetEpisodesAsync(string seriesId, int seasonNumber, CancellationToken ct = default)
-        => client.GetAsync<EpisodesResponse>($"/api/v1/catalog/series/{seriesId}/seasons/{seasonNumber}/episodes", ct);
+        => client.GetAsync<EpisodesResponse>($"/api/v1/catalog/series/{Uri.EscapeDataString(seriesId)}/seasons/{seasonNumber}/episodes", ct);
 
     /// <summary>
     /// Fetches the episodes that belong to a season item. This is the canonical
@@ -237,10 +237,10 @@ public class CatalogApi(SiloApiClient client)
     // ===== Watched State =====
 
     public Task MarkWatchedAsync(string contentId, CancellationToken ct = default)
-        => client.PostNoContentAsync($"/api/v1/watched/{contentId}", new { }, ct);
+        => client.PostNoContentAsync($"/api/v1/watched/{Uri.EscapeDataString(contentId)}", new { }, ct);
 
     public Task MarkUnwatchedAsync(string contentId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/watched/{contentId}", ct);
+        => client.DeleteAsync($"/api/v1/watched/{Uri.EscapeDataString(contentId)}", ct);
 
     // ===== Ratings =====
 
@@ -248,7 +248,7 @@ public class CatalogApi(SiloApiClient client)
     {
         try
         {
-            var r = await client.GetAsync<RatingResponse>($"/api/v1/ratings/{contentId}", ct);
+            var r = await client.GetAsync<RatingResponse>($"/api/v1/ratings/{Uri.EscapeDataString(contentId)}", ct);
             return r.Rating;
         }
         catch (ApiException ex) when (ex.StatusCode == 404)
@@ -258,15 +258,15 @@ public class CatalogApi(SiloApiClient client)
     }
 
     public Task SetRatingAsync(string contentId, int rating, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/ratings/{contentId}", new { rating }, ct);
+        => client.PutNoContentAsync($"/api/v1/ratings/{Uri.EscapeDataString(contentId)}", new { rating }, ct);
 
     public Task DeleteRatingAsync(string contentId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/ratings/{contentId}", ct);
+        => client.DeleteAsync($"/api/v1/ratings/{Uri.EscapeDataString(contentId)}", ct);
 
     // ===== Recommendations =====
 
     public Task<SimilarResponse> GetSimilarAsync(string contentId, CancellationToken ct = default)
-        => client.GetAsync<SimilarResponse>($"/api/v1/recommendations/similar/{contentId}", ct);
+        => client.GetAsync<SimilarResponse>($"/api/v1/recommendations/similar/{Uri.EscapeDataString(contentId)}", ct);
 
     // ===== Item Versions =====
 

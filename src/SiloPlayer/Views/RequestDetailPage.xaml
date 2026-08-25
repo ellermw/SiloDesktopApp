@@ -14,7 +14,7 @@
                     <Rectangle.Fill><LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5"><GradientStop Color="#FF0B0C0F" Offset="0" /><GradientStop Color="#E60B0C0F" Offset="0.45" /><GradientStop Color="#330B0C0F" Offset="1" /></LinearGradientBrush></Rectangle.Fill>
                 </Rectangle>
                 <Rectangle VerticalAlignment="Bottom" Height="250"><Rectangle.Fill><LinearGradientBrush StartPoint="0.5,0" EndPoint="0.5,1"><GradientStop Color="#000B0C0F" /><GradientStop Color="#FF0B0C0F" Offset="1" /></LinearGradientBrush></Rectangle.Fill></Rectangle>
-                <Button x:Name="BackButton" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="24" Width="44" Height="44" Click="Back_Click"><FontIcon Glyph="&#xE72B;" /></Button>
+                <Button x:Name="BackButton" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="24" Width="44" Height="44" Click="Back_Click" AutomationProperties.Name="Go back"><FontIcon Glyph="&#xE72B;" /></Button>
                 <Grid x:Name="HeroContent" Margin="54,104,54,46" VerticalAlignment="Bottom" ColumnSpacing="34" RowSpacing="24">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="210" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>

@@ -19,6 +19,11 @@ public sealed partial class ServerSelectPage : Page
 
         // Update empty state visibility when servers change
         ViewModel.Servers.CollectionChanged += (_, _) => UpdateEmptyState();
+        ViewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(ServerSelectViewModel.IsAddingServer))
+                UpdateEmptyState();
+        };
         UpdateEmptyState();
     }
 

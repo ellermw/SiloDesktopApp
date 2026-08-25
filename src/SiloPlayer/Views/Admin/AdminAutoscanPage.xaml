@@ -36,7 +36,7 @@
       <ListView.ItemTemplate>
        <DataTemplate x:DataType="admin:AutoscanSource">
         <Grid Padding="16,13" ColumnSpacing="16" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
-         <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="2.7*"/><ColumnDefinition Width="4*"/><ColumnDefinition Width="85"/><ColumnDefinition Width="130"/><ColumnDefinition Width="56"/></Grid.ColumnDefinitions>
+         <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="2.7*"/><ColumnDefinition Width="4*"/><ColumnDefinition Width="85"/><ColumnDefinition Width="130"/><ColumnDefinition Width="150"/></Grid.ColumnDefinitions>
          <StackPanel Spacing="5">
           <StackPanel Orientation="Horizontal" Spacing="6"><TextBlock Text="{x:Bind SourceDisplayName}" FontWeight="SemiBold"/><Border Padding="7,2" CornerRadius="8" Background="{StaticResource SurfaceBrush}" Visibility="{x:Bind IsWebhook,Converter={StaticResource BoolToVis}}"><TextBlock Text="Webhook" FontSize="10"/></Border></StackPanel>
           <TextBlock Text="{x:Bind SourceDetail}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}"/>

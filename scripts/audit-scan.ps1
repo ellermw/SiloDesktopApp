@@ -3,7 +3,7 @@
 #
 # What it does:
 #  1. Reads docs/audit-baseline.json to find the server SHA we last audited.
-#  2. Walks the local continuum-server clone and (optionally) pulls the latest.
+#  2. Walks the official Silo server clone and (optionally) pulls the latest.
 #  3. Diffs baseline..HEAD to find every changed file under web/src/ and internal/.
 #  4. Classifies each changed file against the "areas" map in audit-baseline.json.
 #  5. Writes a markdown report under docs/audit-reports/ with a prioritized work list.
@@ -19,10 +19,10 @@
 # Usage:
 #   pwsh scripts/audit-scan.ps1                 # use existing local server state
 #   pwsh scripts/audit-scan.ps1 -Pull           # git pull before scanning
-#   pwsh scripts/audit-scan.ps1 -ServerPath X   # override default F:\continuum-server
+#   pwsh scripts/audit-scan.ps1 -ServerPath X   # override the bundled reference worktree
 
 param(
-    [string]$ServerPath = "F:\continuum-server",
+    [string]$ServerPath = (Join-Path (Join-Path $PSScriptRoot "..") ".codex-tmp\silo-server-current"),
     [string]$BaselinePath = (Join-Path (Join-Path $PSScriptRoot "..") "docs\audit-baseline.json"),
     [string]$ReportsDir = (Join-Path (Join-Path $PSScriptRoot "..") "docs\audit-reports"),
     [string]$Since = "",   # Optional: override the baseline SHA for an ad-hoc scan
@@ -31,8 +31,17 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Invoke-GitChecked {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    $output = & git @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "git $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
+    }
+    return $output
+}
+
 if (-not (Test-Path $ServerPath)) {
-    Write-Error "Server clone not found at '$ServerPath'. Clone gitlab.zenterprise.org/quick/continuum first."
+    Write-Error "Official Silo server clone not found at '$ServerPath'. Clone https://github.com/Silo-Server/silo-server.git first."
     exit 1
 }
 if (-not (Test-Path $BaselinePath)) {
@@ -49,22 +58,30 @@ if (-not $baselineSha) {
 
 Push-Location $ServerPath
 try {
+    $originUrl = (Invoke-GitChecked @("remote", "get-url", "origin")).Trim()
+    if ($originUrl -notmatch 'github\.com[/:]Silo-Server/silo-server(?:\.git)?$') {
+        throw "Refusing to audit unexpected origin '$originUrl'; expected the official Silo GitHub repository."
+    }
     if ($Pull) {
-        Write-Host "Pulling latest continuum-server..."
-        git fetch origin 2>&1 | Out-Null
-        git pull 2>&1 | Out-Null
+        Write-Host "Pulling latest Silo server main..."
+        Invoke-GitChecked @("fetch", "origin", "main") | Out-Null
+        Invoke-GitChecked @("merge", "--ff-only", "origin/main") | Out-Null
     }
 
     # Verify the baseline SHA actually exists in the server repo.
-    $null = git cat-file -e "$baselineSha^{commit}" 2>$null
+    & git cat-file -e "$baselineSha^{commit}" 2>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Baseline SHA $baselineSha not found in $ServerPath. Did the repo get force-pushed?"
         exit 1
     }
 
-    $headSha = (git rev-parse HEAD).Trim()
-    $headShort = (git rev-parse --short HEAD).Trim()
-    $headDate = (git log -1 --format="%ci" HEAD).Trim()
+    $headSha = (Invoke-GitChecked @("rev-parse", "HEAD")).Trim()
+    $headShort = (Invoke-GitChecked @("rev-parse", "--short", "HEAD")).Trim()
+    $headDate = (Invoke-GitChecked @("log", "-1", "--format=%ci", "HEAD")).Trim()
+    & git merge-base --is-ancestor $baselineSha $headSha
+    if ($LASTEXITCODE -ne 0) {
+        throw "Baseline SHA $baselineSha is not an ancestor of HEAD $headSha; refusing an ambiguous audit window."
+    }
 
     if ($headSha -eq $baselineSha) {
         Write-Host ""
@@ -80,7 +97,7 @@ try {
     Write-Host ""
 
     # Build { filePath → change kind (A/M/D) } for every file under tracked roots.
-    $diffRaw = git diff --name-status "$baselineSha" "$headSha" -- web/src/ internal/
+    $diffRaw = Invoke-GitChecked @("diff", "--name-status", $baselineSha, $headSha, "--", "web/src/", "internal/")
     $changes = @()
     foreach ($line in $diffRaw) {
         if (-not $line) { continue }
@@ -99,7 +116,7 @@ try {
     }
 
     # List of commit messages for context.
-    $commits = git log --format="%h %s" "$baselineSha..$headSha" -- web/src/ internal/
+    $commits = Invoke-GitChecked @("log", "--format=%h %s", "$baselineSha..$headSha", "--", "web/src/", "internal/")
 }
 finally {
     Pop-Location
@@ -182,12 +199,13 @@ $timestamp = Get-Date -Format "yyyy-MM-dd-HHmm"
 $reportPath = Join-Path $ReportsDir "$timestamp-changes.md"
 
 $sb = New-Object System.Text.StringBuilder
-[void]$sb.AppendLine("# Continuum Server Change Report")
+[void]$sb.AppendLine("# Silo Server Change Report")
 [void]$sb.AppendLine()
 [void]$sb.AppendLine("| | |")
 [void]$sb.AppendLine("|---|---|")
 [void]$sb.AppendLine("| Generated | $(Get-Date -Format "yyyy-MM-dd HH:mm:ss") |")
-[void]$sb.AppendLine("| Baseline  | ``$($baseline.continuum_server_short_sha)`` ($(($baseline.continuum_server_commit_message).Substring(0, [Math]::Min(60, $baseline.continuum_server_commit_message.Length)))) |")
+$baselineMsg = if ($baseline.continuum_server_commit_message) { $baseline.continuum_server_commit_message } else { "(unknown)" }
+[void]$sb.AppendLine("| Baseline  | ``$($baseline.continuum_server_short_sha)`` ($($baselineMsg.Substring(0, [Math]::Min(60, $baselineMsg.Length)))) |")
 [void]$sb.AppendLine("| HEAD      | ``$headShort`` ($headDate) |")
 [void]$sb.AppendLine("| Changed files | $($changes.Count) |")
 [void]$sb.AppendLine("| P0 (tracked-area modified) | $($p0.Count) |")

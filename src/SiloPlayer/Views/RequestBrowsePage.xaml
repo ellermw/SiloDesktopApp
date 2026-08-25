@@ -39,7 +39,7 @@
             </Grid>
         </StackPanel>
         <GridView x:Name="ResultsGrid" Grid.Row="1" Padding="40,8,40,20" SelectionMode="None" IsItemClickEnabled="True" ItemClick="ResultsGrid_ItemClick" ContainerContentChanging="ResultsGrid_ContainerContentChanging">
-            <GridView.ItemsPanel><ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" ItemWidth="164" ItemHeight="312" /></ItemsPanelTemplate></GridView.ItemsPanel>
+            <GridView.ItemsPanel><ItemsPanelTemplate><ItemsWrapGrid Orientation="Horizontal" ItemWidth="196" ItemHeight="344" /></ItemsPanelTemplate></GridView.ItemsPanel>
             <GridView.ItemTemplate>
                 <DataTemplate x:DataType="requests:RequestMediaResult">
                     <Grid Width="184" Margin="6" PointerEntered="ResultCard_PointerEntered" PointerExited="ResultCard_PointerExited">
@@ -52,19 +52,19 @@
                                     HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8"
                                     Padding="9,4" CornerRadius="14"
                                     AutomationProperties.Name="Open in library" />
-                            <Border x:Name="StatusRibbon" Visibility="{x:Bind Request.Requestable, Converter={StaticResource InverseBoolToVis}}"
+                            <Border x:Name="StatusRibbon" Visibility="{x:Bind Request.Requestable, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
                                     HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"
                                     Padding="9,4" CornerRadius="14" BorderThickness="1">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <Ellipse x:Name="StatusDot" Width="6" Height="6" VerticalAlignment="Center" />
-                                    <TextBlock x:Name="StatusRibbonText" Text="{x:Bind RequestLabel}" FontSize="10" FontWeight="SemiBold"
+                                    <TextBlock x:Name="StatusRibbonText" Text="{x:Bind RequestLabel, Mode=OneWay}" FontSize="10" FontWeight="SemiBold"
                                                CharacterSpacing="60" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Border>
-                            <Button x:Name="InlineRequestButton" Content="{x:Bind RequestLabel}" Tag="{x:Bind}"
+                            <Button x:Name="InlineRequestButton" Content="{x:Bind RequestLabel, Mode=OneWay}" Tag="{x:Bind}"
                                     Click="Request_Click" Tapped="InlineAction_Tapped"
                                     GotFocus="InlineRequest_GotFocus" LostFocus="InlineRequest_LostFocus"
-                                    Visibility="{x:Bind Request.Requestable, Converter={StaticResource BoolToVis}}"
+                                    Visibility="{x:Bind Request.Requestable, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                                     HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,12"
                                     Padding="14,6" CornerRadius="16" Opacity="0"
                                     AutomationProperties.Name="Request title" />

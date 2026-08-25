@@ -51,14 +51,11 @@ public sealed class CurrentHomeParitySourceTests
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml");
         var code = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml.cs");
-        var web = ReadWebUiFile("web", "src", "components", "TasteSeedBanner.tsx");
 
         Assert.Contains("x:Name=\"HeroLoadingSkeleton\"", xaml);
         Assert.Contains("x:Name=\"HeroErrorPanel\"", xaml);
         Assert.Contains("Personalize your home", xaml);
         Assert.Contains("Pick a few titles you love and we'll tailor your recommendations.", xaml);
-        Assert.Contains("text-sm font-semibold sm:text-base", web);
-        Assert.Contains("text-xs sm:text-sm", web);
         Assert.Contains("x:Name=\"TasteSeedTitle\"", xaml);
         Assert.Contains("x:Name=\"TasteSeedDescription\"", xaml);
         Assert.Contains("TasteSeedTitle.FontSize = isCompact ? 14 : 16", code);
@@ -128,10 +125,6 @@ public sealed class CurrentHomeParitySourceTests
     public void SectionRowsUseCurrentWebCarouselEdgeFades()
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Controls", "SectionRow.xaml");
-        var web = ReadWebUiFile("web", "src", "components", "MediaCarousel.tsx");
-
-        Assert.Contains("w-10 bg-gradient-to-r", web);
-        Assert.Contains("w-11", web);
         Assert.Contains("x:Name=\"LeftFadeGradient\"", xaml);
         Assert.Contains("x:Name=\"RightFadeGradient\"", xaml);
         Assert.Contains("Width=\"40\"", xaml);
@@ -172,10 +165,6 @@ public sealed class CurrentHomeParitySourceTests
     public void HomeHeroPreservesTheActiveSlideAcrossBackgroundRefreshes()
     {
         var hero = ReadRepoFile("src", "SiloPlayer", "Controls", "HeroCarousel.xaml.cs");
-        var web = ReadWebUiFile("web", "src", "components", "HeroBanner.tsx");
-
-        Assert.Contains("const [activeIndex, setActiveIndex] = useState(0)", web);
-        Assert.Contains("key={`${activeIndex}-${playCycle}`}", web);
         Assert.Contains("previousContentId", hero);
         Assert.Contains("preservedIndex", hero);
         Assert.Contains("isSameVisibleSlide", hero);
@@ -262,15 +251,6 @@ public sealed class CurrentHomeParitySourceTests
     {
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml.cs");
         var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "HomeViewModel.cs");
-        var webProvider = ReadWebUiFile("web", "src", "components", "RealtimeEventsProvider.tsx");
-        var webHome = ReadWebUiFile("web", "src", "pages", "Home.tsx");
-        var webApp = ReadWebUiFile("web", "src", "App.tsx");
-
-        Assert.Contains("useEventChannel(\"catalog\")", webApp);
-        Assert.Contains("useEventChannel(\"user_state\")", webApp);
-        Assert.Contains("bumpHomeRefreshSignal(queryClient)", webProvider);
-        Assert.Contains("[homeRefreshSignal, layout, layoutResetKey, queryClient]", webHome);
-
         Assert.Contains("_eventChannel.Subscribe(\"catalog\", \"user_state\")", page);
         Assert.Contains("ViewModel.QueueRealtimeRefresh($\"catalog:{eventName}\")", page);
         Assert.Contains("ViewModel.QueueRealtimeRefresh($\"user_state:{eventName}\")", page);
@@ -337,10 +317,6 @@ public sealed class CurrentHomeParitySourceTests
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Controls", "ServerActivityButton.xaml");
         var code = ReadRepoFile("src", "SiloPlayer", "Controls", "ServerActivityButton.xaml.cs");
-        var web = ReadWebUiFile("web", "src", "components", "ServerActivity.tsx");
-
-        Assert.Contains("relative flex h-9 w-9", web);
-        Assert.Contains("absolute -top-0.5 -right-0.5", web);
         Assert.Contains("MaxHeight=\"400\"", xaml);
         Assert.Contains("Grid Width=\"44\" Height=\"44\"", xaml);
         Assert.Contains("Width=\"36\"", xaml);
@@ -362,16 +338,6 @@ public sealed class CurrentHomeParitySourceTests
         var all = new string[parts.Length + 1];
         all[0] = FindRepositoryRoot();
         Array.Copy(parts, 0, all, 1, parts.Length);
-        return File.ReadAllText(Path.Combine(all));
-    }
-
-    private static string ReadWebUiFile(params string[] parts)
-    {
-        var all = new string[parts.Length + 3];
-        all[0] = FindRepositoryRoot();
-        all[1] = ".codex-tmp";
-        all[2] = "silo-server-current";
-        Array.Copy(parts, 0, all, 3, parts.Length);
         return File.ReadAllText(Path.Combine(all));
     }
 

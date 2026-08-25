@@ -85,7 +85,7 @@
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
-                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
 
                         <StackPanel x:Name="SourceIdentityPanel" Grid.Column="0" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
                             <ComboBox x:Name="SourceComboBox"

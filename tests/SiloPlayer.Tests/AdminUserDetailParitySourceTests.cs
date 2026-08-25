@@ -31,7 +31,7 @@ public sealed class AdminUserDetailParitySourceTests
     {
         Assert.Contains("Marker Editing", Page, StringComparison.Ordinal);
         Assert.Contains("Metadata Curation", Page, StringComparison.Ordinal);
-        Assert.Contains("Permissions              = permissions", Page, StringComparison.Ordinal);
+        Assert.Matches(@"Permissions\s*=\s*permissions", Page);
         Assert.Contains("AdminDeviceNavigationTarget", Page, StringComparison.Ordinal);
         Assert.Contains("Reset this override?", Page, StringComparison.Ordinal);
     }

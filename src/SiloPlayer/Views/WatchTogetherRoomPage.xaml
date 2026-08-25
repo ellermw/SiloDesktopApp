@@ -309,15 +309,17 @@
                                                         Background="#B3000000">
                                                     <StackPanel Orientation="Horizontal" Spacing="4">
                                                         <FontIcon Glyph="&#xE74A;" FontSize="9" />
-                                                        <TextBlock Text="{x:Bind VoteCount}" FontSize="11" />
+                                                        <TextBlock Text="{x:Bind VoteCount, Mode=OneWay}" FontSize="11" />
                                                     </StackPanel>
                                                 </Button>
                                                 <Button Content="&#xE74D;" Tag="{x:Bind}" Click="SuggestionDelete_Click"
-                                                        Loaded="SuggestionDelete_Loaded" HorizontalAlignment="Left"
+                                                        Visibility="{x:Bind CanDelete, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                                                        HorizontalAlignment="Left"
                                                         VerticalAlignment="Top" Margin="8,8,0,0" Width="28" Height="28"
                                                         Padding="0" CornerRadius="14" Background="#B3000000" />
                                                 <Button Content="&#xE768;" Tag="{x:Bind}" Click="SuggestionPromote_Click"
-                                                        Loaded="SuggestionPromote_Loaded" Width="42" Height="42" Padding="0"
+                                                        Visibility="{x:Bind CanPromote, Mode=OneWay, Converter={StaticResource BoolToVis}}"
+                                                        Width="42" Height="42" Padding="0"
                                                         CornerRadius="21" Background="#C9404040" />
                                             </Grid>
                                         </Border>

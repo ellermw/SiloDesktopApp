@@ -10,9 +10,9 @@ public sealed class AuthorizationPolicyTests
     {
         var admin = new UserInfo { Role = "admin" };
 
-        Assert.True(AuthorizationPolicy.IsActingAdmin(admin, null));
-        Assert.True(AuthorizationPolicy.IsActingAdmin(admin, new Profile { IsPrimary = true }));
-        Assert.False(AuthorizationPolicy.IsActingAdmin(admin, new Profile { IsPrimary = false }));
+        Assert.True(AuthorizationPolicy.IsActingAdmin(admin, null, hasSelectedProfile: false));
+        Assert.True(AuthorizationPolicy.IsActingAdmin(admin, new Profile { IsPrimary = true }, hasSelectedProfile: true));
+        Assert.False(AuthorizationPolicy.IsActingAdmin(admin, new Profile { IsPrimary = false }, hasSelectedProfile: true));
     }
 
     [Fact]
@@ -30,8 +30,8 @@ public sealed class AuthorizationPolicyTests
         var admin = new UserInfo { Role = "admin", Permissions = [AuthorizationPolicy.MarkerEdit] };
         var child = new Profile { IsPrimary = false };
 
-        Assert.True(AuthorizationPolicy.HasPermission(admin, child, AuthorizationPolicy.MarkerEdit));
-        Assert.False(AuthorizationPolicy.HasPermission(admin, child, AuthorizationPolicy.MetadataCuration));
+        Assert.True(AuthorizationPolicy.HasPermission(admin, child, true, AuthorizationPolicy.MarkerEdit));
+        Assert.False(AuthorizationPolicy.HasPermission(admin, child, true, AuthorizationPolicy.MetadataCuration));
     }
 
     [Fact]
@@ -39,7 +39,7 @@ public sealed class AuthorizationPolicyTests
     {
         var user = new UserInfo { Role = "user", Permissions = [AuthorizationPolicy.MetadataCuration] };
 
-        Assert.True(AuthorizationPolicy.HasPermission(user, new Profile(), AuthorizationPolicy.MetadataCuration));
-        Assert.False(AuthorizationPolicy.IsActingAdmin(user, null));
+        Assert.True(AuthorizationPolicy.HasPermission(user, new Profile(), true, AuthorizationPolicy.MetadataCuration));
+        Assert.False(AuthorizationPolicy.IsActingAdmin(user, null, hasSelectedProfile: false));
     }
 }

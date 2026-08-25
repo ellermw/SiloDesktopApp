@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Collections.ObjectModel;
+using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
@@ -307,7 +308,14 @@ public sealed partial class CollectionBrowsePage : Page
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(genre => new QueryRule { Field = "genre", Op = "is", Value = genre })
             .ToList();
-        AddTextRule("rating_imdb", "gte", MinimumRatingBox.Text);
+        if (double.TryParse(
+                MinimumRatingBox.Text,
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out var minimumRating))
+        {
+            rules.Add(new QueryRule { Field = "rating_imdb", Op = "gte", Value = minimumRating });
+        }
         AddTextRule("original_language", "is", OriginalLanguageBox.Text);
         if (FourKToggle.IsChecked == true) rules.Add(new QueryRule { Field = "resolution", Op = "is", Value = "4k" });
         if (HdrToggle.IsChecked == true) rules.Add(new QueryRule { Field = "hdr", Op = "is", Value = true });

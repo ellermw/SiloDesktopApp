@@ -4,15 +4,14 @@ using System.Text;
 using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.UI.Dispatching;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Helpers;
 using SiloPlayer.Core.Models.Playback;
 
 namespace SiloPlayer.ViewModels;
 
-// Two ViewModels backing the two Watch Party pages. Kept in the same file so the
-// page pair ships as a single shadow of continuum-server's
-// WatchTogetherJoin.tsx + WatchTogetherRoomPage.tsx.
+// Two ViewModels backing the current Silo Watch Party page pair.
 
 /// <summary>
 /// Backs <c>WatchTogetherJoinPage</c> — create a new room or join an existing one
@@ -135,15 +134,19 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
 {
     private readonly PlaybackApi _playbackApi;
     private readonly SiloApiClient _apiClient;
+    private readonly DispatcherQueue? _dispatcher;
 
     private ClientWebSocket? _ws;
     private CancellationTokenSource? _wsCts;
     private Task? _wsRunTask;
+    private readonly SemaphoreSlim _wsLifecycleGate = new(1, 1);
+    private bool _disposed;
 
     public WatchTogetherRoomViewModel(PlaybackApi playbackApi, SiloApiClient apiClient)
     {
         _playbackApi = playbackApi;
         _apiClient = apiClient;
+        _dispatcher = App.MainWindowInstance?.DispatcherQueue ?? DispatcherQueue.GetForCurrentThread();
     }
 
     [ObservableProperty] private string? _roomId;
@@ -157,9 +160,9 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     public ObservableCollection<WatchTogetherSuggestion> Suggestions { get; } = [];
 
     /// <summary>
-    /// Fired when a <c>transport_command</c> frame arrives from the server — raised
-    /// on the WebSocket receive thread; subscribers MUST dispatch to the UI thread
-    /// before touching mpv or XAML state. Payload carries action (play/pause/seek),
+    /// Fired when a <c>transport_command</c> frame arrives from the server. The
+    /// callback is dispatched to the UI thread with the other room-state changes.
+    /// Payload carries action (play/pause/seek),
     /// target position, and the session it applies to.
     /// </summary>
     public event Action<WatchTogetherTransportCommand>? TransportCommandReceived;
@@ -195,6 +198,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(HasRoom));
         OnPropertyChanged(nameof(DisplayCode));
         OnPropertyChanged(nameof(MemberCount));
+        UpdateSuggestionPermissions(Suggestions);
 
         if (value != null && value.Phase == "playing"
             && !string.IsNullOrEmpty(value.SelectedContentId)
@@ -231,6 +235,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         {
             var list = await _playbackApi.ListWatchTogetherSuggestionsAsync(roomId, roomToken);
             Suggestions.Clear();
+            UpdateSuggestionPermissions(list.Suggestions);
             foreach (var s in list.Suggestions) Suggestions.Add(s);
         }
         catch
@@ -238,7 +243,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
             // Non-fatal — suggestions may be empty or vote-mode-off.
         }
 
-        StartWebSocket();
+        await RestartWebSocketAsync();
     }
 
     [RelayCommand]
@@ -267,7 +272,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         {
             await _playbackApi.CloseWatchTogetherRoomAsync(RoomId);
             ClosedReason = "host_left";
-            StopWebSocket();
+            await StopWebSocketAsync();
         }
         catch (Exception ex) { ErrorMessage = $"Failed to close room: {ex.Message}"; }
         finally { IsBusy = false; }
@@ -319,8 +324,21 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
 
     private void ReplaceSuggestions(List<WatchTogetherSuggestion> next)
     {
+        UpdateSuggestionPermissions(next);
         Suggestions.Clear();
         foreach (var s in next) Suggestions.Add(s);
+    }
+
+    private void UpdateSuggestionPermissions(IEnumerable<WatchTogetherSuggestion> suggestions)
+    {
+        var profileId = _apiClient.ProfileId;
+        foreach (var suggestion in suggestions)
+        {
+            suggestion.CanPromote = IsHost;
+            suggestion.CanDelete = IsHost
+                || (!string.IsNullOrWhiteSpace(profileId)
+                    && string.Equals(suggestion.SuggesterProfileId, profileId, StringComparison.Ordinal));
+        }
     }
 
     // ===== Playback sync (outbound messages) =====
@@ -449,29 +467,60 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
 
     // ===== WebSocket =====
 
-    private void StartWebSocket()
+    private async Task RestartWebSocketAsync()
     {
-        StopWebSocket();
-        if (string.IsNullOrEmpty(RoomId) || string.IsNullOrEmpty(RoomToken)) return;
-        _wsCts = new CancellationTokenSource();
-        _wsRunTask = Task.Run(() => WebSocketRunLoopAsync(_wsCts.Token));
-    }
-
-    private void StopWebSocket()
-    {
-        try { _wsCts?.Cancel(); } catch { }
+        await _wsLifecycleGate.WaitAsync();
         try
         {
-            if (_ws?.State == WebSocketState.Open || _ws?.State == WebSocketState.CloseReceived)
-                _ws.Abort();
+            await StopWebSocketCoreAsync();
+            if (_disposed || string.IsNullOrEmpty(RoomId) || string.IsNullOrEmpty(RoomToken))
+                return;
+
+            var cts = new CancellationTokenSource();
+            _wsCts = cts;
+            _wsRunTask = Task.Run(() => WebSocketRunLoopAsync(cts.Token));
         }
-        catch { }
-        _ws?.Dispose();
-        _ws = null;
-        _wsRunTask = null;
-        _wsCts?.Dispose();
+        finally
+        {
+            _wsLifecycleGate.Release();
+        }
+    }
+
+    private async Task StopWebSocketAsync()
+    {
+        await _wsLifecycleGate.WaitAsync();
+        try
+        {
+            await StopWebSocketCoreAsync();
+        }
+        finally
+        {
+            _wsLifecycleGate.Release();
+        }
+    }
+
+    private async Task StopWebSocketCoreAsync()
+    {
+        var cts = _wsCts;
+        var runTask = _wsRunTask;
+        var ws = _ws;
         _wsCts = null;
-        ConnectionState = "disconnected";
+        _wsRunTask = null;
+        _ws = null;
+
+        try { cts?.Cancel(); } catch { }
+        try { ws?.Abort(); } catch { }
+
+        if (runTask != null)
+        {
+            try { await runTask.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+            catch { }
+        }
+
+        ws?.Dispose();
+        cts?.Dispose();
+        SetConnectionState("disconnected");
     }
 
     private async Task WebSocketRunLoopAsync(CancellationToken ct)
@@ -513,34 +562,84 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         if (!string.IsNullOrEmpty(_apiClient.ProfileToken))
             wsUrl += $"&profile_token={Uri.EscapeDataString(_apiClient.ProfileToken)}";
 
-        ConnectionState = "connecting";
-        _ws = new ClientWebSocket();
-        await _ws.ConnectAsync(new Uri(wsUrl), ct);
-        ConnectionState = "connected";
-
-        var buffer = new byte[16 * 1024];
-        var sb = new StringBuilder();
-
-        while (!ct.IsCancellationRequested && _ws.State == WebSocketState.Open)
+        await RunOnUiThreadAsync(() => ConnectionState = "connecting");
+        var ws = new ClientWebSocket();
+        _ws = ws;
+        try
         {
-            WebSocketReceiveResult result;
-            try
+            await ws.ConnectAsync(new Uri(wsUrl), ct);
+            await RunOnUiThreadAsync(() => ConnectionState = "connected");
+
+            var buffer = new byte[16 * 1024];
+            using var message = new MemoryStream();
+
+            while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
             {
-                result = await _ws.ReceiveAsync(buffer, ct);
+                WebSocketReceiveResult result;
+                try
+                {
+                    result = await ws.ReceiveAsync(buffer, ct);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch { return; }
+
+                if (result.MessageType == WebSocketMessageType.Close) return;
+
+                message.Write(buffer, 0, result.Count);
+                if (!result.EndOfMessage) continue;
+
+                var json = Encoding.UTF8.GetString(message.GetBuffer(), 0, checked((int)message.Length));
+                message.SetLength(0);
+
+                await RunOnUiThreadAsync(() => HandleFrame(json));
             }
-            catch (OperationCanceledException) { throw; }
-            catch { return; }
-
-            if (result.MessageType == WebSocketMessageType.Close) return;
-
-            sb.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
-            if (!result.EndOfMessage) continue;
-
-            var json = sb.ToString();
-            sb.Clear();
-
-            HandleFrame(json);
         }
+        finally
+        {
+            if (ReferenceEquals(_ws, ws))
+                _ws = null;
+            try { ws.Abort(); } catch { }
+            ws.Dispose();
+        }
+    }
+
+    private void SetConnectionState(string value)
+    {
+        if (_dispatcher == null || _dispatcher.HasThreadAccess)
+        {
+            ConnectionState = value;
+            return;
+        }
+
+        _dispatcher.TryEnqueue(() => ConnectionState = value);
+    }
+
+    private Task RunOnUiThreadAsync(Action action)
+    {
+        if (_dispatcher == null || _dispatcher.HasThreadAccess)
+        {
+            action();
+            return Task.CompletedTask;
+        }
+
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_dispatcher.TryEnqueue(() =>
+            {
+                try
+                {
+                    action();
+                    completion.TrySetResult();
+                }
+                catch (Exception ex)
+                {
+                    completion.TrySetException(ex);
+                }
+            }))
+        {
+            completion.TrySetResult();
+        }
+
+        return completion.Task;
     }
 
     private void HandleFrame(string json)
@@ -610,6 +709,33 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
-        StopWebSocket();
+        if (_disposed) return;
+        _disposed = true;
+
+        var cts = _wsCts;
+        var runTask = _wsRunTask;
+        var ws = _ws;
+        _wsCts = null;
+        _wsRunTask = null;
+        _ws = null;
+
+        try { cts?.Cancel(); } catch { }
+        try { ws?.Abort(); } catch { }
+        SetConnectionState("disconnected");
+        _ = DisposeWebSocketResourcesAfterRunAsync(runTask, ws, cts);
+    }
+
+    private static async Task DisposeWebSocketResourcesAfterRunAsync(
+        Task? runTask,
+        ClientWebSocket? ws,
+        CancellationTokenSource? cts)
+    {
+        if (runTask != null)
+        {
+            try { await runTask.ConfigureAwait(false); }
+            catch { }
+        }
+        ws?.Dispose();
+        cts?.Dispose();
     }
 }

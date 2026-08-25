@@ -800,7 +800,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("_videoWindow?.EnterPostRollPreview();", source, StringComparison.Ordinal);
         Assert.Contains("_closing = true;", source, StringComparison.Ordinal);
         Assert.Contains("_playbackManager.ProgressReportingFailed -= OnProgressReportingFailed;", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("if (State != PlayerState.Idle)\n        {\n            _playbackManager?.Dispose();", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("if (State != PlayerState.Idle)\n        {\n            _playbackManager?.Dispose();", source.ReplaceLineEndings("\n"), StringComparison.Ordinal);
     }
 
     [Fact]

@@ -347,6 +347,14 @@ public sealed partial class CollectionEditorPage : Page
         SetDescendantControlsEnabled(ManualItemsSection, editable);
         SetDescendantControlsEnabled(SmartRulesSection, editable);
         SaveButton.IsEnabled = editable;
+
+        // Editing never permits changing the collection's fundamental type,
+        // and only MDBList sources expose an editable source URL.
+        var isExistingCollection = !string.IsNullOrWhiteSpace(ViewModel.CollectionId);
+        ManualTypeButton.IsEnabled = editable && !isExistingCollection;
+        SmartTypeButton.IsEnabled = editable && !isExistingCollection;
+        SourceUrlTextBox.IsEnabled = editable
+            && string.Equals(ViewModel.CollectionType, "mdblist", StringComparison.OrdinalIgnoreCase);
         if (!editable) PageTitle.Text = $"{ViewModel.Name} · Read-only";
     }
 

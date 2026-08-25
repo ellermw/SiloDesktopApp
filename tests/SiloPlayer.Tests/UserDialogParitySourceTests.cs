@@ -13,8 +13,9 @@ public sealed class UserDialogParitySourceTests
         Assert.Contains("IsActive = true", picker);
         Assert.Contains("var saved = await SaveDirectDownloadAsync", picker);
         Assert.Contains("if (saved)", picker);
-        Assert.True(picker.IndexOf("if (saved)", StringComparison.Ordinal) <
-                    picker.IndexOf("dialog.Hide();", StringComparison.Ordinal));
+        var savedCheck = picker.IndexOf("if (saved)", StringComparison.Ordinal);
+        var hideDialog = picker.IndexOf("dialog.Hide();", StringComparison.Ordinal);
+        Assert.True(savedCheck >= 0 && hideDialog > savedCheck);
         Assert.DoesNotContain("dialog.Hide();\n                await SaveDirectDownloadAsync", picker);
         Assert.Contains("if (file == null) return false", save);
         Assert.Contains("toast.Success(\"Download saved\")", save);

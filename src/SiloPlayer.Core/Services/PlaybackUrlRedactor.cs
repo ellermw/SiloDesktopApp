@@ -17,7 +17,11 @@ public static partial class PlaybackUrlRedactor
         if (Uri.TryCreate(value, UriKind.Absolute, out var absolute) &&
             (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps))
         {
-            return absolute.GetLeftPart(UriPartial.Authority) + RedactPath(absolute.AbsolutePath);
+            var safeAuthority = new UriBuilder(
+                absolute.Scheme,
+                absolute.Host,
+                absolute.IsDefaultPort ? -1 : absolute.Port).Uri.GetLeftPart(UriPartial.Authority);
+            return safeAuthority + RedactPath(absolute.AbsolutePath);
         }
 
         var pathEnd = value.IndexOfAny(['?', '#']);

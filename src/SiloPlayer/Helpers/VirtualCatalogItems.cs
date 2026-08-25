@@ -59,7 +59,14 @@ public sealed class VirtualCatalogItems : IList<MediaItem?>, IList, INotifyColle
     public void Reset(int totalCount)
     {
         _pages.Clear();
-        SetCount(totalCount);
+        totalCount = Math.Max(0, totalCount);
+        var countChanged = _count != totalCount;
+        _count = totalCount;
+        if (countChanged)
+            OnPropertyChanged(nameof(Count));
+        // Clearing loaded pages changes every realized slot even when the
+        // server-reported total remains identical.
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
     }
 
     public void SetCount(int totalCount)

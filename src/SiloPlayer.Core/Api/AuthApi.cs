@@ -32,7 +32,7 @@ public class AuthApi(SiloApiClient client)
         => client.GetAsync<List<AdminSession>>("/api/v1/profiles/household/sessions", ct);
 
     public Task<VerifyPinResponse> VerifyPinAsync(string profileId, string pin, CancellationToken ct = default)
-        => client.PostAsync<VerifyPinResponse>($"/api/v1/profiles/{profileId}/verify-pin", new VerifyPinRequest { Pin = pin }, ct);
+        => client.PostAsync<VerifyPinResponse>($"/api/v1/profiles/{Uri.EscapeDataString(profileId)}/verify-pin", new VerifyPinRequest { Pin = pin }, ct);
 
     public Task<Profile> CreateProfileAsync(string name, string? pin = null, bool isChild = false, CancellationToken ct = default)
         => CreateProfileAsync(new CreateProfileRequest

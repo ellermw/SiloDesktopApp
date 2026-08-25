@@ -40,10 +40,15 @@ public class AdminTasksParitySourceTests
     [Fact]
     public void MetricsAreAppliedAfterTheParallelLoadCompletes()
     {
-        var metricsAssignment = CodeBehind.IndexOf("_refreshMetrics = await adminApi.GetTaskMetricsAsync", StringComparison.Ordinal);
-        var rebuild = CodeBehind.IndexOf("RebuildTaskGroups();", metricsAssignment, StringComparison.Ordinal);
+        var methodStart = CodeBehind.IndexOf("private async void Page_Loaded", StringComparison.Ordinal);
+        Assert.True(methodStart >= 0, "Expected Page_Loaded to exist.");
+        var methodEnd = CodeBehind.IndexOf("private void ApplyResponsiveLayout", methodStart, StringComparison.Ordinal);
+        Assert.True(methodEnd > methodStart, "Expected Page_Loaded to end before ApplyResponsiveLayout.");
+        var loadMethod = CodeBehind[methodStart..methodEnd];
+        var metricsAssignment = loadMethod.IndexOf("_refreshMetrics = await adminApi.GetTaskMetricsAsync", StringComparison.Ordinal);
 
         Assert.True(metricsAssignment >= 0, "Expected refresh metrics to be captured.");
+        var rebuild = loadMethod.IndexOf("RebuildTaskGroups();", metricsAssignment, StringComparison.Ordinal);
         Assert.True(rebuild > metricsAssignment, "Expected task groups to rebuild after metrics are available.");
     }
 

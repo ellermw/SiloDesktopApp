@@ -123,7 +123,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     private bool _similarLoadFailed;
 
     [ObservableProperty]
-    private int _selectedSeasonNumber;
+    private int _selectedSeasonNumber = -1;
 
     public ObservableCollection<Season> Seasons { get; } = [];
     public ObservableCollection<Episode> Episodes { get; } = [];
@@ -173,7 +173,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         SeasonsLoadFailed = false;
         EpisodesLoadFailed = false;
         SimilarLoadFailed = false;
-        SelectedSeasonNumber = 0;
+        SelectedSeasonNumber = -1;
         UserRating = null;
 
         try
@@ -430,7 +430,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     [RelayCommand]
     private async Task SelectSeasonAsync(int seasonNumber)
     {
-        if (Item == null || seasonNumber == 0) return;
+        if (Item == null || seasonNumber < 0) return;
 
         var contentId = Item.ContentId;
         var generation = Interlocked.Increment(ref _episodesLoadGeneration);

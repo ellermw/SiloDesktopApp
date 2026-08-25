@@ -23,6 +23,7 @@ public sealed class EventChannelClient : IDisposable
     private CancellationTokenSource? _cts;
     private Task? _runTask;
     private readonly object _lock = new();
+    private bool _reconnectSuppressed;
 
     // Ref-counted channel subscriptions — multiple features (settings/import,
     // admin/server-activity, watch-party, …) share a single WebSocket. Each call
@@ -80,6 +81,7 @@ public sealed class EventChannelClient : IDisposable
         _authService = authService;
         _authService.TokenRefreshed += OnTokenRefreshed;
         _authService.LoggedOut += OnLoggedOut;
+        _authService.UserChanged += OnUserChanged;
     }
 
     public WebSocketState State => _ws?.State ?? WebSocketState.None;
@@ -100,6 +102,7 @@ public sealed class EventChannelClient : IDisposable
             bool changed = false;
             foreach (var ch in channels)
             {
+                if (string.IsNullOrWhiteSpace(ch)) continue;
                 if (!_channelRefs.TryGetValue(ch, out var count))
                 {
                     _channelRefs[ch] = 1;
@@ -146,6 +149,9 @@ public sealed class EventChannelClient : IDisposable
 
     private void EnsureRunning_NoLock(bool forceReconnect)
     {
+        if (_reconnectSuppressed || !_authService.IsLoggedIn)
+            return;
+
         if (_runTask != null && !_runTask.IsCompleted)
         {
             if (!forceReconnect) return;
@@ -180,7 +186,8 @@ public sealed class EventChannelClient : IDisposable
     {
         lock (_lock)
         {
-            if (_channelRefs.Count == 0) return;
+            if (!_authService.IsLoggedIn || _channelRefs.Count == 0) return;
+            _reconnectSuppressed = false;
             Log("Token refreshed; forcing reconnect");
             CancelCurrentRunLoop_NoLock();
             _cts = new CancellationTokenSource();
@@ -190,7 +197,28 @@ public sealed class EventChannelClient : IDisposable
 
     private void OnLoggedOut()
     {
-        Stop();
+        lock (_lock)
+        {
+            _reconnectSuppressed = true;
+            StopInternal_NoLock();
+        }
+    }
+
+    private void OnUserChanged()
+    {
+        lock (_lock)
+        {
+            if (!_authService.IsLoggedIn)
+            {
+                _reconnectSuppressed = true;
+                StopInternal_NoLock();
+                return;
+            }
+
+            _reconnectSuppressed = false;
+            if (_channelRefs.Count > 0)
+                EnsureRunning_NoLock(forceReconnect: true);
+        }
     }
 
     /// <summary>
@@ -203,25 +231,60 @@ public sealed class EventChannelClient : IDisposable
         // Replace the "start" semantics with "ensure subscribed" — any channels
         // added via this path are anchored until Stop() is called. We track the
         // anchor set separately so Stop() only releases what Start added.
-        var toAdd = channels.Where(c => !_legacyStartChannels.Contains(c)).ToArray();
         lock (_lock)
         {
-            foreach (var ch in channels) _legacyStartChannels.Add(ch);
+            var changed = false;
+            foreach (var ch in channels)
+            {
+                if (string.IsNullOrWhiteSpace(ch) || !_legacyStartChannels.Add(ch))
+                    continue;
+
+                if (!_channelRefs.TryGetValue(ch, out var count))
+                {
+                    _channelRefs[ch] = 1;
+                    changed = true;
+                }
+                else
+                {
+                    _channelRefs[ch] = count + 1;
+                }
+            }
+
+            if (changed || _runTask == null || _runTask.IsCompleted)
+                EnsureRunning_NoLock(forceReconnect: changed);
         }
-        if (toAdd.Length > 0) _ = Subscribe(toAdd); // Fire-and-forget ref-counted subscribe.
     }
 
     private readonly HashSet<string> _legacyStartChannels = new(StringComparer.OrdinalIgnoreCase);
 
     public void Stop()
     {
-        string[] toRelease;
         lock (_lock)
         {
-            toRelease = _legacyStartChannels.ToArray();
+            var changed = false;
+            foreach (var ch in _legacyStartChannels)
+            {
+                if (!_channelRefs.TryGetValue(ch, out var count))
+                    continue;
+
+                if (count <= 1)
+                {
+                    _channelRefs.Remove(ch);
+                    changed = true;
+                }
+                else
+                {
+                    _channelRefs[ch] = count - 1;
+                }
+            }
             _legacyStartChannels.Clear();
+
+            if (!changed) return;
+            if (_channelRefs.Count == 0)
+                StopInternal_NoLock();
+            else
+                EnsureRunning_NoLock(forceReconnect: true);
         }
-        if (toRelease.Length > 0) Release(toRelease);
     }
 
     private sealed class SubscriptionHandle : IDisposable
@@ -558,7 +621,15 @@ public sealed class EventChannelClient : IDisposable
     {
         _authService.TokenRefreshed -= OnTokenRefreshed;
         _authService.LoggedOut -= OnLoggedOut;
-        Stop();
-        _cts?.Dispose();
+        _authService.UserChanged -= OnUserChanged;
+        lock (_lock)
+        {
+            _reconnectSuppressed = true;
+            _legacyStartChannels.Clear();
+            _channelRefs.Clear();
+            StopInternal_NoLock();
+            _cts?.Dispose();
+            _cts = null;
+        }
     }
 }

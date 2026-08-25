@@ -635,6 +635,9 @@ public partial class HomeViewModel : ObservableObject,
         {
             // Restore on failure
             RestoreDismissedItem();
+            ShowUndoBanner = false;
+            ClearDismissState();
+            return;
         }
 
         // Auto-hide after 5 seconds

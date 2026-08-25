@@ -158,9 +158,7 @@ public sealed partial class SettingsPage : Page
         SettingsLayoutGrid.ColumnDefinitions[0].Width = isCompact
             ? new GridLength(0)
             : new GridLength(220);
-        SettingsLayoutGrid.ColumnDefinitions[1].Width = isCompact
-            ? new GridLength(0)
-            : new GridLength(1, GridUnitType.Star);
+        SettingsLayoutGrid.ColumnDefinitions[1].Width = new GridLength(1, GridUnitType.Star);
 
         Grid.SetRow(SettingsNavigationScroller, 0);
         Grid.SetColumn(SettingsNavigationScroller, 0);
@@ -1091,6 +1089,7 @@ public sealed partial class SettingsPage : Page
             (PlaybackTab, "playback quality language skipping video spoken metadata auto skip intros credits recaps preview auto play next up episodes"),
             (SubtitlesTab, "subtitles subtitle language behavior forced captions font size family color outline background opacity position preview"),
             (AppearanceTab, "appearance theme profile dark light custom date time format clock reset cinema"),
+            (InterfaceTab, "navigation cards menu poster size card captions title year artwork preset primary menu"),
             (ThemeEditorTab, "theme editor customize colors css design tokens token overrides custom css community themes preview"),
             (AccessibilityTab, "accessibility readability contrast motion transparency text size weight high contrast preview"),
             (HomeScreenTab, "home screen sections layout rows continue watching next up recently added library order scope reset"),
@@ -1134,7 +1133,7 @@ public sealed partial class SettingsPage : Page
             .Any(button => button.Visibility == Visibility.Visible)
             ? Visibility.Visible : Visibility.Collapsed;
 
-        var availableSettingsCount = _canManageProfiles ? 17 : 16;
+        var availableSettingsCount = _canManageProfiles ? entries.Length : entries.Length - 1;
         SettingsSearchStatus.Text = tokens.Length == 0
             ? $"{availableSettingsCount} settings sections"
             : matches == 0 ? "No matching settings" : $"{matches} {(matches == 1 ? "match" : "matches")}";

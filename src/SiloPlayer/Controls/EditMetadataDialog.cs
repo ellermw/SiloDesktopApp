@@ -845,9 +845,7 @@ public sealed class EditMetadataDialog : ContentDialog
                 case "logo": _images.Current.LogoUrl = selected.OriginalUrl; break;
             }
             _selectedImage = null;
-            _toast.Success(string.IsNullOrWhiteSpace(applied.Revision)
-                ? "Image applied successfully."
-                : "Image applied successfully.");
+            _toast.Success("Image applied successfully.");
             RenderImages();
         }
         catch (Exception ex)

@@ -12,7 +12,7 @@ public sealed class RequestsCurrentParitySourceTests
         Assert.Contains("var requestedMediaType = SelectedMediaType", source);
         Assert.Contains("var requestedPage = SearchPage", source);
         Assert.Contains("ReferenceEquals(Volatile.Read(ref _searchCts), owner)", source);
-        Assert.DoesNotContain("StatusMessage = \"Searching...\";\n        SearchResults.Clear();", source);
+        Assert.DoesNotContain("StatusMessage = \"Searching...\";\n        SearchResults.Clear();", source.ReplaceLineEndings("\n"));
     }
 
     [Fact]

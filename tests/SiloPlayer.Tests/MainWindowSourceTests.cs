@@ -62,9 +62,10 @@ public sealed class MainWindowSourceTests
         Assert.Contains("_playerService.IsPostRollVideoEnded", code);
         Assert.Contains("_playerService.EnterPostRollPreview();", code);
         Assert.Contains("_playerService.FinishPostRollPreview();", code);
+        var enterPreview = code.IndexOf("_playerService.EnterPostRollPreview();", StringComparison.Ordinal);
+        var showOverlay = code.IndexOf("PlayingNextOverlay.Visibility = Visibility.Visible;", StringComparison.Ordinal);
         Assert.True(
-            code.IndexOf("_playerService.EnterPostRollPreview();", StringComparison.Ordinal) <
-            code.IndexOf("PlayingNextOverlay.Visibility = Visibility.Visible;", StringComparison.Ordinal),
+            enterPreview >= 0 && showOverlay > enterPreview,
             "The native mpv HWND must move before the WinUI Playing Next surface is exposed.");
         Assert.Contains("if (playbackHasEnded && hasNextEpisode && _playingNextAutoPlay)", code);
         Assert.Contains("PlayingNextFinishedHeading.Text", code);
@@ -292,7 +293,8 @@ public sealed class MainWindowSourceTests
         Assert.Contains("x:Name=\"ProfileAvatarImage\"", xaml);
         Assert.Contains("x:Name=\"ProfileDropdownAvatarImage\"", xaml);
         Assert.Contains("x:Name=\"MobileProfileInitialText\"", xaml);
-        Assert.Contains("ApplyProfileAvatar(profile.AvatarUrl)", code);
+        Assert.Contains("ApplyProfileAvatarAsync(profile.AvatarUrl)", code);
+        Assert.Contains("GetImageDiskPathAsync", code);
         Assert.Contains("MobileProfileInitialText.Text = ProfileInitialText.Text", code);
         Assert.Contains("_navigationService.Navigate<SettingsPage>();", code);
         Assert.Contains("string.Equals(username, profile.Name, StringComparison.Ordinal)", code);

@@ -438,10 +438,12 @@ public sealed partial class MainWindow : Window
         _playerService.ShowPlayingNextRequested -= OnShowPlayingNextRequested;
         _playerService.PostRollReturnRequested -= OnPostRollReturnRequested;
         this.SizeChanged -= OnWindowSizeChanged;
+        this.Activated -= OnWindowActivated;
         if (AppWindow != null) AppWindow.Changed -= OnAppWindowChanged;
         _navigationService.Navigated -= OnNavigated_UpdateWindowTitle;
         _navigationService.Navigated -= OnNavigated_ApplyAccessibility;
         _navigationService.Navigated -= OnNavigated_SynchronizeShellChrome;
+        _navigationService.Navigated -= OnNavigated_AnimatePageEntrance;
         if (_paneOpenPropertyCallbackToken != 0)
         {
             NavView.UnregisterPropertyChangedCallback(
@@ -751,11 +753,18 @@ public sealed partial class MainWindow : Window
         if (string.IsNullOrEmpty(url)) return;
         try
         {
+            var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
-            var bytes = await httpClient.GetByteArrayAsync(url);
-            var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
-            using var stream = new MemoryStream(bytes);
-            await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
+            var path = await imageService.GetImageDiskPathAsync(
+                contentId ?? url,
+                "playing-next",
+                url,
+                httpClient);
+            if (string.IsNullOrWhiteSpace(path)) return;
+            var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(path))
+            {
+                DecodePixelWidth = 640,
+            };
             if (!string.Equals(contentId, _playerService.NextEpisodeContentId, StringComparison.Ordinal) ||
                 PlayingNextOverlay.Visibility != Visibility.Visible)
             {
@@ -2028,7 +2037,7 @@ public sealed partial class MainWindow : Window
                         string.Equals(username, profile.Name, StringComparison.Ordinal)
                             ? Visibility.Collapsed
                             : Visibility.Visible;
-                    ApplyProfileAvatar(profile.AvatarUrl);
+                    _ = ApplyProfileAvatarAsync(profile.AvatarUrl);
                 });
             }
         }
@@ -2041,8 +2050,11 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private void ApplyProfileAvatar(string? avatarUrl)
+    private long _profileAvatarGeneration;
+
+    private async Task ApplyProfileAvatarAsync(string? avatarUrl)
     {
+        var generation = Interlocked.Increment(ref _profileAvatarGeneration);
         if (!Uri.TryCreate(avatarUrl, UriKind.Absolute, out var avatarUri))
         {
             ProfileAvatarBrush.ImageSource = null;
@@ -2052,12 +2064,35 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage();
+        Microsoft.UI.Xaml.Media.Imaging.BitmapImage bitmap;
+        try
+        {
+            var path = await App.Services.GetRequiredService<ImageService>().GetImageDiskPathAsync(
+                avatarUri.AbsolutePath,
+                "profile-avatar",
+                avatarUrl!,
+                App.Services.GetRequiredService<HttpClient>());
+            if (string.IsNullOrWhiteSpace(path) || generation != Volatile.Read(ref _profileAvatarGeneration))
+                return;
+            bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(path))
+            {
+                DecodePixelWidth = 96,
+            };
+        }
+        catch
+        {
+            return;
+        }
+
+        if (generation != Volatile.Read(ref _profileAvatarGeneration))
+            return;
+
         bitmap.ImageFailed += (_, _) =>
         {
             DispatcherQueue.TryEnqueue(() =>
             {
-                if (ReferenceEquals(ProfileAvatarBrush.ImageSource, bitmap))
+                if (generation == Volatile.Read(ref _profileAvatarGeneration) &&
+                    ReferenceEquals(ProfileAvatarBrush.ImageSource, bitmap))
                 {
                     ProfileAvatarImage.Visibility = Visibility.Collapsed;
                     ProfileDropdownAvatarImage.Visibility = Visibility.Collapsed;
@@ -2068,7 +2103,6 @@ public sealed partial class MainWindow : Window
         ProfileDropdownAvatarBrush.ImageSource = bitmap;
         ProfileAvatarImage.Visibility = Visibility.Visible;
         ProfileDropdownAvatarImage.Visibility = Visibility.Visible;
-        bitmap.UriSource = avatarUri;
     }
 
     public void HideMainNavigation()
@@ -2361,7 +2395,12 @@ public sealed partial class MainWindow : Window
     public void NavigateToHome()
     {
         if (!_navigationService.Navigate<HomePage>())
-            throw new InvalidOperationException("The navigation frame rejected the Home page.");
+        {
+            var failure = new InvalidOperationException("The navigation frame rejected the Home page.");
+            LogNavigationFailure("navigate_home", failure);
+            ShowPlaybackError("Page failed to open", "Silo could not open Home. The current page is still available.");
+            return;
+        }
         NavView.SelectedItem = HomeNavItem;
     }
 
@@ -2429,18 +2468,30 @@ public sealed partial class MainWindow : Window
 
         var wordmarkUrl = _apiClient.ResolveServerUrl(branding.WordmarkUrl);
         var markUrl = _apiClient.ResolveServerUrl(branding.MarkUrl);
+        var imageService = App.Services.GetRequiredService<ImageService>();
+        var httpClient = App.Services.GetRequiredService<HttpClient>();
+        var wordmarkPathTask = Uri.TryCreate(wordmarkUrl, UriKind.Absolute, out _)
+            ? imageService.GetImageDiskPathAsync(shellKey, "server-wordmark", wordmarkUrl!, httpClient, cancellationToken)
+            : Task.FromResult<string?>(null);
+        var markPathTask = Uri.TryCreate(markUrl, UriKind.Absolute, out _)
+            ? imageService.GetImageDiskPathAsync(shellKey, "server-mark", markUrl!, httpClient, cancellationToken)
+            : Task.FromResult<string?>(null);
+        await Task.WhenAll(wordmarkPathTask, markPathTask);
+        if (!IsCurrentShellHydration(shellKey, cancellationToken)) return;
+        var wordmarkPath = await wordmarkPathTask;
+        var markPath = await markPathTask;
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!IsCurrentShellHydration(shellKey, cancellationToken)) return;
 
-            if (Uri.TryCreate(wordmarkUrl, UriKind.Absolute, out var wordmarkUri))
+            if (!string.IsNullOrWhiteSpace(wordmarkPath))
             {
-                var source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(wordmarkUri);
+                var source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(wordmarkPath));
                 SiloWordmarkImage.Source = source;
                 MobileSiloWordmarkImage.Source = source;
             }
-            if (Uri.TryCreate(markUrl, UriKind.Absolute, out var markUri))
-                SiloMarkImage.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(markUri);
+            if (!string.IsNullOrWhiteSpace(markPath))
+                SiloMarkImage.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(markPath));
 
             DocumentTitle.SetServerName(branding.ServerName);
             if (AppWindow != null && ContentFrame.CurrentSourcePageType != null)

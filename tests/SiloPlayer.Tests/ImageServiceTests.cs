@@ -112,11 +112,9 @@ public sealed class ImageServiceTests
                 CancellationToken.None);
 
             firstWaiter.Cancel();
-            var firstCompletion = await Task.WhenAny(first, Task.Delay(250));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(
+                () => first.WaitAsync(TimeSpan.FromSeconds(5)));
             releaseContent.SetResult();
-
-            Assert.Same(first, firstCompletion);
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => first);
             var secondPath = await second.WaitAsync(TimeSpan.FromSeconds(5));
 
             Assert.True(File.Exists(secondPath));

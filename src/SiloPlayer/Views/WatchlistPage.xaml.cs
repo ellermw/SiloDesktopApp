@@ -88,6 +88,9 @@ public sealed partial class WatchlistPage : Page
             "year" => _ascending
                 ? ViewModel.Items.OrderBy(i => i.Year).ToList()
                 : ViewModel.Items.OrderByDescending(i => i.Year).ToList(),
+            "added_at" => _ascending
+                ? ViewModel.Items.OrderBy(i => ParseAddedAt(i.AddedAt)).ToList()
+                : ViewModel.Items.OrderByDescending(i => ParseAddedAt(i.AddedAt)).ToList(),
             _ => _ascending
                 ? ViewModel.Items.OrderBy(i => i.Title).ToList()
                 : ViewModel.Items.OrderByDescending(i => i.Title).ToList(),
@@ -97,4 +100,7 @@ public sealed partial class WatchlistPage : Page
         foreach (var item in sorted)
             ViewModel.Items.Add(item);
     }
+
+    private static DateTimeOffset ParseAddedAt(string? value)
+        => DateTimeOffset.TryParse(value, out var parsed) ? parsed : DateTimeOffset.MinValue;
 }

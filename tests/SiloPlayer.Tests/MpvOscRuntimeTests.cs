@@ -15,17 +15,24 @@ public sealed class MpvOscRuntimeTests
         Assert.True(File.Exists(libraryPath), $"Missing bundled libmpv: {libraryPath}");
         Assert.True(File.Exists(scriptPath), $"Missing OSC script: {scriptPath}");
 
-        var library = NativeLibrary.Load(libraryPath);
-        var create = LoadDelegate<MpvCreate>(library, "mpv_create");
-        var setOption = LoadDelegate<MpvSetOptionString>(library, "mpv_set_option_string");
-        var initialize = LoadDelegate<MpvInitialize>(library, "mpv_initialize");
-        var commandString = LoadDelegate<MpvCommandString>(library, "mpv_command_string");
-        var terminate = LoadDelegate<MpvTerminateDestroy>(library, "mpv_terminate_destroy");
-        var handle = create();
-        Assert.NotEqual(IntPtr.Zero, handle);
+        var library = IntPtr.Zero;
+        var handle = IntPtr.Zero;
+        MpvTerminateDestroy? terminate = null;
 
         try
         {
+            library = NativeLibrary.Load(libraryPath);
+            var create = LoadDelegate<MpvCreate>(library, "mpv_create");
+            var setOption = LoadDelegate<MpvSetOptionString>(library, "mpv_set_option_string");
+            var initialize = LoadDelegate<MpvInitialize>(library, "mpv_initialize");
+            var commandString = LoadDelegate<MpvCommandString>(library, "mpv_command_string");
+            terminate = LoadDelegate<MpvTerminateDestroy>(library, "mpv_terminate_destroy");
+            handle = create();
+            Assert.NotEqual(IntPtr.Zero, handle);
+
+            void Set(string name, string value) =>
+                Assert.True(setOption(handle, name, value) >= 0, $"libmpv rejected {name}={value}");
+
             Set("vo", "null");
             Set("ao", "null");
             Set("idle", "yes");
@@ -49,8 +56,10 @@ public sealed class MpvOscRuntimeTests
         }
         finally
         {
-            terminate(handle);
-            NativeLibrary.Free(library);
+            if (handle != IntPtr.Zero)
+                terminate?.Invoke(handle);
+            if (library != IntPtr.Zero)
+                NativeLibrary.Free(library);
         }
 
         try
@@ -65,9 +74,6 @@ public sealed class MpvOscRuntimeTests
         {
             File.Delete(logPath);
         }
-
-        void Set(string name, string value) =>
-            Assert.True(setOption(handle, name, value) >= 0, $"libmpv rejected {name}={value}");
     }
 
     private static T LoadDelegate<T>(IntPtr library, string export) where T : Delegate =>

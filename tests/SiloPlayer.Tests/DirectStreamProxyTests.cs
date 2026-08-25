@@ -10,12 +10,7 @@ public sealed class DirectStreamProxyTests
     public async Task SignedNodeUrl_PreservesSignedQueryAndNeverSendsBearerToken()
     {
         var body = new byte[] { 1, 2, 3, 4 };
-        var handler = new RecordingHandler(request =>
-        {
-            Assert.Null(request.Headers.Authorization);
-            Assert.Equal("?seek=12&token=node-token", request.RequestUri?.Query);
-            return CreateResponse(body);
-        });
+        var handler = new RecordingHandler(_ => CreateResponse(body));
         using var upstreamClient = new HttpClient(handler);
         using var proxy = new DirectStreamProxy(
             "https://proxy.example/stream/direct/signed-token?seek=12&token=node-token",
@@ -27,18 +22,14 @@ public sealed class DirectStreamProxyTests
 
         Assert.Equal(body, result);
         Assert.Single(handler.Requests);
+        Assert.Null(handler.Requests[0].Headers.Authorization);
+        Assert.Equal("?seek=12&token=node-token", handler.Requests[0].RequestUri?.Query);
     }
 
     [Fact]
     public async Task IntegratedUrl_StripsStaleQueryTokenAndUsesCurrentBearerToken()
     {
-        var handler = new RecordingHandler(request =>
-        {
-            Assert.Equal("Bearer", request.Headers.Authorization?.Scheme);
-            Assert.Equal("fresh-user-access-token", request.Headers.Authorization?.Parameter);
-            Assert.Equal("?seek=5", request.RequestUri?.Query);
-            return CreateResponse(new byte[] { 5, 6, 7 });
-        });
+        var handler = new RecordingHandler(_ => CreateResponse(new byte[] { 5, 6, 7 }));
         using var upstreamClient = new HttpClient(handler);
         using var proxy = new DirectStreamProxy(
             "https://server.example/api/v1/stream/session?token=stale-token&seek=5",
@@ -50,16 +41,15 @@ public sealed class DirectStreamProxyTests
 
         Assert.Equal(new byte[] { 5, 6, 7 }, result);
         Assert.Single(handler.Requests);
+        Assert.Equal("Bearer", handler.Requests[0].Headers.Authorization?.Scheme);
+        Assert.Equal("fresh-user-access-token", handler.Requests[0].Headers.Authorization?.Parameter);
+        Assert.Equal("?seek=5", handler.Requests[0].RequestUri?.Query);
     }
 
     [Fact]
     public async Task HeadRequest_IsForwardedWithoutAResponseBody()
     {
-        var handler = new RecordingHandler(request =>
-        {
-            Assert.Equal(HttpMethod.Head, request.Method);
-            return CreateResponse(new byte[] { 8, 9, 10 });
-        });
+        var handler = new RecordingHandler(_ => CreateResponse(new byte[] { 8, 9, 10 }));
         using var upstreamClient = new HttpClient(handler);
         using var proxy = new DirectStreamProxy(
             "https://server.example/api/v1/stream/session",
@@ -74,16 +64,13 @@ public sealed class DirectStreamProxyTests
         Assert.Equal(3, response.Content.Headers.ContentLength);
         Assert.Empty(await response.Content.ReadAsByteArrayAsync());
         Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Head, handler.Requests[0].Method);
     }
 
     [Fact]
     public async Task SequentialMode_IgnoresClientRangeAndDoesNotAdvertiseByteRanges()
     {
-        var handler = new RecordingHandler(request =>
-        {
-            Assert.Null(request.Headers.Range);
-            return CreateResponse(new byte[] { 11, 12, 13 });
-        });
+        var handler = new RecordingHandler(_ => CreateResponse(new byte[] { 11, 12, 13 }));
         using var upstreamClient = new HttpClient(handler);
         using var proxy = new DirectStreamProxy(
             "https://proxy.example/stream/remux/signed-token?seek=120",
@@ -100,6 +87,7 @@ public sealed class DirectStreamProxyTests
         Assert.Empty(response.Headers.AcceptRanges);
         Assert.Equal(new byte[] { 11, 12, 13 }, await response.Content.ReadAsByteArrayAsync());
         Assert.Single(handler.Requests);
+        Assert.Null(handler.Requests[0].Headers.Range);
     }
 
     [Fact]

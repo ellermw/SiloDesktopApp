@@ -253,10 +253,22 @@
             <!-- Results grid -->
             <ScrollViewer x:Name="ResultsScroll" Grid.Row="5" Padding="40,0,40,24"
                           ViewChanged="ResultsScroll_ViewChanged">
-                <StackPanel x:Name="ResultsContent" MaxWidth="1400" HorizontalAlignment="Center">
+                <!-- A Grid preserves the ScrollViewer's effective viewport for the
+                     virtualizing repeaters. A vertical StackPanel measures children
+                     with infinite height and causes the entire result set to realize. -->
+                <Grid x:Name="ResultsContent" MaxWidth="1400" HorizontalAlignment="Center">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
 
                     <!-- People results section -->
-                    <StackPanel x:Name="PeopleSection" Visibility="Collapsed" Margin="0,0,0,24">
+                    <StackPanel x:Name="PeopleSection" Grid.Row="0" Visibility="Collapsed" Margin="0,0,0,24">
                         <TextBlock
                             Text="People"
                             FontSize="{StaticResource FontSizeTitle}"
@@ -311,7 +323,7 @@
                         </ItemsRepeater>
                     </StackPanel>
 
-                    <ItemsRepeater x:Name="ResultsRepeater" ElementPrepared="ResultsRepeater_ElementPrepared">
+                    <ItemsRepeater x:Name="ResultsRepeater" Grid.Row="1" ElementPrepared="ResultsRepeater_ElementPrepared">
                         <ItemsRepeater.Layout>
                             <UniformGridLayout
                                 x:Name="ResultsGridLayout"
@@ -328,12 +340,12 @@
                         </ItemsRepeater.ItemTemplate>
                     </ItemsRepeater>
 
-                    <ProgressRing x:Name="SearchLoadMoreRing"
+                    <ProgressRing x:Name="SearchLoadMoreRing" Grid.Row="2"
                                   IsActive="{x:Bind ViewModel.IsLoadingMore, Mode=OneWay}"
                                   Visibility="{x:Bind ViewModel.IsLoadingMore, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                                   HorizontalAlignment="Center" Width="24" Height="24" Margin="0,16" />
 
-                    <StackPanel x:Name="RequestResultsSection" Visibility="Collapsed" Margin="0,36,0,0" Spacing="12">
+                    <StackPanel x:Name="RequestResultsSection" Grid.Row="3" Visibility="Collapsed" Margin="0,36,0,0" Spacing="12">
                         <Grid>
                             <StackPanel Spacing="7">
                                 <TextBlock x:Name="RequestResultsEyebrow" Text="Discover · Outside your library" FontSize="11" CharacterSpacing="140" FontWeight="SemiBold" Foreground="#FFD8B46A" />
@@ -394,7 +406,7 @@
                     </StackPanel>
 
                     <!-- Skeleton while search results load (inline rows) -->
-                    <ItemsRepeater x:Name="SearchLoadingRepeater"
+                    <ItemsRepeater x:Name="SearchLoadingRepeater" Grid.Row="4"
                                    ElementPrepared="SearchLoadingRepeater_ElementPrepared"
                                    Visibility="Collapsed">
                         <ItemsRepeater.Layout>
@@ -415,6 +427,7 @@
 
                     <!-- Error -->
                     <TextBlock
+                        Grid.Row="5"
                         Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
                         Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
                         Foreground="{StaticResource ErrorBrush}"
@@ -424,6 +437,7 @@
 
                     <!-- No results -->
                     <TextBlock
+                        Grid.Row="6"
                         x:Name="NoResultsText"
                         Text="No items found."
                         FontSize="14"
@@ -431,7 +445,7 @@
                         HorizontalAlignment="Center"
                         Margin="0,40,0,0"
                         Visibility="Collapsed" />
-                </StackPanel>
+                </Grid>
             </ScrollViewer>
 
             <!-- WebUI parity: long result grids expose a floating scroll-to-top affordance. -->

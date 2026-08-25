@@ -1,3 +1,5 @@
+using System.ComponentModel;
+using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 
 namespace SiloPlayer.Core.Models.Playback;
@@ -237,9 +239,9 @@ public class MarkerEditAuditEntry
 }
 
 // ===== Watch Together (Watch Party) =====
-// DTOs for the /api/v1/watch-together/* surface. Shadow the webui types in
-// continuum-server/web/src/lib/watchTogether.ts. Kept in this file so playback-
-// related models stay colocated; there's no separate WatchTogether folder yet.
+// DTOs for the current Silo /api/v1/watch-together/* contract. Kept in this file
+// so playback-related models stay colocated; there is no separate WatchTogether
+// model folder yet.
 
 public class WatchTogetherRoomSnapshot
 {
@@ -286,8 +288,14 @@ public class WatchTogetherRoomResponse
     public string? RoomAccessToken { get; set; }
 }
 
-public class WatchTogetherSuggestion
+public class WatchTogetherSuggestion : INotifyPropertyChanged
 {
+    private bool _canDelete;
+    private bool _canPromote;
+    private int _voteCount;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
     public string Id { get; set; } = "";
     public string RoomId { get; set; } = "";
     public int SuggesterUserId { get; set; }
@@ -298,9 +306,41 @@ public class WatchTogetherSuggestion
     public string Subtitle { get; set; } = "";
     public string PosterUrl { get; set; } = "";
     public string Note { get; set; } = "";
-    public int VoteCount { get; set; }
+    public int VoteCount
+    {
+        get => _voteCount;
+        set => SetField(ref _voteCount, value);
+    }
     public bool VotedByMe { get; set; }
     public string? CreatedAt { get; set; }
+
+    [JsonIgnore]
+    public bool CanDelete
+    {
+        get => _canDelete;
+        set => SetField(ref _canDelete, value);
+    }
+
+    [JsonIgnore]
+    public bool CanPromote
+    {
+        get => _canPromote;
+        set => SetField(ref _canPromote, value);
+    }
+
+    private void SetField(ref bool field, bool value, [CallerMemberName] string? propertyName = null)
+    {
+        if (field == value) return;
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
+
+    private void SetField(ref int field, int value, [CallerMemberName] string? propertyName = null)
+    {
+        if (field == value) return;
+        field = value;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+    }
 }
 
 public class WatchTogetherSuggestionsResponse

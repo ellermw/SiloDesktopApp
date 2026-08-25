@@ -220,7 +220,7 @@ public sealed class FeatureTourDialog : ContentDialog
         if (step.Kind == "handoff" || _index == _steps.Count - 1)
         {
             _finished = true;
-            await _settingsApi.ReportOnboardingProgressAsync(
+            await TryReportProgressAsync(
                 _flow.TourId, step.Id, completed: true, skipped: false);
             Hide();
             NavigateRoute(step.Route);
@@ -229,7 +229,7 @@ public sealed class FeatureTourDialog : ContentDialog
 
         _index++;
         _selectedSettingValue = null;
-        await _settingsApi.ReportOnboardingProgressAsync(_flow.TourId, _steps[_index].Id);
+        await TryReportProgressAsync(_flow.TourId, _steps[_index].Id);
         RenderStep();
     }
 
@@ -246,8 +246,26 @@ public sealed class FeatureTourDialog : ContentDialog
     {
         if (_finished || _steps.Count == 0) return;
         var step = _steps[Math.Clamp(_index, 0, _steps.Count - 1)];
-        await _settingsApi.ReportOnboardingProgressAsync(
+        await TryReportProgressAsync(
             _flow.TourId, step.Id, completed: false, skipped: true);
+    }
+
+    private async Task TryReportProgressAsync(
+        string tourId,
+        string? stepId = null,
+        bool completed = false,
+        bool skipped = false)
+    {
+        try
+        {
+            await _settingsApi.ReportOnboardingProgressAsync(tourId, stepId, completed, skipped);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Feature tour progress sync failed: {ex}");
+            App.Services.GetRequiredService<ToastService>()
+                .Warning("Feature tour progress could not be synced.");
+        }
     }
 
     private static void NavigateRoute(string? route)

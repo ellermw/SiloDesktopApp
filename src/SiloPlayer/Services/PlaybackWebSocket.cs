@@ -79,13 +79,14 @@ public sealed class PlaybackWebSocket : IDisposable
         // Pass token as query param (matching web player) — CDN may strip Auth headers on WebSocket upgrades
         wsUrl = UrlHelper.AppendToken(wsUrl, _tokenProvider());
 
-        _ws = new ClientWebSocket();
+        var ws = new ClientWebSocket();
+        _ws = ws;
 
         try
         {
             var logUrl = wsUrl.Contains('?') ? wsUrl[..wsUrl.IndexOf('?')] : wsUrl;
             Log($"Connecting to: {logUrl}");
-            await _ws.ConnectAsync(new Uri(wsUrl), ct);
+            await ws.ConnectAsync(new Uri(wsUrl), ct);
             Log($"Connected successfully");
 
             // Send hello (use dictionaries — anonymous types break with .NET trimmer)
@@ -98,7 +99,7 @@ public sealed class PlaybackWebSocket : IDisposable
             });
 
             lock (_seenCommandGate) _seenCommandIds.Clear();
-            await ReceiveLoop(ct);
+            await ReceiveLoop(ws, ct);
             return true;
         }
         catch (Exception ex)
@@ -108,10 +109,9 @@ public sealed class PlaybackWebSocket : IDisposable
         }
         finally
         {
-            var socket = _ws;
-            _ws = null;
-            try { socket?.Abort(); } catch { }
-            socket?.Dispose();
+            Interlocked.CompareExchange(ref _ws, null, ws);
+            try { ws.Abort(); } catch { }
+            ws.Dispose();
         }
     }
 
@@ -130,16 +130,16 @@ public sealed class PlaybackWebSocket : IDisposable
         cts?.Dispose();
     }
 
-    private async Task ReceiveLoop(CancellationToken ct)
+    private async Task ReceiveLoop(ClientWebSocket ws, CancellationToken ct)
     {
         var buffer = new byte[8192];
-        var messageBuffer = new StringBuilder();
+        using var messageBuffer = new MemoryStream();
 
-        while (!ct.IsCancellationRequested && _ws?.State == WebSocketState.Open)
+        while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
         {
             try
             {
-                var result = await _ws.ReceiveAsync(buffer, ct);
+                var result = await ws.ReceiveAsync(buffer, ct);
 
                 if (result.MessageType == WebSocketMessageType.Close)
                 {
@@ -147,12 +147,15 @@ public sealed class PlaybackWebSocket : IDisposable
                     break;
                 }
 
-                messageBuffer.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
+                messageBuffer.Write(buffer, 0, result.Count);
 
                 if (result.EndOfMessage)
                 {
-                    var message = messageBuffer.ToString();
-                    messageBuffer.Clear();
+                    var message = Encoding.UTF8.GetString(
+                        messageBuffer.GetBuffer(),
+                        0,
+                        checked((int)messageBuffer.Length));
+                    messageBuffer.SetLength(0);
                     await HandleMessage(message);
                 }
             }

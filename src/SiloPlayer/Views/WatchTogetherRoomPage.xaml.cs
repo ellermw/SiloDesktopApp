@@ -417,18 +417,6 @@ public sealed partial class WatchTogetherRoomPage : Page
         else await ViewModel.VoteAsync(id);
     }
 
-    private void SuggestionPromote_Loaded(object sender, RoutedEventArgs e)
-    {
-        if (sender is FrameworkElement element) element.Visibility = ViewModel.IsHost ? Visibility.Visible : Visibility.Collapsed;
-    }
-
-    private void SuggestionDelete_Loaded(object sender, RoutedEventArgs e)
-    {
-        if (sender is not FrameworkElement { Tag: WatchTogetherSuggestion suggestion } element) return;
-        var profileId = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>().ProfileId;
-        element.Visibility = ViewModel.IsHost || suggestion.SuggesterProfileId == profileId ? Visibility.Visible : Visibility.Collapsed;
-    }
-
     private async void SuggestionPromote_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not FrameworkElement { Tag: WatchTogetherSuggestion suggestion }) return;

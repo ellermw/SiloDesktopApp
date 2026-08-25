@@ -67,20 +67,21 @@
                                                       Foreground="{StaticResource SecondaryTextBrush}"
                                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
                                         </Border>
-                                        <Border Background="{StaticResource AppBackgroundBrush}"
-                                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                                CornerRadius="4" Padding="5,1"
-                                                HorizontalAlignment="Center" VerticalAlignment="Bottom"
-                                                Visibility="{x:Bind Profile.IsChild, Converter={StaticResource BoolToVis}}">
-                                            <TextBlock Text="KIDS" FontFamily="Consolas" FontSize="9" CharacterSpacing="80" />
-                                        </Border>
-                                        <Border Background="{StaticResource AppBackgroundBrush}"
-                                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                                CornerRadius="4" Padding="5,1"
-                                                HorizontalAlignment="Center" VerticalAlignment="Bottom"
-                                                Visibility="{x:Bind Profile.ShowsPinBadge, Converter={StaticResource BoolToVis}}">
-                                            <TextBlock Text="PIN" FontFamily="Consolas" FontSize="9" CharacterSpacing="80" />
-                                        </Border>
+                                        <StackPanel Orientation="Horizontal" Spacing="4"
+                                                    HorizontalAlignment="Center" VerticalAlignment="Bottom">
+                                            <Border Background="{StaticResource AppBackgroundBrush}"
+                                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                                    CornerRadius="4" Padding="5,1"
+                                                    Visibility="{x:Bind Profile.IsChild, Converter={StaticResource BoolToVis}}">
+                                                <TextBlock Text="KIDS" FontFamily="Consolas" FontSize="9" CharacterSpacing="80" />
+                                            </Border>
+                                            <Border Background="{StaticResource AppBackgroundBrush}"
+                                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                                                    CornerRadius="4" Padding="5,1"
+                                                    Visibility="{x:Bind Profile.ShowsPinBadge, Converter={StaticResource BoolToVis}}">
+                                                <TextBlock Text="PIN" FontFamily="Consolas" FontSize="9" CharacterSpacing="80" />
+                                            </Border>
+                                        </StackPanel>
                                     </Grid>
                                     <TextBlock Text="{x:Bind DisplayName}" FontSize="14"
                                                FontWeight="{x:Bind LabelWeight}"

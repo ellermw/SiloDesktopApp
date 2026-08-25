@@ -13,6 +13,7 @@ public sealed class WebhookSyncTests
         """);
         var client = new SiloApiClient(new HttpClient(handler));
         client.SetBaseUrl("https://silo.test");
+        client.SetAccessToken("token");
 
         var connection = Assert.Single(await new WebhookSyncApi(client).GetConnectionsAsync());
 
@@ -53,7 +54,11 @@ public sealed class WebhookSyncTests
     private sealed class JsonHandler(string json) : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) });
+        {
+            Assert.Equal("Bearer", request.Headers.Authorization?.Scheme);
+            Assert.Equal("token", request.Headers.Authorization?.Parameter);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) });
+        }
     }
 
     private static string FindRepositoryRoot()

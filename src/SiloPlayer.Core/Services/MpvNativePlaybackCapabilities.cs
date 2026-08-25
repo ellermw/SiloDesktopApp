@@ -8,6 +8,12 @@ namespace SiloPlayer.Core.Services;
 /// </summary>
 public static class MpvNativePlaybackCapabilities
 {
+#if DEBUG
+    private const string AppChannelName = "qa";
+#else
+    private const string AppChannelName = "release";
+#endif
+
     public const string ClientManagedDynamicRangeClaim = "client_managed_dynamic_range_v1";
     public const string ClientSelectedAudioTrackClaim = "client_selected_audio_track_v1";
 
@@ -181,7 +187,7 @@ public static class MpvNativePlaybackCapabilities
             ProtocolVersion = 3,
             FormFactor = "desktop",
             AppVersion = string.IsNullOrWhiteSpace(appVersion) ? "unknown" : appVersion[..Math.Min(64, appVersion.Length)],
-            AppChannel = "qa",
+            AppChannel = AppChannelName,
             Device = new PlaybackDeviceContextV3
             {
                 Platform = "windows",

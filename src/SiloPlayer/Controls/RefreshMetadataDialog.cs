@@ -81,7 +81,6 @@ public sealed class RefreshMetadataDialog : ContentDialog
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         Grid.SetColumn(icon, 0);
         Grid.SetColumn(copy, 1);
-        grid.Children.Add(icon);
         grid.Children.Add(copy);
         var button = new Button
         {
@@ -105,7 +104,6 @@ public sealed class RefreshMetadataDialog : ContentDialog
         var iconHost = new Grid();
         iconHost.Children.Add(icon);
         iconHost.Children.Add(spinner);
-        grid.Children.Remove(icon);
         Grid.SetColumn(iconHost, 0);
         grid.Children.Add(iconHost);
         _choiceIndicators.Add((icon, spinner));
@@ -124,6 +122,7 @@ public sealed class RefreshMetadataDialog : ContentDialog
         try
         {
             await _onConfirm(mode);
+            _pending = false;
             Hide();
         }
         catch (Exception ex)

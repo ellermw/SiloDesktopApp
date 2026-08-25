@@ -292,7 +292,7 @@ public partial class AdminAutoscanViewModel(AdminApi adminApi, RequestsApi reque
     public void ApplyActiveScanSnapshot(IEnumerable<AdminScanRun> scans)
     {
         var mapped = scans
-            .Where(scan => scan.Trigger.Equals("autoscan", StringComparison.OrdinalIgnoreCase)
+            .Where(scan => string.Equals(scan.Trigger, "autoscan", StringComparison.OrdinalIgnoreCase)
                 && scan.Status is "accepted" or "queued" or "running")
             .Select(MapActiveScan)
             .OrderBy(scan => scan.Status == "running" ? 0 : 1)

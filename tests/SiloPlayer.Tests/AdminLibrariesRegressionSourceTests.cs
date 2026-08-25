@@ -19,7 +19,9 @@ public class AdminLibrariesRegressionSourceTests
     {
         var source = File.ReadAllText(Path.Combine(
             RepoRoot, "src", "SiloPlayer", "MainWindow.xaml.cs"));
-        var adminClick = source[source.IndexOf("private void Admin_Click", StringComparison.Ordinal)..];
+        var adminClickMarker = source.IndexOf("private void Admin_Click", StringComparison.Ordinal);
+        Assert.True(adminClickMarker >= 0, "Admin_Click marker was not found.");
+        var adminClick = source[adminClickMarker..];
 
         Assert.Contains("HideSharedServerActivity()", adminClick, StringComparison.Ordinal);
         Assert.Contains("MobileServerActivityButton.SetHostVisibility(false)", source, StringComparison.Ordinal);
@@ -49,11 +51,15 @@ public class AdminLibrariesRegressionSourceTests
     {
         var source = File.ReadAllText(Path.Combine(
             RepoRoot, "src", "SiloPlayer", "Views", "Admin", "AdminLibrariesPage.xaml.cs"));
-        var loaded = source[source.IndexOf("private async void Page_Loaded", StringComparison.Ordinal)..];
+        var loadedMarker = source.IndexOf("private async void Page_Loaded", StringComparison.Ordinal);
+        Assert.True(loadedMarker >= 0, "Page_Loaded marker was not found.");
+        var loaded = source[loadedMarker..];
+        var loadingRows = loaded.IndexOf("BuildLibraryLoadingRows();", StringComparison.Ordinal);
+        var libraryLoad = loaded.IndexOf("await ViewModel.LoadLibrariesAsync();", StringComparison.Ordinal);
 
         Assert.True(
-            loaded.IndexOf("BuildLibraryLoadingRows();", StringComparison.Ordinal)
-            < loaded.IndexOf("await ViewModel.LoadLibrariesAsync();", StringComparison.Ordinal));
+            loadingRows >= 0 && libraryLoad > loadingRows,
+            "The library loading rows must render before the primary request starts.");
     }
 
     [Fact]

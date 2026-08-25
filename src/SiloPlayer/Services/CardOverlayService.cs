@@ -292,6 +292,7 @@ public class CardOverlayService
     {
         var normalized = NormalizeDocument(prefs);
         await _settingsApi.PutSettingAsync("card_overlays", SerializePrefs(normalized), ct);
+        Interlocked.Increment(ref _loadGeneration);
         _document = normalized;
         _initialized = true;
     }

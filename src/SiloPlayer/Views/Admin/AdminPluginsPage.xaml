@@ -146,6 +146,7 @@
                     <StackPanel x:Name="InstalledCards" Spacing="8" />
                     <Border x:Name="InstalledEmpty" Padding="20,40" Visibility="Collapsed">
                         <TextBlock
+                            x:Name="InstalledEmptyText"
                             Text="No plugins installed."
                             FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}"

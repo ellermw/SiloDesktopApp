@@ -314,13 +314,32 @@ public partial class LibraryViewModel : ObservableObject
     {
         if (Library == null || TotalCount == 0) return;
 
+        var sortChanged = !string.Equals(SelectedSort, "title", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(SelectedOrder, "asc", StringComparison.OrdinalIgnoreCase);
+        var knownTotal = TotalCount;
         SelectedSort = "title";
         SelectedOrder = "asc";
 
-        if (letter == "#")
+        if (sortChanged)
         {
             StartNewCatalogQuery();
+            // Sorting does not change membership, so retain the known total while
+            // clearing every page/window/snapshot tied to the old sort order.
+            TotalCount = knownTotal;
+            DisplayTotalCount = knownTotal;
+            _estimatedTotalItems = knownTotal;
+            _hasExactTotal = true;
+            HasMore = knownTotal > PageSize;
             Items.Clear();
+        }
+
+        if (letter == "#")
+        {
+            if (!sortChanged)
+            {
+                StartNewCatalogQuery();
+                Items.Clear();
+            }
             await LoadWindowAsync(0, PageSize, force: true);
             return;
         }

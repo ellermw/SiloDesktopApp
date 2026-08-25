@@ -305,8 +305,8 @@ public partial class AdminLibrariesViewModel : ObservableObject
         try
         {
             await _adminApi.ConfirmEmptyRootCleanupAsync(id);
-            StatusMessage = "Empty root cleanup confirmed.";
             await LoadAsync();
+            StatusMessage = "Empty root cleanup confirmed.";
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
     }

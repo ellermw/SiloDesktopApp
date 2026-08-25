@@ -187,7 +187,7 @@ public partial class AdminLogsViewModel : ObservableObject
             .ToList();
 
         SummaryFirstSeen = timestamps.Count > 0 ? FormatDateTime(timestamps[0]) : "-";
-        SummaryLastSeen = timestamps.Count > 1 ? FormatDateTime(timestamps[^1]) : "-";
+        SummaryLastSeen = timestamps.Count > 0 ? FormatDateTime(timestamps[^1]) : "-";
 
         var nodes = matchingApp.Select(r => r.NodeId).Where(n => !string.IsNullOrEmpty(n))
             .Concat(matchingAudit.Select(r => r.NodeId).Where(n => !string.IsNullOrEmpty(n)))

@@ -31,9 +31,10 @@ public partial class AdminPlaybackHistoryViewModel : ObservableObject
 
     partial void OnSelectedUserIdChanged(int? value)
     {
-        // When user changes, clear profile selection
         SelectedProfileId = null;
         Profiles.Clear();
+        if (value is int userId)
+            _ = LoadProfilesAsync(userId, CancellationToken.None);
     }
 
     [RelayCommand]
@@ -84,7 +85,9 @@ public partial class AdminPlaybackHistoryViewModel : ObservableObject
             Items.Clear();
             foreach (var item in items) Items.Add(item);
 
-            ActiveMediaItemLabel = Items.FirstOrDefault()?.MediaTitle ?? MediaItemId ?? "";
+            ActiveMediaItemLabel = string.IsNullOrWhiteSpace(MediaItemId)
+                ? ""
+                : Items.FirstOrDefault()?.MediaTitle ?? MediaItemId;
 
             TotalCount = Items.Count;
             CompletedCount = Items.Count(i => i.Completed);

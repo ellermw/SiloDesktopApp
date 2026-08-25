@@ -5468,7 +5468,9 @@ public sealed partial class ItemDetailPage : Page
             {
                 var fraction = userData.PositionSeconds / userData.DurationSeconds;
                 _playProgressFraction = Math.Min(fraction, 1.0);
+                SplitPlayButton.SizeChanged -= OnSplitPlayButtonSizeChanged;
                 SplitPlayButton.SizeChanged += OnSplitPlayButtonSizeChanged;
+                UpdatePlayProgressWidth();
             }
 
             // Restart now lives in the More menu, matching ActionBar.tsx.
@@ -5782,10 +5784,10 @@ public sealed partial class ItemDetailPage : Page
             if (isResuming && userData?.DurationSeconds > 0)
             {
                 var fraction = userData.PositionSeconds!.Value / userData.DurationSeconds.Value;
-                // We need to measure the split button width; use a reasonable estimate
-                // The actual width will be set after layout
+                SplitPlayButton.SizeChanged -= OnSplitPlayButtonSizeChanged;
                 SplitPlayButton.SizeChanged += OnSplitPlayButtonSizeChanged;
                 _playProgressFraction = Math.Min(fraction, 1.0);
+                UpdatePlayProgressWidth();
             }
         }
     }

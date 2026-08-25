@@ -63,7 +63,7 @@ public class AdminPluginsCurrentParitySourceTests
         Assert.Contains("BuildPluginApps", MainWindow, StringComparison.Ordinal);
         Assert.Contains("PluginRoutePage", MainWindow, StringComparison.Ordinal);
         Assert.Contains("/api/v1/plugins/{args.InstallationId}{path}", PluginRoutePage, StringComparison.Ordinal);
-        Assert.Contains("Authorization", PluginRoutePage, StringComparison.Ordinal);
+        Assert.Contains("SetHeader(\"Authorization\", $\"Bearer {apiClient.AccessToken}\")", PluginRoutePage, StringComparison.Ordinal);
         Assert.Contains("X-Profile-Id", PluginRoutePage, StringComparison.Ordinal);
     }
 }

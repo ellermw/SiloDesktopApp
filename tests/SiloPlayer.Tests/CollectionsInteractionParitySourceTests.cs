@@ -5,7 +5,8 @@ public sealed class CollectionsInteractionParitySourceTests
     [Fact]
     public void CollectionAndTemplateCardsUseFocusableOpenActions()
     {
-        var source = Read("src", "SiloPlayer", "Views", "CollectionsPage.xaml.cs");
+        var source = Read("src", "SiloPlayer", "Views", "CollectionsPage.xaml.cs")
+            .ReplaceLineEndings("\n");
 
         Assert.Contains("private Button BuildTemplateCard", source);
         Assert.Contains("AutomationProperties.SetName(card, $\"Use {template.Title} collection template\")", source);

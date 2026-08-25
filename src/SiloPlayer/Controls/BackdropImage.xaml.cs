@@ -11,6 +11,8 @@ public sealed partial class BackdropImage : UserControl
     private double _imgW;
     private double _imgH;
     private Storyboard? _kenBurnsStoryboard;
+    private BitmapImage? _trackedBitmap;
+    private RoutedEventHandler? _trackedImageOpenedHandler;
 
     public static readonly DependencyProperty SourceProperty =
         DependencyProperty.Register(
@@ -63,12 +65,56 @@ public sealed partial class BackdropImage : UserControl
     public BackdropImage()
     {
         this.InitializeComponent();
+        Loaded += BackdropImage_Loaded;
+        Unloaded += BackdropImage_Unloaded;
+    }
+
+    private void BackdropImage_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (Source is BitmapImage bmp && _trackedBitmap == null)
+        {
+            if (bmp.PixelWidth > 0 && bmp.PixelHeight > 0)
+            {
+                _imgW = bmp.PixelWidth;
+                _imgH = bmp.PixelHeight;
+                Reposition();
+            }
+            else
+            {
+                RoutedEventHandler opened = (_, _) =>
+                {
+                    if (!ReferenceEquals(Source, bmp)) return;
+                    _imgW = bmp.PixelWidth;
+                    _imgH = bmp.PixelHeight;
+                    Reposition();
+                };
+                _trackedBitmap = bmp;
+                _trackedImageOpenedHandler = opened;
+                bmp.ImageOpened += opened;
+            }
+        }
+
+        if (EnableKenBurns && _kenBurnsStoryboard == null)
+            StartKenBurns();
+    }
+
+    private void BackdropImage_Unloaded(object sender, RoutedEventArgs e)
+    {
+        StopKenBurns();
+        if (_trackedBitmap != null && _trackedImageOpenedHandler != null)
+            _trackedBitmap.ImageOpened -= _trackedImageOpenedHandler;
+        _trackedBitmap = null;
+        _trackedImageOpenedHandler = null;
     }
 
     private static void OnSourceChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is not BackdropImage ctrl) return;
 
+        if (ctrl._trackedBitmap != null && ctrl._trackedImageOpenedHandler != null)
+            ctrl._trackedBitmap.ImageOpened -= ctrl._trackedImageOpenedHandler;
+        ctrl._trackedBitmap = null;
+        ctrl._trackedImageOpenedHandler = null;
         ctrl._imgW = 0;
         ctrl._imgH = 0;
         ctrl.InnerImage.Source = e.NewValue as ImageSource;
@@ -76,12 +122,16 @@ public sealed partial class BackdropImage : UserControl
         if (e.NewValue is BitmapImage bmp)
         {
             // BitmapImage may not have pixel dimensions until ImageOpened fires
-            bmp.ImageOpened += (_, _) =>
+            RoutedEventHandler opened = (_, _) =>
             {
+                if (!ReferenceEquals(ctrl.Source, bmp)) return;
                 ctrl._imgW = bmp.PixelWidth;
                 ctrl._imgH = bmp.PixelHeight;
                 ctrl.Reposition();
             };
+            ctrl._trackedBitmap = bmp;
+            ctrl._trackedImageOpenedHandler = opened;
+            bmp.ImageOpened += opened;
 
             // If already loaded (PixelWidth > 0), use immediately
             if (bmp.PixelWidth > 0 && bmp.PixelHeight > 0)
@@ -199,7 +249,7 @@ public sealed partial class BackdropImage : UserControl
         double anchorY = AnchorY;
         double top = containerH * anchorY - scaledH * anchorY;
         // Clamp so we never show gaps at top or bottom
-        top = Math.Clamp(top, containerH - scaledH, 0);
+        top = Math.Clamp(top, Math.Min(0, containerH - scaledH), 0);
 
         InnerImage.Width = scaledW;
         InnerImage.Height = scaledH;

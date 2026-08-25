@@ -34,7 +34,7 @@
     <Color x:Key="AccentForegroundColor">#0F1722</Color>
 
     <!-- ===== Badge / Tag Colors ===== -->
-    <Color x:Key="BadgeBackgroundColor">#1F6FEB33</Color>
+    <Color x:Key="BadgeBackgroundColor">#331F6FEB</Color>
     <Color x:Key="BadgeTextColor">#78AEFC</Color>
     <Color x:Key="BadgeResolutionColor">#238636</Color>
     <Color x:Key="BadgeHdrColor">#DB6D28</Color>

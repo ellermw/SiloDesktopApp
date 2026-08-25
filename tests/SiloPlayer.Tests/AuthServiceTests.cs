@@ -10,6 +10,49 @@ namespace SiloPlayer.Tests;
 public sealed class AuthServiceTests
 {
     [Fact]
+    public async Task TokenLifetime_SchedulesProactiveRefreshAtEightyPercentWithout401()
+    {
+        var scheduledDelay = new TaskCompletionSource<TimeSpan>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstDelay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var delayCall = 0;
+        Task ControlledDelay(TimeSpan dueTime, CancellationToken ct)
+        {
+            scheduledDelay.TrySetResult(dueTime);
+            if (Interlocked.Increment(ref delayCall) == 1)
+                return releaseFirstDelay.Task.WaitAsync(ct);
+            return Task.Delay(Timeout.InfiniteTimeSpan, ct);
+        }
+
+        var handler = new DelegateHandler((request, _) =>
+        {
+            if (request.RequestUri?.AbsolutePath == "/api/v1/auth/refresh")
+            {
+                refreshObserved.TrySetResult();
+                return Task.FromResult(JsonResponse(
+                    """{"access_token":"new-access","refresh_token":"new-refresh","expires_in":86400}"""));
+            }
+
+            return Task.FromResult(JsonResponse(
+                """{"id":1,"username":"tester","role":"user","permissions":[]}"""));
+        });
+        var apiClient = new SiloApiClient(new HttpClient(handler));
+        apiClient.SetBaseUrl("https://example.test");
+        using var authService = new AuthService(
+            apiClient,
+            new AuthApi(apiClient),
+            credentialStore: null,
+            ControlledDelay);
+
+        authService.SetTokens("old-access", "old-refresh", expiresIn: 100);
+
+        Assert.Equal(TimeSpan.FromSeconds(80), await scheduledDelay.Task.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.False(refreshObserved.Task.IsCompleted);
+        releaseFirstDelay.TrySetResult();
+        await refreshObserved.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
     public async Task ConcurrentTryRefreshAsync_ReusesSingleRotatingRefreshToken()
     {
         var refreshCalls = 0;

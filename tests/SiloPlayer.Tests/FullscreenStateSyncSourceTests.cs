@@ -111,8 +111,8 @@ public sealed class FullscreenStateSyncSourceTests
 
         Assert.Contains("PublishPictureInPictureVisualState", service);
         Assert.Contains(
-            "if (newState != PlayerState.PictureInPicture)\r\n            _videoWindow?.ExitPictureInPicture();",
-            service.ReplaceLineEndings("\r\n"));
+            "if (newState != PlayerState.PictureInPicture)\n            _videoWindow?.ExitPictureInPicture();",
+            service.ReplaceLineEndings("\n"));
         Assert.Matches(
             "(?s)HandleUnhandledPlaybackEscape\\(\\).*?State == PlayerState\\.PictureInPicture.*?SetState\\(PlayerState\\.Expanded\\)",
             service);

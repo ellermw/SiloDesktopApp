@@ -1752,6 +1752,8 @@ end
 -- Render the OSC
 --------------------------------------------------------------------------------
 
+local capitalize
+
 local function render_osc()
     if state.current_alpha <= 0.01 then
         remove_chapter_thumbnail_overlay()
@@ -2942,7 +2944,7 @@ local function source_priority(src)
 end
 
 -- Capitalize first letter
-local function capitalize(s)
+capitalize = function(s)
     if not s or s == "" then return "" end
     return s:sub(1,1):upper() .. s:sub(2)
 end

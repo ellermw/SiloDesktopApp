@@ -391,7 +391,9 @@ public sealed partial class AdminActivityPage : Page
             // Method name: capitalize, font-medium, text-[11px]
             sp.Children.Add(new TextBlock
             {
-                Text = char.ToUpper(method[0]) + method[1..],
+                Text = string.IsNullOrEmpty(method)
+                    ? "Unknown"
+                    : char.ToUpperInvariant(method[0]) + method[1..],
                 FontSize = 11,
                 FontWeight = FontWeights.Medium,
                 Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
@@ -940,10 +942,13 @@ public sealed partial class AdminActivityPage : Page
         flyout.Items.Add(ffmpegLogsItem);
         if (supportsPlaybackControl)
         {
+            flyout.Items.Add(pauseItem);
+            flyout.Items.Add(stopItem);
             flyout.Items.Add(msgItem);
         }
         else
         {
+            flyout.Items.Add(stopItem);
             flyout.Items.Add(new MenuFlyoutItem
             {
                 Text = "This session does not support live pause, resume, or messages.",
@@ -981,6 +986,8 @@ public sealed partial class AdminActivityPage : Page
                 catch (Exception ex) { toastService.Error($"Terminate failed: {ex.Message}"); }
             }
         };
+        flyout.Items.Add(new MenuFlyoutSeparator());
+        flyout.Items.Add(terminateItem);
 
         // Action button that opens the flyout
         var actionBtn = new Button

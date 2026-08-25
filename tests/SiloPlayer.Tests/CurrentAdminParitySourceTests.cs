@@ -29,9 +29,11 @@ public sealed class CurrentAdminParitySourceTests
         Assert.Contains("Ambiguous Roots", xaml);
         Assert.Contains("Troubleshooting", xaml);
         Assert.Contains("Stale External IDs", xaml);
-        Assert.True(
-            code.IndexOf("var skippedRootsTask", StringComparison.Ordinal) <
-            code.IndexOf("await ViewModel.LoadLibrariesAsync()", StringComparison.Ordinal));
+        var skippedRootsTask = code.IndexOf("var skippedRootsTask", StringComparison.Ordinal);
+        var librariesAwait = code.IndexOf("await ViewModel.LoadLibrariesAsync()", StringComparison.Ordinal);
+        Assert.True(skippedRootsTask >= 0, "Expected skipped-roots loading to be initialized.");
+        Assert.True(librariesAwait >= 0, "Expected libraries to be loaded.");
+        Assert.True(skippedRootsTask < librariesAwait, "Skipped-roots loading must begin before the libraries await.");
         Assert.Contains("selectedPaths = new HashSet<string>", code);
         Assert.Contains("Add {selectedPaths.Count} Folder", code);
         Assert.Contains("Auto-translate descriptions", code);
@@ -230,7 +232,7 @@ public sealed class CurrentAdminParitySourceTests
         var viewModel = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "ViewModels", "Admin", "AdminAutoscanViewModel.cs"));
 
         Assert.Contains("Queue counts are active, but live scan details have not arrived yet.", viewModel);
-        Assert.Contains("scan.Trigger.Equals(\"autoscan\"", viewModel);
+        Assert.Contains("string.Equals(scan.Trigger, \"autoscan\", StringComparison.OrdinalIgnoreCase)", viewModel);
         Assert.Contains("CancelLibraryScansAsync", viewModel);
         Assert.Contains("DeliveryMode = isWebhook ? \"webhook\" : \"poll\"", viewModel);
         Assert.Contains("[\"webhook_provider\"] = \"auto\"", viewModel);

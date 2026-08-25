@@ -21,6 +21,7 @@ public sealed class MpvPlayer : IDisposable
     private Thread? _eventThread;
     private Thread? _renderThread;
     private volatile bool _disposed;
+    private int _nativeCleanupStarted;
 
     // Render context creation artifacts (must be kept alive while render context exists)
     private GCHandle _apiTypePin;
@@ -684,7 +685,6 @@ public sealed class MpvPlayer : IDisposable
     public void SendMouseButton(int x, int y, int button, bool isDown)
     {
         if (_mpvHandle == IntPtr.Zero) return;
-        var action = isDown ? "press" : "release";
         var btnName = button switch
         {
             0 => "MBTN_LEFT",
@@ -692,7 +692,8 @@ public sealed class MpvPlayer : IDisposable
             2 => "MBTN_RIGHT",
             _ => $"MBTN{button}"
         };
-        Command("mouse", x.ToString(), y.ToString(), button.ToString(), action);
+        Command("mouse", x.ToString(), y.ToString());
+        Command(isDown ? "keydown" : "keyup", btnName);
     }
 
     /// <summary>Sends a key press to mpv's input system.</summary>
@@ -865,7 +866,7 @@ public sealed class MpvPlayer : IDisposable
 
         return Regex.Replace(
             arg,
-            @"(?<key>[?&](?:access_token|refresh_token|profile_token|room_token|token|jwt|password|secret|api_key|apikey|key)=)[^&\s]+",
+            @"(?<key>[?&](?:access_token|refresh_token|profile_token|room_token|token|jwt|password|secret|api_key|apikey|key|AWSAccessKeyId|X-Amz-[A-Za-z0-9-]+)=)[^&\s]+",
             "${key}<redacted>",
             RegexOptions.IgnoreCase);
     }
@@ -1168,24 +1169,63 @@ public sealed class MpvPlayer : IDisposable
         // Signal render thread to exit
         _frameUpdateEvent.Set();
 
-        // Wait for the render thread to finish
-        if (_renderThread is not null && _renderThread.IsAlive)
-            _renderThread.Join(TimeSpan.FromSeconds(2));
+        // Wake the mpv event loop before waiting so both native-facing threads
+        // have a chance to observe disposal promptly.
+        if (_mpvHandle != IntPtr.Zero)
+            mpv_wakeup(_mpvHandle);
 
-        // Free the render context before terminating mpv
+        var renderStopped = WaitForThread(_renderThread, TimeSpan.FromSeconds(2));
+        var eventStopped = WaitForThread(_eventThread, TimeSpan.FromSeconds(2));
+
+        if (renderStopped && eventStopped)
+        {
+            CompleteNativeCleanup();
+            return;
+        }
+
+        // Never free the render context, mpv handle, pinned buffers, or callback
+        // state while either worker can still be inside native code. A rare slow
+        // teardown is completed in the background after both workers actually exit.
+        var cleanupThread = new Thread(() =>
+        {
+            WaitForThreadWithoutTimeout(_renderThread);
+            WaitForThreadWithoutTimeout(_eventThread);
+            CompleteNativeCleanup();
+        })
+        {
+            IsBackground = true,
+            Name = "Silo mpv deferred cleanup",
+        };
+        cleanupThread.Start();
+    }
+
+    private static bool WaitForThread(Thread? thread, TimeSpan timeout)
+    {
+        if (thread is null || !thread.IsAlive)
+            return true;
+        if (ReferenceEquals(thread, Thread.CurrentThread))
+            return false;
+        return thread.Join(timeout);
+    }
+
+    private static void WaitForThreadWithoutTimeout(Thread? thread)
+    {
+        if (thread is null || !thread.IsAlive || ReferenceEquals(thread, Thread.CurrentThread))
+            return;
+        thread.Join();
+    }
+
+    private void CompleteNativeCleanup()
+    {
+        if (Interlocked.Exchange(ref _nativeCleanupStarted, 1) != 0)
+            return;
+
+        // Free the render context only after the render thread is gone.
         if (_renderCtx != IntPtr.Zero)
         {
             mpv_render_context_free(_renderCtx);
             _renderCtx = IntPtr.Zero;
         }
-
-        // Wake up the event loop so it can exit
-        if (_mpvHandle != IntPtr.Zero)
-            mpv_wakeup(_mpvHandle);
-
-        // Wait for the event thread to finish
-        if (_eventThread is not null && _eventThread.IsAlive)
-            _eventThread.Join(TimeSpan.FromSeconds(2));
 
         // Terminate and destroy the mpv instance
         if (_mpvHandle != IntPtr.Zero)

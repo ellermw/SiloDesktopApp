@@ -31,10 +31,14 @@ public class AdminDashboardRegressionSourceTests
     [Fact]
     public void DashboardPaintsLoadingStateBeforeNetworkRequests()
     {
-        var loaded = DashboardSource[DashboardSource.IndexOf("private async void Page_Loaded", StringComparison.Ordinal)..];
+        var marker = DashboardSource.IndexOf("private async void Page_Loaded", StringComparison.Ordinal);
+        Assert.True(marker >= 0, "Page_Loaded marker was not found.");
+        var loaded = DashboardSource[marker..];
+        var loadingState = loaded.IndexOf("BuildLoadingState();", StringComparison.Ordinal);
+        var networkLoad = loaded.IndexOf("await LoadDashboardProgressivelyAsync", StringComparison.Ordinal);
         Assert.True(
-            loaded.IndexOf("BuildLoadingState();", StringComparison.Ordinal)
-            < loaded.IndexOf("await LoadDashboardProgressivelyAsync", StringComparison.Ordinal));
+            loadingState >= 0 && networkLoad > loadingState,
+            "The loading state must be rendered before dashboard network loading starts.");
     }
 
     [Fact]

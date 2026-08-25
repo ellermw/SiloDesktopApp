@@ -35,10 +35,10 @@ public partial class AdminActivityViewModel : ObservableObject
     [ObservableProperty] private string _sortField = "started";
     [ObservableProperty] private bool _sortAscending;
 
-    partial void OnSearchTextChanged(string value) => ApplyFilters();
-    partial void OnMethodFilterChanged(string? value) => ApplyFilters();
-    partial void OnNodeFilterChanged(string? value) => ApplyFilters();
-    partial void OnTypeFilterChanged(string? value) => ApplyFilters();
+    partial void OnSearchTextChanged(string value) { RaiseFilterFlags(); ApplyFilters(); }
+    partial void OnMethodFilterChanged(string? value) { RaiseFilterFlags(); ApplyFilters(); }
+    partial void OnNodeFilterChanged(string? value) { RaiseFilterFlags(); ApplyFilters(); }
+    partial void OnTypeFilterChanged(string? value) { RaiseFilterFlags(); ApplyFilters(); }
     partial void OnSortFieldChanged(string value) => ApplyFilters();
     partial void OnSortAscendingChanged(bool value) => ApplyFilters();
 
@@ -93,9 +93,16 @@ public partial class AdminActivityViewModel : ObservableObject
         || TypeFilter != null;
 
     public int ActiveFilterCount =>
-        (MethodFilter != null ? 1 : 0)
+        (!string.IsNullOrEmpty(SearchText) ? 1 : 0)
+        + (MethodFilter != null ? 1 : 0)
         + (NodeFilter != null ? 1 : 0)
         + (TypeFilter != null ? 1 : 0);
+
+    private void RaiseFilterFlags()
+    {
+        OnPropertyChanged(nameof(HasActiveFilters));
+        OnPropertyChanged(nameof(ActiveFilterCount));
+    }
 
     [RelayCommand]
     private Task LoadAsync() => LoadInternalAsync(silent: false);
@@ -129,13 +136,14 @@ public partial class AdminActivityViewModel : ObservableObject
     {
         if (string.IsNullOrWhiteSpace(IpLookupText)) return;
         IpLookupLoading = true;
+        ErrorMessage = null;
+        IPLookupResults.Clear();
         try
         {
             var results = await _adminApi.GetIPUsersAsync(IpLookupText.Trim(), 30);
-            IPLookupResults.Clear();
             foreach (var r in results) IPLookupResults.Add(r);
         }
-        catch { }
+        catch (Exception ex) { ErrorMessage = $"IP lookup failed: {ex.Message}"; }
         finally { IpLookupLoading = false; }
     }
 

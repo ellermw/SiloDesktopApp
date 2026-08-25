@@ -684,6 +684,7 @@ public sealed partial class HeroCarousel : UserControl
             From = 0,
             To = 100,
             Duration = new Duration(TimeSpan.FromSeconds(8)),
+            EnableDependentAnimation = true,
         };
         Storyboard.SetTarget(anim, ProgressRailFill);
         Storyboard.SetTargetProperty(anim, "Width");

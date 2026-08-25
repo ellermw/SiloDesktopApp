@@ -425,11 +425,11 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
     {
         if (string.IsNullOrEmpty(hex)) return Colors.White;
         var clean = hex.TrimStart('#');
-        if (clean.Length == 6)
+        if (clean.Length == 6
+            && byte.TryParse(clean.AsSpan(0, 2), System.Globalization.NumberStyles.HexNumber, null, out var r)
+            && byte.TryParse(clean.AsSpan(2, 2), System.Globalization.NumberStyles.HexNumber, null, out var g)
+            && byte.TryParse(clean.AsSpan(4, 2), System.Globalization.NumberStyles.HexNumber, null, out var b))
         {
-            byte r = Convert.ToByte(clean.Substring(0, 2), 16);
-            byte g = Convert.ToByte(clean.Substring(2, 2), 16);
-            byte b = Convert.ToByte(clean.Substring(4, 2), 16);
             return Color.FromArgb(0xFF, r, g, b);
         }
         return Colors.White;

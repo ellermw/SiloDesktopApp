@@ -11,7 +11,7 @@
 - ⚠️ Major: **70**
 - ℹ️ Minor: **104**
 - Application code was not modified by the review.
-- Status boxes below are intentionally unchecked for Codex triage.
+- Codex dispositions recorded: **184/184** (174 Fixed, 8 Already fixed, 1 False positive, 1 Intentional).
 
 ### Review coverage
 
@@ -40,7 +40,7 @@ Replace `[ ]` with `[x]` only after recording one of:
 
 ### 1. Add `iconHost` to `grid` instead of adding `icon` directly. `icon` already belongs to `grid` when `iconHost.Children.Add(icon)` runs, so WinUI throws and dialog construction fails. Remove the earlier direct `icon` insertion and the later `grid.Children.Remove(icon)` call.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/RefreshMetadataDialog.cs:84-110`
 - **CodeRabbit ID:** `c4e8acc1-85f6-41d9-8dca-d184afd45866`
@@ -57,15 +57,15 @@ In @src/SiloPlayer/Controls/RefreshMetadataDialog.cs around lines 84 - 110, Upda
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/RefreshMetadataDialog.cs:84-110`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 2. Clear `pending` before you call `Hide()`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/RefreshMetadataDialog.cs:116-141`
 - **CodeRabbit ID:** `bf4cb2ef-66ee-4b01-811b-03e33e15eef2`
@@ -150,15 +150,15 @@ private async Task RunAsync(string mode)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/RefreshMetadataDialog.cs:116-141`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 3. Wrap the awaited API calls in the `async void` handlers with try/catch.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/Dialogs/FeatureTourDialog.cs:216-251`
 - **CodeRabbit ID:** `08bfce78-7ef4-401b-8f7d-eaeaa1998328`
@@ -226,15 +226,15 @@ In @src/SiloPlayer/Views/Dialogs/FeatureTourDialog.cs around lines 216 - 251, Wr
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Dialogs/FeatureTourDialog.cs:216-251`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 4. The dialog cannot close after a successful save.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/Dialogs/ProfileEditorDialog.cs:594-608`
 - **CodeRabbit ID:** `f9bf580c-3cee-4d49-89b9-d07786137f82`
@@ -287,15 +287,15 @@ SavedProfile = saved;
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Dialogs/ProfileEditorDialog.cs:594-608`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 5. Guard the awaited calls in `OnNavigatedFrom` and `ProgressTimerTick`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/EbookReaderPage.xaml.cs:120-134`
 - **CodeRabbit ID:** `2cb1d63c-ae0c-402b-8463-7fd25b7378ae`
@@ -365,15 +365,15 @@ protected override async void OnNavigatedFrom(NavigationEventArgs e)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/EbookReaderPage.xaml.cs:120-134`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 6. `Math.Clamp` throws when the book has zero chapters.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/EbookReaderPage.xaml.cs:419-420`
 - **CodeRabbit ID:** `0cd255b7-220f-4b22-b355-43c688198fda`
@@ -418,15 +418,15 @@ private int ChapterFromProgress(double progress) => _book == null || _book.Chapt
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/EbookReaderPage.xaml.cs:419-420`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 7. Settings content collapses to zero width below 1024 px.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/SettingsPage.xaml.cs:158-175`
 - **CodeRabbit ID:** `ca3402dc-2053-4558-9998-cfb3f3c8f1a7`
@@ -484,15 +484,15 @@ SettingsLayoutGrid.ColumnDefinitions[0].Width = isCompact
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/SettingsPage.xaml.cs:158-175`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 8. `capitalize` is not in scope here and resolves to a nil global.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `libs/mpv/scripts/silo-osc.lua:1926-1928`
 - **CodeRabbit ID:** `52966e66-98e3-4268-9928-9d86a088bbfc`
@@ -537,15 +537,15 @@ In @libs/mpv/scripts/silo-osc.lua around lines 1926 - 1928, Fix the out-of-scope
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `libs/mpv/scripts/silo-osc.lua:1926-1928`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 9. Declare `bytes` as `byte[]`. The `[]` collection expression has no natural type. Because `var` provides no target type, the compiler cannot resolve the conditional expression and reports `CS0173`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/DirectStreamRelayTests.cs:17-22`
 - **CodeRabbit ID:** `44f8d6bc-6a7c-45d3-9e3b-85b4c971e4e8`
@@ -562,15 +562,15 @@ In @tests/SiloPlayer.Tests/DirectStreamRelayTests.cs around lines 17 - 22, In th
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/DirectStreamRelayTests.cs:17-22`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 10. Marshal room state updates to the UI thread.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/WatchTogetherViewModels.cs:516-544`
 - **CodeRabbit ID:** `26d5ce98-4198-48e2-991a-8883715285a4`
@@ -629,9 +629,9 @@ In @src/SiloPlayer/ViewModels/WatchTogetherViewModels.cs around lines 516 - 544,
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/WatchTogetherViewModels.cs:516-544`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
@@ -640,7 +640,7 @@ In @src/SiloPlayer/ViewModels/WatchTogetherViewModels.cs around lines 516 - 544,
 
 ### 11. `pauseItem`, `stopItem`, and `terminateItem` are never added to the flyout.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminActivityPage.xaml.cs:841-952`
 - **CodeRabbit ID:** `c97cfc9c-5da0-49c7-84c1-8d605fdb08a1`
@@ -688,15 +688,15 @@ In @src/SiloPlayer/Views/Admin/AdminActivityPage.xaml.cs around lines 841 - 952,
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminActivityPage.xaml.cs:841-952`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 12. Stale `RateTier` blocks a second tier change back to the original value.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminApiKeysPage.xaml.cs:288-296`
 - **CodeRabbit ID:** `b57e5dce-3b37-44f2-b1a2-1926f458f96b`
@@ -755,15 +755,15 @@ var capturedKeyForTier = capturedKey;
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminApiKeysPage.xaml.cs:288-296`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 13. Selection taps rebuild every row and re-decode every poster.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminCollectionsPage.xaml.cs:809-847`
 - **CodeRabbit ID:** `f1847968-78fd-49b1-9d1e-9d17855335a2`
@@ -789,15 +789,15 @@ In @src/SiloPlayer/Views/Admin/AdminCollectionsPage.xaml.cs around lines 809 - 8
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminCollectionsPage.xaml.cs:809-847`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 14. Reset the unused filter columns in compact mode.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminDiagnosticsPage.xaml.cs:80-96`
 - **CodeRabbit ID:** `30802f9e-aaf5-469f-8209-36b84dfa89bf`
@@ -850,15 +850,15 @@ In @src/SiloPlayer/Views/Admin/AdminDiagnosticsPage.xaml.cs around lines 80 - 96
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminDiagnosticsPage.xaml.cs:80-96`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 15. Fix the row collision in compact mode.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminHistoryImportPage.xaml.cs:252-255`
 - **CodeRabbit ID:** `b936d52b-2964-49fc-be3b-7ee3e04f0613`
@@ -905,15 +905,15 @@ In @src/SiloPlayer/Views/Admin/AdminHistoryImportPage.xaml.cs around lines 252 -
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminHistoryImportPage.xaml.cs:252-255`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 16. Guard the event subscriptions in `PageLoaded`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminInviteCodesPage.xaml.cs:24-38`
 - **CodeRabbit ID:** `9a3e011c-1294-480d-83f1-2126df9bde94`
@@ -1008,15 +1008,15 @@ private bool _subscribed;
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminInviteCodesPage.xaml.cs:24-38`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 17. Catch exceptions in the `async void` toggle handler.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminNodesPage.xaml.cs:232-236`
 - **CodeRabbit ID:** `93e41b18-ba05-4e21-bfa5-8c82c29e0215`
@@ -1076,15 +1076,15 @@ In @src/SiloPlayer/Views/Admin/AdminNodesPage.xaml.cs around lines 232 - 236, Wr
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminNodesPage.xaml.cs:232-236`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 18. Do not create a second polling timer when `Loaded` fires again.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminPlaybackHistoryPage.xaml.cs:95-109`
 - **CodeRabbit ID:** `da6151b5-d9eb-49fd-9de0-71653edceea5`
@@ -1147,15 +1147,15 @@ private async void Page_Loaded(object sender, RoutedEventArgs e)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminPlaybackHistoryPage.xaml.cs:95-109`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 19. Fix the inverted result handling after `AddRepositoryAsync`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminPluginsPage.xaml.cs:1264-1284`
 - **CodeRabbit ID:** `6ddead28-8329-4903-b03e-763320b639e7`
@@ -1218,15 +1218,15 @@ private async void SubmitRepoButton_Click(object sender, RoutedEventArgs e)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminPluginsPage.xaml.cs:1264-1284`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 20. Wrap the users fetch in error handling.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminRequestsPage.xaml.cs:161-171`
 - **CodeRabbit ID:** `3b269546-8897-4ec5-b260-a0988374c92c`
@@ -1297,15 +1297,15 @@ private async Task LoadQueueAsync(bool showSkeleton = true)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminRequestsPage.xaml.cs:161-171`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 21. Guard the nullable `Language` and `Format` values.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminSubtitlesPage.xaml.cs:296-299`
 - **CodeRabbit ID:** `7f20daea-ae1b-44bf-b910-d331dcda2b83`
@@ -1338,15 +1338,15 @@ In @src/SiloPlayer/Views/Admin/AdminSubtitlesPage.xaml.cs around lines 296 - 299
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminSubtitlesPage.xaml.cs:296-299`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 22. Reject an invalid interval before you add the trigger.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminTaskDetailPage.xaml.cs:913-927`
 - **CodeRabbit ID:** `a0c17a1e-1818-40a3-a01a-27dcc60df992`
@@ -1400,15 +1400,15 @@ In @src/SiloPlayer/Views/Admin/AdminTaskDetailPage.xaml.cs around lines 913 - 92
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminTaskDetailPage.xaml.cs:913-927`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 23. Clamp the progress value before you build the star widths.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminTasksPage.xaml.cs:296-308`
 - **CodeRabbit ID:** `c22bf4b4-877f-49c8-815b-bf747ed8fab4`
@@ -1454,15 +1454,15 @@ double pct = Math.Clamp(Math.Max(task.Progress, 2.0), 0, 100);
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminTasksPage.xaml.cs:296-308`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 24. Keep the page-size control reachable after the user raises the page size.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminUsersPage.xaml.cs:758-791`
 - **CodeRabbit ID:** `1592b9ce-577b-40be-868f-ddc0d1dcfb78`
@@ -1536,15 +1536,15 @@ In @src/SiloPlayer/Views/Admin/AdminUsersPage.xaml.cs around lines 758 - 791, Up
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminUsersPage.xaml.cs:758-791`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 25. Bump the load generation in `SaveAsync`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Application services
 - **Location:** `src/SiloPlayer/Services/CardOverlayService.cs:291-297`
 - **CodeRabbit ID:** `bc692c30-898d-470d-9c36-2607a3c479c9`
@@ -1596,15 +1596,15 @@ public async Task SaveAsync(CardOverlayPrefs prefs, CancellationToken ct = defau
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Services/CardOverlayService.cs:291-297`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 26. Decode UTF-8 after the message is complete.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Application services
 - **Location:** `src/SiloPlayer/Services/PlaybackWebSocket.cs:135-157`
 - **CodeRabbit ID:** `02f28e19-1335-44af-9817-d4a9f2e16544`
@@ -1679,15 +1679,15 @@ var buffer = new byte[8192];
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Services/PlaybackWebSocket.cs:135-157`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 27. Prevent old delayed commands from controlling the new session.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Application services
 - **Location:** `src/SiloPlayer/Services/WatchTogetherCoordinator.cs:239-243`
 - **CodeRabbit ID:** `efb8bf8c-c71a-458b-b91d-3184ed41a693`
@@ -1708,15 +1708,15 @@ In @src/SiloPlayer/Services/WatchTogetherCoordinator.cs around lines 239 - 243, 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Services/WatchTogetherCoordinator.cs:239-243`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 28. Send the required playback progress heartbeat.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Application services
 - **Location:** `src/SiloPlayer/Services/WatchTogetherCoordinator.cs:308-313`
 - **CodeRabbit ID:** `da0655b5-fe5d-4635-8e79-ad5349d94e66`
@@ -1739,15 +1739,15 @@ In @src/SiloPlayer/Services/WatchTogetherCoordinator.cs around lines 308 - 313, 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** False positive
+- **Evidence:** `PlaybackManager.StartProgressReporting` owns the heartbeat for every active playback session (1-second initial delay, then every 7 seconds). `WatchTogetherCoordinator.TickStateReport` intentionally emits only room state, so adding another progress loop there would duplicate session traffic.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 29. Make the loaded template self-contained. `XamlReader.Load` cannot resolve `StaticResource` references from `Application.Resources` in this disconnected XAML fragment. Define the brushes locally or assign them after loading; otherwise template creation throws and the palette cannot display results.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/AdminCommandPaletteDialog.cs:85-100`
 - **CodeRabbit ID:** `71564ba1-2a7a-438a-80f1-0d01310db3c0`
@@ -1764,15 +1764,15 @@ In @src/SiloPlayer/Controls/AdminCommandPaletteDialog.cs around lines 85 - 100, 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/AdminCommandPaletteDialog.cs:85-100`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 30. Reset the cover state in `Bind` so recycled cards do not show a stale poster.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/AudiobookSquareCard.xaml.cs:39-51`
 - **CodeRabbit ID:** `a419accb-786d-4a30-96c4-e61c581981f5`
@@ -1833,15 +1833,15 @@ private void Bind(MediaItem item)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/AudiobookSquareCard.xaml.cs:39-51`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 31. The `ImageOpened` subscription leaks and can run more than once.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/BackdropImage.xaml.cs:76-93`
 - **CodeRabbit ID:** `36fc159b-9c6b-4c53-9d32-3382f4ec751c`
@@ -1914,15 +1914,15 @@ In @src/SiloPlayer/Controls/BackdropImage.xaml.cs around lines 76 - 93, Update t
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/BackdropImage.xaml.cs:76-93`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 32. Wrap the refresh handlers in try/catch.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/CatalogImportDialog.xaml.cs:90-100`
 - **CodeRabbit ID:** `2f1d6c90-fa7f-4e67-8b03-e1dd18643dff`
@@ -2012,15 +2012,15 @@ private async void RefreshLocalSources_Click(object sender, RoutedEventArgs e)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/CatalogImportDialog.xaml.cs:90-100`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 33. Show the import error instead of failing silently.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/CatalogImportDialog.xaml.cs:217-230`
 - **CodeRabbit ID:** `59a119f1-de10-4448-ac8f-b5de9e41858b`
@@ -2074,15 +2074,15 @@ In @src/SiloPlayer/Controls/CatalogImportDialog.xaml.cs around lines 217 - 230, 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/CatalogImportDialog.xaml.cs:217-230`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 34. Enable dependent animation for `ProgressRailFill.Width`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/HeroCarousel.xaml.cs:682-693`
 - **CodeRabbit ID:** `76baed02-7c1c-4d18-824c-21826adc363d`
@@ -2101,15 +2101,15 @@ In @src/SiloPlayer/Controls/HeroCarousel.xaml.cs around lines 682 - 693, Update 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/HeroCarousel.xaml.cs:682-693`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 35. Attach the event handlers only after `Subscribe` succeeds, or track subscription separately.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/ServerActivityButton.xaml.cs:146-166`
 - **CodeRabbit ID:** `a8a0f0e6-6547-4893-94ae-25b3bd8dcaab`
@@ -2183,15 +2183,15 @@ private void SubscribeToEvents()
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/ServerActivityButton.xaml.cs:146-166`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 36. Cancel the pending close animation when the sheet reopens.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/SlideSheet.xaml.cs:82-137`
 - **CodeRabbit ID:** `92877fd6-aa69-4143-a694-32a00daf97ae`
@@ -2243,15 +2243,15 @@ In @src/SiloPlayer/Controls/SlideSheet.xaml.cs around lines 82 - 137, Retain the
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/SlideSheet.xaml.cs:82-137`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 37. Keep the toast root hit-testable.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/ToastContainer.xaml:9-13`
 - **CodeRabbit ID:** `b4f06c2e-8cae-4b98-9986-f7396d54957e`
@@ -2270,15 +2270,15 @@ In @src/SiloPlayer/Controls/ToastContainer.xaml around lines 9 - 13, Update the 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/ToastContainer.xaml:9-13`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 38. Parse with invariant culture and assume UTC.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Helpers/TimeAgo.cs:29-75`
 - **CodeRabbit ID:** `8af8e5b0-063a-476b-b81b-f1527bb31b39`
@@ -2334,15 +2334,15 @@ In @src/SiloPlayer.Core/Helpers/TimeAgo.cs around lines 29 - 75, Update FormatAd
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Helpers/TimeAgo.cs:29-75`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 39. Deserialize history items as `MediaItem`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Models/Catalog/HistoryEntry.cs:17-22`
 - **CodeRabbit ID:** `aaea8385-12f6-4d47-b9c8-ee47d28cfbca`
@@ -2393,15 +2393,15 @@ public class HistoryResponse
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Models/Catalog/HistoryEntry.cs:17-22`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 40. Remove the legacy Continuum source citation.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Models/Playback/WatchDetailResponse.cs:239-242`
 - **CodeRabbit ID:** `5e5ecb61-5806-4a27-8b3c-9648bbe411b6`
@@ -2426,15 +2426,15 @@ In @src/SiloPlayer.Core/Models/Playback/WatchDetailResponse.cs around lines 239 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Models/Playback/WatchDetailResponse.cs:239-242`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 41. Guard the read loop against a superseded connection.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Services/AdminLogStreamClient.cs:85-94`
 - **CodeRabbit ID:** `493fc583-0c08-4069-a4f5-ed795d586c5f`
@@ -2495,15 +2495,15 @@ In @src/SiloPlayer.Core/Services/AdminLogStreamClient.cs around lines 85 - 94, U
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Services/AdminLogStreamClient.cs:85-94`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 42. The two-argument overloads are fail-open.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Services/AuthorizationPolicy.cs:21-22`
 - **CodeRabbit ID:** `7926f75c-9cba-47d1-b6a5-bc76ae494c3d`
@@ -2530,15 +2530,15 @@ In @src/SiloPlayer.Core/Services/AuthorizationPolicy.cs around lines 21 - 22, Th
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Services/AuthorizationPolicy.cs:21-22`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 43. `DeleteAllForServer` leaves the impersonation credentials in Credential Manager.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Services/CredentialStore.cs:75-81`
 - **CodeRabbit ID:** `24d5629f-d072-4a0e-b13c-4db2de9c3c08`
@@ -2589,15 +2589,15 @@ public void DeleteAllForServer(string serverUrl)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Services/CredentialStore.cs:75-81`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 44. Logout does not stop handle-based subscriptions.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Services/EventChannelClient.cs:191-194`
 - **CodeRabbit ID:** `9a1b8885-279a-4dbe-a20a-27d3f76c4d52`
@@ -2642,15 +2642,15 @@ In @src/SiloPlayer.Core/Services/EventChannelClient.cs around lines 191 - 194, U
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Services/EventChannelClient.cs:191-194`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 45. Do not advertise `clientmanageddynamicrangev1` while Profile 7 is excluded. The claim path bypasses `HDRDetails.DolbyVisionProfiles`, so the server can return untransformed Profile 7 bytes to a client that advertises only Profiles 5 and 8.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Services/MpvNativePlaybackCapabilities.cs:76`
 - **CodeRabbit ID:** `33013ca1-aef6-4f19-a365-519292f4ee7a`
@@ -2667,15 +2667,15 @@ In @src/SiloPlayer.Core/Services/MpvNativePlaybackCapabilities.cs at line 76, Up
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Intentional
+- **Evidence:** The current official Silo server `main` commit `20ae82ae05edcfef151a02738e323cf1a97034ef` explicitly tests this contract in `internal/playback/protocol_v3_test.go`, including `TestPlanPlaybackV3ClientManagedDynamicRangeCanHandDV7ToEngine` and the DV7 transformation ladder. The client claim is therefore intentional and server-coordinated.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 46. Strip `UserInfo` before logging the URL.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Services/PlaybackUrlRedactor.cs:17-21`
 - **CodeRabbit ID:** `cb007153-51e2-4ce9-92a7-d8d1f54e5d77`
@@ -2694,15 +2694,15 @@ In @src/SiloPlayer.Core/Services/PlaybackUrlRedactor.cs around lines 17 - 21, Up
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Services/PlaybackUrlRedactor.cs:17-21`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 47. Restore a visible focus indicator on the filter pills.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/CalendarPage.xaml:35-74`
 - **CodeRabbit ID:** `2ae457c7-0a93-4aa5-90c7-b9be0024a5d8`
@@ -2777,15 +2777,15 @@ In @src/SiloPlayer/Views/CalendarPage.xaml around lines 35 - 74, Restore keyboar
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/CalendarPage.xaml:35-74`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 48. Convert `MinimumRatingBox.Text` to a number before creating the rule.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/CollectionBrowsePage.xaml.cs:304-322`
 - **CodeRabbit ID:** `3a8ff75e-4a54-4c6b-bfe4-8878e2de99f8`
@@ -2804,15 +2804,15 @@ In @src/SiloPlayer/Views/CollectionBrowsePage.xaml.cs around lines 304 - 322, Up
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/CollectionBrowsePage.xaml.cs:304-322`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 49. `ApplyReadOnlyState` re-enables controls that were deliberately disabled.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/CollectionEditorPage.xaml.cs:339-351`
 - **CodeRabbit ID:** `e17d335d-dd05-4b50-9a53-51c694bbb920`
@@ -2889,15 +2889,15 @@ private void ApplyReadOnlyState()
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/CollectionEditorPage.xaml.cs:339-351`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 50. Do not put the access token in the URL query string.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/DownloadsPage.xaml.cs:256-264`
 - **CodeRabbit ID:** `8f71332f-4a51-41e4-99a7-5ceead08fe96`
@@ -2955,15 +2955,15 @@ var apiClient = App.Services.GetRequiredService<SiloApiClient>();
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/DownloadsPage.xaml.cs:256-264`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 51. Sorting in place corrupts the order after each page load.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/FavoritesPage.xaml.cs:82-102`
 - **CodeRabbit ID:** `0bcd3312-88db-4665-b6d3-707f6bd1a77f`
@@ -2984,15 +2984,15 @@ In @src/SiloPlayer/Views/FavoritesPage.xaml.cs around lines 82 - 102, Update App
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/FavoritesPage.xaml.cs:82-102`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 52. Remove the duplicate `SplitPlayButton.SizeChanged` subscriptions.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/ItemDetailPage.xaml.cs:5467-5472`
 - **CodeRabbit ID:** `4ecd0e25-24c2-4fd6-8eee-e8d63e439962`
@@ -3048,15 +3048,15 @@ In @src/SiloPlayer/Views/ItemDetailPage.xaml.cs around lines 5467 - 5472, Preven
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/ItemDetailPage.xaml.cs:5467-5472`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 53. Close the `WebView2` control after the dialog closes.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/LoginPage.xaml.cs:127-227`
 - **CodeRabbit ID:** `54fb0a83-41be-469a-9cf2-ca1c080ebc82`
@@ -3212,15 +3212,15 @@ private async Task ShowOAuthDialogAsync(AuthProvider provider, Uri authorizeUri)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/LoginPage.xaml.cs:127-227`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 54. Validate the origin of the OAuth completion URL.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/LoginPage.xaml.cs:229-249`
 - **CodeRabbit ID:** `7cc7dbed-ded7-4ccb-96be-9f0f8be741c0`
@@ -3294,15 +3294,15 @@ private bool TryGetOAuthCompletionCode(string uriText, out string code)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/LoginPage.xaml.cs:229-249`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 55. Align the `ItemsWrapGrid` cell size with the item template size.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/RequestBrowsePage.xaml:42-46`
 - **CodeRabbit ID:** `01385f4a-e332-496f-adbd-053177c8cf74`
@@ -3342,15 +3342,15 @@ In @src/SiloPlayer/Views/RequestBrowsePage.xaml around lines 42 - 46, Align the 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/RequestBrowsePage.xaml:42-46`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 56. Use `Mode=OneWay` for the request state bindings.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/RequestBrowsePage.xaml:55-70`
 - **CodeRabbit ID:** `1b400320-1f74-46c8-bc03-6866ce28fc7b`
@@ -3414,15 +3414,15 @@ In @src/SiloPlayer/Views/RequestBrowsePage.xaml around lines 55 - 70, Update the
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/RequestBrowsePage.xaml:55-70`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 57. Implement sorting for `addedat`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/WatchlistPage.xaml.cs:86-94`
 - **CodeRabbit ID:** `c1de56c3-d695-4bf3-8d9e-9ab718e7d6dc`
@@ -3443,15 +3443,15 @@ In @src/SiloPlayer/Views/WatchlistPage.xaml.cs around lines 86 - 94, Add an "add
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/WatchlistPage.xaml.cs:86-94`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 58. Remove the reference to the legacy Continuum repository.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/WatchTogetherJoinPage.xaml.cs:9-19`
 - **CodeRabbit ID:** `1c072b6d-aad5-4d23-9293-57926b837d1e`
@@ -3485,15 +3485,15 @@ In @src/SiloPlayer/Views/WatchTogetherJoinPage.xaml.cs around lines 9 - 19, Upda
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/WatchTogetherJoinPage.xaml.cs:9-19`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 59. Do not set per-item visibility from the `Loaded` event inside an `ItemsRepeater`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/WatchTogetherRoomPage.xaml:315-321`
 - **CodeRabbit ID:** `1c9a467b-4181-4fc4-8e6e-f542581e3ef9`
@@ -3512,15 +3512,15 @@ In @src/SiloPlayer/Views/WatchTogetherRoomPage.xaml around lines 315 - 321, Repl
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/WatchTogetherRoomPage.xaml:315-321`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 60. Pin and verify the Windows App SDK bootstrapper.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `installer/build.ps1:79-85`
 - **CodeRabbit ID:** `ce354cb8-968e-41dc-babe-8b89200706a3`
@@ -3539,15 +3539,15 @@ In @installer/build.ps1 around lines 79 - 85, Update the Windows App SDK bootstr
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `installer/build.ps1:79-85`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests. PowerShell parser validation also passed for all five installer/audit scripts; Inno Setup itself is not installed.
 
 ---
 
 ### 61. Check the Windows App SDK runtime installer exit code.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `installer/SiloInstaller.iss:69-74`
 - **CodeRabbit ID:** `e27c8163-0994-4e9e-bba5-4dd9c3d40505`
@@ -3635,15 +3635,15 @@ end;
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `installer/SiloInstaller.iss:69-74`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests. Inno Setup is not installed in this environment, so the `.iss` compiler pass could not be executed.
 
 ---
 
 ### 62. This script targets the legacy Continuum repository and conflicts with the parity source rule.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `scripts/audit-bump.ps1:1-17`
 - **CodeRabbit ID:** `faa01ec1-5efb-4ebd-b2d1-d3d136041174`
@@ -3666,15 +3666,15 @@ In @scripts/audit-bump.ps1 around lines 1 - 17, Update the audit-bump workflow a
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `scripts/audit-bump.ps1:1-17`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests. PowerShell parser validation also passed for all five installer/audit scripts; Inno Setup itself is not installed.
 
 ---
 
 ### 63. `git` failures inside `Push-Location`/`finally` are not detected.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `scripts/audit-bump.ps1:35-43`
 - **CodeRabbit ID:** `d633449c-bbf3-410c-be81-5b8671c923ef`
@@ -3714,15 +3714,15 @@ In @scripts/audit-bump.ps1 around lines 35 - 43, Update the git command handling
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `scripts/audit-bump.ps1:35-43`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests. PowerShell parser validation also passed for all five installer/audit scripts; Inno Setup itself is not installed.
 
 ---
 
 ### 64. An invalid `lastverifiedsha` makes a page report as UNCHANGED.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `scripts/audit-delta.ps1:114-127`
 - **CodeRabbit ID:** `79345bfb-f43a-4df1-932b-1412e1b17127`
@@ -3796,15 +3796,15 @@ $changedFiles = @()
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `scripts/audit-delta.ps1:114-127`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests. PowerShell parser validation also passed for all five installer/audit scripts; Inno Setup itself is not installed.
 
 ---
 
 ### 65. Use `keydown` and `keyup` for mouse-button state.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `src/SiloPlayer.Player/MpvPlayer.cs:683-696`
 - **CodeRabbit ID:** `f6d1fb6f-c575-4280-9d62-9610e3246a4e`
@@ -3823,15 +3823,15 @@ In @src/SiloPlayer.Player/MpvPlayer.cs around lines 683 - 696, Update SendMouseB
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Player/MpvPlayer.cs:683-696`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 66. The redaction regex misses presigned S3 signature parameters.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `src/SiloPlayer.Player/MpvPlayer.cs:861-871`
 - **CodeRabbit ID:** `b03606e7-ccb9-47ad-ab67-079aa1ccb35d`
@@ -3884,15 +3884,15 @@ private static string RedactCommandArgument(string arg)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Player/MpvPlayer.cs:861-871`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 67. Dispose continues after a failed thread join and can free resources the render thread still uses.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `src/SiloPlayer.Player/MpvPlayer.cs:1168-1214`
 - **CodeRabbit ID:** `8105fc65-0f90-46aa-b3f9-a210c8c55932`
@@ -3947,15 +3947,15 @@ In @src/SiloPlayer.Player/MpvPlayer.cs around lines 1168 - 1214, Update Dispose 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Player/MpvPlayer.cs:1168-1214`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 68. The activation pipe accepts connections from any local caller.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `src/SiloPlayer/App.xaml.cs:147-159`
 - **CodeRabbit ID:** `5732734e-205a-44d2-a327-c5bbae95f26f`
@@ -4000,15 +4000,15 @@ In @src/SiloPlayer/App.xaml.cs around lines 147 - 159, Update the activation pip
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/App.xaml.cs:147-159`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 69. Cache image data instead of constructing a `BitmapImage` from the presigned URL.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `src/SiloPlayer/Converters/UrlToImageSourceConverter.cs:13-23`
 - **CodeRabbit ID:** `73c57388-eceb-42dc-ba10-c0ba5dc36cb6`
@@ -4031,15 +4031,15 @@ In @src/SiloPlayer/Converters/UrlToImageSourceConverter.cs around lines 13 - 23,
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Converters/UrlToImageSourceConverter.cs:13-23`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 70. Always notify the view after `Reset`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `src/SiloPlayer/Helpers/VirtualCatalogItems.cs:59-63`
 - **CodeRabbit ID:** `8679d3af-8f9b-4ec5-a121-243623dadb09`
@@ -4097,15 +4097,15 @@ public void Reset(int totalCount)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Helpers/VirtualCatalogItems.cs:59-63`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 71. Add coverage for the proactive refresh schedule.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/AuthServiceTests.cs:12-39`
 - **CodeRabbit ID:** `79192aa2-82ff-4581-b9eb-3cfab78186f5`
@@ -4128,15 +4128,15 @@ In @tests/SiloPlayer.Tests/AuthServiceTests.cs around lines 12 - 39, Add a focus
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/AuthServiceTests.cs:12-39`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 72. Assertions inside the handler delegate can be swallowed by the retry loop.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/DirectStreamRelayTests.cs:96-97`
 - **CodeRabbit ID:** `f86687a1-feb6-4c20-ac1d-f212127f41b4`
@@ -4163,15 +4163,15 @@ In @tests/SiloPlayer.Tests/DirectStreamRelayTests.cs around lines 96 - 97, Updat
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/DirectStreamRelayTests.cs:96-97`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 73. Assert that both indices are found before you compare them.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/FullscreenStateSyncSourceTests.cs:56-58`
 - **CodeRabbit ID:** `23423127-26bc-4b54-8436-bcaf22444f51`
@@ -4212,15 +4212,15 @@ In @tests/SiloPlayer.Tests/FullscreenStateSyncSourceTests.cs around lines 56 - 5
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/FullscreenStateSyncSourceTests.cs:56-58`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 74. Remove the 250 ms timing race from the cancellation assertion.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/ImageServiceTests.cs:114-119`
 - **CodeRabbit ID:** `8b97dd53-f39c-4352-a046-30c3ff67f78f`
@@ -4267,15 +4267,15 @@ firstWaiter.Cancel();
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/ImageServiceTests.cs:114-119`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 75. Do not make tests depend on the `.codex-tmp` scratch checkout.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/SearchRuntimeRegressionTests.cs:151`
 - **CodeRabbit ID:** `1c80b8e2-3f3d-4599-bdbd-feb662f1e882`
@@ -4319,15 +4319,15 @@ In @tests/SiloPlayer.Tests/SearchRuntimeRegressionTests.cs at line 151, Remove t
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/SearchRuntimeRegressionTests.cs:151`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 76. Guard the null `Trigger` before `Equals`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/Admin/AdminAutoscanViewModel.cs:292-300`
 - **CodeRabbit ID:** `df51fc83-6445-4806-81bd-43b7b2de0b48`
@@ -4371,15 +4371,15 @@ public void ApplyActiveScanSnapshot(IEnumerable<AdminScanRun> scans)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/Admin/AdminAutoscanViewModel.cs:292-300`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 77. Replace the anonymous types in the reorder bodies with dictionaries.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/Admin/AdminSectionsViewModel.cs:278-286`
 - **CodeRabbit ID:** `1671d4f5-2b6a-4e1b-8c99-17698edd6c54`
@@ -4426,15 +4426,15 @@ In @src/SiloPlayer/ViewModels/Admin/AdminSectionsViewModel.cs around lines 278 -
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/Admin/AdminSectionsViewModel.cs:278-286`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 78. Reset the catalog query when the jump changes the sort.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/LibraryViewModel.cs:312-358`
 - **CodeRabbit ID:** `fe05b8f7-0c9d-453d-bd2a-a8cf1233bc33`
@@ -4488,15 +4488,15 @@ In @src/SiloPlayer/ViewModels/LibraryViewModel.cs around lines 312 - 358, Update
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/LibraryViewModel.cs:312-358`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 79. Handle the admin edit path, or reject it explicitly.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/SmartCollectionWizardViewModel.cs:84-179`
 - **CodeRabbit ID:** `38262e20-8be6-4468-9841-bb98d4b4c345`
@@ -4541,15 +4541,15 @@ In @src/SiloPlayer/ViewModels/SmartCollectionWizardViewModel.cs around lines 84 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/SmartCollectionWizardViewModel.cs:84-179`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 80. Wait for the previous run loop before you start a new one.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/WatchTogetherViewModels.cs:452-475`
 - **CodeRabbit ID:** `5d48bcc3-a383-49a4-b025-c1f91408aca3`
@@ -4614,9 +4614,9 @@ In @src/SiloPlayer/ViewModels/WatchTogetherViewModels.cs around lines 452 - 475,
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/WatchTogetherViewModels.cs:452-475`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
@@ -4625,7 +4625,7 @@ In @src/SiloPlayer/ViewModels/WatchTogetherViewModels.cs around lines 452 - 475,
 
 ### 81. Guard the method label against an empty key.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminActivityPage.xaml.cs:392-399`
 - **CodeRabbit ID:** `0ea02123-52f4-44d7-b74a-87085e5910da`
@@ -4673,15 +4673,15 @@ sp.Children.Add(new TextBlock
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminActivityPage.xaml.cs:392-399`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 82. The Sources header and row column widths do not match.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminAutoscanPage.xaml:34-39`
 - **CodeRabbit ID:** `aa120146-ce60-4599-9562-ff86dcc4ad66`
@@ -4725,15 +4725,15 @@ In @src/SiloPlayer/Views/Admin/AdminAutoscanPage.xaml around lines 34 - 39, Upda
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminAutoscanPage.xaml:34-39`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 83. Align the suggested file name with the registered file type.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminDiagnosticsPage.xaml.cs:343-344`
 - **CodeRabbit ID:** `ee197c9c-15f3-4db0-8741-8c425773c09e`
@@ -4776,15 +4776,15 @@ var picker = new Windows.Storage.Pickers.FileSavePicker { SuggestedFileName = $"
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminDiagnosticsPage.xaml.cs:343-344`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 84. Re-enable the remove-poster button after the request completes.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminLibrariesPage.xaml.cs:3915-3925`
 - **CodeRabbit ID:** `07c84572-2286-44eb-bd12-c40432159ba1`
@@ -4843,15 +4843,15 @@ removePosterBtn.Click += async (_, _) =>
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminLibrariesPage.xaml.cs:3915-3925`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 85. Render the empty states after the initial load.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminMaintenancePage.xaml.cs:52-56`
 - **CodeRabbit ID:** `a5bbb94c-073a-4fab-ad7f-f5d98a6310be`
@@ -4903,15 +4903,15 @@ if (ViewModel.ImportJobs.Count > 0) RebuildImportJobs();
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminMaintenancePage.xaml.cs:52-56`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 86. Render the node empty states after the initial load.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminNodesPage.xaml.cs:34-45`
 - **CodeRabbit ID:** `b55dfafd-90b8-42ef-ac72-1691fa17f744`
@@ -4973,15 +4973,15 @@ if (ViewModel.ProxyNodes.Count > 0) RebuildProxyRows();
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminNodesPage.xaml.cs:34-45`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 87. Correct the installed empty state and clear the stale toolbar state.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminPluginsPage.xaml.cs:220-248`
 - **CodeRabbit ID:** `701f5d6c-a8fe-4556-b77d-ce04a9508b14`
@@ -5079,15 +5079,15 @@ private void RebuildInstalled()
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminPluginsPage.xaml.cs:220-248`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 88. Use the shared date formatter for the document timestamp.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminPolicyPage.xaml.cs:238-243`
 - **CodeRabbit ID:** `28a5c724-e3fa-466c-b8a6-9bbbd262bd22`
@@ -5131,15 +5131,15 @@ var updated = new TextBlock
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminPolicyPage.xaml.cs:238-243`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 89. Do not dispose the previous `CancellationTokenSource` in the scheduler.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminSettingsDetailPage.xaml.cs:1609-1633`
 - **CodeRabbit ID:** `1db9e25e-378c-43b6-bcef-0c62c71e9220`
@@ -5198,15 +5198,15 @@ private void ScheduleAdminThemeSave(string key, int delayMilliseconds)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminSettingsDetailPage.xaml.cs:1609-1633`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 90. Attach the `SizeChanged` handler only once per ScrollViewer.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminShellPage.xaml.cs:104-118`
 - **CodeRabbit ID:** `df639ae8-7d01-411f-b626-26d3926ebf94`
@@ -5255,15 +5255,15 @@ In @src/SiloPlayer/Views/Admin/AdminShellPage.xaml.cs around lines 104 - 118, Up
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminShellPage.xaml.cs:104-118`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 91. Correct the Max Profiles hint text.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminUserDetailPage.xaml.cs:1584-1589`
 - **CodeRabbit ID:** `6f54b9d0-2d33-4051-8b08-4b91f6bf75c7`
@@ -5307,15 +5307,15 @@ profilesGroup.Children.Add(new TextBlock
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminUserDetailPage.xaml.cs:1584-1589`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 92. Correct the Max Profiles hint text.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Admin views
 - **Location:** `src/SiloPlayer/Views/Admin/AdminUsersPage.xaml.cs:1506-1511`
 - **CodeRabbit ID:** `68ee3e82-eb85-4813-a9cb-8448803d60f2`
@@ -5359,15 +5359,15 @@ profilesGroup.Children.Add(new TextBlock
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/Admin/AdminUsersPage.xaml.cs:1506-1511`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 93. The skip labels bypass the clamp that the tooltips use.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/AudiobookNowListening.xaml.cs:42-43`
 - **CodeRabbit ID:** `247dae9e-965e-45e8-94f1-2a506f800ae1`
@@ -5410,15 +5410,15 @@ In @src/SiloPlayer/Controls/AudiobookNowListening.xaml.cs around lines 42 - 43, 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/AudiobookNowListening.xaml.cs:42-43`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 94. Handle a null `MediaItem` in `OnMediaItemChanged`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/AudiobookSquareCard.xaml.cs:33-37`
 - **CodeRabbit ID:** `257c1c6c-f74e-43b4-b592-741466e1df32`
@@ -5457,15 +5457,15 @@ In @src/SiloPlayer/Controls/AudiobookSquareCard.xaml.cs around lines 33 - 37, Up
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/AudiobookSquareCard.xaml.cs:33-37`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 95. `Math.Clamp` can throw when `scaledH` rounds below `containerH`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/BackdropImage.xaml.cs:199-202`
 - **CodeRabbit ID:** `dc71317c-75a5-4466-a078-ac4b4d0a3465`
@@ -5512,15 +5512,15 @@ double anchorY = AnchorY;
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/BackdropImage.xaml.cs:199-202`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 96. `DescribeImportSource` prints the key twice when `LastModified` is empty.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/CatalogImportDialog.xaml.cs:235-239`
 - **CodeRabbit ID:** `af149762-2a0f-496e-89ed-31e7f785357d`
@@ -5568,15 +5568,15 @@ private static string DescribeImportSource(CatalogSeedImportSource src)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/CatalogImportDialog.xaml.cs:235-239`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 97. Remove the ternary with two identical branches.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/EditMetadataDialog.cs:848-850`
 - **CodeRabbit ID:** `3d56fdda-926d-47ec-b4d8-ecc793845436`
@@ -5615,15 +5615,15 @@ _toast.Success("Image applied successfully.");
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/EditMetadataDialog.cs:848-850`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 98. Make `moreButton` non-hit-testable while it is invisible.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/LibraryGridCard.cs:121-144`
 - **CodeRabbit ID:** `7de9f440-31d2-4e64-8cce-5b11275b05a3`
@@ -5675,15 +5675,15 @@ In @src/SiloPlayer/Controls/LibraryGridCard.cs around lines 121 - 144, Update th
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/LibraryGridCard.cs:121-144`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 99. Parse the volume number with the invariant culture.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/MangaFilesDialog.cs:180-193`
 - **CodeRabbit ID:** `ed57b29a-456e-4dab-8dae-21d8d4dc4d74`
@@ -5743,15 +5743,15 @@ private static string FileRowLabel(MangaChapterFile file)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/MangaFilesDialog.cs:180-193`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 100. The mini bar picks its layout only once per activation.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/MiniPlayerBar.xaml.cs:43-50`
 - **CodeRabbit ID:** `e7a572d4-8c19-461e-8418-3ecfde48810f`
@@ -5772,15 +5772,15 @@ In @src/SiloPlayer/Controls/MiniPlayerBar.xaml.cs around lines 43 - 50, Update U
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/MiniPlayerBar.xaml.cs:43-50`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 101. Preserve the source selection when a submit fails.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/SubtitleAiDialog.xaml.cs:205-222`
 - **CodeRabbit ID:** `e007ae64-b622-476d-b998-19c0fe21f049`
@@ -5824,15 +5824,15 @@ In @src/SiloPlayer/Controls/SubtitleAiDialog.xaml.cs around lines 205 - 222, Pre
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/SubtitleAiDialog.xaml.cs:205-222`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 102. Add accessible names to `OutlineToggle` and `OpacitySlider`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/SubtitleAppearanceDialog.xaml:155-156`
 - **CodeRabbit ID:** `2cdc188b-649b-486e-bba3-60ce8841819c`
@@ -5873,15 +5873,15 @@ In @src/SiloPlayer/Controls/SubtitleAppearanceDialog.xaml around lines 155 - 156
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/SubtitleAppearanceDialog.xaml:155-156`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 103. Guard hex parsing against malformed input.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/SubtitleAppearanceDialog.xaml.cs:424-436`
 - **CodeRabbit ID:** `7cdbd923-e5ce-4054-b3b0-623bbc43c3fc`
@@ -5942,15 +5942,15 @@ private static Color ColorFromHex(string hex)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/SubtitleAppearanceDialog.xaml.cs:424-436`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 104. Reset the file label when validation rejects the file.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Controls
 - **Location:** `src/SiloPlayer/Controls/SubtitleSearchDialog.xaml.cs:198-212`
 - **CodeRabbit ID:** `92f170d1-19a1-4e32-9d96-28c6a8eec5af`
@@ -6015,15 +6015,15 @@ var extension = Path.GetExtension(file.Name);
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Controls/SubtitleSearchDialog.xaml.cs:198-212`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 105. Escape `profileId` in the verify-pin path.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Api/AuthApi.cs:34-35`
 - **CodeRabbit ID:** `f1040d58-644d-45a4-8ce1-f9150036a994`
@@ -6065,15 +6065,15 @@ public Task<VerifyPinResponse> VerifyPinAsync(string profileId, string pin, Canc
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Api/AuthApi.cs:34-35`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 106. Escape path IDs consistently.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Api/CatalogApi.cs:186-187`
 - **CodeRabbit ID:** `7e86c48c-0358-414a-8127-94b73800feda`
@@ -6110,15 +6110,15 @@ In @src/SiloPlayer.Core/Api/CatalogApi.cs around lines 186 - 187, Update every c
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Api/CatalogApi.cs:186-187`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 107. Escape `contentId` and `sessionId` in these paths.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Api/PlaybackApi.cs:7-8`
 - **CodeRabbit ID:** `c317613a-765b-406b-91d8-6776270e89dc`
@@ -6153,15 +6153,15 @@ In @src/SiloPlayer.Core/Api/PlaybackApi.cs around lines 7 - 8, Escape the interp
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Api/PlaybackApi.cs:7-8`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 108. Escape `profileId` in the path.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Api/SettingsApi.cs:582-583`
 - **CodeRabbit ID:** `7a15ea80-cb92-4971-9145-d06b14d7249e`
@@ -6198,15 +6198,15 @@ public Task<Profile> UpdateProfileAsync(string profileId, object updates, Cancel
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Api/SettingsApi.cs:582-583`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 109. Preserve non-`Int64` numeric tokens.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Json/StringOrNumberJsonConverter.cs:23-24`
 - **CodeRabbit ID:** `84532805-e321-45cf-a02d-68e1487799d1`
@@ -6225,15 +6225,15 @@ In @src/SiloPlayer.Core/Json/StringOrNumberJsonConverter.cs around lines 23 - 24
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Json/StringOrNumberJsonConverter.cs:23-24`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 110. Remove the Continuum repository reference.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Models/Admin/ScanModels.cs:42-46`
 - **CodeRabbit ID:** `99af3925-ef91-4705-a6ea-145fd7a4a842`
@@ -6258,15 +6258,15 @@ In @src/SiloPlayer.Core/Models/Admin/ScanModels.cs around lines 42 - 46, Update 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Models/Admin/ScanModels.cs:42-46`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 111. Guard non-object JSON roots before property access.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Models/Settings/SubtitleAppearance.cs:81-95`
 - **CodeRabbit ID:** `d4edf92b-62b3-4999-baee-55945f720760`
@@ -6285,15 +6285,15 @@ In @src/SiloPlayer.Core/Models/Settings/SubtitleAppearance.cs around lines 81 - 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Models/Settings/SubtitleAppearance.cs:81-95`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 112. `Start` reads `legacyStartChannels` outside the lock.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Services/EventChannelClient.cs:201-212`
 - **CodeRabbit ID:** `3a98f586-a168-425e-aceb-a6b5fd69fa53`
@@ -6314,15 +6314,15 @@ In @src/SiloPlayer.Core/Services/EventChannelClient.cs around lines 201 - 212, M
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Services/EventChannelClient.cs:201-212`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 113. Do not hardcode `AppChannel` to `"qa"`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Services/MpvNativePlaybackCapabilities.cs:184`
 - **CodeRabbit ID:** `dff16f31-91e8-4348-8d1c-c898482b3b2e`
@@ -6360,15 +6360,15 @@ In @src/SiloPlayer.Core/Services/MpvNativePlaybackCapabilities.cs at line 184, U
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Services/MpvNativePlaybackCapabilities.cs:184`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 114. Guard the version lookup so playback start cannot fail.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Core/API/models/services
 - **Location:** `src/SiloPlayer.Core/Services/PlaybackManager.cs:106-108`
 - **CodeRabbit ID:** `7fc874f6-5106-46ba-84c7-649249f0e40f`
@@ -6429,15 +6429,15 @@ var appVersion = s_appVersion;
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer.Core/Services/PlaybackManager.cs:106-108`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 115. The status text is unreadable because `Opacity` is set on the parent `Border`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/DownloadsPage.xaml.cs:122-135`
 - **CodeRabbit ID:** `1f27a8c3-15dc-4879-ae47-7d38e5154ade`
@@ -6495,15 +6495,15 @@ var statusBadge = new Border
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/DownloadsPage.xaml.cs:122-135`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 116. The file name fallback never runs.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/EbookReaderPage.xaml.cs:158-163`
 - **CodeRabbit ID:** `7f593ac6-be64-46f9-b88f-f941fda9d892`
@@ -6544,15 +6544,15 @@ var name = Path.GetFileName(version.FileName ?? version.FilePath ?? "");
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/EbookReaderPage.xaml.cs:158-163`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 117. Prevent the KIDS and PIN badges from overlapping.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/HouseholdSetupPage.xaml:70-83`
 - **CodeRabbit ID:** `d6e34a11-d3e2-476f-a1f4-1cbad31e17fb`
@@ -6631,15 +6631,15 @@ In @src/SiloPlayer/Views/HouseholdSetupPage.xaml around lines 70 - 83, Wrap the 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/HouseholdSetupPage.xaml:70-83`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 118. Encode the plugin route path before you build the URL.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/PluginRoutePage.xaml.cs:52-58`
 - **CodeRabbit ID:** `89988a10-b11d-4dfc-a614-12ba4cb34509`
@@ -6658,15 +6658,15 @@ In @src/SiloPlayer/Views/PluginRoutePage.xaml.cs around lines 52 - 58, Update th
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/PluginRoutePage.xaml.cs:52-58`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 119. Suppress the toast when the page cancels the request.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/RequestBrowsePage.xaml.cs:118-133`
 - **CodeRabbit ID:** `76da472f-e77b-4532-9f36-6f595ccc4b5f`
@@ -6721,15 +6721,15 @@ private async void Request_Click(object sender, RoutedEventArgs e)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/RequestBrowsePage.xaml.cs:118-133`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 120. Add an accessible name to `BackButton`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/RequestDetailPage.xaml:17`
 - **CodeRabbit ID:** `8936d9f5-f37b-4ebd-ba7c-e2838fb9565d`
@@ -6763,15 +6763,15 @@ In @src/SiloPlayer/Views/RequestDetailPage.xaml at line 17, Add AutomationProper
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/RequestDetailPage.xaml:17`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 121. Handle cancellation in `RecommendationRequestClick`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/RequestDetailPage.xaml.cs:240-256`
 - **CodeRabbit ID:** `59942d66-6879-4318-b645-28f1015e8578`
@@ -6825,15 +6825,15 @@ private async void RecommendationRequest_Click(object sender, RoutedEventArgs e)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/RequestDetailPage.xaml.cs:240-256`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 122. Preserve `ResultsRepeater` virtualization. `ResultsContent` gives its vertical `StackPanel` children infinite height, so `ResultsRepeater` can realize the full growing result set. Host it in a constrained virtualization viewport instead of the vertical `StackPanel`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/SearchPage.xaml:254-334`
 - **CodeRabbit ID:** `0092124c-9a35-4da2-818d-b6458b90795e`
@@ -6850,15 +6850,15 @@ In @src/SiloPlayer/Views/SearchPage.xaml around lines 254 - 334, Update the Resu
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Already fixed
+- **Evidence:** `SearchPage.xaml` now hosts `ResultsRepeater` in a constrained `Grid` under the outer `ResultsScroll` viewport, preserving realization bounds and infinite scrolling.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 123. `EmptyStateText` ignores `IsAddingServer` changes.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/ServerSelectPage.xaml:84-88`
 - **CodeRabbit ID:** `fcadb44f-1296-4a71-b796-d3bc4761d061`
@@ -6894,15 +6894,15 @@ In @src/SiloPlayer/Views/ServerSelectPage.xaml around lines 84 - 88, Update Empt
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/ServerSelectPage.xaml:84-88`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 124. Align the import source keyboard order with the visual order.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/SettingsPage.xaml:1404-1468`
 - **CodeRabbit ID:** `59187e18-776c-4f46-8c10-44c373a67e1b`
@@ -6921,15 +6921,15 @@ In @src/SiloPlayer/Views/SettingsPage.xaml around lines 1404 - 1468, Set TabInde
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/SettingsPage.xaml:1404-1468`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 125. `InterfaceTab` is missing from the search index.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/SettingsPage.xaml.cs:1089-1141`
 - **CodeRabbit ID:** `9943f257-5ede-4588-9915-50b637fb187b`
@@ -7026,15 +7026,15 @@ var entries = new (Button Button, string SearchText)[]
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/SettingsPage.xaml.cs:1089-1141`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 126. Do not dispose the `CancellationTokenSource` while the previous preview still runs.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/SmartCollectionWizardPage.xaml.cs:596-608`
 - **CodeRabbit ID:** `38e139bf-8b6c-4421-811b-9854604be130`
@@ -7087,15 +7087,15 @@ In @src/SiloPlayer/Views/SmartCollectionWizardPage.xaml.cs around lines 596 - 60
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Already fixed
+- **Evidence:** `RunPreviewAsync` retains and cancels the previous source, runs the new preview with its own source, and disposes sources only after the associated asynchronous operation has completed.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 127. Bind the "Loading more" row to `IsLoadingMore`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/TasteSeedPage.xaml:80-83`
 - **CodeRabbit ID:** `fc776b47-5493-4116-bed8-455d008533d8`
@@ -7135,15 +7135,15 @@ In @src/SiloPlayer/Views/TasteSeedPage.xaml around lines 80 - 83, Update the “
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/TasteSeedPage.xaml:80-83`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 128. `VoteCount` uses a one-time binding.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Non-admin views
 - **Location:** `src/SiloPlayer/Views/WatchTogetherRoomPage.xaml:306-314`
 - **CodeRabbit ID:** `e78dfe8f-a07d-4a98-924d-5e68edebc2c0`
@@ -7174,15 +7174,15 @@ In @src/SiloPlayer/Views/WatchTogetherRoomPage.xaml around lines 306 - 314, Upda
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Views/WatchTogetherRoomPage.xaml:306-314`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 129. Remove the embedded line-number prefixes from the imported document.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `AGENTS.md:1-8`
 - **CodeRabbit ID:** `5d99e1d3-1ee0-45e2-9ed1-c980570fa66a`
@@ -7201,15 +7201,15 @@ In @AGENTS.md around lines 1 - 8, Remove the imported line-number prefixes and t
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `AGENTS.md:1-8`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 130. Resolve the conflicting runtime app-data path.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `AGENTS.md:511-525`
 - **CodeRabbit ID:** `001ff5c4-ae26-41ab-b2b3-f8e5caf2eb30`
@@ -7228,15 +7228,15 @@ In @AGENTS.md around lines 511 - 525, Update the runtime app-data/logs reference
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `AGENTS.md:511-525`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 131. Update the stale `ContinuumPlayer` file paths to the current `SiloPlayer` layout.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `AGENTS.md:549-671`
 - **CodeRabbit ID:** `9eaa0a2c-1704-4fcf-a2aa-9acc9865b3c8`
@@ -7257,15 +7257,15 @@ In @AGENTS.md around lines 549 - 671, Update the “Important Recent Changes” 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `AGENTS.md:549-671`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 132. Correct the duplicate `1.1.41` heading.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `CHANGELOG.md:391-405`
 - **CodeRabbit ID:** `7bb07ed2-977e-4fe4-bf11-3904fe12a8f4`
@@ -7284,15 +7284,15 @@ In @CHANGELOG.md around lines 391 - 405, Correct the duplicate version heading i
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `CHANGELOG.md:391-405`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 133. Do not report a timestamped signature without confirming the timestamp.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `installer/build.ps1:224-232`
 - **CodeRabbit ID:** `521fd802-51bb-4c9b-99bd-e845a5a4c57c`
@@ -7350,15 +7350,15 @@ if ($SetupExe) {
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Already fixed
+- **Evidence:** `installer/build.ps1` re-reads the installer signature after signing and rejects either a non-valid signature or a missing `TimeStamperCertificate` before printing verification.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests. PowerShell parser validation also passed for all five installer/audit scripts; Inno Setup itself is not installed.
 
 ---
 
 ### 134. `linecounts` refresh silently skips missing files and reports an inflated count.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `scripts/audit-bump.ps1:62-77`
 - **CodeRabbit ID:** `862acb01-3a0e-49c8-9622-9f9c83318232`
@@ -7437,15 +7437,15 @@ $allSources = @($areaObj.web_sources) + @($areaObj.server_sources)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `scripts/audit-bump.ps1:62-77`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests. PowerShell parser validation also passed for all five installer/audit scripts; Inno Setup itself is not installed.
 
 ---
 
 ### 135. `Pop-Location` is skipped when `git pull` fails.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `scripts/audit-delta.ps1:38-44`
 - **CodeRabbit ID:** `97ab825a-7b22-4fc3-8944-73f00073eb49`
@@ -7497,15 +7497,15 @@ if ($Pull) {
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `scripts/audit-delta.ps1:38-44`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests. PowerShell parser validation also passed for all five installer/audit scripts; Inno Setup itself is not installed.
 
 ---
 
 ### 136. A baseline without `continuumservercommitmessage` crashes report generation.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `scripts/audit-scan.ps1:190`
 - **CodeRabbit ID:** `8b25d503-5095-4503-9692-0ff161e58555`
@@ -7540,15 +7540,15 @@ In @scripts/audit-scan.ps1 at line 190, Update the baseline report generation ar
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `scripts/audit-scan.ps1:190`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests. PowerShell parser validation also passed for all five installer/audit scripts; Inno Setup itself is not installed.
 
 ---
 
 ### 137. Restore `ObservableCollection<T>` property notifications for bulk mutations.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `src/SiloPlayer/Helpers/BulkObservableCollection.cs:17-29`
 - **CodeRabbit ID:** `119c2310-d12e-4821-a47f-9f7986ec5dcb`
@@ -7602,15 +7602,15 @@ In @src/SiloPlayer/Helpers/BulkObservableCollection.cs around lines 17 - 29, Upd
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Already fixed
+- **Evidence:** `BulkObservableCollection<T>` raises `PropertyChanged` for both `Count` and `Item[]` before its ranged `CollectionChanged` notifications.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 138. Unsubscribe every handler that this window registers.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `src/SiloPlayer/MainWindow.xaml.cs:426-453`
 - **CodeRabbit ID:** `906bd575-31d5-4a54-b620-5c484874cf80`
@@ -7681,15 +7681,15 @@ private void OnWindowClosed(object sender, WindowEventArgs args)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/MainWindow.xaml.cs:426-453`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 139. Cache the avatar image data, not the presigned URL.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `src/SiloPlayer/MainWindow.xaml.cs:2044-2072`
 - **CodeRabbit ID:** `6da8dee5-69d9-4094-b558-d98a4e3d6877`
@@ -7713,15 +7713,15 @@ In @src/SiloPlayer/MainWindow.xaml.cs around lines 2044 - 2072, Update ApplyProf
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Already fixed
+- **Evidence:** `ApplyProfileAvatarAsync` resolves the expiring avatar URL through `ImageService.GetImageDiskPathAsync`, which caches the image data locally; `BitmapImage` loads that cached local file rather than retaining the presigned network URL.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 140. Do not throw from a XAML input handler.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `src/SiloPlayer/MainWindow.xaml.cs:2361-2366`
 - **CodeRabbit ID:** `8880ae8f-193f-479e-8d3a-d72b1c91b142`
@@ -7786,15 +7786,15 @@ public void NavigateToHome()
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/MainWindow.xaml.cs:2361-2366`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 141. Align the package version and replace the placeholder publisher identity.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `src/SiloPlayer/Package.appxmanifest:10-13`
 - **CodeRabbit ID:** `bc0a6a76-f8f8-46e0-9dc0-5734fdca0fbe`
@@ -7831,15 +7831,15 @@ In @src/SiloPlayer/Package.appxmanifest around lines 10 - 13, Update the Identit
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Package.appxmanifest:10-13`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 142. Fix the channel order of `BadgeBackgroundColor`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Remaining player/installer/scripts/root code
 - **Location:** `src/SiloPlayer/Themes/DarkTheme.xaml:37`
 - **CodeRabbit ID:** `8fcd752b-01f1-48f9-b58c-be0e1584abff`
@@ -7876,15 +7876,15 @@ In @src/SiloPlayer/Themes/DarkTheme.xaml at line 37, Update the BadgeBackgroundC
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/Themes/DarkTheme.xaml:37`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 143. Assert the Bearer scheme for plugin routes.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/AdminPluginsCurrentParitySourceTests.cs:65-67`
 - **CodeRabbit ID:** `9163950d-1c74-4f0e-a7ec-cd856df0e94d`
@@ -7905,15 +7905,15 @@ In @tests/SiloPlayer.Tests/AdminPluginsCurrentParitySourceTests.cs around lines 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/AdminPluginsCurrentParitySourceTests.cs:65-67`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 144. Assert the required public GitHub source.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/AdminSettingsCurrentParitySourceTests.cs:24-25`
 - **CodeRabbit ID:** `056d2bcc-e3db-4557-88bc-ecdf57fbf10d`
@@ -7934,15 +7934,15 @@ In @tests/SiloPlayer.Tests/AdminSettingsCurrentParitySourceTests.cs around lines
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** `AdminSettingsCurrentParitySourceTests` now requires the exact public GitHub raw catalog URL `https://raw.githubusercontent.com/Silo-Server/silo-themes/main/catalog.json` and rejects the legacy Continuum catalog. The review request to insert `silo-server` here was not followed literally because this test validates the separate Silo theme catalog, not the WebUI source repository.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 145. Test current write keys, not only legacy fallback reads.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/AdminSettingsCurrentParitySourceTests.cs:111-120`
 - **CodeRabbit ID:** `7ed8d045-5563-4f56-937e-b56519764c93`
@@ -7961,15 +7961,15 @@ In @tests/SiloPlayer.Tests/AdminSettingsCurrentParitySourceTests.cs around lines
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/AdminSettingsCurrentParitySourceTests.cs:111-120`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 146. Move the guard before the second `IndexOf` call.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/AdminTasksParitySourceTests.cs:43-48`
 - **CodeRabbit ID:** `345c6cb6-a850-40df-a7a6-9cde6296aa7c`
@@ -8018,15 +8018,15 @@ var metricsAssignment = CodeBehind.IndexOf("_refreshMetrics = await adminApi.Get
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/AdminTasksParitySourceTests.cs:43-48`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 147. Remove the dependency on alignment whitespace.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/AdminUserDetailParitySourceTests.cs:34`
 - **CodeRabbit ID:** `f1ed226c-3322-42f2-9414-cc577db08ed9`
@@ -8063,15 +8063,15 @@ Assert.Matches(@"Permissions\s*=\s*permissions", Page);
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/AdminUserDetailParitySourceTests.cs:34`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 148. The assertions do not prove the invariant in the test name.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/AdminUsersParitySourceTests.cs:74-81`
 - **CodeRabbit ID:** `6d1dd9d1-9fcc-4a28-9adf-2c7e7a1b4c5b`
@@ -8090,15 +8090,15 @@ In @tests/SiloPlayer.Tests/AdminUsersParitySourceTests.cs around lines 74 - 81, 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/AdminUsersParitySourceTests.cs:74-81`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 149. Make the negative assertion independent of line endings.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/ChapterThumbnailRealtimeParitySourceTests.cs:29`
 - **CodeRabbit ID:** `95fdaa44-086f-43de-ad01-970371865ae2`
@@ -8136,15 +8136,15 @@ var source = File.ReadAllText(SourcePath("libs", "mpv", "scripts", "silo-osc.lua
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/ChapterThumbnailRealtimeParitySourceTests.cs:29`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 150. This negative assertion depends on line endings.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/CollectionsInteractionParitySourceTests.cs:14`
 - **CodeRabbit ID:** `cdbbd120-d8e6-4425-bff2-9d9169bd4c87`
@@ -8182,15 +8182,15 @@ var source = Read("src", "SiloPlayer", "Views", "CollectionsPage.xaml.cs")
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/CollectionsInteractionParitySourceTests.cs:14`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 151. The ordering assertion passes when the first marker is absent.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/CurrentAdminParitySourceTests.cs:32-34`
 - **CodeRabbit ID:** `ce7a973e-baba-4a7f-a56c-1ccabda42a09`
@@ -8234,15 +8234,15 @@ var skippedRootsIndex = code.IndexOf("var skippedRootsTask", StringComparison.Or
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/CurrentAdminParitySourceTests.cs:32-34`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 152. These negative assertions depend on CRLF line endings.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/CurrentCatalogParitySourceTests.cs:136`
 - **CodeRabbit ID:** `39f703a9-bd3a-4b88-b400-8c71107bc67c`
@@ -8279,15 +8279,15 @@ In @tests/SiloPlayer.Tests/CurrentCatalogParitySourceTests.cs at line 136, Norma
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Already fixed
+- **Evidence:** `CurrentCatalogParitySourceTests` normalizes source text with `ReplaceLineEndings("\n")`, so its negative assertions work with both CRLF and LF checkouts.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 153. Assert `initialize >= 0` before you use it as a start index.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/CurrentLibraryParitySourceTests.cs:9-13`
 - **CodeRabbit ID:** `99754566-bb7d-4506-ba8d-12a6a69b5f2d`
@@ -8332,15 +8332,15 @@ var initialize = source.IndexOf("this.InitializeComponent();", StringComparison.
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/CurrentLibraryParitySourceTests.cs:9-13`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 154. Assert `loadStart >= 0` before you pass it as a start index.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/CurrentProfilesParitySourceTests.cs:66-69`
 - **CodeRabbit ID:** `5489c39a-4398-438a-a44b-5bc8dceb03ba`
@@ -8382,15 +8382,15 @@ var loadStart = settings.IndexOf("private async Task LoadProfilesAsync", StringC
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/CurrentProfilesParitySourceTests.cs:66-69`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 155. Guard the four marker offsets before you slice `window`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/CurrentSettingsParitySourceTests.cs:225-230`
 - **CodeRabbit ID:** `1863fb85-c883-4da6-9f3b-3e11e97792c3`
@@ -8441,15 +8441,15 @@ var transitionStart = window.IndexOf("public bool TryEnterAuthenticatedPage", St
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/CurrentSettingsParitySourceTests.cs:225-230`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 156. The order assertion can pass when a section heading is deleted.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/CurrentSettingsParitySourceTests.cs:288-293`
 - **CodeRabbit ID:** `1854cfd9-d939-40d9-b555-3985806c0640`
@@ -8494,15 +8494,15 @@ var episode = control.IndexOf("New Episode Notifications", StringComparison.Ordi
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/CurrentSettingsParitySourceTests.cs:288-293`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 157. Move the native library acquisition inside the `try` block.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/MpvOscRuntimeTests.cs:18-25`
 - **CodeRabbit ID:** `fdedac39-38e5-41ac-b4b2-ff43f95aceee`
@@ -8569,15 +8569,15 @@ In @tests/SiloPlayer.Tests/MpvOscRuntimeTests.cs around lines 18 - 25, Move Nati
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/MpvOscRuntimeTests.cs:18-25`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 158. Assert `delayStart` before you use it as a search offset.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/MpvPlayerSourceTests.cs:161-166`
 - **CodeRabbit ID:** `4b555b4f-4f02-42d2-b3fb-b88a4abc4ae1`
@@ -8621,15 +8621,15 @@ var delayStart = source.IndexOf("Task.Delay(200)", StringComparison.Ordinal);
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/MpvPlayerSourceTests.cs:161-166`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 159. Validate `start` before you pass it to the second `IndexOf`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/NavigationResourceRegressionTests.cs:34-36`
 - **CodeRabbit ID:** `a201eb1f-e9b0-4210-a82d-197903216e76`
@@ -8670,15 +8670,15 @@ var start = source.IndexOf("private void NavView_ItemInvoked", StringComparison.
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/NavigationResourceRegressionTests.cs:34-36`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 160. The multi-line assertion on Line 803 can pass vacuously on CRLF checkouts.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/PlayerServiceSourceTests.cs:799-804`
 - **CodeRabbit ID:** `c643244c-530d-4d9d-ba7f-40562ed1a399`
@@ -8721,15 +8721,15 @@ Assert.Contains("else if (_postRollActive && !_postRollVideoEnded)", source, Str
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/PlayerServiceSourceTests.cs:799-804`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 161. This negative assertion cannot fail.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/RequestsCurrentParitySourceTests.cs:15`
 - **CodeRabbit ID:** `7baf5054-fbe2-450b-888f-3d8a797baf6e`
@@ -8765,15 +8765,15 @@ var normalized = source.Replace("\r\n", "\n");
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/RequestsCurrentParitySourceTests.cs:15`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 162. `Slice` throws an unclear exception when the start marker is missing.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/SearchRuntimeRegressionTests.cs:242-248`
 - **CodeRabbit ID:** `ac284ab0-5f4f-4240-8945-4d45317bb09f`
@@ -8821,15 +8821,15 @@ private static string Slice(string source, string start, string end)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/SearchRuntimeRegressionTests.cs:242-248`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 163. Handle a non-zero `git` exit code by falling back, and read the pipes without a deadlock risk.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/ServerContractSourceTests.cs:24-46`
 - **CodeRabbit ID:** `31e76275-1e06-48ca-9097-ecb19d2da509`
@@ -8908,15 +8908,15 @@ private static string? TryListTrackedFiles(string root)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/ServerContractSourceTests.cs:24-46`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 164. Assert bearer authentication for the room request.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/WatchTogetherCurrentParityTests.cs:30-34`
 - **CodeRabbit ID:** `9aa68112-e784-47cb-8a99-c48608f0efca`
@@ -8937,15 +8937,15 @@ In @tests/SiloPlayer.Tests/WatchTogetherCurrentParityTests.cs around lines 30 - 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/WatchTogetherCurrentParityTests.cs:30-34`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 165. Exercise bearer authentication in the connection test.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** Tests
 - **Location:** `tests/SiloPlayer.Tests/WebhookSyncTests.cs:11-17`
 - **CodeRabbit ID:** `b1bd79a2-7cbf-43f9-b47e-b946ed7ddfda`
@@ -8966,15 +8966,15 @@ In @tests/SiloPlayer.Tests/WebhookSyncTests.cs around lines 11 - 17, Update the 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `tests/SiloPlayer.Tests/WebhookSyncTests.cs:11-17`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 166. Add a re-entrancy guard for `DecideAsync`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/ActivateDeviceViewModel.cs:302-310`
 - **CodeRabbit ID:** `e67d200a-a02e-49dc-bde2-3f9aa24d2677`
@@ -9020,15 +9020,15 @@ private async Task DecideAsync(bool approve)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/ActivateDeviceViewModel.cs:302-310`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 167. Raise change notification for `HasActiveFilters` and `ActiveFilterCount`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/Admin/AdminActivityViewModel.cs:38-43`
 - **CodeRabbit ID:** `bab87aee-b47d-48d7-b69a-3b14410b3930`
@@ -9076,15 +9076,15 @@ In @src/SiloPlayer/ViewModels/Admin/AdminActivityViewModel.cs around lines 38 - 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/Admin/AdminActivityViewModel.cs:38-43`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 168. Clear stale results and report failures in `LookupIPAsync`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/Admin/AdminActivityViewModel.cs:127-140`
 - **CodeRabbit ID:** `391c4953-2123-4d14-aa17-43aa1b5aca46`
@@ -9117,15 +9117,15 @@ In @src/SiloPlayer/ViewModels/Admin/AdminActivityViewModel.cs around lines 127 -
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/Admin/AdminActivityViewModel.cs:127-140`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 169. Avoid `TimeSpan.FromDays(int.MaxValue)` in the fallback branch.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/Admin/AdminDevicesViewModel.cs:337-341`
 - **CodeRabbit ID:** `64e3a6a6-e94b-4ad4-9a3b-a60c8b1a99fd`
@@ -9170,15 +9170,15 @@ if (RecencyFilter != "Any activity")
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/Admin/AdminDevicesViewModel.cs:337-341`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 170. `LoadAsync` clears every success message.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/Admin/AdminInviteCodesViewModel.cs:27-47`
 - **CodeRabbit ID:** `1af5d563-6ad3-46c8-88c4-f4d632b3a72e`
@@ -9226,15 +9226,15 @@ In @src/SiloPlayer/ViewModels/Admin/AdminInviteCodesViewModel.cs around lines 27
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/Admin/AdminInviteCodesViewModel.cs:27-47`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 171. Set the status message after the reload.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/Admin/AdminLibrariesViewModel.cs:300-312`
 - **CodeRabbit ID:** `878cdcb8-240e-45d8-88d4-1dc11f2fd73f`
@@ -9282,15 +9282,15 @@ In @src/SiloPlayer/ViewModels/Admin/AdminLibrariesViewModel.cs around lines 300 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/Admin/AdminLibrariesViewModel.cs:300-312`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 172. Fix the `SummaryLastSeen` boundary condition.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/Admin/AdminLogsViewModel.cs:189-190`
 - **CodeRabbit ID:** `ddced33a-a109-4225-94cf-56e0aeb675ae`
@@ -9326,15 +9326,15 @@ SummaryFirstSeen = timestamps.Count > 0 ? FormatDateTime(timestamps[0]) : "-";
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/Admin/AdminLogsViewModel.cs:189-190`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 173. Clear `ErrorMessage` when the export starts.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/Admin/AdminMaintenanceViewModel.cs:116-132`
 - **CodeRabbit ID:** `829e5ba5-1262-4d30-b11c-34daedca497d`
@@ -9386,15 +9386,15 @@ In @src/SiloPlayer/ViewModels/Admin/AdminMaintenanceViewModel.cs around lines 11
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/Admin/AdminMaintenanceViewModel.cs:116-132`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 174. Load profiles in the changed handler, or correct the comment.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/Admin/AdminPlaybackHistoryViewModel.cs:32-37`
 - **CodeRabbit ID:** `b43f6efb-b560-4638-a531-8d422ef0b780`
@@ -9434,15 +9434,15 @@ In @src/SiloPlayer/ViewModels/Admin/AdminPlaybackHistoryViewModel.cs around line
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/Admin/AdminPlaybackHistoryViewModel.cs:32-37`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 175. Do not label the result set with an unrelated title.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/Admin/AdminPlaybackHistoryViewModel.cs:87`
 - **CodeRabbit ID:** `0da2af58-38bc-453b-bd38-810d470994b9`
@@ -9480,15 +9480,15 @@ ActiveMediaItemLabel = string.IsNullOrWhiteSpace(MediaItemId)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/Admin/AdminPlaybackHistoryViewModel.cs:87`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 176. Raise notifications for `EditorStep` and `ActivationTarget` at the end of `SelectDocumentAsync`.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/Admin/AdminPolicyViewModel.cs:55-76`
 - **CodeRabbit ID:** `f7d8451f-7930-4803-83e8-26b288bd875c`
@@ -9548,15 +9548,15 @@ public async Task SelectDocumentAsync(PolicyDocument document)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/Admin/AdminPolicyViewModel.cs:55-76`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 177. Refresh the sensitive status after the page-level save, and keep dirty state accurate on partial failure.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/Admin/AdminSettingsDetailViewModel.cs:241-263`
 - **CodeRabbit ID:** `86edc63a-f22f-42a2-aacd-63dcdbfabe47`
@@ -9640,15 +9640,15 @@ try
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/Admin/AdminSettingsDetailViewModel.cs:241-263`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 178. Avoid rebuilding `History` on every silent refresh, and guard against out-of-order responses.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/Admin/AdminTaskDetailViewModel.cs:34-65`
 - **CodeRabbit ID:** `9ad8d071-5dc1-4da3-9425-aa56f5e32408`
@@ -9694,15 +9694,15 @@ In @src/SiloPlayer/ViewModels/Admin/AdminTaskDetailViewModel.cs around lines 34 
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/Admin/AdminTaskDetailViewModel.cs:34-65`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 179. Report failed item additions on the create path.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/CollectionEditorViewModel.cs:340-357`
 - **CodeRabbit ID:** `4fd208ae-5797-4399-bcc4-666c997d07b3`
@@ -9797,15 +9797,15 @@ if (CollectionType == "manual" && ManualItems.Count > 0)
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/CollectionEditorViewModel.cs:340-357`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 180. Clear the undo state when the dismiss request fails.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/HomeViewModel.cs:623-642`
 - **CodeRabbit ID:** `bdf861a4-ad2f-4329-85b0-8822528ce5ba`
@@ -9869,15 +9869,15 @@ try
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/HomeViewModel.cs:623-642`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 181. Do not use season number 0 as a sentinel.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/ItemDetailViewModel.cs:430-441`
 - **CodeRabbit ID:** `145d2396-2ea2-4999-8880-e013b758e137`
@@ -9907,15 +9907,15 @@ In @src/SiloPlayer/ViewModels/ItemDetailViewModel.cs around lines 430 - 441, Rem
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Already fixed
+- **Evidence:** `ItemDetailViewModel` uses `-1` as the no-season sentinel and accepts season `0`, allowing Specials to load and auto-select normally.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 182. Fix the age calculation across leap years.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/PersonDetailViewModel.cs:137-143`
 - **CodeRabbit ID:** `5bf1c7e5-e273-490c-a529-baa1d8b79583`
@@ -9961,15 +9961,15 @@ In @src/SiloPlayer/ViewModels/PersonDetailViewModel.cs around lines 137 - 143, U
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/PersonDetailViewModel.cs:137-143`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 183. Compare the URL scheme without case sensitivity.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/ServerSelectViewModel.cs:63-68`
 - **CodeRabbit ID:** `8d17b546-9d93-4a64-85da-50c46820149c`
@@ -10017,15 +10017,15 @@ var url = NewServerUrl.Trim();
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Fixed
+- **Evidence:** The requested remediation was implemented and re-inspected in `src/SiloPlayer/ViewModels/ServerSelectViewModel.cs:63-68`; the reviewed defect path is now removed, guarded, or updated as specified.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 
 ### 184. Remove the legacy repository reference from this comment.
 
-- [ ] **Status:** Unreviewed
+- [x] **Status:** Reviewed
 - **Scope:** View models
 - **Location:** `src/SiloPlayer/ViewModels/WatchTogetherViewModels.cs:13-15`
 - **CodeRabbit ID:** `997874ee-abad-44a5-a1e3-df14cc7d2659`
@@ -10067,9 +10067,9 @@ In @src/SiloPlayer/ViewModels/WatchTogetherViewModels.cs around lines 13 - 15, U
 
 #### Codex disposition
 
-- **Decision:** _Pending_
-- **Evidence:** _Pending_
-- **Validation:** _Pending_
+- **Decision:** Already fixed
+- **Evidence:** The Watch Together view-model comment now refers only to the current Silo Watch Party page pair and contains no legacy Continuum repository reference.
+- **Validation:** Fresh verification on 2026-08-25: `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` succeeded with 0 warnings and 0 errors; `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release -nologo` passed 800/800 tests.
 
 ---
 

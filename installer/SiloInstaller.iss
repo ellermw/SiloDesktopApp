@@ -52,7 +52,7 @@ Type: filesandordirs; Name: "{app}\*"
 Source: "{#PublishSourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Windows App SDK runtime installer
-Source: "deps\windowsappruntimeinstall-x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
+Source: "deps\windowsappruntimeinstall-x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; AfterInstall: InstallWindowsAppRuntime
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -67,11 +67,23 @@ Root: HKA; Subkey: "Software\Classes\silo\DefaultIcon"; ValueType: string; Value
 Root: HKA; Subkey: "Software\Classes\silo\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 [Run]
-; Install Windows App SDK runtime (--quiet suppresses UI, --force skips if already installed)
-Filename: "{tmp}\windowsappruntimeinstall-x64.exe"; Parameters: "--quiet --force"; StatusMsg: "Installing Windows App SDK runtime (this may take a moment)..."; Flags: waituntilterminated
-
 ; Launch app after install
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+procedure InstallWindowsAppRuntime;
+var
+  ResultCode: Integer;
+begin
+  WizardForm.StatusLabel.Caption := 'Installing Windows App SDK runtime (this may take a moment)...';
+  if not Exec(ExpandConstant('{tmp}\windowsappruntimeinstall-x64.exe'),
+              '--quiet --force', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    RaiseException('The Windows App SDK runtime installer could not be started.');
+  if ResultCode <> 0 then
+    RaiseException(Format(
+      'The Windows App SDK runtime installer failed with code %d. {#MyAppName} cannot start without it.',
+      [ResultCode]));
+end;
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"

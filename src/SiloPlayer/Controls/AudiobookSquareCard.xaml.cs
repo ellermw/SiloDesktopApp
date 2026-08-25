@@ -12,6 +12,7 @@ public sealed partial class AudiobookSquareCard : UserControl
 {
     private bool _isPointerOver;
     private bool _isKeyboardFocusWithin;
+    private int _posterGeneration;
 
     public static readonly DependencyProperty MediaItemProperty = DependencyProperty.Register(
         nameof(MediaItem), typeof(MediaItem), typeof(AudiobookSquareCard),
@@ -32,12 +33,17 @@ public sealed partial class AudiobookSquareCard : UserControl
 
     private static void OnMediaItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
-        if (d is AudiobookSquareCard card && e.NewValue is MediaItem item)
-            card.Bind(item);
+        if (d is not AudiobookSquareCard card) return;
+        if (e.NewValue is MediaItem item) card.Bind(item);
+        else card.ResetCard();
     }
 
     private void Bind(MediaItem item)
     {
+        var generation = ++_posterGeneration;
+        CoverImage.Source = null;
+        CoverImage.Opacity = 0;
+        FallbackTitle.Visibility = Visibility.Visible;
         TitleText.Text = item.Title;
         FallbackTitle.Text = item.Title;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, item.Title);
@@ -47,21 +53,38 @@ public sealed partial class AudiobookSquareCard : UserControl
         ProgressFill.Width = duration > 0 ? 168 * Math.Clamp(position / duration, 0, 1) : 0;
         var remaining = Math.Max(0, duration - position);
         TimeLeftText.Text = remaining > 0 ? $"{FormatDuration(remaining)} left" : "";
-        if (!string.IsNullOrWhiteSpace(item.PosterUrl)) _ = LoadPosterAsync(item);
+        if (!string.IsNullOrWhiteSpace(item.PosterUrl)) _ = LoadPosterAsync(item, generation);
     }
 
-    private async Task LoadPosterAsync(MediaItem item)
+    private async Task LoadPosterAsync(MediaItem item, int generation)
     {
         try
         {
             var imageService = App.Services.GetRequiredService<ImageService>();
             var path = await imageService.GetImageDiskPathAsync(item.ContentId, "poster", item.PosterUrl!, App.Services.GetRequiredService<HttpClient>());
-            if (!ReferenceEquals(item, MediaItem) || string.IsNullOrWhiteSpace(path)) return;
+            if (generation != _posterGeneration
+                || !ReferenceEquals(item, MediaItem)
+                || string.IsNullOrWhiteSpace(path)) return;
             CoverImage.Source = new BitmapImage { UriSource = new Uri(path), DecodePixelWidth = 260 };
             CoverImage.Opacity = 1;
             FallbackTitle.Visibility = Visibility.Collapsed;
         }
         catch { }
+    }
+
+    private void ResetCard()
+    {
+        ++_posterGeneration;
+        CoverImage.Source = null;
+        CoverImage.Opacity = 0;
+        FallbackTitle.Visibility = Visibility.Visible;
+        TitleText.Text = "";
+        FallbackTitle.Text = "";
+        TimeLeftText.Text = "";
+        ProgressFill.Width = 0;
+        _isPointerOver = false;
+        _isKeyboardFocusWithin = false;
+        SetInteractiveVisualState(false);
     }
 
     private void Card_Tapped(object sender, TappedRoutedEventArgs e)

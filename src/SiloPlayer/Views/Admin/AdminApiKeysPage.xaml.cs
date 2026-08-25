@@ -286,12 +286,14 @@ public sealed partial class AdminApiKeysPage : Page
         }
         if (tierCombo.SelectedIndex < 0) tierCombo.SelectedIndex = 0;
         var capturedKeyForTier = capturedKey;
+        var appliedTier = capturedKeyForTier.RateTier;
         tierCombo.SelectionChanged += async (_, _) =>
         {
             if (tierCombo.SelectedItem is ComboBoxItem selected && selected.Tag is string newTier
-                && !string.Equals(newTier, capturedKeyForTier.RateTier, StringComparison.OrdinalIgnoreCase))
+                && !string.Equals(newTier, appliedTier, StringComparison.OrdinalIgnoreCase))
             {
                 await ViewModel.UpdateTierCommand.ExecuteAsync((capturedKeyForTier.Id, newTier));
+                appliedTier = newTier;
             }
         };
         Grid.SetColumn(tierCombo, 3);

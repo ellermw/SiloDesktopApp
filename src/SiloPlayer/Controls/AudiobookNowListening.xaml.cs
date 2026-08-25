@@ -39,8 +39,6 @@ public sealed partial class AudiobookNowListening : UserControl
         _rate = _player.AudiobookPlaybackRate;
         SpeedButton.Content = $"{_rate:0.##}×";
         var config = _settings.Load();
-        SkipBackText.Text = config.AudiobookSkipBackSeconds.ToString();
-        SkipForwardText.Text = config.AudiobookSkipForwardSeconds.ToString();
         UpdateSkipButtonLabels(config);
         BuildFlyouts();
         UpdatePresentation();
@@ -223,8 +221,6 @@ public sealed partial class AudiobookNowListening : UserControl
                 if (backward) config.AudiobookSkipBackSeconds = seconds;
                 else config.AudiobookSkipForwardSeconds = seconds;
                 _settings.Save(config);
-                SkipBackText.Text = config.AudiobookSkipBackSeconds.ToString();
-                SkipForwardText.Text = config.AudiobookSkipForwardSeconds.ToString();
                 UpdateSkipButtonLabels(config);
                 BuildFlyouts();
             };
@@ -290,6 +286,8 @@ public sealed partial class AudiobookNowListening : UserControl
     {
         var back = Math.Clamp(settings.AudiobookSkipBackSeconds, 5, 120);
         var forward = Math.Clamp(settings.AudiobookSkipForwardSeconds, 5, 120);
+        SkipBackText.Text = back.ToString();
+        SkipForwardText.Text = forward.ToString();
         AutomationProperties.SetName(SkipBackButton, $"Back {back} seconds");
         AutomationProperties.SetName(SkipForwardButton, $"Forward {forward} seconds");
         ToolTipService.SetToolTip(SkipBackButton, $"Back {back} seconds (Left)");

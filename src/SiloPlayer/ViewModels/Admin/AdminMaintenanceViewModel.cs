@@ -118,6 +118,7 @@ public partial class AdminMaintenanceViewModel : ObservableObject
     {
         if (IsStartingExport) return;
         IsStartingExport = true;
+        ErrorMessage = null;
         StatusMessage = null;
         try
         {

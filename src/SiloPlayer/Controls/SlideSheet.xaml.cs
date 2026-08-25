@@ -16,6 +16,8 @@ public sealed partial class SlideSheet : UserControl
 {
     private const double SheetWidth = 420;
     private static readonly TimeSpan AnimDuration = TimeSpan.FromMilliseconds(220);
+    private int _animationGeneration;
+    private Storyboard? _activeStoryboard;
 
     public static readonly DependencyProperty IsOpenProperty =
         DependencyProperty.Register(
@@ -81,13 +83,15 @@ public sealed partial class SlideSheet : UserControl
 
     private void Open()
     {
+        var generation = ++_animationGeneration;
+        _activeStoryboard?.Stop();
         this.Visibility = Visibility.Visible;
 
         var sb = new Storyboard();
 
         var scrimAnim = new DoubleAnimation
         {
-            From = 0, To = 1, Duration = new Duration(AnimDuration),
+            From = Scrim.Opacity, To = 1, Duration = new Duration(AnimDuration),
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
         };
         Storyboard.SetTarget(scrimAnim, Scrim);
@@ -96,18 +100,26 @@ public sealed partial class SlideSheet : UserControl
 
         var slideAnim = new DoubleAnimation
         {
-            From = SheetWidth, To = 0, Duration = new Duration(AnimDuration),
+            From = SheetTransform.X, To = 0, Duration = new Duration(AnimDuration),
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
         };
         Storyboard.SetTarget(slideAnim, SheetTransform);
         Storyboard.SetTargetProperty(slideAnim, "X");
         sb.Children.Add(slideAnim);
 
+        _activeStoryboard = sb;
+        sb.Completed += (_, _) =>
+        {
+            if (generation == _animationGeneration)
+                _activeStoryboard = null;
+        };
         sb.Begin();
     }
 
     private void Close()
     {
+        var generation = ++_animationGeneration;
+        _activeStoryboard?.Stop();
         var sb = new Storyboard();
 
         var scrimAnim = new DoubleAnimation
@@ -130,9 +142,14 @@ public sealed partial class SlideSheet : UserControl
 
         sb.Completed += (_, _) =>
         {
+            if (generation != _animationGeneration || IsOpen)
+                return;
+
+            _activeStoryboard = null;
             this.Visibility = Visibility.Collapsed;
             try { Closed?.Invoke(); } catch { }
         };
+        _activeStoryboard = sb;
         sb.Begin();
     }
 

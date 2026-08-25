@@ -7,10 +7,11 @@ public sealed class CurrentLibraryParitySourceTests
     {
         var source = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
         var initialize = source.IndexOf("this.InitializeComponent();", StringComparison.Ordinal);
+        Assert.True(initialize >= 0, "LibraryPage.xaml.cs no longer calls InitializeComponent().");
         var enableEvents = source.IndexOf("_suppressFilterEvents = false;", initialize, StringComparison.Ordinal);
 
         Assert.Contains("private bool _suppressFilterEvents = true;", source, StringComparison.Ordinal);
-        Assert.True(initialize >= 0 && enableEvents > initialize);
+        Assert.True(enableEvents > initialize);
         Assert.DoesNotContain("private bool _suppressFilterEvents;", source, StringComparison.Ordinal);
     }
 

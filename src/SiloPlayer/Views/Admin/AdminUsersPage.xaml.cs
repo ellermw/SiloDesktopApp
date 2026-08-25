@@ -757,8 +757,9 @@ public sealed partial class AdminUsersPage : Page
 
         // Pagination bar
         UserPaginationBar.Children.Clear();
-        UserPaginationBar.Visibility = list.Count > _userPageSize ? Visibility.Visible : Visibility.Collapsed;
-        if (list.Count > _userPageSize)
+        bool showPagination = list.Count > 0 && (list.Count > _userPageSize || _userPageSize != 25);
+        UserPaginationBar.Visibility = showPagination ? Visibility.Visible : Visibility.Collapsed;
+        if (showPagination)
         {
             UserPaginationBar.Children.Add(new TextBlock
             {
@@ -1505,7 +1506,7 @@ public sealed partial class AdminUsersPage : Page
         profilesGroup.Children.Add(maxProfilesBox);
         profilesGroup.Children.Add(new TextBlock
         {
-            Text = "0 = unlimited",
+            Text = "Minimum 1 profile",
             FontSize = 11,
             Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"]
         });
@@ -1725,7 +1726,7 @@ public sealed partial class AdminUsersPage : Page
         var profilesGroup = new StackPanel { Spacing = 4 };
         profilesGroup.Children.Add(MakeFormLabel("Max Profiles"));
         profilesGroup.Children.Add(maxProfilesBox);
-        profilesGroup.Children.Add(new TextBlock { Text = "0 = unlimited", FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"] });
+        profilesGroup.Children.Add(new TextBlock { Text = "Minimum 1 profile", FontSize = 11, Foreground = (SolidColorBrush)Application.Current.Resources["TertiaryTextBrush"] });
         form.Children.Add(profilesGroup);
 
         // Max Playback Quality — full width

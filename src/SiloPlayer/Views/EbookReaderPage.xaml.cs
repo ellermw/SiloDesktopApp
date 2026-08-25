@@ -155,7 +155,9 @@ public sealed partial class EbookReaderPage : Page
         foreach (var version in _readerFiles)
         {
             var format = FormatOf(version).ToUpperInvariant();
-            var name = Path.GetFileName(version.FileName ?? version.FilePath ?? "") ?? $"File {version.FileId}";
+            var name = Path.GetFileName(version.FileName ?? version.FilePath ?? "");
+            if (string.IsNullOrWhiteSpace(name))
+                name = $"File {version.FileId}";
             FileSelector.Items.Add(new ComboBoxItem
             {
                 Content = string.IsNullOrWhiteSpace(format) ? name : $"{format} · {name}",
@@ -416,8 +418,20 @@ public sealed partial class EbookReaderPage : Page
         _suppressControls = false;
     }
 
-    private int ChapterFromProgress(double progress) => _book == null ? 0 : Math.Clamp((int)Math.Floor(Math.Clamp(progress, 0, 0.999999) * _book.Chapters.Count), 0, _book.Chapters.Count - 1);
-    private double FractionWithinChapter(double progress) => _book == null ? 0 : Math.Clamp(progress * _book.Chapters.Count - ChapterFromProgress(progress), 0, 1);
+    private int ChapterFromProgress(double progress)
+    {
+        if (_book == null || _book.Chapters.Count == 0) return 0;
+        return Math.Clamp(
+            (int)Math.Floor(Math.Clamp(progress, 0, 0.999999) * _book.Chapters.Count),
+            0,
+            _book.Chapters.Count - 1);
+    }
+
+    private double FractionWithinChapter(double progress)
+    {
+        if (_book == null || _book.Chapters.Count == 0) return 0;
+        return Math.Clamp(progress * _book.Chapters.Count - ChapterFromProgress(progress), 0, 1);
+    }
 
     private async void ProgressTimer_Tick(object? sender, object e)
     {
@@ -432,12 +446,26 @@ public sealed partial class EbookReaderPage : Page
         finally { _savePending = false; }
     }
 
-    private Task SaveProgressAsync() => _ebooksApi.SaveProgressAsync(_contentId, new EbookReaderProgressInput
+    private async Task SaveProgressAsync()
     {
-        FileId = _fileId,
-        Location = $"chapter:{_chapterIndex};fraction:{_chapterFraction.ToString("F6", CultureInfo.InvariantCulture)}",
-        Progress = OverallProgress
-    }, _lifetime.Token);
+        try
+        {
+            await _ebooksApi.SaveProgressAsync(_contentId, new EbookReaderProgressInput
+            {
+                FileId = _fileId,
+                Location = $"chapter:{_chapterIndex};fraction:{_chapterFraction.ToString("F6", CultureInfo.InvariantCulture)}",
+                Progress = OverallProgress
+            }, _lifetime.Token);
+        }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+        {
+            // Navigating away cancels the page lifetime; progress saving is best effort.
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Ebook progress save failed: {ex}");
+        }
+    }
 
     private async Task<EbookReaderProgress?> TryGetProgressAsync()
     {
