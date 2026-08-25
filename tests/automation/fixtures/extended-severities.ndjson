@@ -1,0 +1,4 @@
+{"type":"finding","severity":"trivial","fileName":"src/trivial.cs","comment":"Trivial issue"}
+{"type":"finding","severity":"info","fileName":"src/info.cs","comment":"Informational issue"}
+{"type":"finding","severity":"none","fileName":"src/none.cs","comment":"Unclassified issue"}
+{"type":"complete","status":"review_completed","findings":3,"reviewedFiles":[]}

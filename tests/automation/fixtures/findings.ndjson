@@ -1,0 +1,4 @@
+{"type":"finding","severity":"minor","fileName":"src/minor.cs","comment":"Minor issue","codegenInstructions":"Fix the minor issue."}
+{"type":"finding","severity":"major","fileName":"src/major.cs","comment":"Major issue","codegenInstructions":"Fix the major issue."}
+{"type":"finding","severity":"critical","fileName":"src/critical.cs","comment":"Critical issue","codegenInstructions":"Stop for owner review."}
+{"type":"complete","status":"review_completed","findings":3,"reviewedFiles":["src/minor.cs","src/major.cs","src/critical.cs"]}

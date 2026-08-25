@@ -1,0 +1,2 @@
+{"type":"status","phase":"analyzing","status":"reviewing"}
+{"type":"complete","status":"review_completed","findings":0,"reviewedFiles":["src/example.cs"]}
