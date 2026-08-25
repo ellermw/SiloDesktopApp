@@ -317,6 +317,7 @@ public partial class LibraryViewModel : ObservableObject
         var sortChanged = !string.Equals(SelectedSort, "title", StringComparison.OrdinalIgnoreCase)
             || !string.Equals(SelectedOrder, "asc", StringComparison.OrdinalIgnoreCase);
         var knownTotal = TotalCount;
+        var knownTotalIsExact = _hasExactTotal;
         SelectedSort = "title";
         SelectedOrder = "asc";
 
@@ -328,7 +329,7 @@ public partial class LibraryViewModel : ObservableObject
             TotalCount = knownTotal;
             DisplayTotalCount = knownTotal;
             _estimatedTotalItems = knownTotal;
-            _hasExactTotal = true;
+            _hasExactTotal = knownTotalIsExact;
             HasMore = knownTotal > PageSize;
             Items.Clear();
         }

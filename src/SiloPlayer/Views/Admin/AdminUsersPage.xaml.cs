@@ -1646,8 +1646,8 @@ public sealed partial class AdminUsersPage : Page
 
         var maxProfilesBox = new NumberBox
         {
-            Value = 0,
-            Minimum = 0,
+            Value = 5,
+            Minimum = 1,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
             CornerRadius = new CornerRadius(8),
             FontSize = 13,

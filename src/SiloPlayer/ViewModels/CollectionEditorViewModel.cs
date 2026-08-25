@@ -337,6 +337,12 @@ public partial class CollectionEditorViewModel : ObservableObject
                     ? await _collectionsApi.CreateCollectionAsync(request, PosterFileName, poster, PosterContentType)
                     : await _collectionsApi.CreateCollectionAsync(request);
 
+                // Creation is already durable at this point. Switch to edit mode before
+                // any follow-up item request so a retry cannot create a second collection.
+                CollectionId = created.Id;
+                IsEditing = true;
+                _originalManualItemIds.Clear();
+
                 // For manual collections, add items after creation
                 if (CollectionType == "manual" && ManualItems.Count > 0)
                 {
@@ -348,6 +354,7 @@ public partial class CollectionEditorViewModel : ObservableObject
                         {
                             await _collectionsApi.AddCollectionItemAsync(created.Id, item.MediaItemId);
                             addedIds.Add(item.MediaItemId);
+                            _originalManualItemIds.Add(item.MediaItemId);
                         }
                         catch
                         {
@@ -359,10 +366,6 @@ public partial class CollectionEditorViewModel : ObservableObject
                         await _collectionsApi.ReorderCollectionItemsAsync(created.Id, addedIds);
                     if (failed > 0)
                     {
-                        CollectionId = created.Id;
-                        IsEditing = true;
-                        _originalManualItemIds.Clear();
-                        foreach (var id in addedIds) _originalManualItemIds.Add(id);
                         ErrorMessage = $"{failed} item(s) could not be added to the collection. Retry to add the remaining items.";
                         keepEditorOpen = true;
                     }

@@ -17,6 +17,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. "$PSScriptRoot\audit-common.ps1"
 
 function Invoke-GitChecked {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
@@ -42,9 +43,17 @@ if (-not (Test-Path $BaselinePath)) {
 Push-Location $ServerPath
 try {
     $originUrl = (Invoke-GitChecked @("remote", "get-url", "origin")).Trim()
-    if ($originUrl -notmatch 'github\.com[/:]Silo-Server/silo-server(?:\.git)?$') {
-        throw "Refusing to audit unexpected origin '$originUrl'; expected the official Silo GitHub repository."
+    Assert-OfficialSiloOrigin $originUrl
+    $dirty = @(Invoke-GitChecked @("status", "--porcelain")) -join "`n"
+    if (-not [string]::IsNullOrWhiteSpace($dirty)) {
+        throw "Refusing to bump from a dirty Silo server checkout. Commit or stash its changes first."
     }
+    Invoke-GitChecked @("fetch", "origin", "main") | Out-Null
+    & git merge-base --is-ancestor HEAD origin/main
+    if ($LASTEXITCODE -ne 0) {
+        throw "Local Silo checkout cannot be fast-forwarded to official origin/main."
+    }
+    Invoke-GitChecked @("merge", "--ff-only", "origin/main") | Out-Null
     $headSha = (Invoke-GitChecked @("rev-parse", "HEAD")).Trim()
     $headShort = (Invoke-GitChecked @("rev-parse", "--short", "HEAD")).Trim()
     $headMsg = (Invoke-GitChecked @("log", "-1", "--format=%s", "HEAD")).Trim()

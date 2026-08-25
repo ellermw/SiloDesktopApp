@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using SiloPlayer.Core.Models.Downloads;
 
 namespace SiloPlayer.Tests;
@@ -55,7 +56,12 @@ public sealed class DownloadsCurrentParityTests
         Assert.Contains("dl.DeliveryFormat", downloadsPage);
         Assert.Contains("dl.BytesSent", downloadsPage);
         Assert.Contains("AuthenticationHeaderValue", downloadsPage);
-        Assert.DoesNotContain("?token=", downloadsPage, StringComparison.Ordinal);
+        Assert.Contains("new HttpRequestMessage(HttpMethod.Get, url)", downloadsPage, StringComparison.Ordinal);
+        Assert.Contains("request.Headers.Authorization", downloadsPage, StringComparison.Ordinal);
+        Assert.Contains("DownloadsApi.GetDownloadFilePath(downloadId)", downloadsPage, StringComparison.Ordinal);
+        Assert.DoesNotMatch(new Regex(@"(?i)[?&]token\s*="), downloadsPage);
+        Assert.DoesNotContain("AppendToken", downloadsPage, StringComparison.Ordinal);
+        Assert.DoesNotMatch(new Regex(@"(?i)[?&]token\s*="), api);
     }
 
     private static string FindRepositoryRoot()

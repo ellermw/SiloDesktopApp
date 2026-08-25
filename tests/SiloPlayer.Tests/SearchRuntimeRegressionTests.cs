@@ -3,6 +3,35 @@ namespace SiloPlayer.Tests;
 public sealed class SearchRuntimeRegressionTests
 {
     [Fact]
+    public void DesktopSearchContractMatchesThePinnedOfficialWebUiFixture()
+    {
+        using var fixture = System.Text.Json.JsonDocument.Parse(ReadRepoFile(
+            "tests", "SiloPlayer.Tests", "Fixtures", "SiloWebUi",
+            "20ae82ae05edcfef151a02738e323cf1a97034ef", "search-contract.json"));
+        var contract = fixture.RootElement;
+        var searchPage = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml.cs");
+        var searchMarkup = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml");
+        var searchViewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "SearchViewModel.cs");
+        var globalSearch = ReadRepoFile("src", "SiloPlayer", "Controls", "GlobalSearchDialog.xaml.cs");
+
+        Assert.Equal("https://github.com/Silo-Server/silo-server", contract.GetProperty("source_repository").GetString());
+        Assert.Equal("20ae82ae05edcfef151a02738e323cf1a97034ef", contract.GetProperty("source_commit").GetString());
+        Assert.Equal("web/src/components/SearchBar.tsx", contract.GetProperty("sources")[0].GetString());
+        Assert.Equal("web/src/components/GlobalSearch.tsx", contract.GetProperty("sources")[1].GetString());
+        Assert.Equal("web/src/hooks/useSearchMediaScope.ts", contract.GetProperty("sources")[2].GetString());
+        Assert.Equal("web/src/components/RequestToAddSection.tsx", contract.GetProperty("sources")[3].GetString());
+
+        var debounceMs = contract.GetProperty("prominent_navigation_debounce_ms").GetInt32();
+        Assert.Contains($"TimeSpan.FromMilliseconds({debounceMs})", searchPage, StringComparison.Ordinal);
+        Assert.Equal(1, searchMarkup.Split("x:Name=\"SearchBox\"").Length - 1);
+        Assert.True(contract.GetProperty("persistent_input_focus").GetBoolean());
+        Assert.Contains("RestoreSearchFocus", searchPage, StringComparison.Ordinal);
+        Assert.Contains($"private string _mediaScope = \"{contract.GetProperty("default_media_scope").GetString()}\"", searchViewModel, StringComparison.Ordinal);
+        Assert.Contains($".Take({contract.GetProperty("request_page_limit").GetInt32()})", searchViewModel, StringComparison.Ordinal);
+        Assert.Contains($".Take({contract.GetProperty("request_dialog_limit").GetInt32()})", globalSearch, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TypingUsesOnePersistentNativeInputAndDoesNotWaitForFilterWarmup()
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml");

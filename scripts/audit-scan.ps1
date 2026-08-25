@@ -3,8 +3,8 @@
 #
 # What it does:
 #  1. Reads docs/audit-baseline.json to find the server SHA we last audited.
-#  2. Walks the official Silo server clone and (optionally) pulls the latest.
-#  3. Diffs baseline..HEAD to find every changed file under web/src/ and internal/.
+#  2. Fetches the official Silo server origin/main (and optionally fast-forwards the checkout).
+#  3. Diffs baseline..origin/main to find every changed file under web/src/ and internal/.
 #  4. Classifies each changed file against the "areas" map in audit-baseline.json.
 #  5. Writes a markdown report under docs/audit-reports/ with a prioritized work list.
 #
@@ -17,8 +17,8 @@
 #        brand-new feature that needs a new area entry.
 #
 # Usage:
-#   pwsh scripts/audit-scan.ps1                 # use existing local server state
-#   pwsh scripts/audit-scan.ps1 -Pull           # git pull before scanning
+#   pwsh scripts/audit-scan.ps1                 # scan freshly fetched official origin/main
+#   pwsh scripts/audit-scan.ps1 -Pull           # also fast-forward the local checkout
 #   pwsh scripts/audit-scan.ps1 -ServerPath X   # override the bundled reference worktree
 
 param(
@@ -30,6 +30,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. "$PSScriptRoot\audit-common.ps1"
 
 function Invoke-GitChecked {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
@@ -59,12 +60,18 @@ if (-not $baselineSha) {
 Push-Location $ServerPath
 try {
     $originUrl = (Invoke-GitChecked @("remote", "get-url", "origin")).Trim()
-    if ($originUrl -notmatch 'github\.com[/:]Silo-Server/silo-server(?:\.git)?$') {
-        throw "Refusing to audit unexpected origin '$originUrl'; expected the official Silo GitHub repository."
-    }
+    Assert-OfficialSiloOrigin $originUrl
+    Write-Host "Fetching latest official Silo server main..."
+    Invoke-GitChecked @("fetch", "origin", "main") | Out-Null
     if ($Pull) {
-        Write-Host "Pulling latest Silo server main..."
-        Invoke-GitChecked @("fetch", "origin", "main") | Out-Null
+        $dirty = @(Invoke-GitChecked @("status", "--porcelain")) -join "`n"
+        if (-not [string]::IsNullOrWhiteSpace($dirty)) {
+            throw "Refusing to fast-forward a dirty Silo server checkout. Commit or stash its changes first."
+        }
+        & git merge-base --is-ancestor HEAD origin/main
+        if ($LASTEXITCODE -ne 0) {
+            throw "Local Silo checkout cannot be fast-forwarded to official origin/main."
+        }
         Invoke-GitChecked @("merge", "--ff-only", "origin/main") | Out-Null
     }
 
@@ -75,17 +82,17 @@ try {
         exit 1
     }
 
-    $headSha = (Invoke-GitChecked @("rev-parse", "HEAD")).Trim()
-    $headShort = (Invoke-GitChecked @("rev-parse", "--short", "HEAD")).Trim()
-    $headDate = (Invoke-GitChecked @("log", "-1", "--format=%ci", "HEAD")).Trim()
+    $headSha = (Invoke-GitChecked @("rev-parse", "origin/main")).Trim()
+    $headShort = (Invoke-GitChecked @("rev-parse", "--short", "origin/main")).Trim()
+    $headDate = (Invoke-GitChecked @("log", "-1", "--format=%ci", "origin/main")).Trim()
     & git merge-base --is-ancestor $baselineSha $headSha
     if ($LASTEXITCODE -ne 0) {
-        throw "Baseline SHA $baselineSha is not an ancestor of HEAD $headSha; refusing an ambiguous audit window."
+        throw "Baseline SHA $baselineSha is not an ancestor of official origin/main $headSha; refusing an ambiguous audit window."
     }
 
     if ($headSha -eq $baselineSha) {
         Write-Host ""
-        Write-Host "  Baseline is up to date with HEAD ($headShort)."
+        Write-Host "  Baseline is up to date with official origin/main ($headShort)."
         Write-Host "  Nothing to scan."
         Write-Host ""
         exit 0
@@ -93,7 +100,7 @@ try {
 
     Write-Host ""
     Write-Host "  Baseline: $($baseline.continuum_server_short_sha)"
-    Write-Host "  HEAD:     $headShort ($headDate)"
+    Write-Host "  Official origin/main: $headShort ($headDate)"
     Write-Host ""
 
     # Build { filePath → change kind (A/M/D) } for every file under tracked roots.
@@ -206,7 +213,7 @@ $sb = New-Object System.Text.StringBuilder
 [void]$sb.AppendLine("| Generated | $(Get-Date -Format "yyyy-MM-dd HH:mm:ss") |")
 $baselineMsg = if ($baseline.continuum_server_commit_message) { $baseline.continuum_server_commit_message } else { "(unknown)" }
 [void]$sb.AppendLine("| Baseline  | ``$($baseline.continuum_server_short_sha)`` ($($baselineMsg.Substring(0, [Math]::Min(60, $baselineMsg.Length)))) |")
-[void]$sb.AppendLine("| HEAD      | ``$headShort`` ($headDate) |")
+[void]$sb.AppendLine("| Official origin/main | ``$headShort`` ($headDate) |")
 [void]$sb.AppendLine("| Changed files | $($changes.Count) |")
 [void]$sb.AppendLine("| P0 (tracked-area modified) | $($p0.Count) |")
 [void]$sb.AppendLine("| P1 (new file in tracked dir) | $($p1.Count) |")

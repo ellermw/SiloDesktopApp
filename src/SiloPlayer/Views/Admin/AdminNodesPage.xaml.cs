@@ -228,16 +228,37 @@ public sealed partial class AdminNodesPage : Page
             VerticalAlignment = VerticalAlignment.Center
         };
         var capturedNode = node;
+        var serverEnabled = node.Enabled;
+        var suppressToggle = false;
         toggleSwitch.Toggled += async (_, _) =>
         {
+            if (suppressToggle) return;
+            toggleSwitch.IsEnabled = false;
             try
             {
                 await ViewModel.ToggleNodeCommand.ExecuteAsync(capturedNode.Id);
+                if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+                {
+                    suppressToggle = true;
+                    try { toggleSwitch.IsOn = serverEnabled; }
+                    finally { suppressToggle = false; }
+                    ShowStatus($"Could not update node: {ViewModel.ErrorMessage}");
+                    return;
+                }
+
+                serverEnabled = toggleSwitch.IsOn;
                 if (ViewModel.StatusMessage != null) ShowStatus(ViewModel.StatusMessage);
             }
             catch (Exception ex)
             {
+                suppressToggle = true;
+                try { toggleSwitch.IsOn = serverEnabled; }
+                finally { suppressToggle = false; }
                 ShowStatus($"Could not update node: {ex.Message}");
+            }
+            finally
+            {
+                toggleSwitch.IsEnabled = true;
             }
         };
         Grid.SetColumn(toggleSwitch, 3);

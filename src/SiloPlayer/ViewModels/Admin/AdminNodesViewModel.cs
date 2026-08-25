@@ -129,6 +129,8 @@ public partial class AdminNodesViewModel : ObservableObject
     [RelayCommand]
     public async Task ToggleNodeAsync(int id)
     {
+        ErrorMessage = null;
+        StatusMessage = null;
         // Find the node in either collection
         var node = ProxyNodes.FirstOrDefault(n => n.Id == id)
                 ?? TranscodeNodes.FirstOrDefault(n => n.Id == id);

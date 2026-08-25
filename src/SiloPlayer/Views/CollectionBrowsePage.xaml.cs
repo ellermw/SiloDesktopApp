@@ -308,11 +308,7 @@ public sealed partial class CollectionBrowsePage : Page
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(genre => new QueryRule { Field = "genre", Op = "is", Value = genre })
             .ToList();
-        if (double.TryParse(
-                MinimumRatingBox.Text,
-                NumberStyles.Float,
-                CultureInfo.InvariantCulture,
-                out var minimumRating))
+        if (TryReadMinimumRating(out var minimumRating))
         {
             rules.Add(new QueryRule { Field = "rating_imdb", Op = "gte", Value = minimumRating });
         }
@@ -380,7 +376,12 @@ public sealed partial class CollectionBrowsePage : Page
 
         AddText("Year from", "year_min", YearMinBox.Text);
         AddText("Year to", "year_max", YearMaxBox.Text);
-        AddText("IMDb", "rating_imdb", MinimumRatingBox.Text);
+        if (TryReadMinimumRating(out var minimumRating))
+        {
+            badges.Add(new FilterBadge(
+                $"IMDb: {minimumRating.ToString("0.##", CultureInfo.InvariantCulture)}",
+                new FilterToken("rating_imdb", null)));
+        }
         AddText("Rating", "content_rating", ContentRatingBox.Text);
         AddText("Language", "original_language", OriginalLanguageBox.Text);
         AddText("Studio", "studio", StudioBox.Text);
@@ -396,6 +397,13 @@ public sealed partial class CollectionBrowsePage : Page
                 badges.Add(new FilterBadge($"{label}: {value.Trim()}", new FilterToken(kind, null)));
         }
     }
+
+    private bool TryReadMinimumRating(out double minimumRating)
+        => double.TryParse(
+            MinimumRatingBox.Text,
+            NumberStyles.Float,
+            CultureInfo.InvariantCulture,
+            out minimumRating);
 
     private async void ActiveFilterBadge_Click(object sender, RoutedEventArgs e)
     {

@@ -79,17 +79,30 @@ public class AdminUsersParitySourceTests
         Assert.True(createCall >= 0, "Expected the invite creation API call.");
         var createValidated = CodeBehind.IndexOf("if (created != null)", createCall, StringComparison.Ordinal);
         Assert.True(createValidated > createCall, "Expected invite creation to validate its API result.");
-        var createSuccess = CodeBehind.IndexOf("ShowStatus(InviteCodesViewModel.StatusMessage", createValidated, StringComparison.Ordinal);
-        Assert.True(createSuccess > createValidated,
-            "Invite creation must report success only after a non-null API result.");
+        var createGuard = ExtractBlock(CodeBehind, createValidated);
+        Assert.Contains("ShowStatus(InviteCodesViewModel.StatusMessage", createGuard, StringComparison.Ordinal);
         Assert.Contains("Title = \"Top Up Invite Code\"", CodeBehind, StringComparison.Ordinal);
         Assert.Contains("PrimaryButtonText = \"Add Uses\"", CodeBehind, StringComparison.Ordinal);
         var topUpCall = CodeBehind.IndexOf("var updated = await InviteCodesViewModel.TopUpInviteCodeAsync", StringComparison.Ordinal);
         Assert.True(topUpCall >= 0, "Expected the invite top-up API call.");
         var topUpValidated = CodeBehind.IndexOf("if (updated != null)", topUpCall, StringComparison.Ordinal);
         Assert.True(topUpValidated > topUpCall, "Expected invite top-up to validate its API result.");
-        var topUpSuccess = CodeBehind.IndexOf("ShowStatus(InviteCodesViewModel.StatusMessage", topUpValidated, StringComparison.Ordinal);
-        Assert.True(topUpSuccess > topUpValidated,
-            "Invite top-up must report success only after a non-null API result.");
+        var topUpGuard = ExtractBlock(CodeBehind, topUpValidated);
+        Assert.Contains("ShowStatus(InviteCodesViewModel.StatusMessage", topUpGuard, StringComparison.Ordinal);
+    }
+
+    private static string ExtractBlock(string source, int statementStart)
+    {
+        var openingBrace = source.IndexOf('{', statementStart);
+        Assert.True(openingBrace >= 0, "Expected guarded block opening brace.");
+        var depth = 0;
+        for (var index = openingBrace; index < source.Length; index++)
+        {
+            if (source[index] == '{') depth++;
+            else if (source[index] == '}' && --depth == 0)
+                return source[openingBrace..(index + 1)];
+        }
+
+        throw new InvalidOperationException("Expected guarded block closing brace.");
     }
 }

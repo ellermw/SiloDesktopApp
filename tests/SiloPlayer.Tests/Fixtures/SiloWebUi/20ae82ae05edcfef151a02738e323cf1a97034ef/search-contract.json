@@ -1,0 +1,19 @@
+{
+  "source_repository": "https://github.com/Silo-Server/silo-server",
+  "source_commit": "20ae82ae05edcfef151a02738e323cf1a97034ef",
+  "verified_at": "2026-08-25",
+  "sources": [
+    "web/src/components/SearchBar.tsx",
+    "web/src/components/GlobalSearch.tsx",
+    "web/src/hooks/useSearchMediaScope.ts",
+    "web/src/components/RequestToAddSection.tsx"
+  ],
+  "prominent_navigation_debounce_ms": 100,
+  "global_preview_debounce_ms": 200,
+  "global_discovery_debounce_ms": 400,
+  "global_preview_limit": 8,
+  "persistent_input_focus": true,
+  "default_media_scope": "video",
+  "request_page_limit": 20,
+  "request_dialog_limit": 4
+}

@@ -191,6 +191,7 @@ public partial class HistoryViewModel : ObservableObject,
 
                 foreach (var entry in response.Items)
                 {
+                    var resolvedDuration = entry.DurationSeconds ?? Math.Max(0, entry.Runtime * 60);
                     Items.Add(new HistoryDisplayItem
                     {
                         ContentId = entry.ContentId,
@@ -199,10 +200,10 @@ public partial class HistoryViewModel : ObservableObject,
                         PosterUrl = entry.PosterUrl,
                         PosterThumbhash = entry.PosterThumbhash,
                         PositionSeconds = entry.PositionSeconds ?? 0,
-                        DurationSeconds = entry.DurationSeconds ?? Math.Max(0, entry.Runtime * 60),
+                        DurationSeconds = resolvedDuration,
                         Completed = entry.UserState?.Played ?? false,
-                        ProgressPercent = entry.DurationSeconds > 0
-                            ? (int)((entry.PositionSeconds ?? 0) / entry.DurationSeconds.Value * 100)
+                        ProgressPercent = resolvedDuration > 0
+                            ? (int)((entry.PositionSeconds ?? 0) / resolvedDuration * 100)
                             : 0,
                         UpdatedAt = entry.SortMetrics?.ViewedAt
                             ?? entry.ProgressUpdatedAt

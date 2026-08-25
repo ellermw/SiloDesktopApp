@@ -215,9 +215,13 @@ public sealed class EventChannelClient : IDisposable
                 return;
             }
 
+            var wasReconnectSuppressed = _reconnectSuppressed;
             _reconnectSuppressed = false;
-            if (_channelRefs.Count > 0)
-                EnsureRunning_NoLock(forceReconnect: true);
+            if (_channelRefs.Count > 0 &&
+                (wasReconnectSuppressed || _runTask == null || _runTask.IsCompleted))
+            {
+                EnsureRunning_NoLock(forceReconnect: false);
+            }
         }
     }
 

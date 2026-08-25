@@ -33,6 +33,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. "$PSScriptRoot\audit-common.ps1"
 
 function Invoke-GitChecked {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
@@ -43,18 +44,6 @@ function Invoke-GitChecked {
 
 if (-not (Test-Path $ServerRepo)) {
     throw "Official Silo server clone not found at '$ServerRepo'."
-}
-
-# --- Pull if requested ---
-if ($Pull) {
-    Write-Host "Pulling latest Silo server main..." -ForegroundColor Cyan
-    Push-Location $ServerRepo
-    try {
-        Invoke-GitChecked @("fetch", "origin", "main") | Out-Null
-        Invoke-GitChecked @("merge", "--ff-only", "origin/main") | Out-Null
-    }
-    finally { Pop-Location }
-    Write-Host ""
 }
 
 # --- Load page map ---
@@ -68,8 +57,12 @@ $map = Get-Content $PageMap -Raw | ConvertFrom-Json
 Push-Location $ServerRepo
 try {
     $originUrl = (Invoke-GitChecked @("remote", "get-url", "origin")).Trim()
-    if ($originUrl -notmatch 'github\.com[/:]Silo-Server/silo-server(?:\.git)?$') {
-        throw "Refusing to audit unexpected origin '$originUrl'; expected the official Silo GitHub repository."
+    Assert-OfficialSiloOrigin $originUrl
+    if ($Pull) {
+        Write-Host "Pulling latest Silo server main..." -ForegroundColor Cyan
+        Invoke-GitChecked @("fetch", "origin", "main") | Out-Null
+        Invoke-GitChecked @("merge", "--ff-only", "origin/main") | Out-Null
+        Write-Host ""
     }
     $headSha = (Invoke-GitChecked @("rev-parse", "--short", "HEAD")).Trim()
     $headMsg = (Invoke-GitChecked @("log", "-1", "--format=%s")).Trim()

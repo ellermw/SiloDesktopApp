@@ -13,7 +13,9 @@ namespace SiloPlayer.Converters;
 /// </summary>
 public sealed class UrlToImageSourceConverter : IValueConverter
 {
+    private const int PruneInterval = 64;
     private static readonly ConcurrentDictionary<string, WeakReference<BitmapImage>> Sources = new();
+    private static int _lookupCount;
 
     public object Convert(object value, Type targetType, object parameter, string language)
     {
@@ -25,9 +27,15 @@ public sealed class UrlToImageSourceConverter : IValueConverter
         }
 
         var cacheKey = StableIdentity(uri);
-        if (Sources.TryGetValue(cacheKey, out var existing)
-            && existing.TryGetTarget(out var cached))
-            return cached;
+        if (Interlocked.Increment(ref _lookupCount) % PruneInterval == 0)
+            PruneDeadSources();
+
+        if (Sources.TryGetValue(cacheKey, out var existing))
+        {
+            if (existing.TryGetTarget(out var cached))
+                return cached;
+            RemoveDeadEntry(cacheKey, existing);
+        }
 
         var bitmap = new BitmapImage { DecodePixelWidth = 342 };
         Sources[cacheKey] = new WeakReference<BitmapImage>(bitmap);
@@ -58,4 +66,20 @@ public sealed class UrlToImageSourceConverter : IValueConverter
 
     private static string StableIdentity(Uri uri)
         => uri.GetComponents(UriComponents.SchemeAndServer | UriComponents.Path, UriFormat.UriEscaped);
+
+    private static void PruneDeadSources()
+    {
+        var entries = (ICollection<KeyValuePair<string, WeakReference<BitmapImage>>>)Sources;
+        foreach (var entry in Sources)
+        {
+            if (!entry.Value.TryGetTarget(out _))
+                entries.Remove(entry);
+        }
+    }
+
+    private static void RemoveDeadEntry(string cacheKey, WeakReference<BitmapImage> entry)
+    {
+        var entries = (ICollection<KeyValuePair<string, WeakReference<BitmapImage>>>)Sources;
+        entries.Remove(new KeyValuePair<string, WeakReference<BitmapImage>>(cacheKey, entry));
+    }
 }
