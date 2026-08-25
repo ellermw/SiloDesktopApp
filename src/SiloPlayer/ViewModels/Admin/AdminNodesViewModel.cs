@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.ViewModels.Admin;
 
@@ -39,19 +40,24 @@ public partial class AdminNodesViewModel : ObservableObject
         ErrorMessage = null;
         try
         {
-            var nodes = await _adminApi.GetNodesAsync();
-            ProxyNodes.Clear();
-            TranscodeNodes.Clear();
-            foreach (var n in nodes)
-            {
-                if (n.Type == "proxy")
-                    ProxyNodes.Add(n);
-                else
-                    TranscodeNodes.Add(n);
-            }
+            await ReloadNodesAsync();
         }
         catch (Exception ex) { ErrorMessage = ex.Message; }
         finally { IsLoading = false; }
+    }
+
+    private async Task ReloadNodesAsync()
+    {
+        var nodes = await _adminApi.GetNodesAsync();
+        ProxyNodes.Clear();
+        TranscodeNodes.Clear();
+        foreach (var n in nodes)
+        {
+            if (n.Type == "proxy")
+                ProxyNodes.Add(n);
+            else
+                TranscodeNodes.Add(n);
+        }
     }
 
     // ===== Create Node =====
@@ -126,23 +132,34 @@ public partial class AdminNodesViewModel : ObservableObject
 
     // ===== Toggle Node =====
 
-    [RelayCommand]
-    public async Task ToggleNodeAsync(int id)
+    public async Task<AdminNodeToggleResult> ToggleNodeAsync(int id)
     {
         ErrorMessage = null;
         StatusMessage = null;
         // Find the node in either collection
         var node = ProxyNodes.FirstOrDefault(n => n.Id == id)
                 ?? TranscodeNodes.FirstOrDefault(n => n.Id == id);
-        if (node == null) return;
-
-        bool newEnabled = !node.Enabled;
-        try
+        if (node == null)
         {
-            await _adminApi.UpdateNodeAsync(id, new Dictionary<string, object?> { ["enabled"] = newEnabled });
-            StatusMessage = newEnabled ? "Node enabled." : "Node disabled.";
-            await LoadAsync();
+            const string error = "Node is no longer available.";
+            ErrorMessage = error;
+            return new AdminNodeToggleResult(false, false, error, null);
         }
-        catch (Exception ex) { ErrorMessage = ex.Message; }
+
+        var result = await AdminNodeToggleOperation.ExecuteAsync(
+            node.Enabled,
+            enabled => _adminApi.UpdateNodeAsync(
+                id,
+                new Dictionary<string, object?> { ["enabled"] = enabled }),
+            ReloadNodesAsync);
+
+        if (!result.UpdateSucceeded)
+        {
+            ErrorMessage = result.UpdateError;
+            return result;
+        }
+
+        StatusMessage = result.Enabled ? "Node enabled." : "Node disabled.";
+        return result;
     }
 }

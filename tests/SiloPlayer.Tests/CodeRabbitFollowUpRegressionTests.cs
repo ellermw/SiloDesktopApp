@@ -125,7 +125,7 @@ public sealed class CodeRabbitFollowUpRegressionTests
     }
 
     [Fact]
-    public void FailedAdminNodeToggleRestoresTheServerBackedValueWithoutRecursion()
+    public void AdminNodeToggleRollsBackOnlyUpdateFailuresAndReportsReloadFailuresSeparately()
     {
         var source = ReadRepoFile("src", "SiloPlayer", "Views", "Admin", "AdminNodesPage.xaml.cs");
         var handlerStart = source.IndexOf("toggleSwitch.Toggled += async", StringComparison.Ordinal);
@@ -133,9 +133,16 @@ public sealed class CodeRabbitFollowUpRegressionTests
         var handler = source[handlerStart..source.IndexOf("Grid.SetColumn(toggleSwitch", handlerStart, StringComparison.Ordinal)];
 
         Assert.Contains("suppressToggle", handler, StringComparison.Ordinal);
-        Assert.Contains("toggleSwitch.IsOn = serverEnabled", handler, StringComparison.Ordinal);
-        Assert.Contains("ViewModel.ErrorMessage", handler, StringComparison.Ordinal);
         Assert.Contains("toggleSwitch.IsEnabled = false", handler, StringComparison.Ordinal);
+
+        var updateFailure = handler.IndexOf("if (!result.UpdateSucceeded)", StringComparison.Ordinal);
+        var rollback = handler.IndexOf("toggleSwitch.IsOn = serverEnabled", StringComparison.Ordinal);
+        var reloadFailure = handler.IndexOf("if (!string.IsNullOrWhiteSpace(result.ReloadError))", StringComparison.Ordinal);
+        Assert.True(updateFailure >= 0 && rollback > updateFailure && reloadFailure > rollback);
+
+        var reloadBranch = handler[reloadFailure..];
+        Assert.DoesNotContain("toggleSwitch.IsOn = serverEnabled", reloadBranch, StringComparison.Ordinal);
+        Assert.Contains("Node updated, but could not refresh nodes", reloadBranch, StringComparison.Ordinal);
     }
 
     [Fact]

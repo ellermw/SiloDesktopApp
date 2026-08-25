@@ -236,25 +236,25 @@ public sealed partial class AdminNodesPage : Page
             toggleSwitch.IsEnabled = false;
             try
             {
-                await ViewModel.ToggleNodeCommand.ExecuteAsync(capturedNode.Id);
-                if (!string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
+                var result = await ViewModel.ToggleNodeAsync(capturedNode.Id);
+                if (!result.UpdateSucceeded)
                 {
                     suppressToggle = true;
                     try { toggleSwitch.IsOn = serverEnabled; }
                     finally { suppressToggle = false; }
-                    ShowStatus($"Could not update node: {ViewModel.ErrorMessage}");
+                    ShowStatus($"Could not update node: {result.UpdateError}");
                     return;
                 }
 
-                serverEnabled = toggleSwitch.IsOn;
-                if (ViewModel.StatusMessage != null) ShowStatus(ViewModel.StatusMessage);
+                serverEnabled = result.Enabled;
+                if (!string.IsNullOrWhiteSpace(result.ReloadError))
+                    ShowStatus($"Node updated, but could not refresh nodes: {result.ReloadError}");
+                else if (ViewModel.StatusMessage != null)
+                    ShowStatus(ViewModel.StatusMessage);
             }
             catch (Exception ex)
             {
-                suppressToggle = true;
-                try { toggleSwitch.IsOn = serverEnabled; }
-                finally { suppressToggle = false; }
-                ShowStatus($"Could not update node: {ex.Message}");
+                ShowStatus($"Could not determine node update state: {ex.Message}");
             }
             finally
             {
