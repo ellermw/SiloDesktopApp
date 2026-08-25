@@ -119,6 +119,7 @@ jobs:
         with:
           ref: ${{ needs.context.outputs.head_sha }}
           fetch-depth: 0
+          lfs: true
           persist-credentials: false
           clean: true
 
