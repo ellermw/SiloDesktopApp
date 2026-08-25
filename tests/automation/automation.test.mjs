@@ -142,10 +142,10 @@ test("remediation patch excludes private automation evidence", () => {
   );
   assert.match(
     workflow,
-    /git add -N -- \. ':\(exclude\)\.codex-automation\/\*\*' ':\(exclude\)\.github\/workflows\/\*\*'/u,
+    /git add -N -- \. ':\(exclude\)\.codex-automation\/\*\*' ':\(exclude\)\.github\/workflows\/\*\*'[\s\\]+':\(exclude\)scripts\/automation\/\*\*' ':\(exclude\)\.github\/codex\/\*\*'/u,
   );
   assert.match(
     workflow,
-    /git diff --binary --full-index HEAD -- \. ':\(exclude\)\.codex-automation\/\*\*'[\s\\]+':\(exclude\)\.github\/workflows\/\*\*'/u,
+    /git diff --binary --full-index HEAD -- \. ':\(exclude\)\.codex-automation\/\*\*'[\s\\]+':\(exclude\)\.github\/workflows\/\*\*'[\s\\]+':\(exclude\)scripts\/automation\/\*\*'[\s\\]+':\(exclude\)\.github\/codex\/\*\*'/u,
   );
 });

@@ -25,7 +25,7 @@ permissions:
 
 concurrency:
   group: silo-automated-review-${{ github.event.pull_request.number || inputs.pr_number }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   context:
@@ -335,6 +335,19 @@ jobs:
           name: coderabbit-review-${{ github.run_id }}
           path: .codex-automation
 
+      - name: Stage immutable remediation controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          controls="$RUNNER_TEMP/remediation-controls"
+          mkdir -p "$controls"
+          cp scripts/automation/validate-remediation.mjs "$controls/validate-remediation.mjs"
+          cp .github/codex/remediation-output.schema.json "$controls/remediation-output.schema.json"
+          sha256sum \
+            scripts/automation/validate-remediation.mjs \
+            .github/codex/remediation-output.schema.json \
+            > "$controls/workspace-control-hashes.txt"
+
       - name: Run Codex remediation
         env:
           HOME: /home/silo-review
@@ -344,7 +357,7 @@ jobs:
           set -euo pipefail
           codex login status
           codex exec --ephemeral --sandbox workspace-write --json \
-            --output-schema .github/codex/remediation-output.schema.json \
+            --output-schema "$RUNNER_TEMP/remediation-controls/remediation-output.schema.json" \
             --output-last-message .codex-automation/remediation-result.json \
             -C "$GITHUB_WORKSPACE" \
             "$(< .github/codex/remediation-prompt.md)" \
@@ -355,7 +368,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/automation/validate-remediation.mjs \
+          sha256sum -c "$RUNNER_TEMP/remediation-controls/workspace-control-hashes.txt"
+          node "$RUNNER_TEMP/remediation-controls/validate-remediation.mjs" \
             .codex-automation/review-report.json \
             .codex-automation/remediation-result.json
 
@@ -366,9 +380,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git add -N -- . ':(exclude).codex-automation/**' ':(exclude).github/workflows/**'
+          git add -N -- . ':(exclude).codex-automation/**' ':(exclude).github/workflows/**' \
+            ':(exclude)scripts/automation/**' ':(exclude).github/codex/**'
           git diff --binary --full-index HEAD -- . ':(exclude).codex-automation/**' \
             ':(exclude).github/workflows/**' \
+            ':(exclude)scripts/automation/**' \
+            ':(exclude).github/codex/**' \
             > .codex-automation/remediation.patch
           if [[ "$HAS_FIX" == "true" ]]; then
             test -s .codex-automation/remediation.patch
