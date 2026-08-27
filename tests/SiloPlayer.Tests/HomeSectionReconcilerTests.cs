@@ -70,6 +70,39 @@ public class HomeSectionReconcilerTests
         Assert.Equal(42, current.TotalCount);
     }
 
+    [Fact]
+    public void HeroSnapshotBecomesStaleWhenAVisibleReconciledItemIsReplaced()
+    {
+        var first = Item("movie-1", "Movie 1");
+        var changed = Item("movie-1", "Movie 1");
+        changed.PositionSeconds = 120;
+        var source = new[] { changed, Item("movie-2", "Movie 2") };
+        var mountedSnapshot = new[] { first, source[1] };
+
+        var isCurrent = HomeSectionReconciler.IsHeroSnapshotCurrent(
+            mountedSnapshot,
+            source,
+            itemLimit: 2);
+
+        Assert.False(isCurrent);
+    }
+
+    [Fact]
+    public void HeroSnapshotIgnoresReconciledItemsBeyondItsVisibleLimit()
+    {
+        var first = Item("movie-1", "Movie 1");
+        var second = Item("movie-2", "Movie 2");
+        var mountedSnapshot = new[] { first, second };
+        var source = new[] { first, second, Item("movie-3", "Movie 3") };
+
+        var isCurrent = HomeSectionReconciler.IsHeroSnapshotCurrent(
+            mountedSnapshot,
+            source,
+            itemLimit: 2);
+
+        Assert.True(isCurrent);
+    }
+
     private static HomeSectionWithItems Section(params MediaItem[] items) => new()
     {
         Id = "recently-added",

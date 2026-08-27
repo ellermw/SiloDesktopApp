@@ -17,6 +17,31 @@ public enum HomeSectionChange
 /// </summary>
 public static class HomeSectionReconciler
 {
+    /// <summary>
+    /// Returns whether the hero's materialized item snapshot still matches the
+    /// visible prefix of the reconciled featured section.
+    /// </summary>
+    public static bool IsHeroSnapshotCurrent(
+        IList<MediaItem>? snapshot,
+        IList<MediaItem>? source,
+        int itemLimit)
+    {
+        var sourceCount = source?.Count ?? 0;
+        var visibleCount = itemLimit > 0
+            ? Math.Min(itemLimit, sourceCount)
+            : sourceCount;
+        if ((snapshot?.Count ?? 0) != visibleCount)
+            return false;
+
+        for (var index = 0; index < visibleCount; index++)
+        {
+            if (!ReferenceEquals(snapshot![index], source![index]))
+                return false;
+        }
+
+        return true;
+    }
+
     public static HomeSectionChange Apply(HomeSectionWithItems current, HomeSectionWithItems incoming)
     {
         ArgumentNullException.ThrowIfNull(current);
