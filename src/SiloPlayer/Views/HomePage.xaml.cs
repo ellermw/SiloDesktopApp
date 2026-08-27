@@ -102,7 +102,8 @@ public sealed partial class HomePage : Page
     {
         if (string.Equals(channel, "catalog", StringComparison.OrdinalIgnoreCase))
         {
-            ViewModel.QueueRealtimeRefresh($"catalog:{eventName}");
+            ViewModel.QueueRealtimeRefresh(
+                HomeRealtimeRefreshGate.ClassifyCatalogEvent(eventName, data));
             return;
         }
 
@@ -496,6 +497,26 @@ public sealed partial class HomePage : Page
                 EmptyHomeState.Visibility = ViewModel.HasConfiguredSections
                     ? Visibility.Collapsed
                     : Visibility.Visible);
+        }
+        else if (e.PropertyName == nameof(ViewModel.RenderRevision))
+        {
+            var revision = ViewModel.RenderRevision;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (_isRefreshingLayout) return;
+
+                var heroSection = ViewModel.FeaturedSections.FirstOrDefault();
+                var itemLimit = heroSection?.ItemLimit ?? 0;
+                if (!HomeSectionReconciler.IsHeroSnapshotCurrent(
+                        HeroCarouselControl.ItemsSource,
+                        heroSection?.Items,
+                        itemLimit))
+                {
+                    RefreshHero();
+                }
+
+                _lastRenderedRevision = Math.Max(_lastRenderedRevision, revision);
+            });
         }
     }
 

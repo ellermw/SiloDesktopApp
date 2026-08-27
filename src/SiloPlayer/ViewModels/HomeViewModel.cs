@@ -133,6 +133,10 @@ public partial class HomeViewModel : ObservableObject,
     private bool _isActive;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan RealtimeRefreshDebounce = TimeSpan.FromMilliseconds(350);
+    private static readonly TimeSpan CatalogBurstRefreshCooldown = TimeSpan.FromSeconds(30);
+    private readonly HomeRealtimeRefreshGate _realtimeRefreshGate = new(
+        RealtimeRefreshDebounce,
+        CatalogBurstRefreshCooldown);
 
     // F12: maximum number of concurrent per-section fetches. Matches the
     // webui `MAX_CONCURRENT_SECTION_REQUESTS = 5` limit so we don't overwhelm
@@ -173,23 +177,39 @@ public partial class HomeViewModel : ObservableObject,
         InvalidateCache();
         if (!_isActive) return;
 
+        var delay = _realtimeRefreshGate.GetDelay(reason, DateTimeOffset.UtcNow);
+        var existing = Volatile.Read(ref _realtimeRefreshCts);
+        if (HomeRealtimeRefreshGate.IsCatalogBurst(reason)
+            && delay > RealtimeRefreshDebounce
+            && existing is { IsCancellationRequested: false })
+        {
+            // Keep the already-scheduled refresh. Repeated scan notifications
+            // share one absolute cooldown deadline instead of perpetually
+            // cancelling and pushing that refresh farther into the future.
+            return;
+        }
+
         var cts = new CancellationTokenSource();
         var previous = Interlocked.Exchange(ref _realtimeRefreshCts, cts);
         previous?.Cancel();
         previous?.Dispose();
-        _ = QueueRealtimeRefreshAsync(reason, cts);
+        _ = QueueRealtimeRefreshAsync(reason, delay, cts);
     }
 
-    private async Task QueueRealtimeRefreshAsync(string reason, CancellationTokenSource owner)
+    private async Task QueueRealtimeRefreshAsync(
+        string reason,
+        TimeSpan delay,
+        CancellationTokenSource owner)
     {
         try
         {
-            await Task.Delay(RealtimeRefreshDebounce, owner.Token).ConfigureAwait(false);
+            await Task.Delay(delay, owner.Token).ConfigureAwait(false);
             await RunOnUiThreadAsync(() =>
             {
                 if (!ReferenceEquals(_realtimeRefreshCts, owner) || owner.IsCancellationRequested || !_isActive)
                     return;
 
+                _realtimeRefreshGate.MarkRefreshed(reason, DateTimeOffset.UtcNow);
                 _ = RefreshMountedSectionsAsync(reason);
             }).ConfigureAwait(false);
         }
@@ -374,7 +394,7 @@ public partial class HomeViewModel : ObservableObject,
                     completed.LoadFailed = false;
                     completed.LoadCompleted = true;
                     completed.Items ??= new ObservableCollection<MediaItem>();
-                    ReplaceInBoundCollection(completed);
+                    ApplyRefreshedSection(completed);
                 }).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -389,7 +409,9 @@ public partial class HomeViewModel : ObservableObject,
                     await RunOnUiThreadAsync(() =>
                     {
                         if (!IsCurrentSectionLoad(generation, ct, section.Id)) return;
-                        ReplaceInBoundCollection(CloneSection(section, loadFailed: true, loadCompleted: true));
+                        var mounted = FindMountedSection(section.Id);
+                        if (mounted is not { LoadCompleted: true })
+                            ReplaceInBoundCollection(CloneSection(section, loadFailed: true, loadCompleted: true));
                     }).ConfigureAwait(false);
                 }
                 catch (Exception uiEx)
@@ -585,6 +607,47 @@ public partial class HomeViewModel : ObservableObject,
                 return;
             }
         }
+    }
+
+    private HomeSectionWithItems? FindMountedSection(string sectionId) =>
+        FeaturedSections.Concat(Sections).FirstOrDefault(section => section.Id == sectionId);
+
+    private void ApplyRefreshedSection(HomeSectionWithItems updated)
+    {
+        if (TryApplyRefreshedSection(FeaturedSections, updated)) return;
+        TryApplyRefreshedSection(Sections, updated);
+    }
+
+    private bool TryApplyRefreshedSection(
+        ObservableCollection<HomeSectionWithItems> sections,
+        HomeSectionWithItems updated)
+    {
+        for (var i = 0; i < sections.Count; i++)
+        {
+            var mounted = sections[i];
+            if (!string.Equals(mounted.Id, updated.Id, StringComparison.Ordinal))
+                continue;
+
+            // The initial empty layout slot is cheap to replace once. Every
+            // subsequent refresh reconciles against the mounted collection so
+            // unchanged cards, images, focus, and scroll position stay alive.
+            if (!mounted.LoadCompleted && mounted.Items.Count == 0)
+            {
+                sections[i] = updated;
+                BumpRenderRevision();
+                return true;
+            }
+
+            var change = HomeSectionReconciler.Apply(mounted, updated);
+            if (change == HomeSectionChange.None)
+                return true;
+
+            if (change.HasFlag(HomeSectionChange.Metadata))
+                sections[i] = mounted;
+            BumpRenderRevision();
+            return true;
+        }
+        return false;
     }
 
     public void InvalidateCache()

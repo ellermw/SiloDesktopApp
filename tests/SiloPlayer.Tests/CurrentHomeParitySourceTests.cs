@@ -252,11 +252,12 @@ public sealed class CurrentHomeParitySourceTests
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "HomePage.xaml.cs");
         var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "HomeViewModel.cs");
         Assert.Contains("_eventChannel.Subscribe(\"catalog\", \"user_state\")", page);
-        Assert.Contains("ViewModel.QueueRealtimeRefresh($\"catalog:{eventName}\")", page);
+        Assert.Contains("HomeRealtimeRefreshGate.ClassifyCatalogEvent(eventName, data)", page);
         Assert.Contains("ViewModel.QueueRealtimeRefresh($\"user_state:{eventName}\")", page);
         Assert.Contains("profile_id", page);
         Assert.Contains("public void QueueRealtimeRefresh(string reason)", viewModel);
         Assert.Contains("await FetchSectionItemsInBatchesAsync(generation, _sectionLoadCts.Token)", viewModel);
+        Assert.Contains("ApplyRefreshedSection(completed)", viewModel);
         Assert.Contains("QueueRealtimeRefresh(message.Completed ? \"playback_completed\" : \"playback_progress\")", viewModel);
     }
 
