@@ -102,7 +102,8 @@ public sealed partial class HomePage : Page
     {
         if (string.Equals(channel, "catalog", StringComparison.OrdinalIgnoreCase))
         {
-            ViewModel.QueueRealtimeRefresh($"catalog:{eventName}");
+            ViewModel.QueueRealtimeRefresh(
+                HomeRealtimeRefreshGate.ClassifyCatalogEvent(eventName, data));
             return;
         }
 
