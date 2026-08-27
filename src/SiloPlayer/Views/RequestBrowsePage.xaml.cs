@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Shapes;
 using Microsoft.UI.Xaml.Input;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Requests;
+using SiloPlayer.Converters;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 
@@ -15,6 +16,7 @@ namespace SiloPlayer.Views;
 
 public sealed partial class RequestBrowsePage : Page
 {
+    private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
     private readonly RequestsApi _api = App.Services.GetRequiredService<RequestsApi>();
     private readonly CancellationTokenSource _lifetime = new();
     private CancellationTokenSource? _loadCts;
@@ -76,7 +78,13 @@ public sealed partial class RequestBrowsePage : Page
             TitleText.Text = response.DisplayName;
             HeaderTileText.Text = response.DisplayName;
             HeaderTileText.Visibility = string.IsNullOrWhiteSpace(response.LogoUrl) ? Visibility.Visible : Visibility.Collapsed;
-            HeaderLogo.Source = string.IsNullOrWhiteSpace(response.LogoUrl) ? null : new BitmapImage(new Uri(response.LogoUrl));
+            HeaderLogo.Source = string.IsNullOrWhiteSpace(response.LogoUrl)
+                ? null
+                : (ImageSource)RemoteImageConverter.Convert(
+                    response.LogoUrl,
+                    typeof(ImageSource),
+                    null!,
+                    string.Empty);
             _totalPages = Math.Max(1, response.TotalPages);
             PageText.Text = response.Results.Count == 0 ? "No results." : $"Page {requestedPage} of {_totalPages}";
             FooterPageText.Text = $"Page {requestedPage} of {_totalPages}";

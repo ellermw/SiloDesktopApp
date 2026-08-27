@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Converters;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Storage;
 using Windows.Storage.Pickers;
@@ -20,6 +21,7 @@ namespace SiloPlayer.Views.Dialogs;
 /// </summary>
 public sealed class ProfileEditorDialog
 {
+    private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
     private static readonly (string Value, string Label)[] RatingOptions =
     [
         ("", "Any content"),
@@ -478,7 +480,11 @@ public sealed class ProfileEditorDialog
                 Width = 62,
                 Height = 62,
                 Stretch = Stretch.UniformToFill,
-                Source = new BitmapImage(new Uri(BuildDiceBearUrl(_activeAvatarStyle, seed))),
+                Source = (ImageSource)RemoteImageConverter.Convert(
+                    BuildDiceBearUrl(_activeAvatarStyle, seed),
+                    typeof(ImageSource),
+                    null!,
+                    string.Empty),
             };
             var button = new Button
             {
@@ -666,7 +672,11 @@ public sealed class ProfileEditorDialog
         var selectedParts = _selectedAvatarPreset.Split(':', StringSplitOptions.RemoveEmptyEntries);
         if (selectedParts.Length == 3 && selectedParts[0] == "dicebear")
         {
-            _avatarPreview.Source = new BitmapImage(new Uri(BuildDiceBearUrl(selectedParts[1], selectedParts[2])));
+            _avatarPreview.Source = (ImageSource)RemoteImageConverter.Convert(
+                BuildDiceBearUrl(selectedParts[1], selectedParts[2]),
+                typeof(ImageSource),
+                null!,
+                string.Empty);
             _avatarPreview.Visibility = Visibility.Visible;
             _avatarFallback.Visibility = Visibility.Collapsed;
             _avatarStatus.Text = "Preset avatar";
@@ -674,7 +684,11 @@ public sealed class ProfileEditorDialog
         }
         if (!_removeUploadedAvatar && !string.IsNullOrWhiteSpace(_profile?.AvatarUrl))
         {
-            _avatarPreview.Source = new BitmapImage(new Uri(_profile.AvatarUrl));
+            _avatarPreview.Source = (ImageSource)RemoteImageConverter.Convert(
+                _profile.AvatarUrl,
+                typeof(ImageSource),
+                null!,
+                string.Empty);
             _avatarPreview.Visibility = Visibility.Visible;
             _avatarFallback.Visibility = Visibility.Collapsed;
             _avatarStatus.Text = "Custom upload";

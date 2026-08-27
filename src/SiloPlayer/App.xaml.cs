@@ -20,7 +20,7 @@ public partial class App : Application
     private Mutex? _singleInstanceMutex;
     private CancellationTokenSource? _activationPipeCts;
     private Task? _activationPipeTask;
-    private const string ActivationPipeName = "SiloDesktopPlayer-Activation-6F4EE0EA";
+    private AppInstanceNames _instanceNames = AppInstanceNames.Create(null);
 
     public static IServiceProvider Services =>
         _services ?? throw new InvalidOperationException("Service provider not initialized.");
@@ -43,9 +43,10 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs e)
     {
+        _instanceNames = AppInstanceNames.Create(Environment.GetEnvironmentVariable("SILO_QA_INSTANCE_ID"));
         _singleInstanceMutex = new Mutex(
             initiallyOwned: true,
-            name: @"Local\SiloDesktopPlayer-6F4EE0EA-4DA3-49D0-940D-461F977BA343",
+            name: _instanceNames.MutexName,
             createdNew: out var isPrimaryInstance);
         if (!isPrimaryInstance)
         {
@@ -111,14 +112,14 @@ public partial class App : Application
         StartUiThreadLagDetector();
     }
 
-    private static void ForwardActivationToPrimary(string? argument)
+    private void ForwardActivationToPrimary(string? argument)
     {
         if (string.IsNullOrWhiteSpace(argument)) return;
         try
         {
             using var pipe = new NamedPipeClientStream(
                 ".",
-                ActivationPipeName,
+                _instanceNames.PipeName,
                 PipeDirection.Out,
                 PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
@@ -148,7 +149,7 @@ public partial class App : Application
             try
             {
                 await using var pipe = new NamedPipeServerStream(
-                    ActivationPipeName,
+                    _instanceNames.PipeName,
                     PipeDirection.In,
                     1,
                     PipeTransmissionMode.Byte,
@@ -312,6 +313,7 @@ public partial class App : Application
         // Populated lazily on first PosterCard bind.
         services.AddSingleton<CardOverlayService>();
         services.AddSingleton<UICustomizationService>();
+        services.AddSingleton<ItemDetailPrefetchCache>();
 
         // Player service (owns mpv lifecycle, not tied to page navigation)
         services.AddSingleton<PlayerService>();

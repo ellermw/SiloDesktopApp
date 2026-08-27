@@ -62,17 +62,19 @@
             <Grid
                 x:Name="ProgressContainer"
                 VerticalAlignment="Bottom"
+                HorizontalAlignment="Stretch"
+                Margin="10,0,10,8"
                 Height="3"
                 Visibility="Collapsed">
                 <!-- Track -->
                 <Border
-                    Background="#40FFFFFF"
-                    CornerRadius="0,0,12,12" />
+                    Background="#66000000"
+                    CornerRadius="2" />
                 <!-- Fill -->
                 <Border
                     x:Name="ProgressFill"
                     Background="{StaticResource AccentBrush}"
-                    CornerRadius="0,0,0,12"
+                    CornerRadius="2"
                     HorizontalAlignment="Left" />
             </Grid>
 
@@ -111,24 +113,11 @@
                 </StackPanel>
             </Border>
 
-            <Border
-                x:Name="EpisodeWatchedBadge"
-                Width="28" Height="28"
-                HorizontalAlignment="Right"
-                VerticalAlignment="Top"
-                Margin="8"
-                Background="#A6000000"
-                CornerRadius="14"
-                Visibility="Collapsed">
-                <FontIcon Glyph="&#xE73E;" FontSize="16" Foreground="#4ADE80"
-                          HorizontalAlignment="Center" VerticalAlignment="Center" />
-            </Border>
-
             <!-- Hover overlays — MUST be last so they paint on top of image/gradient/progress/badges.
                  Z-order: background → image → gradient → progress → remaining badge → dim → play → border. -->
             <StackPanel x:Name="OverlayTopLeft" Orientation="Vertical" Spacing="4" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="8" />
             <StackPanel x:Name="OverlayTopRight" Orientation="Vertical" Spacing="4" VerticalAlignment="Top" HorizontalAlignment="Right" Margin="8" />
-            <StackPanel x:Name="OverlayBottomLeft" Orientation="Vertical" Spacing="4" VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="8,8,8,24" />
+            <StackPanel x:Name="OverlayBottomLeft" Orientation="Vertical" Spacing="4" VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="8,8,8,56" />
             <StackPanel x:Name="OverlayBottomRight" Orientation="Vertical" Spacing="4" VerticalAlignment="Bottom" HorizontalAlignment="Right" Margin="8,8,8,56" />
 
             <Border
@@ -178,6 +167,26 @@
                 </Grid>
             </Button>
 
+            <Button
+                x:Name="QuickWatchedButton"
+                Width="36" Height="36"
+                MinWidth="0" MinHeight="0"
+                Padding="0"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Bottom"
+                Margin="12"
+                CornerRadius="6"
+                Background="#AA000000"
+                BorderBrush="#30FFFFFF"
+                BorderThickness="1"
+                Opacity="0"
+                Visibility="Collapsed"
+                ToolTipService.ToolTip="Mark Watched"
+                Click="QuickWatchedButton_Click"
+                Tapped="QuickWatchedButton_Tapped">
+                <FontIcon x:Name="QuickWatchedIcon" Glyph="&#xED1A;" FontSize="18" Foreground="White" />
+            </Button>
+
             <!-- Current WebUI MediaItemMenu trigger: translucent ellipsis in
                  the top-right, revealed on hover. -->
             <Button
@@ -216,13 +225,28 @@
             <Button x:Name="HeadingButton" Click="OnHeadingClick"
                     Padding="0" MinWidth="0" MinHeight="0" HorizontalAlignment="Stretch"
                     HorizontalContentAlignment="Left" Background="Transparent" BorderThickness="0">
-                <TextBlock
-                    x:Name="TitleText"
-                    FontSize="13"
-                    FontWeight="SemiBold"
-                    Foreground="{StaticResource PrimaryTextBrush}"
-                    TextTrimming="CharacterEllipsis"
-                    MaxLines="1" />
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock
+                        x:Name="TitleText"
+                        FontSize="13"
+                        FontWeight="SemiBold"
+                        Foreground="{StaticResource PrimaryTextBrush}"
+                        TextTrimming="CharacterEllipsis"
+                        MaxLines="1" />
+                    <FontIcon
+                        x:Name="EpisodeWatchedInline"
+                        Grid.Column="1"
+                        Glyph="&#xE73E;"
+                        FontSize="14"
+                        Foreground="#4ADE80"
+                        VerticalAlignment="Center"
+                        Visibility="Collapsed"
+                        AutomationProperties.Name="Watched" />
+                </Grid>
             </Button>
             <!-- Episode context: "Series Title · S1 E3" -->
             <Button x:Name="SubtitleButton" Click="OnMetadataClick"

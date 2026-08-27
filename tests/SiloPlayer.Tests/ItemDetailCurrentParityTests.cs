@@ -522,7 +522,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("ViewModel.CancelPendingLoads();", page);
         Assert.Contains("ViewModel.Item?.ContentId != contentId", page);
         Assert.Contains("AllowConcurrentExecutions = true", viewModel);
-        Assert.Contains("GetItemDetailAsync(contentId, ct)", viewModel);
+        Assert.Contains("_detailPrefetchCache.GetAsync(contentId, ct)", viewModel);
         Assert.Contains("ReferenceEquals(_loadCts, loadCts)", viewModel);
         Assert.Contains("catch (OperationCanceledException)", viewModel);
         Assert.Contains("var contentId = Item?.ContentId;", viewModel);
@@ -551,7 +551,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("headingIsSeries ? MediaItem.SeriesId! : MediaItem.ContentId", landscape);
         Assert.Contains("private void OnMetadataClick", landscape);
         Assert.Contains("CurrentItemBorder.Visibility = CurrentItemBadge.Visibility", landscape);
-        Assert.Contains("EpisodeWatchedBadge.Visibility", landscape);
+        Assert.Contains("EpisodeWatchedInline.Visibility", landscape);
     }
 
     [Fact]

@@ -103,7 +103,7 @@ public sealed partial class EbookReaderPage : Page
                 return;
             }
             await ReaderWebView.EnsureCoreWebView2Async();
-            ReaderWebView.CoreWebView2.WebMessageReceived += ReaderWebView_WebMessageReceived;
+            ConfigureReaderWebView();
             await LoadPreferencesAsync();
             await LoadAnnotationsAsync();
             await OpenVersionAsync(version, restoreProgress: true);
@@ -127,10 +127,58 @@ public sealed partial class EbookReaderPage : Page
         }
         _lifetime.Cancel();
         ReleaseDisplayRequest();
-        if (ReaderWebView.CoreWebView2 != null)
-            ReaderWebView.CoreWebView2.WebMessageReceived -= ReaderWebView_WebMessageReceived;
+        if (ReaderWebView.CoreWebView2 is { } core)
+        {
+            core.WebMessageReceived -= ReaderWebView_WebMessageReceived;
+            core.NavigationStarting -= ReaderWebView_NavigationStarting;
+            core.NewWindowRequested -= ReaderWebView_NewWindowRequested;
+            core.PermissionRequested -= ReaderWebView_PermissionRequested;
+            core.WebResourceRequested -= ReaderWebView_WebResourceRequested;
+        }
         ReaderWebView.Close();
         base.OnNavigatedFrom(e);
+    }
+
+    private void ConfigureReaderWebView()
+    {
+        var core = ReaderWebView.CoreWebView2;
+        core.Settings.AreHostObjectsAllowed = false;
+        core.Settings.AreDevToolsEnabled = false;
+        core.Settings.AreDefaultScriptDialogsEnabled = false;
+        core.WebMessageReceived += ReaderWebView_WebMessageReceived;
+        core.NavigationStarting += ReaderWebView_NavigationStarting;
+        core.NewWindowRequested += ReaderWebView_NewWindowRequested;
+        core.PermissionRequested += ReaderWebView_PermissionRequested;
+        core.AddWebResourceRequestedFilter("*", CoreWebView2WebResourceContext.All);
+        core.WebResourceRequested += ReaderWebView_WebResourceRequested;
+    }
+
+    private void ReaderWebView_NavigationStarting(CoreWebView2 sender, CoreWebView2NavigationStartingEventArgs args)
+    {
+        if (!EbookReaderWebPolicy.IsTrustedReaderUri(args.Uri))
+            args.Cancel = true;
+    }
+
+    private void ReaderWebView_NewWindowRequested(CoreWebView2 sender, CoreWebView2NewWindowRequestedEventArgs args)
+    {
+        args.Handled = true;
+    }
+
+    private void ReaderWebView_PermissionRequested(CoreWebView2 sender, CoreWebView2PermissionRequestedEventArgs args)
+    {
+        args.State = CoreWebView2PermissionState.Deny;
+    }
+
+    private void ReaderWebView_WebResourceRequested(CoreWebView2 sender, CoreWebView2WebResourceRequestedEventArgs args)
+    {
+        if (EbookReaderWebPolicy.IsAllowedSubresource(args.Request.Uri))
+            return;
+
+        args.Response = sender.Environment.CreateWebResourceResponse(
+            new Windows.Storage.Streams.InMemoryRandomAccessStream(),
+            403,
+            "Blocked",
+            "Content-Type: text/plain");
     }
 
     private static FileVersion? ChooseVersion(IEnumerable<FileVersion> versions, int? requested)
@@ -188,7 +236,10 @@ public sealed partial class EbookReaderPage : Page
         LoadingText.Text = "Preparing reader…";
         var cacheRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "reader-cache", SafeName(_contentId), _fileId.ToString(CultureInfo.InvariantCulture));
         _book = await Task.Run(() => EbookPackageExtractor.Extract(_sourceBytes, cacheRoot, FormatOf(version)), _lifetime.Token);
-        ReaderWebView.CoreWebView2.SetVirtualHostNameToFolderMapping("silo-reader.local", _book.RootDirectory, CoreWebView2HostResourceAccessKind.Allow);
+        ReaderWebView.CoreWebView2.SetVirtualHostNameToFolderMapping(
+            EbookReaderWebPolicy.ReaderHost,
+            _book.RootDirectory,
+            CoreWebView2HostResourceAccessKind.DenyCors);
         BuildContents();
         UpdateFormatSpecificChrome();
 
@@ -324,6 +375,9 @@ public sealed partial class EbookReaderPage : Page
 
     private async void ReaderWebView_WebMessageReceived(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
     {
+        if (!EbookReaderWebPolicy.IsTrustedReaderUri(args.Source))
+            return;
+
         try
         {
             using var message = JsonDocument.Parse(args.TryGetWebMessageAsString());

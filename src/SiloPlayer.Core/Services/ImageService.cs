@@ -14,7 +14,9 @@ public class ImageService : IDisposable
     private long _currentMemoryBytes;
     private readonly SemaphoreSlim _downloadLock = new(16);
     private readonly ConcurrentDictionary<string, Lazy<Task<string?>>> _inflightDownloads = new();
+    private readonly ConcurrentDictionary<string, long> _negativeCache = new();
     private static readonly TimeSpan DiskTrimInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan NegativeCacheDuration = TimeSpan.FromSeconds(30);
     private long _lastDiskTrimTicks;
     private int _diskTrimQueued;
 
@@ -32,6 +34,7 @@ public class ImageService : IDisposable
     public Task<byte[]?> GetImageAsync(string contentId, string imageType, string url, HttpClient http, CancellationToken ct = default)
     {
         var cacheKey = BuildCacheKey(contentId, imageType, url);
+        var negativeCacheKey = BuildNegativeCacheKey(cacheKey, url);
 
         // 1. Memory cache hit — synchronous fast path. No I/O, safe to run
         //    from any thread including the UI thread.
@@ -54,7 +57,10 @@ public class ImageService : IDisposable
                 return (byte[]?)diskBytes;
             }
 
-            var downloadedPath = await GetOrStartDownloadAsync(cacheKey, diskPath, url, http)
+            if (IsNegativeCacheHit(negativeCacheKey))
+                return null;
+
+            var downloadedPath = await GetOrStartDownloadAsync(cacheKey, negativeCacheKey, diskPath, url, http)
                 .WaitAsync(ct)
                 .ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(downloadedPath) || !File.Exists(downloadedPath))
@@ -79,6 +85,7 @@ public class ImageService : IDisposable
     public Task<string?> GetImageDiskPathAsync(string contentId, string imageType, string url, HttpClient http, CancellationToken ct = default)
     {
         var cacheKey = BuildCacheKey(contentId, imageType, url);
+        var negativeCacheKey = BuildNegativeCacheKey(cacheKey, url);
 
         // All sync I/O (File.Exists) goes on the thread pool so the UI thread
         // never blocks on disk ops. Fast-path: if download is already inflight,
@@ -92,20 +99,39 @@ public class ImageService : IDisposable
                 return (string?)diskPath;
             }
 
-            return await GetOrStartDownloadAsync(cacheKey, diskPath, url, http)
+            if (IsNegativeCacheHit(negativeCacheKey))
+                return null;
+
+            return await GetOrStartDownloadAsync(cacheKey, negativeCacheKey, diskPath, url, http)
                 .WaitAsync(ct)
                 .ConfigureAwait(false);
         }, ct);
     }
 
-    private Task<string?> GetOrStartDownloadAsync(string cacheKey, string diskPath, string url, HttpClient http)
+    private Task<string?> GetOrStartDownloadAsync(
+        string cacheKey,
+        string negativeCacheKey,
+        string diskPath,
+        string url,
+        HttpClient http)
     {
+        // The disk identity intentionally ignores expiring signatures, but an
+        // in-flight request may already be using a signature that the CDN has
+        // rejected. Share only callers using the exact same URL. A refreshed
+        // signature then waits on the common disk lock and either reuses the
+        // old request's successful file or performs its own recovery request.
+        var inflightKey = negativeCacheKey;
         Lazy<Task<string?>>? lazyDownload = null;
-        lazyDownload = _inflightDownloads.GetOrAdd(cacheKey, _ => new Lazy<Task<string?>>(() =>
+        lazyDownload = _inflightDownloads.GetOrAdd(inflightKey, _ => new Lazy<Task<string?>>(() =>
         {
-            var task = DownloadAndCacheToDiskAsync(diskPath, url, http, CancellationToken.None);
+            var task = DownloadAndCacheToDiskAsync(
+                diskPath,
+                url,
+                http,
+                negativeCacheKey,
+                CancellationToken.None);
             task.ContinueWith(
-                _ => RemoveInflightDownload(cacheKey, lazyDownload),
+                _ => RemoveInflightDownload(inflightKey, lazyDownload),
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
@@ -115,16 +141,21 @@ public class ImageService : IDisposable
         return lazyDownload.Value;
     }
 
-    private void RemoveInflightDownload(string cacheKey, Lazy<Task<string?>>? lazyDownload)
+    private void RemoveInflightDownload(string inflightKey, Lazy<Task<string?>>? lazyDownload)
     {
         if (lazyDownload == null)
             return;
 
         ((ICollection<KeyValuePair<string, Lazy<Task<string?>>>>)_inflightDownloads)
-            .Remove(new KeyValuePair<string, Lazy<Task<string?>>>(cacheKey, lazyDownload));
+            .Remove(new KeyValuePair<string, Lazy<Task<string?>>>(inflightKey, lazyDownload));
     }
 
-    private async Task<string?> DownloadAndCacheToDiskAsync(string diskPath, string url, HttpClient http, CancellationToken ct)
+    private async Task<string?> DownloadAndCacheToDiskAsync(
+        string diskPath,
+        string url,
+        HttpClient http,
+        string negativeCacheKey,
+        CancellationToken ct)
     {
         await _downloadLock.WaitAsync(ct).ConfigureAwait(false);
         string? tempPath = null;
@@ -138,7 +169,14 @@ public class ImageService : IDisposable
             }
 
             using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode) return null;
+            if (!response.IsSuccessStatusCode)
+            {
+                if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Gone)
+                    _negativeCache[negativeCacheKey] = DateTimeOffset.UtcNow.Add(NegativeCacheDuration).UtcTicks;
+                return null;
+            }
+
+            _negativeCache.TryRemove(negativeCacheKey, out _);
 
             tempPath = $"{diskPath}.{Guid.NewGuid():N}.tmp";
             await using (var remoteStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
@@ -211,6 +249,21 @@ public class ImageService : IDisposable
         var normalizedUrl = NormalizeImageUrlForCache(url);
         var urlHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalizedUrl)))[..16];
         return $"{contentId}_{imageType}_{urlHash}";
+    }
+
+    private static string BuildNegativeCacheKey(string cacheKey, string url)
+        => $"{cacheKey}\u001F{url}";
+
+    private bool IsNegativeCacheHit(string negativeCacheKey)
+    {
+        if (!_negativeCache.TryGetValue(negativeCacheKey, out var expiresAtTicks))
+            return false;
+
+        if (expiresAtTicks > DateTimeOffset.UtcNow.UtcTicks)
+            return true;
+
+        _negativeCache.TryRemove(negativeCacheKey, out _);
+        return false;
     }
 
     private static string NormalizeImageUrlForCache(string url)
@@ -350,5 +403,6 @@ public class ImageService : IDisposable
     {
         _downloadLock.Dispose();
         _memoryCache.Clear();
+        _negativeCache.Clear();
     }
 }

@@ -3,6 +3,21 @@ namespace SiloPlayer.Tests;
 public sealed class CurrentCatalogParitySourceTests
 {
     [Fact]
+    public void FavoritesAndWatchlistPersistCurrentProfileSortChoices()
+    {
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "CatalogPage.xaml.cs");
+        var api = ReadRepoFile("src", "SiloPlayer.Core", "Api", "CollectionsApi.cs");
+
+        Assert.Contains("PersonalCatalogSortPolicy.DefaultSortLabel(_source)", page);
+        Assert.Contains("PersonalCatalogSortPolicy.ShouldShowOrderSelector(_source, sort)", page);
+        Assert.Contains("QueuePersonalSortPreferenceSave", page);
+        Assert.Contains("_sortPreferenceTail", page);
+        Assert.Contains("string.Equals(_authService.SelectedProfileId, profileId", page);
+        Assert.Contains("SetCollectionSortPreferenceAsync", page);
+        Assert.Contains("/api/v1/collections/sort-preference", api);
+    }
+
+    [Fact]
     public void SearchSurfaceUsesCurrentEmptyResultsScopeToolbarAndRequestSections()
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml");

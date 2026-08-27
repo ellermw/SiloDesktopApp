@@ -9,6 +9,7 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Requests;
+using SiloPlayer.Converters;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.Views;
@@ -28,6 +29,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 {
     private const int PreviewLimit = 8;
     private const int DebounceMs = 200;
+    private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
 
     private readonly CatalogApi _catalogApi;
     private readonly SettingsApi _settingsApi;
@@ -50,6 +52,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         _scopeLoadTask = LoadScopeAsync();
         this.InitializeComponent();
         this.Opened += (_, _) => SearchBox.Focus(FocusState.Programmatic);
+        this.Closed += OnClosed;
     }
 
     private async Task LoadScopeAsync()
@@ -86,7 +89,12 @@ public sealed partial class GlobalSearchDialog : ContentDialog
     private async Task RunSearchAsync()
     {
         var query = SearchBox.Text.Trim();
-        _searchCts?.Cancel();
+        var previousOwner = Interlocked.Exchange(ref _searchCts, null);
+        if (previousOwner != null)
+        {
+            previousOwner.Cancel();
+            previousOwner.Dispose();
+        }
 
         if (string.IsNullOrEmpty(query))
         {
@@ -98,8 +106,9 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             return;
         }
 
-        _searchCts = new CancellationTokenSource();
-        var cts = _searchCts;
+        var cts = new CancellationTokenSource();
+        _searchCts = cts;
+        _requestResults.Clear();
 
         LoadingPanel.Visibility = Visibility.Visible;
         ResultsScroll.Visibility = Visibility.Collapsed;
@@ -111,17 +120,15 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             await _scopeLoadTask;
             var catalogTask = _catalogApi.SearchAsync(query, PreviewLimit, _mediaScope, cts.Token);
             var requestsTask = _mediaScope is "all" or "video" ? SearchRequestsAsync(query, cts.Token) : Task.FromResult(new List<RequestMediaResult>());
-            await Task.WhenAll(catalogTask, requestsTask);
             var response = await catalogTask;
-            if (cts.IsCancellationRequested) return;
+            if (!IsCurrentSearchOwner(cts, query)) return;
 
             _results.Clear();
             _results.AddRange(response.Items);
             _hasMore = response.HasMore;
             _searchFailed = false;
-            _requestResults.Clear();
-            _requestResults.AddRange(await requestsTask);
             Render();
+            _ = PublishRequestResultsAsync(requestsTask, query, cts);
         }
         catch (OperationCanceledException) { /* superseded by a newer query */ }
         catch
@@ -132,6 +139,54 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             _searchFailed = true;
             Render();
         }
+    }
+
+    private async Task PublishRequestResultsAsync(
+        Task<List<RequestMediaResult>> requestsTask,
+        string query,
+        CancellationTokenSource owner)
+    {
+        try
+        {
+            var results = await requestsTask;
+            if (!IsCurrentSearchOwner(owner, query)) return;
+
+            _requestResults.Clear();
+            _requestResults.AddRange(results);
+            Render();
+        }
+        catch (OperationCanceledException)
+        {
+            // Closing the dialog or typing a newer query owns the surface now.
+        }
+        catch
+        {
+            // Request discovery is optional and cannot fail local search.
+        }
+    }
+
+    private bool IsCurrentSearchOwner(CancellationTokenSource owner, string query) =>
+        !owner.IsCancellationRequested
+        && ReferenceEquals(_searchCts, owner)
+        && string.Equals(SearchBox.Text.Trim(), query, StringComparison.Ordinal);
+
+    private void OnClosed(ContentDialog sender, ContentDialogClosedEventArgs args)
+    {
+        _debounceTimer?.Stop();
+        var owner = Interlocked.Exchange(ref _searchCts, null);
+        if (owner != null)
+        {
+            owner.Cancel();
+            owner.Dispose();
+        }
+
+        _results.Clear();
+        _requestResults.Clear();
+        _selectedIndex = -1;
+        _hasMore = false;
+        _searchFailed = false;
+        SearchBox.Text = string.Empty;
+        _debounceTimer?.Stop();
     }
 
     private async Task<List<RequestMediaResult>> SearchRequestsAsync(string query, CancellationToken ct)
@@ -269,7 +324,11 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         {
             thumb.Child = new Image
             {
-                Source = new BitmapImage(new Uri(item.PosterUrl)),
+                Source = (ImageSource)RemoteImageConverter.Convert(
+                    item.PosterUrl,
+                    typeof(ImageSource),
+                    null!,
+                    string.Empty),
                 Stretch = Stretch.UniformToFill
             };
         }
@@ -334,7 +393,15 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         var poster = new Border { Width = 40, Height = 56, CornerRadius = new CornerRadius(4), Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"] };
         if (!string.IsNullOrWhiteSpace(item.PosterUrl))
         {
-            poster.Child = new Image { Source = new BitmapImage(new Uri(item.PosterUrl)), Stretch = Stretch.UniformToFill };
+            poster.Child = new Image
+            {
+                Source = (ImageSource)RemoteImageConverter.Convert(
+                    item.PosterUrl,
+                    typeof(ImageSource),
+                    null!,
+                    string.Empty),
+                Stretch = Stretch.UniformToFill,
+            };
         }
         else
         {

@@ -126,6 +126,118 @@ public sealed class ImageServiceTests
         }
     }
 
+    [Fact]
+    public async Task GetImageDiskPathAsync_DoesNotRepeatMissingImageRequestWithinNegativeCacheWindow()
+    {
+        var cacheDir = CreateTempCacheDir();
+        try
+        {
+            var requestCount = 0;
+            using var service = new ImageService(cacheDir, maxMemoryCacheBytes: 1024 * 1024, maxDiskCacheBytes: 1024 * 1024);
+            using var http = new HttpClient(new DelegateHandler((_, _) =>
+            {
+                Interlocked.Increment(ref requestCount);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }));
+            const string url = "https://cdn.example.test/posters/missing.jpg?X-Amz-Signature=aaa";
+
+            var firstPath = await service.GetImageDiskPathAsync("missing-movie", "poster", url, http);
+            var secondPath = await service.GetImageDiskPathAsync("missing-movie", "poster", url, http);
+
+            Assert.Null(firstPath);
+            Assert.Null(secondPath);
+            Assert.Equal(1, requestCount);
+        }
+        finally
+        {
+            DeleteTempCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task GetImageDiskPathAsync_RetriesMissingImageWhenSignedUrlChanges()
+    {
+        var cacheDir = CreateTempCacheDir();
+        try
+        {
+            var requestCount = 0;
+            using var service = new ImageService(cacheDir, maxMemoryCacheBytes: 1024 * 1024, maxDiskCacheBytes: 1024 * 1024);
+            using var http = new HttpClient(new DelegateHandler((_, _) =>
+            {
+                var attempt = Interlocked.Increment(ref requestCount);
+                return Task.FromResult(attempt == 1
+                    ? new HttpResponseMessage(HttpStatusCode.NotFound)
+                    : ImageResponse());
+            }));
+
+            var firstPath = await service.GetImageDiskPathAsync(
+                "movie-1",
+                "poster",
+                "https://cdn.example.test/posters/movie-1.jpg?X-Amz-Signature=expired",
+                http);
+            var secondPath = await service.GetImageDiskPathAsync(
+                "movie-1",
+                "poster",
+                "https://cdn.example.test/posters/movie-1.jpg?X-Amz-Signature=fresh",
+                http);
+
+            Assert.Null(firstPath);
+            Assert.True(File.Exists(secondPath));
+            Assert.Equal(2, requestCount);
+        }
+        finally
+        {
+            DeleteTempCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task GetImageDiskPathAsync_FreshSignedUrlDoesNotJoinExpiredInflightFailure()
+    {
+        var cacheDir = CreateTempCacheDir();
+        try
+        {
+            var requestCount = 0;
+            var expiredRequestStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseExpiredRequest = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var service = new ImageService(cacheDir, maxMemoryCacheBytes: 1024 * 1024, maxDiskCacheBytes: 1024 * 1024);
+            using var http = new HttpClient(new DelegateHandler(async (request, ct) =>
+            {
+                Interlocked.Increment(ref requestCount);
+                if (request.RequestUri!.Query.Contains("expired", StringComparison.Ordinal))
+                {
+                    expiredRequestStarted.TrySetResult();
+                    await releaseExpiredRequest.Task.WaitAsync(ct);
+                    return new HttpResponseMessage(HttpStatusCode.NotFound);
+                }
+
+                return ImageResponse();
+            }));
+
+            var expired = service.GetImageDiskPathAsync(
+                "movie-1",
+                "poster",
+                "https://cdn.example.test/posters/movie-1.jpg?X-Amz-Signature=expired",
+                http);
+            await expiredRequestStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            var fresh = service.GetImageDiskPathAsync(
+                "movie-1",
+                "poster",
+                "https://cdn.example.test/posters/movie-1.jpg?X-Amz-Signature=fresh",
+                http);
+            releaseExpiredRequest.SetResult();
+
+            Assert.Null(await expired.WaitAsync(TimeSpan.FromSeconds(5)));
+            Assert.True(File.Exists(await fresh.WaitAsync(TimeSpan.FromSeconds(5))));
+            Assert.Equal(2, requestCount);
+        }
+        finally
+        {
+            DeleteTempCacheDir(cacheDir);
+        }
+    }
+
     private static string CreateTempCacheDir()
     {
         var path = Path.Combine(Path.GetTempPath(), "SiloPlayer.Tests", Guid.NewGuid().ToString("N"));

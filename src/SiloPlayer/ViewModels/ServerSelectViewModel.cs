@@ -66,7 +66,11 @@ public partial class ServerSelectViewModel : ObservableObject
         {
             url = "https://" + url;
         }
-        url = ServerUrlIdentity.Normalize(url);
+        if (!ServerUrlIdentity.TryNormalizeHttpOrigin(url, out url))
+        {
+            ErrorMessage = "Enter a valid HTTP or HTTPS server address without embedded credentials.";
+            return;
+        }
 
         var name = string.IsNullOrWhiteSpace(NewServerName) ? url : NewServerName.Trim();
 

@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Shapes;
 using Windows.UI;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Converters;
 using SiloPlayer.Helpers;
 using SiloPlayer.Views;
 
@@ -30,6 +31,7 @@ namespace SiloPlayer.Controls;
 public sealed partial class WatchTonightDialog : ContentDialog
 {
     private readonly RecommendationsApi _api;
+    private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
 
     // ─── State ──────────────────────────────────────────────────────────
     private enum Step { ModeSelect, GenrePicker, SwipeDeck }
@@ -444,7 +446,11 @@ public sealed partial class WatchTonightDialog : ContentDialog
             {
                 grid.Children.Add(new Image
                 {
-                    Source = new BitmapImage(new Uri(imgUrl)),
+                    Source = (ImageSource)RemoteImageConverter.Convert(
+                        imgUrl,
+                        typeof(ImageSource),
+                        null!,
+                        string.Empty),
                     Stretch = Stretch.UniformToFill,
                 });
             }
@@ -566,7 +572,11 @@ public sealed partial class WatchTonightDialog : ContentDialog
             {
                 bottomInfo.Children.Add(new Image
                 {
-                    Source = new BitmapImage(new Uri(card.LogoUrl)),
+                    Source = (ImageSource)RemoteImageConverter.Convert(
+                        card.LogoUrl,
+                        typeof(ImageSource),
+                        null!,
+                        string.Empty),
                     Height = 40,
                     MaxWidth = 240,
                     HorizontalAlignment = HorizontalAlignment.Left,

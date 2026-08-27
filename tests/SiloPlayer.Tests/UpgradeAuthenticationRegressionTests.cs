@@ -5,6 +5,28 @@ namespace SiloPlayer.Tests;
 public sealed class UpgradeAuthenticationRegressionTests
 {
     [Theory]
+    [InlineData("https://Example.COM:443/silo/?token=secret#fragment", "https://example.com/silo")]
+    [InlineData("http://localhost:8096/", "http://localhost:8096")]
+    public void ServerUrlIdentity_TryNormalizeHttpOriginAcceptsOnlyCredentialSafeOrigins(
+        string input,
+        string expected)
+    {
+        Assert.True(ServerUrlIdentity.TryNormalizeHttpOrigin(input, out var normalized));
+        Assert.Equal(expected, normalized);
+    }
+
+    [Theory]
+    [InlineData("file:///C:/media")]
+    [InlineData("javascript:alert(1)")]
+    [InlineData("https://user:password@example.com")]
+    [InlineData("not a url")]
+    [InlineData("")]
+    public void ServerUrlIdentity_TryNormalizeHttpOriginRejectsUnsafeServerAddresses(string input)
+    {
+        Assert.False(ServerUrlIdentity.TryNormalizeHttpOrigin(input, out _));
+    }
+
+    [Theory]
     [InlineData(" HTTPS://Example.COM/ ", "https://example.com")]
     [InlineData("https://Example.COM:443/silo/", "https://example.com/silo")]
     [InlineData("http://Example.COM:80/", "http://example.com")]
@@ -57,12 +79,14 @@ public sealed class UpgradeAuthenticationRegressionTests
         var installer = ReadRepoFile("installer", "SiloInstaller.iss");
         var installerBuild = ReadRepoFile("installer", "build.ps1");
         var app = ReadRepoFile("src", "SiloPlayer", "App.xaml.cs");
+        var instanceNames = ReadRepoFile("src", "SiloPlayer.Core", "Services", "AppInstanceNames.cs");
 
         Assert.Contains("CloseApplications=force", installer);
         Assert.Contains("RestartApplications=no", installer);
         Assert.Contains("SiloInstaller-Windows-x64.exe", installerBuild);
         Assert.Contains("Stable installer alias does not match", installerBuild);
-        Assert.Contains("SiloDesktopPlayer-6F4EE0EA-4DA3-49D0-940D-461F977BA343", app);
+        Assert.Contains("AppInstanceNames.Create(Environment.GetEnvironmentVariable(\"SILO_QA_INSTANCE_ID\"))", app);
+        Assert.Contains("SiloDesktopPlayer-6F4EE0EA-4DA3-49D0-940D-461F977BA343", instanceNames);
         Assert.Contains("secondary_instance_blocked", app);
     }
 

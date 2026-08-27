@@ -23,6 +23,7 @@ public sealed partial class MatchItemDialog : ContentDialog
     private bool _searching;
 
     public MatchCandidate? SelectedCandidate => _selectedCandidate;
+    public bool HasAppliedMatch { get; private set; }
 
     public MatchItemDialog(string itemId)
         : this(itemId, "", null, "movie", null, null, null)
@@ -84,6 +85,7 @@ public sealed partial class MatchItemDialog : ContentDialog
             {
                 ProviderIds = _selectedCandidate.ProviderIds,
             });
+            HasAppliedMatch = true;
             App.Services.GetService<SiloPlayer.Services.ToastService>()?.Success("Match applied");
             Hide();
         }

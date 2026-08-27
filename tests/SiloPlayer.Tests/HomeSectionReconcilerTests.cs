@@ -11,7 +11,7 @@ public class HomeSectionReconcilerTests
     {
         var currentItem = Item("movie-1", "Movie", "https://images.test/poster.jpg?old-signature");
         var current = Section(currentItem);
-        var incoming = Section(Item("movie-1", "Movie", "https://images.test/poster.jpg?new-signature"));
+        var incoming = Section(Item("movie-1", "Movie", "https://images.test/poster.jpg?old-signature"));
         var mountedItems = current.Items;
 
         var result = HomeSectionReconciler.Apply(current, incoming);
@@ -19,6 +19,57 @@ public class HomeSectionReconcilerTests
         Assert.Equal(HomeSectionChange.None, result);
         Assert.Same(mountedItems, current.Items);
         Assert.Same(currentItem, current.Items[0]);
+    }
+
+    [Fact]
+    public void RefreshedSignedArtworkUrlUpdatesMountedCardWithoutReplacingIt()
+    {
+        var currentItem = Item(
+            "movie-1",
+            "Movie",
+            "https://images.test/poster.jpg?X-Amz-Signature=expired");
+        currentItem.BackdropUrl = "https://images.test/backdrop.jpg?X-Amz-Signature=expired";
+        currentItem.LogoUrl = "https://images.test/logo.png?X-Amz-Signature=expired";
+        var current = Section(currentItem);
+        var incomingItem = Item(
+            "movie-1",
+            "Movie",
+            "https://images.test/poster.jpg?X-Amz-Signature=fresh");
+        incomingItem.BackdropUrl = "https://images.test/backdrop.jpg?X-Amz-Signature=fresh";
+        incomingItem.LogoUrl = "https://images.test/logo.png?X-Amz-Signature=fresh";
+
+        var result = HomeSectionReconciler.Apply(current, Section(incomingItem));
+
+        Assert.Equal(HomeSectionChange.Items, result);
+        Assert.Same(currentItem, current.Items[0]);
+        Assert.Equal(incomingItem.PosterUrl, currentItem.PosterUrl);
+        Assert.Equal(incomingItem.BackdropUrl, currentItem.BackdropUrl);
+        Assert.Equal(incomingItem.LogoUrl, currentItem.LogoUrl);
+    }
+
+    [Fact]
+    public void RefreshedSignedArtworkUrlNotifiesTheMountedCollection()
+    {
+        var mountedItem = Item(
+            "movie-1",
+            "Movie",
+            "https://images.test/poster.jpg?X-Amz-Signature=expired");
+        var current = Section(mountedItem);
+        var incoming = Section(Item(
+            "movie-1",
+            "Movie",
+            "https://images.test/poster.jpg?X-Amz-Signature=fresh"));
+        System.Collections.Specialized.NotifyCollectionChangedEventArgs? notification = null;
+        current.Items.CollectionChanged += (_, args) => notification = args;
+
+        var result = HomeSectionReconciler.Apply(current, incoming);
+
+        Assert.Equal(HomeSectionChange.Items, result);
+        Assert.NotNull(notification);
+        Assert.Equal(
+            System.Collections.Specialized.NotifyCollectionChangedAction.Replace,
+            notification!.Action);
+        Assert.Same(mountedItem, current.Items[0]);
     }
 
     [Fact]

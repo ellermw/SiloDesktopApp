@@ -30,6 +30,8 @@ public sealed partial class CatalogPage : Page,
     IRecipient<PlaybackProgressUpdated>
 {
     private readonly CatalogApi _api = App.Services.GetRequiredService<CatalogApi>();
+    private readonly CollectionsApi _collectionsApi = App.Services.GetRequiredService<CollectionsApi>();
+    private readonly AuthService _authService = App.Services.GetRequiredService<AuthService>();
     private readonly UICustomizationService _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
     private readonly ObservableCollection<MediaItem> _items = [];
     private CancellationTokenSource? _loadCts;
@@ -54,6 +56,8 @@ public sealed partial class CatalogPage : Page,
     private bool _advancedMode;
     private const int PageSize = 60;
     private bool _messengerRegistered;
+    private readonly object _sortPreferenceGate = new();
+    private Task _sortPreferenceTail = Task.CompletedTask;
 
     private static readonly (string Label, string Value)[] AdvancedFields =
     [
@@ -110,7 +114,7 @@ public sealed partial class CatalogPage : Page,
         {
             SortCombo.Items.Insert(0, new ComboBoxItem
             {
-                Content = _source == "watchlist" ? "List Order" : "Date Added",
+                Content = PersonalCatalogSortPolicy.DefaultSortLabel(_source),
                 // The current WebUI presents these labels while preserving the
                 // server-defined personal-list order. Sending an explicit
                 // added_at sort changes the history resolver path and can show
@@ -121,13 +125,14 @@ public sealed partial class CatalogPage : Page,
             if (_source is "favorites" or "history")
                 OrderCombo.SelectedIndex = 0; // current WebUI defaults these recency lists to Descending
 
-            // The live WebUI treats watchlist order as a single, server-owned
+            // The live WebUI treats Favorites and Watchlist order as a single,
+            // server-owned
             // "List Order" control.  Showing a second Ascending/Descending
             // selector here both diverges visually and can accidentally turn
             // the personal ordering into an added-at sort.
-            OrderCombo.Visibility = _source == "watchlist"
-                ? Visibility.Collapsed
-                : Visibility.Visible;
+            OrderCombo.Visibility = PersonalCatalogSortPolicy.ShouldShowOrderSelector(_source, null)
+                ? Visibility.Visible
+                : Visibility.Collapsed;
         }
         if (_source == "history") HistoryActions.Visibility = Visibility.Visible;
         if (_source == "section")
@@ -385,7 +390,11 @@ public sealed partial class CatalogPage : Page,
                 extraRulesMatch: _advancedMode ? SelectedTag(AdvancedMatchCombo) ?? "all" : "all",
                 ct: _loadCts.Token);
             if (generation != Volatile.Read(ref _loadGeneration)) return;
-            foreach (var item in response.Items) _items.Add(item);
+            foreach (var item in response.Items)
+            {
+                item.ItemSource = _source;
+                _items.Add(item);
+            }
             _snapshot = response.Snapshot ?? _snapshot;
             _offset += response.Items.Count;
             _hasMore = response.HasMore || _offset < response.Total;
@@ -439,6 +448,11 @@ public sealed partial class CatalogPage : Page,
         if (_initializing) return;
         if (ReferenceEquals(sender, OrderCombo) && _source is "favorites" or "watchlist" or "history")
             _personalDefaultOrderTouched = true;
+        if ((ReferenceEquals(sender, SortCombo) || ReferenceEquals(sender, OrderCombo))
+            && PersonalCatalogSortPolicy.SupportsSourceOrder(_source))
+        {
+            QueuePersonalSortPreferenceSave();
+        }
         UpdateFilterCount();
         _debounce?.Stop();
         _debounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(sender is TextBox ? 300 : 40) };
@@ -450,16 +464,64 @@ public sealed partial class CatalogPage : Page,
     {
         if (OrderCombo == null) return;
         var sort = SelectedTag(SortCombo);
-        var isPersonalDefault = sort == null && _source is "favorites" or "watchlist" or "history";
-        OrderCombo.Visibility = _source == "watchlist" || (sort == null && !isPersonalDefault)
-            ? Visibility.Collapsed
-            : Visibility.Visible;
+        OrderCombo.Visibility = PersonalCatalogSortPolicy.ShouldShowOrderSelector(_source, sort)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
         if (!_initializing && sort != null)
         {
             var ascendingByDefault = sort is "title" or "content_rating" or "author" or "narrator" or "series";
             OrderCombo.SelectedIndex = ascendingByDefault ? 1 : 0;
         }
         Filter_Changed(sender, e);
+    }
+
+    private void QueuePersonalSortPreferenceSave()
+    {
+        var source = _source;
+        var profileId = _authService.SelectedProfileId;
+        var field = SelectedTag(SortCombo) ?? "";
+        var order = field.Length == 0 ? "" : SelectedTag(OrderCombo) ?? "desc";
+
+        lock (_sortPreferenceGate)
+        {
+            _sortPreferenceTail = SavePersonalSortPreferenceAfterAsync(
+                _sortPreferenceTail,
+                source,
+                profileId,
+                field,
+                order);
+        }
+    }
+
+    private async Task SavePersonalSortPreferenceAfterAsync(
+        Task previous,
+        string source,
+        string? profileId,
+        string field,
+        string order)
+    {
+        try { await previous.ConfigureAwait(false); }
+        catch { }
+
+        if (!string.Equals(_authService.SelectedProfileId, profileId, StringComparison.Ordinal))
+            return;
+
+        try
+        {
+            await _collectionsApi.SetCollectionSortPreferenceAsync(
+                source,
+                "",
+                field,
+                order).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            // The current sort already applies to this visit. Match the WebUI
+            // by treating preference persistence as silent best effort.
+            LocalLog.AppendLine(
+                "catalog_error.txt",
+                $"sort_preference | source={source} | {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     private async void LoadMore_Click(object sender, RoutedEventArgs e) { if (_hasMore) await LoadAsync(false); }

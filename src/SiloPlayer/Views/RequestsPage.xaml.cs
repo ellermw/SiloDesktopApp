@@ -7,12 +7,14 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
+using SiloPlayer.Converters;
 using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Views;
 
 public sealed partial class RequestsPage : Page
 {
+    private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
     public RequestsViewModel ViewModel { get; }
     private string _activeTab = "discover";
     private int _renderedDataVersion = -1;
@@ -300,7 +302,11 @@ public sealed partial class RequestsPage : Page
         card.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var image = new Image { Width = _requestCardWidth, Height = _requestCardWidth * 1.5, Stretch = Stretch.UniformToFill };
         if (!string.IsNullOrWhiteSpace(result.PosterUrl))
-            image.Source = new BitmapImage(new Uri(result.PosterUrl));
+            image.Source = (ImageSource)RemoteImageConverter.Convert(
+                result.PosterUrl,
+                typeof(ImageSource),
+                null!,
+                string.Empty);
         var poster = new Grid { Width = _requestCardWidth, Height = _requestCardWidth * 1.5 };
         poster.Children.Add(new Border { CornerRadius = new CornerRadius(8), Background = Brush("CardBackgroundBrush"), Child = image });
         var ribbonLabel = !string.IsNullOrWhiteSpace(result.Request.Status) ? FormatStatus(result.Request.Status)
@@ -451,7 +457,17 @@ public sealed partial class RequestsPage : Page
                 Background = Brush("CardBackgroundBrush")
             };
             if (!string.IsNullOrWhiteSpace(card.LogoUrl))
-                button.Content = new Image { Source = new BitmapImage(new Uri(card.LogoUrl)), Stretch = Stretch.Uniform, MaxWidth = 128, MaxHeight = 54 };
+                button.Content = new Image
+                {
+                    Source = (ImageSource)RemoteImageConverter.Convert(
+                        card.LogoUrl,
+                        typeof(ImageSource),
+                        null!,
+                        string.Empty),
+                    Stretch = Stretch.Uniform,
+                    MaxWidth = 128,
+                    MaxHeight = 54,
+                };
             else
                 button.Content = new TextBlock { Text = card.DisplayName, FontWeight = FontWeights.SemiBold, TextAlignment = TextAlignment.Center, TextWrapping = TextWrapping.Wrap };
             button.Click += Brand_Click;
@@ -517,7 +533,12 @@ public sealed partial class RequestsPage : Page
         panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var image = new Image { Width = _requestCardWidth, Height = _requestCardWidth * 1.5, Stretch = Stretch.UniformToFill };
-        if (!string.IsNullOrWhiteSpace(request.PosterPath)) image.Source = new BitmapImage(new Uri($"https://image.tmdb.org/t/p/w342{request.PosterPath}"));
+        if (!string.IsNullOrWhiteSpace(request.PosterPath))
+            image.Source = (ImageSource)RemoteImageConverter.Convert(
+                $"https://image.tmdb.org/t/p/w342{request.PosterPath}",
+                typeof(ImageSource),
+                null!,
+                string.Empty);
         var poster = new Grid { Width = _requestCardWidth, Height = _requestCardWidth * 1.5 };
         poster.Children.Add(new Border { CornerRadius = new CornerRadius(9), Background = Brush("CardBackgroundBrush"), Child = image });
         var failed = request.Outcome is "declined" or "cancelled" or "failed";

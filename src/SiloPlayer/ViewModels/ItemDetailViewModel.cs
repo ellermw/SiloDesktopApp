@@ -5,6 +5,7 @@ using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
 
 namespace SiloPlayer.ViewModels;
@@ -14,14 +15,18 @@ public partial class ItemDetailViewModel : ObservableObject,
     IRecipient<PlaybackProgressUpdated>
 {
     private readonly CatalogApi _catalogApi;
+    private readonly ItemDetailPrefetchCache _detailPrefetchCache;
     private CancellationTokenSource? _loadCts;
     private long _similarLoadGeneration;
     private long _seasonsLoadGeneration;
     private long _episodesLoadGeneration;
 
-    public ItemDetailViewModel(CatalogApi catalogApi)
+    public ItemDetailViewModel(
+        CatalogApi catalogApi,
+        ItemDetailPrefetchCache detailPrefetchCache)
     {
         _catalogApi = catalogApi;
+        _detailPrefetchCache = detailPrefetchCache;
         // F4: subscribe to media-surface changes so if the same item is
         // favorited / watchlisted / watched from another surface (context
         // menu on a poster card, etc.), this VM reflects it immediately.
@@ -40,6 +45,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     public void Receive(MediaSurfaceChanged message)
     {
+        _detailPrefetchCache.Invalidate(message.ContentId);
         // Ignore our own publishes (already reflected in state) and anything
         // that doesn't match the currently displayed item.
         if (Item == null || message.ContentId != Item.ContentId) return;
@@ -72,6 +78,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     public void Receive(PlaybackProgressUpdated message)
     {
+        _detailPrefetchCache.Invalidate(message.ContentId);
         // Progress update for the item we're currently displaying → refresh
         // the resume position so the "Resume at X:XX" label reflects the
         // latest watch state. We don't refetch the whole detail — just patch
@@ -178,7 +185,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
         try
         {
-            var item = await _catalogApi.GetItemDetailAsync(contentId, ct);
+            var item = await _detailPrefetchCache.GetAsync(contentId, ct);
             ct.ThrowIfCancellationRequested();
             if (!ReferenceEquals(_loadCts, loadCts)) return;
             Item = item;

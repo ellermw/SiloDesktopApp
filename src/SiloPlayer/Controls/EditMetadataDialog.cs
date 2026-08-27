@@ -3,12 +3,12 @@ using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.UI;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Converters;
 using SiloPlayer.Services;
 
 namespace SiloPlayer.Controls;
@@ -20,6 +20,7 @@ namespace SiloPlayer.Controls;
 /// </summary>
 public sealed class EditMetadataDialog : ContentDialog
 {
+    private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
     private const int FieldName = 0;
     private const int FieldOverview = 1;
     private const int FieldGenres = 2;
@@ -767,8 +768,7 @@ public sealed class EditMetadataDialog : ContentDialog
                 Height = _activeImageType == "poster" ? 180 : 102,
             };
             var image = new Image { Stretch = Stretch.UniformToFill };
-            if (Uri.TryCreate(remote.Url, UriKind.Absolute, out var uri))
-                image.Source = new BitmapImage(uri);
+            image.Source = RemoteImageConverter.Convert(remote.Url, typeof(ImageSource), null!, "") as ImageSource;
             card.Children.Add(image);
 
             var badge = new Border

@@ -4809,11 +4809,24 @@ public sealed partial class SettingsPage : Page
         };
         open.Click += (_, _) =>
         {
+            var toast = App.Services.GetRequiredService<ToastService>();
+            if (!ExternalBrowserUrlPolicy.TryGetSafeUri(session.VerificationUrl, out var verificationUri))
+            {
+                toast.Error("The server returned an invalid activation URL.");
+                return;
+            }
+
             try
             {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(session.VerificationUrl) { UseShellExecute = true });
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(verificationUri.AbsoluteUri)
+                {
+                    UseShellExecute = true,
+                });
             }
-            catch { }
+            catch (Exception ex)
+            {
+                toast.Error($"Could not open the activation page: {ex.Message}");
+            }
         };
         actionRow.Children.Add(open);
 

@@ -5,6 +5,8 @@ using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
+using System.Collections.ObjectModel;
+using System.Text.Json;
 using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Api;
@@ -24,6 +26,8 @@ public sealed partial class LibraryPage : Page,
     IRecipient<PlaybackProgressUpdated>
 {
     private readonly UICustomizationService _uiCustomizationService;
+    private readonly EventChannelClient _eventChannel;
+    private readonly AuthService _authService;
     public sealed record NavigationArgs(
         Library Library,
         string? InitialTab = null,
@@ -122,6 +126,13 @@ public sealed partial class LibraryPage : Page,
     private bool _recommendedLoaded;
     private bool _recommendationsLoading;
     private CancellationTokenSource? _recommendationsLoadCts;
+    private CancellationTokenSource? _recommendationsRefreshCts;
+    private IDisposable? _recommendationsRealtimeSubscription;
+    private readonly DeferredSurfaceRefreshGate _recommendedRefreshGate = new();
+    private readonly ObservableCollection<HomeSectionWithItems> _recommendedSections = [];
+    private readonly Dictionary<string, SectionRow> _recommendedRows = new(StringComparer.Ordinal);
+    private HomeSectionWithItems? _recommendedHeroSection;
+    private SectionRow? _recommendedHeroRestRow;
     private bool _collectionsLoaded;
     private bool _libraryCatalogLoaded;
     private int _recommendationsVersion;
@@ -170,6 +181,8 @@ public sealed partial class LibraryPage : Page,
     {
         ViewModel = App.Services.GetRequiredService<LibraryViewModel>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
+        _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
+        _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
         NavigationCacheMode = NavigationCacheMode.Required;
         AttachViewModelEvents();
@@ -287,6 +300,7 @@ public sealed partial class LibraryPage : Page,
         _uiCustomizationService.Changed += UICustomization_Changed;
         AttachViewModelEvents();
         RegisterMediaMessages();
+        AttachRecommendedRealtimeEvents();
 
         var library = e.Parameter as Library;
         string? requestedTab = null;
@@ -433,8 +447,13 @@ public sealed partial class LibraryPage : Page,
 
             ShowTab(state.Tab);
 
-            if (state.Tab == "Recommended" && !_recommendedLoaded)
-                await LoadRecommendationsAsync();
+            if (state.Tab == "Recommended")
+            {
+                if (!_recommendedLoaded)
+                    await LoadRecommendationsAsync();
+                else
+                    QueueRecommendedRefresh();
+            }
 
             if (state.Tab == "Library")
             {
@@ -457,6 +476,8 @@ public sealed partial class LibraryPage : Page,
         _isNavigated = false;
         _uiCustomizationService.Changed -= UICustomization_Changed;
         UnregisterMediaMessages();
+        DetachRecommendedRealtimeEvents();
+        CancelRecommendedRefresh();
         _visibleRangeDebounceTimer?.Stop();
         _cardBindTimer?.Stop();
         _audiobookGroupSearchTimer?.Stop();
@@ -512,6 +533,96 @@ public sealed partial class LibraryPage : Page,
         _messengerRegistered = false;
     }
 
+    private void AttachRecommendedRealtimeEvents()
+    {
+        if (_recommendationsRealtimeSubscription != null) return;
+        _eventChannel.EventReceived += OnRecommendedRealtimeEvent;
+        _recommendationsRealtimeSubscription = _eventChannel.Subscribe("catalog", "user_state");
+    }
+
+    private void DetachRecommendedRealtimeEvents()
+    {
+        _eventChannel.EventReceived -= OnRecommendedRealtimeEvent;
+        _recommendationsRealtimeSubscription?.Dispose();
+        _recommendationsRealtimeSubscription = null;
+    }
+
+    private void OnRecommendedRealtimeEvent(string channel, string eventName, JsonElement data)
+    {
+        if (string.Equals(channel, "catalog", StringComparison.OrdinalIgnoreCase))
+        {
+            DispatcherQueue.TryEnqueue(QueueRecommendedRefresh);
+            return;
+        }
+
+        if (!string.Equals(channel, "user_state", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        if (data.TryGetProperty("profile_id", out var profileElement)
+            && profileElement.ValueKind == JsonValueKind.String
+            && !string.IsNullOrWhiteSpace(profileElement.GetString())
+            && !string.IsNullOrWhiteSpace(_authService.SelectedProfileId)
+            && !string.Equals(profileElement.GetString(), _authService.SelectedProfileId, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        DispatcherQueue.TryEnqueue(QueueRecommendedRefresh);
+    }
+
+    private void QueueRecommendedRefresh()
+    {
+        if (!_recommendedLoaded)
+            return;
+
+        if (!_recommendedRefreshGate.Request(
+                _isNavigated && _currentTab == "Recommended"))
+        {
+            return;
+        }
+
+        var owner = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _recommendationsRefreshCts, owner);
+        previous?.Cancel();
+        previous?.Dispose();
+        _ = QueueRecommendedRefreshAsync(owner);
+    }
+
+    private async Task QueueRecommendedRefreshAsync(CancellationTokenSource owner)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(350), owner.Token);
+            if (!ReferenceEquals(_recommendationsRefreshCts, owner)
+                || owner.IsCancellationRequested
+                || !_isNavigated
+                || _currentTab != "Recommended")
+            {
+                return;
+            }
+
+            var succeeded = await RefreshRecommendationsInPlaceAsync(owner.Token);
+            if (ReferenceEquals(_recommendationsRefreshCts, owner))
+                _recommendedRefreshGate.Complete(succeeded);
+        }
+        catch (OperationCanceledException) when (owner.IsCancellationRequested)
+        {
+            // A newer surface change superseded this debounce window.
+        }
+        finally
+        {
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _recommendationsRefreshCts, null, owner), owner))
+                owner.Dispose();
+        }
+    }
+
+    private void CancelRecommendedRefresh()
+    {
+        var pending = Interlocked.Exchange(ref _recommendationsRefreshCts, null);
+        pending?.Cancel();
+        pending?.Dispose();
+    }
+
     public void Receive(MediaSurfaceChanged message)
     {
         DispatcherQueue.TryEnqueue(() =>
@@ -528,6 +639,7 @@ public sealed partial class LibraryPage : Page,
                 _ => false,
             });
             if (changed > 0) RefreshVisibleItemState(message.ContentId);
+            QueueRecommendedRefresh();
         });
     }
 
@@ -544,6 +656,7 @@ public sealed partial class LibraryPage : Page,
                     message.Completed,
                     message.UpdatedAt));
             if (changed > 0) RefreshVisibleItemState(message.ContentId);
+            QueueRecommendedRefresh();
         });
     }
 
@@ -2543,13 +2656,22 @@ public sealed partial class LibraryPage : Page,
                 await EnsureLibraryCatalogLoadedAsync();
                 await FillViewportAsync();
             }
+            else if (tag == "Recommended" && _recommendedRefreshGate.Activate())
+            {
+                QueueRecommendedRefresh();
+            }
             return;
         }
 
         ShowTab(tag);
 
-        if (tag == "Recommended" && !_recommendedLoaded)
-            await LoadRecommendationsAsync();
+        if (tag == "Recommended")
+        {
+            if (!_recommendedLoaded)
+                await LoadRecommendationsAsync();
+            else if (_recommendedRefreshGate.Activate())
+                QueueRecommendedRefresh();
+        }
 
         if (tag == "Collections" && !_collectionsLoaded)
             await LoadCollectionsAsync();
@@ -2609,6 +2731,7 @@ public sealed partial class LibraryPage : Page,
     private void ResetRecommendedContent()
     {
         _recommendationsVersion++;
+        CancelRecommendedRefresh();
         _recommendationsLoadCts?.Cancel();
         _recommendationsLoadCts?.Dispose();
         _recommendationsLoadCts = null;
@@ -2626,6 +2749,12 @@ public sealed partial class LibraryPage : Page,
             if (RecommendedSectionsPanel.Children[i] is SectionRow)
                 RecommendedSectionsPanel.Children.RemoveAt(i);
         }
+
+        _recommendedSections.Clear();
+        _recommendedRows.Clear();
+        _recommendedHeroSection = null;
+        _recommendedHeroRestRow = null;
+        _recommendedRefreshGate.Reset();
 
         _recommendedLoaded = false;
     }
@@ -2686,12 +2815,16 @@ public sealed partial class LibraryPage : Page,
             if (heroLayout != null)
                 RecommendedHeroSkeleton.Visibility = Visibility.Visible;
 
-            var rows = new Dictionary<string, SectionRow>(StringComparer.Ordinal);
+            _recommendedSections.Clear();
+            _recommendedRows.Clear();
+            _recommendedHeroSection = null;
+            _recommendedHeroRestRow = null;
             foreach (var layout in layoutResponse.Sections.Where(section => !ReferenceEquals(section, heroLayout)))
             {
                 var placeholder = ToLoadingSection(layout);
                 var row = CreateLibrarySectionRow(placeholder, libraryId);
-                rows[layout.Id] = row;
+                _recommendedSections.Add(placeholder);
+                _recommendedRows[layout.Id] = row;
                 RecommendedSectionsPanel.Children.Add(row);
             }
 
@@ -2710,6 +2843,8 @@ public sealed partial class LibraryPage : Page,
                         RecommendedHeroSkeleton.Visibility = Visibility.Collapsed;
                         if (section?.Items.Count > 0)
                         {
+                            section.LoadCompleted = true;
+                            _recommendedHeroSection = section;
                             var isAudiobook = ViewModel.Library?.Type is "audiobook" or "audiobooks";
                             if (isAudiobook && section.SectionType == "continue_watching")
                             {
@@ -2727,6 +2862,7 @@ public sealed partial class LibraryPage : Page,
                                         Items = new System.Collections.ObjectModel.ObservableCollection<MediaItem>(section.Items.Skip(1)),
                                     };
                                     var restRow = CreateLibrarySectionRow(rest, libraryId);
+                                    _recommendedHeroRestRow = restRow;
                                     var firstDynamic = RecommendedSectionsPanel.Children
                                         .Select((child, index) => (child, index))
                                         .FirstOrDefault(pair => pair.child is SectionRow).index;
@@ -2744,14 +2880,25 @@ public sealed partial class LibraryPage : Page,
                         return;
                     }
 
-                    if (!rows.TryGetValue(layout.Id, out var row)) return;
+                    if (!_recommendedRows.TryGetValue(layout.Id, out var row)) return;
                     if (section == null || section.Items.Count == 0)
                     {
                         RecommendedSectionsPanel.Children.Remove(row);
+                        _recommendedRows.Remove(layout.Id);
+                        var emptyModel = _recommendedSections.FirstOrDefault(candidate => candidate.Id == layout.Id);
+                        if (emptyModel != null)
+                            _recommendedSections.Remove(emptyModel);
                         return;
                     }
-                    ConfigureLibrarySectionRow(row, section, libraryId);
-                    row.Section = section;
+                    section.LoadCompleted = true;
+                    var mounted = _recommendedSections.First(candidate => candidate.Id == layout.Id);
+                    var change = HomeSectionReconciler.Apply(mounted, section);
+                    ConfigureLibrarySectionRow(row, mounted, libraryId);
+                    if ((change & HomeSectionChange.Metadata) != 0)
+                    {
+                        row.Section = null;
+                        row.Section = mounted;
+                    }
                 }
                 catch
                 {
@@ -2764,7 +2911,7 @@ public sealed partial class LibraryPage : Page,
                         return;
                     }
 
-                    if (rows.TryGetValue(layout.Id, out var row))
+                    if (_recommendedRows.TryGetValue(layout.Id, out var row))
                     {
                         var failed = ToLoadingSection(layout);
                         failed.LoadFailed = true;
@@ -2806,6 +2953,274 @@ public sealed partial class LibraryPage : Page,
                 _recommendationsLoading = false;
             }
         }
+    }
+
+    private async Task<bool> RefreshRecommendationsInPlaceAsync(CancellationToken cancellationToken)
+    {
+        var libraryId = ViewModel.Library?.Id ?? 0;
+        if (libraryId <= 0 || !_recommendedLoaded || _currentTab != "Recommended")
+            return true;
+
+        var version = _recommendationsVersion;
+        try
+        {
+            var catalogApi = App.Services.GetRequiredService<CatalogApi>();
+            var layoutResponse = await catalogApi.GetLibraryLayoutAsync(libraryId, cancellationToken);
+            if (version != _recommendationsVersion || _currentTab != "Recommended")
+                return true;
+
+            using var gate = new SemaphoreSlim(4, 4);
+            var sectionTasks = layoutResponse.Sections.Select(async layout =>
+            {
+                await gate.WaitAsync(cancellationToken);
+                try
+                {
+                    var response = await catalogApi.GetLibrarySectionItemsAsync(
+                        libraryId,
+                        layout.Id,
+                        cancellationToken);
+                    return (Layout: layout, Section: response.Section, Failed: false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    LocalLog.AppendLine(
+                        "library_recommended_refresh.txt",
+                        $"section={layout.Id} | {ex.GetType().Name}: {ex.Message}");
+                    return (Layout: layout, Section: (HomeSectionWithItems?)null, Failed: true);
+                }
+                finally
+                {
+                    gate.Release();
+                }
+            }).ToArray();
+
+            var results = await Task.WhenAll(sectionTasks);
+            if (version != _recommendationsVersion
+                || cancellationToken.IsCancellationRequested
+                || !_isNavigated
+                || _currentTab != "Recommended")
+            {
+                return true;
+            }
+
+            var heroLayout = layoutResponse.Sections.FirstOrDefault(section => section.Featured);
+            var heroResult = heroLayout == null
+                ? default
+                : results.First(result => ReferenceEquals(result.Layout, heroLayout));
+            ApplyRefreshedRecommendedHero(heroLayout, heroResult.Section, heroResult.Failed, libraryId);
+
+            var incomingRows = new List<HomeSectionWithItems>();
+            foreach (var result in results.Where(result => !result.Layout.Featured))
+            {
+                if (result.Section != null)
+                {
+                    result.Section.LoadCompleted = true;
+                    incomingRows.Add(result.Section);
+                    continue;
+                }
+
+                var mounted = _recommendedSections.FirstOrDefault(section => section.Id == result.Layout.Id);
+                if (mounted != null)
+                {
+                    incomingRows.Add(mounted);
+                    continue;
+                }
+
+                var failed = ToLoadingSection(result.Layout);
+                failed.LoadFailed = result.Failed;
+                incomingRows.Add(failed);
+            }
+
+            HomeSectionCollectionReconciler.Apply(_recommendedSections, incomingRows);
+            ApplyRecommendedRows(libraryId);
+            return true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // A newer refresh or navigation superseded this work.
+            return false;
+        }
+        catch (Exception ex)
+        {
+            // Keep the populated surface mounted when a background refresh
+            // fails. The next media event will retry without flashing content.
+            LocalLog.AppendLine(
+                "library_recommended_refresh.txt",
+                $"layout | {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private void ApplyRefreshedRecommendedHero(
+        HomeSection? layout,
+        HomeSectionWithItems? incoming,
+        bool failed,
+        int libraryId)
+    {
+        if (failed)
+            return;
+
+        if (layout == null || incoming == null || incoming.Items.Count == 0)
+        {
+            _recommendedHeroSection = null;
+            RecommendedHeroCarousel.ItemsSource = null;
+            RecommendedHeroCarousel.Visibility = Visibility.Collapsed;
+            RecommendedNowListeningHero.Visibility = Visibility.Collapsed;
+            RemoveRecommendedHeroRestRow();
+            UpdateHeaderOverlayMode(false);
+            return;
+        }
+
+        incoming.LoadCompleted = true;
+        if (_recommendedHeroSection != null
+            && string.Equals(_recommendedHeroSection.Id, incoming.Id, StringComparison.Ordinal))
+        {
+            HomeSectionReconciler.Apply(_recommendedHeroSection, incoming);
+        }
+        else
+        {
+            _recommendedHeroSection = incoming;
+        }
+
+        var hero = _recommendedHeroSection;
+        var isAudiobook = ViewModel.Library?.Type is "audiobook" or "audiobooks";
+        if (isAudiobook && hero.SectionType == "continue_watching")
+        {
+            RecommendedHeroCarousel.ItemsSource = null;
+            RecommendedHeroCarousel.Visibility = Visibility.Collapsed;
+            RecommendedNowListeningHero.Bind(hero.Items[0]);
+            RecommendedNowListeningHero.Visibility = Visibility.Visible;
+            ApplyRecommendedHeroRestRow(hero, libraryId);
+        }
+        else
+        {
+            RecommendedNowListeningHero.Visibility = Visibility.Collapsed;
+            RemoveRecommendedHeroRestRow();
+            if (!HomeSectionReconciler.IsHeroSnapshotCurrent(
+                    RecommendedHeroCarousel.ItemsSource,
+                    hero.Items,
+                    hero.ItemLimit))
+            {
+                var limit = hero.ItemLimit > 0 ? hero.ItemLimit : hero.Items.Count;
+                RecommendedHeroCarousel.ItemsSource = hero.Items.Take(limit).ToList();
+            }
+            RecommendedHeroCarousel.Visibility = Visibility.Visible;
+        }
+
+        RecommendedHeroSkeleton.Visibility = Visibility.Collapsed;
+        RecommendedErrorPanel.Visibility = Visibility.Collapsed;
+        UpdateHeaderOverlayMode(true);
+    }
+
+    private void ApplyRecommendedHeroRestRow(HomeSectionWithItems hero, int libraryId)
+    {
+        if (hero.Items.Count <= 1)
+        {
+            RemoveRecommendedHeroRestRow();
+            return;
+        }
+
+        var rest = new HomeSectionWithItems
+        {
+            Id = $"{hero.Id}-rest",
+            SectionType = "continue_listening",
+            Title = hero.Title,
+            ItemLimit = hero.Items.Count - 1,
+            TotalCount = hero.Items.Count - 1,
+            LoadCompleted = true,
+            Items = new ObservableCollection<MediaItem>(hero.Items.Skip(1)),
+        };
+
+        if (_recommendedHeroRestRow?.Section != null)
+        {
+            var change = HomeSectionReconciler.Apply(_recommendedHeroRestRow.Section, rest);
+            ConfigureLibrarySectionRow(_recommendedHeroRestRow, _recommendedHeroRestRow.Section, libraryId);
+            if ((change & HomeSectionChange.Metadata) != 0)
+            {
+                var mounted = _recommendedHeroRestRow.Section;
+                _recommendedHeroRestRow.Section = null;
+                _recommendedHeroRestRow.Section = mounted;
+            }
+            return;
+        }
+
+        _recommendedHeroRestRow = CreateLibrarySectionRow(rest, libraryId);
+        var firstRowIndex = FindFirstRecommendedRowIndex();
+        RecommendedSectionsPanel.Children.Insert(firstRowIndex, _recommendedHeroRestRow);
+    }
+
+    private void RemoveRecommendedHeroRestRow()
+    {
+        if (_recommendedHeroRestRow == null) return;
+        RecommendedSectionsPanel.Children.Remove(_recommendedHeroRestRow);
+        _recommendedHeroRestRow = null;
+    }
+
+    private void ApplyRecommendedRows(int libraryId)
+    {
+        var activeIds = _recommendedSections.Select(section => section.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var staleId in _recommendedRows.Keys.Where(id => !activeIds.Contains(id)).ToList())
+        {
+            RecommendedSectionsPanel.Children.Remove(_recommendedRows[staleId]);
+            _recommendedRows.Remove(staleId);
+        }
+
+        foreach (var section in _recommendedSections)
+        {
+            if (!_recommendedRows.TryGetValue(section.Id, out var row))
+            {
+                row = CreateLibrarySectionRow(section, libraryId);
+                _recommendedRows[section.Id] = row;
+                RecommendedSectionsPanel.Children.Add(row);
+            }
+            else
+            {
+                ConfigureLibrarySectionRow(row, section, libraryId);
+                row.Section = null;
+                row.Section = section;
+            }
+        }
+
+        var firstIndex = FindFirstRecommendedRowIndex();
+        for (var index = 0; index < _recommendedSections.Count; index++)
+        {
+            var row = _recommendedRows[_recommendedSections[index].Id];
+            var currentIndex = RecommendedSectionsPanel.Children.IndexOf(row);
+            var targetIndex = Math.Min(firstIndex + index, RecommendedSectionsPanel.Children.Count - 1);
+            if (currentIndex == targetIndex) continue;
+
+            RecommendedSectionsPanel.Children.Remove(row);
+            targetIndex = Math.Min(firstIndex + index, RecommendedSectionsPanel.Children.Count);
+            RecommendedSectionsPanel.Children.Insert(targetIndex, row);
+        }
+    }
+
+    private int FindFirstRecommendedRowIndex()
+    {
+        var first = int.MaxValue;
+        foreach (var row in _recommendedRows.Values)
+        {
+            var index = RecommendedSectionsPanel.Children.IndexOf(row);
+            if (index >= 0) first = Math.Min(first, index);
+        }
+
+        if (first != int.MaxValue)
+            return first;
+
+        for (var index = 0; index < RecommendedSectionsPanel.Children.Count; index++)
+        {
+            if (RecommendedSectionsPanel.Children[index] is SectionRow row
+                && !ReferenceEquals(row, _recommendedHeroRestRow))
+            {
+                return index;
+            }
+        }
+
+        return RecommendedSectionsPanel.Children.Count;
     }
 
     private static HomeSectionWithItems ToLoadingSection(HomeSection layout) => new()

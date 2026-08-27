@@ -24,6 +24,24 @@ public sealed class GlobalSearchInteractionParitySourceTests
         Assert.DoesNotContain("ResultsPanel.Children[_selectedIndex]", source);
     }
 
+    [Fact]
+    public void LocalPreviewResultsAreNotBlockedByOptionalDiscoveryAndClosingCancelsWork()
+    {
+        var source = Read("src", "SiloPlayer", "Controls", "GlobalSearchDialog.xaml.cs");
+
+        Assert.DoesNotContain("await Task.WhenAll(catalogTask, requestsTask)", source);
+        Assert.Contains("var response = await catalogTask;", source);
+        Assert.Contains("_ = PublishRequestResultsAsync(requestsTask, query, cts);", source);
+        Assert.True(
+            source.IndexOf("Render();", source.IndexOf("var response = await catalogTask;", StringComparison.Ordinal), StringComparison.Ordinal)
+            < source.IndexOf("_ = PublishRequestResultsAsync(requestsTask, query, cts);", StringComparison.Ordinal));
+        Assert.Contains("this.Closed += OnClosed;", source);
+        Assert.Contains("_debounceTimer?.Stop();", source);
+        Assert.Contains("Interlocked.Exchange(ref _searchCts, null)", source);
+        Assert.Contains("owner.Cancel();", source);
+        Assert.Contains("owner.Dispose();", source);
+    }
+
     private static string Read(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

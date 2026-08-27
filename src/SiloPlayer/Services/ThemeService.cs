@@ -657,6 +657,9 @@ public class ThemeService
 
     public string CurrentTheme { get; private set; } = "midnight-cinema";
 
+    public static bool IsLightAppearance(string themeId)
+        => string.Equals(themeId, "cinema-light", StringComparison.Ordinal);
+
     // Single source of truth for theme labels: ThemeInfos.Label. WebUI uses
     // Cinema Dark / Cinema Light / Cobalt / Oxblood / Ember / etc. — not the
     // "Midnight Cinema / Cobalt Studio / Ember Slate" labels from the old dict.

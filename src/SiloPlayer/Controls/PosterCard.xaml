@@ -11,6 +11,8 @@
     IsTabStop="True"
     UseSystemFocusVisuals="True"
     KeyDown="OnCardKeyDown"
+    GotFocus="OnCardGotFocus"
+    LostFocus="OnCardLostFocus"
     PointerEntered="OnPointerEntered"
     PointerExited="OnPointerExited"
     Tapped="OnCardTapped">
@@ -128,7 +130,7 @@
                 Spacing="4"
                 VerticalAlignment="Bottom"
                 HorizontalAlignment="Left"
-                Margin="8" />
+                Margin="8,8,8,48" />
             <StackPanel
                 x:Name="OverlayBottomRight"
                 Orientation="Vertical"
@@ -163,6 +165,49 @@
                 Opacity="0"
                 IsHitTestVisible="False" />
 
+            <!-- Current WebUI quick actions: watched state for movie/series
+                 cards and a favorite heart on poster cards. They reveal with
+                 hover/focus; touch uses the card's long-press menu. -->
+            <StackPanel
+                x:Name="QuickActions"
+                Orientation="Horizontal"
+                Spacing="6"
+                Margin="10"
+                HorizontalAlignment="Left"
+                VerticalAlignment="Bottom"
+                Opacity="0">
+                <Button
+                    x:Name="QuickWatchedButton"
+                    Width="32" Height="32"
+                    MinWidth="0" MinHeight="0"
+                    Padding="0"
+                    CornerRadius="6"
+                    Background="#AA000000"
+                    BorderBrush="#30FFFFFF"
+                    BorderThickness="1"
+                    Visibility="Collapsed"
+                    ToolTipService.ToolTip="Mark Watched"
+                    Click="QuickWatchedButton_Click"
+                    Tapped="QuickAction_Tapped">
+                    <FontIcon x:Name="QuickWatchedIcon" Glyph="&#xED1A;" FontSize="15" Foreground="White" />
+                </Button>
+                <Button
+                    x:Name="QuickFavoriteButton"
+                    Width="32" Height="32"
+                    MinWidth="0" MinHeight="0"
+                    Padding="0"
+                    CornerRadius="6"
+                    Background="#AA000000"
+                    BorderBrush="#30FFFFFF"
+                    BorderThickness="1"
+                    Visibility="Collapsed"
+                    ToolTipService.ToolTip="Add to favorites"
+                    Click="QuickFavoriteButton_Click"
+                    Tapped="QuickAction_Tapped">
+                    <FontIcon x:Name="QuickFavoriteIcon" Glyph="&#xEB51;" FontSize="15" Foreground="White" />
+                </Button>
+            </StackPanel>
+
             <!-- Current WebUI poster menu: bottom-right, revealed on hover. -->
             <Button
                 x:Name="MoreButton"
@@ -184,7 +229,7 @@
                 LostFocus="MoreButton_LostFocus"
                 Click="MoreButton_Click"
                 Tapped="MoreButton_Tapped">
-                <FontIcon Glyph="&#xE712;" FontSize="15" Foreground="White" />
+                <FontIcon x:Name="MoreIcon" Glyph="&#xE712;" FontSize="15" Foreground="White" />
             </Button>
         </Grid>
 

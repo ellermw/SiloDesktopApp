@@ -352,6 +352,7 @@ public partial class SearchViewModel : ObservableObject
         if (Results.Count == items.Count &&
             Results.Select(item => item.ContentId).SequenceEqual(items.Select(item => item.ContentId)))
         {
+            MediaItemCollectionReconciler.Apply(Results, items);
             return;
         }
 

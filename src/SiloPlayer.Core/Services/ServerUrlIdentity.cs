@@ -2,6 +2,23 @@ namespace SiloPlayer.Core.Services;
 
 public static class ServerUrlIdentity
 {
+    public static bool TryNormalizeHttpOrigin(string? serverUrl, out string normalized)
+    {
+        normalized = "";
+        var candidate = serverUrl?.Trim();
+        if (string.IsNullOrWhiteSpace(candidate) || candidate.Any(char.IsControl) ||
+            !Uri.TryCreate(candidate, UriKind.Absolute, out var uri) ||
+            (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps) ||
+            string.IsNullOrWhiteSpace(uri.Host) ||
+            !string.IsNullOrEmpty(uri.UserInfo))
+        {
+            return false;
+        }
+
+        normalized = Normalize(candidate);
+        return normalized.Length > 0;
+    }
+
     public static string Normalize(string? serverUrl)
     {
         var trimmed = serverUrl?.Trim() ?? "";
