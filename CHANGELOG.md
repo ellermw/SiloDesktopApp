@@ -2,6 +2,29 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.1.92 (player reliability and session lifecycle release)
+
+- Matched the current WebUI protocol-v3 recovery chain with bounded,
+  deduplicated attempted-plan history and typed terminal server decisions.
+- Added realtime `plan_invalidated` handling with stale-plan protection and a
+  serialized background recovery path that does not block WebSocket commands.
+- Replaced expired sessions after progress-reporting failures instead of
+  reopening dead stream URLs, while preserving playback position and pause
+  intent.
+- Kept terminal recovery failures inside the active player and added an
+  input-safe Retry/Exit overlay rather than abruptly returning to Home.
+- Restored OSC visibility after autoplay and stream replacement, and moved
+  fullscreen reconciliation entirely onto the UI thread.
+- Centralized current WebUI playback-failure descriptions and preserved
+  specific source-missing and transcoding-policy guidance.
+- Revalidated against official Silo Server commit
+  `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca`.
+- Verified 863 passing tests, a zero-warning x64 Release build, native libmpv
+  loading and hash validation, a successful installer build, and CodeRabbit's
+  zero-issue re-audit of PR #4.
+- Installer SHA-256:
+  `9DEE4460C94EBD486A872B5E6D3906ADC072B49AE6456104905A798E4E63C0C6`.
+
 ## 1.1.91 (Home refresh stability release)
 
 - Replaced overlapping Home-page realtime reloads with a classified,

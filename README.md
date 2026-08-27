@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.91**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.91/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.92**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.92/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `6723DB1233FC03363F2034ED4ABBD43C20B8FE868C67B4941C9BB561AB535276`
+SHA-256: `9DEE4460C94EBD486A872B5E6D3906ADC072B49AE6456104905A798E4E63C0C6`
 
 The QA installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 
@@ -48,20 +48,20 @@ Status meanings:
 | Admin: System | Functional; visual parity incomplete | Settings, Plugins, Nodes, API Keys, and Maintenance were re-audited against the current WebUI. Current grouped settings navigation, branding asset upload/preview/delete, Search diagnostics, safe Source/Changelog/Support links, authenticated plugin pages, plugin configuration/update policy, node capacity/load columns, API-key flows, and catalog import/export jobs are implemented. Installed-build visual verification remains. |
 | Admin: Access Groups and Devices | Functional; visual parity incomplete | Access Groups now follows the current responsive cards and in-place editor sections. Devices now uses the current 1920px fleet console with pulse totals, grouping pivots, saved views, platform/override/recency facets, grouped device rows, and an in-place per-profile override editor. Installed-build side-by-side tuning and remaining keyboard/link refinements are still required. |
 | Remaining admin work | Partial | Provider/policy edge cases and final installed-build visual verification remain across the admin suite. Dashboard, Libraries, Activity, Collections, Sections, Requests, and other pages retain explicit visual-parity-incomplete status until those checks pass. |
-| Player on-screen controls | Substantial | Current cinema controls, recap/intro/credits actions, marker/chapter seek regions, real chapter thumbnails, rich audio/subtitle/quality menus, live AI subtitle translation, bounded playback-info sections, credits countdown, post-roll/finished screens, On Deck, PiP, keyboard shortcuts, and immediate fullscreen/PiP synchronization are implemented. Installed real-playback comparison and remaining edge-case geometry/focus validation are still required. |
-| Native playback engine | Hardening | Direct play, remux, HLS fallback, D3D11VA, HEVC/AV1/VP9/H.264, HDR paths, subtitle rendering, live track switching, progress/session keepalive, seamless replacement sessions, byte-range stall recovery, upstream-idle recovery, and premature-EOF guards are implemented. High-bitrate 4K, Dolby Vision, HDR/tone mapping, TrueHD/Atmos/DTS passthrough, fastest startup/seek, and long-session reliability remain active real-media validation work. |
+| Player on-screen controls | Substantial | Current cinema controls, recap/intro/credits actions, marker/chapter seek regions, real chapter thumbnails, rich audio/subtitle/quality menus, live AI subtitle translation, bounded playback-info sections, credits countdown, post-roll/finished screens, On Deck, PiP, keyboard shortcuts, post-autoplay OSC restoration, fullscreen reconciliation, and an in-player Retry/Exit failure surface are implemented. Installed real-playback comparison and remaining edge-case geometry/focus validation are still required. |
+| Native playback engine | Hardening | Direct play, remux, HLS fallback, D3D11VA, HEVC/AV1/VP9/H.264, HDR paths, subtitle rendering, live track switching, progress/session keepalive, protocol-v3 route recovery, realtime plan invalidation, replacement sessions after keepalive loss, byte-range stall recovery, upstream-idle recovery, and premature-EOF guards are implemented. High-bitrate 4K, Dolby Vision, HDR/tone mapping, TrueHD/Atmos/DTS passthrough, fastest startup/seek, and long-session reliability remain active real-media validation work. |
 | Watch Party | Substantial | Create/join, room membership, suggestions, realtime synchronization, host/guest policy, transport controls, connection state, invite copy, end-room confirmation, and player sync overlay are implemented. Installed multi-client testing and remaining edge cases are still required. |
 
 ## Latest release
 
-### 1.1.91
+### 1.1.92
 
-- Eliminated Home-page blank flashes caused by overlapping realtime refreshes.
-- Reconciled Home-section items in place so playback progress, watched state, and newly scanned content update without rebuilding the page.
-- Kept the featured hero synchronized when its item collection changes, including the stale-snapshot case identified during CodeRabbit review.
-- Added regression coverage for realtime refresh gating, section reconciliation, and hero refresh behavior.
-- Corrected the audited Windows App Runtime installer hook so the current Inno Setup compiler can package it successfully.
-- Verified with 829 passing tests, CodeRabbit's clean review, native libmpv validation, and a successful x64 installer build.
+- Hardened protocol-v3 recovery with bounded, deduplicated route-attempt history and preserved terminal server guidance.
+- Added nonblocking realtime plan invalidation so recovery cannot hold up pause, terminate, subtitle, or other WebSocket commands.
+- Replaced expired sessions after progress-reporting loss and kept unrecoverable playback inside the player with explicit Retry and Exit actions.
+- Restored OSC visibility after autoplay/reloads and reconciled the real fullscreen window state entirely on the UI thread.
+- Added current WebUI playback-error descriptions and expanded regression coverage for recovery, invalidation, retry routing, and fullscreen behavior.
+- Verified against official Silo Server `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca` with 863 passing tests, a zero-issue CodeRabbit re-audit, native libmpv validation, and a successful x64 installer build.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release history.
 ## Playback goals
