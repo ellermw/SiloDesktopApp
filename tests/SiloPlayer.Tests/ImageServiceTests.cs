@@ -238,6 +238,44 @@ public sealed class ImageServiceTests
         }
     }
 
+    [Fact]
+    public async Task GetImageDiskPathAsync_BoundsNegativeCacheAcrossDistinctMissingUrls()
+    {
+        var cacheDir = CreateTempCacheDir();
+        try
+        {
+            var requestCount = 0;
+            using var service = new ImageService(
+                cacheDir,
+                maxMemoryCacheBytes: 1024 * 1024,
+                maxDiskCacheBytes: 1024 * 1024,
+                maxNegativeCacheEntries: 2);
+            using var http = new HttpClient(new DelegateHandler((_, _) =>
+            {
+                Interlocked.Increment(ref requestCount);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+            }));
+
+            await service.GetImageDiskPathAsync("movie-1", "poster", "https://cdn.example.test/1.jpg?token=secret-1", http);
+            await service.GetImageDiskPathAsync("movie-2", "poster", "https://cdn.example.test/2.jpg?token=secret-2", http);
+            await service.GetImageDiskPathAsync("movie-3", "poster", "https://cdn.example.test/3.jpg?token=secret-3", http);
+            await service.GetImageDiskPathAsync("movie-1", "poster", "https://cdn.example.test/1.jpg?token=secret-1", http);
+
+            Assert.Equal(4, requestCount);
+            var field = typeof(ImageService).GetField(
+                "_negativeCache",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            var cache = Assert.IsType<System.Collections.Concurrent.ConcurrentDictionary<string, long>>(
+                field?.GetValue(service));
+            Assert.True(cache.Count <= 2);
+            Assert.All(cache.Keys, key => Assert.DoesNotContain("secret-", key, StringComparison.Ordinal));
+        }
+        finally
+        {
+            DeleteTempCacheDir(cacheDir);
+        }
+    }
+
     private static string CreateTempCacheDir()
     {
         var path = Path.Combine(Path.GetTempPath(), "SiloPlayer.Tests", Guid.NewGuid().ToString("N"));

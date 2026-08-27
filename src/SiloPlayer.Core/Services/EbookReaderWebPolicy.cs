@@ -9,6 +9,7 @@ public static class EbookReaderWebPolicy
         return Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
                uri.Scheme == Uri.UriSchemeHttps &&
                string.Equals(uri.Host, ReaderHost, StringComparison.OrdinalIgnoreCase) &&
+               uri.IsDefaultPort &&
                string.IsNullOrEmpty(uri.UserInfo);
     }
 

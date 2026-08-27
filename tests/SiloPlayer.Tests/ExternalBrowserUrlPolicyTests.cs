@@ -17,6 +17,7 @@ public sealed class ExternalBrowserUrlPolicyTests
     [InlineData("file:///C:/Windows/System32/calc.exe")]
     [InlineData("javascript:alert(1)")]
     [InlineData("silo-custom://activate")]
+    [InlineData("https://user:password@example.com/activate")]
     [InlineData("https://example.test/ok\r\nfile:///bad")]
     [InlineData("not a url")]
     [InlineData("")]

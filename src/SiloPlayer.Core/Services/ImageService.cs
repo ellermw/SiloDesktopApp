@@ -9,12 +9,15 @@ public class ImageService : IDisposable
     private readonly string _diskCacheDir;
     private readonly long _maxMemoryBytes;
     private readonly long _maxDiskBytes;
+    private readonly int _maxNegativeCacheEntries;
     private readonly ConcurrentDictionary<string, byte[]> _memoryCache = new();
     private readonly ConcurrentQueue<string> _evictionOrder = new();
     private long _currentMemoryBytes;
     private readonly SemaphoreSlim _downloadLock = new(16);
     private readonly ConcurrentDictionary<string, Lazy<Task<string?>>> _inflightDownloads = new();
     private readonly ConcurrentDictionary<string, long> _negativeCache = new();
+    private readonly ConcurrentQueue<string> _negativeEvictionOrder = new();
+    private readonly object _negativeCacheSync = new();
     private static readonly TimeSpan DiskTrimInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan NegativeCacheDuration = TimeSpan.FromSeconds(30);
     private long _lastDiskTrimTicks;
@@ -23,11 +26,13 @@ public class ImageService : IDisposable
     public ImageService(
         string diskCacheDir,
         long maxMemoryCacheBytes = 200 * 1024 * 1024,
-        long maxDiskCacheBytes = 2L * 1024 * 1024 * 1024)
+        long maxDiskCacheBytes = 2L * 1024 * 1024 * 1024,
+        int maxNegativeCacheEntries = 2048)
     {
         _diskCacheDir = diskCacheDir;
         _maxMemoryBytes = maxMemoryCacheBytes;
         _maxDiskBytes = maxDiskCacheBytes;
+        _maxNegativeCacheEntries = Math.Max(0, maxNegativeCacheEntries);
         Directory.CreateDirectory(diskCacheDir);
     }
 
@@ -172,11 +177,11 @@ public class ImageService : IDisposable
             if (!response.IsSuccessStatusCode)
             {
                 if (response.StatusCode is System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Gone)
-                    _negativeCache[negativeCacheKey] = DateTimeOffset.UtcNow.Add(NegativeCacheDuration).UtcTicks;
+                    SetNegativeCache(negativeCacheKey);
                 return null;
             }
 
-            _negativeCache.TryRemove(negativeCacheKey, out _);
+            RemoveNegativeCache(negativeCacheKey);
 
             tempPath = $"{diskPath}.{Guid.NewGuid():N}.tmp";
             await using (var remoteStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
@@ -252,18 +257,66 @@ public class ImageService : IDisposable
     }
 
     private static string BuildNegativeCacheKey(string cacheKey, string url)
-        => $"{cacheKey}\u001F{url}";
+    {
+        var exactUrlHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(url)));
+        return $"{cacheKey}\u001F{exactUrlHash}";
+    }
+
+    private void SetNegativeCache(string negativeCacheKey)
+    {
+        if (_maxNegativeCacheEntries <= 0)
+            return;
+
+        lock (_negativeCacheSync)
+        {
+            var nowTicks = DateTimeOffset.UtcNow.UtcTicks;
+            var expiresAtTicks = nowTicks + NegativeCacheDuration.Ticks;
+            if (_negativeCache.TryAdd(negativeCacheKey, expiresAtTicks))
+                _negativeEvictionOrder.Enqueue(negativeCacheKey);
+            else
+                _negativeCache[negativeCacheKey] = expiresAtTicks;
+
+            PruneNegativeCache(nowTicks);
+        }
+    }
+
+    private void PruneNegativeCache(long nowTicks)
+    {
+        while (_negativeEvictionOrder.TryPeek(out var candidate))
+        {
+            if (_negativeCache.TryGetValue(candidate, out var expiresAtTicks) && expiresAtTicks > nowTicks)
+                break;
+
+            _negativeEvictionOrder.TryDequeue(out _);
+            _negativeCache.TryRemove(candidate, out _);
+        }
+
+        while (_negativeCache.Count > _maxNegativeCacheEntries &&
+               _negativeEvictionOrder.TryDequeue(out var oldest))
+        {
+            _negativeCache.TryRemove(oldest, out _);
+        }
+    }
 
     private bool IsNegativeCacheHit(string negativeCacheKey)
     {
-        if (!_negativeCache.TryGetValue(negativeCacheKey, out var expiresAtTicks))
+        lock (_negativeCacheSync)
+        {
+            if (!_negativeCache.TryGetValue(negativeCacheKey, out var expiresAtTicks))
+                return false;
+
+            if (expiresAtTicks > DateTimeOffset.UtcNow.UtcTicks)
+                return true;
+
+            _negativeCache.TryRemove(negativeCacheKey, out _);
             return false;
+        }
+    }
 
-        if (expiresAtTicks > DateTimeOffset.UtcNow.UtcTicks)
-            return true;
-
-        _negativeCache.TryRemove(negativeCacheKey, out _);
-        return false;
+    private void RemoveNegativeCache(string negativeCacheKey)
+    {
+        lock (_negativeCacheSync)
+            _negativeCache.TryRemove(negativeCacheKey, out _);
     }
 
     private static string NormalizeImageUrlForCache(string url)
@@ -403,6 +456,10 @@ public class ImageService : IDisposable
     {
         _downloadLock.Dispose();
         _memoryCache.Clear();
-        _negativeCache.Clear();
+        lock (_negativeCacheSync)
+        {
+            _negativeCache.Clear();
+            while (_negativeEvictionOrder.TryDequeue(out _)) { }
+        }
     }
 }

@@ -15,6 +15,7 @@ public sealed class EbookReaderWebPolicyTests
     [Theory]
     [InlineData("https://example.com/tracker.js")]
     [InlineData("http://silo-reader.local/chapter.xhtml")]
+    [InlineData("https://silo-reader.local:444/chapter.xhtml")]
     [InlineData("file:///C:/Users/test/secret.txt")]
     [InlineData("javascript:alert(1)")]
     [InlineData("not a url")]
@@ -36,5 +37,7 @@ public sealed class EbookReaderWebPolicyTests
     public void IsAllowedSubresource_RejectsRemoteNetworkContent()
     {
         Assert.False(EbookReaderWebPolicy.IsAllowedSubresource("https://tracker.example/pixel"));
+        Assert.False(EbookReaderWebPolicy.IsAllowedSubresource(
+            "blob:https://silo-reader.local:444/00000000-0000-0000-0000-000000000000"));
     }
 }

@@ -11,7 +11,8 @@ public static class ExternalBrowserUrlPolicy
 
         if (!Uri.TryCreate(candidate, UriKind.Absolute, out var parsed) ||
             (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps) ||
-            string.IsNullOrWhiteSpace(parsed.Host))
+            string.IsNullOrWhiteSpace(parsed.Host) ||
+            !string.IsNullOrEmpty(parsed.UserInfo))
         {
             return false;
         }

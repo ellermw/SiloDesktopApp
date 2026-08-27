@@ -4,6 +4,7 @@
 
 - Official repository: `https://github.com/Silo-Server/silo-server`
 - WebUI commit: `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca`
+- Final reference fetch: official GitHub `origin/main` was fetched again on 2026-08-27 and remained exactly `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca`.
 - Desktop baseline: `8940c11ebba42439e18e0fb8df8a978651d5159c` (`v1.1.92`)
 - Audit branch: `codex/user-facing-browse-detail-parity`
 - Profile requirement: compare with the same admin profile, server theme, libraries, and personalization on both clients
@@ -67,9 +68,9 @@ No row in this document is complete at milestone start. Source coverage alone is
 | 2026-08-27 | feature branch from `8940c11` | `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca` | Existing Chrome viewport, 2543x1272 capture | Browser DOM and screenshots | Home, unified search, Movies library, Favorites, movie/series/episode detail, Recommendations, Requests, Calendar, Notifications, Collections, person detail, Watch Party join | Live WebUI was authenticated and inspected directly. Confirmed conditional Home actions, search scope/filters, library tabs/sort/filter controls, compact personal-list cards, detail hierarchy/actions/admin-only media locations, cast/crew rows, supporting-route controls, and current server branding. This is WebUI-reference evidence, not a desktop-runtime parity claim. |
 | 2026-08-27 | feature branch from `8940c11` | `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca` | Existing desktop placement unchanged | Process launch and local logs | Startup/session restoration | A separately named QA process launched from the fresh x64 Release output and restored the saved server/profile on its first attempt in about one second. No new crash or navigation error was written. Automated desktop interaction was stopped after the window-control provider returned an unrelated fullscreen surface for the exact process selector; no visual desktop-runtime claim is made from that attempt. |
 
-## Milestone implementation evidence
+## Code and automated milestone evidence
 
-- The full Release test suite passes with 947 tests, including the current Home, Search, Catalog, Library, item-detail, collection, request, recommendation, calendar, notification, image-cache, input, reader, and authentication contracts.
+- The full Release test suite covers the current Home, Search, Catalog, Library, item-detail, collection, request, recommendation, calendar, notification, image-cache, input, reader, and authentication contracts. The exact final count is recorded in the PR verification after review fixes.
 - Home and library-recommended refreshes reconcile mounted section and item collections without replacing populated pages. Failed background refreshes retain the last good surface.
 - Search retains keyboard focus, cancels obsolete work, applies current-query results only, and no longer blocks first results on optional request-discovery work.
 - Shared poster, landscape, and virtual-library cards now use the current WebUI action set, progress geometry, episode state, touch/long-press policy, cached artwork path, and personal-source action sizing.
