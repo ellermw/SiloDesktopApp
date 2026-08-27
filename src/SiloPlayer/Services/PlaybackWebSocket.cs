@@ -32,7 +32,7 @@ public sealed class PlaybackWebSocket : IDisposable
     [
         "pause", "unpause", "play_pause", "seek", "set_volume",
         "stop", "terminate", "display_message",
-        "server_restarting", "server_shutting_down"
+        "server_restarting", "server_shutting_down", "plan_invalidated"
     ];
 
     /// <summary>Fired when a command is received from the server.</summary>

@@ -27,13 +27,14 @@ public class PlaybackManager : IDisposable
     private string? _playbackAttemptIdV3;
     private string? _planAttemptIdV3;
     private string _qualityPreferenceV3 = "original";
+    private readonly PlaybackRecoveryAttemptHistory _recoveryAttemptHistory = new();
 
     /// <summary>
     /// Fires when progress reporting has failed 3 consecutive times (network
     /// stall, server-side session reaping, etc.). The server reaps sessions
     /// after ~45s of no progress — once that happens the stream URL 404s and
-    /// mpv hangs with an audio buffer loop. Subscribers should surface an
-    /// error to the user and tear down playback cleanly.
+    /// mpv hangs with an audio buffer loop. Subscribers should replace the
+    /// expired session while preserving the viewer's position and pause state.
     /// </summary>
     public event Action<string>? ProgressReportingFailed;
 
@@ -112,7 +113,7 @@ public class PlaybackManager : IDisposable
         var request = new PlaybackStartRequestV3
         {
             ProtocolVersion = 3,
-            ClientFeatures = ["playback_plan_v3"],
+            ClientFeatures = ["playback_plan_v3", "plan_invalidated_v1"],
             FileId = fileId,
             ProfileId = _authService.SelectedProfileId ?? "",
             PlaybackAttemptId = Guid.NewGuid().ToString(),
@@ -133,6 +134,7 @@ public class PlaybackManager : IDisposable
 
         var decision = await _playbackApi.StartPlaybackV3Async(request, ct).ConfigureAwait(false);
         var response = AdoptProtocolV3Decision(decision, request.PlaybackAttemptId);
+        _recoveryAttemptHistory.Reset();
         _currentPlanV3 = decision.PlaybackPlan;
         _clientCapabilitiesV3 = capabilities;
         _clientContextV3 = context;
@@ -205,8 +207,10 @@ public class PlaybackManager : IDisposable
             var detail = terminal?.Message;
             if (string.IsNullOrWhiteSpace(detail))
                 detail = "The server could not find a compatible playback route.";
-            throw new InvalidOperationException(
-                $"{detail} ({terminal?.Reason ?? decision.Outcome})");
+            throw new PlaybackPlanTerminalException(
+                terminal?.Reason ?? decision.Outcome,
+                detail,
+                terminal?.Retryable ?? false);
         }
 
         var plan = decision.PlaybackPlan;
@@ -343,6 +347,49 @@ public class PlaybackManager : IDisposable
             },
             ct);
 
+    /// <summary>
+    /// Replans only when the server invalidated the plan that is still active.
+    /// A late invalidation for an already-replaced plan is a successful no-op.
+    /// </summary>
+    public async Task<PlaybackStartResponse?> ReplanInvalidatedPlanAsync(
+        string invalidatedPlanId,
+        string reason,
+        double positionSeconds,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(invalidatedPlanId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+        await _replanGuard.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (_currentPlanV3 == null ||
+                !string.Equals(_currentPlanV3.PlanId, invalidatedPlanId, StringComparison.Ordinal))
+            {
+                return null;
+            }
+
+            var classification = reason.Trim();
+            if (classification.Length > 64)
+                classification = classification[..64];
+            return await ReplanCoreAsync(
+                "failure_recovery",
+                positionSeconds,
+                _qualityPreferenceV3,
+                selectedTracks => { },
+                new PlaybackFailureV3
+                {
+                    Classification = classification,
+                    Message = "The server invalidated this playback plan.",
+                },
+                ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _replanGuard.Release();
+        }
+    }
+
     private PlaybackTrackIdentityV3 FindSubtitleIdentity(int combinedIndex)
     {
         var track = _currentPlanV3?.Subtitle.Inventory.FirstOrDefault(item => item.CombinedIndex == combinedIndex)
@@ -361,69 +408,92 @@ public class PlaybackManager : IDisposable
         await _replanGuard.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var plan = _currentPlanV3
-                ?? throw new InvalidOperationException("The active playback session does not have a protocol-v3 plan.");
-            var sessionId = _sessionId
-                ?? throw new InvalidOperationException("The playback session is no longer active.");
-            var capabilities = _clientCapabilitiesV3
-                ?? throw new InvalidOperationException("Playback capabilities are unavailable for replanning.");
-            var context = _clientContextV3
-                ?? throw new InvalidOperationException("Playback output context is unavailable for replanning.");
-            var playbackAttemptId = _playbackAttemptIdV3
-                ?? throw new InvalidOperationException("The playback attempt identity is unavailable.");
-
-            var selectedTracks = new PlaybackSelectedTracksV3
-            {
-                Audio = plan.SelectedTracks.Audio == null ? null : new PlaybackTrackIdentityV3
-                {
-                    Id = plan.SelectedTracks.Audio.Id,
-                    Index = plan.SelectedTracks.Audio.Index,
-                },
-                Subtitle = plan.SelectedTracks.Subtitle == null ? null : new PlaybackTrackIdentityV3
-                {
-                    Id = plan.SelectedTracks.Subtitle.Id,
-                    Index = plan.SelectedTracks.Subtitle.Index,
-                },
-            };
-            mutateSelectedTracks(selectedTracks);
-
-            var isFailureRecovery = failure != null;
-            var request = new PlaybackReplanRequestV3
-            {
-                Operation = operation,
-                PlaybackAttemptId = playbackAttemptId,
-                ReplanRequestId = Guid.NewGuid().ToString(),
-                FailedPlanId = plan.PlanId,
-                PlanAttemptId = _planAttemptIdV3 ?? Guid.NewGuid().ToString(),
-                PlanAttemptKey = plan.PlanAttemptKey,
-                AttemptedPlanKeys = isFailureRecovery ? [plan.PlanAttemptKey] : [],
-                AttemptCount = 1,
-                QualityPreference = qualityPreference,
-                PositionSeconds = Math.Clamp(positionSeconds, 0, 31_536_000),
-                Metered = false,
-                SelectedTracks = selectedTracks,
-                Failure = failure,
-                ClientCapabilities = capabilities,
-                ClientPlaybackContext = context,
-            };
-
-            var decision = await _playbackApi.ReplanPlaybackV3Async(sessionId, request, ct).ConfigureAwait(false);
-            var response = AdoptProtocolV3Decision(decision, playbackAttemptId);
-            _currentPlanV3 = decision.PlaybackPlan;
-            _planAttemptIdV3 = Guid.NewGuid().ToString();
-            _qualityPreferenceV3 = qualityPreference;
-            _sessionId = response.SessionId;
-            CurrentSession = response;
-            _lastReportedPosition = Math.Max(0, response.Position);
-            ApplyStreamUrl(response);
-            LogToStateTrace(
-                $"Replan v3: operation={operation}, plan={response.PlanId}, delivery={response.Delivery}, position={response.Position:F1}");
-            return response;
+            return await ReplanCoreAsync(
+                operation,
+                positionSeconds,
+                qualityPreference,
+                mutateSelectedTracks,
+                failure,
+                ct).ConfigureAwait(false);
         }
         finally
         {
             _replanGuard.Release();
         }
+    }
+
+    private async Task<PlaybackStartResponse> ReplanCoreAsync(
+        string operation,
+        double positionSeconds,
+        string qualityPreference,
+        Action<PlaybackSelectedTracksV3> mutateSelectedTracks,
+        PlaybackFailureV3? failure,
+        CancellationToken ct)
+    {
+        var plan = _currentPlanV3
+            ?? throw new InvalidOperationException("The active playback session does not have a protocol-v3 plan.");
+        var sessionId = _sessionId
+            ?? throw new InvalidOperationException("The playback session is no longer active.");
+        var capabilities = _clientCapabilitiesV3
+            ?? throw new InvalidOperationException("Playback capabilities are unavailable for replanning.");
+        var context = _clientContextV3
+            ?? throw new InvalidOperationException("Playback output context is unavailable for replanning.");
+        var playbackAttemptId = _playbackAttemptIdV3
+            ?? throw new InvalidOperationException("The playback attempt identity is unavailable.");
+
+        var selectedTracks = new PlaybackSelectedTracksV3
+        {
+            Audio = plan.SelectedTracks.Audio == null ? null : new PlaybackTrackIdentityV3
+            {
+                Id = plan.SelectedTracks.Audio.Id,
+                Index = plan.SelectedTracks.Audio.Index,
+            },
+            Subtitle = plan.SelectedTracks.Subtitle == null ? null : new PlaybackTrackIdentityV3
+            {
+                Id = plan.SelectedTracks.Subtitle.Id,
+                Index = plan.SelectedTracks.Subtitle.Index,
+            },
+        };
+        mutateSelectedTracks(selectedTracks);
+
+        var recoveryAttempt = failure == null
+            ? null
+            : _recoveryAttemptHistory.PrepareFailure(plan.PlanAttemptKey);
+        var request = new PlaybackReplanRequestV3
+        {
+            Operation = operation,
+            PlaybackAttemptId = playbackAttemptId,
+            ReplanRequestId = Guid.NewGuid().ToString(),
+            FailedPlanId = plan.PlanId,
+            PlanAttemptId = _planAttemptIdV3 ?? Guid.NewGuid().ToString(),
+            PlanAttemptKey = plan.PlanAttemptKey,
+            AttemptedPlanKeys = recoveryAttempt?.AttemptedPlanKeys.ToList() ?? [],
+            AttemptCount = recoveryAttempt?.AttemptCount ?? 1,
+            QualityPreference = qualityPreference,
+            PositionSeconds = Math.Clamp(positionSeconds, 0, 31_536_000),
+            Metered = false,
+            SelectedTracks = selectedTracks,
+            Failure = failure,
+            ClientCapabilities = capabilities,
+            ClientPlaybackContext = context,
+        };
+
+        var decision = await _playbackApi.ReplanPlaybackV3Async(sessionId, request, ct).ConfigureAwait(false);
+        if (recoveryAttempt != null)
+            _recoveryAttemptHistory.CommitFailure(recoveryAttempt);
+        else
+            _recoveryAttemptHistory.Reset();
+        var response = AdoptProtocolV3Decision(decision, playbackAttemptId);
+        _currentPlanV3 = decision.PlaybackPlan;
+        _planAttemptIdV3 = Guid.NewGuid().ToString();
+        _qualityPreferenceV3 = qualityPreference;
+        _sessionId = response.SessionId;
+        CurrentSession = response;
+        _lastReportedPosition = Math.Max(0, response.Position);
+        ApplyStreamUrl(response);
+        LogToStateTrace(
+            $"Replan v3: operation={operation}, plan={response.PlanId}, delivery={response.Delivery}, position={response.Position:F1}");
+        return response;
     }
 
     private void ApplyStreamUrl(PlaybackStartResponse response)
@@ -748,18 +818,6 @@ public class PlaybackManager : IDisposable
                 _progressGuard.Release();
             }
         }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(7));
-    }
-
-    /// <summary>
-    /// Restarts the bounded keepalive loop for the current session after a
-    /// transient control-plane outage. Direct media delivery can remain healthy
-    /// while progress requests fail, so the player may reopen the existing
-    /// byte-range stream before creating a replacement session.
-    /// </summary>
-    public void ResumeProgressReporting()
-    {
-        if (!string.IsNullOrWhiteSpace(_sessionId))
-            StartProgressReporting();
     }
 
     private void StopProgressReporting()

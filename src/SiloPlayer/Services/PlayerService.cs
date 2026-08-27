@@ -113,6 +113,7 @@ public class PlayerService : IDisposable
     public Task SelectQualityAsync(string qualityId) => SwitchQualityTierAsync(qualityId);
     private readonly SemaphoreSlim _transportRestartGate = new(1, 1);
     private readonly SemaphoreSlim _streamRecoveryGate = new(1, 1);
+    private readonly SemaphoreSlim _planInvalidationGate = new(1, 1);
     private CancellationTokenSource? _seekRestartCts;
     private long _seekRestartGeneration;
     private readonly SemaphoreSlim _playRequestGate = new(1, 1);
@@ -125,6 +126,13 @@ public class PlayerService : IDisposable
     private int _consecutiveFileLoadTimeouts;
     private bool? _restorePausedAfterLoad;
     private PlaybackWebSocket? _webSocket;
+    private sealed record PlaybackTerminalState(
+        double Position,
+        string Trigger,
+        bool WasPaused,
+        bool CanRetry);
+    private PlaybackTerminalState? _playbackTerminalState;
+    private bool? _recoveryPauseIntentOverride;
     private CancellationTokenSource? _playbackCts;
     private CancellationTokenSource? _chapterThumbnailCts;
     private readonly ConcurrentDictionary<int, byte> _chapterThumbnailRequests = new();
@@ -1669,6 +1677,7 @@ public class PlayerService : IDisposable
             _ = FinishClosingSessionAsync(retiringManager, retiringSessionTask);
         }
 
+        ClearPlaybackTerminalState();
         ErrorMessage = null;
         IsLoading = true;
         ContentId = contentId;
@@ -1686,6 +1695,7 @@ public class PlayerService : IDisposable
         _prematureEofRecoveryPosition = 0;
         _prematureEofLastAttemptMs = 0;
         _prematureEofStreak = 0;
+        _recoveryPauseIntentOverride = null;
         _playingNextShown = false;
         _postRollActive = false;
         _postRollVideoEnded = false;
@@ -1925,30 +1935,20 @@ public class PlayerService : IDisposable
     // message instead of a raw exception string.
     private static (string Title, string Detail) DescribePlaybackError(Exception ex)
     {
+        if (ex is PlaybackPlanTerminalException terminal)
+        {
+            var description = PlaybackFailureDescription.Describe(terminal);
+            return (description.Title, description.Message);
+        }
         if (ex is ApiException api)
         {
-            if (api.StatusCode == 404 && api.ErrorCode == "not_found")
-            {
-                if (api.Message == "Source media file is missing")
-                    return ("This video is no longer available",
-                        "The file needed to play it can't be found right now. Go back and try another version if one is available.");
-                return ("This item is no longer available",
-                    "The file needed to play this item can't be found right now. Go back and try another version if one is available.");
-            }
-            if (api.StatusCode == 403 && api.ErrorCode == "transcoding_disabled")
-                return ("Transcoding is disabled",
-                    "Transcoding is disabled for your user. Ask your server administrator for access.");
-            if (api.StatusCode == 403 && api.ErrorCode == "audio_transcoding_disabled")
-                return ("Audio transcoding is disabled",
-                    "This item requires audio conversion, but audio transcoding is disabled for your user.");
-            if (api.StatusCode == 403)
-                return ("Playback unavailable", "You do not have permission to play this item.");
+            var transportDescription = PlaybackFailureDescription.DescribeTransport(api);
+            if (transportDescription != null)
+                return (transportDescription.Title, transportDescription.Message);
             if (api.StatusCode == 429 && api.ErrorCode == "too_many_streams")
                 return ("Stream limit reached", "This account has reached its active stream limit. Stop another stream and try again.");
             if (api.StatusCode == 429 && api.ErrorCode == "too_many_transcodes")
                 return ("Transcode limit reached", "This account has reached its active transcode limit. Try direct play or stop another transcode.");
-            if (api.StatusCode >= 500)
-                return ("Playback unavailable", "Silo could not start playback right now. Please try again.");
             return ("Playback unavailable", string.IsNullOrWhiteSpace(api.Message) ? "Playback could not start." : api.Message);
         }
         if (ex.Message == "No compatible file version found")
@@ -1962,8 +1962,8 @@ public class PlayerService : IDisposable
     /// Handles <see cref="PlaybackManager.ProgressReportingFailed"/>. A short
     /// CDN, Wi-Fi, or server interruption must not immediately throw the user
     /// out of a healthy local decode. Recreate the server session at the
-    /// current media position; the shared recovery path only closes playback
-    /// if that restart also fails.
+    /// current media position; if that restart fails, the player remains open
+    /// with explicit Retry and Exit actions.
     /// </summary>
     private void OnProgressReportingFailed(string message)
     {
@@ -2350,18 +2350,12 @@ public class PlayerService : IDisposable
         }
         catch (Exception ex)
         {
-            _prematureEofRecoveryActive = false;
-            _switchingContent = false;
-            IsLoading = false;
             LogToFile("player_recovery_error.txt", $"Recovery setup failed ({reason}): {ex}");
-            var message = $"Playback stalled and could not resume: {ex.Message}";
-            ErrorMessage = message;
-            App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() =>
-            {
-                App.MainWindowInstance?.HideLoadingOverlay();
-                App.MainWindowInstance?.ShowPlaybackError("Playback Stalled", message);
-                _ = CloseAsync();
-            });
+            EnterPlaybackTerminalState(
+                ex,
+                Math.Max(0, currentPosition),
+                reason,
+                CaptureUserPausedState());
         }
         finally
         {
@@ -2390,7 +2384,9 @@ public class PlayerService : IDisposable
         // paused. Preserve that intent across the replacement session, but do
         // not mistake mpv's network-cache pause for a user pause: buffering
         // recoveries must resume as soon as the replacement stream is ready.
-        var restorePaused = _mpv.IsPaused && !_mpv.IsBufferingForCache;
+        var restorePaused = _recoveryPauseIntentOverride
+            ?? (_mpv.IsPaused && !_mpv.IsBufferingForCache);
+        _recoveryPauseIntentOverride = null;
         var resumePosition = Math.Max(0, currentPosition - 2);
         var ct = _playbackCts?.Token ?? CancellationToken.None;
 
@@ -2472,8 +2468,6 @@ public class PlayerService : IDisposable
 
                     ApplyPreparedTransport(reloaded);
                     BeginMpvLoad(reloaded, restorePaused);
-                    if (string.Equals(reason, "progress-reporting-failed", StringComparison.Ordinal))
-                        manager.ResumeProgressReporting();
                     IsPaused = restorePaused;
                     _mpv.SendScriptMessage("osc-set-play-method", PlayMethod ?? "direct");
                     LogToFile(
@@ -2545,25 +2539,85 @@ public class PlayerService : IDisposable
         {
             CancelPendingFileLoadTimeout();
             LogToFile("player_recovery_error.txt", ex.ToString());
-            _prematureEofRecoveryActive = false;
-            _prematureEofRecoveryPosition = 0;
-            _switchingContent = false;
-            IsLoading = false;
-
-            var message = $"Playback stalled and could not resume: {ex.Message}";
-            ErrorMessage = message;
-            Action handleFailure = () =>
-            {
-                App.MainWindowInstance?.HideLoadingOverlay();
-                App.MainWindowInstance?.ShowPlaybackError("Playback Stalled", message);
-                _ = CloseAsync();
-            };
-
-            if (dispatcher != null)
-                dispatcher.TryEnqueue(() => handleFailure());
-            else
-                handleFailure();
+            EnterPlaybackTerminalState(ex, resumePosition, reason, restorePaused);
         }
+    }
+
+    private void EnterPlaybackTerminalState(
+        Exception error,
+        double position,
+        string trigger,
+        bool wasPaused)
+    {
+        CancelPendingFileLoadTimeout();
+        StopPlaybackStallWatchdog();
+        _prematureEofRecoveryActive = false;
+        _prematureEofRecoveryPosition = 0;
+        _switchingContent = false;
+        _qualitySwitchActive = false;
+        IsLoading = false;
+
+        var terminal = error as PlaybackPlanTerminalException;
+        var description = terminal != null
+            ? PlaybackFailureDescription.Describe(terminal)
+            : error is ApiException api && PlaybackFailureDescription.DescribeTransport(api) is { } transport
+                ? transport
+                : new PlaybackFailurePresentation(
+                    "Playback interrupted",
+                    string.IsNullOrWhiteSpace(error.Message)
+                        ? "Playback could not continue. Try reconnecting or exit the player."
+                        : error.Message,
+                    CanRetry: true);
+        ErrorMessage = description.Message;
+        _playbackTerminalState = new PlaybackTerminalState(
+            Math.Max(0, position),
+            trigger,
+            wasPaused,
+            description.CanRetry);
+
+        _mpv?.Pause();
+        _mpv?.SendScriptMessage("osc-set-loading", "false");
+        _mpv?.SendScriptMessage("osc-set-buffering", "false");
+        _mpv?.SendScriptMessage(
+            "osc-show-playback-failure",
+            JsonSerializer.Serialize(new Dictionary<string, object>
+            {
+                ["title"] = description.Title,
+                ["message"] = description.Message,
+                ["can_retry"] = description.CanRetry,
+            }));
+
+        App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
+            () => App.MainWindowInstance?.HideLoadingOverlay());
+        LogToFile(
+            "state_trace.txt",
+            $"Playback terminal state: trigger={trigger} position={position:F1} " +
+            $"reason={terminal?.Reason ?? error.GetType().Name} retryable={description.CanRetry}");
+    }
+
+    private void ClearPlaybackTerminalState()
+    {
+        _playbackTerminalState = null;
+        _mpv?.SendScriptMessage("osc-clear-playback-failure");
+    }
+
+    private async Task RetryPlaybackFromTerminalAsync()
+    {
+        var terminal = _playbackTerminalState;
+        if (terminal == null || !terminal.CanRetry || _closing || State == PlayerState.Idle)
+            return;
+
+        ClearPlaybackTerminalState();
+        _recoveryPauseIntentOverride = terminal.WasPaused;
+        ShowNotice(
+            "Reconnecting playback",
+            "Trying another available playback route from your current position…",
+            "warning");
+        LogToFile(
+            "state_trace.txt",
+            $"Viewer requested playback retry after trigger={terminal.Trigger}");
+        await RecoverInterruptedStreamAsync(terminal.Position, terminal.Trigger)
+            .ConfigureAwait(false);
     }
 
     private double _resumePosition;
@@ -3658,16 +3712,15 @@ public class PlayerService : IDisposable
 
             if (_prematureEofStreak >= 3)
             {
-                LogToFile("state_trace.txt", $"  -> Premature {trigger} stuck at pos={pos:F1} (streak={_prematureEofStreak}). Giving up, closing player.");
+                LogToFile("state_trace.txt", $"  -> Premature {trigger} stuck at pos={pos:F1} (streak={_prematureEofStreak}). Waiting for viewer action.");
                 _prematureEofStreak = 0;
                 _prematureEofLastAttemptMs = 0;
-                ErrorMessage = "Playback stalled and couldn't resume. The stream may be corrupted at this position.";
-                InvokeSubscribersSafely(PlaybackEnded, nameof(PlaybackEnded));
-                var recoveryDispatcher = App.MainWindowInstance?.DispatcherQueue;
-                if (recoveryDispatcher != null)
-                    recoveryDispatcher.TryEnqueue(() => _ = CloseAsync());
-                else
-                    _ = CloseAsync();
+                EnterPlaybackTerminalState(
+                    new InvalidOperationException(
+                        "Playback stalled and couldn't resume. The stream may be unavailable at this position."),
+                    pos,
+                    trigger,
+                    CaptureUserPausedState());
                 return;
             }
             else
@@ -3828,6 +3881,8 @@ public class PlayerService : IDisposable
         {
             var wasPrematureEofRecovery = _prematureEofRecoveryActive;
             var restorePaused = _restorePausedAfterLoad == true;
+            ClearPlaybackTerminalState();
+            ReconcilePlaybackSurfaceStateAfterLoad();
             CancelPendingFileLoadTimeout();
             Interlocked.Exchange(ref _consecutiveFileLoadTimeouts, 0);
             IsLoading = false;
@@ -3920,6 +3975,36 @@ public class PlayerService : IDisposable
         _mpv.Error += _mpvErrorHandler;
     }
 
+    private void ReconcilePlaybackSurfaceStateAfterLoad()
+    {
+        var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+        void Reconcile()
+        {
+            if (_closing || State == PlayerState.Idle)
+                return;
+
+            if (State is PlayerState.Expanded or PlayerState.Fullscreen or PlayerState.PictureInPicture)
+                _mpv?.SendScriptMessage("osc-set-visibility", "true");
+
+            var videoWindow = _videoWindow;
+            if (videoWindow == null)
+                return;
+            var confirmedFullscreen = videoWindow.SynchronizeFullscreenState();
+            PublishFullscreenVisualState(confirmedFullscreen);
+            if (confirmedFullscreen == (State == PlayerState.Fullscreen))
+                return;
+
+            SetState(confirmedFullscreen ? PlayerState.Fullscreen : PlayerState.Expanded);
+        }
+
+        if (dispatcher?.HasThreadAccess == true)
+            Reconcile();
+        else if (dispatcher != null)
+            dispatcher.TryEnqueue(Reconcile);
+        else
+            Reconcile();
+    }
+
     private void HandleMpvPlaybackError(string message)
     {
         LogToFile(
@@ -3966,19 +4051,11 @@ public class PlayerService : IDisposable
                 ? "The media stream could not be loaded after a retry. It may be unavailable or the server may be experiencing issues."
                 : $"The media stream could not resume after a retry: {message}";
             ErrorMessage = detail;
-            var dispatcher = App.MainWindowInstance?.DispatcherQueue;
-            if (dispatcher != null)
-            {
-                dispatcher.TryEnqueue(async () =>
-                {
-                    await CloseAsync();
-                    App.MainWindowInstance?.ShowPlaybackError("Playback failed", detail);
-                });
-            }
-            else
-            {
-                _ = CloseAsync();
-            }
+            EnterPlaybackTerminalState(
+                new InvalidOperationException(detail),
+                mediaPosition,
+                "file-load-error",
+                CaptureUserPausedState());
             return;
         }
 
@@ -5275,6 +5352,9 @@ public class PlayerService : IDisposable
                 if (State == PlayerState.Idle) return; // Prevent duplicate close
                 dispatch.TryEnqueue(() => _ = CloseAsync());
                 break;
+            case "silo-playback-retry":
+                dispatch.TryEnqueue(() => _ = RetryPlaybackFromTerminalAsync());
+                break;
             case "silo-fullscreen-toggle":
                 dispatch.TryEnqueue(ToggleFullscreenFromOsc);
                 break;
@@ -6197,6 +6277,7 @@ public class PlayerService : IDisposable
         // to exit. Clearing first ensures the handler takes the natural-end
         // path (CloseAsync dispatch) instead of the next-episode path.
         ClearNextEpisodeHint();
+        ClearPlaybackTerminalState();
         ClearLiveSubtitleTranslation(restorePreviousSubtitle: false);
         ClearAudiobookSleepTimer();
 
@@ -6227,6 +6308,7 @@ public class PlayerService : IDisposable
         _prematureEofLastAttemptMs = 0;
         _prematureEofStreak = 0;
         _activeTransportPlan = null;
+        _recoveryPauseIntentOverride = null;
         _timelineOffsetSeconds = 0;
         _transportDurationSeconds = null;
         _canSeekAnywhere = true;
@@ -6902,6 +6984,16 @@ public class PlayerService : IDisposable
                     "warning");
                 return Complete(new CommandResult());
 
+            case "plan_invalidated":
+                if (!PlaybackPlanInvalidation.TryCreate(cmd.Payload, out var invalidation))
+                    return Complete(new CommandResult
+                    {
+                        Status = "rejected",
+                        Error = "invalid_plan_invalidated_payload",
+                    });
+                StartPlanInvalidationRecovery(invalidation);
+                return Complete(new CommandResult());
+
             case "stop":
             case "terminate":
                 var msg = cmd.GetString("message");
@@ -6917,6 +7009,113 @@ public class PlayerService : IDisposable
 
             default:
                 return Complete(new CommandResult { Status = "rejected", Error = "unsupported" });
+        }
+    }
+
+    private void StartPlanInvalidationRecovery(PlaybackPlanInvalidation invalidation)
+        => _ = ObservePlanInvalidationRecoveryAsync(invalidation);
+
+    private async Task ObservePlanInvalidationRecoveryAsync(
+        PlaybackPlanInvalidation invalidation)
+    {
+        var gateAcquired = false;
+        try
+        {
+            await _planInvalidationGate.WaitAsync().ConfigureAwait(false);
+            gateAcquired = true;
+            var result = await HandlePlanInvalidationAsync(invalidation).ConfigureAwait(false);
+            if (!string.Equals(result.Status, "completed", StringComparison.Ordinal))
+            {
+                LogToFile(
+                    "state_trace.txt",
+                    $"Plan invalidation recovery rejected: {result.Error ?? "unknown"}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _switchingContent = false;
+            LogToFile(
+                "player_recovery_error.txt",
+                $"Unhandled plan invalidation recovery failure: {ex}");
+        }
+        finally
+        {
+            if (gateAcquired)
+                _planInvalidationGate.Release();
+        }
+    }
+
+    private async Task<CommandResult> HandlePlanInvalidationAsync(
+        PlaybackPlanInvalidation invalidation)
+    {
+        var manager = _playbackManager;
+        var currentSession = manager?.CurrentSession;
+        if (manager == null || currentSession == null || currentSession.ProtocolVersion < 3 || _mpv == null)
+            return new CommandResult { Status = "rejected", Error = "plan_invalidation_unsupported" };
+
+        var currentPosition = CurrentMediaPosition;
+        var wasPaused = CaptureUserPausedState();
+        var ct = _playbackCts?.Token ?? CancellationToken.None;
+        _switchingContent = true;
+        try
+        {
+            var replacement = await manager.ReplanInvalidatedPlanAsync(
+                invalidation.PlanId,
+                invalidation.Reason,
+                currentPosition,
+                ct).ConfigureAwait(false);
+            if (replacement == null)
+            {
+                _switchingContent = false;
+                return new CommandResult();
+            }
+
+            var version = Versions.FirstOrDefault(item => item.FileId == replacement.MediaFileId)
+                ?? throw new InvalidOperationException("The replanned media version is unavailable.");
+            var streamUrl = manager.StreamUrl
+                ?? throw new InvalidOperationException("No stream URL was returned after plan invalidation.");
+            var prepared = await PreparePlaybackTransportAsync(
+                replacement,
+                version,
+                streamUrl,
+                currentPosition,
+                ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            if (_closing || State == PlayerState.Idle ||
+                !ReferenceEquals(_playbackManager, manager) ||
+                !ReferenceEquals(manager.CurrentSession, replacement))
+            {
+                _switchingContent = false;
+                return new CommandResult { Status = "rejected", Error = "playback_session_changed" };
+            }
+
+            PlayMethod = replacement.PlayMethod;
+            _activeQualityTier = replacement.ActiveQuality;
+            ApplyPreparedTransport(prepared);
+            BeginMpvLoad(prepared, wasPaused);
+            _mpv.SendScriptMessage("osc-set-play-method", PlayMethod ?? "direct");
+            LogToFile(
+                "state_trace.txt",
+                $"Realtime plan invalidation adopted plan={replacement.PlanId} " +
+                $"reason={invalidation.Reason} position={currentPosition:F1}");
+            return new CommandResult();
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            _switchingContent = false;
+            return new CommandResult { Status = "rejected", Error = "playback_canceled" };
+        }
+        catch (Exception ex)
+        {
+            LogToFile("player_recovery_error.txt", $"Plan invalidation failed: {ex}");
+            EnterPlaybackTerminalState(ex, currentPosition, "plan_invalidated", wasPaused);
+            return new CommandResult
+            {
+                Status = "rejected",
+                Error = ex is PlaybackPlanTerminalException terminal
+                    ? terminal.Reason
+                    : "plan_invalidation_failed",
+            };
         }
     }
 

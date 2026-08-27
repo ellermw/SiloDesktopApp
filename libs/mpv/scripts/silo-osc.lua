@@ -280,6 +280,16 @@ local state = {
     notice_timer    = nil,
     notice_overlay  = nil,
 
+    -- Persistent playback failure surface. Unlike transient notices this
+    -- remains above the transport until Retry or Exit is chosen.
+    playback_failure_visible = false,
+    playback_failure_title = "",
+    playback_failure_message = "",
+    playback_failure_can_retry = true,
+    playback_failure_focus = "retry",
+    playback_failure_actions = {},
+    playback_failure_overlay = nil,
+
     -- First-frame / rebuffer feedback. These render in the mpv popup itself;
     -- XAML overlays live behind the native video window and cannot be seen.
     playback_loading = false,
@@ -3451,6 +3461,114 @@ local function show_notice(title, message, tone)
 end
 
 --------------------------------------------------------------------------------
+-- Persistent Playback Failure Overlay
+--------------------------------------------------------------------------------
+
+local function render_playback_failure()
+    if not state.playback_failure_visible then
+        state.playback_failure_actions = {}
+        if state.playback_failure_overlay then
+            state.playback_failure_overlay.data = ""
+            state.playback_failure_overlay:update()
+        end
+        return
+    end
+
+    update_osd_dimensions()
+    local ass = assdraw.ass_new()
+    local W = state.osd_width
+    local H = state.osd_height
+    local sc = ui_scale()
+    local box_w = math.min(math.floor(620 * sc), W - math.floor(40 * sc))
+    local padding = math.floor(28 * sc)
+    local title_fs = math.floor(22 * sc)
+    local body_fs = math.floor(15 * sc)
+    local line_h = math.floor(25 * sc)
+    local max_chars = math.max(24, math.floor((box_w - padding * 2) / math.max(1, body_fs * 0.55)))
+    local lines = wrap_display_text(state.playback_failure_message, max_chars, 5)
+    local button_h = math.floor(42 * sc)
+    local button_gap = math.floor(12 * sc)
+    local button_w = math.floor(128 * sc)
+    local box_h = padding * 2 + math.floor(32 * sc) + math.floor(12 * sc)
+        + #lines * line_h + math.floor(24 * sc) + button_h
+    local box_x = (W - box_w) / 2
+    local box_y = math.max(math.floor(24 * sc), (H - box_h) / 2)
+
+    -- Full-window scrim consumes the visual surface, while the nearly opaque
+    -- card stays readable over bright HDR frames and above the seek timeline.
+    draw_rect(ass, 0, 0, W, H, "000000", "55", 1.0)
+    draw_rounded_rect(ass, box_x - 1, box_y - 1, box_x + box_w + 1, box_y + box_h + 1,
+        math.floor(14 * sc), config.accent_color, "45", 1.0)
+    draw_rounded_rect(ass, box_x, box_y, box_x + box_w, box_y + box_h,
+        math.floor(13 * sc), "111111", "08", 1.0)
+
+    local text_y = box_y + padding
+    draw_text(ass, box_x + padding, text_y + math.floor(16 * sc),
+        ass_escape_text(state.playback_failure_title), title_fs,
+        config.text_color, "00", 1.0, 4, nil, true)
+    text_y = text_y + math.floor(44 * sc)
+    for _, line in ipairs(lines) do
+        draw_text(ass, box_x + padding, text_y + line_h / 2,
+            ass_escape_text(line), body_fs, config.dim_text_color, "00", 1.0, 4)
+        text_y = text_y + line_h
+    end
+
+    local actions = {}
+    local action_count = state.playback_failure_can_retry and 2 or 1
+    local total_w = action_count * button_w + (action_count - 1) * button_gap
+    local button_x = box_x + box_w - padding - total_w
+    local button_y = box_y + box_h - padding - button_h
+
+    local function draw_action(name, label, x)
+        local focused = state.playback_failure_focus == name
+        draw_rounded_rect(ass, x, button_y, x + button_w, button_y + button_h,
+            math.floor(8 * sc), focused and config.accent_color or "333333", focused and "10" or "20", 1.0)
+        draw_text(ass, x + button_w / 2, button_y + button_h / 2,
+            label, body_fs, config.text_color, "00", 1.0, 5, nil, true)
+        table.insert(actions, { x = x, y = button_y, w = button_w, h = button_h, action = name })
+    end
+
+    if state.playback_failure_can_retry then
+        draw_action("retry", "Retry", button_x)
+        button_x = button_x + button_w + button_gap
+    end
+    draw_action("exit", "Exit player", button_x)
+    state.playback_failure_actions = actions
+
+    if not state.playback_failure_overlay then
+        state.playback_failure_overlay = mp.create_osd_overlay("ass-events")
+    end
+    state.playback_failure_overlay.data = ass.text
+    state.playback_failure_overlay.res_x = W
+    state.playback_failure_overlay.res_y = H
+    state.playback_failure_overlay.z = 100
+    state.playback_failure_overlay:update()
+end
+
+local function invoke_playback_failure_action(action)
+    if not state.playback_failure_visible then return false end
+    if action == "retry" and state.playback_failure_can_retry then
+        mp.commandv("script-message", "silo-playback-retry")
+    elseif action == "exit" then
+        mp.commandv("script-message", "silo-exit")
+    else
+        return true
+    end
+    return true
+end
+
+local function move_playback_failure_focus()
+    if not state.playback_failure_visible then return false end
+    if state.playback_failure_can_retry then
+        state.playback_failure_focus = state.playback_failure_focus == "retry" and "exit" or "retry"
+    else
+        state.playback_failure_focus = "exit"
+    end
+    render_playback_failure()
+    return true
+end
+
+--------------------------------------------------------------------------------
 -- Skip Intro/Credits Button
 --------------------------------------------------------------------------------
 
@@ -4430,6 +4548,10 @@ local function activate_keyboard_menu_item()
 end
 
 local function close_keyboard_surface()
+    if state.playback_failure_visible then
+        invoke_playback_failure_action("exit")
+        return true
+    end
     if state.watch_party_end_confirm then
         state.watch_party_end_confirm = false
         request_tick()
@@ -4529,6 +4651,9 @@ local function focusable_transport_controls()
 end
 
 local function move_controller_focus(direction)
+    if state.playback_failure_visible then
+        return move_playback_failure_focus()
+    end
     if current_keyboard_menu() then
         if direction == "up" or direction == "left" then
             return move_keyboard_menu_focus("previous")
@@ -4586,6 +4711,9 @@ local function open_transport_menu_from_controller(kind)
 end
 
 local function activate_controller_focus()
+    if state.playback_failure_visible then
+        return invoke_playback_failure_action(state.playback_failure_focus)
+    end
     local name = state.controller_focus_name
     if not name then
         move_controller_focus("next")
@@ -4631,9 +4759,23 @@ local function activate_controller_focus()
 end
 
 local function handle_mouse_down()
-    if state.osc_disabled then return end
     local mx = state.mouse_x
     local my = state.mouse_y
+
+    if state.playback_failure_visible then
+        consume_video_click()
+        for _, item in ipairs(state.playback_failure_actions or {}) do
+            if point_in_rect(mx, my, item) then
+                invoke_playback_failure_action(item.action)
+                return
+            end
+        end
+        -- The scrim owns every click, including clicks outside the card, so
+        -- the hidden seek bar and video surface can never receive input.
+        return
+    end
+
+    if state.osc_disabled then return end
 
     local next_action = point_on_next_episode_countdown_action(mx, my)
     if next_action then
@@ -5023,6 +5165,7 @@ local function handle_mouse_down()
 end
 
 local function handle_mouse_down_right()
+    if state.playback_failure_visible then return end
     if state.osc_disabled then return end
     local mx = state.mouse_x
     local my = state.mouse_y
@@ -5040,6 +5183,13 @@ local function handle_mouse_down_right()
 end
 
 local function handle_mouse_up()
+    if state.playback_failure_visible then
+        state.dragging_seek = false
+        state.dragging_volume = false
+        state.dragging_marker_edge = nil
+        state.dragging_marker_panel = false
+        return
+    end
     if state.osc_disabled then return end
     if state.dragging_marker_edge then
         state.dragging_marker_edge = nil
@@ -5085,6 +5235,7 @@ end
 
 -- Scroll wheel for volume
 local function handle_wheel_up()
+    if state.playback_failure_visible then return end
     if state.stats_visible and state.stats_panel_rect and
         point_in_rect(state.mouse_x, state.mouse_y, state.stats_panel_rect) then
         state.stats_scroll_offset = math.max(0,
@@ -5115,6 +5266,7 @@ local function handle_wheel_up()
 end
 
 local function handle_wheel_down()
+    if state.playback_failure_visible then return end
     if state.stats_visible and state.stats_panel_rect and
         point_in_rect(state.mouse_x, state.mouse_y, state.stats_panel_rect) then
         state.stats_scroll_offset = math.min(state.stats_scroll_max or 0,
@@ -5147,6 +5299,7 @@ end
 -- Double-click for fullscreen (track timing of clicks)
 local last_click_time = 0
 local function handle_mbtn_left_dbl()
+    if state.playback_failure_visible then return end
     mp.commandv("script-message", "silo-fullscreen-toggle")
 end
 
@@ -5301,6 +5454,7 @@ local function observe_properties()
         render_translation_buffering()
         render_playback_wait()
         render_pause_indicator()
+        render_playback_failure()
         request_tick()
     end)
 
@@ -5348,6 +5502,29 @@ local function observe_properties()
         if ok and data then
             show_notice(data.title, data.message, data.tone)
         end
+    end)
+
+    mp.register_script_message("osc-show-playback-failure", function(json_str)
+        local ok, data = pcall(require("mp.utils").parse_json, json_str)
+        if not ok or not data then return end
+        state.playback_failure_title = data.title or "Playback interrupted"
+        state.playback_failure_message = data.message or "Playback could not continue."
+        state.playback_failure_can_retry = data.can_retry ~= false
+        state.playback_failure_focus = state.playback_failure_can_retry and "retry" or "exit"
+        state.playback_failure_visible = true
+        state.dragging_seek = false
+        state.dragging_volume = false
+        state.dragging_marker_edge = nil
+        state.dragging_marker_panel = false
+        close_transport_menus(nil)
+        render_playback_failure()
+    end)
+
+    mp.register_script_message("osc-clear-playback-failure", function()
+        state.playback_failure_visible = false
+        state.playback_failure_actions = {}
+        render_playback_failure()
+        show_osc()
     end)
 
     -- VideoPlayer.tsx explicitly cancels its credits countdown when the
@@ -5638,6 +5815,7 @@ local function observe_properties()
             if state.next_ep_countdown_active then render_next_episode_countdown() end
             if state.translation_buffering then render_translation_buffering() end
             if state.playback_loading or state.playback_buffering then render_playback_wait() end
+            if state.playback_failure_visible then render_playback_failure() end
             request_tick()
         end
     end)
@@ -5688,14 +5866,19 @@ local function setup_key_bindings()
     mp.add_key_binding("mouse_enter", "silo-osc-mouse-enter", handle_mouse_enter)
 
     -- Stats toggle
-    mp.add_key_binding("i", "silo-osc-toggle-stats", toggle_stats)
-    mp.add_key_binding("I", "silo-osc-toggle-stats-shift", toggle_stats)
+    mp.add_key_binding("i", "silo-osc-toggle-stats", function()
+        if not state.playback_failure_visible then toggle_stats() end
+    end)
+    mp.add_key_binding("I", "silo-osc-toggle-stats-shift", function()
+        if not state.playback_failure_visible then toggle_stats() end
+    end)
 
     -- Subtitle delay nudge (matches mpv defaults but bound explicitly because
     -- input-default-bindings=no in the host). Z slows subs (shows them later
     -- relative to audio); X speeds them up. Each press shifts by 100 ms; the
     -- OSD shows the current absolute delay so the user can dial it in.
     local function nudge_sub_delay(delta)
+        if state.playback_failure_visible then return end
         mp.commandv("add", "sub-delay", tostring(delta))
         local d = mp.get_property_number("sub-delay") or 0
         mp.osd_message(string.format("Subtitle delay: %+.0f ms", d * 1000), 1.5)
@@ -5706,22 +5889,31 @@ local function setup_key_bindings()
     -- Override F key — prevent mpv's default "cycle fullscreen" from firing
     -- Arrow keys: Left/Right = seek ±10s, Up/Down = volume ±5% (matching web player)
     mp.add_forced_key_binding("LEFT", "silo-seek-back", function()
+        if move_playback_failure_focus() then return end
         if current_keyboard_menu() then return end
         seek_relative_and_resume(-10)
     end)
     mp.add_forced_key_binding("RIGHT", "silo-seek-fwd", function()
+        if move_playback_failure_focus() then return end
         if current_keyboard_menu() then return end
         seek_relative_and_resume(10)
     end)
     mp.add_forced_key_binding("UP", "silo-vol-up", function()
+        if move_playback_failure_focus() then return end
         if move_keyboard_menu_focus("previous") then return end
         mp.commandv("add", "volume", "5")
     end)
     mp.add_forced_key_binding("DOWN", "silo-vol-down", function()
+        if move_playback_failure_focus() then return end
         if move_keyboard_menu_focus("next") then return end
         mp.commandv("add", "volume", "-5")
     end)
     mp.add_forced_key_binding("HOME", "silo-menu-home", function()
+        if state.playback_failure_visible then
+            state.playback_failure_focus = state.playback_failure_can_retry and "retry" or "exit"
+            render_playback_failure()
+            return
+        end
         if not move_keyboard_menu_focus("home") then
             state.controller_focus_name = "btn_skip_back"
             show_osc()
@@ -5729,6 +5921,11 @@ local function setup_key_bindings()
         end
     end)
     mp.add_forced_key_binding("END", "silo-menu-end", function()
+        if state.playback_failure_visible then
+            state.playback_failure_focus = "exit"
+            render_playback_failure()
+            return
+        end
         if not move_keyboard_menu_focus("end") then
             state.controller_focus_name = "btn_fullscreen"
             show_osc()
@@ -5736,27 +5933,39 @@ local function setup_key_bindings()
         end
     end)
     mp.add_forced_key_binding("ENTER", "silo-menu-activate", function()
+        if state.playback_failure_visible then
+            invoke_playback_failure_action(state.playback_failure_focus)
+            return
+        end
         if not activate_keyboard_menu_item() then
             activate_controller_focus()
         end
     end)
     mp.add_forced_key_binding("TAB", "silo-control-focus-next", function()
+        if move_playback_failure_focus() then return end
         move_controller_focus("right")
     end)
     mp.add_forced_key_binding("ESC", "silo-menu-escape", function()
+        if state.playback_failure_visible then
+            invoke_playback_failure_action("exit")
+            return
+        end
         if not close_keyboard_surface() then
             mp.commandv("script-message", "silo-escape-unhandled")
         end
     end)
     -- M = mute toggle
     mp.add_forced_key_binding("m", "silo-mute-toggle", function()
+        if state.playback_failure_visible then return end
         mp.commandv("cycle", "mute")
     end)
     mp.add_forced_key_binding("M", "silo-mute-toggle-shift", function()
+        if state.playback_failure_visible then return end
         mp.commandv("cycle", "mute")
     end)
 
     local function toggle_play_pause()
+        if state.playback_failure_visible then return end
         mp.commandv("cycle", "pause")
     end
     mp.add_forced_key_binding("SPACE", "silo-play-pause-space", toggle_play_pause)
@@ -5764,6 +5973,7 @@ local function setup_key_bindings()
     mp.add_forced_key_binding("K", "silo-play-pause-k-shift", toggle_play_pause)
 
     local function toggle_captions()
+        if state.playback_failure_visible then return end
         if state.active_subtitle >= 0 then
             state.last_subtitle = state.active_subtitle
             state.active_subtitle = -1
@@ -5783,15 +5993,19 @@ local function setup_key_bindings()
     mp.add_forced_key_binding("C", "silo-captions-toggle-shift", toggle_captions)
 
     mp.add_forced_key_binding("f", "silo-fs-override", function()
+        if state.playback_failure_visible then return end
         mp.commandv("script-message", "silo-fullscreen-toggle")
     end)
     mp.add_forced_key_binding("F", "silo-fs-override-shift", function()
+        if state.playback_failure_visible then return end
         mp.commandv("script-message", "silo-fullscreen-toggle")
     end)
     mp.add_forced_key_binding("p", "silo-pip-override", function()
+        if state.playback_failure_visible then return end
         mp.commandv("script-message", "silo-pip-toggle")
     end)
     mp.add_forced_key_binding("P", "silo-pip-override-shift", function()
+        if state.playback_failure_visible then return end
         mp.commandv("script-message", "silo-pip-toggle")
     end)
 end
@@ -5917,7 +6131,7 @@ local function setup_script_messages()
         local my = tonumber(y) or 0
         compute_layout()
         local L = state.layout
-        local hit = point_on_floating_action_button(mx, my)
+        local hit = state.playback_failure_visible or point_on_floating_action_button(mx, my)
         if not hit and state.current_alpha > 0.1 and L.bar_hit then
             hit = point_in_rect(mx, my, L.bar_hit)
         end
@@ -5928,6 +6142,7 @@ local function setup_script_messages()
     -- any OSC chrome (bar, menu overlay, stats panel), we toggle pause so
     -- clicking the video body works like every other media player.
     mp.register_script_message("osc-video-click", function(x, y)
+        if state.playback_failure_visible then return end
         if mp.get_time() <= (state.ignore_video_click_until or 0) then
             return
         end
