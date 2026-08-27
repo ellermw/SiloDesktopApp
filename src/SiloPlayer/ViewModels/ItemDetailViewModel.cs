@@ -233,6 +233,16 @@ public partial class ItemDetailViewModel : ObservableObject,
         }
     }
 
+    /// <summary>
+    /// Invalidates prefetched detail after a server-side metadata or state
+    /// mutation, then performs a definitive reload.
+    /// </summary>
+    public Task ReloadAsync(string contentId)
+    {
+        _detailPrefetchCache.Invalidate(contentId);
+        return LoadAsync(contentId);
+    }
+
     private async Task CheckFavoriteWatchlistAsync(string contentId, CancellationTokenSource owner)
     {
         try

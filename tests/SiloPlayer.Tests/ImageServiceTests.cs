@@ -6,6 +6,37 @@ namespace SiloPlayer.Tests;
 public sealed class ImageServiceTests
 {
     [Fact]
+    public async Task GetImageDiskPathAsync_DoesNotReuseACompletedDownloadAfterItsFileIsRemoved()
+    {
+        var cacheDir = CreateTempCacheDir();
+        try
+        {
+            var requestCount = 0;
+            using var http = new HttpClient(new DelegateHandler((_, _) =>
+            {
+                Interlocked.Increment(ref requestCount);
+                return Task.FromResult(ImageResponse());
+            }));
+            using var service = new ImageService(cacheDir);
+            const string url = "https://cdn.example.test/poster.jpg?token=stable";
+
+            var firstPath = await service.GetImageDiskPathAsync("movie-1", "poster", url, http);
+            Assert.NotNull(firstPath);
+            File.Delete(firstPath);
+
+            var secondPath = await service.GetImageDiskPathAsync("movie-1", "poster", url, http);
+
+            Assert.Equal(firstPath, secondPath);
+            Assert.True(File.Exists(secondPath));
+            Assert.Equal(2, Volatile.Read(ref requestCount));
+        }
+        finally
+        {
+            DeleteTempCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
     public async Task GetImageDiskPathAsync_ReusesPoster_WhenOnlySignedQueryChanges()
     {
         var cacheDir = CreateTempCacheDir();

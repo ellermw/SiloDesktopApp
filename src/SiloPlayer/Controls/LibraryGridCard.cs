@@ -562,13 +562,19 @@ public sealed class LibraryGridCard : Canvas
 
         _quickActionPending = true;
         SetQuickActionsEnabled(false);
-        var operation = MediaItemCardActions.ToggleWatchedAsync(item);
-        UpdateQuickActionState(item);
-        await operation;
-        if (ReferenceEquals(MediaItem, item))
-            RefreshState();
-        _quickActionPending = false;
-        SetQuickActionsEnabled(true);
+        try
+        {
+            var operation = MediaItemCardActions.ToggleWatchedAsync(item);
+            UpdateQuickActionState(item);
+            await operation;
+            if (ReferenceEquals(MediaItem, item))
+                RefreshState();
+        }
+        finally
+        {
+            _quickActionPending = false;
+            SetQuickActionsEnabled(true);
+        }
     }
 
     private async void QuickFavoriteButton_Click(object sender, RoutedEventArgs e)
@@ -578,13 +584,19 @@ public sealed class LibraryGridCard : Canvas
 
         _quickActionPending = true;
         SetQuickActionsEnabled(false);
-        var operation = MediaItemCardActions.ToggleFavoriteAsync(item);
-        UpdateQuickActionState(item);
-        await operation;
-        if (ReferenceEquals(MediaItem, item))
-            RefreshState();
-        _quickActionPending = false;
-        SetQuickActionsEnabled(true);
+        try
+        {
+            var operation = MediaItemCardActions.ToggleFavoriteAsync(item);
+            UpdateQuickActionState(item);
+            await operation;
+            if (ReferenceEquals(MediaItem, item))
+                RefreshState();
+        }
+        finally
+        {
+            _quickActionPending = false;
+            SetQuickActionsEnabled(true);
+        }
     }
 
     private void UpdateQuickActionState(MediaItem item)

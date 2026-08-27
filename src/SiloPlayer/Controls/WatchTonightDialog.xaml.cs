@@ -444,15 +444,18 @@ public sealed partial class WatchTonightDialog : ContentDialog
         {
             try
             {
-                grid.Children.Add(new Image
-                {
-                    Source = (ImageSource)RemoteImageConverter.Convert(
+                if (RemoteImageConverter.Convert(
                         imgUrl,
                         typeof(ImageSource),
                         null!,
-                        string.Empty),
-                    Stretch = Stretch.UniformToFill,
-                });
+                        string.Empty) is ImageSource backdropSource)
+                {
+                    grid.Children.Add(new Image
+                    {
+                        Source = backdropSource,
+                        Stretch = Stretch.UniformToFill,
+                    });
+                }
             }
             catch { /* placeholder below */ }
         }
@@ -570,19 +573,26 @@ public sealed partial class WatchTonightDialog : ContentDialog
         {
             try
             {
-                bottomInfo.Children.Add(new Image
-                {
-                    Source = (ImageSource)RemoteImageConverter.Convert(
+                if (RemoteImageConverter.Convert(
                         card.LogoUrl,
                         typeof(ImageSource),
                         null!,
-                        string.Empty),
-                    Height = 40,
-                    MaxWidth = 240,
-                    HorizontalAlignment = HorizontalAlignment.Left,
-                    Stretch = Stretch.Uniform,
-                    Margin = new Thickness(0, 0, 0, 4),
-                });
+                        string.Empty) is ImageSource logoSource)
+                {
+                    bottomInfo.Children.Add(new Image
+                    {
+                        Source = logoSource,
+                        Height = 40,
+                        MaxWidth = 240,
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        Stretch = Stretch.Uniform,
+                        Margin = new Thickness(0, 0, 0, 4),
+                    });
+                }
+                else
+                {
+                    bottomInfo.Children.Add(BuildTitleText(heading));
+                }
             }
             catch
             {

@@ -126,24 +126,27 @@ public class ImageService : IDisposable
         // signature then waits on the common disk lock and either reuses the
         // old request's successful file or performs its own recovery request.
         var inflightKey = negativeCacheKey;
-        Lazy<Task<string?>>? lazyDownload = null;
-        lazyDownload = _inflightDownloads.GetOrAdd(inflightKey, _ => new Lazy<Task<string?>>(() =>
-        {
-            var task = DownloadAndCacheToDiskAsync(
+        var candidateDownload = new Lazy<Task<string?>>(() =>
+            DownloadAndCacheToDiskAsync(
                 diskPath,
                 url,
                 http,
                 negativeCacheKey,
-                CancellationToken.None);
+                CancellationToken.None),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        var winningDownload = _inflightDownloads.GetOrAdd(inflightKey, candidateDownload);
+        var task = winningDownload.Value;
+
+        if (ReferenceEquals(winningDownload, candidateDownload))
+        {
             task.ContinueWith(
-                _ => RemoveInflightDownload(inflightKey, lazyDownload),
+                _ => RemoveInflightDownload(inflightKey, winningDownload),
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
-            return task;
-        }, LazyThreadSafetyMode.ExecutionAndPublication));
+        }
 
-        return lazyDownload.Value;
+        return task;
     }
 
     private void RemoveInflightDownload(string inflightKey, Lazy<Task<string?>>? lazyDownload)

@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-27-user-facing-browse-detail-parity-design.md`
 
-**Execution status (2026-08-27):** Tasks 1-6 are implemented and covered by the 947-test Release suite. Task 7 includes a direct authenticated live-WebUI pass and desktop startup/log verification; interactive desktop visual comparison remains explicitly open because the Windows-control provider selected an unrelated fullscreen surface for the exact Silo process selector, so that attempt was stopped without disturbing the user's windows. Task 8 final packaging and PR verification follow the review pass.
+**Execution status (2026-08-27):** Tasks 1-6 are implemented and covered by the 960-test Release suite. Task 7 includes a direct authenticated live-WebUI pass and desktop startup/log verification; interactive desktop visual comparison remains explicitly open because the Windows-control provider selected an unrelated fullscreen surface for the exact Silo process selector, so that attempt was stopped without disturbing the user's windows. Task 8 automated verification and packaging are complete: official GitHub `main` remained at `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca`, the x64 Release build completed with zero warnings and errors, and the established multi-file installer pipeline produced `SiloInstaller-1.1.92-Setup.exe`. Installed-app runtime checks remain explicitly pending user QA.
 
 ---
 
@@ -177,10 +177,10 @@
 - Modify only files required by defects discovered during final verification.
 - Generate ignored output: `installer/output/SiloInstaller-<version>-Setup.exe`
 
-- [ ] Fetch official Silo GitHub `main` again and review any commits after `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca`.
-- [ ] Run `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release --no-restore`.
-- [ ] Run `dotnet publish src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo`.
-- [ ] Run `& 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' installer/SiloInstaller.iss`.
+- [x] Fetch official Silo GitHub `main` again and review any commits after `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca` (no newer commit as of the final fetch).
+- [x] Run `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release --no-restore` (960/960 passed).
+- [x] Run the x64 Release publish through the established `installer/build.ps1` pipeline (zero warnings and errors).
+- [x] Build the installer through the established `installer/build.ps1` Inno Setup pipeline (`SiloInstaller-1.1.92-Setup.exe`, SHA256 `20FA83AE07B80942BDE4FDAC923E9E3554BE274BED761B6A7FCBD772E1362F10`).
 - [ ] Install and launch the QA build, repeat the high-risk runtime checks, and confirm Smart App Control packaging follows the known working installer layout.
-- [ ] Review the complete diff and working tree for unrelated files, secrets, generated outputs, and accidental Claude/Codex artifacts.
+- [x] Review the complete diff and working tree for unrelated files, secrets, generated outputs, and accidental Claude/Codex artifacts (only the ten audit remediations, their regression tests, and verification evidence are included).
 - [ ] Report exactly what was runtime-verified, what remains unverified, the QA installer path, and a concise test checklist for the user.

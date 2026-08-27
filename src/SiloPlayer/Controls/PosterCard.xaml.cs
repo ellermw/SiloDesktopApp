@@ -906,13 +906,19 @@ public sealed partial class PosterCard : UserControl
 
         _quickActionPending = true;
         SetQuickActionsEnabled(false);
-        var operation = MediaItemCardActions.ToggleWatchedAsync(item);
-        UpdateQuickActionState(item);
-        await operation;
-        if (ReferenceEquals(MediaItem, item))
+        try
+        {
+            var operation = MediaItemCardActions.ToggleWatchedAsync(item);
             UpdateQuickActionState(item);
-        _quickActionPending = false;
-        SetQuickActionsEnabled(true);
+            await operation;
+            if (ReferenceEquals(MediaItem, item))
+                UpdateQuickActionState(item);
+        }
+        finally
+        {
+            _quickActionPending = false;
+            SetQuickActionsEnabled(true);
+        }
     }
 
     private async void QuickFavoriteButton_Click(object sender, RoutedEventArgs e)
@@ -922,13 +928,19 @@ public sealed partial class PosterCard : UserControl
 
         _quickActionPending = true;
         SetQuickActionsEnabled(false);
-        var operation = MediaItemCardActions.ToggleFavoriteAsync(item);
-        UpdateQuickActionState(item);
-        await operation;
-        if (ReferenceEquals(MediaItem, item))
+        try
+        {
+            var operation = MediaItemCardActions.ToggleFavoriteAsync(item);
             UpdateQuickActionState(item);
-        _quickActionPending = false;
-        SetQuickActionsEnabled(true);
+            await operation;
+            if (ReferenceEquals(MediaItem, item))
+                UpdateQuickActionState(item);
+        }
+        finally
+        {
+            _quickActionPending = false;
+            SetQuickActionsEnabled(true);
+        }
     }
 
     private void QuickAction_Tapped(object sender, TappedRoutedEventArgs e)

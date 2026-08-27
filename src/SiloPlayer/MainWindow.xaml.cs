@@ -41,6 +41,7 @@ public sealed partial class MainWindow : Window
     private readonly PlayerService _playerService;
     private readonly ThemeService _themeService;
     private readonly UICustomizationService _uiCustomizationService;
+    private readonly AsyncLoadVersionGate _brandingLoadGate = new();
     private bool _notificationsAvailable = true;
     private int _notificationUnreadCount;
     private bool _isNarrowShell;
@@ -2450,6 +2451,7 @@ public sealed partial class MainWindow : Window
 
     private void ResetShellBranding()
     {
+        _brandingLoadGate.Cancel();
         var isLightAppearance = ThemeService.IsLightAppearance(_themeService.CurrentTheme);
         var defaultWordmark = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(
             new Uri(isLightAppearance
@@ -2467,8 +2469,10 @@ public sealed partial class MainWindow : Window
         string shellKey,
         CancellationToken cancellationToken)
     {
+        var brandingLoadVersion = _brandingLoadGate.BeginNextLoad();
         var branding = await _settingsApi.GetServerBrandingAsync(cancellationToken);
-        if (!IsCurrentShellHydration(shellKey, cancellationToken)) return;
+        if (!IsCurrentShellHydration(shellKey, cancellationToken)
+            || !_brandingLoadGate.IsCurrent(brandingLoadVersion)) return;
 
         var isLightAppearance = ThemeService.IsLightAppearance(_themeService.CurrentTheme);
         var assetChoice = BrandingAssetSelector.Select(branding, isLightAppearance);
@@ -2483,12 +2487,14 @@ public sealed partial class MainWindow : Window
             ? imageService.GetImageDiskPathAsync(shellKey, "server-mark", markUrl!, httpClient, cancellationToken)
             : Task.FromResult<string?>(null);
         await Task.WhenAll(wordmarkPathTask, markPathTask);
-        if (!IsCurrentShellHydration(shellKey, cancellationToken)) return;
+        if (!IsCurrentShellHydration(shellKey, cancellationToken)
+            || !_brandingLoadGate.IsCurrent(brandingLoadVersion)) return;
         var wordmarkPath = await wordmarkPathTask;
         var markPath = await markPathTask;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!IsCurrentShellHydration(shellKey, cancellationToken)) return;
+            if (!IsCurrentShellHydration(shellKey, cancellationToken)
+                || !_brandingLoadGate.IsCurrent(brandingLoadVersion)) return;
 
             var defaultWordmark = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(
                 new Uri(isLightAppearance

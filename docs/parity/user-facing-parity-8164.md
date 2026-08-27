@@ -70,7 +70,7 @@ No row in this document is complete at milestone start. Source coverage alone is
 
 ## Code and automated milestone evidence
 
-- The full Release test suite covers the current Home, Search, Catalog, Library, item-detail, collection, request, recommendation, calendar, notification, image-cache, input, reader, and authentication contracts. The exact final count is recorded in the PR verification after review fixes.
+- The full 960-test Release suite covers the current Home, Search, Catalog, Library, item-detail, collection, request, recommendation, calendar, notification, image-cache, input, reader, and authentication contracts. All 960 tests passed after the PR review fixes.
 - Home and library-recommended refreshes reconcile mounted section and item collections without replacing populated pages. Failed background refreshes retain the last good surface.
 - Search retains keyboard focus, cancels obsolete work, applies current-query results only, and no longer blocks first results on optional request-discovery work.
 - Shared poster, landscape, and virtual-library cards now use the current WebUI action set, progress geometry, episode state, touch/long-press policy, cached artwork path, and personal-source action sizing.
@@ -79,6 +79,15 @@ No row in this document is complete at milestone start. Source coverage alone is
 - Ebook content is isolated to the mapped reader origin; top-level external navigation, new windows, remote subresources, permissions, and untrusted web messages are rejected.
 - Server and provider URLs now accept only normalized HTTP(S) origins and visibly reject unsupported or credential-bearing URLs.
 - The production single-instance mutex and activation pipe remain unchanged. A hashed, opt-in `SILO_QA_INSTANCE_ID` suffix permits a separate internal QA process without exposing the raw identifier.
+
+## Final automated and packaging evidence
+
+- Official GitHub `origin/main` was fetched again after review and remained at `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca`.
+- `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` completed with zero warnings and zero errors.
+- `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release --no-restore -nologo` passed 960/960 tests.
+- The established multi-file `installer/build.ps1` pipeline completed its x64 publish, libmpv verification, and Inno Setup build.
+- QA installer: `D:\SiloPlayer\installer\output\SiloInstaller-1.1.92-Setup.exe` (SHA256 `20FA83AE07B80942BDE4FDAC923E9E3554BE274BED761B6A7FCBD772E1362F10`, 160.7 MB).
+- Installation and installed-app runtime comparison were not performed during the CodeRabbit remediation pass and remain user-QA evidence, not an automated claim.
 
 ## Open evidence requirements
 

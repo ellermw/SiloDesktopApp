@@ -2242,7 +2242,7 @@ public sealed partial class ItemDetailPage : Page
         var api = App.Services.GetRequiredService<CatalogApi>();
         if (chapter.Read == true) await api.MarkUnwatchedAsync(chapter.ContentId);
         else await api.MarkWatchedAsync(chapter.ContentId);
-        await ViewModel.LoadCommand.ExecuteAsync(ViewModel.Item.ContentId);
+        await ViewModel.ReloadAsync(ViewModel.Item.ContentId);
         UpdateUI();
     }
 
@@ -2379,7 +2379,7 @@ public sealed partial class ItemDetailPage : Page
             while (!ct.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(2), ct);
-                await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+                await ViewModel.ReloadAsync(item.ContentId);
                 var refreshed = ViewModel.Item;
                 if (refreshed == null) continue;
                 OverviewText.Text = refreshed.Overview ?? "";
@@ -4151,7 +4151,7 @@ public sealed partial class ItemDetailPage : Page
         previewCts?.Dispose();
         if (splitSucceeded)
         {
-            await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+            await ViewModel.ReloadAsync(item.ContentId);
             UpdateUI();
         }
     }
@@ -4346,7 +4346,7 @@ public sealed partial class ItemDetailPage : Page
         {
             // The dialog performs the mutation and stays open when the server
             // rejects it. Refresh only after its explicit success signal.
-            await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+            await ViewModel.ReloadAsync(item.ContentId);
             UpdateUI();
         }
     }
@@ -4365,7 +4365,7 @@ public sealed partial class ItemDetailPage : Page
             await adminApi.RefreshItemMetadataAsync(item.ContentId);
 
             // Reload the item detail to pick up refreshed metadata
-            await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+            await ViewModel.ReloadAsync(item.ContentId);
             UpdateUI();
         }
         catch
@@ -4388,7 +4388,7 @@ public sealed partial class ItemDetailPage : Page
 
         // Image changes are immediate and metadata saves can alter any detail
         // surface, so reload the complete item after the dialog closes.
-        await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+        await ViewModel.ReloadAsync(item.ContentId);
         UpdateUI();
     }
 
@@ -8437,16 +8437,26 @@ public sealed partial class ItemDetailPage : Page
         {
             if (!quickWatchedButton.IsEnabled) return;
             quickWatchedButton.IsEnabled = false;
-            var operation = MediaItemCardActions.ToggleWatchedAsync(mediaItem);
-            UpdateQuickAction();
-            await operation;
-            UpdateQuickAction();
-            button.ContextFlyout = MediaItemMenu.Build(
-                mediaItem,
-                MediaItemMenu.Surface.Default,
-                showCollectionActions: false,
-                stateChanged: UpdateQuickAction);
-            quickWatchedButton.IsEnabled = true;
+            try
+            {
+                var operation = MediaItemCardActions.ToggleWatchedAsync(mediaItem);
+                UpdateQuickAction();
+                await operation;
+                UpdateQuickAction();
+                button.ContextFlyout = MediaItemMenu.Build(
+                    mediaItem,
+                    MediaItemMenu.Surface.Default,
+                    showCollectionActions: false,
+                    stateChanged: UpdateQuickAction);
+            }
+            catch (Exception ex)
+            {
+                App.Services.GetRequiredService<Services.ToastService>().Error(ex.Message);
+            }
+            finally
+            {
+                quickWatchedButton.IsEnabled = true;
+            }
         };
         moreButton.Click += (_, _) => MediaItemMenu.Build(
             mediaItem,

@@ -558,7 +558,8 @@ public sealed partial class LibraryPage : Page,
         if (!string.Equals(channel, "user_state", StringComparison.OrdinalIgnoreCase))
             return;
 
-        if (data.TryGetProperty("profile_id", out var profileElement)
+        if (data.ValueKind == JsonValueKind.Object
+            && data.TryGetProperty("profile_id", out var profileElement)
             && profileElement.ValueKind == JsonValueKind.String
             && !string.IsNullOrWhiteSpace(profileElement.GetString())
             && !string.IsNullOrWhiteSpace(_authService.SelectedProfileId)
@@ -3014,7 +3015,7 @@ public sealed partial class LibraryPage : Page,
             ApplyRefreshedRecommendedHero(heroLayout, heroResult.Section, heroResult.Failed, libraryId);
 
             var incomingRows = new List<HomeSectionWithItems>();
-            foreach (var result in results.Where(result => !result.Layout.Featured))
+            foreach (var result in results.Where(result => !ReferenceEquals(result.Layout, heroLayout)))
             {
                 if (result.Section != null)
                 {

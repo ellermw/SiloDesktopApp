@@ -342,7 +342,7 @@ public sealed partial class EbookReaderPage : Page
         PreviousButton.IsEnabled = true;
         NextButton.IsEnabled = true;
         var path = string.Join('/', chapter.RelativePath.Split('/').Select(Uri.EscapeDataString));
-        ReaderWebView.Source = new Uri($"https://silo-reader.local/{path}");
+        ReaderWebView.Source = new Uri($"https://{EbookReaderWebPolicy.ReaderHost}/{path}");
         UpdateProgressControls();
     }
 
