@@ -2,6 +2,24 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.1.91 (Home refresh stability release)
+
+- Replaced overlapping Home-page realtime reloads with a classified,
+  debounced refresh path and cooldown.
+- Reconciled existing Home sections and media items in place, avoiding page
+  teardown and preserving stable card presentation while progress, watched
+  state, and newly scanned content update.
+- Refreshed the featured hero when item-only reconciliation changes its source
+  collection, including the snapshot behavior identified by CodeRabbit.
+- Added regression tests for refresh gating, in-place reconciliation, and hero
+  refresh behavior.
+- Corrected the Windows App Runtime installer hook's Pascal formatting so the
+  current Inno Setup compiler accepts the audited packaging change.
+- Verified 829 passing tests, a clean CodeRabbit review, native libmpv loading
+  and hash validation, and a successful x64 installer build.
+- Installer SHA-256:
+  `6723DB1233FC03363F2034ED4ABBD43C20B8FE868C67B4941C9BB561AB535276`.
+
 ## 1.1.90 (current-server parity and playback hardening release)
 
 - Expanded current Silo API contracts for invitations, household onboarding,

@@ -2,7 +2,7 @@
 ; Inno Setup script for Silo Desktop Player
 
 #define MyAppName "Silo Desktop Player"
-#define MyAppVersion "1.1.90"
+#define MyAppVersion "1.1.91"
 #define MyAppPublisher "Silo"
 #define MyAppExeName "SiloPlayer.exe"
 #ifndef PublishSourceDir
@@ -81,8 +81,7 @@ begin
     RaiseException('The Windows App SDK runtime installer could not be started.');
   if ResultCode <> 0 then
     RaiseException(Format(
-      'The Windows App SDK runtime installer failed with code %d. {#MyAppName} cannot start without it.',
-      [ResultCode]));
+      'The Windows App SDK runtime installer failed with code %d. {#MyAppName} cannot start without it.', [ResultCode]));
 end;
 
 [UninstallDelete]

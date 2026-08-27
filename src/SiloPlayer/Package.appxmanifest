@@ -10,7 +10,7 @@
   <Identity
     Name="341d7bfc-3629-4cb4-b847-e890196eccbc"
     Publisher="CN=ellermw Silo Desktop Player Local Testing"
-    Version="1.1.90.0" />
+    Version="1.1.91.0" />
 
   <mp:PhoneIdentity PhoneProductId="341d7bfc-3629-4cb4-b847-e890196eccbc" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 

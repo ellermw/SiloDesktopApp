@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.90**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.90/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.91**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.91/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `79E35357660FFB515F0FAFB60C0D7702A2F497E27B7ED63718562F56BB3ABF65`
+SHA-256: `6723DB1233FC03363F2034ED4ABBD43C20B8FE868C67B4941C9BB561AB535276`
 
 The QA installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 
@@ -54,13 +54,14 @@ Status meanings:
 
 ## Latest release
 
-### 1.1.90
+### 1.1.91
 
-- Expanded current Silo contract coverage for invitations, household onboarding, UI customization, diagnostics, hardware acceleration, playback protocol v3, notifications, settings, and collections.
-- Added invitation claiming, household setup, admin diagnostics and command palette surfaces, account/settings workflows, recipe and feature-tour dialogs, and richer collection and metadata actions.
-- Hardened direct-stream relay, native playback capability negotiation, session recovery, track/subtitle handling, player overlays, chapter thumbnails, and literary-media playback and reading flows.
-- Refreshed shared navigation, search, cards, item details, recommendations, requests, notifications, calendar, and admin pages with additional interaction and source-parity regression coverage.
-- Verified with 787 passing tests, a zero-warning x64 Release build, and a successful self-contained installer build with native libmpv validation.
+- Eliminated Home-page blank flashes caused by overlapping realtime refreshes.
+- Reconciled Home-section items in place so playback progress, watched state, and newly scanned content update without rebuilding the page.
+- Kept the featured hero synchronized when its item collection changes, including the stale-snapshot case identified during CodeRabbit review.
+- Added regression coverage for realtime refresh gating, section reconciliation, and hero refresh behavior.
+- Corrected the audited Windows App Runtime installer hook so the current Inno Setup compiler can package it successfully.
+- Verified with 829 passing tests, CodeRabbit's clean review, native libmpv validation, and a successful x64 installer build.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release history.
 ## Playback goals
