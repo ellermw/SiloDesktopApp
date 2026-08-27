@@ -18,7 +18,10 @@ public static class PlaybackRecoveryPolicy
         if (transportKind != PlaybackTransportKind.DirectProgressive)
             return false;
 
-        return reason is "buffering-stalled" or "position-stalled" or "end-file" or
-            "progress-reporting-failed";
+        // A progress keepalive failure can mean the server already reaped the
+        // session. Reopening that session's URL only repeats the 404; it must
+        // mint a replacement session instead. Local byte-stream stalls and
+        // premature EOF remain safe same-session range reloads.
+        return reason is "buffering-stalled" or "position-stalled" or "end-file";
     }
 }

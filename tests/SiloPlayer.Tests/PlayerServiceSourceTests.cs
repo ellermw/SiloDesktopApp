@@ -439,13 +439,14 @@ public sealed class PlayerServiceSourceTests
         Assert.True(methodEnd > methodStart);
 
         var method = source[methodStart..methodEnd];
-        Assert.Contains("var restorePaused = _mpv.IsPaused && !_mpv.IsBufferingForCache;", method);
+        Assert.Contains("_recoveryPauseIntentOverride", method);
+        Assert.Contains("_mpv.IsPaused && !_mpv.IsBufferingForCache", method);
         Assert.Contains("BeginMpvLoad(prepared, restorePaused);", method);
         Assert.Contains("IsPaused = restorePaused;", method);
     }
 
     [Fact]
-    public void MpvLoadFailureRetriesBeforeCleanlyClosingTheSession()
+    public void MpvLoadFailureRetriesBeforeWaitingForExplicitViewerAction()
     {
         var source = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
@@ -462,7 +463,8 @@ public sealed class PlayerServiceSourceTests
         var method = source[methodStart..methodEnd];
         Assert.Contains("RecoverInterruptedStreamAsync(mediaPosition, \"file-load-error\")", method);
         Assert.Contains("if (attempt == 1)", method);
-        Assert.Contains("await CloseAsync();", method);
+        Assert.Contains("EnterPlaybackTerminalState", method);
+        Assert.DoesNotContain("CloseAsync()", method);
         Assert.DoesNotContain("SetState(PlayerState.Idle)", method);
         Assert.DoesNotContain("_videoWindow?.Hide()", method);
     }
@@ -754,17 +756,15 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
-    public void DirectPlaySurvivesTransientKeepaliveOutagesBeforeReplacingItsSession()
+    public void KeepaliveFailureMintsAReplacementInsteadOfReopeningAReapedSession()
     {
         var root = FindRepositoryRoot();
         var service = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
-        var manager = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Services", "PlaybackManager.cs"));
         var policy = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Services", "PlaybackRecoveryPolicy.cs"));
 
-        Assert.Contains("\"progress-reporting-failed\"", policy, StringComparison.Ordinal);
-        Assert.Contains("public void ResumeProgressReporting()", manager, StringComparison.Ordinal);
-        Assert.Contains("manager.ResumeProgressReporting();", service, StringComparison.Ordinal);
-        Assert.Contains("PreparePlaybackTransportAsync(", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("\"progress-reporting-failed\"", policy, StringComparison.Ordinal);
+        Assert.Contains("!string.Equals(reason, \"progress-reporting-failed\"", service, StringComparison.Ordinal);
+        Assert.Contains("manager.StartReplacementSessionAsync", service, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1190,6 +1190,58 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("!fromStart && watchDetail.UserData?.PositionSeconds > 0", method, StringComparison.Ordinal);
         Assert.DoesNotContain("Played != true", method, StringComparison.Ordinal);
         Assert.Contains("any nonzero position is an active resume point", method, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExhaustedRecoveryStaysInThePlayerUntilTheViewerExplicitlyExits()
+    {
+        var root = FindRepositoryRoot();
+        var service = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var osc = File.ReadAllText(Path.Combine(root, "libs", "mpv", "scripts", "silo-osc.lua"));
+
+        var recoveryStart = service.IndexOf("private async Task RecoverInterruptedStreamAsync", StringComparison.Ordinal);
+        var recoveryEnd = service.IndexOf("private double _resumePosition", recoveryStart, StringComparison.Ordinal);
+        Assert.True(recoveryStart >= 0 && recoveryEnd > recoveryStart);
+        var recovery = service[recoveryStart..recoveryEnd];
+
+        Assert.Contains("EnterPlaybackTerminalState", recovery, StringComparison.Ordinal);
+        Assert.DoesNotContain("_ = CloseAsync()", recovery, StringComparison.Ordinal);
+        Assert.Contains("osc-show-playback-failure", service, StringComparison.Ordinal);
+        Assert.Contains("osc-clear-playback-failure", service, StringComparison.Ordinal);
+        Assert.Contains("case \"silo-playback-retry\"", service, StringComparison.Ordinal);
+        Assert.Contains("silo-playback-retry", osc, StringComparison.Ordinal);
+        Assert.Contains("osc-show-playback-failure", osc, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RealtimePlanInvalidationUsesTheProtocolV3RecoveryPath()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+
+        Assert.Contains("case \"plan_invalidated\"", source, StringComparison.Ordinal);
+        Assert.Contains("PlaybackPlanInvalidation.TryCreate", source, StringComparison.Ordinal);
+        Assert.Contains("ReplanInvalidatedPlanAsync", source, StringComparison.Ordinal);
+        Assert.Contains("HandlePlanInvalidationAsync", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EveryLoadedSuccessorRestoresOscAndReconcilesActualFullscreenState()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var handlerStart = source.IndexOf("_mpvFileLoadedHandler = () =>", StringComparison.Ordinal);
+        var handlerEnd = source.IndexOf("_mpv.FileLoaded += _mpvFileLoadedHandler", handlerStart, StringComparison.Ordinal);
+        Assert.True(handlerStart >= 0 && handlerEnd > handlerStart);
+        var handler = source[handlerStart..handlerEnd];
+
+        Assert.Contains("ReconcilePlaybackSurfaceStateAfterLoad", handler, StringComparison.Ordinal);
+        var reconcileStart = source.IndexOf("private void ReconcilePlaybackSurfaceStateAfterLoad", StringComparison.Ordinal);
+        var reconcileEnd = source.IndexOf("private void HandleMpvPlaybackError", reconcileStart, StringComparison.Ordinal);
+        Assert.True(reconcileStart >= 0 && reconcileEnd > reconcileStart);
+        var reconcile = source[reconcileStart..reconcileEnd];
+        Assert.Contains("osc-set-visibility", reconcile, StringComparison.Ordinal);
+        Assert.Contains("SynchronizeFullscreenState", reconcile, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()
