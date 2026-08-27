@@ -6,11 +6,11 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.92**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.92/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.93**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.93/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `9DEE4460C94EBD486A872B5E6D3906ADC072B49AE6456104905A798E4E63C0C6`
+SHA-256: `C305CF9A8065606F895FE7CE35E5CE9898810AA09CDFCB5B2CA1C4172A3B1625`
 
-The QA installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
+The installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 
 ## License / private use
 
@@ -29,9 +29,9 @@ Status meanings:
 |---|---|---|
 | Authentication and profiles | Substantial | Login, refresh tokens, profile selection, PINs, profile management, signup, setup, public server branding, QR/device login, and the complete administrator impersonation lifecycle with restart/stale-session recovery are implemented. Final installed visual comparison remains. |
 | Shared shell and navigation | Substantial | The 260 px desktop sidebar, 64 px detail immersion rail with 150 ms hover expansion, current mobile header/drawer, active-route synchronization, dynamic libraries/pins/apps, profile avatar/fallback behavior, notification/activity chrome, Alt+Left/mouse/controller Back, cached route transitions, and playback-to-shell restoration are implemented. Installed comparison and the Playing Next close regression still require QA confirmation. |
-| Catalog and library browsing | Substantial | Virtualized browsing, filters, sorting, search, collections, favorites, watchlist, history, calendar, recommendations, and requests are implemented. Exact layout details and literary-media browsing still need work. |
-| Home screen | Substantial | Server-defined sections, hero content, continue watching, next up, recommendations, customization, incremental refresh, current card variants, and audiobook rows are implemented. Installed-build visual comparison and remaining responsive edge cases are still required. |
-| Item and person details | Substantial | Movie, series, season, episode, cast/crew, versions, watched/favorite/watchlist/rating, trailers, extras, edition selection, current multi-version Media Info spec sheets, automatic split previews, marker workflows, and current More actions are implemented. Installed-build comparison and remaining edge cases are still required. |
+| Catalog and library browsing | Substantial | Virtualized browsing, filters, sorting, focused/cancelable search, collections, favorites, watchlist, history, calendar, recommendations, and requests are implemented. Shared cards now include current action, progress, episode-state, input, and personal-source presentation behavior. Installed comparison and the post-`8164fd59` WebUI drift pass remain. |
+| Home screen | Substantial | Server-defined sections, hero content, continue watching, next up, recommendations, customization, incremental refresh, current card variants, and audiobook rows are implemented. Mounted sections reconcile in place during refresh instead of blanking loaded content. Installed-build visual comparison and remaining responsive edge cases are still required. |
+| Item and person details | Substantial | Movie, series, season, episode, and person surfaces include cast/crew, versions, watched/favorite/watchlist/rating, trailers, extras, edition selection, current multi-version Media Info spec sheets, automatic split previews, marker workflows, prefetched detail navigation, and current More actions. Navigation-aware mutations prevent an earlier item from repainting a reused detail page. Installed comparison and the post-`8164fd59` WebUI drift pass remain. |
 | Audiobooks, ebooks, and manga | Substantial | Current server contracts, grouped browsing, literary detail surfaces, manga volume/chapter reading through the shared reader, next-chapter navigation, read progress, and the WebUI-style audiobook mini/expanded player are present. The reader recognizes the current EPUB/PDF/MOBI/AZW/AZW3/CBZ/CBR/FB2/FBZ contract; remaining format-specific compatibility and final installed visual validation are still required. |
 | User collections | Substantial | Browse, create, edit, manual/smart rules, imports, and collection management exist. Current templates, guided rules, collage/scheduling details, and visual polish remain. |
 | Notifications | Substantial | Notification center and user notification settings are implemented, including current delivery configuration foundations. Additional current-server edge cases remain to be audited. |
@@ -54,14 +54,14 @@ Status meanings:
 
 ## Latest release
 
-### 1.1.92
+### 1.1.93
 
-- Hardened protocol-v3 recovery with bounded, deduplicated route-attempt history and preserved terminal server guidance.
-- Added nonblocking realtime plan invalidation so recovery cannot hold up pause, terminate, subtitle, or other WebSocket commands.
-- Replaced expired sessions after progress-reporting loss and kept unrecoverable playback inside the player with explicit Retry and Exit actions.
-- Restored OSC visibility after autoplay/reloads and reconciled the real fullscreen window state entirely on the UI thread.
-- Added current WebUI playback-error descriptions and expanded regression coverage for recovery, invalidation, retry routing, and fullscreen behavior.
-- Verified against official Silo Server `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca` with 863 passing tests, a zero-issue CodeRabbit re-audit, native libmpv validation, and a successful x64 installer build.
+- Reworked Home and library recommendation refreshes to reconcile mounted sections and cards without blank-page rebuilds.
+- Kept Search focused and responsive while canceling obsolete work and rejecting stale query results.
+- Aligned shared poster, landscape, and virtual-library cards with the audited WebUI action, progress, badge, episode-state, and input behavior.
+- Expanded movie, series, season, episode, person, audiobook, ebook, and manga detail behavior, including prefetched navigation and navigation-safe asynchronous mutations.
+- Routed additional artwork and server branding through bounded byte/disk caching, and tightened ebook and external-URL trust boundaries.
+- Verified the audited `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca` milestone with 964 passing tests and CodeRabbit's zero-issue re-audit. Official Silo `main` advanced to `b29aaf94cc4d05083230a59388a35e9ee8cbd49e` during release packaging and remains the next parity-drift reference.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release history.
 ## Playback goals

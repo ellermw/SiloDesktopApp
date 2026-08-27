@@ -4,7 +4,8 @@
 
 - Official repository: `https://github.com/Silo-Server/silo-server`
 - WebUI commit: `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca`
-- Final reference fetch: official GitHub `origin/main` was fetched again on 2026-08-27 and remained exactly `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca`.
+- Audit reference fetch: official GitHub `origin/main` was fetched during the audited milestone and remained exactly `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca`.
+- Release packaging fetch: official GitHub `origin/main` had advanced to `b29aaf94cc4d05083230a59388a35e9ee8cbd49e` on 2026-08-27. The intervening WebUI changes were not part of PR #5's CodeRabbit audit and remain a subsequent parity-drift pass; this document does not relabel the audited baseline.
 - Desktop baseline: `8940c11ebba42439e18e0fb8df8a978651d5159c` (`v1.1.92`)
 - Audit branch: `codex/user-facing-browse-detail-parity`
 - Profile requirement: compare with the same admin profile, server theme, libraries, and personalization on both clients
@@ -86,7 +87,7 @@ No row in this document is complete at milestone start. Source coverage alone is
 - `dotnet build src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -nologo` completed with zero warnings and zero errors.
 - `dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release --no-restore -nologo` passed 964/964 tests.
 - The established multi-file `installer/build.ps1` pipeline completed its x64 publish, libmpv verification, and Inno Setup build.
-- QA installer: `D:\SiloPlayer\installer\output\SiloInstaller-1.1.92-Setup.exe` (SHA256 `50398E2229B8DCE15A0DBE04AD03BE4795194AE45019C2290923DEE10AB95C06`, 160.7 MB). Earlier hashes are stale evidence from pre-fix binaries.
+- Release installer: `D:\SiloPlayer\installer\output\SiloInstaller-1.1.93-Setup.exe` (SHA256 `C305CF9A8065606F895FE7CE35E5CE9898810AA09CDFCB5B2CA1C4172A3B1625`, 160.7 MB). Earlier QA hashes are stale evidence from pre-release binaries.
 - Installation and installed-app runtime comparison were not performed during the CodeRabbit remediation pass and remain user-QA evidence, not an automated claim.
 
 ## Open evidence requirements

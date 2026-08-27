@@ -2,7 +2,7 @@
 ; Inno Setup script for Silo Desktop Player
 
 #define MyAppName "Silo Desktop Player"
-#define MyAppVersion "1.1.92"
+#define MyAppVersion "1.1.93"
 #define MyAppPublisher "Silo"
 #define MyAppExeName "SiloPlayer.exe"
 #ifndef PublishSourceDir

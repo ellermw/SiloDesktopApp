@@ -2,6 +2,33 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.1.93 (user-facing browse and detail milestone)
+
+- Reconciled mounted Home and library recommendation sections in place so
+  background refreshes retain usable content instead of rebuilding the page.
+- Kept Search input focused, canceled superseded work, rejected stale-query
+  results, and separated optional discovery work from the first media results.
+- Aligned shared poster, landscape, and virtual-library cards with the audited
+  WebUI action set, progress geometry, episode state, touch/long-press policy,
+  and personal-source presentation.
+- Added bounded detail prefetching and expanded movie, series, season, episode,
+  person, audiobook, ebook, and manga behavior, including navigation-safe
+  watched-state and translation updates.
+- Routed additional artwork and light/dark server branding through the byte and
+  disk cache rather than retaining expiring presigned URLs.
+- Hardened ebook reader origins, external browser URLs, server URL identity,
+  and isolated QA-instance naming without changing production single-instance
+  behavior.
+- Audited the milestone against official Silo Server commit
+  `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca`. Official `main` advanced to
+  `b29aaf94cc4d05083230a59388a35e9ee8cbd49e` during release packaging; those
+  later WebUI changes remain part of the next parity-drift pass.
+- Verified 964 passing tests, a zero-warning x64 Release build, native libmpv
+  loading and hash validation, a successful installer build, and CodeRabbit's
+  zero-issue re-audit of PR #5.
+- Installer SHA-256:
+  `C305CF9A8065606F895FE7CE35E5CE9898810AA09CDFCB5B2CA1C4172A3B1625`.
+
 ## 1.1.92 (player reliability and session lifecycle release)
 
 - Matched the current WebUI protocol-v3 recovery chain with bounded,
