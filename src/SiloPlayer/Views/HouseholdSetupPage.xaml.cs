@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Converters;
 using SiloPlayer.Helpers;
 using SiloPlayer.Views.Dialogs;
 
@@ -13,6 +14,7 @@ namespace SiloPlayer.Views;
 
 public sealed partial class HouseholdSetupPage : Page
 {
+    private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
     private readonly AuthApi _authApi;
     private readonly AuthService _authService;
     private readonly SettingsApi _settingsApi;
@@ -76,7 +78,11 @@ public sealed partial class HouseholdSetupPage : Page
                 var background = _apiClient.ResolveServerUrl(branding.LoginBackgroundUrl);
                 if (!string.IsNullOrWhiteSpace(background))
                 {
-                    LoginBackgroundImage.Source = new BitmapImage(new Uri(background));
+                    LoginBackgroundImage.Source = (ImageSource)RemoteImageConverter.Convert(
+                        background,
+                        typeof(ImageSource),
+                        null!,
+                        string.Empty);
                     LoginBackgroundImage.Visibility = Visibility.Visible;
                     BackgroundScrim.Visibility = Visibility.Visible;
                 }

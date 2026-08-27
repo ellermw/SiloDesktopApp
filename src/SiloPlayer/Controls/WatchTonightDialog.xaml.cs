@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Shapes;
 using Windows.UI;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Converters;
 using SiloPlayer.Helpers;
 using SiloPlayer.Views;
 
@@ -30,6 +31,7 @@ namespace SiloPlayer.Controls;
 public sealed partial class WatchTonightDialog : ContentDialog
 {
     private readonly RecommendationsApi _api;
+    private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
 
     // ─── State ──────────────────────────────────────────────────────────
     private enum Step { ModeSelect, GenrePicker, SwipeDeck }
@@ -442,11 +444,18 @@ public sealed partial class WatchTonightDialog : ContentDialog
         {
             try
             {
-                grid.Children.Add(new Image
+                if (RemoteImageConverter.Convert(
+                        imgUrl,
+                        typeof(ImageSource),
+                        null!,
+                        string.Empty) is ImageSource backdropSource)
                 {
-                    Source = new BitmapImage(new Uri(imgUrl)),
-                    Stretch = Stretch.UniformToFill,
-                });
+                    grid.Children.Add(new Image
+                    {
+                        Source = backdropSource,
+                        Stretch = Stretch.UniformToFill,
+                    });
+                }
             }
             catch { /* placeholder below */ }
         }
@@ -564,15 +573,26 @@ public sealed partial class WatchTonightDialog : ContentDialog
         {
             try
             {
-                bottomInfo.Children.Add(new Image
+                if (RemoteImageConverter.Convert(
+                        card.LogoUrl,
+                        typeof(ImageSource),
+                        null!,
+                        string.Empty) is ImageSource logoSource)
                 {
-                    Source = new BitmapImage(new Uri(card.LogoUrl)),
-                    Height = 40,
-                    MaxWidth = 240,
-                    HorizontalAlignment = HorizontalAlignment.Left,
-                    Stretch = Stretch.Uniform,
-                    Margin = new Thickness(0, 0, 0, 4),
-                });
+                    bottomInfo.Children.Add(new Image
+                    {
+                        Source = logoSource,
+                        Height = 40,
+                        MaxWidth = 240,
+                        HorizontalAlignment = HorizontalAlignment.Left,
+                        Stretch = Stretch.Uniform,
+                        Margin = new Thickness(0, 0, 0, 4),
+                    });
+                }
+                else
+                {
+                    bottomInfo.Children.Add(BuildTitleText(heading));
+                }
             }
             catch
             {

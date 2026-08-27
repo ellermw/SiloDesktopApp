@@ -1,9 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Shapes;
 using SiloPlayer.Core.Models.Playback;
+using SiloPlayer.Converters;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
@@ -19,6 +19,7 @@ namespace SiloPlayer.Views;
 /// </summary>
 public sealed partial class WatchTogetherRoomPage : Page
 {
+    private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
     public WatchTogetherRoomViewModel ViewModel { get; }
     private bool _subscribed;
     private string? _nowPlayingContentId;
@@ -667,7 +668,7 @@ public sealed partial class WatchTogetherRoomPage : Page
 
     private static void SetImageSource(Image target, string? url)
     {
-        target.Source = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? new BitmapImage(uri) : null;
+        target.Source = RemoteImageConverter.Convert(url ?? "", typeof(ImageSource), null!, "") as ImageSource;
     }
 
     private void Page_SizeChanged(object sender, SizeChangedEventArgs e)

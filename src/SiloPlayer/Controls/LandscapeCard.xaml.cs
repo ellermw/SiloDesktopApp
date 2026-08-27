@@ -16,6 +16,7 @@ public sealed partial class LandscapeCard : UserControl
     private CancellationTokenSource? _playbackPrefetchCts;
     private bool _isPointerOver;
     private bool _isKeyboardFocusWithin;
+    private bool _quickActionPending;
     public static readonly DependencyProperty MediaItemProperty =
         DependencyProperty.Register(
             nameof(MediaItem),
@@ -84,13 +85,8 @@ public sealed partial class LandscapeCard : UserControl
             ? new Thickness(0, 0, 10, 10)
             : new Thickness(0, 0, 12, 12);
 
-        var item = MediaItem;
-        if (item?.PositionSeconds is double position &&
-            item.DurationSeconds is double duration && duration > 0 &&
-            item.ItemSource != "next_up")
-        {
-            ProgressFill.Width = _cardWidth * Math.Clamp(position / duration, 0, 1);
-        }
+        if (MediaItem is { } item)
+            UpdateProgressState(item);
     }
 
     private static void OnMediaItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -132,6 +128,7 @@ public sealed partial class LandscapeCard : UserControl
             surface,
             showCollectionActions: item.ItemSource != "episode_carousel",
             stateChanged: () => RefreshMenuState(item));
+        UpdateQuickWatchedState(item);
 
         // Show dismiss X button for CW/NU cards — enables quick-dismiss
         // from the home screen without opening a context menu.
@@ -154,7 +151,7 @@ public sealed partial class LandscapeCard : UserControl
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         CurrentItemBorder.Visibility = CurrentItemBadge.Visibility;
-        EpisodeWatchedBadge.Visibility = isEpisodeCarousel && item.UserState?.Played == true
+        EpisodeWatchedInline.Visibility = isEpisodeCarousel && item.UserState?.Played == true
             ? Visibility.Visible
             : Visibility.Collapsed;
 
@@ -222,19 +219,7 @@ public sealed partial class LandscapeCard : UserControl
             TimeLeftText.Visibility = Visibility.Collapsed;
         }
 
-        // Progress bar (Next Up never renders resume progress).
-        if (!isNextUp && item.PositionSeconds.HasValue && item.DurationSeconds.HasValue && item.DurationSeconds.Value > 0)
-        {
-            double progress = item.PositionSeconds.Value / item.DurationSeconds.Value;
-            progress = Math.Clamp(progress, 0, 1);
-
-            ProgressContainer.Visibility = Visibility.Visible;
-            ProgressFill.Width = _cardWidth * progress;
-        }
-        else
-        {
-            ProgressContainer.Visibility = Visibility.Collapsed;
-        }
+        UpdateProgressState(item);
         RemainingBadge.Visibility = Visibility.Collapsed;
 
         SubtitleButton.Visibility = SubtitleText.Visibility;
@@ -300,9 +285,37 @@ public sealed partial class LandscapeCard : UserControl
             surface,
             showCollectionActions: item.ItemSource != "episode_carousel",
             stateChanged: () => RefreshMenuState(item));
-        EpisodeWatchedBadge.Visibility = item.ItemSource == "episode_carousel" && item.UserState?.Played == true
+        UpdateQuickWatchedState(item);
+        EpisodeWatchedInline.Visibility = item.ItemSource == "episode_carousel" && item.UserState?.Played == true
             ? Visibility.Visible
             : Visibility.Collapsed;
+        UpdateProgressState(item);
+    }
+
+    private void UpdateProgressState(MediaItem item)
+    {
+        var hasPartialProgress = item.ItemSource != "next_up"
+            && item.UserState?.Played != true
+            && item.PositionSeconds is > 0
+            && item.DurationSeconds is > 0;
+        if (!hasPartialProgress)
+        {
+            ProgressContainer.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var progress = item.PositionSeconds!.Value / item.DurationSeconds!.Value;
+        var layout = MediaCardProgressGeometry.Calculate(
+            _cardWidth,
+            progress,
+            episodeCard: item.ItemSource == "episode_carousel");
+        ProgressContainer.Margin = new Thickness(
+            layout.HorizontalInset,
+            0,
+            layout.HorizontalInset,
+            layout.BottomInset);
+        ProgressFill.Width = layout.FillWidth;
+        ProgressContainer.Visibility = Visibility.Visible;
     }
 
     private async Task EnsureBadgesLoadedAsync(MediaItem item, CancellationToken ct)
@@ -434,6 +447,8 @@ public sealed partial class LandscapeCard : UserControl
     {
         if (MediaItem == null) return;
         e.Handled = true;
+        App.Services.GetRequiredService<ItemDetailPrefetchCache>()
+            .Prefetch(MediaItem.ContentId);
         var navigationService = App.Services.GetRequiredService<NavigationService>();
         // Always play the actual content_id on the card — the server resolves
         // episode → file; we don't rewrite to series_id here (that would break
@@ -449,6 +464,8 @@ public sealed partial class LandscapeCard : UserControl
             || MediaItem == null)
             return;
 
+        App.Services.GetRequiredService<ItemDetailPrefetchCache>()
+            .Prefetch(MediaItem.ContentId);
         App.Services.GetRequiredService<NavigationService>()
             .Navigate<ItemDetailPage>(MediaItem.ContentId);
         e.Handled = true;
@@ -489,7 +506,9 @@ public sealed partial class LandscapeCard : UserControl
             && !string.IsNullOrWhiteSpace(MediaItem.SeriesTitle)
             && (MediaItem.SeasonNumber.HasValue && MediaItem.EpisodeNumber.HasValue
                 || MediaItem.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase));
-        nav.Navigate<ItemDetailPage>(headingIsSeries ? MediaItem.SeriesId! : MediaItem.ContentId);
+        var contentId = headingIsSeries ? MediaItem.SeriesId! : MediaItem.ContentId;
+        App.Services.GetRequiredService<ItemDetailPrefetchCache>().Prefetch(contentId);
+        nav.Navigate<ItemDetailPage>(contentId);
     }
 
     private void OnMetadataClick(object sender, RoutedEventArgs e)
@@ -501,14 +520,22 @@ public sealed partial class LandscapeCard : UserControl
         if (isMangaChapter)
             nav.Navigate<EbookReaderPage>(new EbookReaderNavigation(MediaItem.ContentId));
         else
+        {
+            App.Services.GetRequiredService<ItemDetailPrefetchCache>()
+                .Prefetch(MediaItem.ContentId);
             nav.Navigate<ItemDetailPage>(MediaItem.ContentId);
+        }
     }
 
     private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
     {
+        QueuePlaybackPrefetch();
+        if (!CardPointerInteractionPolicy.ShouldRevealHoverActions(
+                e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch))
+            return;
+
         _isPointerOver = true;
         AnimateHover(scale: 1.05, dimOpacity: 1.0, playOpacity: 1.0, playScale: 1.0, dismissOpacity: 1.0);
-        QueuePlaybackPrefetch();
     }
 
     private void OnPointerExited(object sender, PointerRoutedEventArgs e)
@@ -524,6 +551,7 @@ public sealed partial class LandscapeCard : UserControl
     private void OnCardGotFocus(object sender, RoutedEventArgs e)
     {
         _isKeyboardFocusWithin = true;
+        QueuePlaybackPrefetch();
         AnimateHover(scale: 1.05, dimOpacity: 1.0, playOpacity: 1.0, playScale: 1.0, dismissOpacity: 1.0);
     }
 
@@ -551,7 +579,7 @@ public sealed partial class LandscapeCard : UserControl
     private async void QueuePlaybackPrefetch()
     {
         var item = MediaItem;
-        if (item == null || item.Type is not ("movie" or "episode" or "audiobook"))
+        if (item == null)
             return;
 
         try { _playbackPrefetchCts?.Cancel(); } catch { }
@@ -566,8 +594,14 @@ public sealed partial class LandscapeCard : UserControl
             // affordance animation has finished.
             await Task.Delay(140, ct);
             if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
+            {
+                App.Services.GetRequiredService<ItemDetailPrefetchCache>()
+                    .Prefetch(item.ContentId);
+                if (item.Type is not ("movie" or "episode" or "audiobook"))
+                    return;
                 App.Services.GetRequiredService<Services.PlayerService>()
                     .PrefetchWatchDetail(item.ContentId);
+            }
         }
         catch (OperationCanceledException) { }
     }
@@ -582,6 +616,40 @@ public sealed partial class LandscapeCard : UserControl
         // Keep the overlay action from bubbling into the backdrop's play tap
         // or the card's detail-navigation tap. PosterCard uses the same guard.
         e.Handled = true;
+    }
+
+    private async void QuickWatchedButton_Click(object sender, RoutedEventArgs e)
+    {
+        var item = MediaItem;
+        if (item == null || _quickActionPending) return;
+
+        _quickActionPending = true;
+        QuickWatchedButton.IsEnabled = false;
+        var operation = MediaItemCardActions.ToggleWatchedAsync(item);
+        UpdateQuickWatchedState(item);
+        await operation;
+        if (ReferenceEquals(MediaItem, item))
+            RefreshMenuState(item);
+        _quickActionPending = false;
+        QuickWatchedButton.IsEnabled = true;
+    }
+
+    private void QuickWatchedButton_Tapped(object sender, TappedRoutedEventArgs e)
+        => e.Handled = true;
+
+    private void UpdateQuickWatchedState(MediaItem item)
+    {
+        var show = item.UserState != null;
+        var isWatched = item.UserState?.Played == true;
+        QuickWatchedButton.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+        QuickWatchedIcon.Glyph = isWatched ? "\uE7B3" : "\uED1A";
+        QuickWatchedIcon.Foreground = isWatched
+            ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80))
+            : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White);
+        var label = MediaItemCardActions.GetWatchedActionLabel(item.Type, isWatched);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(QuickWatchedButton, label);
+        ToolTipService.SetToolTip(QuickWatchedButton, label);
+        QuickWatchedButton.Opacity = _isPointerOver || _isKeyboardFocusWithin ? 1 : 0;
     }
 
     private void UpdateDismissVisibility()
@@ -621,6 +689,8 @@ public sealed partial class LandscapeCard : UserControl
         Add(HoverPlayButtonTransform, "ScaleY", playScale, 200);
         if (DismissButton.Visibility == Visibility.Visible)
             Add(DismissButton, "Opacity", dismissOpacity, 200);
+        if (QuickWatchedButton.Visibility == Visibility.Visible)
+            Add(QuickWatchedButton, "Opacity", dismissOpacity, 200);
 
         storyboard.Begin();
     }

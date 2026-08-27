@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Requests;
+using SiloPlayer.Converters;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 
@@ -14,6 +15,7 @@ namespace SiloPlayer.Views;
 
 public sealed partial class RequestDetailPage : Page
 {
+    private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
     private readonly RequestsApi _api = App.Services.GetRequiredService<RequestsApi>();
     private readonly CancellationTokenSource _lifetime = new();
     private RequestMediaDetail? _item;
@@ -309,7 +311,15 @@ public sealed partial class RequestDetailPage : Page
     private static string Format(string value) => string.IsNullOrWhiteSpace(value) ? "Requested" : char.ToUpperInvariant(value[0]) + value[1..];
     private static string Reason(string value) => value switch { "already_requested" => "Already requested", "already_available" => "Available", "requests_disabled" => "Requests disabled", "quota_exceeded" => "Limit reached", "blocked" => "Blocked", _ => "Unavailable" };
     private static string? Tmdb(string? path, string size) => string.IsNullOrWhiteSpace(path) ? null : $"https://image.tmdb.org/t/p/{size}{path}";
-    private static void SetImage(Image image, string? url) { if (url != null) image.Source = new BitmapImage(new Uri(url)); }
+    private static void SetImage(Image image, string? url)
+    {
+        if (url != null)
+            image.Source = (ImageSource)RemoteImageConverter.Convert(
+                url,
+                typeof(ImageSource),
+                null!,
+                string.Empty);
+    }
     private static Brush Brush(string key) => (Brush)Application.Current.Resources[key];
 
     private void Page_SizeChanged(object sender, SizeChangedEventArgs e)

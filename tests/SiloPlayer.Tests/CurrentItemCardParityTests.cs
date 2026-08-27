@@ -17,7 +17,12 @@ public sealed class CurrentItemCardParityTests
         Assert.DoesNotContain("HoverDim", xaml);
         Assert.DoesNotContain("HoverBorder", xaml);
         Assert.Contains("x:Name=\"MoreButton\"", xaml);
+        Assert.Contains("x:Name=\"QuickWatchedButton\"", xaml);
+        Assert.Contains("x:Name=\"QuickFavoriteButton\"", xaml);
         Assert.Contains("AutomationProperties.Name=\"More actions\"", xaml);
+        Assert.Contains("QuickWatchedButton_Click", code);
+        Assert.Contains("QuickFavoriteButton_Click", code);
+        Assert.Contains("PosterCard_ContextRequested", code);
         Assert.Contains("MoreButton_Click", code);
         Assert.Contains("AutomationProperties.SetName(this, TitleText.Text)", code);
         Assert.Contains("scale: 1.06, translateY: -4.0", code);
@@ -35,6 +40,9 @@ public sealed class CurrentItemCardParityTests
         Assert.Contains("_hoverBrighten.Opacity = 1", code);
         Assert.Contains("SetLeft(_moreButton, cardWidth - 42)", code);
         Assert.Contains("SetTop(_moreButton, posterHeight - 42)", code);
+        Assert.Contains("_quickWatchedButton", code);
+        Assert.Contains("_quickFavoriteButton", code);
+        Assert.Contains("OnContextRequested", code);
     }
 
     [Fact]
@@ -122,29 +130,36 @@ public sealed class CurrentItemCardParityTests
         Assert.Contains("$\"Play {displayTitle}\"", code);
         Assert.Contains("Tapped=\"DismissButton_Tapped\"", xaml);
         Assert.Contains("private void DismissButton_Tapped", code);
+        Assert.Contains("x:Name=\"QuickWatchedButton\"", xaml);
+        Assert.Contains("QuickWatchedButton_Click", code);
+        Assert.Contains("x:Name=\"EpisodeWatchedInline\"", xaml);
+        Assert.DoesNotContain("x:Name=\"EpisodeWatchedBadge\"", xaml);
+        Assert.Contains("MediaCardProgressGeometry.Calculate", code);
     }
 
     [Fact]
-    public void CardActionMenuMatchesCurrentWebModelAndAdminGate()
+    public void CardActionMenuMatchesCurrentWebModelAndPermissionGates()
     {
         var root = FindRepositoryRoot();
         var code = File.ReadAllText(Path.Combine(
             root, "src", "SiloPlayer", "Controls", "MediaItemMenu.cs"));
 
         Assert.Contains("AuthorizationPolicy.IsActingAdmin(authService)", code);
+        Assert.Contains("AuthorizationPolicy.CanCurateMetadata(authService)", code);
         Assert.Contains("item.UserState != null", code);
         Assert.Contains("item.Type is \"movie\" or \"episode\" or \"audiobook\"", code);
         Assert.Contains("PlayAsync(item.ContentId, fromStart: true)", code);
         Assert.Contains("View Play History", code);
         Assert.Contains("ShowRefreshMetadataDialogAsync", code);
+        Assert.Contains("ShowEditMetadataDialogAsync", code);
+        Assert.Contains("ShowMatchItemDialogAsync", code);
+        Assert.Contains("item.Type is \"movie\" or \"series\"", code);
         Assert.Contains("progress_updated_at = item.ProgressUpdatedAt", code);
-        Assert.Contains("var currentlyWatched = item.UserState?.Played == true", code);
-        Assert.Contains("var currentlyFavorite = item.UserState?.IsFavorite == true", code);
+        Assert.Contains("MediaItemCardActions.ToggleWatchedAsync", code);
+        Assert.Contains("MediaItemCardActions.ToggleFavoriteAsync", code);
         Assert.Contains("var currentlyInWatchlist = item.UserState?.InWatchlist == true", code);
         Assert.Contains("if (!item.IsEnabled) return", code);
         Assert.Contains("AutomationProperties.SetName(item, text)", code);
-        Assert.DoesNotContain("AuthorizationPolicy.CanCurateMetadata(authService)", code);
-
         var restart = code.IndexOf("Play from Beginning", StringComparison.Ordinal);
         var watched = code.IndexOf("GetWatchedActionLabel", StringComparison.Ordinal);
         var history = code.IndexOf("View Play History", StringComparison.Ordinal);

@@ -39,6 +39,7 @@ public static class MediaItemMenu
         var toast = App.Services.GetRequiredService<ToastService>();
 
         bool isActingAdmin = AuthorizationPolicy.IsActingAdmin(authService);
+        bool canCurateMetadata = AuthorizationPolicy.CanCurateMetadata(authService);
         bool isWatched = item.UserState?.Played ?? false;
         bool isFavorite = item.UserState?.IsFavorite ?? false;
         bool inWatchlist = item.UserState?.InWatchlist ?? false;
@@ -67,33 +68,16 @@ public static class MediaItemMenu
         {
             MenuFlyoutItem watchedAction = null!;
             watchedAction = BuildItem(
-                GetWatchedActionLabel(item.Type, isWatched),
+                MediaItemCardActions.GetWatchedActionLabel(item.Type, isWatched),
                 isWatched ? "\uE711" : "\uE73E",
                 async () =>
                 {
                     try
                     {
-                        var currentlyWatched = item.UserState?.Played == true;
-                        if (currentlyWatched)
-                        {
-                            await catalog.MarkUnwatchedAsync(item.ContentId);
-                            MediaItemStateUpdater.SetWatched(item, false);
-                            stateChanged?.Invoke();
-                            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
-                                MediaSurfaceChangeKind.WatchedCleared, item.ContentId, item.SeriesId));
-                            toast.Success(GetWatchedToastMessage(item.Type, false));
-                        }
-                        else
-                        {
-                            await catalog.MarkWatchedAsync(item.ContentId);
-                            MediaItemStateUpdater.SetWatched(item, true);
-                            stateChanged?.Invoke();
-                            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
-                                MediaSurfaceChangeKind.WatchedMarked, item.ContentId, item.SeriesId));
-                            toast.Success(GetWatchedToastMessage(item.Type, true));
-                        }
+                        await MediaItemCardActions.ToggleWatchedAsync(item);
+                        stateChanged?.Invoke();
                         var nowWatched = item.UserState?.Played == true;
-                        watchedAction.Text = GetWatchedActionLabel(item.Type, nowWatched);
+                        watchedAction.Text = MediaItemCardActions.GetWatchedActionLabel(item.Type, nowWatched);
                         watchedAction.Icon = new FontIcon { Glyph = nowWatched ? "\uE711" : "\uE73E" };
                         AutomationProperties.SetName(watchedAction, watchedAction.Text);
                     }
@@ -109,28 +93,11 @@ public static class MediaItemMenu
                     "\uEB52",
                     async () =>
                     {
-                        try
-                        {
-                            var currentlyFavorite = item.UserState?.IsFavorite == true;
-                            if (currentlyFavorite)
-                            {
-                                await catalog.RemoveFavoriteAsync(item.ContentId);
-                                MediaItemStateUpdater.SetFavorite(item, false);
-                                stateChanged?.Invoke();
-                                WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
-                                    MediaSurfaceChangeKind.FavoriteRemoved, item.ContentId, item.SeriesId));
-                                toast.Success("Removed from favorites");
-                            }
-                            else
-                            {
-                                await catalog.AddFavoriteAsync(item.ContentId);
-                                MediaItemStateUpdater.SetFavorite(item, true);
-                                stateChanged?.Invoke();
-                                WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
-                                    MediaSurfaceChangeKind.FavoriteAdded, item.ContentId, item.SeriesId));
-                                toast.Success("Added to favorites");
-                            }
-                            favoriteAction.Text = item.UserState?.IsFavorite == true
+                    try
+                    {
+                        await MediaItemCardActions.ToggleFavoriteAsync(item);
+                        stateChanged?.Invoke();
+                        favoriteAction.Text = item.UserState?.IsFavorite == true
                                 ? "Remove from Favorites"
                                 : "Add to Favorites";
                             AutomationProperties.SetName(favoriteAction, favoriteAction.Text);
@@ -189,22 +156,36 @@ public static class MediaItemMenu
             }));
         }
 
-        if (isActingAdmin && adminApi != null)
+        if ((isActingAdmin || canCurateMetadata) && adminApi != null)
         {
             if (flyout.Items.Count > 0)
                 flyout.Items.Add(new MenuFlyoutSeparator());
 
-            flyout.Items.Add(BuildItem("View Play History", "\uE81C", () =>
+            if (isActingAdmin)
             {
-                App.MainWindowInstance?.RestoreMainPane();
-                App.Services.GetRequiredService<NavigationService>()
-                    .Navigate<Views.Admin.AdminShellPage>(new Views.Admin.AdminShellNavigation(
-                        typeof(Views.Admin.AdminPlaybackHistoryPage),
-                        new Views.Admin.AdminPlaybackHistoryFilter(MediaItemId: item.ContentId)));
-            }));
+                flyout.Items.Add(BuildItem("View Play History", "\uE81C", () =>
+                {
+                    App.MainWindowInstance?.RestoreMainPane();
+                    App.Services.GetRequiredService<NavigationService>()
+                        .Navigate<Views.Admin.AdminShellPage>(new Views.Admin.AdminShellNavigation(
+                            typeof(Views.Admin.AdminPlaybackHistoryPage),
+                            new Views.Admin.AdminPlaybackHistoryFilter(MediaItemId: item.ContentId)));
+                }));
+            }
 
-            flyout.Items.Add(BuildItem("Refresh Metadata", "\uE72C", async () =>
-                await ShowRefreshMetadataDialogAsync(item, adminApi, toast)));
+            if (canCurateMetadata)
+            {
+                flyout.Items.Add(BuildItem("Refresh Metadata", "\uE72C", async () =>
+                    await ShowRefreshMetadataDialogAsync(item, adminApi, toast)));
+
+                if (item.Type is "movie" or "series")
+                {
+                    flyout.Items.Add(BuildItem("Edit Metadata", "\uE70F", async () =>
+                        await ShowEditMetadataDialogAsync(item, catalog, toast, stateChanged)));
+                    flyout.Items.Add(BuildItem("Match Item", "\uE721", async () =>
+                        await ShowMatchItemDialogAsync(item, catalog, toast, stateChanged)));
+                }
+            }
         }
 
         var canDismiss = surface == Surface.ContinueWatching
@@ -243,22 +224,6 @@ public static class MediaItemMenu
         return flyout;
     }
 
-    private static string GetWatchedActionLabel(string type, bool played) => type switch
-    {
-        "series" => played ? "Mark Series Unwatched" : "Mark Series Watched",
-        "season" => played ? "Mark Season Unwatched" : "Mark Season Watched",
-        "audiobook" => played ? "Mark Unlistened" : "Mark Listened",
-        "ebook" or "manga" => played ? "Mark Unread" : "Mark Read",
-        _ => played ? "Mark Unwatched" : "Mark Watched",
-    };
-
-    private static string GetWatchedToastMessage(string type, bool played) => type switch
-    {
-        "audiobook" => played ? "Marked as listened" : "Marked as unlistened",
-        "ebook" or "manga" => played ? "Marked as read" : "Marked as unread",
-        _ => played ? "Marked as watched" : "Marked as unwatched",
-    };
-
     private static async Task ShowRefreshMetadataDialogAsync(
         MediaItem item,
         AdminApi adminApi,
@@ -278,6 +243,73 @@ public static class MediaItemMenu
             XamlRoot = root,
         };
         await dialog.ShowAsync();
+    }
+
+    private static async Task ShowEditMetadataDialogAsync(
+        MediaItem item,
+        CatalogApi catalog,
+        ToastService toast,
+        Action? stateChanged)
+    {
+        var root = App.MainWindowInstance?.Content.XamlRoot;
+        if (root == null) return;
+
+        try
+        {
+            var detail = await catalog.GetItemDetailAsync(item.ContentId);
+            var dialog = new EditMetadataDialog(detail) { XamlRoot = root };
+            await dialog.ShowAsync();
+            if (!dialog.HasAppliedChanges) return;
+
+            stateChanged?.Invoke();
+            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
+                MediaSurfaceChangeKind.ItemMetadataRefreshed,
+                item.ContentId,
+                item.SeriesId));
+        }
+        catch (Exception ex)
+        {
+            toast.Error(ex.Message);
+        }
+    }
+
+    private static async Task ShowMatchItemDialogAsync(
+        MediaItem item,
+        CatalogApi catalog,
+        ToastService toast,
+        Action? stateChanged)
+    {
+        var root = App.MainWindowInstance?.Content.XamlRoot;
+        if (root == null) return;
+
+        try
+        {
+            var detail = await catalog.GetItemDetailAsync(item.ContentId);
+            var dialog = new MatchItemDialog(
+                detail.ContentId,
+                detail.Title,
+                detail.Year > 0 ? detail.Year : null,
+                detail.Type,
+                libraryId: null,
+                versions: detail.Versions,
+                folderPaths: detail.FolderPaths)
+            {
+                XamlRoot = root,
+            };
+            await dialog.ShowAsync();
+            if (dialog.HasAppliedMatch)
+            {
+                stateChanged?.Invoke();
+                WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
+                    MediaSurfaceChangeKind.ItemMetadataRefreshed,
+                    item.ContentId,
+                    item.SeriesId));
+            }
+        }
+        catch (Exception ex)
+        {
+            toast.Error(ex.Message);
+        }
     }
 
     private static MenuFlyoutItem BuildItem(string text, string glyph, Action onClick)

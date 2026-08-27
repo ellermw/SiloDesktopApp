@@ -41,6 +41,7 @@ public sealed partial class MainWindow : Window
     private readonly PlayerService _playerService;
     private readonly ThemeService _themeService;
     private readonly UICustomizationService _uiCustomizationService;
+    private readonly AsyncLoadVersionGate _brandingLoadGate = new();
     private bool _notificationsAvailable = true;
     private int _notificationUnreadCount;
     private bool _isNarrowShell;
@@ -2445,12 +2446,17 @@ public sealed partial class MainWindow : Window
         if (!IsCurrentShellHydration(shellKey, cancellationToken))
             return;
         TryShellAction("theme_switcher_refresh", BuildThemeDots);
+        await LoadShellBrandingAsync(shellKey, cancellationToken);
     }
 
     private void ResetShellBranding()
     {
+        _brandingLoadGate.Cancel();
+        var isLightAppearance = ThemeService.IsLightAppearance(_themeService.CurrentTheme);
         var defaultWordmark = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(
-            new Uri("ms-appx:///Assets/silo-wordmark-sidebar.png"));
+            new Uri(isLightAppearance
+                ? "ms-appx:///Assets/silo-wordmark-sidebar-light.png"
+                : "ms-appx:///Assets/silo-wordmark-sidebar.png"));
         var defaultMark = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(
             new Uri("ms-appx:///Assets/silo-mark-transparent.png"));
         SiloWordmarkImage.Source = defaultWordmark;
@@ -2463,11 +2469,15 @@ public sealed partial class MainWindow : Window
         string shellKey,
         CancellationToken cancellationToken)
     {
+        var brandingLoadVersion = _brandingLoadGate.BeginNextLoad();
         var branding = await _settingsApi.GetServerBrandingAsync(cancellationToken);
-        if (!IsCurrentShellHydration(shellKey, cancellationToken)) return;
+        if (!IsCurrentShellHydration(shellKey, cancellationToken)
+            || !_brandingLoadGate.IsCurrent(brandingLoadVersion)) return;
 
-        var wordmarkUrl = _apiClient.ResolveServerUrl(branding.WordmarkUrl);
-        var markUrl = _apiClient.ResolveServerUrl(branding.MarkUrl);
+        var isLightAppearance = ThemeService.IsLightAppearance(_themeService.CurrentTheme);
+        var assetChoice = BrandingAssetSelector.Select(branding, isLightAppearance);
+        var wordmarkUrl = _apiClient.ResolveServerUrl(assetChoice.WordmarkUrl);
+        var markUrl = _apiClient.ResolveServerUrl(assetChoice.MarkUrl);
         var imageService = App.Services.GetRequiredService<ImageService>();
         var httpClient = App.Services.GetRequiredService<HttpClient>();
         var wordmarkPathTask = Uri.TryCreate(wordmarkUrl, UriKind.Absolute, out _)
@@ -2477,13 +2487,21 @@ public sealed partial class MainWindow : Window
             ? imageService.GetImageDiskPathAsync(shellKey, "server-mark", markUrl!, httpClient, cancellationToken)
             : Task.FromResult<string?>(null);
         await Task.WhenAll(wordmarkPathTask, markPathTask);
-        if (!IsCurrentShellHydration(shellKey, cancellationToken)) return;
+        if (!IsCurrentShellHydration(shellKey, cancellationToken)
+            || !_brandingLoadGate.IsCurrent(brandingLoadVersion)) return;
         var wordmarkPath = await wordmarkPathTask;
         var markPath = await markPathTask;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!IsCurrentShellHydration(shellKey, cancellationToken)) return;
+            if (!IsCurrentShellHydration(shellKey, cancellationToken)
+                || !_brandingLoadGate.IsCurrent(brandingLoadVersion)) return;
 
+            var defaultWordmark = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(
+                new Uri(isLightAppearance
+                    ? "ms-appx:///Assets/silo-wordmark-sidebar-light.png"
+                    : "ms-appx:///Assets/silo-wordmark-sidebar.png"));
+            SiloWordmarkImage.Source = defaultWordmark;
+            MobileSiloWordmarkImage.Source = defaultWordmark;
             if (!string.IsNullOrWhiteSpace(wordmarkPath))
             {
                 var source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(wordmarkPath));
@@ -3192,6 +3210,10 @@ public sealed partial class MainWindow : Window
                         "Theme changed locally, but Silo could not save it to this profile.");
                 }
                 BuildThemeDots();
+                var shellKey = _hydratedShellKey;
+                var shellToken = _shellHydrationCts?.Token ?? CancellationToken.None;
+                if (shellKey != null && IsCurrentShellHydration(shellKey, shellToken))
+                    await LoadShellBrandingAsync(shellKey, shellToken);
             };
 
             ThemeDotsPanel.Children.Add(dot);

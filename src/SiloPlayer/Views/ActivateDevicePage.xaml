@@ -13,12 +13,13 @@
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
         <converters:InverseBoolConverter x:Key="InverseBool" />
+        <converters:UrlToImageSourceConverter x:Key="UrlToImage" />
     </Page.Resources>
 
     <!-- Full-page centered auth shell (matches LoginPage layout) -->
     <Grid HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
         <Image
-            Source="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay}"
+            Source="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource UrlToImage}}"
             Stretch="UniformToFill"
             Visibility="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource NullToVis}}"
             IsHitTestVisible="False"

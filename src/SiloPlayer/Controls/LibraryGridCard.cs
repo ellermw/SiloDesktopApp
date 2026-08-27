@@ -23,6 +23,10 @@ public sealed class LibraryGridCard : Canvas
     private readonly TextBlock _episodeTitleText;
     private readonly TextBlock _subtitleText;
     private readonly Button _moreButton;
+    private readonly Button _quickWatchedButton;
+    private readonly Button _quickFavoriteButton;
+    private readonly FontIcon _quickWatchedIcon;
+    private readonly FontIcon _quickFavoriteIcon;
     private readonly StackPanel _overlayTopLeft;
     private readonly StackPanel _overlayTopRight;
     private readonly StackPanel _overlayBottomLeft;
@@ -31,6 +35,9 @@ public sealed class LibraryGridCard : Canvas
     private CancellationTokenSource? _playbackPrefetchCts;
     private int _posterLoadVersion;
     private double _posterHeight;
+    private bool _quickActionPending;
+    private bool _isPointerOver;
+    private CardOverlayGeometry _overlayGeometry;
 
     private static readonly AsyncWorkThrottle s_imageLoadThrottle = new(maxConcurrency: 8);
     private static readonly SemaphoreSlim s_bitmapCreateLock = new(1);
@@ -45,6 +52,7 @@ public sealed class LibraryGridCard : Canvas
         var posterHeight = (double)Application.Current.Resources["PosterCardHeight"];
         var cardHeight = (double)Application.Current.Resources["PosterCardTotalHeight"];
         _posterHeight = posterHeight;
+        _overlayGeometry = CardOverlayGeometry.ForPoster(cardWidth);
 
         Width = cardWidth;
         Height = cardHeight;
@@ -83,14 +91,11 @@ public sealed class LibraryGridCard : Canvas
         posterHost.Children.Add(_posterImage);
         posterHost.Children.Add(_fallbackTitle);
 
-        _overlayTopLeft = CreateOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Top);
-        _overlayTopRight = CreateOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Top);
-        _overlayBottomLeft = CreateOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Bottom);
-        _overlayBottomRight = CreateOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Bottom);
-        _overlayTopLeft.Margin = new Thickness(8);
-        _overlayTopRight.Margin = new Thickness(8);
-        _overlayBottomLeft.Margin = new Thickness(8);
-        _overlayBottomRight.Margin = new Thickness(8, 8, 8, 48);
+        _overlayTopLeft = CreateOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Top, _overlayGeometry);
+        _overlayTopRight = CreateOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Top, _overlayGeometry);
+        _overlayBottomLeft = CreateOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Bottom, _overlayGeometry);
+        _overlayBottomRight = CreateOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Bottom, _overlayGeometry);
+        ApplyOverlayHostGeometry();
         posterHost.Children.Add(_overlayTopLeft);
         posterHost.Children.Add(_overlayTopRight);
         posterHost.Children.Add(_overlayBottomLeft);
@@ -117,6 +122,32 @@ public sealed class LibraryGridCard : Canvas
         SetLeft(_posterBackground, 0);
         SetTop(_posterBackground, 0);
         Children.Add(_posterBackground);
+
+        _quickWatchedIcon = new FontIcon
+        {
+            Glyph = "\uED1A",
+            FontSize = 15,
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
+        };
+        _quickWatchedButton = CreateQuickActionButton(_quickWatchedIcon);
+        SetLeft(_quickWatchedButton, 10);
+        SetTop(_quickWatchedButton, posterHeight - 42);
+        _quickWatchedButton.Tapped += (_, args) => args.Handled = true;
+        _quickWatchedButton.Click += QuickWatchedButton_Click;
+        Children.Add(_quickWatchedButton);
+
+        _quickFavoriteIcon = new FontIcon
+        {
+            Glyph = "\uEB51",
+            FontSize = 15,
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
+        };
+        _quickFavoriteButton = CreateQuickActionButton(_quickFavoriteIcon);
+        SetLeft(_quickFavoriteButton, 48);
+        SetTop(_quickFavoriteButton, posterHeight - 42);
+        _quickFavoriteButton.Tapped += (_, args) => args.Handled = true;
+        _quickFavoriteButton.Click += QuickFavoriteButton_Click;
+        Children.Add(_quickFavoriteButton);
 
         _moreButton = new Button
         {
@@ -188,6 +219,8 @@ public sealed class LibraryGridCard : Canvas
         Tapped += OnTapped;
         PointerEntered += OnPointerEntered;
         PointerExited += OnPointerExited;
+        GotFocus += OnGotFocus;
+        LostFocus += OnLostFocus;
         ContextRequested += OnContextRequested;
     }
 
@@ -222,6 +255,7 @@ public sealed class LibraryGridCard : Canvas
         SetTop(_subtitleText, _posterHeight + (episodeTitle is null ? 34 : 56));
         ApplyCardPresentation();
         UpdateOverlays(item);
+        UpdateQuickActionState(item);
 
         var imageUrl = !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
         if (!string.IsNullOrWhiteSpace(imageUrl))
@@ -239,6 +273,7 @@ public sealed class LibraryGridCard : Canvas
         _subtitleText.Text = MediaItemDisplayText.BuildSubtitle(item, SortKey);
         ApplyCardPresentation();
         UpdateOverlays(item);
+        UpdateQuickActionState(item);
     }
 
     public void ApplyCardPresentation()
@@ -279,6 +314,17 @@ public sealed class LibraryGridCard : Canvas
             (_episodeTitleText.Visibility == Visibility.Visible ? 56 : 34));
         SetLeft(_moreButton, cardWidth - 42);
         SetTop(_moreButton, posterHeight - 42);
+        SetTop(_quickWatchedButton, posterHeight - 42);
+        SetTop(_quickFavoriteButton, posterHeight - 42);
+
+        var geometry = CardOverlayGeometry.ForPoster(cardWidth);
+        if (Math.Abs(geometry.Scale - _overlayGeometry.Scale) >= 0.001)
+        {
+            _overlayGeometry = geometry;
+            ApplyOverlayHostGeometry();
+            if (MediaItem is { } item)
+                UpdateOverlays(item);
+        }
     }
 
     public void BindPlaceholder()
@@ -298,6 +344,7 @@ public sealed class LibraryGridCard : Canvas
         _posterBackground.Background = Brush("CardBackgroundBrush");
         _moreButton.Opacity = 0;
         _moreButton.IsHitTestVisible = false;
+        HideQuickActions();
         ResetHoverVisuals();
         ClearOverlays();
     }
@@ -319,6 +366,7 @@ public sealed class LibraryGridCard : Canvas
         _posterBackground.Background = Brush("CardBackgroundBrush");
         _moreButton.Opacity = 0;
         _moreButton.IsHitTestVisible = false;
+        HideQuickActions();
         ResetHoverVisuals();
         ClearOverlays();
     }
@@ -397,6 +445,8 @@ public sealed class LibraryGridCard : Canvas
         if (MediaItem == null)
             return;
 
+        App.Services.GetRequiredService<ItemDetailPrefetchCache>()
+            .Prefetch(MediaItem.ContentId);
         App.Services.GetRequiredService<NavigationService>()
             .Navigate<ItemDetailPage>(MediaItem.ContentId);
     }
@@ -404,26 +454,53 @@ public sealed class LibraryGridCard : Canvas
     private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
     {
         QueuePlaybackPrefetch();
+        if (!CardPointerInteractionPolicy.ShouldRevealHoverActions(
+                e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch))
+            return;
+
+        _isPointerOver = true;
         _posterHoverTransform.ScaleX = 1.06;
         _posterHoverTransform.ScaleY = 1.06;
         _cardHoverTransform.TranslateY = -4;
         _hoverBrighten.Opacity = 1;
         _moreButton.Opacity = 1;
         _moreButton.IsHitTestVisible = true;
+        RevealQuickActions();
     }
 
     private void OnPointerExited(object sender, PointerRoutedEventArgs e)
     {
+        _isPointerOver = false;
         CancelPlaybackPrefetch();
         ResetHoverVisuals();
         _moreButton.Opacity = 0;
         _moreButton.IsHitTestVisible = false;
+        HideQuickActions(preserveVisibility: true);
+    }
+
+    private void OnGotFocus(object sender, RoutedEventArgs e)
+    {
+        QueuePlaybackPrefetch();
+        _moreButton.Opacity = 1;
+        _moreButton.IsHitTestVisible = true;
+        RevealQuickActions();
+    }
+
+    private void OnLostFocus(object sender, RoutedEventArgs e)
+    {
+        CancelPlaybackPrefetch();
+        if (!_isPointerOver)
+        {
+            _moreButton.Opacity = 0;
+            _moreButton.IsHitTestVisible = false;
+            HideQuickActions(preserveVisibility: true);
+        }
     }
 
     private async void QueuePlaybackPrefetch()
     {
         var item = MediaItem;
-        if (item == null || item.Type is not ("movie" or "episode" or "audiobook"))
+        if (item == null)
             return;
 
         CancelPlaybackPrefetch();
@@ -435,8 +512,14 @@ public sealed class LibraryGridCard : Canvas
             // Only a pointer that settles on a playable card primes playback.
             await Task.Delay(140, ct);
             if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
+            {
+                App.Services.GetRequiredService<ItemDetailPrefetchCache>()
+                    .Prefetch(item.ContentId);
+                if (item.Type is not ("movie" or "episode" or "audiobook"))
+                    return;
                 App.Services.GetRequiredService<PlayerService>()
                     .PrefetchWatchDetail(item.ContentId);
+            }
         }
         catch (OperationCanceledException) { }
     }
@@ -461,22 +544,144 @@ public sealed class LibraryGridCard : Canvas
         if (MediaItem == null)
             return;
 
-        var flyout = MediaItemMenu.Build(MediaItem, MediaItemMenu.Surface.Default);
+        var item = MediaItem;
+        var flyout = MediaItemMenu.Build(
+            item,
+            MediaItemMenu.Surface.Default,
+            stateChanged: RefreshState);
         flyout.ShowAt(_moreButton, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions
         {
             Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.TopEdgeAlignedRight,
         });
     }
 
-    private static StackPanel CreateOverlayHost(HorizontalAlignment horizontal, VerticalAlignment vertical) => new()
+    private async void QuickWatchedButton_Click(object sender, RoutedEventArgs e)
+    {
+        var item = MediaItem;
+        if (item == null || _quickActionPending) return;
+
+        _quickActionPending = true;
+        SetQuickActionsEnabled(false);
+        try
+        {
+            var operation = MediaItemCardActions.ToggleWatchedAsync(item);
+            UpdateQuickActionState(item);
+            await operation;
+            if (ReferenceEquals(MediaItem, item))
+                RefreshState();
+        }
+        finally
+        {
+            _quickActionPending = false;
+            SetQuickActionsEnabled(true);
+        }
+    }
+
+    private async void QuickFavoriteButton_Click(object sender, RoutedEventArgs e)
+    {
+        var item = MediaItem;
+        if (item == null || _quickActionPending) return;
+
+        _quickActionPending = true;
+        SetQuickActionsEnabled(false);
+        try
+        {
+            var operation = MediaItemCardActions.ToggleFavoriteAsync(item);
+            UpdateQuickActionState(item);
+            await operation;
+            if (ReferenceEquals(MediaItem, item))
+                RefreshState();
+        }
+        finally
+        {
+            _quickActionPending = false;
+            SetQuickActionsEnabled(true);
+        }
+    }
+
+    private void UpdateQuickActionState(MediaItem item)
+    {
+        var hasState = item.UserState != null;
+        var showWatched = hasState && item.Type is "movie" or "series";
+        var isWatched = item.UserState?.Played == true;
+        var isFavorite = item.UserState?.IsFavorite == true;
+
+        _quickWatchedButton.Visibility = showWatched ? Visibility.Visible : Visibility.Collapsed;
+        _quickFavoriteButton.Visibility = hasState ? Visibility.Visible : Visibility.Collapsed;
+        _quickWatchedIcon.Glyph = isWatched ? "\uE7B3" : "\uED1A";
+        _quickWatchedIcon.Foreground = isWatched
+            ? new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80))
+            : new SolidColorBrush(Microsoft.UI.Colors.White);
+        _quickFavoriteIcon.Glyph = isFavorite ? "\uEB52" : "\uEB51";
+        _quickFavoriteIcon.Foreground = isFavorite
+            ? new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xF8, 0x71, 0x71))
+            : new SolidColorBrush(Microsoft.UI.Colors.White);
+
+        var watchedLabel = MediaItemCardActions.GetWatchedActionLabel(item.Type, isWatched);
+        var favoriteLabel = isFavorite ? "Remove from favorites" : "Add to favorites";
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_quickWatchedButton, watchedLabel);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(_quickFavoriteButton, favoriteLabel);
+        ToolTipService.SetToolTip(_quickWatchedButton, watchedLabel);
+        ToolTipService.SetToolTip(_quickFavoriteButton, favoriteLabel);
+    }
+
+    private void RevealQuickActions()
+    {
+        if (_quickWatchedButton.Visibility == Visibility.Visible)
+        {
+            _quickWatchedButton.Opacity = 1;
+            _quickWatchedButton.IsHitTestVisible = true;
+        }
+        if (_quickFavoriteButton.Visibility == Visibility.Visible)
+        {
+            _quickFavoriteButton.Opacity = 1;
+            _quickFavoriteButton.IsHitTestVisible = true;
+        }
+    }
+
+    private void HideQuickActions(bool preserveVisibility = false)
+    {
+        _quickWatchedButton.Opacity = 0;
+        _quickWatchedButton.IsHitTestVisible = false;
+        _quickFavoriteButton.Opacity = 0;
+        _quickFavoriteButton.IsHitTestVisible = false;
+        if (!preserveVisibility)
+        {
+            _quickWatchedButton.Visibility = Visibility.Collapsed;
+            _quickFavoriteButton.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void SetQuickActionsEnabled(bool enabled)
+    {
+        _quickWatchedButton.IsEnabled = enabled;
+        _quickFavoriteButton.IsEnabled = enabled;
+    }
+
+    private static StackPanel CreateOverlayHost(
+        HorizontalAlignment horizontal,
+        VerticalAlignment vertical,
+        CardOverlayGeometry geometry) => new()
     {
         Orientation = Orientation.Vertical,
-        Spacing = 4,
+        Spacing = geometry.StackGap,
         HorizontalAlignment = horizontal,
         VerticalAlignment = vertical,
-        Margin = new Thickness(6),
+        Margin = new Thickness(geometry.EdgeInset),
         IsHitTestVisible = false,
     };
+
+    private void ApplyOverlayHostGeometry()
+    {
+        foreach (var host in new[] { _overlayTopLeft, _overlayTopRight, _overlayBottomLeft, _overlayBottomRight })
+            host.Spacing = _overlayGeometry.StackGap;
+
+        var edge = _overlayGeometry.EdgeInset;
+        _overlayTopLeft.Margin = new Thickness(edge);
+        _overlayTopRight.Margin = new Thickness(edge);
+        _overlayBottomLeft.Margin = new Thickness(edge, edge, edge, 40 + edge);
+        _overlayBottomRight.Margin = new Thickness(edge, edge, edge, 40 + edge);
+    }
 
     private void ClearOverlays()
     {
@@ -505,7 +710,8 @@ public sealed class LibraryGridCard : Canvas
                 label,
                 "status",
                 new OverlayItemConfig(true, OverlayPosition.TopLeft),
-                "classic"));
+                "classic",
+                _overlayGeometry.Scale));
             return;
         }
 
@@ -517,7 +723,8 @@ public sealed class LibraryGridCard : Canvas
                     item.ShowStatus,
                     "show_status",
                     new OverlayItemConfig(true, OverlayPosition.TopLeft),
-                    service.Preset));
+                    service.Preset,
+                    _overlayGeometry.Scale));
             }
 
             var counts = new List<string>();
@@ -529,7 +736,8 @@ public sealed class LibraryGridCard : Canvas
                     string.Join(" · ", counts),
                     "manga_counts",
                     new OverlayItemConfig(true, OverlayPosition.TopRight),
-                    service.Preset));
+                    service.Preset,
+                    _overlayGeometry.Scale));
             }
             return;
         }
@@ -561,7 +769,12 @@ public sealed class LibraryGridCard : Canvas
                 OverlayPosition.BottomRight => _overlayBottomRight,
                 _ => _overlayTopLeft,
             };
-            host.Children.Add(PosterCard.BuildBadge(value, def.Id, config, service.Preset));
+            host.Children.Add(PosterCard.BuildBadge(
+                value,
+                def.Id,
+                config,
+                service.Preset,
+                _overlayGeometry.Scale));
             cornerCounts[config.Position] = cornerCounts.GetValueOrDefault(config.Position) + 1;
         }
     }
@@ -582,7 +795,10 @@ public sealed class LibraryGridCard : Canvas
         if (MediaItem == null)
             return;
 
-        var flyout = MediaItemMenu.Build(MediaItem, MediaItemMenu.Surface.Default);
+        var flyout = MediaItemMenu.Build(
+            MediaItem,
+            MediaItemMenu.Surface.Default,
+            stateChanged: RefreshState);
         if (args.TryGetPosition(this, out var pos))
         {
             flyout.ShowAt(this, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions { Position = pos });
@@ -597,4 +813,21 @@ public sealed class LibraryGridCard : Canvas
 
     private static Brush Brush(string key) =>
         (Brush)Application.Current.Resources[key];
+
+    private static Button CreateQuickActionButton(FontIcon icon) => new()
+    {
+        Width = 32,
+        Height = 32,
+        MinWidth = 0,
+        MinHeight = 0,
+        Padding = new Thickness(0),
+        CornerRadius = new CornerRadius(6),
+        Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(170, 0, 0, 0)),
+        BorderBrush = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(48, 255, 255, 255)),
+        BorderThickness = new Thickness(1),
+        Opacity = 0,
+        IsHitTestVisible = false,
+        Visibility = Visibility.Collapsed,
+        Content = icon,
+    };
 }

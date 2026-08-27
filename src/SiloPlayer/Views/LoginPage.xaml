@@ -15,13 +15,14 @@
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
         <converters:NullToVisibilityConverter x:Key="NullToVisInverse" Invert="True" />
         <converters:InverseBoolConverter x:Key="InverseBool" />
+        <converters:UrlToImageSourceConverter x:Key="UrlToImage" />
     </Page.Resources>
 
     <!-- Full-page centered auth shell. The server-controlled login artwork is
          rendered behind the same 70% readability scrim used by the WebUI. -->
     <Grid>
         <Image
-            Source="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay}"
+            Source="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource UrlToImage}}"
             Stretch="UniformToFill"
             Visibility="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource NullToVis}}"
             IsHitTestVisible="False"
@@ -95,7 +96,7 @@
                                             HorizontalAlignment="Center"
                                             Spacing="8">
                                             <Image
-                                                Source="{Binding IconUrl}"
+                                                Source="{Binding IconUrl, Converter={StaticResource UrlToImage}}"
                                                 Width="20"
                                                 Height="20"
                                                 Stretch="Uniform"

@@ -14,6 +14,8 @@ public sealed partial class PosterCard : UserControl
 {
     private readonly UICustomizationService _uiCustomizationService;
     private bool _observingUICustomization;
+    private CardOverlayGeometry _overlayGeometry = CardOverlayGeometry.ForPoster(178);
+
     public void SetCatalogGridLayout(double width)
     {
         var safeWidth = Math.Max(96, width);
@@ -31,12 +33,56 @@ public sealed partial class PosterCard : UserControl
         RootGrid.Height = totalHeight;
         PosterRow.Height = new GridLength(posterHeight);
         FallbackTitle.MaxWidth = Math.Max(72, safeWidth - 32);
+
+        var geometry = CardOverlayGeometry.ForPoster(safeWidth);
+        if (Math.Abs(geometry.Scale - _overlayGeometry.Scale) >= 0.001)
+        {
+            _overlayGeometry = geometry;
+            ApplyOverlayGeometry();
+            if (MediaItem is { } item)
+                UpdateBadges(item);
+        }
+    }
+
+    private void ApplyOverlayGeometry()
+    {
+        foreach (var host in new[] { OverlayTopLeft, OverlayTopRight, OverlayBottomLeft, OverlayBottomRight })
+            host.Spacing = _overlayGeometry.StackGap;
+
+        var edge = _overlayGeometry.EdgeInset;
+        OverlayTopLeft.Margin = new Thickness(edge);
+        OverlayTopRight.Margin = new Thickness(edge);
+        OverlayBottomLeft.Margin = new Thickness(edge, edge, edge, 40 + edge);
+        OverlayBottomRight.Margin = new Thickness(edge, edge, edge, 40 + edge);
+    }
+
+    private void ApplyActionGeometry(MediaItem? item = null)
+    {
+        var viewportWidth = XamlRoot?.Size.Width ?? 1280;
+        var geometry = PosterActionGeometryFactory.Create(
+            (item ?? MediaItem)?.ItemSource,
+            _uiCustomizationService.CardPresentation.PosterSize,
+            viewportWidth);
+
+        QuickActions.Spacing = geometry.Gap;
+        QuickActions.Margin = new Thickness(geometry.EdgeInset);
+        MoreButton.Margin = new Thickness(0, 0, geometry.EdgeInset, geometry.EdgeInset);
+        foreach (var button in new[] { QuickWatchedButton, QuickFavoriteButton, MoreButton })
+        {
+            button.Width = geometry.TriggerSize;
+            button.Height = geometry.TriggerSize;
+        }
+        QuickWatchedIcon.FontSize = geometry.IconSize;
+        QuickFavoriteIcon.FontSize = geometry.IconSize;
+        MoreIcon.FontSize = geometry.IconSize;
     }
 
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _playbackPrefetchCts;
     private MediaItem? _deferredPosterItem;
     private MediaItem? _deferredOverlayItem;
+    private bool _isKeyboardFocusWithin;
+    private bool _quickActionPending;
 
     public static readonly DependencyProperty MediaItemProperty =
         DependencyProperty.Register(
@@ -76,9 +122,13 @@ public sealed partial class PosterCard : UserControl
     private static void OnSelectionStateChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is PosterCard card)
+        {
             card.SelectionBadge.Visibility = card.SelectionMode && card.IsSelected
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+            if (card.MediaItem is { } item)
+                card.UpdateQuickActionState(item);
+        }
     }
 
     /// <summary>
@@ -97,6 +147,9 @@ public sealed partial class PosterCard : UserControl
     {
         this.InitializeComponent();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
+        ApplyOverlayGeometry();
+        ApplyActionGeometry();
+        SizeChanged += (_, _) => ApplyActionGeometry();
         this.Loaded += (_, _) =>
         {
             if (!_observingUICustomization)
@@ -161,12 +214,16 @@ public sealed partial class PosterCard : UserControl
             : Visibility.Collapsed;
         if (Width > 0)
             SetCatalogGridLayout(Width);
+        ApplyActionGeometry();
     }
 
     private void PosterCard_ContextRequested(UIElement sender, Microsoft.UI.Xaml.Input.ContextRequestedEventArgs args)
     {
-        if (MediaItem == null) return;
-        var flyout = MediaItemMenu.Build(MediaItem, MediaItemMenu.Surface.Default);
+        if (MediaItem is not { } item) return;
+        var flyout = MediaItemMenu.Build(
+            item,
+            MediaItemMenu.Surface.Default,
+            stateChanged: () => UpdateQuickActionState(item));
         if (args.TryGetPosition(this, out var pos))
         {
             flyout.ShowAt(this, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions { Position = pos });
@@ -208,7 +265,9 @@ public sealed partial class PosterCard : UserControl
         PosterImage.Source = null;
         PosterImage.Opacity = 0;
         ThumbhashImage.Source = null;
-        MoreButton.Opacity = 0;
+        RevealCardActions(false);
+        QuickWatchedButton.Visibility = Visibility.Collapsed;
+        QuickFavoriteButton.Visibility = Visibility.Collapsed;
         ClearOverlayPanels();
     }
 
@@ -248,6 +307,8 @@ public sealed partial class PosterCard : UserControl
             ? MediaItemDisplayText.FormatUpcomingSchedule(upcomingSchedule)
             : MediaItemDisplayText.BuildSubtitle(item, CurrentSortKey);
         ApplyCardPresentation();
+        ApplyActionGeometry(item);
+        UpdateQuickActionState(item);
 
         PosterImage.Opacity = 0;
 
@@ -396,7 +457,8 @@ public sealed partial class PosterCard : UserControl
                 label,
                 "status",
                 new Services.OverlayItemConfig(true, Services.OverlayPosition.TopLeft),
-                "classic"));
+                "classic",
+                _overlayGeometry.Scale));
             return;
         }
 
@@ -408,7 +470,8 @@ public sealed partial class PosterCard : UserControl
                     item.ShowStatus,
                     "show_status",
                     new Services.OverlayItemConfig(true, Services.OverlayPosition.TopLeft),
-                    service.Preset));
+                    service.Preset,
+                    _overlayGeometry.Scale));
             }
 
             var counts = new List<string>();
@@ -420,7 +483,8 @@ public sealed partial class PosterCard : UserControl
                     string.Join(" \u00b7 ", counts),
                     "manga_counts",
                     new Services.OverlayItemConfig(true, Services.OverlayPosition.TopRight),
-                    service.Preset));
+                    service.Preset,
+                    _overlayGeometry.Scale));
             }
             return;
         }
@@ -442,7 +506,8 @@ public sealed partial class PosterCard : UserControl
                     label,
                     "upcoming_event",
                     new Services.OverlayItemConfig(true, Services.OverlayPosition.TopLeft),
-                    "classic"));
+                    "classic",
+                    _overlayGeometry.Scale));
             }
         }
 
@@ -459,7 +524,7 @@ public sealed partial class PosterCard : UserControl
             if (string.IsNullOrEmpty(value)) continue;
             if (cornerCounts.GetValueOrDefault(config.Position) >= 3) continue;
 
-            var badge = BuildBadge(value, def.Id, config, service.Preset);
+            var badge = BuildBadge(value, def.Id, config, service.Preset, _overlayGeometry.Scale);
             var host = config.Position switch
             {
                 Services.OverlayPosition.TopLeft => OverlayTopLeft,
@@ -485,8 +550,10 @@ public sealed partial class PosterCard : UserControl
         string text,
         string overlayId,
         Services.OverlayItemConfig config,
-        string preset)
+        string preset,
+        double scale = 1)
     {
+        scale = double.IsFinite(scale) && scale > 0 ? scale : 1;
         var accent = ParseOverlayColor(config.AccentColor ?? DefaultOverlayAccent(overlayId));
         var background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardOverlayBackgroundBrush"];
         var borderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardOverlayBorderBrush"];
@@ -545,7 +612,7 @@ public sealed partial class PosterCard : UserControl
         var content = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 4,
+            Spacing = 4 * scale,
             VerticalAlignment = VerticalAlignment.Center,
         };
         var preferIcon = preset is "vibrant" or "pill";
@@ -554,7 +621,7 @@ public sealed partial class PosterCard : UserControl
             content.Children.Add(new FontIcon
             {
                 Glyph = glyph,
-                FontSize = Math.Max(8, fontSize + 1),
+                FontSize = (fontSize + 1) * scale,
                 Foreground = foreground,
                 VerticalAlignment = VerticalAlignment.Center,
             });
@@ -562,7 +629,7 @@ public sealed partial class PosterCard : UserControl
         content.Children.Add(new TextBlock
         {
             Text = text.ToUpperInvariant(),
-            FontSize = fontSize,
+            FontSize = fontSize * scale,
             FontWeight = preset == "vibrant" ? Microsoft.UI.Text.FontWeights.Bold : Microsoft.UI.Text.FontWeights.SemiBold,
             CharacterSpacing = preset is "minimal" or "square" ? 100 : 60,
             Foreground = foreground,
@@ -571,12 +638,20 @@ public sealed partial class PosterCard : UserControl
 
         return new Border
         {
-            Height = height,
+            Height = height * scale,
             Background = background,
             BorderBrush = borderBrush,
-            BorderThickness = borderThickness,
-            CornerRadius = new CornerRadius(radius),
-            Padding = padding,
+            BorderThickness = new Thickness(
+                borderThickness.Left * scale,
+                borderThickness.Top * scale,
+                borderThickness.Right * scale,
+                borderThickness.Bottom * scale),
+            CornerRadius = new CornerRadius(radius * scale),
+            Padding = new Thickness(
+                padding.Left * scale,
+                padding.Top * scale,
+                padding.Right * scale,
+                padding.Bottom * scale),
             VerticalAlignment = VerticalAlignment.Center,
             Child = content,
         };
@@ -703,6 +778,9 @@ public sealed partial class PosterCard : UserControl
             return true;
         }
 
+        App.Services.GetRequiredService<ItemDetailPrefetchCache>()
+            .Prefetch(MediaItem.ContentId);
+
         App.Services.GetRequiredService<NavigationService>()
             .Navigate<ItemDetailPage>(MediaItem.ContentId);
         return true;
@@ -719,6 +797,10 @@ public sealed partial class PosterCard : UserControl
     private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
     {
         QueuePlaybackPrefetch();
+        if (!CardPointerInteractionPolicy.ShouldRevealHoverActions(
+                e.Pointer.PointerDeviceType == Microsoft.UI.Input.PointerDeviceType.Touch))
+            return;
+
         _hoverEnterTimer?.Stop();
         _hoverEnterTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
         _hoverEnterTimer.Tick += (_, _) =>
@@ -728,7 +810,7 @@ public sealed partial class PosterCard : UserControl
             _hoverActive = true;
             PosterBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
                 Application.Current.Resources["SurfaceHoverBrush"];
-            MoreButton.Opacity = 1;
+            RevealCardActions(true);
             AnimateHover(scale: 1.06, translateY: -4.0, brightenOpacity: 1.0);
         };
         _hoverEnterTimer.Start();
@@ -745,15 +827,15 @@ public sealed partial class PosterCard : UserControl
         _hoverActive = false;
         PosterBackground.Background = (Microsoft.UI.Xaml.Media.Brush)
             Application.Current.Resources["CardBackgroundBrush"];
-        MoreButton.Opacity = 0;
+        if (!_isKeyboardFocusWithin)
+            RevealCardActions(false);
         AnimateHover(scale: 1.0, translateY: 0.0, brightenOpacity: 0.0);
     }
 
     private async void QueuePlaybackPrefetch()
     {
         var item = MediaItem;
-        if (item == null || SelectionMode ||
-            item.Type is not ("movie" or "episode" or "audiobook"))
+        if (item == null || SelectionMode)
             return;
 
         CancelPlaybackPrefetch();
@@ -766,8 +848,14 @@ public sealed partial class PosterCard : UserControl
             // the watch-detail request behind the user's decision time.
             await Task.Delay(140, ct);
             if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
+            {
+                App.Services.GetRequiredService<ItemDetailPrefetchCache>()
+                    .Prefetch(item.ContentId);
+                if (item.Type is not ("movie" or "episode" or "audiobook"))
+                    return;
                 App.Services.GetRequiredService<PlayerService>()
                     .PrefetchWatchDetail(item.ContentId);
+            }
         }
         catch (OperationCanceledException) { }
     }
@@ -786,25 +874,145 @@ public sealed partial class PosterCard : UserControl
 
     private void MoreButton_GotFocus(object sender, RoutedEventArgs e)
     {
-        MoreButton.Opacity = 1;
+        RevealCardActions(true);
     }
 
     private void MoreButton_LostFocus(object sender, RoutedEventArgs e)
     {
-        if (!_hoverActive)
-            MoreButton.Opacity = 0;
+        if (!_hoverActive && !_isKeyboardFocusWithin)
+            RevealCardActions(false);
     }
 
     private void MoreButton_Click(object sender, RoutedEventArgs e)
     {
-        if (MediaItem == null)
+        if (MediaItem is not { } item)
             return;
 
-        var flyout = MediaItemMenu.Build(MediaItem, MediaItemMenu.Surface.Default);
+        var flyout = MediaItemMenu.Build(
+            item,
+            MediaItemMenu.Surface.Default,
+            stateChanged: () => UpdateQuickActionState(item));
         flyout.ShowAt(MoreButton, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions
         {
             Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.TopEdgeAlignedRight,
         });
+    }
+
+    private async void QuickWatchedButton_Click(object sender, RoutedEventArgs e)
+    {
+        var item = MediaItem;
+        if (item == null || _quickActionPending) return;
+
+        _quickActionPending = true;
+        SetQuickActionsEnabled(false);
+        try
+        {
+            var operation = MediaItemCardActions.ToggleWatchedAsync(item);
+            UpdateQuickActionState(item);
+            await operation;
+            if (ReferenceEquals(MediaItem, item))
+                UpdateQuickActionState(item);
+        }
+        finally
+        {
+            _quickActionPending = false;
+            SetQuickActionsEnabled(true);
+        }
+    }
+
+    private async void QuickFavoriteButton_Click(object sender, RoutedEventArgs e)
+    {
+        var item = MediaItem;
+        if (item == null || _quickActionPending) return;
+
+        _quickActionPending = true;
+        SetQuickActionsEnabled(false);
+        try
+        {
+            var operation = MediaItemCardActions.ToggleFavoriteAsync(item);
+            UpdateQuickActionState(item);
+            await operation;
+            if (ReferenceEquals(MediaItem, item))
+                UpdateQuickActionState(item);
+        }
+        finally
+        {
+            _quickActionPending = false;
+            SetQuickActionsEnabled(true);
+        }
+    }
+
+    private void QuickAction_Tapped(object sender, TappedRoutedEventArgs e)
+        => e.Handled = true;
+
+    private void UpdateQuickActionState(MediaItem item)
+    {
+        var hasState = item.UserState != null && !SelectionMode;
+        var showWatched = hasState && item.Type is "movie" or "series";
+        var isWatched = item.UserState?.Played == true;
+        var isFavorite = item.UserState?.IsFavorite == true;
+
+        QuickWatchedButton.Visibility = showWatched ? Visibility.Visible : Visibility.Collapsed;
+        QuickFavoriteButton.Visibility = hasState ? Visibility.Visible : Visibility.Collapsed;
+        QuickWatchedIcon.Glyph = isWatched ? "\uE7B3" : "\uED1A";
+        QuickWatchedIcon.Foreground = isWatched
+            ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80))
+            : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White);
+        QuickFavoriteIcon.Glyph = isFavorite ? "\uEB52" : "\uEB51";
+        QuickFavoriteIcon.Foreground = isFavorite
+            ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xF8, 0x71, 0x71))
+            : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White);
+
+        var watchedLabel = MediaItemCardActions.GetWatchedActionLabel(item.Type, isWatched);
+        var favoriteLabel = isFavorite ? "Remove from favorites" : "Add to favorites";
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(QuickWatchedButton, watchedLabel);
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(QuickFavoriteButton, favoriteLabel);
+        ToolTipService.SetToolTip(QuickWatchedButton, watchedLabel);
+        ToolTipService.SetToolTip(QuickFavoriteButton, favoriteLabel);
+        QuickActions.Opacity = _hoverActive || _isKeyboardFocusWithin ? 1 : 0;
+    }
+
+    private void SetQuickActionsEnabled(bool enabled)
+    {
+        QuickWatchedButton.IsEnabled = enabled;
+        QuickFavoriteButton.IsEnabled = enabled;
+    }
+
+    private void RevealCardActions(bool reveal)
+    {
+        MoreButton.Opacity = reveal ? 1 : 0;
+        MoreButton.IsHitTestVisible = reveal;
+        QuickActions.Opacity = reveal ? 1 : 0;
+        QuickActions.IsHitTestVisible = reveal;
+    }
+
+    private void OnCardGotFocus(object sender, RoutedEventArgs e)
+    {
+        _isKeyboardFocusWithin = true;
+        QueuePlaybackPrefetch();
+        RevealCardActions(true);
+    }
+
+    private void OnCardLostFocus(object sender, RoutedEventArgs e)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var focused = XamlRoot == null ? null : FocusManager.GetFocusedElement(XamlRoot) as DependencyObject;
+            _isKeyboardFocusWithin = IsDescendantOf(focused, this);
+            if (!_isKeyboardFocusWithin && !_hoverActive)
+                RevealCardActions(false);
+        });
+    }
+
+    private static bool IsDescendantOf(DependencyObject? element, DependencyObject ancestor)
+    {
+        for (var current = element; current != null;
+             current = Microsoft.UI.Xaml.Media.VisualTreeHelper.GetParent(current))
+        {
+            if (ReferenceEquals(current, ancestor))
+                return true;
+        }
+        return false;
     }
 
     /// <summary>

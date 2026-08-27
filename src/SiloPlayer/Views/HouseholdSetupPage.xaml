@@ -11,6 +11,7 @@
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:StringToInitialConverter x:Key="Initial" />
+        <converters:UrlToImageSourceConverter x:Key="UrlToImage" />
     </Page.Resources>
 
     <Grid>
@@ -56,7 +57,7 @@
                                                 <TextBlock Text="{x:Bind DisplayName, Converter={StaticResource Initial}}"
                                                            FontSize="24" FontWeight="Bold"
                                                            HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                                <Image Source="{x:Bind Profile.AvatarUrl}" Stretch="UniformToFill" />
+                                                <Image Source="{x:Bind Profile.AvatarUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" />
                                             </Grid>
                                         </Border>
                                         <Border Width="80" Height="80" CornerRadius="16"

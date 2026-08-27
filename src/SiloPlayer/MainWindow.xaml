@@ -6,6 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:controls="using:SiloPlayer.Controls"
+    xmlns:converters="using:SiloPlayer.Converters"
     xmlns:local="using:SiloPlayer"
     mc:Ignorable="d"
     Title="Silo">
@@ -16,6 +17,9 @@
         KeyboardAcceleratorPlacementMode="Hidden"
         CharacterReceived="RootGrid_CharacterReceived"
         PointerPressed="RootGrid_PointerPressed">
+        <Grid.Resources>
+            <converters:UrlToImageSourceConverter x:Key="UrlToImage" />
+        </Grid.Resources>
         <Grid.KeyboardAccelerators>
             <!-- Ctrl+K opens the global search palette (webui parity). -->
             <KeyboardAccelerator Modifiers="Control" Key="K" Invoked="GlobalSearchAccelerator_Invoked" />
@@ -793,7 +797,7 @@
                                         <Grid Height="107">
                                             <Border CornerRadius="8" Background="#14FFFFFF"
                                                     BorderBrush="#10FFFFFF" BorderThickness="1">
-                                                <Image Source="{x:Bind ThumbnailUrl}" Stretch="UniformToFill" />
+                                                <Image Source="{Binding ThumbnailUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" />
                                             </Border>
                                             <ProgressBar Value="{x:Bind ProgressPercent}" Maximum="100"
                                                          Height="3" VerticalAlignment="Bottom"

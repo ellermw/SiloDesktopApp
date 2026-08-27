@@ -15,7 +15,9 @@ public sealed class ServerBrandingResponse
     [JsonPropertyName("accent_color")] public string? AccentColor { get; set; }
     [JsonPropertyName("default_theme")] public string? DefaultTheme { get; set; }
     [JsonPropertyName("wordmark_url")] public string? WordmarkUrl { get; set; }
+    [JsonPropertyName("wordmark_light_url")] public string? WordmarkLightUrl { get; set; }
     [JsonPropertyName("mark_url")] public string? MarkUrl { get; set; }
+    [JsonPropertyName("mark_light_url")] public string? MarkLightUrl { get; set; }
     [JsonPropertyName("favicon_url")] public string? FaviconUrl { get; set; }
     [JsonPropertyName("login_bg_url")] public string? LoginBackgroundUrl { get; set; }
 }

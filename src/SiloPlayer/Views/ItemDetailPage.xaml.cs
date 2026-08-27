@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Controls;
+using SiloPlayer.Converters;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
@@ -19,6 +20,7 @@ namespace SiloPlayer.Views;
 
 public sealed partial class ItemDetailPage : Page
 {
+    private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
     private readonly UICustomizationService _uiCustomizationService;
     public ItemDetailViewModel ViewModel { get; }
     private CancellationTokenSource? _imageCts;
@@ -643,6 +645,14 @@ public sealed partial class ItemDetailPage : Page
     private bool _subscribedToStateChanged;
     private double _seasonCardWidth;
     private string _seasonEpisodesErrorMessage = "Season not found";
+
+    private bool IsCurrentDetail(string contentId) =>
+        _navigationCts is { IsCancellationRequested: false }
+        && string.Equals(_currentContentId, contentId, StringComparison.Ordinal)
+        && string.Equals(ViewModel.Item?.ContentId, contentId, StringComparison.Ordinal);
+
+    private bool IsActiveDetail(string contentId, CancellationToken cancellationToken) =>
+        !cancellationToken.IsCancellationRequested && IsCurrentDetail(contentId);
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
@@ -2236,12 +2246,32 @@ public sealed partial class ItemDetailPage : Page
 
     private async void MangaWatched_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: MangaChapter chapter } || ViewModel.Item == null) return;
-        var api = App.Services.GetRequiredService<CatalogApi>();
-        if (chapter.Read == true) await api.MarkUnwatchedAsync(chapter.ContentId);
-        else await api.MarkWatchedAsync(chapter.ContentId);
-        await ViewModel.LoadCommand.ExecuteAsync(ViewModel.Item.ContentId);
-        UpdateUI();
+        if (sender is not Button { Tag: MangaChapter chapter } button || ViewModel.Item == null) return;
+        var parentContentId = ViewModel.Item.ContentId;
+        var navigationToken = _navigationCts?.Token;
+        if (navigationToken == null || !IsActiveDetail(parentContentId, navigationToken.Value)) return;
+        button.IsEnabled = false;
+        try
+        {
+            var api = App.Services.GetRequiredService<CatalogApi>();
+            if (chapter.Read == true) await api.MarkUnwatchedAsync(chapter.ContentId, navigationToken.Value);
+            else await api.MarkWatchedAsync(chapter.ContentId, navigationToken.Value);
+            if (!IsActiveDetail(parentContentId, navigationToken.Value)) return;
+            await ViewModel.ReloadAsync(parentContentId);
+            if (!IsActiveDetail(parentContentId, navigationToken.Value)) return;
+            UpdateUI();
+        }
+        catch (OperationCanceledException) when (navigationToken.Value.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            App.Services.GetRequiredService<Services.ToastService>().Error(ex.Message);
+        }
+        finally
+        {
+            button.IsEnabled = true;
+        }
     }
 
     private async void MangaDownload_Click(object sender, RoutedEventArgs e)
@@ -2359,7 +2389,9 @@ public sealed partial class ItemDetailPage : Page
 
     private async Task TranslateOverviewAsync(MediaItemDetail item)
     {
-        if (_isTranslatingOverview || string.IsNullOrWhiteSpace(item.PendingTranslationLanguage)) return;
+        if (_isTranslatingOverview
+            || string.IsNullOrWhiteSpace(item.PendingTranslationLanguage)
+            || !IsCurrentDetail(item.ContentId)) return;
         _isTranslatingOverview = true;
         _translationCts?.Cancel();
         _translationCts?.Dispose();
@@ -2377,7 +2409,9 @@ public sealed partial class ItemDetailPage : Page
             while (!ct.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(2), ct);
-                await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+                if (!IsActiveDetail(item.ContentId, ct)) return;
+                await ViewModel.ReloadAsync(item.ContentId);
+                if (!IsActiveDetail(item.ContentId, ct)) return;
                 var refreshed = ViewModel.Item;
                 if (refreshed == null) continue;
                 OverviewText.Text = refreshed.Overview ?? "";
@@ -2400,12 +2434,15 @@ public sealed partial class ItemDetailPage : Page
         finally
         {
             _isTranslatingOverview = false;
-            OverviewText.Opacity = 1;
-            if (_translateButtonMode && !string.IsNullOrWhiteSpace(ViewModel.Item?.PendingTranslationLanguage))
+            if (IsCurrentDetail(item.ContentId))
             {
-                TranslateOverviewButton.Visibility = Visibility.Visible;
-                TranslateOverviewButton.IsEnabled = true;
-                TranslateOverviewButton.Content = "Translate description";
+                OverviewText.Opacity = 1;
+                if (_translateButtonMode && !string.IsNullOrWhiteSpace(ViewModel.Item?.PendingTranslationLanguage))
+                {
+                    TranslateOverviewButton.Visibility = Visibility.Visible;
+                    TranslateOverviewButton.IsEnabled = true;
+                    TranslateOverviewButton.Content = "Translate description";
+                }
             }
         }
     }
@@ -4149,7 +4186,7 @@ public sealed partial class ItemDetailPage : Page
         previewCts?.Dispose();
         if (splitSucceeded)
         {
-            await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+            await ViewModel.ReloadAsync(item.ContentId);
             UpdateUI();
         }
     }
@@ -4339,12 +4376,12 @@ public sealed partial class ItemDetailPage : Page
             XamlRoot = this.XamlRoot
         };
 
-        var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary && dialog.SelectedCandidate != null)
+        await dialog.ShowAsync();
+        if (dialog.HasAppliedMatch)
         {
             // The dialog performs the mutation and stays open when the server
-            // rejects it. A Primary result therefore means the match applied.
-            await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+            // rejects it. Refresh only after its explicit success signal.
+            await ViewModel.ReloadAsync(item.ContentId);
             UpdateUI();
         }
     }
@@ -4363,7 +4400,7 @@ public sealed partial class ItemDetailPage : Page
             await adminApi.RefreshItemMetadataAsync(item.ContentId);
 
             // Reload the item detail to pick up refreshed metadata
-            await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+            await ViewModel.ReloadAsync(item.ContentId);
             UpdateUI();
         }
         catch
@@ -4386,7 +4423,7 @@ public sealed partial class ItemDetailPage : Page
 
         // Image changes are immediate and metadata saves can alter any detail
         // surface, so reload the complete item after the dialog closes.
-        await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+        await ViewModel.ReloadAsync(item.ContentId);
         UpdateUI();
     }
 
@@ -4816,7 +4853,11 @@ public sealed partial class ItemDetailPage : Page
         var thumbnail = new Image
         {
             Stretch = Stretch.UniformToFill,
-            Source = new BitmapImage(new Uri($"https://i.ytimg.com/vi/{video.SiteKey}/hqdefault.jpg")),
+            Source = (ImageSource)RemoteImageConverter.Convert(
+                $"https://i.ytimg.com/vi/{video.SiteKey}/hqdefault.jpg",
+                typeof(ImageSource),
+                null!,
+                string.Empty),
         };
 
         var imageHost = new Grid { Width = 280, Height = 158 };
@@ -7887,23 +7928,31 @@ public sealed partial class ItemDetailPage : Page
         if ((isCompleted || hasProgress) && season.UserData != null && season.EpisodeCount > 0)
         {
             int watched = isCompleted ? season.EpisodeCount : (season.UserData.WatchedCount);
-            double pct = Math.Clamp((double)watched / season.EpisodeCount * 100, 0, 100);
+            double ratio = Math.Clamp((double)watched / season.EpisodeCount, 0, 1);
+            var progressLayout = MediaCardProgressGeometry.Calculate(cardWidth, ratio, episodeCard: false);
             var barTrack = new Grid
             {
+                Width = progressLayout.TrackWidth,
                 Height = 3,
                 VerticalAlignment = VerticalAlignment.Bottom,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 0, 0, progressLayout.BottomInset),
+            };
+            barTrack.Children.Add(new Border
+            {
                 Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
                     Windows.UI.Color.FromArgb(0x66, 0x00, 0x00, 0x00)),
-            };
-            barTrack.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(pct, GridUnitType.Star) });
-            barTrack.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(100 - pct, GridUnitType.Star) });
-            var fill = new Microsoft.UI.Xaml.Shapes.Rectangle
+                CornerRadius = new CornerRadius(2),
+            });
+            var fill = new Border
             {
-                Fill = isCompleted
+                Width = progressLayout.FillWidth,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Background = isCompleted
                     ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x4C, 0xAF, 0x50))
                     : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"],
+                CornerRadius = new CornerRadius(2),
             };
-            Grid.SetColumn(fill, 0);
             barTrack.Children.Add(fill);
             posterHost.Children.Add(barTrack);
         }
@@ -7943,6 +7992,8 @@ public sealed partial class ItemDetailPage : Page
 
         cardButton.PointerEntered += (_, _) =>
         {
+            App.Services.GetRequiredService<ItemDetailPrefetchCache>()
+                .Prefetch(season.ContentId);
             posterBorder.Opacity = 0.92;
         };
         cardButton.PointerExited += (_, _) =>
@@ -7952,9 +8003,14 @@ public sealed partial class ItemDetailPage : Page
         cardButton.Click += (_, _) =>
         {
             if (string.IsNullOrWhiteSpace(season.ContentId)) return;
+            App.Services.GetRequiredService<ItemDetailPrefetchCache>()
+                .Prefetch(season.ContentId);
             App.Services.GetRequiredService<NavigationService>()
                 .Navigate<ItemDetailPage>(season.ContentId);
         };
+        cardButton.GotFocus += (_, _) => App.Services
+            .GetRequiredService<ItemDetailPrefetchCache>()
+            .Prefetch(season.ContentId);
 
         return cardButton;
     }
@@ -8129,12 +8185,14 @@ public sealed partial class ItemDetailPage : Page
     /// top (with progress bar overlay for in-progress episodes), ep-number + title
     /// line below, overview (2 lines), then quality badges + watched checkmark.
     /// </summary>
-    private Button CreateEpisodeCard(Episode episode)
+    private FrameworkElement CreateEpisodeCard(Episode episode)
     {
-        bool isInProgress = episode.UserData != null
-            && episode.UserData.PositionSeconds > 0
-            && !episode.UserData.Played;
-        bool isWatched = episode.UserData?.Played == true;
+        var presentation = EpisodeCardPresentation.Create(
+            episode.UserData?.Played == true,
+            episode.UserData?.PositionSeconds ?? 0,
+            episode.UserData?.DurationSeconds ?? 0);
+        bool isInProgress = presentation.ShowProgress;
+        bool isWatched = presentation.ShowWatchedIndicator;
 
         // ── Still image (16:9, fills card width) ──────────────────────────
         var stillBorder = new Border
@@ -8166,45 +8224,32 @@ public sealed partial class ItemDetailPage : Page
         stillWrapper.Children.Add(stillBorder);
         AddEpisodeCardOverlays(stillWrapper, episode);
 
-        if (isWatched)
-        {
-            stillWrapper.Children.Add(new Border
-            {
-                Width = 24,
-                Height = 24,
-                CornerRadius = new CornerRadius(12),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(8),
-                Background = (Brush)Application.Current.Resources["AccentBrush"],
-                Child = new FontIcon
-                {
-                    Glyph = "\uE73E",
-                    FontSize = 14,
-                    Foreground = (Brush)Application.Current.Resources["AccentForegroundBrush"],
-                },
-            });
-        }
-
         // Progress bar overlay for in-progress episodes.
+        Grid? progressTrack = null;
         if (isInProgress && episode.UserData!.DurationSeconds > 0)
         {
-            var progressFraction = Math.Min(1.0, episode.UserData.PositionSeconds / episode.UserData.DurationSeconds);
-            var progressTrack = new Grid
+            var progressFraction = presentation.ProgressRatio;
+            progressTrack = new Grid
             {
                 Height = 3,
                 VerticalAlignment = VerticalAlignment.Bottom,
                 HorizontalAlignment = HorizontalAlignment.Stretch,
+                Margin = new Thickness(8, 0, 8, 6),
             };
-            progressTrack.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(progressFraction, GridUnitType.Star) });
-            progressTrack.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.0 - progressFraction, GridUnitType.Star) });
+            progressTrack.Children.Add(new Border
+            {
+                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x66, 0, 0, 0)),
+                CornerRadius = new CornerRadius(2),
+            });
             var fill = new Border
             {
                 Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"],
-                CornerRadius = new CornerRadius(0, 2, 2, 0),
+                CornerRadius = new CornerRadius(2),
+                HorizontalAlignment = HorizontalAlignment.Left,
             };
-            Grid.SetColumn(fill, 0);
             progressTrack.Children.Add(fill);
+            progressTrack.SizeChanged += (_, args) =>
+                fill.Width = args.NewSize.Width * Math.Clamp(progressFraction, 0, 1);
             stillWrapper.Children.Add(progressTrack);
         }
 
@@ -8216,6 +8261,34 @@ public sealed partial class ItemDetailPage : Page
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             Margin = new Thickness(0, 8, 0, 0),
         };
+        var episodeNumberRow = new Grid { ColumnSpacing = 8 };
+        episodeNumberRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        episodeNumberRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        episodeNumberRow.Children.Add(episodeNumberText);
+        var watchedIndicator = new Grid
+        {
+            Width = 16,
+            Height = 16,
+            Margin = new Thickness(0, 8, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            Visibility = isWatched ? Visibility.Visible : Visibility.Collapsed,
+        };
+        AutomationProperties.SetName(watchedIndicator, "Watched");
+        watchedIndicator.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse
+        {
+            Stroke = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            StrokeThickness = 1.5,
+        });
+        watchedIndicator.Children.Add(new FontIcon
+        {
+            Glyph = "\uE73E",
+            FontSize = 8,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        Grid.SetColumn(watchedIndicator, 1);
+        episodeNumberRow.Children.Add(watchedIndicator);
         var titleText = new TextBlock
         {
             Text = string.IsNullOrWhiteSpace(episode.Title)
@@ -8260,10 +8333,22 @@ public sealed partial class ItemDetailPage : Page
         var content = new StackPanel
         {
             Spacing = 0,
-            Children = { stillWrapper, episodeNumberText, titleText, episodeMetaText, overviewText },
+            Children = { stillWrapper, episodeNumberRow, titleText, episodeMetaText, overviewText },
         };
 
         var defaultBg = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+        var mediaItem = new MediaItem
+        {
+            ContentId = episode.ContentId,
+            Type = "episode",
+            Title = episode.Title,
+            SeasonNumber = episode.SeasonNumber,
+            EpisodeNumber = episode.EpisodeNumber,
+            BackdropUrl = episode.StillUrl,
+            UserState = new UserState { Played = isWatched },
+            PositionSeconds = episode.UserData?.PositionSeconds,
+            DurationSeconds = episode.UserData?.DurationSeconds,
+        };
 
         var cardBorder = new Border
         {
@@ -8275,6 +8360,8 @@ public sealed partial class ItemDetailPage : Page
         };
         cardBorder.PointerEntered += (s, _) =>
         {
+            App.Services.GetRequiredService<ItemDetailPrefetchCache>()
+                .Prefetch(episode.ContentId);
             if (s is Border b)
                 b.Opacity = 0.9;
         };
@@ -8293,22 +8380,143 @@ public sealed partial class ItemDetailPage : Page
         };
         AutomationProperties.SetName(button,
             $"Episode {episode.EpisodeNumber}, {episode.Title}, {episode.Runtime} minutes");
-        button.Click += (_, _) => App.Services.GetRequiredService<NavigationService>()
-            .Navigate<ItemDetailPage>(episode.ContentId);
-        button.ContextFlyout = MediaItemMenu.Build(new MediaItem
+        button.Click += (_, _) =>
         {
-            ContentId = episode.ContentId,
-            Type = "episode",
-            Title = episode.Title,
-            SeasonNumber = episode.SeasonNumber,
-            EpisodeNumber = episode.EpisodeNumber,
-            BackdropUrl = episode.StillUrl,
-            UserState = new UserState { Played = episode.UserData?.Played == true },
-            PositionSeconds = episode.UserData?.PositionSeconds,
-            DurationSeconds = episode.UserData?.DurationSeconds,
-        }, MediaItemMenu.Surface.Default, showCollectionActions: false);
+            App.Services.GetRequiredService<ItemDetailPrefetchCache>()
+                .Prefetch(episode.ContentId);
+            App.Services.GetRequiredService<NavigationService>()
+                .Navigate<ItemDetailPage>(episode.ContentId);
+        };
+        button.GotFocus += (_, _) => App.Services
+            .GetRequiredService<ItemDetailPrefetchCache>()
+            .Prefetch(episode.ContentId);
+        void RefreshActionState()
+        {
+            var current = EpisodeCardPresentation.Create(
+                mediaItem.UserState?.Played == true,
+                mediaItem.PositionSeconds ?? 0,
+                mediaItem.DurationSeconds ?? 0);
+            watchedIndicator.Visibility = current.ShowWatchedIndicator
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+            if (progressTrack != null)
+                progressTrack.Visibility = current.ShowProgress ? Visibility.Visible : Visibility.Collapsed;
+        }
 
-        return button;
+        button.ContextFlyout = MediaItemMenu.Build(
+            mediaItem,
+            MediaItemMenu.Surface.Default,
+            showCollectionActions: false,
+            stateChanged: RefreshActionState);
+
+        var actionLayer = new Grid
+        {
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Top,
+            Opacity = 0,
+            IsHitTestVisible = false,
+        };
+        void SetActionLayerVisibility(bool reveal)
+        {
+            actionLayer.Opacity = reveal ? 1 : 0;
+            actionLayer.IsHitTestVisible = reveal;
+        }
+        var quickWatchedIcon = new FontIcon { FontSize = 18, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) };
+        var quickWatchedButton = new Button
+        {
+            Width = 36,
+            Height = 36,
+            MinWidth = 0,
+            MinHeight = 0,
+            Padding = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(12),
+            CornerRadius = new CornerRadius(6),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0xAA, 0, 0, 0)),
+            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x30, 0xFF, 0xFF, 0xFF)),
+            BorderThickness = new Thickness(1),
+            Content = quickWatchedIcon,
+        };
+        var moreButton = new Button
+        {
+            Width = 36,
+            Height = 36,
+            MinWidth = 0,
+            MinHeight = 0,
+            Padding = new Thickness(0),
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(12),
+            CornerRadius = new CornerRadius(6),
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0xAA, 0, 0, 0)),
+            BorderThickness = new Thickness(0),
+            Content = new FontIcon { Glyph = "\uE712", FontSize = 14, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) },
+        };
+        AutomationProperties.SetName(moreButton, "More actions");
+        ToolTipService.SetToolTip(moreButton, "More actions");
+
+        void UpdateQuickAction()
+        {
+            var watched = mediaItem.UserState?.Played == true;
+            var current = EpisodeCardPresentation.Create(
+                watched,
+                mediaItem.PositionSeconds ?? 0,
+                mediaItem.DurationSeconds ?? 0);
+            quickWatchedIcon.Glyph = watched ? "\uE7B3" : "\uED1A";
+            quickWatchedIcon.Foreground = watched
+                ? new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80))
+                : new SolidColorBrush(Microsoft.UI.Colors.White);
+            var label = current.WatchedActionLabel;
+            AutomationProperties.SetName(quickWatchedButton, label);
+            ToolTipService.SetToolTip(quickWatchedButton, label);
+            RefreshActionState();
+        }
+
+        quickWatchedButton.Click += async (_, _) =>
+        {
+            if (!quickWatchedButton.IsEnabled) return;
+            quickWatchedButton.IsEnabled = false;
+            try
+            {
+                var operation = MediaItemCardActions.ToggleWatchedAsync(mediaItem);
+                UpdateQuickAction();
+                await operation;
+                UpdateQuickAction();
+                button.ContextFlyout = MediaItemMenu.Build(
+                    mediaItem,
+                    MediaItemMenu.Surface.Default,
+                    showCollectionActions: false,
+                    stateChanged: UpdateQuickAction);
+            }
+            catch (Exception ex)
+            {
+                App.Services.GetRequiredService<Services.ToastService>().Error(ex.Message);
+            }
+            finally
+            {
+                quickWatchedButton.IsEnabled = true;
+            }
+        };
+        moreButton.Click += (_, _) => MediaItemMenu.Build(
+            mediaItem,
+            MediaItemMenu.Surface.Default,
+            showCollectionActions: false,
+            stateChanged: UpdateQuickAction).ShowAt(moreButton);
+        actionLayer.Children.Add(quickWatchedButton);
+        actionLayer.Children.Add(moreButton);
+
+        var root = new Grid();
+        root.Children.Add(button);
+        root.Children.Add(actionLayer);
+        root.SizeChanged += (_, args) => actionLayer.Height = args.NewSize.Width * 9d / 16d;
+        root.PointerEntered += (_, _) => SetActionLayerVisibility(true);
+        root.PointerExited += (_, _) => SetActionLayerVisibility(false);
+        root.GotFocus += (_, _) => SetActionLayerVisibility(true);
+        root.LostFocus += (_, _) => SetActionLayerVisibility(false);
+        UpdateQuickAction();
+
+        return root;
     }
 
     private void AddEpisodeCardOverlays(Grid host, Episode episode)

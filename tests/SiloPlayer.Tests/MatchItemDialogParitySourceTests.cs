@@ -28,6 +28,8 @@ public sealed class MatchItemDialogParitySourceTests
         Assert.Contains("sources agree", code);
         Assert.Contains("ComputeRootPath", code);
         Assert.Contains("await _adminApi.MatchApplyAsync", code);
+        Assert.Contains("public bool HasAppliedMatch", code);
+        Assert.Contains("HasAppliedMatch = true;", code);
         Assert.Contains("ApplyMatchButton.Content = \"Applying...\"", code);
         Assert.Contains("Match could not be applied", code);
 
@@ -36,6 +38,17 @@ public sealed class MatchItemDialogParitySourceTests
         Assert.Contains("public bool TitleIsFallback", models);
         Assert.Contains("public double? MatchScore", models);
         Assert.Contains("public List<string> MatchReasons", models);
+    }
+
+    [Fact]
+    public void DetailAndCardCallersRefreshOnlyAfterAnAppliedMatch()
+    {
+        var detail = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var menu = Read("src", "SiloPlayer", "Controls", "MediaItemMenu.cs");
+
+        Assert.Contains("if (dialog.HasAppliedMatch)", detail);
+        Assert.Contains("if (dialog.HasAppliedMatch)", menu);
+        Assert.DoesNotContain("result == ContentDialogResult.Primary && dialog.SelectedCandidate != null", detail);
     }
 
     private static string Read(params string[] parts)

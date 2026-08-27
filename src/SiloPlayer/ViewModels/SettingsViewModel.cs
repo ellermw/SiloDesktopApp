@@ -1804,8 +1804,26 @@ public partial class SettingsViewModel : ObservableObject
             PlexSessionId = pinResponse.SessionId;
             PlexAuthStatus = $"Waiting for approval in browser (PIN: {pinResponse.PinCode})";
 
-            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(pinResponse.AuthUrl) { UseShellExecute = true }); }
-            catch { /* browser launch is best-effort */ }
+            if (!ExternalBrowserUrlPolicy.TryGetSafeUri(pinResponse.AuthUrl, out var approvalUri))
+            {
+                PlexAuthStatus = "";
+                PlexAuthError = "The server returned an invalid Plex approval URL.";
+                return;
+            }
+
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(approvalUri.AbsoluteUri)
+                {
+                    UseShellExecute = true,
+                });
+            }
+            catch (Exception ex)
+            {
+                PlexAuthStatus = "";
+                PlexAuthError = $"Could not open the Plex approval page: {ex.Message}";
+                return;
+            }
 
             // Poll for completion every 2s for up to 2 minutes.
             for (int i = 0; i < 60; i++)
