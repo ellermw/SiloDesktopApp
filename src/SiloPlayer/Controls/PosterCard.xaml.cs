@@ -265,8 +265,7 @@ public sealed partial class PosterCard : UserControl
         PosterImage.Source = null;
         PosterImage.Opacity = 0;
         ThumbhashImage.Source = null;
-        MoreButton.Opacity = 0;
-        QuickActions.Opacity = 0;
+        RevealCardActions(false);
         QuickWatchedButton.Visibility = Visibility.Collapsed;
         QuickFavoriteButton.Visibility = Visibility.Collapsed;
         ClearOverlayPanels();
@@ -982,7 +981,9 @@ public sealed partial class PosterCard : UserControl
     private void RevealCardActions(bool reveal)
     {
         MoreButton.Opacity = reveal ? 1 : 0;
+        MoreButton.IsHitTestVisible = reveal;
         QuickActions.Opacity = reveal ? 1 : 0;
+        QuickActions.IsHitTestVisible = reveal;
     }
 
     private void OnCardGotFocus(object sender, RoutedEventArgs e)

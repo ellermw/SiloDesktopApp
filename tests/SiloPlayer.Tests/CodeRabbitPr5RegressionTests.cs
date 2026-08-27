@@ -95,6 +95,30 @@ public sealed class CodeRabbitPr5RegressionTests
         Assert.DoesNotContain("https://silo-reader.local/{path}", source);
     }
 
+    [Fact]
+    public void MangaWatchedActionContainsFailuresAndAlwaysRestoresItsButton()
+    {
+        var source = Normalize(Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs"));
+        var method = SliceMethod(source, "private async void MangaWatched_Click", "private async void MangaDownload_Click");
+
+        Assert.Contains("Button { Tag: MangaChapter chapter } button", method);
+        Assert.Contains("button.IsEnabled = false;", method);
+        Assert.Contains("catch (Exception ex)", method);
+        Assert.Contains("ToastService>().Error(ex.Message)", method);
+        Assert.Contains("finally", method);
+        Assert.Contains("button.IsEnabled = true;", method);
+    }
+
+    [Fact]
+    public void HiddenPosterActionsCannotInterceptCardInput()
+    {
+        var source = Normalize(Read("src", "SiloPlayer", "Controls", "PosterCard.xaml.cs"));
+        var method = SliceMethod(source, "private void RevealCardActions", "private void OnCardGotFocus");
+
+        Assert.Contains("MoreButton.IsHitTestVisible = reveal;", method);
+        Assert.Contains("QuickActions.IsHitTestVisible = reveal;", method);
+    }
+
     private static int Count(string source, string value)
     {
         var count = 0;
@@ -109,6 +133,14 @@ public sealed class CodeRabbitPr5RegressionTests
     }
 
     private static string Normalize(string source) => source.Replace("\r\n", "\n");
+
+    private static string SliceMethod(string source, string startMarker, string endMarker)
+    {
+        var start = source.IndexOf(startMarker, StringComparison.Ordinal);
+        var end = source.IndexOf(endMarker, start + startMarker.Length, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        return source[start..end];
+    }
 
     private static string Read(params string[] parts)
     {

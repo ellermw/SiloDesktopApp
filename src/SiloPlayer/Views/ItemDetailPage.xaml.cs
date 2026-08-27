@@ -2238,12 +2238,25 @@ public sealed partial class ItemDetailPage : Page
 
     private async void MangaWatched_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: MangaChapter chapter } || ViewModel.Item == null) return;
-        var api = App.Services.GetRequiredService<CatalogApi>();
-        if (chapter.Read == true) await api.MarkUnwatchedAsync(chapter.ContentId);
-        else await api.MarkWatchedAsync(chapter.ContentId);
-        await ViewModel.ReloadAsync(ViewModel.Item.ContentId);
-        UpdateUI();
+        if (sender is not Button { Tag: MangaChapter chapter } button || ViewModel.Item == null) return;
+        var parentContentId = ViewModel.Item.ContentId;
+        button.IsEnabled = false;
+        try
+        {
+            var api = App.Services.GetRequiredService<CatalogApi>();
+            if (chapter.Read == true) await api.MarkUnwatchedAsync(chapter.ContentId);
+            else await api.MarkWatchedAsync(chapter.ContentId);
+            await ViewModel.ReloadAsync(parentContentId);
+            UpdateUI();
+        }
+        catch (Exception ex)
+        {
+            App.Services.GetRequiredService<Services.ToastService>().Error(ex.Message);
+        }
+        finally
+        {
+            button.IsEnabled = true;
+        }
     }
 
     private async void MangaDownload_Click(object sender, RoutedEventArgs e)
