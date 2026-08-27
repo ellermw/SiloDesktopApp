@@ -29,10 +29,7 @@ public sealed class PlaybackRecoveryAttemptHistory
         }
 
         ArgumentException.ThrowIfNullOrWhiteSpace(planAttemptKey);
-        var keys = _attemptedPlanKeys
-            .Append(planAttemptKey.Trim())
-            .TakeLast(MaxAttemptedPlanKeys)
-            .ToArray();
+        var keys = NormalizePlanKeys(_attemptedPlanKeys.Append(planAttemptKey));
         return new PlaybackRecoveryAttempt(keys, _nextAttemptCount);
     }
 
@@ -40,7 +37,7 @@ public sealed class PlaybackRecoveryAttemptHistory
     {
         ArgumentNullException.ThrowIfNull(attempt);
         _attemptedPlanKeys.Clear();
-        _attemptedPlanKeys.AddRange(attempt.AttemptedPlanKeys.TakeLast(MaxAttemptedPlanKeys));
+        _attemptedPlanKeys.AddRange(NormalizePlanKeys(attempt.AttemptedPlanKeys));
         _nextAttemptCount = Math.Min(attempt.AttemptCount + 1, MaxAttemptCount + 1);
     }
 
@@ -49,4 +46,14 @@ public sealed class PlaybackRecoveryAttemptHistory
         _attemptedPlanKeys.Clear();
         _nextAttemptCount = 1;
     }
+
+    private static string[] NormalizePlanKeys(IEnumerable<string> planKeys)
+        => planKeys
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .Select(key => key.Trim())
+            .Reverse()
+            .Distinct(StringComparer.Ordinal)
+            .Take(MaxAttemptedPlanKeys)
+            .Reverse()
+            .ToArray();
 }

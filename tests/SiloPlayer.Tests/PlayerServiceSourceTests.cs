@@ -1214,6 +1214,25 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
+    public void TerminalRetryPreservesTheOriginalRecoveryTrigger()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var retryStart = source.IndexOf(
+            "private async Task RetryPlaybackFromTerminalAsync()",
+            StringComparison.Ordinal);
+        var retryEnd = source.IndexOf("private double _resumePosition", retryStart, StringComparison.Ordinal);
+        Assert.True(retryStart >= 0 && retryEnd > retryStart);
+        var retry = source[retryStart..retryEnd];
+
+        Assert.Contains(
+            "RecoverInterruptedStreamAsync(terminal.Position, terminal.Trigger)",
+            retry,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("user-retry:", retry, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void RealtimePlanInvalidationUsesTheProtocolV3RecoveryPath()
     {
         var source = File.ReadAllText(Path.Combine(
@@ -1223,6 +1242,15 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("PlaybackPlanInvalidation.TryCreate", source, StringComparison.Ordinal);
         Assert.Contains("ReplanInvalidatedPlanAsync", source, StringComparison.Ordinal);
         Assert.Contains("HandlePlanInvalidationAsync", source, StringComparison.Ordinal);
+        Assert.Contains("StartPlanInvalidationRecovery(invalidation);", source, StringComparison.Ordinal);
+        Assert.Contains("return Complete(new CommandResult());", source, StringComparison.Ordinal);
+        Assert.Contains("private async Task ObservePlanInvalidationRecoveryAsync", source, StringComparison.Ordinal);
+        Assert.Contains("await _planInvalidationGate.WaitAsync", source, StringComparison.Ordinal);
+        Assert.Contains("catch (Exception ex)", source, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "return HandlePlanInvalidationAsync(invalidation);",
+            source,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1242,6 +1270,16 @@ public sealed class PlayerServiceSourceTests
         var reconcile = source[reconcileStart..reconcileEnd];
         Assert.Contains("osc-set-visibility", reconcile, StringComparison.Ordinal);
         Assert.Contains("SynchronizeFullscreenState", reconcile, StringComparison.Ordinal);
+        var dispatcherIndex = reconcile.IndexOf(
+            "var dispatcher = App.MainWindowInstance?.DispatcherQueue;",
+            StringComparison.Ordinal);
+        var callbackIndex = reconcile.IndexOf("void Reconcile()", StringComparison.Ordinal);
+        var oscIndex = reconcile.IndexOf("osc-set-visibility", StringComparison.Ordinal);
+        var fullscreenIndex = reconcile.IndexOf("SynchronizeFullscreenState", StringComparison.Ordinal);
+        Assert.True(dispatcherIndex >= 0 && callbackIndex > dispatcherIndex);
+        Assert.True(oscIndex > callbackIndex);
+        Assert.True(fullscreenIndex > callbackIndex);
+        Assert.DoesNotContain("var actualFullscreen", reconcile, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryRoot()

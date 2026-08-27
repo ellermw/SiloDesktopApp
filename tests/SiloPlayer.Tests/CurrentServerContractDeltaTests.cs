@@ -94,14 +94,16 @@ public sealed class CurrentServerContractDeltaTests
         var users = Read("src", "SiloPlayer", "Views", "Admin", "AdminUsersPage.xaml.cs");
         var detail = Read("src", "SiloPlayer", "Views", "Admin", "AdminUserDetailPage.xaml.cs");
         var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
+        var playbackFailures = Read(
+            "src", "SiloPlayer.Core", "Services", "PlaybackFailureDescription.cs");
         Assert.Contains("TranscodeAllowed", models);
         Assert.Contains("AudioTranscodeAllowed", models);
         Assert.Contains("transcode_allowed", api);
         Assert.Contains("audio_transcode_allowed", api);
         Assert.Contains("TranscodeAllowed", users);
         Assert.Contains("Audio transcodes", detail);
-        Assert.Contains("transcoding_disabled", player);
-        Assert.Contains("audio_transcoding_disabled", player);
+        Assert.Contains("transcoding_disabled", playbackFailures);
+        Assert.Contains("audio_transcoding_disabled", playbackFailures);
         Assert.Contains("if (!transportReplaced)", player);
         Assert.Contains("DescribePlaybackError(ex)", player);
         Assert.Contains("ShowNotice(title, detail, \"error\")", player);

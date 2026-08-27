@@ -56,4 +56,22 @@ public sealed class PlaybackFailureDescriptionTests
         Assert.NotNull(description);
         Assert.Equal(title, description.Title);
     }
+
+    [Theory]
+    [InlineData(403, "transcoding_disabled", "Transcoding is disabled")]
+    [InlineData(403, "audio_transcoding_disabled", "Audio transcoding is disabled")]
+    [InlineData(404, "not_found", "This video is no longer available")]
+    public void SpecificTransportFailuresAreNotShadowedByGenericStatusHandling(
+        int status,
+        string code,
+        string title)
+    {
+        var serverMessage = status == 404 ? "Source media file is missing" : "server detail";
+
+        var description = PlaybackFailureDescription.DescribeTransport(
+            new ApiException(code, serverMessage, status));
+
+        Assert.NotNull(description);
+        Assert.Equal(title, description.Title);
+    }
 }

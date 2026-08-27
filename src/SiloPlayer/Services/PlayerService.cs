@@ -113,6 +113,7 @@ public class PlayerService : IDisposable
     public Task SelectQualityAsync(string qualityId) => SwitchQualityTierAsync(qualityId);
     private readonly SemaphoreSlim _transportRestartGate = new(1, 1);
     private readonly SemaphoreSlim _streamRecoveryGate = new(1, 1);
+    private readonly SemaphoreSlim _planInvalidationGate = new(1, 1);
     private CancellationTokenSource? _seekRestartCts;
     private long _seekRestartGeneration;
     private readonly SemaphoreSlim _playRequestGate = new(1, 1);
@@ -1944,28 +1945,10 @@ public class PlayerService : IDisposable
             var transportDescription = PlaybackFailureDescription.DescribeTransport(api);
             if (transportDescription != null)
                 return (transportDescription.Title, transportDescription.Message);
-            if (api.StatusCode == 404 && api.ErrorCode == "not_found")
-            {
-                if (api.Message == "Source media file is missing")
-                    return ("This video is no longer available",
-                        "The file needed to play it can't be found right now. Go back and try another version if one is available.");
-                return ("This item is no longer available",
-                    "The file needed to play this item can't be found right now. Go back and try another version if one is available.");
-            }
-            if (api.StatusCode == 403 && api.ErrorCode == "transcoding_disabled")
-                return ("Transcoding is disabled",
-                    "Transcoding is disabled for your user. Ask your server administrator for access.");
-            if (api.StatusCode == 403 && api.ErrorCode == "audio_transcoding_disabled")
-                return ("Audio transcoding is disabled",
-                    "This item requires audio conversion, but audio transcoding is disabled for your user.");
-            if (api.StatusCode == 403)
-                return ("Playback unavailable", "You do not have permission to play this item.");
             if (api.StatusCode == 429 && api.ErrorCode == "too_many_streams")
                 return ("Stream limit reached", "This account has reached its active stream limit. Stop another stream and try again.");
             if (api.StatusCode == 429 && api.ErrorCode == "too_many_transcodes")
                 return ("Transcode limit reached", "This account has reached its active transcode limit. Try direct play or stop another transcode.");
-            if (api.StatusCode >= 500)
-                return ("Playback unavailable", "Silo could not start playback right now. Please try again.");
             return ("Playback unavailable", string.IsNullOrWhiteSpace(api.Message) ? "Playback could not start." : api.Message);
         }
         if (ex.Message == "No compatible file version found")
@@ -2630,7 +2613,10 @@ public class PlayerService : IDisposable
             "Reconnecting playback",
             "Trying another available playback route from your current position…",
             "warning");
-        await RecoverInterruptedStreamAsync(terminal.Position, $"user-retry:{terminal.Trigger}")
+        LogToFile(
+            "state_trace.txt",
+            $"Viewer requested playback retry after trigger={terminal.Trigger}");
+        await RecoverInterruptedStreamAsync(terminal.Position, terminal.Trigger)
             .ConfigureAwait(false);
     }
 
@@ -3991,23 +3977,23 @@ public class PlayerService : IDisposable
 
     private void ReconcilePlaybackSurfaceStateAfterLoad()
     {
-        if (State is PlayerState.Expanded or PlayerState.Fullscreen or PlayerState.PictureInPicture)
-            _mpv?.SendScriptMessage("osc-set-visibility", "true");
-
-        var videoWindow = _videoWindow;
-        if (videoWindow == null)
-            return;
-        var actualFullscreen = videoWindow.SynchronizeFullscreenState();
-        PublishFullscreenVisualState(actualFullscreen);
-        if (actualFullscreen == (State == PlayerState.Fullscreen))
-            return;
-
         var dispatcher = App.MainWindowInstance?.DispatcherQueue;
         void Reconcile()
         {
-            if (_closing || State == PlayerState.Idle || _videoWindow == null)
+            if (_closing || State == PlayerState.Idle)
                 return;
-            var confirmedFullscreen = _videoWindow.SynchronizeFullscreenState();
+
+            if (State is PlayerState.Expanded or PlayerState.Fullscreen or PlayerState.PictureInPicture)
+                _mpv?.SendScriptMessage("osc-set-visibility", "true");
+
+            var videoWindow = _videoWindow;
+            if (videoWindow == null)
+                return;
+            var confirmedFullscreen = videoWindow.SynchronizeFullscreenState();
+            PublishFullscreenVisualState(confirmedFullscreen);
+            if (confirmedFullscreen == (State == PlayerState.Fullscreen))
+                return;
+
             SetState(confirmedFullscreen ? PlayerState.Fullscreen : PlayerState.Expanded);
         }
 
@@ -7005,7 +6991,8 @@ public class PlayerService : IDisposable
                         Status = "rejected",
                         Error = "invalid_plan_invalidated_payload",
                     });
-                return HandlePlanInvalidationAsync(invalidation);
+                StartPlanInvalidationRecovery(invalidation);
+                return Complete(new CommandResult());
 
             case "stop":
             case "terminate":
@@ -7022,6 +7009,39 @@ public class PlayerService : IDisposable
 
             default:
                 return Complete(new CommandResult { Status = "rejected", Error = "unsupported" });
+        }
+    }
+
+    private void StartPlanInvalidationRecovery(PlaybackPlanInvalidation invalidation)
+        => _ = ObservePlanInvalidationRecoveryAsync(invalidation);
+
+    private async Task ObservePlanInvalidationRecoveryAsync(
+        PlaybackPlanInvalidation invalidation)
+    {
+        var gateAcquired = false;
+        try
+        {
+            await _planInvalidationGate.WaitAsync().ConfigureAwait(false);
+            gateAcquired = true;
+            var result = await HandlePlanInvalidationAsync(invalidation).ConfigureAwait(false);
+            if (!string.Equals(result.Status, "completed", StringComparison.Ordinal))
+            {
+                LogToFile(
+                    "state_trace.txt",
+                    $"Plan invalidation recovery rejected: {result.Error ?? "unknown"}");
+            }
+        }
+        catch (Exception ex)
+        {
+            _switchingContent = false;
+            LogToFile(
+                "player_recovery_error.txt",
+                $"Unhandled plan invalidation recovery failure: {ex}");
+        }
+        finally
+        {
+            if (gateAcquired)
+                _planInvalidationGate.Release();
         }
     }
 

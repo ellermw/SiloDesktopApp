@@ -679,11 +679,17 @@ public sealed class ServerContractSourceTests
             "SiloPlayer",
             "Services",
             "PlayerService.cs"));
+        var failureDescriptions = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(),
+            "src",
+            "SiloPlayer.Core",
+            "Services",
+            "PlaybackFailureDescription.cs"));
 
         var legacyBrand = "Cont" + "inuum";
-        Assert.DoesNotContain(legacyBrand + " could not start playback", source);
-        Assert.DoesNotContain(legacyBrand + " could not find", source);
-        Assert.Contains("Silo could not start playback", source);
+        Assert.DoesNotContain(legacyBrand + " could not start playback", source + failureDescriptions);
+        Assert.DoesNotContain(legacyBrand + " could not find", source + failureDescriptions);
+        Assert.Contains("Silo could not start playback", failureDescriptions);
         Assert.Contains("too_many_streams", source);
         Assert.Contains("too_many_transcodes", source);
     }

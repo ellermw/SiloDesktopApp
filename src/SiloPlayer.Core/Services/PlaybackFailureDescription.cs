@@ -24,6 +24,29 @@ public static class PlaybackFailureDescription
                 "This playback session is no longer active. Start it again to keep watching.",
                 CanRetry: true);
         }
+        if (error.StatusCode == 403 && error.ErrorCode == "transcoding_disabled")
+        {
+            return new PlaybackFailurePresentation(
+                "Transcoding is disabled",
+                "Transcoding is disabled for your user. Ask your server administrator for access.",
+                CanRetry: false);
+        }
+        if (error.StatusCode == 403 && error.ErrorCode == "audio_transcoding_disabled")
+        {
+            return new PlaybackFailurePresentation(
+                "Audio transcoding is disabled",
+                "This item requires audio conversion, but audio transcoding is disabled for your user.",
+                CanRetry: false);
+        }
+        if (error.StatusCode == 404 &&
+            error.ErrorCode == "not_found" &&
+            error.Message == "Source media file is missing")
+        {
+            return new PlaybackFailurePresentation(
+                "This video is no longer available",
+                "The file needed to play it can't be found right now. Go back and try another version if one is available.",
+                CanRetry: false);
+        }
         if (error.StatusCode == 404)
         {
             return new PlaybackFailurePresentation(
