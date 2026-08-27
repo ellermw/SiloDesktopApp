@@ -646,6 +646,14 @@ public sealed partial class ItemDetailPage : Page
     private double _seasonCardWidth;
     private string _seasonEpisodesErrorMessage = "Season not found";
 
+    private bool IsCurrentDetail(string contentId) =>
+        _navigationCts is { IsCancellationRequested: false }
+        && string.Equals(_currentContentId, contentId, StringComparison.Ordinal)
+        && string.Equals(ViewModel.Item?.ContentId, contentId, StringComparison.Ordinal);
+
+    private bool IsActiveDetail(string contentId, CancellationToken cancellationToken) =>
+        !cancellationToken.IsCancellationRequested && IsCurrentDetail(contentId);
+
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
@@ -2240,14 +2248,21 @@ public sealed partial class ItemDetailPage : Page
     {
         if (sender is not Button { Tag: MangaChapter chapter } button || ViewModel.Item == null) return;
         var parentContentId = ViewModel.Item.ContentId;
+        var navigationToken = _navigationCts?.Token;
+        if (navigationToken == null || !IsActiveDetail(parentContentId, navigationToken.Value)) return;
         button.IsEnabled = false;
         try
         {
             var api = App.Services.GetRequiredService<CatalogApi>();
-            if (chapter.Read == true) await api.MarkUnwatchedAsync(chapter.ContentId);
-            else await api.MarkWatchedAsync(chapter.ContentId);
+            if (chapter.Read == true) await api.MarkUnwatchedAsync(chapter.ContentId, navigationToken.Value);
+            else await api.MarkWatchedAsync(chapter.ContentId, navigationToken.Value);
+            if (!IsActiveDetail(parentContentId, navigationToken.Value)) return;
             await ViewModel.ReloadAsync(parentContentId);
+            if (!IsActiveDetail(parentContentId, navigationToken.Value)) return;
             UpdateUI();
+        }
+        catch (OperationCanceledException) when (navigationToken.Value.IsCancellationRequested)
+        {
         }
         catch (Exception ex)
         {
@@ -2374,7 +2389,9 @@ public sealed partial class ItemDetailPage : Page
 
     private async Task TranslateOverviewAsync(MediaItemDetail item)
     {
-        if (_isTranslatingOverview || string.IsNullOrWhiteSpace(item.PendingTranslationLanguage)) return;
+        if (_isTranslatingOverview
+            || string.IsNullOrWhiteSpace(item.PendingTranslationLanguage)
+            || !IsCurrentDetail(item.ContentId)) return;
         _isTranslatingOverview = true;
         _translationCts?.Cancel();
         _translationCts?.Dispose();
@@ -2392,7 +2409,9 @@ public sealed partial class ItemDetailPage : Page
             while (!ct.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                if (!IsActiveDetail(item.ContentId, ct)) return;
                 await ViewModel.ReloadAsync(item.ContentId);
+                if (!IsActiveDetail(item.ContentId, ct)) return;
                 var refreshed = ViewModel.Item;
                 if (refreshed == null) continue;
                 OverviewText.Text = refreshed.Overview ?? "";
@@ -2415,12 +2434,15 @@ public sealed partial class ItemDetailPage : Page
         finally
         {
             _isTranslatingOverview = false;
-            OverviewText.Opacity = 1;
-            if (_translateButtonMode && !string.IsNullOrWhiteSpace(ViewModel.Item?.PendingTranslationLanguage))
+            if (IsCurrentDetail(item.ContentId))
             {
-                TranslateOverviewButton.Visibility = Visibility.Visible;
-                TranslateOverviewButton.IsEnabled = true;
-                TranslateOverviewButton.Content = "Translate description";
+                OverviewText.Opacity = 1;
+                if (_translateButtonMode && !string.IsNullOrWhiteSpace(ViewModel.Item?.PendingTranslationLanguage))
+                {
+                    TranslateOverviewButton.Visibility = Visibility.Visible;
+                    TranslateOverviewButton.IsEnabled = true;
+                    TranslateOverviewButton.Content = "Translate description";
+                }
             }
         }
     }
@@ -8392,8 +8414,13 @@ public sealed partial class ItemDetailPage : Page
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Top,
             Opacity = 0,
-            IsHitTestVisible = true,
+            IsHitTestVisible = false,
         };
+        void SetActionLayerVisibility(bool reveal)
+        {
+            actionLayer.Opacity = reveal ? 1 : 0;
+            actionLayer.IsHitTestVisible = reveal;
+        }
         var quickWatchedIcon = new FontIcon { FontSize = 18, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) };
         var quickWatchedButton = new Button
         {
@@ -8483,10 +8510,10 @@ public sealed partial class ItemDetailPage : Page
         root.Children.Add(button);
         root.Children.Add(actionLayer);
         root.SizeChanged += (_, args) => actionLayer.Height = args.NewSize.Width * 9d / 16d;
-        root.PointerEntered += (_, _) => actionLayer.Opacity = 1;
-        root.PointerExited += (_, _) => actionLayer.Opacity = 0;
-        root.GotFocus += (_, _) => actionLayer.Opacity = 1;
-        root.LostFocus += (_, _) => actionLayer.Opacity = 0;
+        root.PointerEntered += (_, _) => SetActionLayerVisibility(true);
+        root.PointerExited += (_, _) => SetActionLayerVisibility(false);
+        root.GotFocus += (_, _) => SetActionLayerVisibility(true);
+        root.LostFocus += (_, _) => SetActionLayerVisibility(false);
         UpdateQuickAction();
 
         return root;

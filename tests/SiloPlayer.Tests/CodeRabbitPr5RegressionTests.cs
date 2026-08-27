@@ -119,6 +119,37 @@ public sealed class CodeRabbitPr5RegressionTests
         Assert.Contains("QuickActions.IsHitTestVisible = reveal;", method);
     }
 
+    [Fact]
+    public void MangaAndTranslationReloadsCannotRepaintAReusedDetailPage()
+    {
+        var source = Normalize(Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs"));
+        var manga = SliceMethod(source, "private async void MangaWatched_Click", "private async void MangaDownload_Click");
+        var translation = SliceMethod(source, "private async Task TranslateOverviewAsync", "private void UpdateScoresRow");
+
+        Assert.Contains("var navigationToken = _navigationCts?.Token", manga);
+        Assert.True(Count(manga, "IsActiveDetail(parentContentId, navigationToken.Value)") >= 2);
+        Assert.Contains("MarkWatchedAsync(chapter.ContentId, navigationToken.Value)", manga);
+        Assert.Contains("MarkUnwatchedAsync(chapter.ContentId, navigationToken.Value)", manga);
+
+        Assert.True(Count(translation, "IsActiveDetail(item.ContentId, ct)") >= 2);
+        var reload = translation.IndexOf("await ViewModel.ReloadAsync(item.ContentId);", StringComparison.Ordinal);
+        var postReloadGuard = translation.IndexOf("IsActiveDetail(item.ContentId, ct)", reload, StringComparison.Ordinal);
+        Assert.True(reload >= 0 && postReloadGuard > reload);
+        Assert.Contains("IsCurrentDetail(item.ContentId)", translation);
+    }
+
+    [Fact]
+    public void EpisodeActionLayerHitTestingTracksItsVisibleState()
+    {
+        var source = Normalize(Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs"));
+        var method = SliceMethod(source, "private FrameworkElement CreateEpisodeCard", "private void AddEpisodeCardOverlays");
+
+        Assert.Contains("void SetActionLayerVisibility(bool reveal)", method);
+        Assert.Contains("actionLayer.Opacity = reveal ? 1 : 0;", method);
+        Assert.Contains("actionLayer.IsHitTestVisible = reveal;", method);
+        Assert.DoesNotContain("IsHitTestVisible = true", method);
+    }
+
     private static int Count(string source, string value)
     {
         var count = 0;
