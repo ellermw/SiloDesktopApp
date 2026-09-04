@@ -2,7 +2,6 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using SiloPlayer.Core.Api;
-using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Playback;
 
 namespace SiloPlayer.Tests;
@@ -202,59 +201,6 @@ public sealed class SiloApiClientTests
         Assert.Equal(418.25, response.StreamOriginSeconds);
         Assert.Equal(418.25, response.TimelineOffsetSeconds);
         Assert.False(response.CanSeekAnywhere);
-    }
-
-    [Fact]
-    public async Task AccessGroupUpdatePreservesExplicitNullMasks()
-    {
-        string? sentJson = null;
-        var handler = new DelegateHandler(async (request, ct) =>
-        {
-            sentJson = await request.Content!.ReadAsStringAsync(ct);
-            return JsonResponse(HttpStatusCode.OK,
-                """{"id":7,"name":"Guests","description":"","library_ids":null,"max_playback_quality":"","download_allowed":false,"download_transcode_allowed":false,"max_streams":0,"max_transcodes":0,"allowed_permissions":null,"requests_allowed":false,"is_default":false,"member_count":0,"created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}""");
-        });
-        var client = CreateClient(handler);
-        var api = new AdminApi(client);
-
-        await api.UpdateAccessGroupAsync(7, new UpdateAccessGroupRequest
-        {
-            Name = "Guests",
-            LibraryIds = null,
-            AllowedPermissions = null,
-        });
-        using var document = JsonDocument.Parse(sentJson!);
-
-        Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("library_ids").ValueKind);
-        Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("allowed_permissions").ValueKind);
-    }
-
-    [Fact]
-    public async Task UserUpdateDistinguishesExplicitNullFromOmittedAccessMasks()
-    {
-        var bodies = new List<string>();
-        var handler = new DelegateHandler(async (request, ct) =>
-        {
-            bodies.Add(await request.Content!.ReadAsStringAsync(ct));
-            return JsonResponse(HttpStatusCode.OK, """{"id":9,"username":"sam"}""");
-        });
-        var api = new AdminApi(CreateClient(handler));
-
-        await api.UpdateUserAsync(9, new UpdateUserRequest { Enabled = true });
-        await api.UpdateUserAsync(9, new UpdateUserRequest
-        {
-            LibraryIds = null,
-            LibraryIdsSpecified = true,
-            AccessGroupId = null,
-            AccessGroupIdSpecified = true,
-        });
-
-        using var omitted = JsonDocument.Parse(bodies[0]);
-        Assert.False(omitted.RootElement.TryGetProperty("library_ids", out _));
-        Assert.False(omitted.RootElement.TryGetProperty("access_group_id", out _));
-        using var explicitNull = JsonDocument.Parse(bodies[1]);
-        Assert.Equal(JsonValueKind.Null, explicitNull.RootElement.GetProperty("library_ids").ValueKind);
-        Assert.Equal(JsonValueKind.Null, explicitNull.RootElement.GetProperty("access_group_id").ValueKind);
     }
 
     [Fact]

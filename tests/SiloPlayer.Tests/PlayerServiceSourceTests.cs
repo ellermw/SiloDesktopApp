@@ -715,26 +715,6 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
-    public void NativeMarkerEditorPersistsEveryCurrentWebUiMarkerKind()
-    {
-        var source = File.ReadAllText(Path.Combine(
-            FindRepositoryRoot(),
-            "src",
-            "SiloPlayer",
-            "Services",
-            "PlayerService.cs"));
-
-        Assert.Contains("case \"silo-marker-save\"", source);
-        Assert.Contains("SaveMarkerEditsFromOscAsync", source);
-        Assert.Contains("[\"intro\"]", source);
-        Assert.Contains("[\"recap\"]", source);
-        Assert.Contains("[\"credits\"]", source);
-        Assert.Contains("[\"preview\"]", source);
-        Assert.Contains("SetFileMarkersAsync(session.MediaFileId, changes)", source);
-        Assert.Contains("ApplyMarkerEdits(intro, recap, credits, preview)", source);
-    }
-
-    [Fact]
     public void AcceptedHlsAudioSwitchRecoversInsteadOfLeavingAnInvalidatedStream()
     {
         var source = File.ReadAllText(Path.Combine(
@@ -1085,15 +1065,6 @@ public sealed class PlayerServiceSourceTests
         Assert.DoesNotContain("_videoWindow?.Hide()", ai, StringComparison.Ordinal);
         Assert.Contains("PlaybackDialogHost.ShowAsync", ai, StringComparison.Ordinal);
         Assert.Contains("osc-subtitle-dialog-closed", ai, StringComparison.Ordinal);
-
-        var markerStart = source.IndexOf("private async Task ShowMarkerEditDialogAsync()", StringComparison.Ordinal);
-        var markerEnd = source.IndexOf("private void SendMarkerEditAvailabilityToOsc()", markerStart, StringComparison.Ordinal);
-        Assert.True(markerStart >= 0 && markerEnd > markerStart);
-        var marker = source[markerStart..markerEnd];
-        Assert.Contains("var snapshot = CapturePlaybackUiSnapshot();", marker, StringComparison.Ordinal);
-        Assert.Contains("RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);", marker, StringComparison.Ordinal);
-        Assert.DoesNotContain("_videoWindow?.Hide()", marker, StringComparison.Ordinal);
-        Assert.Contains("PlaybackDialogHost.ShowAsync", marker, StringComparison.Ordinal);
 
         var host = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),

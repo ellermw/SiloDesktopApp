@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using SiloPlayer.Core.Api;
-using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Collections;
@@ -11,7 +10,6 @@ using SiloPlayer.Core.Services;
 namespace SiloPlayer.ViewModels;
 
 public sealed record SmartCollectionWizardNavigationArgs(
-    bool IsAdmin = false,
     int? LibraryId = null,
     string? CollectionId = null);
 
@@ -20,7 +18,6 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
     public static readonly IReadOnlyList<string> MediaScopes =
         ["", "video", "movie", "series", "episode", "audiobook", "ebook", "manga"];
 
-    private readonly AdminApi _adminApi;
     private readonly CatalogApi _catalogApi;
     private readonly CollectionsApi _collectionsApi;
     private readonly AuthApi _authApi;
@@ -28,13 +25,11 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
     private string? _collectionId;
 
     public SmartCollectionWizardViewModel(
-        AdminApi adminApi,
         CatalogApi catalogApi,
         CollectionsApi collectionsApi,
         AuthApi authApi,
         AuthService authService)
     {
-        _adminApi = adminApi;
         _catalogApi = catalogApi;
         _collectionsApi = collectionsApi;
         _authApi = authApi;
@@ -49,7 +44,6 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
     public ObservableCollection<Profile> Profiles { get; } = [];
     public ObservableCollection<string> AllowedProfileIds { get; } = [];
 
-    [ObservableProperty] private bool _isAdmin;
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private bool _isPreviewing;
     [ObservableProperty] private bool _isSaving;
@@ -63,22 +57,15 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
     [ObservableProperty] private string _sortOrder = "desc";
     [ObservableProperty] private string? _limitText = "100";
     [ObservableProperty] private bool _isShared;
-    [ObservableProperty] private bool _featured;
     [ObservableProperty] private bool _includeInServerCollections = true;
     [ObservableProperty] private string? _posterSourceUrl;
     [ObservableProperty] private string? _currentPosterUrl;
-    [ObservableProperty] private string? _backdropSourceUrl;
-    [ObservableProperty] private string _visibility = "visible";
     [ObservableProperty] private bool _isReadOnly;
     [ObservableProperty] private int _previewTotal;
 
     public byte[]? PosterFileBytes { get; private set; }
     public string? PosterFileName { get; private set; }
     public string PosterContentType { get; private set; } = "image/jpeg";
-    public byte[]? BackdropFileBytes { get; private set; }
-    public string? BackdropFileName { get; private set; }
-    public string BackdropContentType { get; private set; } = "image/jpeg";
-
     public event Action? Saved;
 
     public async Task ConfigureAsync(SmartCollectionWizardNavigationArgs? args, CancellationToken ct = default)
@@ -86,24 +73,13 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         IsLoading = true;
         ErrorMessage = null;
         StatusMessage = null;
-        IsAdmin = args?.IsAdmin == true;
         _collectionId = args?.CollectionId;
-        if (IsAdmin && !string.IsNullOrWhiteSpace(_collectionId))
-        {
-            ErrorMessage = "Editing an existing admin smart collection is not supported here.";
-            IsLoading = false;
-            return;
-        }
 
         try
         {
             Libraries.Clear();
-            var librariesTask = IsAdmin
-                ? _adminApi.GetAdminLibrariesAsync(ct)
-                : _catalogApi.GetLibrariesAsync(ct);
-            var profilesTask = IsAdmin
-                ? Task.FromResult(new ProfilesResponse())
-                : _authApi.GetProfilesAsync(ct);
+            var librariesTask = _catalogApi.GetLibrariesAsync(ct);
+            var profilesTask = _authApi.GetProfilesAsync(ct);
             await Task.WhenAll(librariesTask, profilesTask);
             var libraries = librariesTask.Result;
             foreach (var library in libraries)
@@ -117,8 +93,6 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
             CurrentPosterUrl = null;
             PosterFileBytes = null;
             PosterFileName = null;
-            BackdropFileBytes = null;
-            BackdropFileName = null;
 
             SelectedLibraryIds.Clear();
             if (args?.LibraryId is int libraryId)
@@ -134,15 +108,12 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
                 SortOrder = "desc";
                 LimitText = "100";
                 IsShared = false;
-                Featured = false;
                 IncludeInServerCollections = true;
                 PosterSourceUrl = null;
-                BackdropSourceUrl = null;
-                Visibility = "visible";
                 Rules.Clear();
             }
 
-            if (!IsAdmin && !string.IsNullOrWhiteSpace(_collectionId))
+            if (!string.IsNullOrWhiteSpace(_collectionId))
             {
                 var response = await _collectionsApi.GetCollectionsAsync(ct);
                 var collection = response.Collections.FirstOrDefault(item => item.Id == _collectionId);
@@ -190,14 +161,6 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         PosterFileBytes = bytes;
         PosterContentType = string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType;
         PosterSourceUrl = "";
-    }
-
-    public void SetBackdropFile(string fileName, byte[] bytes, string? contentType)
-    {
-        BackdropFileName = fileName;
-        BackdropFileBytes = bytes;
-        BackdropContentType = string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType;
-        BackdropSourceUrl = "";
     }
 
     public void AddRule(string field = "genre", string op = "contains", object? value = null)
@@ -263,12 +226,6 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
 
     public async Task SaveAsync(CancellationToken ct = default)
     {
-        if (IsAdmin && !string.IsNullOrWhiteSpace(_collectionId))
-        {
-            ErrorMessage = "Editing an existing admin smart collection is not supported here.";
-            return;
-        }
-
         if (IsReadOnly)
         {
             ErrorMessage = "Only the profile that created this collection can edit it.";
@@ -288,76 +245,45 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         try
         {
             var query = BuildQueryDefinition();
-            if (IsAdmin)
+            var request = new CreateCollectionRequest
             {
-                if (SelectedLibraryIds.Count == 0)
-                {
-                    ErrorMessage = "Select at least one library for an admin smart collection.";
-                    return;
-                }
-
-                var created = await _adminApi.CreateCollectionAsync(new CreateLibraryCollectionRequest
-                {
-                    Title = Title.Trim(),
-                    Description = string.IsNullOrWhiteSpace(Description) ? null : Description.Trim(),
-                    CollectionType = "smart",
-                    Visibility = Visibility,
-                    LibraryId = SelectedLibraryIds[0],
-                    LibraryIds = SelectedLibraryIds.Count > 0 ? [.. SelectedLibraryIds] : null,
-                    Featured = Featured,
-                    QueryDefinition = ToAdminQueryDefinition(query),
-                    PosterSourceUrl = string.IsNullOrWhiteSpace(PosterSourceUrl) ? null : PosterSourceUrl.Trim(),
-                    BackdropSourceUrl = string.IsNullOrWhiteSpace(BackdropSourceUrl) ? null : BackdropSourceUrl.Trim()
-                }, ct);
+                Name = Title.Trim(),
+                Description = string.IsNullOrWhiteSpace(Description) ? null : Description.Trim(),
+                CollectionType = "smart",
+                IsShared = IsShared,
+                AllowedProfileIds = IsShared ? [.. AllowedProfileIds] : [],
+                IncludeInServerCollections = IncludeInServerCollections,
+                PosterSourceUrl = string.IsNullOrWhiteSpace(PosterSourceUrl) ? null : PosterSourceUrl.Trim(),
+                QueryDefinition = query
+            };
+            if (string.IsNullOrWhiteSpace(_collectionId))
+            {
                 if (PosterFileBytes is { Length: > 0 } poster && !string.IsNullOrWhiteSpace(PosterFileName))
-                    await _adminApi.UploadCollectionImageAsync(created.Id, "poster", poster, PosterFileName, PosterContentType, ct);
-                if (BackdropFileBytes is { Length: > 0 } backdrop && !string.IsNullOrWhiteSpace(BackdropFileName))
-                    await _adminApi.UploadCollectionImageAsync(created.Id, "backdrop", backdrop, BackdropFileName, BackdropContentType, ct);
+                    await _collectionsApi.CreateCollectionAsync(request, PosterFileName, poster, PosterContentType, ct);
+                else
+                    await _collectionsApi.CreateCollectionAsync(request, ct);
             }
             else
             {
-                var request = new CreateCollectionRequest
+                var update = new UpdateCollectionRequest
                 {
                     Name = Title.Trim(),
                     Description = string.IsNullOrWhiteSpace(Description) ? null : Description.Trim(),
-                    CollectionType = "smart",
                     IsShared = IsShared,
                     AllowedProfileIds = IsShared ? [.. AllowedProfileIds] : [],
                     IncludeInServerCollections = IncludeInServerCollections,
                     PosterSourceUrl = string.IsNullOrWhiteSpace(PosterSourceUrl) ? null : PosterSourceUrl.Trim(),
                     QueryDefinition = query
                 };
-                if (string.IsNullOrWhiteSpace(_collectionId))
-                {
-                    if (PosterFileBytes is { Length: > 0 } poster && !string.IsNullOrWhiteSpace(PosterFileName))
-                        await _collectionsApi.CreateCollectionAsync(request, PosterFileName, poster, PosterContentType, ct);
-                    else
-                        await _collectionsApi.CreateCollectionAsync(request, ct);
-                }
+                if (PosterFileBytes is { Length: > 0 } poster && !string.IsNullOrWhiteSpace(PosterFileName))
+                    await _collectionsApi.UpdateCollectionAsync(_collectionId, update, PosterFileName, poster, PosterContentType, ct);
                 else
-                {
-                    var update = new UpdateCollectionRequest
-                    {
-                        Name = request.Name,
-                        Description = request.Description,
-                        IsShared = request.IsShared,
-                        AllowedProfileIds = request.AllowedProfileIds,
-                        IncludeInServerCollections = request.IncludeInServerCollections,
-                        PosterSourceUrl = request.PosterSourceUrl,
-                        QueryDefinition = request.QueryDefinition
-                    };
-                    if (PosterFileBytes is { Length: > 0 } poster && !string.IsNullOrWhiteSpace(PosterFileName))
-                        await _collectionsApi.UpdateCollectionAsync(_collectionId, update, PosterFileName, poster, PosterContentType, ct);
-                    else
-                        await _collectionsApi.UpdateCollectionAsync(_collectionId, update, ct);
-                }
+                    await _collectionsApi.UpdateCollectionAsync(_collectionId, update, ct);
             }
 
             StatusMessage = "Smart collection saved.";
             PosterFileBytes = null;
             PosterFileName = null;
-            BackdropFileBytes = null;
-            BackdropFileName = null;
             Saved?.Invoke();
         }
         catch (Exception ex)
@@ -437,37 +363,4 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         return value.Trim();
     }
 
-    private static Dictionary<string, object> ToAdminQueryDefinition(QueryDefinition query)
-    {
-        var body = new Dictionary<string, object>
-        {
-            ["library_ids"] = query.LibraryIds,
-            ["media_scope"] = query.MediaScope ?? "movie",
-            ["match"] = query.Match,
-            ["groups"] = query.Groups.Select(group => new Dictionary<string, object>
-            {
-                ["match"] = group.Match,
-                ["rules"] = group.Rules.Select(rule => new Dictionary<string, object?>
-                {
-                    ["field"] = rule.Field,
-                    ["op"] = rule.Op,
-                    ["value"] = rule.Value
-                }).ToList()
-            }).ToList()
-        };
-
-        if (query.Sort != null)
-        {
-            body["sort"] = new Dictionary<string, object>
-            {
-                ["field"] = query.Sort.Field,
-                ["order"] = query.Sort.Order
-            };
-        }
-
-        if (query.Limit.HasValue)
-            body["limit"] = query.Limit.Value;
-
-        return body;
-    }
 }

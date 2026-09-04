@@ -11,20 +11,15 @@ namespace SiloPlayer.ViewModels;
 public partial class PersonDetailViewModel : ObservableObject
 {
     private readonly PeopleApi _peopleApi;
-    private readonly AdminApi _adminApi;
     private readonly CatalogApi _catalogApi;
-    private readonly AuthService _authService;
 
     private CancellationTokenSource? _pageCts;
     private CancellationTokenSource? _filmographyCts;
-    private CancellationTokenSource? _metadataRefreshCts;
 
-    public PersonDetailViewModel(PeopleApi peopleApi, AdminApi adminApi, CatalogApi catalogApi, AuthService authService)
+    public PersonDetailViewModel(PeopleApi peopleApi, CatalogApi catalogApi)
     {
         _peopleApi = peopleApi;
-        _adminApi = adminApi;
         _catalogApi = catalogApi;
-        _authService = authService;
     }
 
     [ObservableProperty]
@@ -37,13 +32,7 @@ public partial class PersonDetailViewModel : ObservableObject
     private string? _errorMessage;
 
     [ObservableProperty]
-    private string? _statusMessage;
-
-    [ObservableProperty]
     private string _selectedTypeFilter = "all";
-
-    [ObservableProperty]
-    private bool _isRefreshing;
 
     [ObservableProperty]
     private int _filmographyTotal;
@@ -58,8 +47,6 @@ public partial class PersonDetailViewModel : ObservableObject
 
     /// <summary>Whether there are more filmography items to fetch.</summary>
     public bool FilmographyHasMore => Filmography.Count < FilmographyTotal;
-
-    public bool IsAdmin => AuthorizationPolicy.IsActingAdmin(_authService);
 
     public string AgeDisplay
     {
@@ -156,7 +143,6 @@ public partial class PersonDetailViewModel : ObservableObject
 
         IsLoading = true;
         ErrorMessage = null;
-        StatusMessage = null;
         SelectedTypeFilter = "all";
 
         try
@@ -173,8 +159,6 @@ public partial class PersonDetailViewModel : ObservableObject
             OnPropertyChanged(nameof(DatesDisplay));
             OnPropertyChanged(nameof(BirthDateDisplay));
             OnPropertyChanged(nameof(DeathDateDisplay));
-            OnPropertyChanged(nameof(IsAdmin));
-            StartIncompleteMetadataRefresh(personId);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
         catch (ApiException ex) when (ex.StatusCode == 404)
@@ -199,38 +183,6 @@ public partial class PersonDetailViewModel : ObservableObject
         if (Person == null) return;
         SelectedTypeFilter = type;
         await LoadFilmographyAsync(Person.Id, type);
-    }
-
-    [RelayCommand]
-    private async Task RefreshMetadataAsync()
-    {
-        if (Person == null || IsRefreshing) return;
-
-        IsRefreshing = true;
-        ErrorMessage = null;
-        StatusMessage = null;
-        try
-        {
-            if (IsAdmin)
-            {
-                Person = await _adminApi.RefreshPersonAsync(Person.Id);
-                StatusMessage = "Person metadata refreshed.";
-            }
-            else
-            {
-                await _peopleApi.RefreshPersonAsync(Person.Id);
-                StatusMessage = "Person refresh queued.";
-            }
-            OnPropertyChanged(nameof(AgeDisplay));
-            OnPropertyChanged(nameof(DatesDisplay));
-            OnPropertyChanged(nameof(BirthDateDisplay));
-            OnPropertyChanged(nameof(DeathDateDisplay));
-        }
-        catch (Exception ex) { ErrorMessage = $"Refresh failed: {ex.Message}"; }
-        finally
-        {
-            IsRefreshing = false;
-        }
     }
 
     private async Task LoadFilmographyAsync(string personId, string typeFilter)
@@ -302,66 +254,8 @@ public partial class PersonDetailViewModel : ObservableObject
         page?.Cancel();
         page?.Dispose();
         CancelFilmographyLoad();
-        var metadataRefresh = Interlocked.Exchange(ref _metadataRefreshCts, null);
-        metadataRefresh?.Cancel();
-        metadataRefresh?.Dispose();
         IsLoading = false;
     }
-
-    private void StartIncompleteMetadataRefresh(string personId)
-    {
-        var previous = Interlocked.Exchange(ref _metadataRefreshCts, null);
-        previous?.Cancel();
-        previous?.Dispose();
-        if (Person is null || !IsMetadataIncomplete(Person)) return;
-
-        var cts = new CancellationTokenSource();
-        _metadataRefreshCts = cts;
-        _ = RefreshIncompleteMetadataAsync(personId, cts);
-    }
-
-    private async Task RefreshIncompleteMetadataAsync(string personId, CancellationTokenSource owner)
-    {
-        try
-        {
-            // Current WebUI requests one refresh, then refetches the person at
-            // three-second intervals for a bounded thirty-second window.
-            if (IsAdmin)
-                Person = await _adminApi.RefreshPersonAsync(personId, owner.Token);
-            else
-                await _peopleApi.RefreshPersonAsync(personId, owner.Token);
-
-            var deadline = DateTimeOffset.UtcNow.AddSeconds(30);
-            while (!owner.IsCancellationRequested && DateTimeOffset.UtcNow < deadline)
-            {
-                if (Person is not null && !IsMetadataIncomplete(Person)) break;
-                await Task.Delay(TimeSpan.FromSeconds(3), owner.Token);
-                var refreshed = await _peopleApi.GetPersonAsync(personId, owner.Token);
-                if (!ReferenceEquals(_metadataRefreshCts, owner)) return;
-                Person = refreshed;
-                OnPropertyChanged(nameof(AgeDisplay));
-                OnPropertyChanged(nameof(DatesDisplay));
-                OnPropertyChanged(nameof(BirthDateDisplay));
-                OnPropertyChanged(nameof(DeathDateDisplay));
-            }
-        }
-        catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
-        catch
-        {
-            // Automatic enrichment is best effort; the explicit Refresh button
-            // remains available and reports errors to the viewer.
-        }
-        finally
-        {
-            if (ReferenceEquals(Interlocked.CompareExchange(ref _metadataRefreshCts, null, owner), owner))
-                owner.Dispose();
-        }
-    }
-
-    private static bool IsMetadataIncomplete(Person person)
-        => string.IsNullOrWhiteSpace(person.Bio) ||
-           string.IsNullOrWhiteSpace(person.PhotoUrl) ||
-           string.IsNullOrWhiteSpace(person.BirthDate);
 
     private void CancelFilmographyLoad()
     {

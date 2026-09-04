@@ -7,7 +7,7 @@ public sealed class MatchItemDialogParitySourceTests
     {
         var xaml = Read("src", "SiloPlayer", "Controls", "MatchItemDialog.xaml");
         var code = Read("src", "SiloPlayer", "Controls", "MatchItemDialog.xaml.cs");
-        var models = Read("src", "SiloPlayer.Core", "Models", "Admin", "MatchSearch.cs");
+        var models = Read("src", "SiloPlayer.Core", "Models", "MediaMaintenance", "MatchModels.cs");
 
         Assert.Contains("x:Name=\"CurrentTitleText\"", xaml);
         Assert.Contains("x:Name=\"TitleBox\"", xaml);
@@ -27,7 +27,8 @@ public sealed class MatchItemDialogParitySourceTests
         Assert.Contains("candidate.MatchReasons", code);
         Assert.Contains("sources agree", code);
         Assert.Contains("ComputeRootPath", code);
-        Assert.Contains("await _adminApi.MatchApplyAsync", code);
+        Assert.Contains("await _maintenanceApi.ApplyMatchAsync", code);
+        Assert.Contains("await _maintenanceApi.SearchMatchesAsync", code);
         Assert.Contains("public bool HasAppliedMatch", code);
         Assert.Contains("HasAppliedMatch = true;", code);
         Assert.Contains("ApplyMatchButton.Content = \"Applying...\"", code);

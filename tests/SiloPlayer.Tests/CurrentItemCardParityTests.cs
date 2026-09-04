@@ -144,16 +144,14 @@ public sealed class CurrentItemCardParityTests
         var code = File.ReadAllText(Path.Combine(
             root, "src", "SiloPlayer", "Controls", "MediaItemMenu.cs"));
 
-        Assert.Contains("AuthorizationPolicy.IsActingAdmin(authService)", code);
         Assert.Contains("AuthorizationPolicy.CanCurateMetadata(authService)", code);
+        Assert.Contains("ItemMaintenanceActionPolicy.Resolve", code);
         Assert.Contains("item.UserState != null", code);
         Assert.Contains("item.Type is \"movie\" or \"episode\" or \"audiobook\"", code);
         Assert.Contains("PlayAsync(item.ContentId, fromStart: true)", code);
-        Assert.Contains("View Play History", code);
         Assert.Contains("ShowRefreshMetadataDialogAsync", code);
-        Assert.Contains("ShowEditMetadataDialogAsync", code);
         Assert.Contains("ShowMatchItemDialogAsync", code);
-        Assert.Contains("item.Type is \"movie\" or \"series\"", code);
+        Assert.Contains("maintenance.CanMatch", code);
         Assert.Contains("progress_updated_at = item.ProgressUpdatedAt", code);
         Assert.Contains("MediaItemCardActions.ToggleWatchedAsync", code);
         Assert.Contains("MediaItemCardActions.ToggleFavoriteAsync", code);
@@ -162,10 +160,11 @@ public sealed class CurrentItemCardParityTests
         Assert.Contains("AutomationProperties.SetName(item, text)", code);
         var restart = code.IndexOf("Play from Beginning", StringComparison.Ordinal);
         var watched = code.IndexOf("GetWatchedActionLabel", StringComparison.Ordinal);
-        var history = code.IndexOf("View Play History", StringComparison.Ordinal);
         var dismiss = code.IndexOf("var canDismiss", StringComparison.Ordinal);
         Assert.True(restart >= 0 && watched > restart);
-        Assert.True(history > watched && dismiss > history);
+        Assert.True(dismiss > watched);
+        Assert.DoesNotContain("View Play History", code);
+        Assert.DoesNotContain("Edit Metadata", code);
     }
 
     [Fact]

@@ -1,5 +1,5 @@
 using SiloPlayer.Core.Models.Auth;
-using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Models.Sessions;
 
 namespace SiloPlayer.Core.Api;
 
@@ -28,8 +28,8 @@ public class AuthApi(SiloApiClient client)
     public Task<ProfilesResponse> GetProfilesAsync(CancellationToken ct = default)
         => client.GetAsync<ProfilesResponse>("/api/v1/profiles", ct);
 
-    public Task<List<AdminSession>> GetHouseholdSessionsAsync(CancellationToken ct = default)
-        => client.GetAsync<List<AdminSession>>("/api/v1/profiles/household/sessions", ct);
+    public Task<List<PlaybackSessionSummary>> GetHouseholdSessionsAsync(CancellationToken ct = default)
+        => client.GetAsync<List<PlaybackSessionSummary>>("/api/v1/profiles/household/sessions", ct);
 
     public Task<VerifyPinResponse> VerifyPinAsync(string profileId, string pin, CancellationToken ct = default)
         => client.PostAsync<VerifyPinResponse>($"/api/v1/profiles/{Uri.EscapeDataString(profileId)}/verify-pin", new VerifyPinRequest { Pin = pin }, ct);
@@ -212,17 +212,6 @@ public class AuthApi(SiloApiClient client)
 
     public Task LogoutAsync(CancellationToken ct = default)
         => client.PostNoContentWithoutRefreshAsync("/api/v1/auth/logout", new Dictionary<string, object?>(), ct);
-
-    /// <summary>
-    /// Revokes only the active impersonated session. Automatic 401 refresh is
-    /// deliberately disabled: a revoked impersonation token must never cause the
-    /// client to discard the separately preserved administrator session.
-    /// </summary>
-    public Task EndImpersonationAsync(CancellationToken ct = default)
-        => client.PostNoContentWithoutRefreshAsync(
-            "/api/v1/auth/impersonation/end",
-            new Dictionary<string, object?>(),
-            ct);
 
     public Task LogoutAsync(string baseUrl, string accessToken, CancellationToken ct = default)
         => client.PostNoContentWithBearerAsync(

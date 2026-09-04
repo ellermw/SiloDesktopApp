@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 
@@ -22,7 +23,6 @@ public sealed class DirectStreamRelay
     private const int BufferSize = 128 * 1024;
     private const int DefaultMaxRetries = 50;
     private const int MaxInitialStatusRetries = 5;
-    private static readonly TimeSpan DefaultUpstreamIdleTimeout = TimeSpan.FromSeconds(20);
 
     private readonly HttpClient _httpClient;
     private readonly Uri _remoteUri;
@@ -32,6 +32,8 @@ public sealed class DirectStreamRelay
     private readonly bool _supportsRanges;
     private readonly TimeSpan _upstreamIdleTimeout;
     private string? _strongEntityTag;
+    private int _activeRecoveries;
+    private long _recoveryStartedTimestamp;
 
     public DirectStreamRelay(
         HttpClient httpClient,
@@ -51,9 +53,27 @@ public sealed class DirectStreamRelay
         _log = log;
         _maxRetries = maxRetries;
         _supportsRanges = supportsRanges;
-        _upstreamIdleTimeout = upstreamIdleTimeout ?? DefaultUpstreamIdleTimeout;
+        _upstreamIdleTimeout = upstreamIdleTimeout ?? DirectPlaybackRecoveryPolicy.UpstreamIdleTimeout;
         if (_upstreamIdleTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(upstreamIdleTimeout));
+    }
+
+    /// <summary>Gets whether at least one relay request is reconnecting upstream.</summary>
+    public bool IsRecovering => Volatile.Read(ref _activeRecoveries) > 0;
+
+    /// <summary>Gets the elapsed time of the oldest active upstream reconnect.</summary>
+    public TimeSpan? RecoveryElapsed
+    {
+        get
+        {
+            if (!IsRecovering)
+                return null;
+
+            var startedTimestamp = Volatile.Read(ref _recoveryStartedTimestamp);
+            return startedTimestamp > 0
+                ? Stopwatch.GetElapsedTime(startedTimestamp)
+                : TimeSpan.Zero;
+        }
     }
 
     public async Task<DirectStreamRelayResult> RelayAsync(
@@ -72,167 +92,200 @@ public sealed class DirectStreamRelay
         var attempts = 0;
         var headersWritten = false;
         var firstStatusCode = HttpStatusCode.OK;
+        var recoveryRegistered = false;
 
-        while (true)
+        void BeginRecovery()
         {
-            attempts++;
+            if (!_supportsRanges || recoveryRegistered)
+                return;
 
-            try
+            if (Interlocked.Increment(ref _activeRecoveries) == 1)
+                Volatile.Write(ref _recoveryStartedTimestamp, Stopwatch.GetTimestamp());
+            recoveryRegistered = true;
+        }
+
+        void CompleteRecovery()
+        {
+            if (!recoveryRegistered)
+                return;
+
+            recoveryRegistered = false;
+            if (Interlocked.Decrement(ref _activeRecoveries) == 0)
+                Volatile.Write(ref _recoveryStartedTimestamp, 0);
+        }
+
+        try
+        {
+            while (true)
             {
-                var resumeEntityTag = Volatile.Read(ref _strongEntityTag);
-                using var request = CreateRequest(
-                    nextOffset,
-                    endOffset,
-                    requestedRange is not null,
-                    headOnly,
-                    resumeEntityTag);
-                using var response = await _httpClient.SendAsync(
-                    request,
-                    HttpCompletionOption.ResponseHeadersRead,
-                    cancellationToken);
+                attempts++;
 
-                // CDN edges and a just-started server stream can briefly return
-                // 404/429/5xx before media bytes are available. Retry these
-                // before exposing headers to mpv; after headers or body bytes
-                // have been sent, only byte-range continuation is safe.
-                if (!headersWritten && bytesWritten == 0 &&
-                    ShouldRetryInitialStatus(response.StatusCode) &&
-                    attempts <= Math.Min(_maxRetries, MaxInitialStatusRetries))
+                try
+                {
+                    var resumeEntityTag = Volatile.Read(ref _strongEntityTag);
+                    using var request = CreateRequest(
+                        nextOffset,
+                        endOffset,
+                        requestedRange is not null,
+                        headOnly,
+                        resumeEntityTag);
+                    using var response = await _httpClient.SendAsync(
+                        request,
+                        HttpCompletionOption.ResponseHeadersRead,
+                        cancellationToken);
+
+                    // CDN edges and a just-started server stream can briefly return
+                    // 404/429/5xx before media bytes are available. Retry these
+                    // before exposing headers to mpv; after headers or body bytes
+                    // have been sent, only byte-range continuation is safe.
+                    if (!headersWritten && bytesWritten == 0 &&
+                        ShouldRetryInitialStatus(response.StatusCode) &&
+                        attempts <= Math.Min(_maxRetries, MaxInitialStatusRetries))
+                    {
+                        _log?.Invoke(
+                            $"Direct stream initial HTTP {(int)response.StatusCode}; retry {attempts}/{Math.Min(_maxRetries, MaxInitialStatusRetries)}.");
+                        BeginRecovery();
+                        await DelayBeforeRetryAsync(attempts, cancellationToken);
+                        continue;
+                    }
+
+                    // A strong If-Range validator returning 200 means the source
+                    // entity changed. Never splice bytes from the replacement into
+                    // mpv's active representation; close this relay so the player
+                    // can perform its normal full-session recovery.
+                    var responseEntityTag = response.Headers.ETag is { IsWeak: false } strongTag
+                        ? strongTag.ToString()
+                        : null;
+                    if (_supportsRanges &&
+                        !string.IsNullOrWhiteSpace(resumeEntityTag) &&
+                        (nextOffset > 0 || requestedRange is not null) &&
+                        (response.StatusCode == HttpStatusCode.OK ||
+                         (!string.IsNullOrWhiteSpace(responseEntityTag) &&
+                          !string.Equals(responseEntityTag, resumeEntityTag, StringComparison.Ordinal))))
+                    {
+                        throw new DirectStreamEntityChangedException();
+                    }
+                    if (!string.IsNullOrWhiteSpace(responseEntityTag))
+                        Volatile.Write(ref _strongEntityTag, responseEntityTag);
+
+                    await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
+                    var initialByte = -1;
+                    if (!_supportsRanges && !headOnly && response.IsSuccessStatusCode)
+                    {
+                        initialByte = await ReadInitialByteAsync(
+                            input,
+                            _upstreamIdleTimeout,
+                            cancellationToken);
+                        if (initialByte < 0)
+                        {
+                            if (!headersWritten && bytesWritten == 0 &&
+                                attempts <= Math.Min(_maxRetries, MaxInitialStatusRetries))
+                            {
+                                _log?.Invoke(
+                                    $"Direct stream returned no media bytes; retry {attempts}/{Math.Min(_maxRetries, MaxInitialStatusRetries)}.");
+                                await DelayBeforeRetryAsync(attempts, cancellationToken);
+                                continue;
+                            }
+
+                            throw new IOException("Upstream returned a successful response without any media bytes.");
+                        }
+                    }
+
+                    // An origin is allowed to ignore a client's initial Range request and
+                    // return the complete representation with 200. It is not safe to accept
+                    // that response after bytes have already been relayed, because doing so
+                    // would append the representation from byte zero and corrupt playback.
+                    if (_supportsRanges && bytesWritten > 0 && response.StatusCode == HttpStatusCode.OK)
+                        throw new IOException("Upstream ignored the resume range request.");
+
+                    if (_supportsRanges &&
+                        response.StatusCode == HttpStatusCode.PartialContent &&
+                        response.Content.Headers.ContentRange?.From != nextOffset)
+                    {
+                        throw new IOException(
+                            $"Upstream returned an invalid resume range; expected byte {nextOffset}.");
+                    }
+
+                    if (!headersWritten)
+                    {
+                        firstStatusCode = response.StatusCode;
+                        if (writeHeadersAsync is not null)
+                        {
+                            try
+                            {
+                                await writeHeadersAsync(CreateHeaders(response), cancellationToken);
+                            }
+                            catch (Exception ex) when (IsTransient(ex))
+                            {
+                                throw new DirectStreamWriteException(ex);
+                            }
+                        }
+
+                        headersWritten = true;
+                    }
+
+                    if (headOnly)
+                        return new DirectStreamRelayResult(firstStatusCode, bytesWritten, attempts);
+
+                    var expectedBytes = response.Content.Headers.ContentLength;
+                    if (initialByte >= 0)
+                        await output.WriteAsync(
+                            new byte[] { (byte)initialByte },
+                            cancellationToken);
+                    var bytesThisAttempt = await CopyToAsync(
+                        input,
+                        output,
+                        _upstreamIdleTimeout,
+                        cancellationToken,
+                        recoveryRegistered ? CompleteRecovery : null) + (initialByte >= 0 ? 1 : 0);
+
+                    bytesWritten += bytesThisAttempt;
+                    nextOffset += bytesThisAttempt;
+
+                    if (!response.IsSuccessStatusCode)
+                        return new DirectStreamRelayResult(firstStatusCode, bytesWritten, attempts);
+
+                    if (!expectedBytes.HasValue || bytesThisAttempt >= expectedBytes.Value)
+                        return new DirectStreamRelayResult(firstStatusCode, bytesWritten, attempts);
+
+                    if (!_supportsRanges)
+                    {
+                        throw new IOException(
+                            $"Sequential upstream ended after {bytesThisAttempt} bytes; expected {expectedBytes.Value} bytes.");
+                    }
+
+                    if (attempts > _maxRetries)
+                    {
+                        throw new IOException(
+                            $"Upstream ended after {bytesThisAttempt} bytes; expected {expectedBytes.Value} bytes.");
+                    }
+
+                    _log?.Invoke(
+                        $"Direct stream retry {attempts}/{_maxRetries} from byte {nextOffset}: upstream ended early after {bytesThisAttempt} bytes.");
+                    BeginRecovery();
+                    await DelayBeforeRetryAsync(attempts, cancellationToken);
+                }
+                catch (DirectStreamReadException ex) when (_supportsRanges && !cancellationToken.IsCancellationRequested && attempts <= _maxRetries)
+                {
+                    bytesWritten += ex.BytesCopied;
+                    nextOffset += ex.BytesCopied;
+                    _log?.Invoke(
+                        $"Direct stream retry {attempts}/{_maxRetries} from byte {nextOffset}: {ex.InnerException?.GetType().Name}: {ex.InnerException?.Message}");
+                    BeginRecovery();
+                    await DelayBeforeRetryAsync(attempts, cancellationToken);
+                }
+                catch (Exception ex) when (_supportsRanges && !cancellationToken.IsCancellationRequested && IsTransient(ex) && attempts <= _maxRetries)
                 {
                     _log?.Invoke(
-                        $"Direct stream initial HTTP {(int)response.StatusCode}; retry {attempts}/{Math.Min(_maxRetries, MaxInitialStatusRetries)}.");
+                        $"Direct stream retry {attempts}/{_maxRetries} from byte {nextOffset}: {ex.GetType().Name}: {ex.Message}");
+                    BeginRecovery();
                     await DelayBeforeRetryAsync(attempts, cancellationToken);
-                    continue;
                 }
-
-                // A strong If-Range validator returning 200 means the source
-                // entity changed. Never splice bytes from the replacement into
-                // mpv's active representation; close this relay so the player
-                // can perform its normal full-session recovery.
-                var responseEntityTag = response.Headers.ETag is { IsWeak: false } strongTag
-                    ? strongTag.ToString()
-                    : null;
-                if (_supportsRanges &&
-                    !string.IsNullOrWhiteSpace(resumeEntityTag) &&
-                    (nextOffset > 0 || requestedRange is not null) &&
-                    (response.StatusCode == HttpStatusCode.OK ||
-                     (!string.IsNullOrWhiteSpace(responseEntityTag) &&
-                      !string.Equals(responseEntityTag, resumeEntityTag, StringComparison.Ordinal))))
-                {
-                    throw new DirectStreamEntityChangedException();
-                }
-                if (!string.IsNullOrWhiteSpace(responseEntityTag))
-                    Volatile.Write(ref _strongEntityTag, responseEntityTag);
-
-                await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
-                var initialByte = -1;
-                if (!_supportsRanges && !headOnly && response.IsSuccessStatusCode)
-                {
-                    initialByte = await ReadInitialByteAsync(
-                        input,
-                        _upstreamIdleTimeout,
-                        cancellationToken);
-                    if (initialByte < 0)
-                    {
-                        if (!headersWritten && bytesWritten == 0 &&
-                            attempts <= Math.Min(_maxRetries, MaxInitialStatusRetries))
-                        {
-                            _log?.Invoke(
-                                $"Direct stream returned no media bytes; retry {attempts}/{Math.Min(_maxRetries, MaxInitialStatusRetries)}.");
-                            await DelayBeforeRetryAsync(attempts, cancellationToken);
-                            continue;
-                        }
-
-                        throw new IOException("Upstream returned a successful response without any media bytes.");
-                    }
-                }
-
-                // An origin is allowed to ignore a client's initial Range request and
-                // return the complete representation with 200. It is not safe to accept
-                // that response after bytes have already been relayed, because doing so
-                // would append the representation from byte zero and corrupt playback.
-                if (_supportsRanges && bytesWritten > 0 && response.StatusCode == HttpStatusCode.OK)
-                    throw new IOException("Upstream ignored the resume range request.");
-
-                if (_supportsRanges &&
-                    response.StatusCode == HttpStatusCode.PartialContent &&
-                    response.Content.Headers.ContentRange?.From != nextOffset)
-                {
-                    throw new IOException(
-                        $"Upstream returned an invalid resume range; expected byte {nextOffset}.");
-                }
-
-                if (!headersWritten)
-                {
-                    firstStatusCode = response.StatusCode;
-                    if (writeHeadersAsync is not null)
-                    {
-                        try
-                        {
-                            await writeHeadersAsync(CreateHeaders(response), cancellationToken);
-                        }
-                        catch (Exception ex) when (IsTransient(ex))
-                        {
-                            throw new DirectStreamWriteException(ex);
-                        }
-                    }
-
-                    headersWritten = true;
-                }
-
-                if (headOnly)
-                    return new DirectStreamRelayResult(firstStatusCode, bytesWritten, attempts);
-
-                var expectedBytes = response.Content.Headers.ContentLength;
-                if (initialByte >= 0)
-                    await output.WriteAsync(
-                        new byte[] { (byte)initialByte },
-                        cancellationToken);
-                var bytesThisAttempt = await CopyToAsync(
-                    input,
-                    output,
-                    _upstreamIdleTimeout,
-                    cancellationToken) + (initialByte >= 0 ? 1 : 0);
-
-                bytesWritten += bytesThisAttempt;
-                nextOffset += bytesThisAttempt;
-
-                if (!response.IsSuccessStatusCode)
-                    return new DirectStreamRelayResult(firstStatusCode, bytesWritten, attempts);
-
-                if (!expectedBytes.HasValue || bytesThisAttempt >= expectedBytes.Value)
-                    return new DirectStreamRelayResult(firstStatusCode, bytesWritten, attempts);
-
-                if (!_supportsRanges)
-                {
-                    throw new IOException(
-                        $"Sequential upstream ended after {bytesThisAttempt} bytes; expected {expectedBytes.Value} bytes.");
-                }
-
-                if (attempts > _maxRetries)
-                {
-                    throw new IOException(
-                        $"Upstream ended after {bytesThisAttempt} bytes; expected {expectedBytes.Value} bytes.");
-                }
-
-                _log?.Invoke(
-                    $"Direct stream retry {attempts}/{_maxRetries} from byte {nextOffset}: upstream ended early after {bytesThisAttempt} bytes.");
-                await DelayBeforeRetryAsync(attempts, cancellationToken);
             }
-            catch (DirectStreamReadException ex) when (_supportsRanges && !cancellationToken.IsCancellationRequested && attempts <= _maxRetries)
-            {
-                bytesWritten += ex.BytesCopied;
-                nextOffset += ex.BytesCopied;
-                _log?.Invoke(
-                    $"Direct stream retry {attempts}/{_maxRetries} from byte {nextOffset}: {ex.InnerException?.GetType().Name}: {ex.InnerException?.Message}");
-                await DelayBeforeRetryAsync(attempts, cancellationToken);
-            }
-            catch (Exception ex) when (_supportsRanges && !cancellationToken.IsCancellationRequested && IsTransient(ex) && attempts <= _maxRetries)
-            {
-                _log?.Invoke(
-                    $"Direct stream retry {attempts}/{_maxRetries} from byte {nextOffset}: {ex.GetType().Name}: {ex.Message}");
-                await DelayBeforeRetryAsync(attempts, cancellationToken);
-            }
+        }
+        finally
+        {
+            CompleteRecovery();
         }
     }
 
@@ -253,7 +306,11 @@ public sealed class DirectStreamRelay
         bool headOnly,
         string? resumeEntityTag)
     {
-        var request = new HttpRequestMessage(headOnly ? HttpMethod.Head : HttpMethod.Get, _remoteUri);
+        var request = new HttpRequestMessage(headOnly ? HttpMethod.Head : HttpMethod.Get, _remoteUri)
+        {
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionOrLower
+        };
         var token = _accessTokenProvider();
 
         if (!string.IsNullOrWhiteSpace(token))
@@ -287,7 +344,8 @@ public sealed class DirectStreamRelay
         Stream input,
         Stream output,
         TimeSpan upstreamIdleTimeout,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action? onFirstMediaBytes = null)
     {
         var buffer = ArrayPool<byte>.Shared.Rent(BufferSize);
         var total = 0L;
@@ -318,6 +376,9 @@ public sealed class DirectStreamRelay
 
                 if (read == 0)
                     break;
+
+                onFirstMediaBytes?.Invoke();
+                onFirstMediaBytes = null;
 
                 try
                 {

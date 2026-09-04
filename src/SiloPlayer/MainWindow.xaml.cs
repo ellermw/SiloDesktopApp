@@ -138,52 +138,12 @@ public sealed partial class MainWindow : Window
         toastService.Register(ToastHost, DispatcherQueue);
 
         // Hide the nav view initially -- it shows only after login.
-        // Server Activity button follows the same admin-gate as AdminButton and
-        // stays hidden until ShowMainNavigation() fires post-login.
         NavView.IsPaneVisible = false;
-        MainServerActivityButton.SetHostVisibility(false);
-        MobileServerActivityButton.SetHostVisibility(false);
-
-        // Wire Server Activity "View all" callbacks. Routes navigate through
-        // AdminShellPage so the admin sidebar stays present — passing the target
-        // sub-page type as a parameter, which AdminShellPage consumes in
-        // OnNavigatedTo and opens inside its internal AdminContentFrame.
-        //
-        // HideWhenEmpty=false keeps the button visible for admins on every page
-        // (not just when something is active). Non-admin users never see it
-        // regardless — the role check inside the control handles that.
-        MainServerActivityButton.HideWhenEmpty = true;
-        MainServerActivityButton.OnViewStreams = () =>
-        {
-            // Hide the main sidebar BEFORE navigating — same as Admin_Click —
-            // otherwise the user sees two navigation panes side-by-side
-            // (main nav + AdminShellPage's own admin nav).
-            NavView.IsPaneVisible = false;
-            HideSharedServerActivity();
-            _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminActivityPage));
-        };
-        MainServerActivityButton.OnViewTasks = () =>
-        {
-            NavView.IsPaneVisible = false;
-            HideSharedServerActivity();
-            _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminTasksPage));
-        };
-        MainServerActivityButton.OnViewScans = () =>
-        {
-            NavView.IsPaneVisible = false;
-            HideSharedServerActivity();
-            _navigationService.Navigate<Views.Admin.AdminShellPage>(typeof(Views.Admin.AdminLibrariesPage));
-        };
-        MobileServerActivityButton.HideWhenEmpty = true;
-        MobileServerActivityButton.OnViewStreams = () => MainServerActivityButton.OnViewStreams?.Invoke();
-        MobileServerActivityButton.OnViewTasks = () => MainServerActivityButton.OnViewTasks?.Invoke();
-        MobileServerActivityButton.OnViewScans = () => MainServerActivityButton.OnViewScans?.Invoke();
 
         // Listen for player state changes
         _playerService = App.Services.GetRequiredService<PlayerService>();
         _playerService.StateChanged += OnPlayerStateChanged;
         _authService.LoggedOut += OnAuthLoggedOut;
-        _authService.UserChanged += OnAuthUserChanged;
         _authService.ProfileVerificationRequired += OnProfileVerificationRequired;
         _authService.CredentialStoreFailed += OnCredentialStoreFailed;
         _eventChannel.SnapshotReceived += OnShellEventSnapshot;
@@ -258,18 +218,14 @@ public sealed partial class MainWindow : Window
         var mobileHeaderVisibility =
             isNarrow &&
             NavView.IsPaneVisible &&
-            CanExposeAuthenticatedNavigation &&
-            ContentFrame.Content is not Views.Admin.AdminShellPage
+            CanExposeAuthenticatedNavigation
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         if (MobileShellHeader.Visibility != mobileHeaderVisibility)
             MobileShellHeader.Visibility = mobileHeaderVisibility;
 
         if (!NavView.IsPaneVisible)
-        {
-            UpdateServerActivityHostVisibility();
             return;
-        }
 
         if (isNarrow)
         {
@@ -288,7 +244,6 @@ public sealed partial class MainWindow : Window
         }
 
         UpdateSidebarPanePresentation(NavView.IsPaneOpen);
-        UpdateServerActivityHostVisibility();
     }
 
     public void SetMobileHeaderHidden(bool hidden)
@@ -303,23 +258,6 @@ public sealed partial class MainWindow : Window
             : System.Numerics.Vector3.Zero;
         MobileShellHeader.Opacity = hidden ? 0 : 1;
         MobileShellHeader.IsHitTestVisible = !hidden;
-    }
-
-    private void UpdateServerActivityHostVisibility()
-    {
-        var shellActive =
-            NavView.IsPaneVisible &&
-            CanExposeAuthenticatedNavigation &&
-            ContentFrame.Content is not Views.Admin.AdminShellPage;
-        var canShow = shellActive && AuthorizationPolicy.IsActingAdmin(_authService);
-        MainServerActivityButton.SetHostVisibility(canShow && !_isNarrowShell);
-        MobileServerActivityButton.SetHostVisibility(canShow && _isNarrowShell);
-    }
-
-    private void HideSharedServerActivity()
-    {
-        MainServerActivityButton.SetHostVisibility(false);
-        MobileServerActivityButton.SetHostVisibility(false);
     }
 
     private void MobileMenu_Click(object sender, RoutedEventArgs e)
@@ -433,7 +371,6 @@ public sealed partial class MainWindow : Window
         _playerService.StateChanged -= OnPlayerStateChanged;
         _uiCustomizationService.Changed -= OnUICustomizationChanged;
         _authService.LoggedOut -= OnAuthLoggedOut;
-        _authService.UserChanged -= OnAuthUserChanged;
         _authService.ProfileVerificationRequired -= OnProfileVerificationRequired;
         _authService.CredentialStoreFailed -= OnCredentialStoreFailed;
         _playerService.ShowPlayingNextRequested -= OnShowPlayingNextRequested;
@@ -942,9 +879,6 @@ public sealed partial class MainWindow : Window
         args.Handled = true;
         try
         {
-            if (ContentFrame.Content is Views.Admin.AdminShellPage adminShell &&
-                await adminShell.TryShowAdminCommandPaletteAsync())
-                return;
             var dlg = new Controls.GlobalSearchDialog { XamlRoot = this.Content.XamlRoot };
             await dlg.ShowAsync();
         }
@@ -1270,21 +1204,6 @@ public sealed partial class MainWindow : Window
         // links, library pins, and player prewarming are all supplemental.
         TryShellAction("shell_visibility", () =>
         {
-            // Always update admin button and profile display for current user.
-            bool isAdmin = AuthorizationPolicy.IsActingAdmin(_authService);
-            AdminButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
-            var adminShellActive = ContentFrame.Content is Views.Admin.AdminShellPage;
-            if (adminShellActive)
-            {
-                // AdminShell owns both its sidebar and ServerActivity button.
-                // ShowMainNavigation can run immediately after a successful
-                // authenticated navigation, so it must not re-layer the main
-                // shell controls after the Navigated handler hid them.
-                NavView.IsPaneVisible = false;
-                HideSharedServerActivity();
-                return;
-            }
-
             // HideMainNavigation closes the pane while login/profile selection
             // owns the window. Restore the user's last explicit desktop state
             // before revealing it so the wrong state cannot render for a frame.
@@ -1295,7 +1214,6 @@ public sealed partial class MainWindow : Window
                 NavView.IsPaneVisible = true;
             ApplyResponsiveShellLayout();
             UpdateSidebarPanePresentation(NavView.IsPaneOpen);
-            UpdateServerActivityHostVisibility();
         });
 
         if (shouldHydrateShell)
@@ -1664,23 +1582,12 @@ public sealed partial class MainWindow : Window
 
         // PaneFooter is custom content and retains its expanded desired width
         // unless it is explicitly constrained. Pin it to the 64px rail while
-        // compact so the Admin/profile icons cannot be centered at x=130 and
+        // compact so the profile icon cannot be centered at x=130 and
         // clipped in half by the native pane viewport.
         SidebarFooterPanel.Width = isOpen ? double.NaN : NavView.CompactPaneLength;
         SidebarFooterPanel.HorizontalAlignment = HorizontalAlignment.Left;
         SidebarFooterSeparator.Width = isOpen ? double.NaN : NavView.CompactPaneLength;
         SidebarFooterSeparator.Margin = new Thickness(0, 0, 0, 8);
-
-        AdminButtonLabel.Opacity = isOpen ? 1 : 0;
-        AdminButtonContent.Spacing = 10;
-        AdminButton.HorizontalAlignment = isOpen ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-        AdminButton.Width = isOpen ? double.NaN : 40;
-        AdminButton.Height = 42;
-        AdminButton.Margin = isOpen ? new Thickness(12, 0, 12, 0) : new Thickness(12, 0, 0, 0);
-        AdminButton.Padding = isOpen ? new Thickness(12) : new Thickness(0);
-        AdminButton.HorizontalContentAlignment = isOpen
-            ? HorizontalAlignment.Left
-            : HorizontalAlignment.Center;
 
         ProfileNameText.Opacity = isOpen ? 1 : 0;
         ProfileFooterContent.Spacing = 10;
@@ -1834,24 +1741,10 @@ public sealed partial class MainWindow : Window
             () => App.Services.GetRequiredService<AccessibilityService>().ApplySaved(ContentFrame.Content as DependencyObject));
     }
 
-    /// <summary>
-    /// The admin shell owns its own server-activity control and navigation rail.
-    /// Enforce that ownership at the frame boundary so every route into Admin --
-    /// including deep links, back-stack restores, and activity-popover links --
-    /// cannot leave the main-shell activity control layered underneath it.
-    /// </summary>
     private void OnNavigated_SynchronizeShellChrome(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         _lastShellPageType = e.SourcePageType;
         _lastShellParameter = e.Parameter;
-
-        if (e.SourcePageType == typeof(Views.Admin.AdminShellPage))
-        {
-            NavView.SelectedItem = null;
-            NavView.IsPaneVisible = false;
-            HideSharedServerActivity();
-            return;
-        }
 
         if (!CanExposeAuthenticatedNavigation)
         {
@@ -1859,9 +1752,8 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        // A Back operation or deep link can leave Admin without passing through
-        // its explicit exit button. Restore the shared shell at the frame
-        // boundary so it never remains hidden after returning to user pages.
+        // Restore the authenticated shell at the frame boundary so navigation
+        // never leaves the user-controlled pane in a transient hidden state.
         var desiredPaneOpen = !_isNarrowShell && _desktopSidebarOpen;
         if (NavView.IsPaneOpen != desiredPaneOpen)
             NavView.IsPaneOpen = desiredPaneOpen;
@@ -2118,10 +2010,6 @@ public sealed partial class MainWindow : Window
         _hydratedShellKey = null;
         CancelShellHydration();
         ReleaseNotificationSubscription();
-        // Keep the Server Activity button in sync with the rest of the shell —
-        // while the nav is hidden (login / profile select / setup), no admin
-        // chrome should be visible.
-        HideSharedServerActivity();
     }
 
     private void NavView_PaneClosing(
@@ -2264,7 +2152,6 @@ public sealed partial class MainWindow : Window
         NavView.IsPaneVisible = true;
         ApplyResponsiveShellLayout();
         UpdateSidebarPanePresentation(NavView.IsPaneOpen);
-        UpdateServerActivityHostVisibility();
     }
 
     private void OnPlayerStateChanged(PlayerState state)
@@ -2389,9 +2276,6 @@ public sealed partial class MainWindow : Window
 
     public Task ShowSubtitleAiDialogAsync(XamlRoot? dialogXamlRoot = null)
         => PlayerOverlayControl.ShowSubtitleAiDialogAsync(dialogXamlRoot);
-
-    public Task ShowMarkerEditDialogAsync(XamlRoot? dialogXamlRoot = null)
-        => PlayerOverlayControl.ShowMarkerEditDialogAsync(dialogXamlRoot);
 
     public void NavigateToHome()
     {
@@ -3244,13 +3128,6 @@ public sealed partial class MainWindow : Window
         DispatcherQueue.TryEnqueue(() => ProfileFooterFlyout.Hide());
     }
 
-    private void Admin_Click(object sender, RoutedEventArgs e)
-    {
-        NavView.IsPaneVisible = false;
-        HideSharedServerActivity();
-        _navigationService.Navigate<Views.Admin.AdminShellPage>();
-    }
-
     private void NavView_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
     {
         try
@@ -3446,7 +3323,6 @@ public sealed partial class MainWindow : Window
                 _settingsService.Save(settings);
             }
 
-            HideImpersonationBanner();
             HideMainNavigation();
             _navigationService.Navigate<ServerSelectPage>();
         });
@@ -3478,81 +3354,4 @@ public sealed partial class MainWindow : Window
         LocalLog.AppendLine("auth_errors.txt", $"credential_store | {exception.GetType().Name}: {exception.Message}");
     }
 
-    // ===== Impersonation =====
-
-    private void OnAuthUserChanged()
-    {
-        DispatcherQueue.TryEnqueue(() =>
-        {
-            var user = _authService.CurrentUser;
-            if (user?.Impersonation?.Active == true)
-            {
-                ShowImpersonationBanner(
-                    user.Username,
-                    user.Impersonation.ImpersonatorUsername);
-            }
-            else
-            {
-                HideImpersonationBanner();
-            }
-        });
-    }
-
-    public void ShowImpersonationBanner(string username, string impersonatorUsername = "")
-    {
-        _viewModel.IsImpersonating = true;
-        _viewModel.ImpersonatedUsername = username;
-        ImpersonationBannerControl.ImpersonatedUsername = username;
-        ImpersonationBannerControl.ImpersonatorUsername = impersonatorUsername;
-        ImpersonationBannerControl.Visibility = Visibility.Visible;
-    }
-
-    public void HideImpersonationBanner()
-    {
-        _viewModel.IsImpersonating = false;
-        _viewModel.ImpersonatedUsername = "";
-        ImpersonationBannerControl.ImpersonatorUsername = "";
-        ImpersonationBannerControl.Visibility = Visibility.Collapsed;
-    }
-
-    private async void ImpersonationBanner_EndRequested(object? sender, EventArgs e)
-    {
-        ImpersonationBannerControl.IsEnding = true;
-        try
-        {
-            // Stop user-scoped playback before replacing its authentication context.
-            await _playerService.CloseAsync();
-            var returnPath = await _authService.EndImpersonationAsync();
-            HideImpersonationBanner();
-
-            NavView.IsPaneVisible = false;
-            HideSharedServerActivity();
-
-            const string userPrefix = "/admin/users/";
-            if (returnPath.StartsWith(userPrefix, StringComparison.OrdinalIgnoreCase) &&
-                int.TryParse(returnPath[userPrefix.Length..].Trim('/'), out var userId))
-            {
-                _navigationService.Navigate<Views.Admin.AdminShellPage>(
-                    new Views.Admin.AdminShellNavigation(
-                        typeof(Views.Admin.AdminUserDetailPage),
-                        userId));
-            }
-            else
-            {
-                _navigationService.Navigate<Views.Admin.AdminShellPage>(
-                    typeof(Views.Admin.AdminUsersPage));
-            }
-
-            App.Services.GetRequiredService<ToastService>()
-                .Success("Administrator session restored.");
-        }
-        catch (Exception ex)
-        {
-            App.Services.GetRequiredService<ToastService>().Error(ex.Message);
-        }
-        finally
-        {
-            ImpersonationBannerControl.IsEnding = false;
-        }
-    }
 }

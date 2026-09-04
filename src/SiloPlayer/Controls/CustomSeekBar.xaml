@@ -51,32 +51,6 @@
         <!-- Chapter markers layer — overlays the full width. Populated by code-behind. -->
         <Canvas x:Name="ChapterMarkersLayer" Height="24" Background="Transparent" IsHitTestVisible="False" />
 
-        <!-- The WebUI exposes two white timeline handles for the active marker
-             while marker editing is open. Their 24px hit targets remain usable
-             on touch even though the visible grip is intentionally narrow. -->
-        <Border x:Name="MarkerStartHandle" Width="24" Height="24"
-                HorizontalAlignment="Left" VerticalAlignment="Center"
-                Background="Transparent" Visibility="Collapsed" Tag="start"
-                PointerPressed="MarkerHandle_PointerPressed"
-                PointerMoved="MarkerHandle_PointerMoved"
-                PointerReleased="MarkerHandle_PointerReleased"
-                PointerCaptureLost="MarkerHandle_PointerCaptureLost">
-            <Border Width="6" Height="18" CornerRadius="3" Background="White"
-                    BorderBrush="#33000000" BorderThickness="1"
-                    HorizontalAlignment="Center" VerticalAlignment="Center" />
-        </Border>
-        <Border x:Name="MarkerEndHandle" Width="24" Height="24"
-                HorizontalAlignment="Left" VerticalAlignment="Center"
-                Background="Transparent" Visibility="Collapsed" Tag="end"
-                PointerPressed="MarkerHandle_PointerPressed"
-                PointerMoved="MarkerHandle_PointerMoved"
-                PointerReleased="MarkerHandle_PointerReleased"
-                PointerCaptureLost="MarkerHandle_PointerCaptureLost">
-            <Border Width="6" Height="18" CornerRadius="3" Background="White"
-                    BorderBrush="#33000000" BorderThickness="1"
-                    HorizontalAlignment="Center" VerticalAlignment="Center" />
-        </Border>
-
         <!-- Scrub thumb (visible on hover / during drag) -->
         <Ellipse x:Name="ScrubThumb" Width="12" Height="12" Fill="White"
                  HorizontalAlignment="Left" VerticalAlignment="Center"

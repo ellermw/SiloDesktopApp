@@ -88,27 +88,6 @@ local state = {
     stats_scroll_offset = 0,
     stats_scroll_max = 0,
     stats_panel_rect = nil,
-    marker_edit_available = false,
-    marker_editor_active = false,
-    marker_editor_visible = false,
-    marker_editor_kind = "",
-    marker_editor_start = -1,
-    marker_editor_end = -1,
-    marker_editor_original = {},
-    marker_editor_draft = {},
-    marker_editor_actions = {},
-    marker_editor_panel_rect = nil,
-    marker_editor_panel_x = nil,
-    marker_editor_panel_y = nil,
-    marker_editor_header_rect = nil,
-    dragging_marker_panel = false,
-    marker_panel_drag_start_x = 0,
-    marker_panel_drag_start_y = 0,
-    marker_panel_drag_origin_x = 0,
-    marker_panel_drag_origin_y = 0,
-    marker_editor_handle_rects = {},
-    dragging_marker_edge = nil,
-
     -- Properties from mpv
     time_pos        = 0,
     duration        = 0,
@@ -239,6 +218,7 @@ local state = {
     intro_auto_skipped = false,
     recap_auto_skipped = false,
     credits_auto_skipped = false,
+    marker_content_id = nil,
 
     -- Episode navigation. The host resolves the previous/next episode and
     -- tells us when the current item belongs to a series.
@@ -912,264 +892,6 @@ local function request_tick()
     if state.tick_timer then state.tick_timer:resume() end
 end
 
-local function clone_marker_range(range)
-    if not range then return nil end
-    return { start = range.start, finish = range.finish }
-end
-
-local function current_marker_range(kind)
-    local marker_start = tonumber(state[kind .. "_start"]) or 0
-    local marker_end = tonumber(state[kind .. "_end"]) or 0
-    if marker_end <= marker_start then return nil end
-    return { start = marker_start, finish = marker_end }
-end
-
-local function sync_active_marker_editor_range()
-    local range = state.marker_editor_draft[state.marker_editor_kind]
-    state.marker_editor_active = state.marker_editor_visible
-    state.marker_editor_start = range and range.start or -1
-    state.marker_editor_end = range and range.finish or -1
-end
-
-local function open_marker_editor()
-    state.marker_editor_original = {}
-    state.marker_editor_draft = {}
-    state.marker_editor_panel_x = nil
-    state.marker_editor_panel_y = nil
-    state.marker_editor_header_rect = nil
-    state.dragging_marker_panel = false
-    for _, marker in ipairs(marker_regions) do
-        local range = current_marker_range(marker.key)
-        state.marker_editor_original[marker.key] = clone_marker_range(range)
-        state.marker_editor_draft[marker.key] = clone_marker_range(range)
-    end
-    state.marker_editor_kind = "intro"
-    state.marker_editor_visible = true
-    sync_active_marker_editor_range()
-    show_osc()
-    request_tick()
-end
-
-local function close_marker_editor()
-    state.marker_editor_visible = false
-    state.marker_editor_active = false
-    state.marker_editor_kind = ""
-    state.marker_editor_start = -1
-    state.marker_editor_end = -1
-    state.marker_editor_original = {}
-    state.marker_editor_draft = {}
-    state.marker_editor_actions = {}
-    state.marker_editor_panel_rect = nil
-    state.marker_editor_header_rect = nil
-    state.dragging_marker_panel = false
-    state.marker_editor_handle_rects = {}
-    state.dragging_marker_edge = nil
-    request_tick()
-end
-
-local function marker_ranges_equal(left, right)
-    if left == nil or right == nil then return left == nil and right == nil end
-    return math.abs(left.start - right.start) < 0.001
-        and math.abs(left.finish - right.finish) < 0.001
-end
-
-local function marker_editor_dirty()
-    for _, marker in ipairs(marker_regions) do
-        if not marker_ranges_equal(state.marker_editor_original[marker.key],
-            state.marker_editor_draft[marker.key]) then return true end
-    end
-    return false
-end
-
-local function update_active_marker_draft_from_handles()
-    if not state.marker_editor_visible or state.marker_editor_kind == "" then return end
-    if state.marker_editor_start >= 0 and state.marker_editor_end > state.marker_editor_start then
-        state.marker_editor_draft[state.marker_editor_kind] = {
-            start = state.marker_editor_start,
-            finish = state.marker_editor_end,
-        }
-    else
-        state.marker_editor_draft[state.marker_editor_kind] = nil
-    end
-end
-
-local function update_marker_panel_drag(mx, my)
-    if not state.dragging_marker_panel or not state.marker_editor_panel_rect then return end
-    local rect = state.marker_editor_panel_rect
-    local margin = 8
-    state.marker_editor_panel_x = clamp(
-        state.marker_panel_drag_origin_x + (mx - state.marker_panel_drag_start_x),
-        margin, math.max(margin, state.osd_width - rect.w - margin))
-    state.marker_editor_panel_y = clamp(
-        state.marker_panel_drag_origin_y + (my - state.marker_panel_drag_start_y),
-        margin, math.max(margin, state.osd_height - rect.h - margin))
-    request_tick()
-end
-
-local function update_marker_edge_drag(mx, seek_bar)
-    if not state.dragging_marker_edge or not seek_bar or state.duration <= 0 then return end
-    local ratio = clamp((mx - seek_bar.x1) / (seek_bar.x2 - seek_bar.x1), 0, 1)
-    local seconds = ratio * state.duration
-    if state.dragging_marker_edge == "start" then
-        state.marker_editor_start = math.min(seconds, state.marker_editor_end - 0.5)
-    else
-        state.marker_editor_end = math.max(seconds, state.marker_editor_start + 0.5)
-    end
-    update_active_marker_draft_from_handles()
-    request_tick()
-end
-
-local function render_marker_editor_panel(ass, W, H, ma, sc)
-    state.marker_editor_actions = {}
-    if not state.marker_editor_visible then return end
-
-    local panel_w = math.floor(352 * sc)
-    local padding = math.floor(12 * sc)
-    local header_h = math.floor(58 * sc)
-    local collapsed_h = math.floor(36 * sc)
-    local active_h = math.floor(74 * sc)
-    local footer_h = math.floor(48 * sc)
-    local segment_h = 0
-    for _, marker in ipairs(marker_regions) do
-        segment_h = segment_h + (marker.key == state.marker_editor_kind and active_h or collapsed_h)
-    end
-    local panel_h = header_h + segment_h + footer_h + padding
-    local anchored_x = math.floor(16 * sc)
-    local anchored_y = math.max(math.floor(8 * sc), H - math.floor(176 * sc) - panel_h)
-    local margin = math.floor(8 * sc)
-    local panel_x = clamp(state.marker_editor_panel_x or anchored_x,
-        margin, math.max(margin, W - panel_w - margin))
-    local panel_y = clamp(state.marker_editor_panel_y or anchored_y,
-        margin, math.max(margin, H - panel_h - margin))
-    state.marker_editor_panel_x = panel_x
-    state.marker_editor_panel_y = panel_y
-    state.marker_editor_panel_rect = {
-        x = panel_x, y = panel_y, w = panel_w, h = panel_h,
-    }
-
-    draw_rounded_rect(ass, panel_x - 1, panel_y - 1,
-        panel_x + panel_w + 1, panel_y + panel_h + 1,
-        math.floor(16 * sc), config.text_color, "E6", ma)
-    draw_rounded_rect(ass, panel_x, panel_y,
-        panel_x + panel_w, panel_y + panel_h,
-        math.floor(16 * sc), "171717", "0D", ma)
-
-    -- Draggable header geometry from MarkerEditPanel.tsx.
-    draw_text(ass, panel_x + padding, panel_y + math.floor(20 * sc), "=",
-        math.floor(15 * sc), config.text_color, "B0", ma, 4, "Consolas", true)
-    draw_text(ass, panel_x + math.floor(34 * sc), panel_y + math.floor(19 * sc),
-        "Edit markers", math.floor(14 * sc), config.text_color, "00", ma, 4, nil, true)
-    draw_text(ass, panel_x + math.floor(34 * sc), panel_y + math.floor(39 * sc),
-        "Drag the timeline handles, or set points to the playhead.",
-        math.floor(10 * sc), config.text_color, "99", ma, 4, nil, false)
-    local close_rect = {
-        x = panel_x + panel_w - math.floor(36 * sc), y = panel_y + math.floor(8 * sc),
-        w = math.floor(28 * sc), h = math.floor(28 * sc), action = "cancel",
-    }
-    state.marker_editor_header_rect = {
-        x = panel_x, y = panel_y, w = close_rect.x - panel_x, h = header_h,
-    }
-    draw_text(ass, close_rect.x + close_rect.w / 2, close_rect.y + close_rect.h / 2,
-        "x", math.floor(15 * sc), config.text_color, "66", ma, 5, "Consolas", false)
-    table.insert(state.marker_editor_actions, close_rect)
-
-    local cy = panel_y + header_h
-    for _, marker in ipairs(marker_regions) do
-        local active = marker.key == state.marker_editor_kind
-        local row_h = active and active_h or collapsed_h
-        if active then
-            draw_rounded_rect(ass, panel_x + math.floor(8 * sc), cy,
-                panel_x + panel_w - math.floor(8 * sc), cy + row_h - math.floor(2 * sc),
-                math.floor(12 * sc), config.text_color, "EF", ma)
-        end
-        local range = state.marker_editor_draft[marker.key]
-        draw_circle(ass, panel_x + math.floor(24 * sc), cy + math.floor(18 * sc),
-            active and math.floor(5 * sc) or math.floor(4 * sc), marker.color,
-            active and "00" or "70", ma)
-        draw_text(ass, panel_x + math.floor(38 * sc), cy + math.floor(18 * sc),
-            marker.label, math.floor(13 * sc), config.text_color,
-            active and "00" or "48", ma, 4, nil, true)
-        local range_text = range
-            and (format_time(range.start) .. " - " .. format_time(range.finish))
-            or "Not set"
-        draw_text(ass, panel_x + panel_w - math.floor(20 * sc), cy + math.floor(18 * sc),
-            range_text, math.floor(10 * sc), config.text_color,
-            range and "48" or "99", ma, 6, "Consolas", false)
-        table.insert(state.marker_editor_actions, {
-            x = panel_x + math.floor(8 * sc), y = cy,
-            w = panel_w - math.floor(16 * sc), h = collapsed_h,
-            action = "select", kind = marker.key,
-        })
-
-        if active then
-            local by = cy + math.floor(40 * sc)
-            local button_h = math.floor(24 * sc)
-            local start_rect = { x = panel_x + math.floor(38 * sc), y = by,
-                w = math.floor(66 * sc), h = button_h, action = "set-start", kind = marker.key }
-            local end_rect = { x = start_rect.x + start_rect.w + math.floor(6 * sc), y = by,
-                w = math.floor(62 * sc), h = button_h, action = "set-end", kind = marker.key }
-            for _, button in ipairs({ start_rect, end_rect }) do
-                draw_rounded_rect(ass, button.x, button.y, button.x + button.w,
-                    button.y + button.h, math.floor(6 * sc), config.text_color, "EE", ma)
-                table.insert(state.marker_editor_actions, button)
-            end
-            draw_text(ass, start_rect.x + start_rect.w / 2, by + button_h / 2,
-                "Set start", math.floor(10 * sc), config.text_color, "28", ma, 5, nil, true)
-            draw_text(ass, end_rect.x + end_rect.w / 2, by + button_h / 2,
-                "Set end", math.floor(10 * sc), config.text_color, "28", ma, 5, nil, true)
-
-            local original = state.marker_editor_original[marker.key]
-            if not marker_ranges_equal(original, range) then
-                local reset_rect = { x = panel_x + panel_w - math.floor(68 * sc), y = by,
-                    w = math.floor(28 * sc), h = button_h, action = "reset", kind = marker.key }
-                draw_text(ass, reset_rect.x + reset_rect.w / 2, by + button_h / 2,
-                    "R", math.floor(10 * sc), config.text_color, "66", ma, 5, nil, true)
-                table.insert(state.marker_editor_actions, reset_rect)
-            end
-            if range then
-                local clear_rect = { x = panel_x + panel_w - math.floor(38 * sc), y = by,
-                    w = math.floor(28 * sc), h = button_h, action = "clear", kind = marker.key }
-                draw_text(ass, clear_rect.x + clear_rect.w / 2, by + button_h / 2,
-                    "x", math.floor(11 * sc), "7A7AEF", "30", ma, 5, "Consolas", true)
-                table.insert(state.marker_editor_actions, clear_rect)
-            end
-        end
-        cy = cy + row_h
-    end
-
-    local dirty = marker_editor_dirty()
-    local footer_y = panel_y + panel_h - footer_h
-    draw_rect(ass, panel_x, footer_y, panel_x + panel_w, footer_y + 1,
-        config.text_color, "EF", ma)
-    draw_text(ass, panel_x + padding, footer_y + footer_h / 2,
-        format_time(state.time_pos), math.floor(10 * sc), config.text_color,
-        "99", ma, 4, "Consolas", false)
-
-    local save_rect = { x = panel_x + panel_w - math.floor(66 * sc),
-        y = footer_y + math.floor(10 * sc), w = math.floor(54 * sc),
-        h = math.floor(28 * sc), action = "save" }
-    local cancel_rect = { x = save_rect.x - math.floor(60 * sc), y = save_rect.y,
-        w = math.floor(54 * sc), h = save_rect.h, action = "cancel" }
-    draw_text(ass, cancel_rect.x + cancel_rect.w / 2, cancel_rect.y + cancel_rect.h / 2,
-        "Cancel", math.floor(11 * sc), config.text_color, "48", ma, 5, nil, true)
-    table.insert(state.marker_editor_actions, cancel_rect)
-    draw_rounded_rect(ass, save_rect.x, save_rect.y, save_rect.x + save_rect.w,
-        save_rect.y + save_rect.h, math.floor(7 * sc), config.text_color,
-        dirty and "00" or "99", ma)
-    draw_text(ass, save_rect.x + save_rect.w / 2, save_rect.y + save_rect.h / 2,
-        "Save", math.floor(11 * sc), "171717", dirty and "00" or "88", ma, 5, nil, true)
-    if dirty then table.insert(state.marker_editor_actions, save_rect) end
-
-    if dirty then
-        local reset_all_rect = { x = cancel_rect.x - math.floor(72 * sc), y = save_rect.y,
-            w = math.floor(68 * sc), h = save_rect.h, action = "reset-all" }
-        draw_text(ass, reset_all_rect.x + reset_all_rect.w / 2,
-            reset_all_rect.y + reset_all_rect.h / 2, "Reset all",
-            math.floor(10 * sc), config.text_color, "66", ma, 5, nil, true)
-        table.insert(state.marker_editor_actions, reset_all_rect)
-    end
-end
-
 local function marker_at_time(seconds)
     local match = nil
     for _, marker in ipairs(marker_regions) do
@@ -1448,7 +1170,6 @@ local _layout_w, _layout_h = 0, 0
 local _layout_next_ep = nil
 local _layout_prev_ep = nil
 local _layout_series = nil
-local _layout_marker_edit = nil
 local _layout_audio_count = -1
 local _layout_chapter_count = -1
 local function compute_layout()
@@ -1459,7 +1180,6 @@ local function compute_layout()
     if W == _layout_w and H == _layout_h and _layout_next_ep == state.next_ep_available
         and _layout_prev_ep == state.prev_ep_available
         and _layout_series == state.series_context
-        and _layout_marker_edit == state.marker_edit_available
         and _layout_audio_count == #state.audio_tracks
         and _layout_chapter_count == #state.chapters
         and state.layout.bar then return end
@@ -1467,7 +1187,6 @@ local function compute_layout()
     _layout_next_ep = state.next_ep_available
     _layout_prev_ep = state.prev_ep_available
     _layout_series = state.series_context
-    _layout_marker_edit = state.marker_edit_available
     _layout_audio_count = #state.audio_tracks
     _layout_chapter_count = #state.chapters
     local L = state.layout
@@ -1546,7 +1265,6 @@ local function compute_layout()
     L.btn_fullscreen = place_utility()
     L.btn_pip = place_utility()
     L.btn_stats = place_utility()
-    L.btn_marker_edit = state.marker_edit_available and place_utility() or nil
     local show_quality_label = W >= math.floor(640 * sc)
     L.btn_quality = place_utility(show_quality_label and math.floor(140 * sc) or utility_size)
     L.btn_quality.show_label = show_quality_label
@@ -1661,35 +1379,6 @@ local function draw_pip_icon(ass, cx, cy, size, color, alpha, master_alpha)
         cx + size * 0.02, cy + size * 0.01,
         cx + hw - t, cy + hh - t,
         color, "40", master_alpha)
-end
-
--- Lucide-style overlapping tag outlines used by the WebUI marker editor.
-local function draw_marker_tags_icon(ass, cx, cy, size, color, alpha, master_alpha)
-    local a = blend_alpha(alpha, master_alpha)
-    local function tag(dx, dy, scale)
-        local left = cx + dx - size * 0.34 * scale
-        local top = cy + dy - size * 0.30 * scale
-        local shoulder = cx + dx + size * 0.08 * scale
-        local tip_x = cx + dx + size * 0.34 * scale
-        local tip_y = cy + dy
-        local bottom = cy + dy + size * 0.30 * scale
-        ass:new_event()
-        ass:pos(0, 0)
-        ass:append(string.format(
-            "{\\an7\\bord1.5\\shad0\\1a&HFF&\\3c&H%s&\\3a&H%s&\\p1}" ..
-            "m %d %d l %d %d %d %d %d %d %d %d{\\p0}",
-            color, a,
-            math.floor(left), math.floor(top),
-            math.floor(shoulder), math.floor(top),
-            math.floor(tip_x), math.floor(tip_y),
-            math.floor(shoulder), math.floor(bottom),
-            math.floor(left), math.floor(bottom)
-        ))
-        draw_circle(ass, left + size * 0.12 * scale, cy + dy,
-            math.max(1.2, size * 0.035), color, alpha, master_alpha)
-    end
-    tag(-size * 0.09, size * 0.08, 0.86)
-    tag(size * 0.07, -size * 0.07, 0.86)
 end
 
 local chapter_thumbnail_hover_overlay_id = 63
@@ -1897,51 +1586,6 @@ local function render_osc()
         local marker_end = tonumber(state[marker.key .. "_end"]) or 0
         draw_marker_region(marker_start, marker_end, marker.color, "99",
             hover_marker and hover_marker.label == marker.label)
-    end
-
-    -- Marker editor handles mirror SeekBar.tsx. The visible grip is narrow,
-    -- while its cached hit target remains comfortably pointer-friendly.
-    state.marker_editor_handle_rects = {}
-    if state.marker_editor_active and state.duration > 0
-        and state.marker_editor_start >= 0
-        and state.marker_editor_end > state.marker_editor_start then
-        local editor_start_x = sb.x1 + (sb.x2 - sb.x1)
-            * clamp(state.marker_editor_start / state.duration, 0, 1)
-        local editor_end_x = sb.x1 + (sb.x2 - sb.x1)
-            * clamp(state.marker_editor_end / state.duration, 0, 1)
-        local grip_h = math.floor(16 * sc)
-        local grip_w = math.max(5, math.floor(6 * sc))
-        local hit_w = math.max(20, math.floor(20 * sc))
-        local function draw_editor_handle(edge, x)
-            draw_rounded_rect(ass, x - grip_w / 2, seek_draw_y - grip_h / 2,
-                x + grip_w / 2, seek_draw_y + grip_h / 2,
-                grip_w / 2, config.text_color, "00", ma)
-            state.marker_editor_handle_rects[edge] = {
-                x = x - hit_w / 2, y = seek_draw_y - math.floor(14 * sc),
-                w = hit_w, h = math.floor(28 * sc),
-            }
-        end
-        draw_editor_handle("start", editor_start_x)
-        draw_editor_handle("end", editor_end_x)
-
-        if state.dragging_marker_edge then
-            local seconds = state.dragging_marker_edge == "start"
-                and state.marker_editor_start or state.marker_editor_end
-            local x = state.dragging_marker_edge == "start" and editor_start_x or editor_end_x
-            local tooltip_w = math.floor(92 * sc)
-            local tooltip_h = math.floor(42 * sc)
-            local tooltip_x = clamp(x, sb.x1 + tooltip_w / 2, sb.x2 - tooltip_w / 2)
-            local tooltip_bottom = seek_draw_y - math.floor(12 * sc)
-            draw_rounded_rect(ass, tooltip_x - tooltip_w / 2,
-                tooltip_bottom - tooltip_h, tooltip_x + tooltip_w / 2,
-                tooltip_bottom, math.floor(8 * sc), "171717", "0D", ma)
-            draw_text(ass, tooltip_x, tooltip_bottom - math.floor(27 * sc),
-                capitalize(state.marker_editor_kind) .. " " .. state.dragging_marker_edge,
-                math.floor(10 * sc), config.text_color, "73", ma, 5, nil, true)
-            draw_text(ass, tooltip_x, tooltip_bottom - math.floor(12 * sc),
-                format_time(seconds), math.floor(12 * sc), config.text_color,
-                "00", ma, 5, "Consolas", true)
-        end
     end
 
     -- Chapter boundaries are one-pixel, ten-pixel-high ticks in the WebUI.
@@ -2243,12 +1887,6 @@ local function render_osc()
             config.text_color, state.quality_menu_visible and "00" or "38", ma)
     end
 
-    if L.btn_marker_edit then
-        draw_utility_state(L.btn_marker_edit, state.marker_editor_visible)
-        draw_marker_tags_icon(ass, L.btn_marker_edit.cx, L.btn_marker_edit.cy,
-            L.btn_marker_edit.w * 0.68, config.text_color, "38", ma)
-    end
-
     local bst = L.btn_stats
     draw_utility_state(bst, state.stats_visible)
     draw_info_icon(ass, bst.cx, bst.cy, math.floor(20 * sc),
@@ -2286,8 +1924,6 @@ local function render_osc()
             draw_rect(ass, x2 - thickness, y1, x2, y2, config.accent_color, "10", ma)
         end
     end
-
-    render_marker_editor_panel(ass, W, H, ma, sc)
 
     -- Watch Party panel mirrors WatchTogetherPanel.tsx: top-right glass card,
     -- live connection status, room code/viewer count, policy, and host actions.
@@ -2693,8 +2329,7 @@ show_osc = function()
     -- can be stuck visible forever when stale state (e.g. mouse_in_bar) is
     -- left over after the cursor has actually left the window.
     local function check_hide()
-        if state.pause or state.dragging_seek or state.dragging_volume
-            or state.dragging_marker_edge or state.marker_editor_visible then
+        if state.pause or state.dragging_seek or state.dragging_volume then
             state.hide_timer = mp.add_timeout(config.hide_timeout, check_hide)
             return
         end
@@ -2730,8 +2365,7 @@ local function dismiss_transport_menus_for_fade()
 end
 
 hide_osc = function()
-    if state.dragging_seek or state.dragging_volume or state.dragging_marker_edge then return end
-    if state.marker_editor_visible then return end
+    if state.dragging_seek or state.dragging_volume then return end
     if state.pause then return end  -- Stay visible when paused
     -- A transport menu is part of the OSC lifecycle, not an independent
     -- always-on surface. Closing it here prevents a subtitle/audio/quality
@@ -2881,14 +2515,6 @@ local function handle_mouse_move()
             state.skip_hovered = skip_hovered
             render_skip_button()
         end
-    end
-
-    update_marker_panel_drag(mx, my)
-
-    -- Marker edge dragging is isolated from normal seeking, matching the
-    -- WebUI's dedicated pointer loop.
-    if state.dragging_marker_edge then
-        update_marker_edge_drag(mx, L.seek_bar)
     end
 
     -- Handle seek drag
@@ -4564,10 +4190,6 @@ local function close_keyboard_surface()
         state.keyboard_menu_index = -1
         return true
     end
-    if state.marker_editor_visible then
-        close_marker_editor()
-        return true
-    end
     if state.stats_visible then
         state.stats_visible = false
         render_stats()
@@ -4643,7 +4265,6 @@ local function focusable_transport_controls()
     add("btn_chapters")
     add("btn_cc")
     add("btn_quality")
-    add("btn_marker_edit")
     add("btn_stats")
     add("btn_pip")
     add("btn_fullscreen")
@@ -4744,8 +4365,6 @@ local function activate_controller_focus()
         open_transport_menu_from_controller("subtitles")
     elseif name == "btn_quality" then
         open_transport_menu_from_controller("quality")
-    elseif name == "btn_marker_edit" then
-        if state.marker_editor_visible then close_marker_editor() else open_marker_editor() end
     elseif name == "btn_stats" then
         toggle_stats()
     elseif name == "btn_pip" then
@@ -4812,93 +4431,6 @@ local function handle_mouse_down()
         render_next_episode_button()
         mp.commandv("script-message", "silo-next-episode")
         return
-    end
-
-    -- Marker editor panel actions. This panel is rendered in the native OSC
-    -- so the video and editable timeline remain visible while it is open.
-    if state.marker_editor_visible then
-        for _, item in ipairs(state.marker_editor_actions or {}) do
-            if point_in_rect(mx, my, item) then
-                consume_video_click()
-                local kind = item.kind or state.marker_editor_kind
-                if item.action == "select" then
-                    update_active_marker_draft_from_handles()
-                    state.marker_editor_kind = kind
-                    sync_active_marker_editor_range()
-                elseif item.action == "set-start" then
-                    local range = state.marker_editor_draft[kind]
-                    local start_seconds = clamp(state.time_pos, 0, state.duration)
-                    local end_seconds = range and range.finish
-                        or math.min(state.duration, start_seconds + 60)
-                    if end_seconds <= start_seconds then
-                        start_seconds = math.max(0, end_seconds - 0.5)
-                    end
-                    state.marker_editor_draft[kind] = {
-                        start = start_seconds, finish = end_seconds,
-                    }
-                    sync_active_marker_editor_range()
-                elseif item.action == "set-end" then
-                    local range = state.marker_editor_draft[kind]
-                    local end_seconds = clamp(state.time_pos, 0, state.duration)
-                    local start_seconds = range and range.start
-                        or math.max(0, end_seconds - 60)
-                    if end_seconds <= start_seconds then
-                        end_seconds = math.min(state.duration, start_seconds + 0.5)
-                    end
-                    state.marker_editor_draft[kind] = {
-                        start = start_seconds, finish = end_seconds,
-                    }
-                    sync_active_marker_editor_range()
-                elseif item.action == "reset" then
-                    state.marker_editor_draft[kind] = clone_marker_range(
-                        state.marker_editor_original[kind])
-                    sync_active_marker_editor_range()
-                elseif item.action == "clear" then
-                    state.marker_editor_draft[kind] = nil
-                    sync_active_marker_editor_range()
-                elseif item.action == "reset-all" then
-                    for _, marker in ipairs(marker_regions) do
-                        state.marker_editor_draft[marker.key] = clone_marker_range(
-                            state.marker_editor_original[marker.key])
-                    end
-                    sync_active_marker_editor_range()
-                elseif item.action == "cancel" then
-                    close_marker_editor()
-                    return
-                elseif item.action == "save" then
-                    update_active_marker_draft_from_handles()
-                    local values = {}
-                    for _, marker in ipairs(marker_regions) do
-                        local range = state.marker_editor_draft[marker.key]
-                        table.insert(values, range and tostring(range.start) or "-1")
-                        table.insert(values, range and tostring(range.finish) or "-1")
-                    end
-                    mp.commandv("script-message", "silo-marker-save", unpack(values))
-                    close_marker_editor()
-                    return
-                end
-                show_osc()
-                request_tick()
-                return
-            end
-        end
-        if state.marker_editor_header_rect
-            and point_in_rect(mx, my, state.marker_editor_header_rect) then
-            consume_video_click()
-            state.dragging_marker_panel = true
-            state.marker_panel_drag_start_x = mx
-            state.marker_panel_drag_start_y = my
-            state.marker_panel_drag_origin_x = state.marker_editor_panel_rect.x
-            state.marker_panel_drag_origin_y = state.marker_editor_panel_rect.y
-            return
-        end
-        -- Consume clicks inside decorative panel space. Outside clicks leave
-        -- the editor open, matching the WebUI's non-modal floating panel.
-        if state.marker_editor_panel_rect
-            and point_in_rect(mx, my, state.marker_editor_panel_rect) then
-            consume_video_click()
-            return
-        end
     end
 
     -- Watch Party host actions live in the same top-right panel as the WebUI.
@@ -5044,19 +4576,6 @@ local function handle_mouse_down()
     compute_layout()
     local L = state.layout
 
-    -- Marker handles own the pointer before the seek rail underneath.
-    if state.marker_editor_active then
-        for _, edge in ipairs({ "start", "end" }) do
-            local rect = state.marker_editor_handle_rects[edge]
-            if rect and point_in_rect(mx, my, rect) then
-                state.dragging_marker_edge = edge
-                consume_video_click()
-                request_tick()
-                return
-            end
-        end
-    end
-
     -- Check seek bar
     if L.seek_bar then
         local sb = L.seek_bar
@@ -5142,16 +4661,6 @@ local function handle_mouse_down()
         return
     end
 
-    if L.btn_marker_edit and point_in_rect(mx, my, L.btn_marker_edit) then
-        if state.marker_editor_visible then
-            close_marker_editor()
-        else
-            close_transport_menus(nil)
-            open_marker_editor()
-        end
-        return
-    end
-
     if L.btn_pip and point_in_rect(mx, my, L.btn_pip) then
         mp.commandv("script-message", "silo-pip-toggle")
         return
@@ -5186,19 +4695,9 @@ local function handle_mouse_up()
     if state.playback_failure_visible then
         state.dragging_seek = false
         state.dragging_volume = false
-        state.dragging_marker_edge = nil
-        state.dragging_marker_panel = false
         return
     end
     if state.osc_disabled then return end
-    if state.dragging_marker_edge then
-        state.dragging_marker_edge = nil
-        request_tick()
-    end
-    if state.dragging_marker_panel then
-        state.dragging_marker_panel = false
-        request_tick()
-    end
     -- Complete seek drag
     if state.dragging_seek then
         state.dragging_seek = false
@@ -5217,8 +4716,7 @@ end
 local function handle_mouse_leave()
     state.mouse_in_window = false
     state.mouse_in_bar = false
-    if not state.dragging_seek and not state.dragging_volume
-        and not state.dragging_marker_edge and not state.dragging_marker_panel then
+    if not state.dragging_seek and not state.dragging_volume then
         -- Start hide timer (shorter since mouse left window)
         if state.hide_timer then state.hide_timer:kill() end
         state.hide_timer = mp.add_timeout(0.5, function()
@@ -5372,30 +4870,6 @@ local function observe_properties()
         end
     end)
 
-    mp.register_script_message("osc-set-marker-edit-available", function(val)
-        state.marker_edit_available = (val == "true" or val == "1")
-    end)
-
-    mp.register_script_message("osc-set-marker-editor", function(kind, start_seconds, end_seconds)
-        state.marker_editor_active = kind ~= nil and kind ~= ""
-        state.marker_editor_kind = kind or ""
-        state.marker_editor_start = tonumber(start_seconds) or -1
-        state.marker_editor_end = tonumber(end_seconds) or -1
-        state.dragging_marker_edge = nil
-        show_osc()
-        request_tick()
-    end)
-
-    mp.register_script_message("osc-clear-marker-editor", function()
-        state.marker_editor_active = false
-        state.marker_editor_kind = ""
-        state.marker_editor_start = -1
-        state.marker_editor_end = -1
-        state.marker_editor_handle_rects = {}
-        state.dragging_marker_edge = nil
-        request_tick()
-    end)
-
     mp.register_script_message("osc-set-visibility", function(val)
         state.osc_disabled = (val == "false")
         if state.osc_disabled then
@@ -5439,7 +4913,6 @@ local function observe_properties()
             -- immediate visible control surface after the content swap.
             state.dragging_seek = false
             state.dragging_volume = false
-            state.dragging_marker_edge = nil
             state.mouse_in_bar = false
             dismiss_transport_menus_for_fade()
             show_osc()
@@ -5466,6 +4939,10 @@ local function observe_properties()
     mp.register_script_message("osc-set-markers", function(json_str)
         local ok, data = pcall(require("mp.utils").parse_json, json_str)
         if ok and data then
+            local incoming_content_id = tostring(data.content_id or "")
+            local reset_auto_skip = data.reset_auto_skip == true
+                or state.marker_content_id ~= incoming_content_id
+            state.marker_content_id = incoming_content_id
             state.intro_start = tonumber(data.intro_start) or 0
             state.intro_end = tonumber(data.intro_end) or 0
             state.recap_start = tonumber(data.recap_start) or 0
@@ -5474,9 +4951,11 @@ local function observe_properties()
             state.credits_end = tonumber(data.credits_end) or 0
             state.preview_start = tonumber(data.preview_start) or 0
             state.preview_end = tonumber(data.preview_end) or 0
-            state.intro_auto_skipped = false
-            state.recap_auto_skipped = false
-            state.credits_auto_skipped = false
+            if reset_auto_skip then
+                state.intro_auto_skipped = false
+                state.recap_auto_skipped = false
+                state.credits_auto_skipped = false
+            end
         end
     end)
 
@@ -5514,8 +4993,6 @@ local function observe_properties()
         state.playback_failure_visible = true
         state.dragging_seek = false
         state.dragging_volume = false
-        state.dragging_marker_edge = nil
-        state.dragging_marker_panel = false
         close_transport_menus(nil)
         render_playback_failure()
     end)
@@ -6038,15 +5515,6 @@ local function setup_script_messages()
             state.mouse_in_bar = point_in_rect(mx, my, L.bar_hit)
         end
 
-        update_marker_panel_drag(mx, my)
-
-        -- Embedded libmpv sends pointer motion through this script message,
-        -- not mpv's native mouse_move binding. Keep marker grips responsive
-        -- on the actual desktop host path as well as standalone mpv.
-        if state.dragging_marker_edge then
-            update_marker_edge_drag(mx, L.seek_bar)
-        end
-
         -- Handle seek drag
         if state.dragging_seek then
             local sb = L.seek_bar
@@ -6223,7 +5691,6 @@ local function init()
     -- Show OSC briefly on file load
     mp.register_event("file-loaded", function()
         state.idle = false
-        close_marker_editor()
         -- Reset drag state from previous session (mpv instance is reused)
         state.dragging_seek = false
         state.dragging_volume = false

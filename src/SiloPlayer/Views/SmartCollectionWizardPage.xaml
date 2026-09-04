@@ -167,16 +167,6 @@
                                                           OnContent="" OffContent="" />
                                         </Grid>
                                     </Border>
-                                    <ToggleSwitch x:Name="FeaturedToggle" Visibility="Collapsed"
-                                                  IsOn="{x:Bind ViewModel.Featured, Mode=TwoWay}"
-                                                  Header="Featured" OnContent="Enabled" OffContent="Disabled" />
-                                    <StackPanel x:Name="AdminVisibilityPanel" Spacing="6" Visibility="Collapsed">
-                                        <TextBlock Text="Visibility" FontSize="13" FontWeight="SemiBold" />
-                                        <ComboBox x:Name="VisibilityCombo" HorizontalAlignment="Stretch" CornerRadius="8" SelectionChanged="VisibilityCombo_SelectionChanged">
-                                            <ComboBoxItem Content="Visible" Tag="visible" />
-                                            <ComboBoxItem Content="Hidden" Tag="hidden" />
-                                        </ComboBox>
-                                    </StackPanel>
                                 </StackPanel>
                                 <StackPanel x:Name="PosterDetailsPanel" Grid.Column="1" Spacing="10">
                                     <TextBlock Text="Poster" FontSize="16" FontWeight="SemiBold" />
@@ -193,14 +183,6 @@
                                              Text="{x:Bind ViewModel.PosterSourceUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                                     <TextBlock Text="Paste an image URL instead of uploading a file. If both are provided, the uploaded file wins."
                                                FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
-                                    <StackPanel x:Name="AdminBackdropPanel" Spacing="6" Visibility="Collapsed">
-                                        <TextBlock Text="Backdrop" FontSize="13" FontWeight="SemiBold" />
-                                        <Button Content="Choose image" Style="{StaticResource OutlineButtonStyle}" Click="ChooseBackdrop_Click" />
-                                        <TextBlock x:Name="BackdropFileStatusText" Text="Upload a wide JPG, PNG, or WebP (max 20 MB)."
-                                                   FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" />
-                                        <TextBox Style="{StaticResource DarkTextBoxStyle}" PlaceholderText="Or paste a backdrop image URL"
-                                                 Text="{x:Bind ViewModel.BackdropSourceUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                                    </StackPanel>
                                 </StackPanel>
                             </Grid>
                             </StackPanel>

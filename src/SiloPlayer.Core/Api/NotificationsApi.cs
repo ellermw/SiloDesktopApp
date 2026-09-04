@@ -107,27 +107,4 @@ public sealed class NotificationsApi(SiloApiClient client)
     public Task DeleteWebPushSubscriptionAsync(string id, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v1/notifications/web-push/subscriptions/{Uri.EscapeDataString(id)}", ct);
 
-    public async Task<List<ServerNotificationChannel>> GetServerChannelsAsync(CancellationToken ct = default)
-        => (await client.GetAsync<ServerNotificationChannelsResponse>("/api/v1/admin/notifications/server-channels", ct)).Channels;
-
-    public Task<ServerNotificationChannel> CreateServerChannelAsync(ServerNotificationChannelInput input, CancellationToken ct = default)
-        => client.PostAsync<ServerNotificationChannel>("/api/v1/admin/notifications/server-channels", input, ct);
-
-    public Task<ServerNotificationChannel> UpdateServerChannelAsync(string id, ServerNotificationChannelInput input, CancellationToken ct = default)
-        => client.PutAsync<ServerNotificationChannel>($"/api/v1/admin/notifications/server-channels/{Uri.EscapeDataString(id)}", input, ct);
-
-    public Task DeleteServerChannelAsync(string id, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/admin/notifications/server-channels/{Uri.EscapeDataString(id)}", ct);
-
-    public Task<SigningSecretResponse> RotateServerChannelSecretAsync(string id, CancellationToken ct = default)
-        => client.PostAsync<SigningSecretResponse>(
-            $"/api/v1/admin/notifications/server-channels/{Uri.EscapeDataString(id)}/rotate-secret",
-            new Dictionary<string, object?>(),
-            ct);
-
-    public Task<NotificationWebhookTestResult> TestServerChannelAsync(string id, CancellationToken ct = default)
-        => client.PostAsync<NotificationWebhookTestResult>(
-            $"/api/v1/admin/notifications/server-channels/{Uri.EscapeDataString(id)}/test",
-            new Dictionary<string, object?>(),
-            ct);
 }

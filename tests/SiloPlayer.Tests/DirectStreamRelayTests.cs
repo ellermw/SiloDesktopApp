@@ -7,6 +7,31 @@ namespace SiloPlayer.Tests;
 public sealed class DirectStreamRelayTests
 {
     [Fact]
+    public async Task RelayAsync_NegotiatesHttp2WithHttp11Fallback()
+    {
+        var handler = new SequenceHandler(_ => CreateResponse(
+            HttpStatusCode.OK,
+            new MemoryStream(new byte[] { 1, 2, 3 }),
+            contentLength: 3,
+            contentRange: null));
+        var relay = new DirectStreamRelay(
+            new HttpClient(handler),
+            new Uri("https://example.test/api/v1/stream/session"),
+            () => null);
+        using var output = new MemoryStream();
+
+        await relay.RelayAsync(
+            output,
+            rangeHeader: null,
+            writeHeadersAsync: null,
+            CancellationToken.None);
+
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpVersion.Version20, request.Version);
+        Assert.Equal(HttpVersionPolicy.RequestVersionOrLower, request.VersionPolicy);
+    }
+
+    [Fact]
     public async Task RelayAsync_SequentialModeRetriesSuccessfulResponsesWithNoMediaBytes()
     {
         var media = new byte[] { 0x1A, 0x45, 0xDF, 0xA3 };
@@ -372,6 +397,59 @@ public sealed class DirectStreamRelayTests
     }
 
     [Fact]
+    public async Task RelayAsync_ReportsRecoveryUntilResumedMediaArrives()
+    {
+        var bytes = Enumerable.Range(0, 512).Select(i => (byte)(i % 251)).ToArray();
+        var reconnectRequested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseReconnect = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var handler = new AsyncSequenceHandler(async (request, cancellationToken) =>
+        {
+            calls++;
+            if (calls == 1)
+            {
+                return CreateResponse(
+                    HttpStatusCode.OK,
+                    new ThrowAfterStream(bytes, throwAfterBytes: 128),
+                    bytes.Length,
+                    contentRange: null);
+            }
+
+            reconnectRequested.SetResult();
+            await releaseReconnect.Task.WaitAsync(cancellationToken);
+            return CreateResponse(
+                HttpStatusCode.PartialContent,
+                new MemoryStream(bytes[128..]),
+                bytes.Length - 128,
+                new ContentRangeHeaderValue(128, bytes.Length - 1, bytes.Length));
+        });
+        var relay = new DirectStreamRelay(
+            new HttpClient(handler),
+            new Uri("https://example.test/api/v1/stream/session"),
+            () => null,
+            maxRetries: 2);
+        using var output = new MemoryStream();
+
+        var relayTask = relay.RelayAsync(
+            output,
+            rangeHeader: null,
+            writeHeadersAsync: null,
+            CancellationToken.None);
+        await reconnectRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(relay.IsRecovering);
+        Assert.NotNull(relay.RecoveryElapsed);
+        Assert.True(relay.RecoveryElapsed >= TimeSpan.Zero);
+
+        releaseReconnect.SetResult();
+        await relayTask;
+
+        Assert.False(relay.IsRecovering);
+        Assert.Null(relay.RecoveryElapsed);
+        Assert.Equal(bytes, output.ToArray());
+    }
+
+    [Fact]
     public async Task RelayAsync_RejectsMismatchedPartialContentRange()
     {
         var handler = new SequenceHandler(_ => CreateResponse(
@@ -482,6 +560,22 @@ public sealed class DirectStreamRelayTests
             Requests.Add(request);
             return Task.FromResult(_responseFactory(request));
         }
+    }
+
+    private sealed class AsyncSequenceHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _responseFactory;
+
+        public AsyncSequenceHandler(
+            Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responseFactory)
+        {
+            _responseFactory = responseFactory;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            _responseFactory(request, cancellationToken);
     }
 
     private sealed class ThrowAfterStream : Stream

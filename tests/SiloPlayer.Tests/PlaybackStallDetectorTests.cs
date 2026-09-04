@@ -5,6 +5,62 @@ namespace SiloPlayer.Tests;
 public class PlaybackStallDetectorTests
 {
     [Fact]
+    public void DirectPlaybackPolicyLetsTheRelayReconnectBeforeEscalatingTheRoute()
+    {
+        var detector = DirectPlaybackRecoveryPolicy.CreateStallDetector();
+
+        detector.Observe(
+            position: 1200,
+            duration: 5400,
+            isPaused: true,
+            isBufferingForCache: true,
+            isRecoveryInProgress: false,
+            now: DateTimeOffset.UnixEpoch);
+
+        var duringRelayIdleWindow = detector.Observe(
+            position: 1200,
+            duration: 5400,
+            isPaused: true,
+            isBufferingForCache: true,
+            isRecoveryInProgress: false,
+            now: DateTimeOffset.UnixEpoch.AddSeconds(21));
+        var duringReconnectGrace = detector.Observe(
+            position: 1200,
+            duration: 5400,
+            isPaused: true,
+            isBufferingForCache: true,
+            isRecoveryInProgress: false,
+            now: DateTimeOffset.UnixEpoch.AddSeconds(26));
+        var afterReconnectGrace = detector.Observe(
+            position: 1200,
+            duration: 5400,
+            isPaused: true,
+            isBufferingForCache: true,
+            isRecoveryInProgress: false,
+            now: DateTimeOffset.UnixEpoch.AddSeconds(31));
+
+        Assert.False(duringRelayIdleWindow.ShouldRecover);
+        Assert.False(duringReconnectGrace.ShouldRecover);
+        Assert.True(afterReconnectGrace.ShouldRecover);
+        Assert.Equal("buffering-stalled", afterReconnectGrace.Reason);
+    }
+
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(10, true)]
+    [InlineData(15, false)]
+    [InlineData(60, false)]
+    public void DirectPlaybackPolicyBoundsRelayRecoveryDeferral(
+        double recoverySeconds,
+        bool expectedDeferral)
+    {
+        var shouldDefer = DirectPlaybackRecoveryPolicy.ShouldDeferRouteEscalation(
+            TimeSpan.FromSeconds(recoverySeconds));
+
+        Assert.Equal(expectedDeferral, shouldDefer);
+    }
+
+    [Fact]
     public void RequestsRecoveryWhenBufferedPlaybackStopsAdvancingPastThreshold()
     {
         var detector = new PlaybackStallDetector(

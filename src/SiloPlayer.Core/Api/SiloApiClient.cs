@@ -601,7 +601,7 @@ public class SiloApiClient
             {
                 // Never replay an old request in a replacement user's session. Token
                 // changes within the same generation are refreshes; a generation
-                // change represents logout, login, OAuth completion, or impersonation.
+        // change represents logout, login, or OAuth completion.
                 var currentContext = GetRequestContextSnapshot();
                 if (currentContext.AuthenticationGeneration == sentAuthenticationGeneration &&
                     currentContext.RequestContextGeneration == sentRequestContextGeneration)

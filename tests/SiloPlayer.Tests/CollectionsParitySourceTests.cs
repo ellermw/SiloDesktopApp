@@ -1,5 +1,5 @@
 using System.Text.Json;
-using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Models.Catalog;
 
 namespace SiloPlayer.Tests;
 
@@ -159,36 +159,13 @@ public sealed class CollectionsParitySourceTests
     }
 
     [Fact]
-    public void AdminCollectionsUsesCurrentAdminTemplatesAndBundleApplyFlow()
-    {
-        var root = FindRepositoryRoot();
-        var page = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "Admin", "AdminCollectionsPage.xaml.cs"));
-        var api = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Api", "AdminApi.cs"));
-        var models = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Models", "Collections", "CollectionImports.cs"));
-
-        Assert.Contains("ShowAdminTemplateGalleryAsync", page);
-        Assert.Contains("ShowBundleApplyViewAsync", page);
-        Assert.Contains("ShowAdminTemplateConfigAsync", page);
-        Assert.Contains("RenderBundleResult", page);
-        Assert.DoesNotContain("Navigate<CollectionsPage>(new CollectionsNavigationArgs(OpenTemplates", page);
-
-        Assert.Contains("/api/v1/admin/collections/templates", api);
-        Assert.Contains("/api/v1/admin/collections/template-bundles", api);
-        Assert.Contains("/apply-job", api);
-        Assert.Contains("CollectionTemplateBundleCatalog", models);
-        Assert.Contains("ApplyCollectionTemplateBundleFeaturedRequest", models);
-        Assert.Contains("CollectionTemplateTmdbDiscoverSpec", models);
-    }
-
-    [Fact]
-    public void SmartCollectionWizardIsAvailableForUserAndAdminCollections()
+    public void SmartCollectionWizardIsAvailableForUserCollections()
     {
         var root = FindRepositoryRoot();
         var app = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "App.xaml.cs"));
         var documentTitle = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Helpers", "DocumentTitle.cs"));
         var collectionsXaml = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "CollectionsPage.xaml"));
         var collectionsPage = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "CollectionsPage.xaml.cs"));
-        var adminCollectionsPage = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "Admin", "AdminCollectionsPage.xaml.cs"));
         var wizardPage = Path.Combine(root, "src", "SiloPlayer", "Views", "SmartCollectionWizardPage.xaml.cs");
         var wizardViewModel = Path.Combine(root, "src", "SiloPlayer", "ViewModels", "SmartCollectionWizardViewModel.cs");
 
@@ -199,30 +176,9 @@ public sealed class CollectionsParitySourceTests
         Assert.Contains("New Collection", collectionsXaml);
         Assert.DoesNotContain("Smart Wizard", collectionsXaml);
         Assert.Contains("Navigate<SmartCollectionWizardPage>", collectionsPage);
-        Assert.Contains("Navigate<SmartCollectionWizardPage>", adminCollectionsPage);
+        Assert.DoesNotContain("IsAdmin", File.ReadAllText(wizardViewModel));
         Assert.Contains("MediaScope", File.ReadAllText(wizardViewModel));
         Assert.Contains("\"episode\"", File.ReadAllText(wizardViewModel));
-    }
-
-    [Fact]
-    public void AdminCollectionGroupsCanBeManagedAndReordered()
-    {
-        var root = FindRepositoryRoot();
-        var adminApi = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Api", "AdminApi.cs"));
-        var viewModel = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "ViewModels", "Admin", "AdminCollectionsViewModel.cs"));
-        var page = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "Admin", "AdminCollectionsPage.xaml.cs"));
-
-        Assert.Contains("GetCollectionGroupsAsync", adminApi);
-        Assert.Contains("CreateCollectionGroupAsync", adminApi);
-        Assert.Contains("UpdateCollectionGroupAsync", adminApi);
-        Assert.Contains("DeleteCollectionGroupAsync", adminApi);
-        Assert.Contains("ReorderCollectionGroupsAsync", adminApi);
-        Assert.Contains("ReorderCollectionsInGroupAsync", adminApi);
-        Assert.Contains("CollectionGroups", viewModel);
-        Assert.Contains("MoveCollectionInGroupAsync", viewModel);
-        Assert.Contains("BuildCollectionGroupBoard", page);
-        Assert.Contains("OpenCreateGroupDialogAsync", page);
-        Assert.Contains("MoveGroupAsync", page);
     }
 
     [Fact]

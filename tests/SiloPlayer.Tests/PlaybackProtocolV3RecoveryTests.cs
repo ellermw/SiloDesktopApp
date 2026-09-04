@@ -54,6 +54,8 @@ public sealed class PlaybackProtocolV3RecoveryTests
         Assert.Equal("source_unavailable", error.Reason);
         Assert.Equal("The effective media source is unavailable.", error.ServerMessage);
         Assert.True(error.Retryable);
+        Assert.Single(handler.StartBodies);
+        Assert.All(handler.StartBodies, body => Assert.Equal(42, ReadFileId(body)));
     }
 
     [Fact]
@@ -103,10 +105,17 @@ public sealed class PlaybackProtocolV3RecoveryTests
             root.GetProperty("attempted_plan_keys").EnumerateArray().Select(item => item.GetString()).ToArray());
     }
 
+    private static int ReadFileId(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        return document.RootElement.GetProperty("file_id").GetInt32();
+    }
+
     private sealed class RecoveryPlaybackHandler : HttpMessageHandler
     {
         private int _planNumber;
         public bool ReturnTerminalOnStart { get; set; }
+        public List<string> StartBodies { get; } = [];
         public List<string> ReplanBodies { get; } = [];
 
         protected override async Task<HttpResponseMessage> SendAsync(
@@ -116,6 +125,7 @@ public sealed class PlaybackProtocolV3RecoveryTests
             var path = request.RequestUri?.AbsolutePath ?? "";
             if (request.Method == HttpMethod.Post && path == "/api/v1/playback/start")
             {
+                StartBodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
                 if (ReturnTerminalOnStart)
                 {
                     return JsonResponse("""

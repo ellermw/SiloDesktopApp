@@ -1,6 +1,5 @@
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Views;
-using SiloPlayer.Views.Admin;
 
 namespace SiloPlayer.Helpers;
 
@@ -56,37 +55,9 @@ public static class DocumentTitle
         [typeof(SignupPage)] = "Sign Up",
         [typeof(ServerSelectPage)] = "Select Server",
         [typeof(ProfileSelectPage)] = "Select Profile",
-        [typeof(SetupWizardPage)] = "Setup",
+        [typeof(ServerSetupRequiredPage)] = "Setup Required",
         [typeof(ActivateDevicePage)] = "Activate Device",
 
-        // Admin
-        [typeof(AdminShellPage)] = "Admin",
-        [typeof(AdminRequestsPage)] = "Admin Requests",
-        [typeof(AdminDashboardPage)] = "Admin · Dashboard",
-        [typeof(AdminActivityPage)] = "Admin · Activity",
-        [typeof(AdminTasksPage)] = "Admin · Tasks",
-        [typeof(AdminTaskDetailPage)] = "Admin · Task",
-        [typeof(AdminLogsPage)] = "Admin · Logs",
-        [typeof(AdminNodesPage)] = "Admin · Nodes",
-        [typeof(AdminPluginsPage)] = "Admin · Plugins",
-        [typeof(AdminRecommendationsPage)] = "Admin · Recommendations",
-        [typeof(AdminSectionsPage)] = "Admin · Home Sections",
-        [typeof(AdminSubtitlesPage)] = "Admin · Subtitles",
-        [typeof(AdminLibrariesPage)] = "Admin · Libraries",
-        [typeof(AdminCollectionsPage)] = "Admin · Collections",
-        [typeof(AdminMaintenancePage)] = "Admin · Catalog Maintenance",
-        [typeof(AdminUsersPage)] = "Admin · Users",
-        [typeof(AdminUserDetailPage)] = "Admin · User",
-        [typeof(AdminAccessGroupsPage)] = "Admin · Access Groups",
-        [typeof(AdminDevicesPage)] = "Admin · Devices",
-        [typeof(AdminAutoscanPage)] = "Admin · Autoscan",
-        [typeof(AdminPolicyPage)] = "Admin · Policy",
-        [typeof(AdminApiKeysPage)] = "Admin · API Keys",
-        [typeof(AdminInviteCodesPage)] = "Admin · Invite Codes",
-        [typeof(AdminPlaybackHistoryPage)] = "Admin · Playback History",
-        [typeof(AdminMarkerHistoryPage)] = "Admin · Marker History",
-        [typeof(AdminHistoryImportPage)] = "Admin · History Import",
-        [typeof(AdminSettingsDetailPage)] = "Admin · Settings",
     };
 
     public static void SetServerName(string? serverName)

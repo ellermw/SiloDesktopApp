@@ -9,16 +9,12 @@ namespace SiloPlayer.Controls;
 
 /// <summary>
 /// Current WebUI add-to-collection picker. It includes the user's manual
-/// collections and, while acting as an administrator, manual collections from
-/// every accessible library grouped beneath the library name.
+/// collections available to the active profile.
 /// </summary>
 public sealed partial class AddToCollectionDialog : ContentDialog
 {
     private readonly string _mediaItemId;
     private readonly CollectionsApi _collectionsApi;
-    private readonly AdminApi _adminApi;
-    private readonly CatalogApi _catalogApi;
-    private readonly bool _isActingAdmin;
     private readonly CancellationTokenSource _lifetimeCts = new();
     private CollectionPick? _selected;
     private Button? _selectedButton;
@@ -29,10 +25,6 @@ public sealed partial class AddToCollectionDialog : ContentDialog
     {
         _mediaItemId = mediaItemId;
         _collectionsApi = App.Services.GetRequiredService<CollectionsApi>();
-        _adminApi = App.Services.GetRequiredService<AdminApi>();
-        _catalogApi = App.Services.GetRequiredService<CatalogApi>();
-        _isActingAdmin = AuthorizationPolicy.IsActingAdmin(
-            App.Services.GetRequiredService<AuthService>());
 
         InitializeComponent();
         DescriptionText.Text = string.IsNullOrWhiteSpace(itemTitle)
@@ -50,51 +42,10 @@ public sealed partial class AddToCollectionDialog : ContentDialog
         {
             var picks = new List<CollectionPick>();
             var userTask = _collectionsApi.GetCollectionsAsync(_lifetimeCts.Token);
-            var librariesTask = _isActingAdmin
-                ? _catalogApi.GetLibrariesAsync(_lifetimeCts.Token)
-                : Task.FromResult(new List<SiloPlayer.Core.Models.Catalog.Library>());
             var userCollections = await userTask;
             picks.AddRange(userCollections.Collections
                 .Where(collection => collection.CollectionType.Equals("manual", StringComparison.OrdinalIgnoreCase))
-                .Select(collection => new CollectionPick(collection.Id, collection.Name, "My Collections", false)));
-
-            if (_isActingAdmin)
-            {
-                List<SiloPlayer.Core.Models.Catalog.Library> libraries;
-                try
-                {
-                    libraries = await librariesTask;
-                }
-                catch (Exception ex) when (ex is not OperationCanceledException)
-                {
-                    libraries = [];
-                    ShowPartialLoadWarning("Some library collections could not be loaded.");
-                }
-                var requests = libraries.Select(async library =>
-                {
-                    try
-                    {
-                        var response = await _adminApi.GetCollectionsAsync(library.Id, _lifetimeCts.Token);
-                        return (Library: library, Response: response, Failed: false);
-                    }
-                    catch (Exception ex) when (ex is not OperationCanceledException)
-                    {
-                        return (Library: library, Response: (SiloPlayer.Core.Models.Admin.AdminCollectionsResponse?)null, Failed: true);
-                    }
-                }).ToList();
-                var results = await Task.WhenAll(requests);
-                foreach (var (library, response, failed) in results)
-                {
-                    if (failed || response == null)
-                    {
-                        ShowPartialLoadWarning("Some library collections could not be loaded.");
-                        continue;
-                    }
-                    picks.AddRange(response.Collections
-                        .Where(collection => collection.CollectionType.Equals("manual", StringComparison.OrdinalIgnoreCase))
-                        .Select(collection => new CollectionPick(collection.Id, collection.Title, library.Name, true)));
-                }
-            }
+                .Select(collection => new CollectionPick(collection.Id, collection.Name, "My Collections")));
 
             RenderPicks(picks);
         }
@@ -110,13 +61,6 @@ public sealed partial class AddToCollectionDialog : ContentDialog
             EmptyText.Text = "Collections could not be loaded.";
             EmptyText.Visibility = Visibility.Visible;
         }
-    }
-
-    private void ShowPartialLoadWarning(string message)
-    {
-        StatusText.Text = message;
-        StatusText.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xFD, 0xE0, 0x68));
-        StatusText.Visibility = Visibility.Visible;
     }
 
     private void RenderPicks(IReadOnlyList<CollectionPick> picks)
@@ -170,20 +114,6 @@ public sealed partial class AddToCollectionDialog : ContentDialog
                 Grid.SetColumn(title, 1);
                 row.Children.Add(icon);
                 row.Children.Add(title);
-                if (pick.IsLibrary)
-                {
-                    var badge = new TextBlock
-                    {
-                        Text = "LIBRARY",
-                        FontSize = 10,
-                        CharacterSpacing = 100,
-                        Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-                        VerticalAlignment = VerticalAlignment.Center,
-                    };
-                    Grid.SetColumn(badge, 2);
-                    row.Children.Add(badge);
-                }
-
                 var button = new Button
                 {
                     Content = row,
@@ -228,10 +158,7 @@ public sealed partial class AddToCollectionDialog : ContentDialog
         StatusText.Visibility = Visibility.Visible;
         try
         {
-            if (_selected.IsLibrary)
-                await _adminApi.AddCollectionItemAsync(_selected.Id, _mediaItemId, _lifetimeCts.Token);
-            else
-                await _collectionsApi.AddCollectionItemAsync(_selected.Id, _mediaItemId, _lifetimeCts.Token);
+            await _collectionsApi.AddCollectionItemAsync(_selected.Id, _mediaItemId, _lifetimeCts.Token);
 
             ItemAdded?.Invoke();
             args.Cancel = false;
@@ -251,5 +178,5 @@ public sealed partial class AddToCollectionDialog : ContentDialog
         }
     }
 
-    private sealed record CollectionPick(string Id, string Title, string Group, bool IsLibrary);
+    private sealed record CollectionPick(string Id, string Title, string Group);
 }

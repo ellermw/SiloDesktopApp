@@ -78,8 +78,6 @@ public class CredentialStore : ICredentialStore
         DeleteCredential(serverUrl, "refresh_token");
         DeleteCredential(serverUrl, "profile_id");
         DeleteCredential(serverUrl, "profile_token");
-        DeleteCredential(serverUrl, "impersonation_admin_refresh_token");
-        DeleteCredential(serverUrl, "impersonation_return_path");
     }
 
     private static class NativeMethods

@@ -16,7 +16,6 @@ namespace SiloPlayer.Controls;
 public sealed partial class CustomSeekBar : UserControl
 {
     public event Action<double>? SeekRequested;
-    public event Action<string, double>? MarkerEdgeChanged;
 
     // ── Bindable state ──────────────────────────────────────────────────
     //
@@ -62,16 +61,12 @@ public sealed partial class CustomSeekBar : UserControl
     public (double start, double end)? RecapMarker { get; set; }
     public (double start, double end)? CreditsMarker { get; set; }
     public (double start, double end)? PreviewMarker { get; set; }
-    public (double start, double end)? EditableMarker { get; set; }
-    public bool IsMarkerEditing { get; set; }
     public IReadOnlyList<VersionChapter>? Chapters { get; set; }
 
     private double _currentTime;
     private double _duration;
     private double _bufferedEnd;
     private bool _isDragging;
-    private bool _isMarkerDragging;
-    private string? _markerDragEdge;
     private double _dragPendingSeconds;
 
     public CustomSeekBar()
@@ -121,8 +116,6 @@ public sealed partial class CustomSeekBar : UserControl
             RecapRegion.Visibility = Visibility.Collapsed;
             CreditsRegion.Visibility = Visibility.Collapsed;
             PreviewRegion.Visibility = Visibility.Collapsed;
-            MarkerStartHandle.Visibility = Visibility.Collapsed;
-            MarkerEndHandle.Visibility = Visibility.Collapsed;
             return;
         }
 
@@ -137,20 +130,6 @@ public sealed partial class CustomSeekBar : UserControl
         LayoutMarkerRegion(RecapRegion, RecapMarker, width);
         LayoutMarkerRegion(CreditsRegion, CreditsMarker, width);
         LayoutMarkerRegion(PreviewRegion, PreviewMarker, width);
-
-        if (IsMarkerEditing && EditableMarker is { } editable && editable.end > editable.start)
-        {
-            MarkerStartHandle.Margin = new Thickness(width * Math.Clamp(editable.start / _duration, 0, 1) - 12, 0, 0, 0);
-            MarkerEndHandle.Margin = new Thickness(width * Math.Clamp(editable.end / _duration, 0, 1) - 12, 0, 0, 0);
-            MarkerStartHandle.Visibility = Visibility.Visible;
-            MarkerEndHandle.Visibility = Visibility.Visible;
-            TrackArea.Height = 6;
-        }
-        else
-        {
-            MarkerStartHandle.Visibility = Visibility.Collapsed;
-            MarkerEndHandle.Visibility = Visibility.Collapsed;
-        }
 
         // Position the scrub thumb at the progress point.
         ScrubThumb.Margin = new Thickness(width * progressFraction - 6, 0, 0, 0);
@@ -171,7 +150,7 @@ public sealed partial class CustomSeekBar : UserControl
         var right = (Math.Min(_duration, range.end) / _duration) * width;
         element.Margin = new Thickness(left, 0, 0, 0);
         element.Width = Math.Max(0, right - left);
-        element.Height = IsMarkerEditing && EditableMarker == marker ? 8 : 4;
+        element.Height = 4;
         element.VerticalAlignment = VerticalAlignment.Center;
         element.Visibility = Visibility.Visible;
     }
@@ -194,7 +173,6 @@ public sealed partial class CustomSeekBar : UserControl
 
     private void Root_PointerPressed(object sender, PointerRoutedEventArgs e)
     {
-        if (_isMarkerDragging) return;
         if (_duration <= 0) return;
         _isDragging = true;
         this.CapturePointer(e.Pointer);
@@ -238,37 +216,4 @@ public sealed partial class CustomSeekBar : UserControl
         return fraction * _duration;
     }
 
-    private void MarkerHandle_PointerPressed(object sender, PointerRoutedEventArgs e)
-    {
-        if (_duration <= 0 || sender is not FrameworkElement { Tag: string edge } handle) return;
-        e.Handled = true;
-        _isMarkerDragging = true;
-        _markerDragEdge = edge;
-        handle.CapturePointer(e.Pointer);
-        MarkerEdgeChanged?.Invoke(edge, PointerToSeconds(e));
-    }
-
-    private void MarkerHandle_PointerMoved(object sender, PointerRoutedEventArgs e)
-    {
-        if (!_isMarkerDragging || _markerDragEdge == null) return;
-        e.Handled = true;
-        MarkerEdgeChanged?.Invoke(_markerDragEdge, PointerToSeconds(e));
-    }
-
-    private void MarkerHandle_PointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        if (!_isMarkerDragging) return;
-        e.Handled = true;
-        if (_markerDragEdge != null)
-            MarkerEdgeChanged?.Invoke(_markerDragEdge, PointerToSeconds(e));
-        _isMarkerDragging = false;
-        _markerDragEdge = null;
-        if (sender is UIElement handle) handle.ReleasePointerCapture(e.Pointer);
-    }
-
-    private void MarkerHandle_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
-    {
-        _isMarkerDragging = false;
-        _markerDragEdge = null;
-    }
 }

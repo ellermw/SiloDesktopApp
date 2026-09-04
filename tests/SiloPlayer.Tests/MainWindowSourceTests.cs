@@ -160,7 +160,6 @@ public sealed class MainWindowSourceTests
         Assert.Contains("loadCts.IsCancellationRequested", mainViewModel);
         Assert.Contains("SidebarFooterPanel.Width = isOpen ? double.NaN : NavView.CompactPaneLength", code);
         Assert.Contains("SidebarFooterSeparator.Width = isOpen ? double.NaN : NavView.CompactPaneLength", code);
-        Assert.Contains("AdminButton.Margin = isOpen", code);
         Assert.Contains("ProfileFooterButton.Margin = isOpen", code);
         Assert.Contains("UpdateLibraryNavigationVisibility(isOpen)", code);
         Assert.Contains("if (!NavView.IsPaneOpen)", code);
@@ -204,7 +203,6 @@ public sealed class MainWindowSourceTests
         Assert.Contains("x:Name=\"MobileShellHeader\"", xaml);
         Assert.Contains("Click=\"MobileMenu_Click\"", xaml);
         Assert.Contains("Click=\"MobileSearch_Click\"", xaml);
-        Assert.Contains("x:Name=\"MobileServerActivityButton\"", xaml);
         Assert.Contains("Click=\"MobileProfile_Click\"", xaml);
         Assert.DoesNotContain("NavView.PointerMoved += NavView_PointerMoved", code);
         Assert.DoesNotContain("NavView_PointerExited", code);
@@ -217,7 +215,6 @@ public sealed class MainWindowSourceTests
         Assert.Contains("x:Name=\"ProfileFooterContent\"", xaml);
         Assert.Contains("SiloWordmarkImage.Opacity = isOpen ? 1 : 0", code);
         Assert.Contains("SiloMarkImage.Opacity = isOpen ? 0 : 1", code);
-        Assert.Contains("AdminButtonLabel.Opacity = isOpen ? 1 : 0", code);
         Assert.Contains("ProfileNameText.Opacity = isOpen ? 1 : 0", code);
         Assert.Contains("ProfileFooterContent.Spacing = 10", code);
         Assert.Contains("FlyoutPlacementMode.RightEdgeAlignedBottom", code);
@@ -226,8 +223,6 @@ public sealed class MainWindowSourceTests
         Assert.Contains("themeService.PreviewTheme(capturedId)", code);
         Assert.Contains("_settingsApi.PutSettingAsync(\"ui_theme\", capturedId)", code);
         Assert.Contains("ApplyResponsiveShellLayout();", code);
-        Assert.Contains("ContentFrame.Content is Views.Admin.AdminShellPage", code);
-        Assert.Contains("AdminShell owns both its sidebar and ServerActivity button", code);
         Assert.Contains("SynchronizeSelectedNavigationItem(e.SourcePageType, e.Parameter)", code);
         Assert.Contains("ResynchronizeSelectedNavigationItem();", code);
         Assert.Contains("FindLibraryNavigationItem", code);
@@ -255,32 +250,6 @@ public sealed class MainWindowSourceTests
         Assert.Contains("public Func<bool>? BackNavigationRequestHandler", navigation);
         Assert.Contains("public bool NavigateImmediately(Type pageType, object? parameter = null)", navigation);
         Assert.Contains("public void GoBackImmediately()", navigation);
-    }
-
-    [Fact]
-    public void ServerActivityTriggerHasClippingSafeGeometryAndDynamicAccessibleName()
-    {
-        var root = FindRepositoryRoot();
-        var xaml = File.ReadAllText(Path.Combine(
-            root,
-            "src",
-            "SiloPlayer",
-            "Controls",
-            "ServerActivityButton.xaml"));
-        var code = File.ReadAllText(Path.Combine(
-            root,
-            "src",
-            "SiloPlayer",
-            "Controls",
-            "ServerActivityButton.xaml.cs"));
-
-        Assert.Contains("<Grid Width=\"44\" Height=\"44\">", xaml);
-        Assert.Contains("Width=\"36\"", xaml);
-        Assert.Contains("Height=\"36\"", xaml);
-        Assert.Contains("AutomationProperties.Name=\"Server activity\"", xaml);
-        Assert.Contains("CountBadgeText.Text = total > 99 ? \"99+\" : total.ToString()", code);
-        Assert.Contains("$\"Server activity: {total} active\"", code);
-        Assert.Contains("ActivityIcon.Stroke = (SolidColorBrush)Application.Current.Resources[\"AccentBrush\"]", code);
     }
 
     [Fact]

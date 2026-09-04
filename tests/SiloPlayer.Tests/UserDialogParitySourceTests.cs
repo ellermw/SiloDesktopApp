@@ -37,8 +37,9 @@ public sealed class UserDialogParitySourceTests
         Assert.Contains("IsPrimaryButtonEnabled = false", source);
         Assert.Contains("args.Cancel = true", source);
         Assert.Contains("ItemAdded?.Invoke()", source);
-        Assert.Contains("Some library collections could not be loaded.", source);
-        Assert.Contains("if (failed || response == null)", source);
+        Assert.Contains("Collections could not be loaded.", source);
+        Assert.Contains("_collectionsApi.GetCollectionsAsync", source);
+        Assert.DoesNotContain("AdminApi", source);
     }
 
     [Fact]
@@ -53,37 +54,6 @@ public sealed class UserDialogParitySourceTests
         Assert.Contains("FolderPaths", source);
         Assert.Contains("FileRowLabel", source);
         Assert.Contains("FormatFileSize", source);
-    }
-
-    [Fact]
-    public void ServerFolderBrowserExposesTheCurrentWebUiNavigationAndSelectionStates()
-    {
-        var source = ReadRepoFile("src", "SiloPlayer", "Views", "SetupWizardPage.xaml.cs");
-        Assert.Contains("private async Task<IReadOnlyList<string>> BrowseServerFoldersAsync", source);
-
-        Assert.Contains("Browse Library Folders", source);
-        Assert.Contains("Use an absolute path that starts with /.", source);
-        Assert.Contains("Current folder", source);
-        Assert.Contains("Refresh current folder", source);
-        Assert.Contains("This folder is already listed on the library.", source);
-        Assert.Contains("Select folders or use current", source);
-        Assert.Contains("Use Current Folder", source);
-        Assert.Contains("Windows.System.VirtualKey.Enter", source);
-        Assert.Contains("var generation = ++loadGeneration", source);
-    }
-
-    [Fact]
-    public void ItemMarkerEditorCannotCloseMidSaveAndClearsStaleValidation()
-    {
-        var source = ReadRepoFile("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
-        var editor = Slice(source, "private async Task ShowMarkerEditorAsync", "private static FrameworkElement BuildMarkerHistorySection");
-
-        Assert.Contains("fields.Start.TextChanged", editor);
-        Assert.Contains("fields.End.TextChanged", editor);
-        Assert.Contains("if (savePending) args.Cancel = true", editor);
-        Assert.Contains("dialog.PrimaryButtonText = \"Saving…\"", editor);
-        Assert.Contains("dialog.PrimaryButtonText = \"Save\"", editor);
-        Assert.Contains("error.Visibility = Visibility.Visible", editor);
     }
 
     [Fact]
@@ -126,18 +96,6 @@ public sealed class UserDialogParitySourceTests
         Assert.Contains("Copied root path", source);
         Assert.Contains("Failed to copy path", source);
         Assert.Contains("if (_searching) return", source);
-    }
-
-    [Fact]
-    public void SplitVersionsUsesCurrentSearchAndHistoryAccessibilityLabels()
-    {
-        var source = ReadRepoFile("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
-        var split = Slice(source, "private async Task ShowSplitVersionsDialogAsync", "private async void FavoriteButton_Click");
-
-        Assert.Contains("AutomationProperties.SetName(year, \"Search year\")", split);
-        Assert.Contains("Header = \"Watch history handling\"", split);
-        Assert.Contains("AutomationProperties.SetName(historyMode, \"Watch history handling\")", split);
-        Assert.Contains("Resume points and downloads tied to the moved files always follow them.", split);
     }
 
     [Fact]
@@ -191,54 +149,6 @@ public sealed class UserDialogParitySourceTests
         Assert.Contains("Text = \"No subtitles available.\"", source);
         Assert.Contains("SelectedProfile?.Language", source);
         Assert.Contains("ProfileLanguage: _authService.SelectedProfile?.Language", player);
-    }
-
-    [Fact]
-    public void IncompletePersonMetadataUsesTheCurrentWebUiBoundedAutoRefresh()
-    {
-        var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "PersonDetailViewModel.cs");
-        var page = ReadRepoFile("src", "SiloPlayer", "Views", "PersonDetailPage.xaml.cs");
-
-        Assert.Contains("private CancellationTokenSource? _metadataRefreshCts", viewModel);
-        Assert.Contains("DateTimeOffset.UtcNow.AddSeconds(30)", viewModel);
-        Assert.Contains("Task.Delay(TimeSpan.FromSeconds(3)", viewModel);
-        Assert.Contains("RefreshIncompleteMetadataAsync", viewModel);
-        Assert.Contains("metadataRefresh?.Cancel()", viewModel);
-        Assert.Contains("nameof(PersonDetailViewModel.Person)", page);
-        Assert.Contains("DispatcherQueue.TryEnqueue(UpdateUI)", page);
-    }
-
-    [Fact]
-    public void PersonMetadataEditorCollapsesResponsivelyAndValidatesWebStyleDates()
-    {
-        var page = ReadRepoFile("src", "SiloPlayer", "Views", "PersonDetailPage.xaml.cs");
-        var editor = Slice(page, "private async void EditMetadataButton_Click", "private void ShowMoreBio_Click");
-
-        Assert.Contains("Math.Clamp(availableWidth, 300, 600)", editor);
-        Assert.Contains("var compactForm = formWidth < 520", editor);
-        Assert.Contains("if (!compactForm)", editor);
-        Assert.Contains("DateOnly.TryParseExact", editor);
-        Assert.Contains("Dates must use YYYY-MM-DD.", editor);
-        Assert.Contains("args.Cancel = true", editor);
-    }
-
-    [Fact]
-    public void MarkerEditingStaysInsidePlaybackAndExposesRealTimelineHandles()
-    {
-        var overlayMarkup = ReadRepoFile("src", "SiloPlayer", "Controls", "PlayerOverlay.xaml");
-        var overlaySource = ReadRepoFile("src", "SiloPlayer", "Controls", "PlayerOverlay.xaml.cs");
-        var seekMarkup = ReadRepoFile("src", "SiloPlayer", "Controls", "CustomSeekBar.xaml");
-        var seekSource = ReadRepoFile("src", "SiloPlayer", "Controls", "CustomSeekBar.xaml.cs");
-
-        Assert.Contains("x:Name=\"MarkerEditorPanel\"", overlayMarkup);
-        Assert.Contains("Drag the timeline handles, or set points to the playhead.", overlayMarkup);
-        Assert.Contains("x:Name=\"MarkerStartHandle\"", seekMarkup);
-        Assert.Contains("x:Name=\"MarkerEndHandle\"", seekMarkup);
-        Assert.Contains("SeekBar.MarkerEdgeChanged += MarkerEdgeChanged", overlaySource);
-        Assert.Contains("SeekBar.IsMarkerEditing = true", overlaySource);
-        Assert.Contains("MarkerEditorPanel.Visibility == Visibility.Visible", overlaySource);
-        Assert.Contains("public event Action<string, double>? MarkerEdgeChanged", seekSource);
-        Assert.DoesNotContain("var dialog = new ContentDialog\n        {\n            XamlRoot = activeXamlRoot,\n            Title = \"Edit markers\"", overlaySource);
     }
 
     [Fact]

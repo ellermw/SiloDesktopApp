@@ -188,47 +188,30 @@ public sealed class ItemDetailCurrentParityTests
     }
 
     [Fact]
-    public void DetailActionBarCarriesCurrentOverflowAndCuratorActions()
+    public void DetailActionBarCarriesOnlyApprovedMaintenanceActions()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
-        var api = Read("src", "SiloPlayer.Core", "Api", "AdminApi.cs");
-        var playback = Read("src", "SiloPlayer.Core", "Api", "PlaybackApi.cs");
+        var api = Read("src", "SiloPlayer.Core", "Api", "MediaMaintenanceApi.cs");
 
         Assert.Contains("Add to Collection", page);
         Assert.Contains("Search Subtitles", page);
         Assert.Contains("Media Info", page);
-        Assert.Contains("View Play History", page);
-        Assert.Contains("Re-detect Intro Markers", page);
-        Assert.Contains("Edit Markers", page);
-        Assert.Contains("Split Versions", page);
-        Assert.Contains("item.Type == \"movie\" || item.Type == \"series\"", page);
-        Assert.Contains("item.Type.Equals(\"series\"", page);
-        Assert.Contains("item.Type.Equals(\"movie\"", page);
+        Assert.Contains("Refresh Metadata", page);
+        Assert.Contains("Match Item", page);
+        Assert.Contains("ItemMaintenanceActionPolicy.Resolve", page);
+        Assert.DoesNotContain("View Play History", page);
+        Assert.DoesNotContain("Re-detect Intro Markers", page);
+        Assert.DoesNotContain("Edit Metadata", page);
+        Assert.DoesNotContain("Edit Markers", page);
+        Assert.DoesNotContain("Split Versions", page);
         Assert.Contains("ShowRefreshMetadataDialogAsync", page);
-        Assert.Contains("new { mode }", api);
-        Assert.Contains("/split", api);
-        Assert.Contains("GetItemMarkersAsync", playback);
-        Assert.Contains("SetItemMarkersAsync", playback);
+        Assert.Contains("[\"mode\"] = mode", api);
+        Assert.DoesNotContain("/split", api);
         Assert.Contains("var hasOverflowActions = false;", page);
         Assert.Contains("if (hasOverflowActions)\n                MoreFlyout.Items.Add(new MenuFlyoutSeparator());", page.Replace("\r\n", "\n"));
     }
 
-    [Fact]
-    public void SplitVersionsOpensImmediatelyAndMatchesTheCurrentIdentitySearchDefaults()
-    {
-        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
-
-        Assert.Contains("Text = \"Loading files…\"", page);
-        Assert.Contains("dialog.Opened += async", page);
-        Assert.Contains("This item has only one file; splitting needs at least two.", page);
-        Assert.Contains("PlaceholderText = \"Title\"", page);
-        Assert.Contains("PlaceholderText = \"Year\"", page);
-        Assert.Contains("PlaceholderText = \"IMDb ID (tt…)\"", page);
-        Assert.Contains("Text = \"No candidates found.\"", page);
-        Assert.DoesNotContain("var title = new TextBox { Text = item.Title", page);
-    }
-
-    [Fact]
+   [Fact]
     public void MediaInfoUsesCurrentMultiVersionSpecSheetsAndAudioProfiles()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
@@ -346,25 +329,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("UpdateDetailCarouselButtons(CastScrollViewer, CastPrevButton, CastNextButton)", page);
     }
 
-    [Fact]
-    public void SplitVersionsAutomaticallyDebouncesItsDryRunPreview()
-    {
-        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
-
-        Assert.Contains("await Task.Delay(400, token)", page);
-        Assert.Contains("BuildSplitRequest(dryRun: true)", page);
-        Assert.Contains("previewText.Text = \"Previewing…\"", page);
-        Assert.Contains("dialog.IsPrimaryButtonEnabled = true", page);
-        Assert.Contains("BuildSplitRequest(dryRun: false)", page);
-        Assert.Contains("dialog.PrimaryButtonClick += async", page);
-        Assert.Contains("args.Cancel = true", page);
-        Assert.Contains("dialog.PrimaryButtonText = \"Splitting…\"", page);
-        Assert.Contains("args.Cancel = false", page);
-        Assert.DoesNotContain("PrimaryButtonText = \"Review Split\"", page);
-        Assert.DoesNotContain("Title = \"Confirm Split\"", page);
-    }
-
-    [Fact]
+   [Fact]
     public void VersionControlIsScopedToTheActiveEditionLikeTheWebUi()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");

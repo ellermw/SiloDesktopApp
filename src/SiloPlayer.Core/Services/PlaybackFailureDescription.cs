@@ -38,15 +38,6 @@ public static class PlaybackFailureDescription
                 "This item requires audio conversion, but audio transcoding is disabled for your user.",
                 CanRetry: false);
         }
-        if (error.StatusCode == 404 &&
-            error.ErrorCode == "not_found" &&
-            error.Message == "Source media file is missing")
-        {
-            return new PlaybackFailurePresentation(
-                "This video is no longer available",
-                "The file needed to play it can't be found right now. Go back and try another version if one is available.",
-                CanRetry: false);
-        }
         if (error.StatusCode == 404)
         {
             return new PlaybackFailurePresentation(
