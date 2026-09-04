@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.94**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.94/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.95**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.95/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `F486FB9301D7674A971D16289A4B37F76209E0F0E7A7BB9AF71246923BC22CE9`
+SHA-256: `F0238CA6E778A8AB5A3999EB118CE5019963AB4EC95C76F1EBC93440460FF992`
 
 The installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 
@@ -43,14 +43,12 @@ Status meanings:
 
 ## Latest release
 
-### 1.1.94
+### 1.1.95
 
-- Removed the desktop administration surface so server setup, scanning, users, nodes, plugins, policies, tasks, logs, and other server-management work remain in the Silo WebUI.
-- Retained only permission-gated media maintenance appropriate to a user client: Match/Fix Match and Quick/Complete Refresh Metadata.
-- Replaced the native server-setup wizard with a safe handoff to the connected server's WebUI.
-- Matched the WebUI's missing-source behavior: one attempt for the selected source, a terminal 404 message, and fresh server planning on the next manual Play instead of desktop-side file cycling.
-- Coordinated the direct-stream relay with the playback watchdog, added bounded byte-range reconnect grace, and negotiated HTTP/2 with HTTP/1.1 fallback before escalating a recoverable direct stream to remux.
-- Audited against official Silo Server `main` commit `7c1cb2d3f34e7a37d2864b63735386300e81ef31`; verified 788 passing tests, a zero-warning x64 Release build, native libmpv loading/hash validation, a successful installer build, and CodeRabbit's zero-issue review of PR #6.
+- Kept multi-gigabyte progressive direct-play and remux streams on exact HTTP/1.1 after live 1.1.94 playback exposed repeated HTTP/2 `INTERNAL_ERROR` resets through the server/CDN path.
+- Preserved HTTP/2 negotiation for normal API traffic while retaining byte-range continuation, strong-ETag entity protection, watchdog coordination, and protocol-v3 fallback behavior.
+- Added a regression test that rejects HTTP/2 progressive requests and verifies successful HTTP/1.1 media delivery with an exact version policy.
+- Audited against official Silo Server `main` commit `7c1cb2d3f34e7a37d2864b63735386300e81ef31`; verified 788 passing tests and CodeRabbit's zero-issue review of PR #7.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release history.
 ## Playback goals
@@ -90,7 +88,7 @@ Visual Studio 2022 with Windows App SDK tooling or a compatible .NET 8 SDK is re
 ```powershell
 dotnet build SiloPlayer.sln -c Release -p:Platform=x64
 dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release
-powershell -ExecutionPolicy Bypass -File installer/build.ps1
+pwsh -NoProfile -File installer/build.ps1
 ```
 
 ## Requirements

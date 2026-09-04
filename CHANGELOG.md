@@ -2,6 +2,16 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.1.95 (progressive playback stability hotfix)
+
+- Pinned progressive direct-play and remux media requests to exact HTTP/1.1 after live 1.1.94 sessions repeatedly received HTTP/2 `INTERNAL_ERROR` stream resets during multi-gigabyte transfers.
+- Left normal API traffic on its existing HTTP/2-with-fallback policy and preserved byte-range continuation, entity-change protection, playback-watchdog coordination, and protocol-v3 recovery.
+- Added a regression test that simulates rejection of HTTP/2 progressive media and verifies successful HTTP/1.1 relay output plus the exact request policy.
+- Audited against official Silo Server `main` commit `7c1cb2d3f34e7a37d2864b63735386300e81ef31` and passed CodeRabbit's zero-issue review of PR #7.
+- Verified 788 passing tests, a zero-warning x64 Release build, native libmpv loading and hash validation, and a successful installer build.
+- Installer SHA-256:
+  `F0238CA6E778A8AB5A3999EB118CE5019963AB4EC95C76F1EBC93440460FF992`.
+
 ## 1.1.94 (user-only desktop client)
 
 - Removed the desktop Admin shell, routes, pages, view models, dialogs, server-management API clients, and admin-only data contracts. Server administration now remains exclusively in the Silo WebUI.
