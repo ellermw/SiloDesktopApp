@@ -68,6 +68,9 @@ public sealed class DirectStreamProxy : IDisposable
     {
     }
 
+    /// <summary>Gets the elapsed time of the active upstream byte-range reconnect.</summary>
+    public TimeSpan? RecoveryElapsed => _relay.RecoveryElapsed;
+
     public string Start()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);

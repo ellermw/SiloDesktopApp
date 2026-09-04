@@ -69,13 +69,8 @@ public class PlayerService : IDisposable
     private double _prematureEofRecoveryPosition;
     private long _prematureEofLastAttemptMs;
     private int _prematureEofStreak;
-    private readonly PlaybackStallDetector _stallDetector = new(
-        bufferingTimeout: TimeSpan.FromSeconds(20),
-        // The direct relay gets one full 20-second rolling idle window to
-        // reconnect first. If mpv still claims to be playing five seconds
-        // later without advancing, restart the transport instead of leaving
-        // a black/frozen player on screen for nearly a minute.
-        silentPlaybackTimeout: TimeSpan.FromSeconds(25));
+    private readonly PlaybackStallDetector _stallDetector =
+        DirectPlaybackRecoveryPolicy.CreateStallDetector();
     private Timer? _stallWatchdogTimer;
     private long _stallRecoveryLastAttemptMs;
     private bool _displayRequestActive;
@@ -2250,6 +2245,16 @@ public class PlayerService : IDisposable
 
             if (!decision.ShouldRecover)
                 return;
+
+            // The loopback direct relay owns transient byte-range reconnects.
+            // Do not replace a recoverable direct route with remux while that
+            // reconnect is active, but cap the deferral so a hung upstream
+            // request cannot suppress the player's route recovery forever.
+            if (DirectPlaybackRecoveryPolicy.ShouldDeferRouteEscalation(
+                    _directStreamProxy?.RecoveryElapsed))
+            {
+                return;
+            }
 
             var nowMs = Environment.TickCount64;
             if (_stallRecoveryLastAttemptMs > 0 && nowMs - _stallRecoveryLastAttemptMs < 30_000)
