@@ -35,7 +35,9 @@ public sealed class DirectStreamRelayTests
             CancellationToken.None);
 
         Assert.Equal(media, output.ToArray());
-        Assert.Equal(HttpVersion.Version11, Assert.Single(handler.Requests).Version);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpVersion.Version11, request.Version);
+        Assert.Equal(HttpVersionPolicy.RequestVersionExact, request.VersionPolicy);
     }
 
     [Fact]
