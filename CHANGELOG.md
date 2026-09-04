@@ -2,14 +2,18 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
-## Unreleased (user-only desktop client)
+## 1.1.94 (user-only desktop client)
 
 - Removed the desktop Admin shell, routes, pages, view models, dialogs, server-management API clients, and admin-only data contracts. Server administration now remains exclusively in the Silo WebUI.
 - Preserved only the approved permission-gated media maintenance actions: Match/Fix Match for movies and series, plus Quick/Complete Refresh Metadata; removed the in-player marker editor and its write endpoints.
 - Replaced the native first-run server setup wizard with a focused handoff that opens the connected server's WebUI and can retry once setup is complete.
 - Matched the current WebUI missing-source playback behavior: a selected unavailable source receives one playback attempt, displays the WebUI's terminal 404 message with Go Back, and invalidates stale watch-prefetch data so a later manual Play obtains a fresh server plan.
 - Removed desktop-only file cycling; valid alternate-version selection remains the responsibility of Silo's playback planner, matching the WebUI.
+- Coordinated direct-stream byte-range reconnection with the playback watchdog so a recoverable upstream idle event is not prematurely escalated to remux. Upstream media requests now negotiate HTTP/2 with HTTP/1.1 fallback, and route-recovery deferral remains explicitly bounded.
 - Audited against official Silo Server `main` commit `7c1cb2d3f34e7a37d2864b63735386300e81ef31`.
+- Verified 788 passing tests, a zero-warning x64 Release build, native libmpv loading and hash validation, a successful installer build, and CodeRabbit's zero-issue review of PR #6.
+- Installer SHA-256:
+  `F486FB9301D7674A971D16289A4B37F76209E0F0E7A7BB9AF71246923BC22CE9`.
 
 ## 1.1.93 (user-facing browse and detail milestone)
 

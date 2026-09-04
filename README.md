@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.93**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.93/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.94**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.94/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `C305CF9A8065606F895FE7CE35E5CE9898810AA09CDFCB5B2CA1C4172A3B1625`
+SHA-256: `F486FB9301D7674A971D16289A4B37F76209E0F0E7A7BB9AF71246923BC22CE9`
 
 The installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 
@@ -43,14 +43,14 @@ Status meanings:
 
 ## Latest release
 
-### 1.1.93
+### 1.1.94
 
-- Reworked Home and library recommendation refreshes to reconcile mounted sections and cards without blank-page rebuilds.
-- Kept Search focused and responsive while canceling obsolete work and rejecting stale query results.
-- Aligned shared poster, landscape, and virtual-library cards with the audited WebUI action, progress, badge, episode-state, and input behavior.
-- Expanded movie, series, season, episode, person, audiobook, ebook, and manga detail behavior, including prefetched navigation and navigation-safe asynchronous mutations.
-- Routed additional artwork and server branding through bounded byte/disk caching, and tightened ebook and external-URL trust boundaries.
-- Verified the audited `8164fd594b9fdd8c1944bb0b6251f2d00e4a24ca` milestone with 964 passing tests and CodeRabbit's zero-issue re-audit. Official Silo `main` advanced to `b29aaf94cc4d05083230a59388a35e9ee8cbd49e` during release packaging and remains the next parity-drift reference.
+- Removed the desktop administration surface so server setup, scanning, users, nodes, plugins, policies, tasks, logs, and other server-management work remain in the Silo WebUI.
+- Retained only permission-gated media maintenance appropriate to a user client: Match/Fix Match and Quick/Complete Refresh Metadata.
+- Replaced the native server-setup wizard with a safe handoff to the connected server's WebUI.
+- Matched the WebUI's missing-source behavior: one attempt for the selected source, a terminal 404 message, and fresh server planning on the next manual Play instead of desktop-side file cycling.
+- Coordinated the direct-stream relay with the playback watchdog, added bounded byte-range reconnect grace, and negotiated HTTP/2 with HTTP/1.1 fallback before escalating a recoverable direct stream to remux.
+- Audited against official Silo Server `main` commit `7c1cb2d3f34e7a37d2864b63735386300e81ef31`; verified 788 passing tests, a zero-warning x64 Release build, native libmpv loading/hash validation, a successful installer build, and CodeRabbit's zero-issue review of PR #6.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release history.
 ## Playback goals
