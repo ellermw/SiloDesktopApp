@@ -7,17 +7,25 @@ namespace SiloPlayer.Tests;
 public sealed class DirectStreamRelayTests
 {
     [Fact]
-    public async Task RelayAsync_NegotiatesHttp2WithHttp11Fallback()
+    public async Task RelayAsync_UsesHttp11WhenHttp2ProgressiveStreamsAreRejected()
     {
-        var handler = new SequenceHandler(_ => CreateResponse(
-            HttpStatusCode.OK,
-            new MemoryStream(new byte[] { 1, 2, 3 }),
-            contentLength: 3,
-            contentRange: null));
+        var media = new byte[] { 1, 2, 3 };
+        var handler = new SequenceHandler(request =>
+        {
+            if (request.Version.Major >= 2)
+                throw new HttpRequestException("Simulated HTTP/2 progressive-stream reset.");
+
+            return CreateResponse(
+                HttpStatusCode.OK,
+                new MemoryStream(media),
+                contentLength: media.Length,
+                contentRange: null);
+        });
         var relay = new DirectStreamRelay(
             new HttpClient(handler),
             new Uri("https://example.test/api/v1/stream/session"),
-            () => null);
+            () => null,
+            maxRetries: 0);
         using var output = new MemoryStream();
 
         await relay.RelayAsync(
@@ -26,9 +34,8 @@ public sealed class DirectStreamRelayTests
             writeHeadersAsync: null,
             CancellationToken.None);
 
-        var request = Assert.Single(handler.Requests);
-        Assert.Equal(HttpVersion.Version20, request.Version);
-        Assert.Equal(HttpVersionPolicy.RequestVersionOrLower, request.VersionPolicy);
+        Assert.Equal(media, output.ToArray());
+        Assert.Equal(HttpVersion.Version11, Assert.Single(handler.Requests).Version);
     }
 
     [Fact]
