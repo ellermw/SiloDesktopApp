@@ -308,8 +308,12 @@ public sealed class DirectStreamRelay
     {
         var request = new HttpRequestMessage(headOnly ? HttpMethod.Head : HttpMethod.Get, _remoteUri)
         {
-            Version = HttpVersion.Version20,
-            VersionPolicy = HttpVersionPolicy.RequestVersionOrLower
+            // Keep multi-gigabyte progressive media on HTTP/1.1. The Silo/CDN
+            // HTTP/2 path can reset long-lived response streams after substantial
+            // transfer, while byte-range continuation over HTTP/1.1 is resilient.
+            // Normal API traffic continues to negotiate HTTP/2 independently.
+            Version = HttpVersion.Version11,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact
         };
         var token = _accessTokenProvider();
 
