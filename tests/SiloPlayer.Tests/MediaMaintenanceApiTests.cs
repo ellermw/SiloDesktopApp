@@ -8,6 +8,14 @@ namespace SiloPlayer.Tests;
 public sealed class MediaMaintenanceApiTests
 {
     [Fact]
+    public void ProductionApiTransportDisablesAutomaticRedirects()
+    {
+        using var handler = SiloHttpClientFactory.CreateHandler();
+
+        Assert.False(handler.AllowAutoRedirect);
+    }
+
+    [Fact]
     public async Task SearchMatchesUsesTheCurrentServerContract()
     {
         var handler = new RecordingHandler("{\"candidates\":[]}");
@@ -113,6 +121,24 @@ public sealed class MediaMaintenanceApiTests
         Assert.Null(handler.LastUri);
     }
 
+    [Theory]
+    [InlineData("http://downgrade.example/api/v1/admin/items/movie-1/refresh-metadata")]
+    [InlineData("https://other-host.example/api/v1/admin/items/movie-1/refresh-metadata")]
+    public async Task MaintenanceRequestsDoNotFollowUnsafeRedirects(string redirectUrl)
+    {
+        var handler = new RecordingHandler(
+            "{\"error\":\"redirect_rejected\",\"message\":\"Redirects are not permitted\"}",
+            HttpStatusCode.TemporaryRedirect,
+            new Uri(redirectUrl));
+        var api = CreateApi(handler);
+
+        await Assert.ThrowsAsync<ApiException>(
+            () => api.RefreshMetadataAsync("movie-1", "quick"));
+
+        Assert.Equal(1, handler.RequestCount);
+        Assert.Equal("example.test", handler.LastUri!.Host);
+    }
+
     private static MediaMaintenanceApi CreateApi(RecordingHandler handler)
     {
         var client = new SiloApiClient(new HttpClient(handler));
@@ -122,8 +148,10 @@ public sealed class MediaMaintenanceApiTests
 
     private sealed class RecordingHandler(
         string responseJson,
-        HttpStatusCode statusCode = HttpStatusCode.OK) : HttpMessageHandler
+        HttpStatusCode statusCode = HttpStatusCode.OK,
+        Uri? redirectLocation = null) : HttpMessageHandler
     {
+        public int RequestCount { get; private set; }
         public HttpMethod? LastMethod { get; private set; }
         public Uri? LastUri { get; private set; }
         public string? LastBody { get; private set; }
@@ -132,15 +160,18 @@ public sealed class MediaMaintenanceApiTests
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
+            RequestCount++;
             LastMethod = request.Method;
             LastUri = request.RequestUri;
             LastBody = request.Content == null
                 ? null
                 : await request.Content.ReadAsStringAsync(cancellationToken);
-            return new HttpResponseMessage(statusCode)
+            var response = new HttpResponseMessage(statusCode)
             {
                 Content = new StringContent(responseJson),
             };
+            response.Headers.Location = redirectLocation;
+            return response;
         }
     }
 }

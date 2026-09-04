@@ -37,6 +37,7 @@ public sealed class CodeRabbitPr6RegressionTests
         Assert.Contains("protected override void OnNavigatedFrom", source, StringComparison.Ordinal);
         Assert.Contains("GetSetupStatusAsync(requestCts.Token)", source, StringComparison.Ordinal);
         Assert.Contains("!ReferenceEquals(Frame?.Content, this)", source, StringComparison.Ordinal);
+        Assert.Contains("if (ownsRequest && ReferenceEquals(Frame?.Content, this))", source, StringComparison.Ordinal);
     }
 
     private static string ReadRepoFile(params string[] segments)

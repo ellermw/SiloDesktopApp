@@ -115,11 +115,13 @@ public sealed class SearchRuntimeRegressionTests
     public void DesktopApiTransportMatchesBrowserCompressionAndStreamsJsonResponses()
     {
         var app = ReadRepoFile("src", "SiloPlayer", "App.xaml.cs");
+        var transport = ReadRepoFile("src", "SiloPlayer.Core", "Api", "SiloHttpClientFactory.cs");
         var apiClient = ReadRepoFile("src", "SiloPlayer.Core", "Api", "SiloApiClient.cs");
 
-        Assert.Contains("AutomaticDecompression = DecompressionMethods.All", app);
-        Assert.Contains("DefaultRequestVersion = HttpVersion.Version20", app);
-        Assert.Contains("DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower", app);
+        Assert.Contains("SiloHttpClientFactory.CreateClient()", app);
+        Assert.Contains("AutomaticDecompression = DecompressionMethods.All", transport);
+        Assert.Contains("DefaultRequestVersion = HttpVersion.Version20", transport);
+        Assert.Contains("DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower", transport);
         Assert.Contains("HttpCompletionOption.ResponseHeadersRead", apiClient);
     }
 

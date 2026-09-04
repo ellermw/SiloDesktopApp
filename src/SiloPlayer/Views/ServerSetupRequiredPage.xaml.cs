@@ -89,13 +89,14 @@ public sealed partial class ServerSetupRequiredPage : Page
         }
         finally
         {
-            if (ReferenceEquals(
+            var ownsRequest = ReferenceEquals(
                     Interlocked.CompareExchange(ref _setupStatusCts, null, requestCts),
-                    requestCts))
+                    requestCts);
+            if (ownsRequest)
             {
                 requestCts.Dispose();
             }
-            if (ReferenceEquals(Frame?.Content, this))
+            if (ownsRequest && ReferenceEquals(Frame?.Content, this))
                 RetryButton.IsEnabled = true;
         }
     }

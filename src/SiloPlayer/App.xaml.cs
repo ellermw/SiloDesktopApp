@@ -5,7 +5,6 @@ using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using System.IO.Pipes;
-using System.Net;
 using System.Text;
 
 namespace SiloPlayer;
@@ -220,20 +219,7 @@ public partial class App : Application
             // modern HTTP versions. Match that transport behavior so large
             // catalog/search payloads are not downloaded uncompressed or
             // serialized behind an HTTP/1.1 connection.
-            var handler = new SocketsHttpHandler
-            {
-                AutomaticDecompression = DecompressionMethods.All,
-                ConnectTimeout = TimeSpan.FromSeconds(10),
-                PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
-                PooledConnectionLifetime = TimeSpan.FromMinutes(10),
-                MaxConnectionsPerServer = 16,
-                EnableMultipleHttp2Connections = true,
-            };
-            return new HttpClient(handler)
-            {
-                DefaultRequestVersion = HttpVersion.Version20,
-                DefaultVersionPolicy = HttpVersionPolicy.RequestVersionOrLower,
-            };
+            return SiloHttpClientFactory.CreateClient();
         });
         services.AddSingleton<SiloApiClient>(sp =>
         {
