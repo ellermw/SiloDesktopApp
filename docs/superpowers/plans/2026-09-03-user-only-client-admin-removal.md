@@ -26,13 +26,14 @@
 
 **Files:**
 - Modify: `tests/SiloPlayer.Tests/PlaybackFailureDescriptionTests.cs`
+- Modify: `tests/SiloPlayer.Tests/PlaybackProtocolV3RecoveryTests.cs`
 - Create: `tests/SiloPlayer.Tests/WatchDetailPrefetchCacheTests.cs`
 - Create: `src/SiloPlayer.Core/Services/WatchDetailPrefetchCache.cs`
 - Modify: `src/SiloPlayer/Services/PlayerService.cs`
 - Modify: `src/SiloPlayer.Core/Services/PlaybackFailureDescription.cs`
 
 **Interfaces:**
-- Produces: `WatchDetailPrefetchCache<T>` with `Store`, `TryTake`, `Invalidate`, and bounded expiration behavior.
+- Produces: `WatchDetailPrefetchCache<T>` with `Store`, `TryTakeAsync`, `Invalidate`, and bounded expiration behavior.
 - Produces: initial HTTP 404 presentation matching the WebUI transport-level copy.
 - Consumes: existing `PlaybackApi.GetWatchDetailAsync` tasks and `PlayerService` playback-start error flow.
 
@@ -59,12 +60,14 @@ Assert.Null(await cache.TryTakeAsync("movie-1", "profile-1", now));
 Assert.Equal("keep", await cache.TryTakeAsync("movie-2", "profile-1", now));
 ```
 
+Add an executable playback-start regression that records every `/api/v1/playback/start` body, returns a terminal missing-source decision, and asserts the request list contains exactly one entry for the originally selected `file_id` and no alternate-file entry.
+
 - [ ] **Step 2: Run focused tests and verify RED**
 
 Run:
 
 ```powershell
-dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release --no-restore --filter "FullyQualifiedName~PlaybackFailureDescriptionTests|FullyQualifiedName~WatchDetailPrefetchCacheTests" -nologo
+dotnet test tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj -c Release --no-restore --filter "FullyQualifiedName~PlaybackFailureDescriptionTests|FullyQualifiedName~PlaybackProtocolV3RecoveryTests|FullyQualifiedName~WatchDetailPrefetchCacheTests" -nologo
 ```
 
 Expected: the 404 title differs and `WatchDetailPrefetchCache<T>` does not exist.
@@ -89,6 +92,8 @@ Run the Step 2 command. Expected: PASS.
 - Create: `src/SiloPlayer.Core/Models/MediaMaintenance/MetadataRefreshReceipt.cs`
 - Create: `tests/SiloPlayer.Tests/MediaMaintenanceApiTests.cs`
 - Modify: `src/SiloPlayer/Controls/MatchItemDialog.xaml.cs`
+- Modify: `src/SiloPlayer/Controls/MediaItemMenu.cs`
+- Modify: `src/SiloPlayer/Controls/RefreshMetadataDialog.cs`
 - Modify: `src/SiloPlayer/Views/ItemDetailPage.xaml.cs`
 - Modify: `src/SiloPlayer/App.xaml.cs`
 
@@ -131,7 +136,7 @@ if (mode is not ("quick" or "complete"))
 
 - [ ] **Step 4: Migrate the two retained UI workflows and DI**
 
-Replace `AdminApi` in `MatchItemDialog` and both metadata refresh call sites with `MediaMaintenanceApi`. Replace `Core.Models.Admin.MatchCandidate` and related match DTOs with the neutral namespace. Register only `MediaMaintenanceApi` in `App.xaml.cs`.
+Replace `AdminApi` in `MatchItemDialog`, `RefreshMetadataDialog`, `ItemDetailPage`, and `MediaItemMenu` with `MediaMaintenanceApi`. Cover both refresh-dialog caller paths—detail-page actions and the card/context menu—with regression tests that assert they resolve the focused maintenance API. Replace `Core.Models.Admin.MatchCandidate` and related match DTOs with the neutral namespace. Register only `MediaMaintenanceApi` in `App.xaml.cs`.
 
 - [ ] **Step 5: Run focused tests and verify GREEN**
 
@@ -372,7 +377,7 @@ Run the existing `installer/build.ps1` workflow without changing its multi-file 
 
 - [ ] **Step 4: Inspect published resources**
 
-Assert no `Views/Admin/*.xbf` artifacts exist. Record publish and installer sizes for comparison without claiming a predetermined gain.
+Assert the publish output contains no Admin, SetupWizard, Impersonation, or MarkerEditor resources. The installer build must enforce the same four-pattern boundary before compiling the package. Record publish and installer sizes for comparison without claiming a predetermined gain.
 
 - [ ] **Step 5: Review the complete diff and preserve unrelated work**
 

@@ -57,7 +57,7 @@ Create a focused `MediaMaintenanceApi` containing only the operations required b
 - Apply a selected match to an item.
 - Queue a Quick or Complete metadata refresh for an item.
 
-Move only the match request/response/candidate DTOs and the minimal metadata-refresh acknowledgement DTO into a neutral media-maintenance namespace. `MatchItemDialog`, `RefreshMetadataDialog`, and `ItemDetailPage` consume this focused API. They must not depend on `AdminApi`, `Models.Admin`, or Admin page types.
+Move only the match request/response/candidate DTOs and the minimal metadata-refresh acknowledgement DTO into a neutral media-maintenance namespace. `MatchItemDialog`, `RefreshMetadataDialog`, `ItemDetailPage`, and `MediaItemMenu` consume this focused API. Both refresh-dialog caller paths—the detail page and media-item context menu—must resolve `MediaMaintenanceApi`; none of these surfaces may depend on `AdminApi`, `Models.Admin`, or Admin page types. Authenticated maintenance calls reject a non-HTTPS server base URL before attaching credentials or dispatching a request.
 
 The server may still authorize these endpoints as administrative or curation operations. Desktop visibility remains permission-gated using the existing effective curation policy; a direct call must still rely on server authorization and surface a normal error if permission changes after the page loads.
 
@@ -131,7 +131,7 @@ The special retry that waits for a retiring session after `too_many_streams` rem
 - Existing server-planner/adaptation tests continue proving valid-source fallback behavior remains untouched.
 - Media-maintenance API tests cover match search, match apply, Quick refresh, Complete refresh, and server authorization failures.
 - Detail-page source/behavior tests prove only Match Item and Refresh Metadata remain from the former administrator action group.
-- Architecture guard tests fail if `Views/Admin`, `ViewModels/Admin`, `AdminApi`, Admin DI registrations, Admin navigation, impersonation UI, or the server-activity control returns.
+- Architecture guard tests fail if `Views/Admin`, `ViewModels/Admin`, `AdminApi`, Admin DI registrations, Admin navigation, SetupWizard, MarkerEditor, impersonation UI, or the server-activity control returns.
 - Tests protect ordinary notifications, requests, collections, plugin user navigation, and role-aware media-detail visibility from accidental deletion.
 - Setup-required tests prove the app directs the user to the browser and can retry after setup.
 

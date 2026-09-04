@@ -1611,6 +1611,10 @@ public class PlayerService : IDisposable
         ClearPlaybackTerminalState();
         ErrorMessage = null;
         IsLoading = true;
+        // Every user-initiated play request starts a fresh logical watch, even
+        // when it replays the same item. Transport reloads bypass PlayCoreAsync
+        // and retain their current OSC auto-skip latches.
+        _autoSkipMarkerIdentity.Clear();
         ContentId = contentId;
         _resumePosition = 0;
         _activeTransportPlan = null;

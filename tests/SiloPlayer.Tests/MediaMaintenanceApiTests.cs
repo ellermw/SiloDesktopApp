@@ -86,6 +86,33 @@ public sealed class MediaMaintenanceApiTests
         Assert.Equal("forbidden", error.ErrorCode);
     }
 
+    [Theory]
+    [InlineData("search")]
+    [InlineData("apply")]
+    [InlineData("refresh")]
+    public async Task MaintenanceRequestsRejectHttpBeforeDispatchingCredentials(string operation)
+    {
+        var handler = new RecordingHandler("{\"candidates\":[]}");
+        var client = new SiloApiClient(new HttpClient(handler));
+        client.SetBaseUrl("http://example.test");
+        client.SetAccessToken("secret-access-token");
+        client.SetProfile("profile-1", "secret-profile-token");
+        var api = new MediaMaintenanceApi(client);
+
+        Task Request() => operation switch
+        {
+            "search" => api.SearchMatchesAsync("movie-1", new ItemMatchSearchRequest()),
+            "apply" => api.ApplyMatchAsync("movie-1", new ItemMatchApplyRequest()),
+            "refresh" => api.RefreshMetadataAsync("movie-1", "quick"),
+            _ => throw new ArgumentOutOfRangeException(nameof(operation)),
+        };
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(Request);
+
+        Assert.Contains("HTTPS", error.Message, StringComparison.Ordinal);
+        Assert.Null(handler.LastUri);
+    }
+
     private static MediaMaintenanceApi CreateApi(RecordingHandler handler)
     {
         var client = new SiloApiClient(new HttpClient(handler));

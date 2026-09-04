@@ -130,6 +130,26 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# A user-only desktop build must never package a removed administration,
+# setup-wizard, impersonation, or writable marker-editor resource.
+$ForbiddenPublishedResourcePatterns = @(
+    'Admin',
+    'SetupWizard',
+    'Impersonation',
+    'MarkerEditor'
+)
+$ForbiddenPublishedResources = Get-ChildItem -LiteralPath $PublishDir -Recurse -File |
+    Where-Object {
+        $relativePath = [System.IO.Path]::GetRelativePath($PublishDir, $_.FullName)
+        $ForbiddenPublishedResourcePatterns.Where({
+            $relativePath -match [regex]::Escape($_)
+        }).Count -gt 0
+    }
+if ($ForbiddenPublishedResources) {
+    $names = ($ForbiddenPublishedResources | Select-Object -ExpandProperty FullName) -join "`n"
+    throw "Forbidden user-only resources were found in the publish output:`n$names"
+}
+
 # Copy libmpv if not already in publish output
 $MpvDll = "$PublishDir\libmpv-2.dll"
 if (-not (Test-Path $MpvDll)) {
@@ -214,10 +234,10 @@ if ($SigningCertificate) {
     # This also avoids Inno's 32-bit process resolving a different PowerShell
     # installation with an incompatible module search path.
     $InnoPowerShell = (Get-Process -Id $PID).Path
-    # ISCC parses the /S value before invoking the sign tool. Embedded literal
-    # quotes are rewritten as backslashes by its command-line parser, so keep
-    # fixed arguments unquoted here. Inno expands $f to a quoted file path.
-    $InnoSignCommand = "$InnoPowerShell -NoProfile -ExecutionPolicy Bypass -File $InnoSignScript -Path `$f -Thumbprint $($SigningCertificate.Thumbprint) -TimestampServer $TimestampServer"
+    # ISCC parses the /S value before invoking the sign tool. Inno's $q token
+    # survives that parsing and becomes a literal quote for paths/values that
+    # may contain spaces. Inno expands $f to the file being signed.
+    $InnoSignCommand = "`$q$InnoPowerShell`$q -NoProfile -ExecutionPolicy Bypass -File `$q$InnoSignScript`$q -Path `$f -Thumbprint $($SigningCertificate.Thumbprint) -TimestampServer `$q$TimestampServer`$q"
     $IsccArguments += "/DLocalSigning=1"
     $IsccArguments += "/Slocaltesting=$InnoSignCommand"
 }

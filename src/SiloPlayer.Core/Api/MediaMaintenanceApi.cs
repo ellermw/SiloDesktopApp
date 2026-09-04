@@ -12,19 +12,25 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
         string itemId,
         ItemMatchSearchRequest request,
         CancellationToken ct = default)
-        => client.PostAsync<ItemMatchSearchResponse>(
+    {
+        EnsureSecureBaseUrl();
+        return client.PostAsync<ItemMatchSearchResponse>(
             $"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/match/search",
             request,
             ct);
+    }
 
     public Task ApplyMatchAsync(
         string itemId,
         ItemMatchApplyRequest request,
         CancellationToken ct = default)
-        => client.PostNoContentAsync(
+    {
+        EnsureSecureBaseUrl();
+        return client.PostNoContentAsync(
             $"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/match/apply",
             request,
             ct);
+    }
 
     public Task<MetadataRefreshReceipt> RefreshMetadataAsync(
         string itemId,
@@ -34,9 +40,20 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
         if (mode is not ("quick" or "complete"))
             throw new ArgumentOutOfRangeException(nameof(mode));
 
+        EnsureSecureBaseUrl();
         return client.PostAsync<MetadataRefreshReceipt>(
             $"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/refresh-metadata",
             new Dictionary<string, object?> { ["mode"] = mode },
             ct);
+    }
+
+    private void EnsureSecureBaseUrl()
+    {
+        if (!Uri.TryCreate(client.BaseUrl, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "Media maintenance requires an HTTPS Silo server connection.");
+        }
     }
 }
