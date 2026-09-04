@@ -313,27 +313,6 @@ public sealed class CurrentHomeParitySourceTests
         });
     }
 
-    [Fact]
-    public void AdminServerActivityUsesTheCurrentActiveScanAndBoundedFlyoutContract()
-    {
-        var xaml = ReadRepoFile("src", "SiloPlayer", "Controls", "ServerActivityButton.xaml");
-        var code = ReadRepoFile("src", "SiloPlayer", "Controls", "ServerActivityButton.xaml.cs");
-        Assert.Contains("MaxHeight=\"400\"", xaml);
-        Assert.Contains("Grid Width=\"44\" Height=\"44\"", xaml);
-        Assert.Contains("Width=\"36\"", xaml);
-        Assert.Contains("Height=\"36\"", xaml);
-        Assert.Contains("Padding=\"0\"", xaml);
-        Assert.Contains("Margin=\"0,2,2,0\"", xaml);
-        Assert.Contains("IsHitTestVisible=\"False\"", xaml);
-        Assert.Contains("LineHeight=\"12\"", xaml);
-        Assert.DoesNotContain("Margin=\"0,-2,-2,0\"", xaml);
-        Assert.DoesNotContain("Margin=\"0,0,-2,-2\"", xaml);
-        Assert.Contains("MaxActivityScanRows = 25", code);
-        Assert.Contains("run.Status is \"accepted\" or \"running\"", code);
-        Assert.DoesNotContain("run.Status is \"accepted\" or \"queued\"", code);
-        Assert.Contains("_lastActiveScans.Take(MaxActivityScanRows)", code);
-    }
-
     private static string ReadRepoFile(params string[] parts)
     {
         var all = new string[parts.Length + 1];

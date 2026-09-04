@@ -9,11 +9,11 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
-using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Models.HistoryImport;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Plugins;
+using SiloPlayer.Core.Models.Sessions;
 using SiloPlayer.Core.Models.Settings;
 using SiloPlayer.Core.Models.WatchProviders;
 using SiloPlayer.Core.Services;
@@ -46,7 +46,7 @@ public sealed partial class SettingsPage : Page
     private int _householdSessionsLoadGeneration;
     private DispatcherTimer? _householdSessionsTimer;
     private bool _householdSessionsLoading;
-    private IReadOnlyList<AdminSession> _householdSessions = [];
+    private IReadOnlyList<PlaybackSessionSummary> _householdSessions = [];
     private DateTime _loadedAtUtc;
     private bool _showingSettingsOverview;
     private bool _canManageProfiles;
@@ -6486,7 +6486,7 @@ public sealed partial class SettingsPage : Page
         return card;
     }
 
-    private Border BuildHouseholdStreamsCard(IReadOnlyList<AdminSession> sessions, bool refreshing)
+    private Border BuildHouseholdStreamsCard(IReadOnlyList<PlaybackSessionSummary> sessions, bool refreshing)
     {
         var card = CreateHouseholdStreamsCard();
         var stack = new StackPanel { Spacing = 12 };
@@ -6520,7 +6520,7 @@ public sealed partial class SettingsPage : Page
         Padding = new Thickness(16),
     };
 
-    private FrameworkElement BuildHouseholdStreamsHeader(IReadOnlyList<AdminSession> sessions, bool refreshing)
+    private FrameworkElement BuildHouseholdStreamsHeader(IReadOnlyList<PlaybackSessionSummary> sessions, bool refreshing)
     {
         var header = new Grid { ColumnSpacing = 12 };
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -6568,7 +6568,7 @@ public sealed partial class SettingsPage : Page
         return header;
     }
 
-    private FrameworkElement BuildHouseholdStreamRow(AdminSession session)
+    private FrameworkElement BuildHouseholdStreamRow(PlaybackSessionSummary session)
     {
         var row = new Border
         {
@@ -6604,7 +6604,7 @@ public sealed partial class SettingsPage : Page
             "transcode" or "hls" => "Transcode",
             _ => "Unknown",
         };
-        var bitrate = SiloPlayer.ViewModels.Admin.AdminActivityViewModel.FormatSessionBitrate(session.StreamBitrateKbps);
+        var bitrate = SessionDisplayText.FormatBitrate(session.StreamBitrateKbps);
         badgeRow.Children.Add(new TextBlock
         {
             Text = string.IsNullOrWhiteSpace(bitrate) ? method : $"{method} · {bitrate}",
@@ -6615,7 +6615,7 @@ public sealed partial class SettingsPage : Page
         if (session.IsJellyfinClient) badgeRow.Children.Add(ProfileBadge("JF"));
         content.Children.Add(badgeRow);
 
-        var title = SiloPlayer.ViewModels.Admin.AdminActivityViewModel.GetDisplayTitle(session);
+        var title = SessionDisplayText.GetTitle(session);
         if (!string.IsNullOrWhiteSpace(session.ContentId) && session.MediaFileId > 0)
         {
             var contentId = session.ContentId;
@@ -6643,14 +6643,14 @@ public sealed partial class SettingsPage : Page
             });
         }
 
-        var subtitle = SiloPlayer.ViewModels.Admin.AdminActivityViewModel.GetDisplaySubtitle(session);
+        var subtitle = SessionDisplayText.GetSubtitle(session);
         if (!string.IsNullOrWhiteSpace(subtitle))
             content.Children.Add(new TextBlock { Text = subtitle, FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], TextTrimming = TextTrimming.CharacterEllipsis });
 
         var meta = new[]
         {
             FormatHouseholdStreamElapsed(session.StartedAt),
-            SiloPlayer.ViewModels.Admin.AdminActivityViewModel.GetSessionClientLabel(session),
+            SessionDisplayText.GetClientLabel(session),
             session.ClientIp?.Trim() ?? "",
             session.NodeDisplayName?.Trim() ?? "",
         }.Where(value => !string.IsNullOrWhiteSpace(value));

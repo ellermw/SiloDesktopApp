@@ -47,14 +47,15 @@ public sealed class CurrentCollectionsParitySourceTests
         var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "SmartCollectionWizardViewModel.cs");
 
         Assert.Contains("x:Name=\"ProfileAccessSection\"", xaml);
-        Assert.Contains("x:Name=\"AdminBackdropPanel\"", xaml);
+        Assert.DoesNotContain("AdminBackdropPanel", xaml);
         Assert.Contains("ChoosePoster_Click", xaml);
         Assert.Contains("SmartCollectionWizardPage_SizeChanged", code);
         Assert.Contains("SchedulePreview", code);
         Assert.Contains("(\"Dolby Vision\", \"dolby_vision\")", code);
         Assert.Contains("(\"between\", \"between\")", code);
         Assert.Contains("AllowedProfileIds = IsShared", viewModel);
-        Assert.Contains("UploadCollectionImageAsync(created.Id, \"backdrop\"", viewModel);
+        Assert.DoesNotContain("AdminApi", viewModel);
+        Assert.DoesNotContain("IsAdmin", viewModel);
         Assert.Contains("Only the profile that created this collection can edit it.", viewModel);
     }
 

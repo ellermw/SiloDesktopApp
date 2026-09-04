@@ -210,7 +210,14 @@ if (-not (Test-Path $OutputDir)) { $null = New-Item -ItemType Directory -Path $O
 $IsccArguments = @("/DPublishSourceDir=$PublishDir")
 if ($SigningCertificate) {
     $InnoSignScript = Join-Path $InstallerDir "sign-file.ps1"
-    $InnoSignCommand = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$InnoSignScript`" -Path `$f -Thumbprint `"$($SigningCertificate.Thumbprint)`" -TimestampServer `"$TimestampServer`""
+    # Reuse the exact PowerShell host that successfully signed the payload.
+    # This also avoids Inno's 32-bit process resolving a different PowerShell
+    # installation with an incompatible module search path.
+    $InnoPowerShell = (Get-Process -Id $PID).Path
+    # ISCC parses the /S value before invoking the sign tool. Embedded literal
+    # quotes are rewritten as backslashes by its command-line parser, so keep
+    # fixed arguments unquoted here. Inno expands $f to a quoted file path.
+    $InnoSignCommand = "$InnoPowerShell -NoProfile -ExecutionPolicy Bypass -File $InnoSignScript -Path `$f -Thumbprint $($SigningCertificate.Thumbprint) -TimestampServer $TimestampServer"
     $IsccArguments += "/DLocalSigning=1"
     $IsccArguments += "/Slocaltesting=$InnoSignCommand"
 }

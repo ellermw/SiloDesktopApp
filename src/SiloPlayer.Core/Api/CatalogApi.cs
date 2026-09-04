@@ -1,4 +1,3 @@
-using SiloPlayer.Core.Models.Admin;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Models.Home;

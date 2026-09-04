@@ -715,37 +715,6 @@
                              state is driven by the More flyout items instead. -->
                         <Button x:Name="WatchlistButton" Visibility="Collapsed" />
                         <Button x:Name="DownloadButton" Visibility="Collapsed" />
-                        <Button x:Name="MatchButton" Visibility="Collapsed" />
-
-                        <!-- Refresh metadata (admin only) — B12 -->
-                        <Button
-                            x:Name="RefreshMetadataButton"
-                            Style="{StaticResource SecondaryButtonStyle}"
-                            Click="RefreshMetadataButton_Click"
-                            Padding="16,10"
-                            CornerRadius="22"
-                            Visibility="Collapsed">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE72C;" FontSize="16"
-                                          Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Refresh metadata" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
-
-                        <!-- Edit metadata (admin only) — inline dialog with title, year, overview, rating -->
-                        <Button
-                            x:Name="EditMetadataButton"
-                            Style="{StaticResource SecondaryButtonStyle}"
-                            Click="EditMetadataButton_Click"
-                            Padding="16,10"
-                            CornerRadius="22"
-                            Visibility="Collapsed">
-                            <StackPanel Orientation="Horizontal" Spacing="8">
-                                <FontIcon Glyph="&#xE70F;" FontSize="16"
-                                          Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Edit metadata" VerticalAlignment="Center" />
-                            </StackPanel>
-                        </Button>
                     </controls:WrapPanel>
 
                     <!-- The current WebUI keeps Version, Audio, and Subtitles

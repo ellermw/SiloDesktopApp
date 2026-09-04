@@ -2,20 +2,6 @@ namespace SiloPlayer.Tests;
 
 public sealed class CurrentPeopleOnboardingParitySourceTests
 {
-    [Fact]
-    public void PersonAdminMutationsUseCurrentPeopleEndpoints()
-    {
-        var api = ReadRepoFile("src", "SiloPlayer.Core", "Api", "AdminApi.cs");
-        var page = ReadRepoFile("src", "SiloPlayer", "Views", "PersonDetailPage.xaml.cs");
-        var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "PersonDetailViewModel.cs");
-
-        Assert.Contains("/api/v1/admin/people/{Uri.EscapeDataString(personId)}/refresh", api);
-        Assert.Contains("/api/v1/admin/people/{Uri.EscapeDataString(personId)}", api);
-        Assert.Contains("adminApi.UpdatePersonAsync", page);
-        Assert.DoesNotContain("UpdateItemMetadataAsync(person.Id", page);
-        Assert.Contains("_adminApi.RefreshPersonAsync(Person.Id)", viewModel);
-        Assert.Contains("Person refresh queued.", viewModel);
-    }
 
     [Fact]
     public void PersonAndTasteSeedPagingCannotApplyAfterAReplacementRequest()
@@ -53,21 +39,6 @@ public sealed class CurrentPeopleOnboardingParitySourceTests
         Assert.Contains("nav.Navigate<HomePage>();", page);
         Assert.Contains("public string BirthDateDisplay", viewModel);
         Assert.Contains("public string DeathDateDisplay", viewModel);
-    }
-
-    [Fact]
-    public void PersonEditorIncludesEveryCurrentWebUiMetadataField()
-    {
-        var page = ReadRepoFile("src", "SiloPlayer", "Views", "PersonDetailPage.xaml.cs");
-
-        Assert.Contains("AddField(\"Homepage\"", page);
-        Assert.Contains("AddField(\"TMDB ID\"", page);
-        Assert.Contains("AddField(\"IMDb ID\"", page);
-        Assert.Contains("AddField(\"TVDB ID\"", page);
-        Assert.Contains("AddStringChange(changes, \"homepage\"", page);
-        Assert.Contains("AddStringChange(changes, \"tmdb_id\"", page);
-        Assert.Contains("AddStringChange(changes, \"imdb_id\"", page);
-        Assert.Contains("AddStringChange(changes, \"tvdb_id\"", page);
     }
 
     [Fact]

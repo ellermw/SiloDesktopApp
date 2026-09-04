@@ -27,10 +27,11 @@ public sealed class AuthorizationPolicyTests
     [Fact]
     public void ExplicitPermissionsRemainAvailableOnNonPrimaryProfiles()
     {
-        var admin = new UserInfo { Role = "admin", Permissions = [AuthorizationPolicy.MarkerEdit] };
+        const string explicitPermission = "personal_collection_share";
+        var admin = new UserInfo { Role = "admin", Permissions = [explicitPermission] };
         var child = new Profile { IsPrimary = false };
 
-        Assert.True(AuthorizationPolicy.HasPermission(admin, child, true, AuthorizationPolicy.MarkerEdit));
+        Assert.True(AuthorizationPolicy.HasPermission(admin, child, true, explicitPermission));
         Assert.False(AuthorizationPolicy.HasPermission(admin, child, true, AuthorizationPolicy.MetadataCuration));
     }
 

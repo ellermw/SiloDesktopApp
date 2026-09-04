@@ -96,7 +96,6 @@ public sealed class MpvOscScriptTests
         var handler = script[start..end];
         Assert.Contains("state.dragging_seek = false", handler);
         Assert.Contains("state.dragging_volume = false", handler);
-        Assert.Contains("state.dragging_marker_edge = nil", handler);
         Assert.Contains("state.mouse_in_bar = false", handler);
         Assert.Contains("dismiss_transport_menus_for_fade()", handler);
         Assert.Contains("show_osc()", handler);
@@ -223,26 +222,6 @@ public sealed class MpvOscScriptTests
                 script,
                 "local menu_y = math\\.max\\(10, menu_bottom - menu_h\\)").Count >= 2);
         Assert.DoesNotContain("anchor.y - menu_h - math.floor(8 * sc)", script);
-    }
-
-    [Fact]
-    public void MarkerEditorIsAvailableInActiveNativeOsc()
-    {
-        var script = File.ReadAllText(FindOscScriptPath());
-
-        Assert.Contains("osc-set-marker-edit-available", script);
-        Assert.Contains("L.btn_marker_edit", script);
-        Assert.Contains("draw_marker_tags_icon", script);
-        Assert.Contains("open_marker_editor", script);
-        Assert.Contains("render_marker_editor_panel", script);
-        Assert.Contains("Drag the timeline handles, or set points to the playhead.", script);
-        Assert.Contains("state.marker_editor_handle_rects", script);
-        Assert.Contains("state.dragging_marker_edge", script);
-        Assert.Contains("state.dragging_marker_panel", script);
-        Assert.Contains("update_marker_panel_drag", script);
-        Assert.Contains("Embedded libmpv sends pointer motion through this script message", script);
-        Assert.Contains("silo-marker-save", script);
-        Assert.Contains("Reset all", script);
     }
 
     [Fact]
@@ -380,7 +359,7 @@ public sealed class MpvOscScriptTests
     }
 
     [Fact]
-    public void AutoSkipMarkersUseTransportAwareSeekAndResetPerMediaLoad()
+    public void AutoSkipMarkersUseTransportAwareSeekAndResetPerLogicalPlayback()
     {
         var script = File.ReadAllText(FindOscScriptPath());
 
@@ -390,7 +369,9 @@ public sealed class MpvOscScriptTests
         Assert.Contains("state.auto_skip_credits and not state.credits_auto_skipped", script);
         Assert.Contains("state.watch_party == nil or state.watch_party.is_host == true", script);
         Assert.Contains("seek_and_resume(state.intro_end", script);
-        Assert.Contains("state.intro_auto_skipped = false", script);
+        Assert.Contains("data.reset_auto_skip == true", script);
+        Assert.Contains("state.marker_content_id ~= incoming_content_id", script);
+        Assert.Contains("if reset_auto_skip then", script);
     }
 
     [Fact]
@@ -665,7 +646,6 @@ public sealed class MpvOscScriptTests
         Assert.True(closeStart >= 0 && closeEnd > closeStart);
         var close = script[closeStart..closeEnd];
         Assert.Contains("close_transport_menus(nil)", close);
-        Assert.Contains("close_marker_editor()", close);
         Assert.Contains("state.stats_visible = false", close);
 
         var escapeStart = script.IndexOf(

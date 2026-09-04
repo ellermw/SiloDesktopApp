@@ -28,14 +28,6 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string? _currentProfileName;
 
-    // ===== Impersonation =====
-
-    [ObservableProperty]
-    private bool _isImpersonating;
-
-    [ObservableProperty]
-    private string _impersonatedUsername = "";
-
     [RelayCommand]
     private Task LoadLibrariesAsync()
         => ReloadLibrariesAsync();

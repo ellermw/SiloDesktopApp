@@ -269,33 +269,6 @@
                         Margin="0,0,0,8"
                         Opacity="0.7" />
 
-                    <!-- Admin nav item (visible only for admin users) -->
-                    <Button
-                        x:Name="AdminButton"
-                        Background="Transparent"
-                        BorderThickness="0"
-                        HorizontalAlignment="Stretch"
-                        HorizontalContentAlignment="Left"
-                        Padding="12"
-                        Margin="12,0"
-                        CornerRadius="12"
-                        Visibility="Collapsed"
-                        Click="Admin_Click">
-                        <StackPanel x:Name="AdminButtonContent" Orientation="Horizontal" Spacing="10">
-                            <FontIcon Glyph="&#xE7EF;" FontSize="18" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBlock
-                                x:Name="AdminButtonLabel"
-                                Text="Admin"
-                                Foreground="{StaticResource SecondaryTextBrush}"
-                                VerticalAlignment="Center"
-                                FontSize="13"
-                                FontWeight="Medium">
-                                <TextBlock.OpacityTransition>
-                                    <ScalarTransition Duration="0:0:0.3" />
-                                </TextBlock.OpacityTransition>
-                            </TextBlock>
-                        </StackPanel>
-                    </Button>
 
                     <!-- Profile button with dropdown (webui: Settings + Switch Profile + Logout inside avatar dropdown) -->
                     <Button
@@ -465,12 +438,11 @@
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
                 <!-- Current WebUI mobile shell: rounded glass header with menu,
-                     brand, search, admin activity, and profile access. -->
+                     brand, search, and profile access. -->
                 <Border
                     x:Name="MobileShellHeader"
                     Grid.Row="0"
@@ -549,9 +521,6 @@
                                     FontSize="20"
                                     Foreground="{StaticResource SecondaryTextBrush}" />
                             </Button>
-                            <controls:ServerActivityButton
-                                x:Name="MobileServerActivityButton"
-                                HideWhenEmpty="True" />
                             <Button
                                 x:Name="MobileProfileButton"
                                 Width="40"
@@ -581,24 +550,9 @@
                     </Grid>
                 </Border>
 
-                <!-- Impersonation banner (hidden by default) -->
-                <controls:ImpersonationBanner
-                    x:Name="ImpersonationBannerControl"
-                    Grid.Row="1"
-                    Visibility="Collapsed"
-                    EndImpersonationRequested="ImpersonationBanner_EndRequested" />
-
                 <!-- Page content -->
-                <Frame x:Name="ContentFrame" Grid.Row="2" CacheSize="16" />
+                <Frame x:Name="ContentFrame" Grid.Row="1" CacheSize="16" />
 
-                <!-- Server Activity button (overlay on top of ContentFrame). -->
-                <controls:ServerActivityButton
-                    x:Name="MainServerActivityButton"
-                    HideWhenEmpty="True"
-                    Grid.Row="2"
-                    HorizontalAlignment="Right"
-                    VerticalAlignment="Top"
-                    Margin="0,12,20,0" />
             </Grid>
         </NavigationView>
 

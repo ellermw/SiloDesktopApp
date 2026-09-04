@@ -14,8 +14,9 @@ namespace SiloPlayer.Controls;
 
 /// <summary>
 /// Builds the card action menu used by the current WebUI's PosterCard and
-/// LandscapeCard surfaces. The action model, ordering, and administrator
-/// gate intentionally mirror web/src/components/MediaItemMenu.tsx.
+/// LandscapeCard surfaces. The action model and ordering intentionally mirror
+/// web/src/components/MediaItemMenu.tsx while server administration stays in
+/// the WebUI.
 /// </summary>
 public static class MediaItemMenu
 {
@@ -34,12 +35,12 @@ public static class MediaItemMenu
     {
         var flyout = new MenuFlyout { Placement = FlyoutPlacementMode.Bottom };
         var catalog = App.Services.GetRequiredService<CatalogApi>();
-        var adminApi = TryGetAdminApi();
+        var maintenanceApi = App.Services.GetRequiredService<MediaMaintenanceApi>();
         var authService = App.Services.GetRequiredService<AuthService>();
         var toast = App.Services.GetRequiredService<ToastService>();
 
-        bool isActingAdmin = AuthorizationPolicy.IsActingAdmin(authService);
         bool canCurateMetadata = AuthorizationPolicy.CanCurateMetadata(authService);
+        var maintenance = ItemMaintenanceActionPolicy.Resolve(canCurateMetadata, item.Type);
         bool isWatched = item.UserState?.Played ?? false;
         bool isFavorite = item.UserState?.IsFavorite ?? false;
         bool inWatchlist = item.UserState?.InWatchlist ?? false;
@@ -47,7 +48,7 @@ public static class MediaItemMenu
         bool hasPartialProgress = item.PositionSeconds is > 0 && !isWatched;
 
         // Current WebUI order: restart, watched state, collection actions,
-        // manga details, admin actions, then surface-specific dismissal.
+        // manga details, permission-gated maintenance, then surface-specific dismissal.
         if (isLeaf && (hasPartialProgress || isWatched))
         {
             flyout.Items.Add(BuildItem(
@@ -156,35 +157,21 @@ public static class MediaItemMenu
             }));
         }
 
-        if ((isActingAdmin || canCurateMetadata) && adminApi != null)
+        if (maintenance.CanMatch || maintenance.CanRefreshMetadata)
         {
             if (flyout.Items.Count > 0)
                 flyout.Items.Add(new MenuFlyoutSeparator());
 
-            if (isActingAdmin)
-            {
-                flyout.Items.Add(BuildItem("View Play History", "\uE81C", () =>
-                {
-                    App.MainWindowInstance?.RestoreMainPane();
-                    App.Services.GetRequiredService<NavigationService>()
-                        .Navigate<Views.Admin.AdminShellPage>(new Views.Admin.AdminShellNavigation(
-                            typeof(Views.Admin.AdminPlaybackHistoryPage),
-                            new Views.Admin.AdminPlaybackHistoryFilter(MediaItemId: item.ContentId)));
-                }));
-            }
-
-            if (canCurateMetadata)
+            if (maintenance.CanRefreshMetadata)
             {
                 flyout.Items.Add(BuildItem("Refresh Metadata", "\uE72C", async () =>
-                    await ShowRefreshMetadataDialogAsync(item, adminApi, toast)));
+                    await ShowRefreshMetadataDialogAsync(item, maintenanceApi, toast)));
+            }
 
-                if (item.Type is "movie" or "series")
-                {
-                    flyout.Items.Add(BuildItem("Edit Metadata", "\uE70F", async () =>
-                        await ShowEditMetadataDialogAsync(item, catalog, toast, stateChanged)));
-                    flyout.Items.Add(BuildItem("Match Item", "\uE721", async () =>
-                        await ShowMatchItemDialogAsync(item, catalog, toast, stateChanged)));
-                }
+            if (maintenance.CanMatch)
+            {
+                flyout.Items.Add(BuildItem("Match Item", "\uE721", async () =>
+                    await ShowMatchItemDialogAsync(item, catalog, toast, stateChanged)));
             }
         }
 
@@ -226,7 +213,7 @@ public static class MediaItemMenu
 
     private static async Task ShowRefreshMetadataDialogAsync(
         MediaItem item,
-        AdminApi adminApi,
+        MediaMaintenanceApi maintenanceApi,
         ToastService toast)
     {
         var root = App.MainWindowInstance?.Content.XamlRoot;
@@ -234,7 +221,7 @@ public static class MediaItemMenu
 
         var dialog = new RefreshMetadataDialog(async mode =>
         {
-            await adminApi.RefreshItemMetadataAsync(item.ContentId, mode);
+            await maintenanceApi.RefreshMetadataAsync(item.ContentId, mode);
             WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                 MediaSurfaceChangeKind.ItemMetadataRefreshed, item.ContentId, item.SeriesId));
             toast.Success(mode == "complete" ? "Complete refresh queued" : "Metadata refresh queued");
@@ -243,34 +230,6 @@ public static class MediaItemMenu
             XamlRoot = root,
         };
         await dialog.ShowAsync();
-    }
-
-    private static async Task ShowEditMetadataDialogAsync(
-        MediaItem item,
-        CatalogApi catalog,
-        ToastService toast,
-        Action? stateChanged)
-    {
-        var root = App.MainWindowInstance?.Content.XamlRoot;
-        if (root == null) return;
-
-        try
-        {
-            var detail = await catalog.GetItemDetailAsync(item.ContentId);
-            var dialog = new EditMetadataDialog(detail) { XamlRoot = root };
-            await dialog.ShowAsync();
-            if (!dialog.HasAppliedChanges) return;
-
-            stateChanged?.Invoke();
-            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
-                MediaSurfaceChangeKind.ItemMetadataRefreshed,
-                item.ContentId,
-                item.SeriesId));
-        }
-        catch (Exception ex)
-        {
-            toast.Error(ex.Message);
-        }
     }
 
     private static async Task ShowMatchItemDialogAsync(
@@ -348,9 +307,4 @@ public static class MediaItemMenu
         return item;
     }
 
-    private static AdminApi? TryGetAdminApi()
-    {
-        try { return App.Services.GetRequiredService<AdminApi>(); }
-        catch { return null; }
-    }
 }

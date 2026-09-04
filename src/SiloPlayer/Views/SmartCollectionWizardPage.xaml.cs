@@ -69,7 +69,7 @@ public sealed partial class SmartCollectionWizardPage : Page
 
         await ViewModel.ConfigureAsync(_args);
         PopulateStaticCombos();
-        ApplyModeVisibility();
+        ApplyReadOnlyState();
         BuildLibrariesPanel();
         BuildProfilesPanel();
         BuildRulesPanel();
@@ -121,12 +121,9 @@ public sealed partial class SmartCollectionWizardPage : Page
             ("Narrator", "narrator"),
             ("Series", "series")
         };
-        if (!ViewModel.IsAdmin)
-        {
-            sortOptions.Add(("Progress", "progress"));
-            sortOptions.Add(("Date Viewed", "date_viewed"));
-            sortOptions.Add(("Plays", "plays"));
-        }
+        sortOptions.Add(("Progress", "progress"));
+        sortOptions.Add(("Date Viewed", "date_viewed"));
+        sortOptions.Add(("Plays", "plays"));
         AddComboItems(SortFieldCombo, sortOptions, ViewModel.SortField);
 
         AddComboItems(SortOrderCombo, [
@@ -157,18 +154,14 @@ public sealed partial class SmartCollectionWizardPage : Page
             combo.SelectedIndex = 0;
     }
 
-    private void ApplyModeVisibility()
+    private void ApplyReadOnlyState()
     {
-        SharedToggle.Visibility = ViewModel.IsAdmin ? Visibility.Collapsed : Visibility.Visible;
-        IncludeServerToggle.Visibility = ViewModel.IsAdmin ? Visibility.Collapsed : Visibility.Visible;
-        FeaturedToggle.Visibility = ViewModel.IsAdmin ? Visibility.Visible : Visibility.Collapsed;
-        DescriptionPanel.Visibility = ViewModel.IsAdmin ? Visibility.Visible : Visibility.Collapsed;
-        ProfileAccessSection.Visibility = !ViewModel.IsAdmin && ViewModel.IsShared
+        SharedToggle.Visibility = Visibility.Visible;
+        IncludeServerToggle.Visibility = Visibility.Visible;
+        DescriptionPanel.Visibility = Visibility.Collapsed;
+        ProfileAccessSection.Visibility = ViewModel.IsShared
             ? Visibility.Visible
             : Visibility.Collapsed;
-        AdminVisibilityPanel.Visibility = ViewModel.IsAdmin ? Visibility.Visible : Visibility.Collapsed;
-        AdminBackdropPanel.Visibility = ViewModel.IsAdmin ? Visibility.Visible : Visibility.Collapsed;
-        VisibilityCombo.SelectedIndex = string.Equals(ViewModel.Visibility, "hidden", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
         SetDescendantControlsEnabled(DetailsStepPanel, !ViewModel.IsReadOnly);
     }
 
@@ -467,8 +460,7 @@ public sealed partial class SmartCollectionWizardPage : Page
     private void UpdateContinueState()
     {
         if (ContinueButton == null) return;
-        ContinueButton.IsEnabled = (!ViewModel.IsAdmin || ViewModel.SelectedLibraryIds.Count > 0)
-            && (ViewModel.IsPreviewing || ViewModel.PreviewTotal > 0);
+        ContinueButton.IsEnabled = ViewModel.IsPreviewing || ViewModel.PreviewTotal > 0;
     }
 
     private async void Preview_Click(object sender, RoutedEventArgs e)
@@ -529,24 +521,15 @@ public sealed partial class SmartCollectionWizardPage : Page
     private void SharedToggle_Toggled(object sender, RoutedEventArgs e)
     {
         if (ProfileAccessSection != null)
-            ProfileAccessSection.Visibility = !ViewModel.IsAdmin && SharedToggle.IsOn
+            ProfileAccessSection.Visibility = SharedToggle.IsOn
                 ? Visibility.Visible
                 : Visibility.Collapsed;
     }
 
-    private void VisibilityCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_suppressSelectionChanges && VisibilityCombo.SelectedItem is ComboBoxItem { Tag: string value })
-            ViewModel.Visibility = value;
-    }
-
     private async void ChoosePoster_Click(object sender, RoutedEventArgs e)
-        => await ChooseArtworkAsync("poster");
+        => await ChooseArtworkAsync();
 
-    private async void ChooseBackdrop_Click(object sender, RoutedEventArgs e)
-        => await ChooseArtworkAsync("backdrop");
-
-    private async Task ChooseArtworkAsync(string type)
+    private async Task ChooseArtworkAsync()
     {
         try
         {
@@ -560,26 +543,21 @@ public sealed partial class SmartCollectionWizardPage : Page
             var properties = await file.GetBasicPropertiesAsync();
             if (properties.Size > 20 * 1024 * 1024)
             {
-                SetArtworkStatus(type, "Image must be smaller than 20 MB.");
+                SetArtworkStatus("Image must be smaller than 20 MB.");
                 return;
             }
             var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
             var bytes = System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.ToArray(buffer);
-            if (type == "poster") ViewModel.SetPosterFile(file.Name, bytes, file.ContentType);
-            else ViewModel.SetBackdropFile(file.Name, bytes, file.ContentType);
-            SetArtworkStatus(type, file.Name);
+            ViewModel.SetPosterFile(file.Name, bytes, file.ContentType);
+            SetArtworkStatus(file.Name);
         }
         catch (Exception ex)
         {
-            SetArtworkStatus(type, ex.Message);
+            SetArtworkStatus(ex.Message);
         }
     }
 
-    private void SetArtworkStatus(string type, string message)
-    {
-        if (type == "poster") PosterFileStatusText.Text = message;
-        else BackdropFileStatusText.Text = message;
-    }
+    private void SetArtworkStatus(string message) => PosterFileStatusText.Text = message;
 
     private void SchedulePreview()
     {

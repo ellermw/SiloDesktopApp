@@ -37,19 +37,12 @@ public class PlayerService : IDisposable
     private readonly SiloApiClient _apiClient;
     private readonly SettingsService _settingsService;
     private readonly SettingsApi _settingsApi;
-    private readonly object _watchDetailPrefetchLock = new();
-    private readonly Dictionary<string, WatchDetailPrefetchEntry> _watchDetailPrefetches =
-        new(StringComparer.Ordinal);
-    private static readonly TimeSpan WatchDetailPrefetchLifetime = TimeSpan.FromMinutes(2);
-    private const int MaxWatchDetailPrefetches = 8;
+    private readonly WatchDetailPrefetchCache<WatchDetailResponse> _watchDetailPrefetches =
+        new(capacity: 8, lifetime: TimeSpan.FromMinutes(2));
     private readonly SemaphoreSlim _subtitleAppearanceLoadGate = new(1, 1);
     private readonly SemaphoreSlim _playbackDialogGate = new(1, 1);
+    private readonly AutoSkipMarkerIdentity _autoSkipMarkerIdentity = new();
     private string? _subtitleAppearanceProfileId;
-
-    private sealed record WatchDetailPrefetchEntry(
-        string ProfileId,
-        DateTimeOffset CreatedAt,
-        Task<WatchDetailResponse> Task);
 
     private MpvPlayer? _mpv;
     private MpvVideoWindow? _videoWindow;
@@ -243,30 +236,14 @@ public class PlayerService : IDisposable
         if (string.IsNullOrWhiteSpace(profileId))
             return;
 
-        lock (_watchDetailPrefetchLock)
-        {
-            PruneWatchDetailPrefetchesLocked(DateTimeOffset.UtcNow, profileId);
-            if (_watchDetailPrefetches.ContainsKey(contentId))
-                return;
-
-            // Enforce the bound only when inserting. Retrieval/pruning must
-            // never evict an otherwise-valid task immediately before Play
-            // attempts to consume it.
-            while (_watchDetailPrefetches.Count >= MaxWatchDetailPrefetches)
-            {
-                var oldest = _watchDetailPrefetches.MinBy(pair => pair.Value.CreatedAt);
-                if (oldest.Key == null)
-                    break;
-                _watchDetailPrefetches.Remove(oldest.Key);
-            }
-
-            var task = _playbackApi.GetWatchDetailAsync(contentId, CancellationToken.None);
-            _watchDetailPrefetches[contentId] = new WatchDetailPrefetchEntry(
-                profileId,
-                DateTimeOffset.UtcNow,
-                task);
+        var task = _watchDetailPrefetches.GetOrAdd(
+            contentId,
+            profileId,
+            () => _playbackApi.GetWatchDetailAsync(contentId, CancellationToken.None),
+            DateTimeOffset.UtcNow,
+            out var added);
+        if (added)
             _ = ObserveWatchDetailPrefetchAsync(contentId, task);
-        }
     }
 
     /// <summary>
@@ -323,12 +300,7 @@ public class PlayerService : IDisposable
         }
         catch
         {
-            lock (_watchDetailPrefetchLock)
-            {
-                if (_watchDetailPrefetches.TryGetValue(contentId, out var entry) &&
-                    ReferenceEquals(entry.Task, task))
-                    _watchDetailPrefetches.Remove(contentId);
-            }
+            _watchDetailPrefetches.Remove(contentId, task);
         }
     }
 
@@ -337,30 +309,19 @@ public class PlayerService : IDisposable
         bool consume,
         CancellationToken ct)
     {
-        WatchDetailPrefetchEntry? entry;
         var profileId = _authService.SelectedProfileId;
-        lock (_watchDetailPrefetchLock)
-        {
-            PruneWatchDetailPrefetchesLocked(DateTimeOffset.UtcNow, profileId);
-            _watchDetailPrefetches.TryGetValue(contentId, out entry);
-        }
-
-        if (entry == null || !string.Equals(entry.ProfileId, profileId, StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(profileId))
             return null;
 
         try
         {
-            var watchDetail = await entry.Task.WaitAsync(ct).ConfigureAwait(false);
-            if (consume)
-            {
-                lock (_watchDetailPrefetchLock)
-                {
-                    if (_watchDetailPrefetches.TryGetValue(contentId, out var current) &&
-                        ReferenceEquals(current.Task, entry.Task))
-                        _watchDetailPrefetches.Remove(contentId);
-                }
-            }
-            return string.Equals(watchDetail.ContentId, contentId, StringComparison.Ordinal)
+            var watchDetail = consume
+                ? await _watchDetailPrefetches.TryTakeAsync(
+                    contentId, profileId, DateTimeOffset.UtcNow, ct).ConfigureAwait(false)
+                : await _watchDetailPrefetches.TryGetAsync(
+                    contentId, profileId, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+            return watchDetail != null &&
+                string.Equals(watchDetail.ContentId, contentId, StringComparison.Ordinal)
                 ? watchDetail
                 : null;
         }
@@ -372,17 +333,6 @@ public class PlayerService : IDisposable
         {
             return null;
         }
-    }
-
-    private void PruneWatchDetailPrefetchesLocked(DateTimeOffset now, string? profileId)
-    {
-        foreach (var key in _watchDetailPrefetches
-                     .Where(pair =>
-                         !string.Equals(pair.Value.ProfileId, profileId, StringComparison.Ordinal) ||
-                         now - pair.Value.CreatedAt >= WatchDetailPrefetchLifetime)
-                     .Select(pair => pair.Key)
-                     .ToList())
-            _watchDetailPrefetches.Remove(key);
     }
 
     /// <summary>
@@ -1006,25 +956,6 @@ public class PlayerService : IDisposable
     public TimeRange? ActiveCredits => ActiveVersion?.Credits ?? WatchDetail?.Credits;
     public TimeRange? ActiveRecap => ActiveVersion?.Recap ?? WatchDetail?.Recap;
     public TimeRange? ActivePreview => ActiveVersion?.Preview ?? WatchDetail?.Preview;
-
-    public void ApplyMarkerEdits(TimeRange? intro, TimeRange? recap, TimeRange? credits, TimeRange? preview)
-    {
-        if (ActiveVersion != null)
-        {
-            ActiveVersion.Intro = intro;
-            ActiveVersion.Recap = recap;
-            ActiveVersion.Credits = credits;
-            ActiveVersion.Preview = preview;
-        }
-        if (WatchDetail != null)
-        {
-            WatchDetail.Intro = intro;
-            WatchDetail.Recap = recap;
-            WatchDetail.Credits = credits;
-            WatchDetail.Preview = preview;
-        }
-        InvokeSubscribersSafely(MarkersChanged, nameof(MarkersChanged));
-    }
 
     // ── Events ───────────────────────────────────────────────────────────
 
@@ -1907,6 +1838,8 @@ public class PlayerService : IDisposable
         {
             CancelPendingFileLoadTimeout();
             LogToFile("player_crash.txt", ex.ToString());
+            if (ex is ApiException { StatusCode: 404 })
+                _watchDetailPrefetches.Invalidate(contentId);
             var (errTitle, errDetail) = DescribePlaybackError(ex);
             ErrorMessage = errDetail;
             IsLoading = false;
@@ -2225,7 +2158,6 @@ public class PlayerService : IDisposable
             // the short asynchronous refresh window for this media load.
             _mpv?.SendScriptMessage("osc-set-auto-skip", "false", "false", "false");
             SendMarkersToOsc();
-            SendMarkerEditAvailabilityToOsc();
 
             // Effective playback settings are profile/device scoped and may
             // change between sessions. Resolve them without delaying first
@@ -5144,16 +5076,18 @@ public class PlayerService : IDisposable
         if (_mpv == null || _playbackManager?.WatchDetail == null) return;
         var wd = _playbackManager.WatchDetail;
 
-        var markers = new Dictionary<string, double>
+        var markers = new
         {
-            ["intro_start"] = wd.Intro?.Start ?? 0,
-            ["intro_end"] = wd.Intro?.End ?? 0,
-            ["recap_start"] = wd.Recap?.Start ?? 0,
-            ["recap_end"] = wd.Recap?.End ?? 0,
-            ["credits_start"] = wd.Credits?.Start ?? 0,
-            ["credits_end"] = wd.Credits?.End ?? 0,
-            ["preview_start"] = wd.Preview?.Start ?? 0,
-            ["preview_end"] = wd.Preview?.End ?? 0
+            content_id = ContentId,
+            reset_auto_skip = _autoSkipMarkerIdentity.ShouldResetFor(ContentId),
+            intro_start = wd.Intro?.Start ?? 0,
+            intro_end = wd.Intro?.End ?? 0,
+            recap_start = wd.Recap?.Start ?? 0,
+            recap_end = wd.Recap?.End ?? 0,
+            credits_start = wd.Credits?.Start ?? 0,
+            credits_end = wd.Credits?.End ?? 0,
+            preview_start = wd.Preview?.Start ?? 0,
+            preview_end = wd.Preview?.End ?? 0
         };
 
         var json = System.Text.Json.JsonSerializer.Serialize(markers);
@@ -5388,30 +5322,6 @@ public class PlayerService : IDisposable
             case "silo-subtitle-ai":
                 dispatch.TryEnqueue(() => _ = ShowSubtitleAiDialogAsync());
                 break;
-            case "silo-marker-edit":
-                dispatch.TryEnqueue(() => _ = ShowMarkerEditDialogAsync());
-                break;
-            case "silo-marker-save":
-            {
-                if (args.Length < 9) break;
-                var values = new double[8];
-                var valid = true;
-                for (var index = 0; index < values.Length; index++)
-                {
-                    if (!double.TryParse(
-                            args[index + 1],
-                            System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture,
-                            out values[index]))
-                    {
-                        valid = false;
-                        break;
-                    }
-                }
-                if (valid)
-                    dispatch.TryEnqueue(() => _ = SaveMarkerEditsFromOscAsync(values));
-                break;
-            }
             case "silo-audio-select":
                 if (args.Length > 1 && int.TryParse(args[1], out var audioIdx))
                     dispatch.TryEnqueue(() => _ = SwitchAudioTrackAsync(audioIdx));
@@ -5968,72 +5878,6 @@ public class PlayerService : IDisposable
         RestorePlaybackStateAfterSubtitleChange(snapshot.WasPaused, snapshot.Position, allowSeek: false);
     }
 
-    private async Task SaveMarkerEditsFromOscAsync(double[] values)
-    {
-        var session = _playbackManager?.CurrentSession;
-        if (session == null || values.Length < 8 ||
-            !AuthorizationPolicy.CanEditMarkers(_authService))
-            return;
-
-        static TimeRange? Range(double start, double end)
-            => start >= 0 && end > start
-                ? new TimeRange { Start = start, End = end }
-                : null;
-
-        var intro = Range(values[0], values[1]);
-        var recap = Range(values[2], values[3]);
-        var credits = Range(values[4], values[5]);
-        var preview = Range(values[6], values[7]);
-        var changes = new Dictionary<string, object?>
-        {
-            ["intro"] = intro == null ? null : new { start = intro.Start, end = intro.End },
-            ["recap"] = recap == null ? null : new { start = recap.Start, end = recap.End },
-            ["credits"] = credits == null ? null : new { start = credits.Start, end = credits.End },
-            ["preview"] = preview == null ? null : new { start = preview.Start, end = preview.End },
-        };
-
-        try
-        {
-            await _playbackApi.SetFileMarkersAsync(session.MediaFileId, changes);
-            ApplyMarkerEdits(intro, recap, credits, preview);
-            ShowNotice("Markers saved", "Timeline markers were updated.", "info");
-        }
-        catch (Exception ex)
-        {
-            LogToFile("player_marker_save_error.txt", ex.ToString());
-            ShowNotice("Could not save markers", ex.Message, "error");
-        }
-    }
-
-    private async Task ShowMarkerEditDialogAsync()
-    {
-        var mainWindow = App.MainWindowInstance;
-        if (mainWindow == null)
-            return;
-
-        var snapshot = CapturePlaybackUiSnapshot();
-        if (!await _playbackDialogGate.WaitAsync(0))
-            return;
-        var restorePlayerInput = false;
-        try
-        {
-            restorePlayerInput = await PlaybackDialogHost.ShowAsync(
-                _videoWindow?.Hwnd ?? IntPtr.Zero,
-                (xamlRoot, _) => mainWindow.ShowMarkerEditDialogAsync(xamlRoot));
-        }
-        finally
-        {
-            _playbackDialogGate.Release();
-            RestorePlaybackUiSnapshot(snapshot, restorePlayerInput);
-        }
-    }
-
-    private void SendMarkerEditAvailabilityToOsc()
-    {
-        var available = AuthorizationPolicy.CanEditMarkers(_authService);
-        _mpv?.SendScriptMessage("osc-set-marker-edit-available", available ? "true" : "false");
-    }
-
     private async Task SendSubtitleAiAvailabilityToOscAsync(CancellationToken ct)
     {
         var available = false;
@@ -6326,6 +6170,7 @@ public class PlayerService : IDisposable
         Interlocked.Exchange(ref _lastAudiobookProgressReportTicks, 0);
         _pendingSubtitleSelection = null;
         _pendingInitialServerSubtitleIndex = null;
+        _autoSkipMarkerIdentity.Clear();
         ClearChapterThumbnailOverlayCache();
         StopDirectStreamProxy();
         StopHlsProxy();

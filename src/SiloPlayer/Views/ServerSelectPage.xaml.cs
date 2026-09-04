@@ -56,7 +56,7 @@ public sealed partial class ServerSelectPage : Page
             var setup = await authApi.GetSetupStatusAsync(_connectCancellation.Token);
             var nav = App.Services.GetRequiredService<NavigationService>();
             if (setup.NeedsSetup)
-                nav.Navigate<SetupWizardPage>(server);
+                nav.Navigate<ServerSetupRequiredPage>(server);
             else
                 nav.Navigate<LoginPage>(server);
         }

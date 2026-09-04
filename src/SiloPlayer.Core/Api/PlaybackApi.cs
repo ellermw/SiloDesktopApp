@@ -47,29 +47,6 @@ public class PlaybackApi(SiloApiClient client)
                 ["position"] = position,
             }, ct);
 
-    public Task SetFileMarkersAsync(int fileId, IReadOnlyDictionary<string, object?> changes, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/markers/files/{fileId}", changes, ct);
-
-    public Task<FileMarkersResponse> GetItemMarkersAsync(string itemId, CancellationToken ct = default)
-        => client.GetAsync<FileMarkersResponse>($"/api/v1/markers/items/{Uri.EscapeDataString(itemId)}", ct);
-
-    public Task<MarkerEditAuditResponse> GetItemMarkerHistoryAsync(
-        string itemId,
-        int limit = 25,
-        CancellationToken ct = default)
-        => client.GetAsync<MarkerEditAuditResponse>(
-            $"/api/v1/admin/markers/items/{Uri.EscapeDataString(itemId)}/history?limit={Math.Clamp(limit, 1, 250)}",
-            ct);
-
-    public Task<FileMarkersResponse> SetItemMarkersAsync(
-        string itemId,
-        IReadOnlyDictionary<string, object?> changes,
-        CancellationToken ct = default)
-        => client.PutAsync<FileMarkersResponse>(
-            $"/api/v1/markers/items/{Uri.EscapeDataString(itemId)}",
-            changes,
-            ct);
-
     public Task<SubtitleAiStatus> GetSubtitleAiStatusAsync(CancellationToken ct = default)
         => client.GetAsync<SubtitleAiStatus>("/api/v1/subtitles/ai/status", ct);
 

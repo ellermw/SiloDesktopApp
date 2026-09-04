@@ -190,54 +190,6 @@ public class TimeRange
     public double End { get; set; }
 }
 
-public class MarkerSegment
-{
-    public double? Start { get; set; }
-    public double? End { get; set; }
-    public string? Source { get; set; }
-    public string? Provider { get; set; }
-    public double? Confidence { get; set; }
-    public string? Algorithm { get; set; }
-    public string? DetectedAt { get; set; }
-}
-
-public class FileMarkersResponse
-{
-    public int FileId { get; set; }
-    public MarkerSegment Intro { get; set; } = new();
-    public MarkerSegment Recap { get; set; } = new();
-    public MarkerSegment Credits { get; set; } = new();
-    public MarkerSegment Preview { get; set; } = new();
-}
-
-public class MarkerEditAuditResponse
-{
-    public List<MarkerEditAuditEntry> History { get; set; } = [];
-}
-
-public class MarkerEditAuditEntry
-{
-    public long Id { get; set; }
-    [JsonPropertyName("media_file_id")] public int MediaFileId { get; set; }
-    [JsonPropertyName("item_id")] public string? ItemId { get; set; }
-    [JsonPropertyName("item_type")] public string? ItemType { get; set; }
-    [JsonPropertyName("media_title")] public string? MediaTitle { get; set; }
-    [JsonPropertyName("file_path")] public string? FilePath { get; set; }
-    public string Segment { get; set; } = "";
-    public string Action { get; set; } = "";
-    public MarkerSegment? Before { get; set; }
-    public MarkerSegment? After { get; set; }
-    [JsonPropertyName("user_id")] public int? UserId { get; set; }
-    public string? Username { get; set; }
-    [JsonPropertyName("impersonator_user_id")] public int? ImpersonatorUserId { get; set; }
-    [JsonPropertyName("impersonator_username")] public string? ImpersonatorUsername { get; set; }
-    [JsonPropertyName("api_key_id")] public int? ApiKeyId { get; set; }
-    [JsonPropertyName("request_id")] public string? RequestId { get; set; }
-    [JsonPropertyName("client_ip")] public string? ClientIp { get; set; }
-    [JsonPropertyName("user_agent")] public string? UserAgent { get; set; }
-    [JsonPropertyName("created_at")] public DateTimeOffset CreatedAt { get; set; }
-}
-
 // ===== Watch Together (Watch Party) =====
 // DTOs for the current Silo /api/v1/watch-together/* contract. Kept in this file
 // so playback-related models stay colocated; there is no separate WatchTogether

@@ -124,34 +124,6 @@ public sealed class CodeRabbitFollowUpRegressionTests
         Assert.Contains("/ resolvedDuration * 100", historyBranch, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void FailedAdminNodeToggleRestoresTheServerBackedValueWithoutRecursion()
-    {
-        var source = ReadRepoFile("src", "SiloPlayer", "Views", "Admin", "AdminNodesPage.xaml.cs");
-        var handlerStart = source.IndexOf("toggleSwitch.Toggled += async", StringComparison.Ordinal);
-        Assert.True(handlerStart >= 0);
-        var handler = source[handlerStart..source.IndexOf("Grid.SetColumn(toggleSwitch", handlerStart, StringComparison.Ordinal)];
-
-        Assert.Contains("suppressToggle", handler, StringComparison.Ordinal);
-        Assert.Contains("toggleSwitch.IsOn = serverEnabled", handler, StringComparison.Ordinal);
-        Assert.Contains("ViewModel.ErrorMessage", handler, StringComparison.Ordinal);
-        Assert.Contains("toggleSwitch.IsEnabled = false", handler, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void EveryAdminUserMaximumProfilesEditorUsesTheServerMinimumAndWebUiDefault()
-    {
-        var source = ReadRepoFile("src", "SiloPlayer", "Views", "Admin", "AdminUsersPage.xaml.cs");
-        var defaults = ExtractMethod(source, "private FrameworkElement BuildUserDefaultsForm");
-        var maxProfiles = defaults[defaults.IndexOf("var maxProfilesBox", StringComparison.Ordinal)..];
-        maxProfiles = maxProfiles[..maxProfiles.IndexOf("var qualityCombo", StringComparison.Ordinal)];
-
-        Assert.Contains("Value = 5", maxProfiles, StringComparison.Ordinal);
-        Assert.Contains("Minimum = 1", maxProfiles, StringComparison.Ordinal);
-        Assert.DoesNotContain("Value = 0", maxProfiles, StringComparison.Ordinal);
-        Assert.DoesNotContain("Minimum = 0", maxProfiles, StringComparison.Ordinal);
-    }
-
     private static string ExtractMethod(string source, string signature)
     {
         var signatureIndex = source.IndexOf(signature, StringComparison.Ordinal);

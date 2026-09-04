@@ -18,16 +18,7 @@ public class AuthService : IDisposable
     private readonly SemaphoreSlim _refreshGuard = new(1, 1);
     private long _sessionGeneration;
     private string? _sessionServerUrl;
-    private PreservedAdminSession? _preservedAdminSession;
     private static readonly TimeSpan TransientRefreshRetryDelay = TimeSpan.FromSeconds(30);
-    private const string ImpersonationAdminRefreshKey = "impersonation_admin_refresh_token";
-    private const string ImpersonationReturnPathKey = "impersonation_return_path";
-
-    private sealed record PreservedAdminSession(
-        string? AccessToken,
-        string RefreshToken,
-        UserInfo? User,
-        string ReturnPath);
 
     public AuthService(SiloApiClient apiClient, AuthApi authApi, ICredentialStore? credentialStore = null)
         : this(apiClient, authApi, credentialStore, Task.Delay)
@@ -52,7 +43,6 @@ public class AuthService : IDisposable
     public string? RefreshToken { get; private set; }
     public string? SelectedProfileId { get; private set; }
     public Profile? SelectedProfile { get; private set; }
-    public bool IsImpersonating => CurrentUser?.Impersonation?.Active == true;
 
     public event Action? LoggedOut;
     public event Action? TokenRefreshed;
@@ -230,135 +220,6 @@ public class AuthService : IDisposable
     }
 
     /// <summary>
-    /// Switches to the server-issued impersonation token pair while preserving the
-    /// administrator refresh credential in Windows Credential Manager. This mirrors
-    /// the WebUI's preserved-admin-session recovery flow and survives an app restart.
-    /// </summary>
-    public void BeginImpersonation(ImpersonationResponse response, string returnPath)
-    {
-        if (string.IsNullOrWhiteSpace(response.AccessToken) ||
-            string.IsNullOrWhiteSpace(response.RefreshToken))
-        {
-            throw new InvalidOperationException("The server returned an incomplete impersonation session.");
-        }
-
-        string serverUrl;
-        PreservedAdminSession preserved;
-        lock (_stateGate)
-        {
-            serverUrl = _sessionServerUrl ?? _apiClient.BaseUrl;
-            if (string.IsNullOrWhiteSpace(RefreshToken))
-                throw new InvalidOperationException("The administrator session cannot be preserved.");
-
-            preserved = new PreservedAdminSession(
-                _apiClient.AccessToken,
-                RefreshToken,
-                CurrentUser,
-                string.IsNullOrWhiteSpace(returnPath) ? "/admin/users" : returnPath);
-            _preservedAdminSession = preserved;
-        }
-
-        PersistImpersonationAdminSession(serverUrl, preserved);
-        StartSession(
-            response.AccessToken,
-            response.RefreshToken,
-            response.ExpiresIn,
-            response.User,
-            expectedServerUrl: serverUrl);
-        RaiseSafely(UserChanged);
-    }
-
-    /// <summary>
-    /// Ends impersonation and restores the original administrator session. A 401 or
-    /// not_impersonating response is recoverable when a preserved administrator
-    /// refresh credential exists, matching the current WebUI behavior.
-    /// </summary>
-    public async Task<string> EndImpersonationAsync(CancellationToken ct = default)
-    {
-        string serverUrl;
-        lock (_stateGate)
-            serverUrl = _sessionServerUrl ?? _apiClient.BaseUrl;
-
-        try
-        {
-            await _authApi.EndImpersonationAsync(ct).ConfigureAwait(false);
-        }
-        catch (ApiException ex) when (
-            ex.StatusCode == 401 ||
-            string.Equals(ex.ErrorCode, "not_impersonating", StringComparison.Ordinal))
-        {
-            // The impersonated session may already be gone. The preserved admin
-            // session remains authoritative and is recovered below.
-        }
-
-        var preserved = LoadPreservedAdminSession(serverUrl);
-        if (preserved == null)
-        {
-            ClearSession(
-                expectedGeneration: null,
-                expectedRefreshToken: null,
-                deletePersistedCredentials: true,
-                notifyListeners: true);
-            throw new InvalidOperationException(
-                "The original administrator session could not be recovered. Please sign in again.");
-        }
-
-        var returnPath = preserved.ReturnPath;
-        try
-        {
-            // Prefer the still-valid in-memory access token for an instant restore.
-            // If the app restarted or it expired, rotate the preserved admin refresh
-            // token and load the authoritative user before exposing admin UI.
-            if (!string.IsNullOrWhiteSpace(preserved.AccessToken))
-            {
-                try
-                {
-                    var user = await _authApi.GetMeAsync(
-                        serverUrl,
-                        preserved.AccessToken,
-                        ct).ConfigureAwait(false);
-                    StartSession(
-                        preserved.AccessToken,
-                        preserved.RefreshToken,
-                        0,
-                        user,
-                        expectedServerUrl: serverUrl);
-                    ClearPersistedImpersonationAdminSession(serverUrl);
-                    RaiseSafely(UserChanged);
-                    return returnPath;
-                }
-                catch (ApiException ex) when (ex.StatusCode is 401 or 403)
-                {
-                    // Fall through to refresh-token recovery.
-                }
-            }
-
-            StartSession(
-                accessToken: null,
-                preserved.RefreshToken,
-                expiresInSeconds: 0,
-                user: null,
-                expectedServerUrl: serverUrl);
-            var restored = await TryRefreshAsync(ct).ConfigureAwait(false);
-            if (!restored || CurrentUser == null)
-                throw new InvalidOperationException("The administrator session could not be refreshed.");
-
-            ClearPersistedImpersonationAdminSession(serverUrl);
-            RaiseSafely(UserChanged);
-            return returnPath;
-        }
-        catch
-        {
-            ClearSession(
-                expectedGeneration: null,
-                expectedRefreshToken: null,
-                deletePersistedCredentials: true,
-                notifyListeners: true);
-            throw;
-        }
-    }
-
-    /// <summary>
     /// Clears a partially restored in-memory session while retaining its rotated
     /// refresh credential for a later retry. Used only when startup restoration is
     /// interrupted by a transient network failure or an explicit timeout.
@@ -489,9 +350,8 @@ public class AuthService : IDisposable
             refreshGuardHeld = false;
             RaiseSafely(TokenRefreshed);
             // Must fire UserChanged AFTER setting CurrentUser so subscribers
-            // (e.g. ServerActivityButton) observe the new admin state — without
-            // this, auto-login leaves role-gated UI stuck at null until the next
-            // polling tick catches up.
+            // observe the restored account state. Without this, auto-login leaves
+            // role-gated user actions stale until another account refresh occurs.
             if (provisionalUserChanged)
                 RaiseSafely(UserChanged);
 
@@ -680,7 +540,6 @@ public class AuthService : IDisposable
             SelectedProfileId = null;
             SelectedProfile = null;
             _sessionServerUrl = null;
-            _preservedAdminSession = null;
         }
 
         if (deletePersistedCredentials && !string.IsNullOrWhiteSpace(credentialServerUrl))
@@ -868,102 +727,6 @@ public class AuthService : IDisposable
             {
                 // The in-memory session has already been cleared. Do not resurrect it or
                 // suppress logout because the OS credential vault is unavailable.
-                ReportCredentialStoreFailure(ex);
-            }
-        }
-    }
-
-    private void PersistImpersonationAdminSession(
-        string serverUrl,
-        PreservedAdminSession session)
-    {
-        if (_credentialStore == null || string.IsNullOrWhiteSpace(serverUrl))
-            return;
-
-        lock (_credentialGate)
-        {
-            try
-            {
-                _credentialStore.SaveCredential(
-                    serverUrl,
-                    ImpersonationAdminRefreshKey,
-                    session.RefreshToken);
-                _credentialStore.SaveCredential(
-                    serverUrl,
-                    ImpersonationReturnPathKey,
-                    session.ReturnPath);
-            }
-            catch (Exception ex)
-            {
-                try
-                {
-                    _credentialStore.DeleteCredential(serverUrl, ImpersonationAdminRefreshKey);
-                    _credentialStore.DeleteCredential(serverUrl, ImpersonationReturnPathKey);
-                }
-                catch
-                {
-                    // Preserve the original secure-store failure.
-                }
-                ReportCredentialStoreFailure(ex);
-            }
-        }
-    }
-
-    private PreservedAdminSession? LoadPreservedAdminSession(string serverUrl)
-    {
-        lock (_stateGate)
-        {
-            if (_preservedAdminSession != null)
-                return _preservedAdminSession;
-        }
-
-        if (_credentialStore == null || string.IsNullOrWhiteSpace(serverUrl))
-            return null;
-
-        lock (_credentialGate)
-        {
-            try
-            {
-                var refreshToken = _credentialStore.LoadCredential(
-                    serverUrl,
-                    ImpersonationAdminRefreshKey);
-                if (string.IsNullOrWhiteSpace(refreshToken))
-                    return null;
-
-                var returnPath = _credentialStore.LoadCredential(
-                    serverUrl,
-                    ImpersonationReturnPathKey);
-                return new PreservedAdminSession(
-                    AccessToken: null,
-                    refreshToken,
-                    User: null,
-                    string.IsNullOrWhiteSpace(returnPath) ? "/admin/users" : returnPath);
-            }
-            catch (Exception ex)
-            {
-                ReportCredentialStoreFailure(ex);
-                return null;
-            }
-        }
-    }
-
-    private void ClearPersistedImpersonationAdminSession(string serverUrl)
-    {
-        lock (_stateGate)
-            _preservedAdminSession = null;
-
-        if (_credentialStore == null || string.IsNullOrWhiteSpace(serverUrl))
-            return;
-
-        lock (_credentialGate)
-        {
-            try
-            {
-                _credentialStore.DeleteCredential(serverUrl, ImpersonationAdminRefreshKey);
-                _credentialStore.DeleteCredential(serverUrl, ImpersonationReturnPathKey);
-            }
-            catch (Exception ex)
-            {
                 ReportCredentialStoreFailure(ex);
             }
         }

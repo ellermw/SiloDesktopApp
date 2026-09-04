@@ -11,9 +11,18 @@ param(
 
 $ErrorActionPreference = "Stop"
 $normalizedThumbprint = $Thumbprint.Replace(" ", "").ToUpperInvariant()
-$certificate = Get-ChildItem Cert:\CurrentUser\My |
-    Where-Object { $_.Thumbprint -eq $normalizedThumbprint -and $_.HasPrivateKey } |
-    Select-Object -First 1
+$store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+    [System.Security.Cryptography.X509Certificates.StoreName]::My,
+    [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
+$store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadOnly)
+try {
+    $certificate = $store.Certificates |
+        Where-Object { $_.Thumbprint -eq $normalizedThumbprint -and $_.HasPrivateKey } |
+        Select-Object -First 1
+}
+finally {
+    $store.Close()
+}
 
 if (-not $certificate) {
     throw "The requested code-signing certificate was not found with a private key in Cert:\CurrentUser\My."

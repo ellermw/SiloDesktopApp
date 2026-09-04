@@ -143,79 +143,6 @@
             </Button>
         </StackPanel>
 
-        <!-- Current WebUI MarkerEditPanel: stays inside the active player so
-             playback, fullscreen, tracks, and the seek surface remain intact. -->
-        <Border x:Name="MarkerEditorPanel" Visibility="Collapsed"
-                Width="352" MaxHeight="470"
-                HorizontalAlignment="Left" VerticalAlignment="Bottom"
-                Margin="24,0,0,150" Padding="0"
-                Background="#F2111114" BorderBrush="#1AFFFFFF" BorderThickness="1"
-                CornerRadius="16" Canvas.ZIndex="70">
-            <Grid>
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                </Grid.RowDefinitions>
-                <Grid x:Name="MarkerEditorDragHeader" Padding="14,12,10,10"
-                      PointerPressed="MarkerEditorHeader_PointerPressed"
-                      PointerMoved="MarkerEditorHeader_PointerMoved"
-                      PointerReleased="MarkerEditorHeader_PointerReleased"
-                      PointerCaptureLost="MarkerEditorHeader_PointerCaptureLost">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <FontIcon Glyph="&#xE700;" FontSize="14" Foreground="#4DFFFFFF"
-                              Margin="0,2,9,0" VerticalAlignment="Top" />
-                    <StackPanel Grid.Column="1" Spacing="2">
-                        <TextBlock Text="Edit markers" FontSize="14" FontWeight="SemiBold" Foreground="White" />
-                        <TextBlock Text="Drag the timeline handles, or set points to the playhead."
-                                   FontSize="11" Foreground="#66FFFFFF" TextWrapping="Wrap" />
-                    </StackPanel>
-                    <Button Grid.Column="2" Width="30" Height="30" Padding="0"
-                            Background="Transparent" BorderThickness="0"
-                            CornerRadius="6" Click="MarkerEditorCancel_Click"
-                            ToolTipService.ToolTip="Close marker editor"
-                            AutomationProperties.Name="Close marker editor">
-                        <FontIcon Glyph="&#xE711;" FontSize="13" Foreground="#8CFFFFFF" />
-                    </Button>
-                </Grid>
-                <ScrollViewer Grid.Row="1" MaxHeight="300"
-                              VerticalScrollBarVisibility="Auto"
-                              HorizontalScrollBarVisibility="Disabled">
-                    <StackPanel x:Name="MarkerRowsPanel" Padding="8,0,8,8" Spacing="4" />
-                </ScrollViewer>
-                <TextBlock x:Name="MarkerEditorError" Grid.Row="2" Visibility="Collapsed"
-                           Margin="16,0,16,8" Padding="10,6"
-                           TextWrapping="Wrap" FontSize="11" Foreground="#FFFCA5A5" />
-                <Grid Grid.Row="3" Padding="14,10" Background="#33000000">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <TextBlock x:Name="MarkerEditorCurrentTime" Text="0:00"
-                               FontFamily="Consolas" FontSize="11" Foreground="#66FFFFFF"
-                               VerticalAlignment="Center" />
-                    <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-                        <Button x:Name="MarkerEditorResetAllButton" Content="↶  Reset all"
-                                Visibility="Collapsed" Click="MarkerEditorResetAll_Click"
-                                Background="Transparent" BorderThickness="0"
-                                Foreground="#99FFFFFF" Padding="10,6" FontSize="12" />
-                        <Button Content="Cancel" Click="MarkerEditorCancel_Click"
-                                Background="Transparent" BorderThickness="0"
-                                Foreground="#B3FFFFFF" Padding="10,6" FontSize="12" />
-                        <Button x:Name="MarkerEditorSaveButton" Content="Save" IsEnabled="False"
-                                Click="MarkerEditorSave_Click" Background="White" Foreground="#FF111111"
-                                BorderThickness="0" CornerRadius="8" Padding="14,6"
-                                FontSize="12" FontWeight="SemiBold" />
-                    </StackPanel>
-                </Grid>
-            </Grid>
-        </Border>
-
         <!-- Bottom HUD (3-column: title/time left · centered cluster · utility rail right) -->
         <Grid x:Name="ControlsOverlay" VerticalAlignment="Bottom">
             <Grid.Background>
@@ -467,12 +394,6 @@
                         </Button>
 
                         <!-- Info (stats toggle) — active state uses amber dot underline -->
-                        <Button x:Name="MarkerEditButton" Style="{StaticResource PlayerUtilityBtnStyle}"
-                                Click="MarkerEdit_Click" ToolTipService.ToolTip="Edit markers"
-                                AutomationProperties.Name="Edit markers" Visibility="Collapsed">
-                            <FontIcon Glyph="&#xE70F;" FontSize="14" />
-                        </Button>
-
                         <Button x:Name="InfoButton" Style="{StaticResource PlayerUtilityBtnStyle}" Click="Stats_Click"
                                 ToolTipService.ToolTip="Playback info (I)" AutomationProperties.Name="Playback info">
                             <Grid>

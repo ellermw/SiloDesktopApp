@@ -25,23 +25,6 @@ public sealed class DateTimePreferenceSourceTests
             + string.Join(", ", bypasses));
     }
 
-    [Theory]
-    [InlineData("Views/Admin/AdminLibrariesPage.xaml.cs")]
-    [InlineData("Views/Admin/AdminActivityPage.xaml.cs")]
-    [InlineData("Views/Admin/AdminTasksPage.xaml.cs")]
-    [InlineData("Views/Admin/AdminNodesPage.xaml.cs")]
-    [InlineData("Views/Admin/AdminUsersPage.xaml.cs")]
-    public void CurrentAdminSurfacesUseSharedDateTimePreferenceFormatter(string relativePath)
-    {
-        var source = File.ReadAllText(Path.Combine(
-            RepoRoot,
-            "src",
-            "SiloPlayer",
-            relativePath.Replace('/', Path.DirectorySeparatorChar)));
-
-        Assert.Contains("DateTimeDisplay.", source, StringComparison.Ordinal);
-    }
-
     [Fact]
     public void MediumDateFallbackMatchesTheWebUiAbbreviatedMonthContract()
     {

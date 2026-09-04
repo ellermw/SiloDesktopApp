@@ -7,14 +7,14 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.UI;
 using SiloPlayer.Core.Api;
-using SiloPlayer.Core.Models.Admin;
+using SiloPlayer.Core.Models.MediaMaintenance;
 using SiloPlayer.Core.Models.Playback;
 
 namespace SiloPlayer.Controls;
 
 public sealed partial class MatchItemDialog : ContentDialog
 {
-    private readonly AdminApi _adminApi;
+    private readonly MediaMaintenanceApi _maintenanceApi;
     private readonly string _itemId;
     private readonly string _itemType;
     private readonly int? _libraryId;
@@ -39,7 +39,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         IList<FileVersion>? versions,
         IList<string>? folderPaths)
     {
-        _adminApi = App.Services.GetRequiredService<AdminApi>();
+        _maintenanceApi = App.Services.GetRequiredService<MediaMaintenanceApi>();
         _itemId = itemId;
         _itemType = string.IsNullOrWhiteSpace(itemType) ? "item" : itemType.Trim().ToLowerInvariant();
         _libraryId = libraryId;
@@ -81,7 +81,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         ApplyStatusText.Visibility = Visibility.Visible;
         try
         {
-            await _adminApi.MatchApplyAsync(_itemId, new ItemMatchApplyRequest
+            await _maintenanceApi.ApplyMatchAsync(_itemId, new ItemMatchApplyRequest
             {
                 ProviderIds = _selectedCandidate.ProviderIds,
             });
@@ -506,7 +506,7 @@ public sealed partial class MatchItemDialog : ContentDialog
                 LibraryId = _libraryId,
             };
 
-            var response = await _adminApi.MatchSearchAsync(_itemId, request);
+            var response = await _maintenanceApi.SearchMatchesAsync(_itemId, request);
 
             if (response.Candidates.Count == 0)
             {

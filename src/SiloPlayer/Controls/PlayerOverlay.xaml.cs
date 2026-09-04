@@ -36,13 +36,6 @@ public sealed partial class PlayerOverlay : UserControl
     // compatibility. A current server can explicitly disable the entry point.
     private SubtitleProviderStatus _subtitleProviderStatus = new() { Enabled = true };
     private int _lastStatsUpdateSecond = -1;
-    private MarkerEditRow[]? _markerEditRows;
-    private MarkerEditRow? _activeMarkerEditRow;
-    private bool _markerSaveInProgress;
-    private bool _markerPanelDragging;
-    private Windows.Foundation.Point _markerPanelDragStart;
-    private double _markerPanelDragOriginX;
-    private double _markerPanelDragOriginY;
 
     private DispatcherTimer? _uiTimer;
     private DispatcherTimer? _hideTimer;
@@ -69,7 +62,6 @@ public sealed partial class PlayerOverlay : UserControl
             SeekInteractive(seconds);
             ShowControls();
         };
-        SeekBar.MarkerEdgeChanged += MarkerEdgeChanged;
     }
 
     // ── Activate / Deactivate (called by MainWindow when visibility toggles) ──
@@ -118,7 +110,6 @@ public sealed partial class PlayerOverlay : UserControl
 
         // Update title
         TitleText.Text = _playerService.Title;
-        MarkerEditButton.Visibility = CanEditMarkers() ? Visibility.Visible : Visibility.Collapsed;
 
         // Populate flyouts
         PopulateQualityFlyout();
@@ -174,7 +165,6 @@ public sealed partial class PlayerOverlay : UserControl
         _bufferingDebounceTimer?.Stop();
         _bufferingDebounceTimer = null;
         BufferingSpinner.Visibility = Visibility.Collapsed;
-        CloseMarkerEditor();
         System.Threading.Interlocked.Increment(ref _autoSkipSettingsLoadVersion);
 
         // Stop the breathing animation cleanly on deactivate so it doesn't
@@ -255,8 +245,6 @@ public sealed partial class PlayerOverlay : UserControl
         DispatcherQueue?.TryEnqueue(() =>
         {
             if (!_isActive) return;
-            if (MarkerEditorPanel.Visibility == Visibility.Visible)
-                CloseMarkerEditor();
             ResetAutoSkipMarkerState();
             _ = RefreshAutoSkipSettingsAsync();
 
@@ -466,9 +454,6 @@ public sealed partial class PlayerOverlay : UserControl
         UpdateEpisodeNav(pos, dur);
         CheckSleepTimer(pos);
 
-        if (MarkerEditorPanel.Visibility == Visibility.Visible)
-            MarkerEditorCurrentTime.Text = FormatChapterTime(pos);
-
         // Playback information is intentionally sampled once per second, like
         // the WebUI overlay. Rebuilding the diagnostic rows on every 250 ms UI
         // tick adds needless layout work while video is playing.
@@ -578,10 +563,6 @@ public sealed partial class PlayerOverlay : UserControl
     {
         _hideTimer?.Stop();
 
-        // Keep the HUD and timeline available while editing markers. Hiding
-        // them would strand the panel and its seek-bar handles.
-        if (MarkerEditorPanel.Visibility == Visibility.Visible) return;
-
         // Only hide if playing (keep visible when paused)
         if (_playerService.Mpv != null && !_playerService.Mpv.IsPaused)
         {
@@ -683,9 +664,7 @@ public sealed partial class PlayerOverlay : UserControl
                 break;
 
             case Windows.System.VirtualKey.Escape:
-                if (MarkerEditorPanel.Visibility == Visibility.Visible)
-                    CloseMarkerEditor();
-                else if (_playerService.State == PlayerState.Fullscreen)
+                if (_playerService.State == PlayerState.Fullscreen)
                     _playerService.ExitFullscreen();
                 else
                     _playerService.Minimize();
@@ -1646,259 +1625,6 @@ public sealed partial class PlayerOverlay : UserControl
         await dialog.ShowAsync();
     }
 
-    private bool CanEditMarkers()
-        => AuthorizationPolicy.CanEditMarkers(_authService);
-
-    private void MarkerEdit_Click(object sender, RoutedEventArgs e)
-    {
-        if (MarkerEditorPanel.Visibility == Visibility.Visible) CloseMarkerEditor();
-        else OpenMarkerEditor();
-    }
-
-    // Kept as Task-returning API because the native mpv OSC invokes this via
-    // MainWindow. Opening the editor itself is synchronous and never replaces
-    // or suspends the current playback surface.
-    public Task ShowMarkerEditDialogAsync(XamlRoot? dialogXamlRoot = null)
-    {
-        OpenMarkerEditor();
-        return Task.CompletedTask;
-    }
-
-    private void OpenMarkerEditor()
-    {
-        if (_playerService.Manager?.CurrentSession == null || !CanEditMarkers()) return;
-
-        MarkerRowsPanel.Children.Clear();
-        _markerEditRows =
-        [
-            CreateMarkerEditRow("intro", "Intro", "#38BDF8", _playerService.ActiveIntro),
-            CreateMarkerEditRow("recap", "Recap", "#A78BFA", _playerService.ActiveRecap),
-            CreateMarkerEditRow("credits", "Credits / Outro", "#FBBF24", _playerService.ActiveCredits),
-            CreateMarkerEditRow("preview", "Preview", "#34D399", _playerService.ActivePreview)
-        ];
-
-        foreach (var row in _markerEditRows)
-        {
-            MarkerRowsPanel.Children.Add(row.Element);
-            row.HeaderButton.Click += (_, _) => SelectMarkerEditRow(row);
-            row.SetStartButton.Click += (_, _) =>
-            {
-                row.SetStart(_playerService.Position, _playerService.Duration);
-                RefreshMarkerEditorState();
-            };
-            row.SetEndButton.Click += (_, _) =>
-            {
-                row.SetEnd(_playerService.Position, _playerService.Duration);
-                RefreshMarkerEditorState();
-            };
-            row.ResetButton.Click += (_, _) =>
-            {
-                row.SetRange(row.Original);
-                RefreshMarkerEditorState();
-            };
-            row.ClearButton.Click += (_, _) =>
-            {
-                row.SetRange(null);
-                RefreshMarkerEditorState();
-            };
-        }
-
-        MarkerEditorError.Visibility = Visibility.Collapsed;
-        MarkerEditorCurrentTime.Text = FormatChapterTime(_playerService.Position);
-        MarkerEditorPanel.RenderTransform = new TranslateTransform();
-        MarkerEditorPanel.Visibility = Visibility.Visible;
-        SeekBar.IsMarkerEditing = true;
-        SelectMarkerEditRow(_markerEditRows[0]);
-        RefreshMarkerEditorState();
-        ShowControls();
-    }
-
-    private void CloseMarkerEditor()
-    {
-        MarkerEditorPanel.Visibility = Visibility.Collapsed;
-        MarkerEditorError.Visibility = Visibility.Collapsed;
-        _markerEditRows = null;
-        _activeMarkerEditRow = null;
-        _markerSaveInProgress = false;
-        SeekBar.IsMarkerEditing = false;
-        SeekBar.EditableMarker = null;
-        RefreshMarkerRegions();
-        SeekBar.Invalidate();
-        MarkerEditButton.Focus(FocusState.Programmatic);
-    }
-
-    private void SelectMarkerEditRow(MarkerEditRow selected)
-    {
-        _activeMarkerEditRow = selected;
-        if (_markerEditRows == null) return;
-        foreach (var row in _markerEditRows)
-        {
-            var active = ReferenceEquals(row, selected);
-            row.Actions.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
-            row.Element.Background = new SolidColorBrush(active
-                ? Windows.UI.Color.FromArgb(0x10, 0xFF, 0xFF, 0xFF)
-                : Windows.UI.Color.FromArgb(0, 0, 0, 0));
-            row.Element.BorderThickness = active ? new Thickness(1) : new Thickness(0);
-        }
-        RefreshMarkerEditorState();
-    }
-
-    private void RefreshMarkerEditorState()
-    {
-        if (_markerEditRows == null) return;
-        foreach (var row in _markerEditRows) row.Refresh();
-        var dirty = _markerEditRows.Any(row => !RangesEqual(row.Original, row.CurrentRange));
-        MarkerEditorSaveButton.IsEnabled = dirty && !_markerSaveInProgress;
-        MarkerEditorResetAllButton.Visibility = dirty ? Visibility.Visible : Visibility.Collapsed;
-
-        TimeRange? Find(string kind) => _markerEditRows.First(row => row.Kind == kind).CurrentRange;
-        var intro = Find("intro");
-        var recap = Find("recap");
-        var credits = Find("credits");
-        var preview = Find("preview");
-        SeekBar.IntroMarker = intro == null ? null : (intro.Start, intro.End);
-        SeekBar.RecapMarker = recap == null ? null : (recap.Start, recap.End);
-        SeekBar.CreditsMarker = credits == null ? null : (credits.Start, credits.End);
-        SeekBar.PreviewMarker = preview == null ? null : (preview.Start, preview.End);
-        var active = _activeMarkerEditRow?.CurrentRange;
-        SeekBar.EditableMarker = active == null ? null : (active.Start, active.End);
-        SeekBar.Invalidate();
-    }
-
-    private void MarkerEdgeChanged(string edge, double seconds)
-    {
-        if (_activeMarkerEditRow == null || MarkerEditorPanel.Visibility != Visibility.Visible) return;
-        if (edge == "start") _activeMarkerEditRow.SetStart(seconds, _playerService.Duration);
-        else _activeMarkerEditRow.SetEnd(seconds, _playerService.Duration);
-        RefreshMarkerEditorState();
-        ShowControls();
-    }
-
-    private void MarkerEditorResetAll_Click(object sender, RoutedEventArgs e)
-    {
-        if (_markerEditRows == null) return;
-        foreach (var row in _markerEditRows) row.SetRange(row.Original);
-        RefreshMarkerEditorState();
-    }
-
-    private void MarkerEditorCancel_Click(object sender, RoutedEventArgs e) => CloseMarkerEditor();
-
-    private async void MarkerEditorSave_Click(object sender, RoutedEventArgs e)
-    {
-        var session = _playerService.Manager?.CurrentSession;
-        var rows = _markerEditRows;
-        if (session == null || rows == null || _markerSaveInProgress) return;
-
-        var changes = new Dictionary<string, object?>();
-        foreach (var row in rows)
-        {
-            var next = row.CurrentRange;
-            if (!RangesEqual(row.Original, next))
-                changes[row.Kind] = next == null ? null : new { start = next.Start, end = next.End };
-            row.Result = next;
-        }
-        if (changes.Count == 0) return;
-
-        _markerSaveInProgress = true;
-        MarkerEditorSaveButton.Content = "Saving…";
-        MarkerEditorSaveButton.IsEnabled = false;
-        MarkerEditorError.Visibility = Visibility.Collapsed;
-        try
-        {
-            await App.Services.GetRequiredService<PlaybackApi>().SetFileMarkersAsync(session.MediaFileId, changes);
-            _playerService.ApplyMarkerEdits(rows[0].Result, rows[1].Result, rows[2].Result, rows[3].Result);
-            CloseMarkerEditor();
-        }
-        catch (Exception ex)
-        {
-            MarkerEditorError.Text = ex.Message;
-            MarkerEditorError.Visibility = Visibility.Visible;
-        }
-        finally
-        {
-            _markerSaveInProgress = false;
-            MarkerEditorSaveButton.Content = "Save";
-            if (MarkerEditorPanel.Visibility == Visibility.Visible) RefreshMarkerEditorState();
-        }
-    }
-
-    private void MarkerEditorHeader_PointerPressed(object sender, PointerRoutedEventArgs e)
-    {
-        if (sender is not UIElement header) return;
-        _markerPanelDragging = true;
-        _markerPanelDragStart = e.GetCurrentPoint(this).Position;
-        var transform = MarkerEditorPanel.RenderTransform as TranslateTransform ?? new TranslateTransform();
-        MarkerEditorPanel.RenderTransform = transform;
-        _markerPanelDragOriginX = transform.X;
-        _markerPanelDragOriginY = transform.Y;
-        header.CapturePointer(e.Pointer);
-        e.Handled = true;
-    }
-
-    private void MarkerEditorHeader_PointerMoved(object sender, PointerRoutedEventArgs e)
-    {
-        if (!_markerPanelDragging) return;
-        var current = e.GetCurrentPoint(this).Position;
-        var transform = (TranslateTransform)MarkerEditorPanel.RenderTransform;
-        var maxX = Math.Max(0, ActualWidth - MarkerEditorPanel.ActualWidth - 16);
-        var maxUp = Math.Max(0, ActualHeight - MarkerEditorPanel.ActualHeight - 16);
-        transform.X = Math.Clamp(_markerPanelDragOriginX + current.X - _markerPanelDragStart.X, -8, maxX);
-        transform.Y = Math.Clamp(_markerPanelDragOriginY + current.Y - _markerPanelDragStart.Y, -maxUp, 134);
-        e.Handled = true;
-    }
-
-    private void MarkerEditorHeader_PointerReleased(object sender, PointerRoutedEventArgs e)
-    {
-        _markerPanelDragging = false;
-        if (sender is UIElement header) header.ReleasePointerCapture(e.Pointer);
-        e.Handled = true;
-    }
-
-    private void MarkerEditorHeader_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
-        => _markerPanelDragging = false;
-
-    private MarkerEditRow CreateMarkerEditRow(string kind, string label, string colorHex, TimeRange? original)
-    {
-        var color = (Windows.UI.Color)Microsoft.UI.Xaml.Markup.XamlBindingHelper.ConvertValue(typeof(Windows.UI.Color), colorHex);
-        var dot = new Border { Width = 9, Height = 9, CornerRadius = new CornerRadius(5), Background = new SolidColorBrush(color) };
-        var title = new TextBlock { Text = label, FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.Medium, Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xDC, 0xFF, 0xFF, 0xFF)) };
-        var rangeText = new TextBlock { FontSize = 11, FontFamily = new FontFamily("Consolas"), Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0x88, 0xFF, 0xFF, 0xFF)), HorizontalAlignment = HorizontalAlignment.Right };
-        var headerGrid = new Grid { ColumnSpacing = 10 };
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetColumn(dot, 0); Grid.SetColumn(title, 1); Grid.SetColumn(rangeText, 2);
-        headerGrid.Children.Add(dot); headerGrid.Children.Add(title); headerGrid.Children.Add(rangeText);
-        var header = new Button { Content = headerGrid, Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0, 0, 0, 0)), BorderThickness = new Thickness(0), Padding = new Thickness(2, 3, 2, 3), HorizontalContentAlignment = HorizontalAlignment.Stretch };
-
-        Button EdgeButton(string text) => new()
-        {
-            Content = text,
-            FontSize = 11,
-            Padding = new Thickness(10, 5, 10, 5),
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x0D, 0xFF, 0xFF, 0xFF)),
-            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
-            Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xD9, 0xFF, 0xFF, 0xFF))
-        };
-        var setStart = EdgeButton("Set start");
-        var setEnd = EdgeButton("Set end");
-        var reset = EdgeButton("↶");
-        ToolTipService.SetToolTip(reset, "Reset to saved");
-        var clear = EdgeButton("⌫");
-        ToolTipService.SetToolTip(clear, "Clear marker");
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(21, 5, 0, 2), Children = { setStart, setEnd, reset, clear }, Visibility = Visibility.Collapsed };
-        var body = new StackPanel { Spacing = 0, Children = { header, actions } };
-        var border = new Border { Padding = new Thickness(8, 5, 8, 5), CornerRadius = new CornerRadius(12), BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x1A, 0xFF, 0xFF, 0xFF)), Child = body };
-        return new MarkerEditRow(kind, original, rangeText, header, actions, setStart, setEnd, reset, clear, border);
-    }
-
-    private static bool RangesEqual(TimeRange? left, TimeRange? right)
-        => left == null || right == null
-            ? left == null && right == null
-            : Math.Abs(left.Start - right.Start) < 0.001 && Math.Abs(left.End - right.End) < 0.001;
-
     private static int SourceSortKey(string? source) => (source?.ToLowerInvariant()) switch
     {
         "external" => 0,
@@ -2573,88 +2299,4 @@ public sealed partial class PlayerOverlay : UserControl
         PlaybackInfoText.Text = string.Join(" \u2022 ", parts);
     }
 
-    private sealed class MarkerEditRow
-    {
-        private double? _start;
-        private double? _end;
-
-        public MarkerEditRow(
-            string kind,
-            TimeRange? original,
-            TextBlock rangeText,
-            Button headerButton,
-            StackPanel actions,
-            Button setStartButton,
-            Button setEndButton,
-            Button resetButton,
-            Button clearButton,
-            Border element)
-        {
-            Kind = kind;
-            Original = Clone(original);
-            _start = original?.Start;
-            _end = original?.End;
-            RangeText = rangeText;
-            HeaderButton = headerButton;
-            Actions = actions;
-            SetStartButton = setStartButton;
-            SetEndButton = setEndButton;
-            ResetButton = resetButton;
-            ClearButton = clearButton;
-            Element = element;
-            Refresh();
-        }
-
-        public string Kind { get; }
-        public TimeRange? Original { get; }
-        public TextBlock RangeText { get; }
-        public Button HeaderButton { get; }
-        public StackPanel Actions { get; }
-        public Button SetStartButton { get; }
-        public Button SetEndButton { get; }
-        public Button ResetButton { get; }
-        public Button ClearButton { get; }
-        public Border Element { get; }
-        public TimeRange? Result { get; set; }
-
-        public TimeRange? CurrentRange => _start.HasValue && _end.HasValue
-            ? new TimeRange { Start = _start.Value, End = _end.Value }
-            : null;
-
-        public void SetRange(TimeRange? range)
-        {
-            _start = range?.Start;
-            _end = range?.End;
-            Refresh();
-        }
-
-        public void SetStart(double seconds, double duration)
-        {
-            _start = Math.Max(0, seconds);
-            if (!_end.HasValue || _end <= _start)
-                _end = Math.Min(Math.Max(0, duration), _start.Value + 60);
-            Refresh();
-        }
-
-        public void SetEnd(double seconds, double duration)
-        {
-            _end = Math.Min(Math.Max(0, duration), Math.Max(0, seconds));
-            if (!_start.HasValue || _start >= _end)
-                _start = Math.Max(0, _end.Value - 60);
-            Refresh();
-        }
-
-        public void Refresh()
-        {
-            RangeText.Text = CurrentRange is { } range
-                ? $"{FormatChapterTime(range.Start)} – {FormatChapterTime(range.End)}"
-                : "Not set";
-            var dirty = !RangesEqual(Original, CurrentRange);
-            ResetButton.IsEnabled = dirty;
-            ClearButton.IsEnabled = CurrentRange != null;
-        }
-
-        private static TimeRange? Clone(TimeRange? range)
-            => range == null ? null : new TimeRange { Start = range.Start, End = range.End };
-    }
 }

@@ -60,7 +60,7 @@ public sealed class PlaybackFailureDescriptionTests
     [Theory]
     [InlineData(403, "transcoding_disabled", "Transcoding is disabled")]
     [InlineData(403, "audio_transcoding_disabled", "Audio transcoding is disabled")]
-    [InlineData(404, "not_found", "This video is no longer available")]
+    [InlineData(404, "not_found", "This item is no longer available")]
     public void SpecificTransportFailuresAreNotShadowedByGenericStatusHandling(
         int status,
         string code,
@@ -73,5 +73,19 @@ public sealed class PlaybackFailureDescriptionTests
 
         Assert.NotNull(description);
         Assert.Equal(title, description.Title);
+    }
+
+    [Fact]
+    public void MissingSourceTransportFailureMatchesWebUiCopyAndCannotRetryInPlace()
+    {
+        var description = PlaybackFailureDescription.DescribeTransport(
+            new ApiException("not_found", "Source media file is missing", 404));
+
+        Assert.NotNull(description);
+        Assert.Equal("This item is no longer available", description.Title);
+        Assert.Equal(
+            "The file needed to play this item can't be found right now. Go back and try another version if one is available.",
+            description.Message);
+        Assert.False(description.CanRetry);
     }
 }

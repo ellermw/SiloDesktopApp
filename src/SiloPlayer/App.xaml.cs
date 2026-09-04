@@ -273,7 +273,7 @@ public partial class App : Application
         services.AddSingleton<WebhookSyncApi>(sp => new WebhookSyncApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<PlexBrowserAuthApi>();
         services.AddSingleton<PlaybackApi>(sp => new PlaybackApi(sp.GetRequiredService<SiloApiClient>()));
-        services.AddSingleton<AdminApi>(sp => new AdminApi(sp.GetRequiredService<SiloApiClient>()));
+        services.AddSingleton<MediaMaintenanceApi>(sp => new MediaMaintenanceApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<PeopleApi>(sp => new PeopleApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<CollectionsApi>(sp => new CollectionsApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<DownloadsApi>(sp => new DownloadsApi(sp.GetRequiredService<SiloApiClient>()));
@@ -282,7 +282,6 @@ public partial class App : Application
         services.AddSingleton<HistoryImportApi>(sp => new HistoryImportApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<RecommendationsApi>(sp => new RecommendationsApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<ApiKeysApi>(sp => new ApiKeysApi(sp.GetRequiredService<SiloApiClient>()));
-        services.AddSingleton<PluginsApi>(sp => new PluginsApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<WatchProvidersApi>(sp => new WatchProvidersApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<EbooksApi>(sp => new EbooksApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddTransient<PlaybackManager>();
@@ -330,7 +329,6 @@ public partial class App : Application
         services.AddTransient<SignupViewModel>();
         services.AddTransient<InviteClaimViewModel>();
         services.AddTransient<ActivateDeviceViewModel>();
-        services.AddTransient<SetupWizardViewModel>();
         services.AddTransient<ProfileSelectViewModel>();
         services.AddTransient<MainViewModel>();
         services.AddTransient<HomeViewModel>();
@@ -353,36 +351,8 @@ public partial class App : Application
         services.AddTransient<SettingsViewModel>();
         services.AddTransient<WatchTogetherJoinViewModel>();
         services.AddTransient<WatchTogetherRoomViewModel>();
-        // Retain the last successful dashboard snapshot so returning from another
-        // admin page paints immediately while a fresh snapshot loads in place.
-        services.AddSingleton<SiloPlayer.ViewModels.Admin.AdminDashboardViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminActivityViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminUsersViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminUserDetailViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminLogsViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminLibrariesViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminCollectionsViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminSectionsViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminTasksViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminMarkerHistoryViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminAccessGroupsViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminDevicesViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminAutoscanViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminPolicyViewModel>();
         services.AddTransient<SiloPlayer.ViewModels.TasteSeedViewModel>();
         services.AddTransient<SiloPlayer.ViewModels.NotificationSettingsViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminTaskDetailViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminNodesViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminSettingsDetailViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminApiKeysViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminRecommendationsViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminPlaybackHistoryViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminRequestsViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminPluginsViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminInviteCodesViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminMaintenanceViewModel>();
-        services.AddTransient<SiloPlayer.ViewModels.Admin.AdminSubtitleProvidersViewModel>();
-        services.AddTransient<SiloPlayer.Views.Admin.AdminSubtitlesPage>();
 
         var provider = services.BuildServiceProvider();
 
