@@ -822,6 +822,17 @@
                             </StackPanel>
                             <ToggleSwitch x:Name="AudioPassthroughToggle" Grid.Column="1" VerticalAlignment="Center" OnContent="" OffContent="" Toggled="AudioPassthroughToggle_Toggled" />
                         </Grid>
+                        <Border Style="{StaticResource SettingsSeparator}" />
+                        <Grid ColumnSpacing="20">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="NVIDIA RTX AI upscaling (preview)" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Enhance 1080p and lower-resolution SDR video on larger displays, up to 2×. Uses this PC's RTX GPU. Original 4K and HDR video keep normal playback." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" MaxWidth="680" />
+                                <TextBlock Text="Enable Video Super Resolution in NVIDIA App → System → Video. Restart Silo for Windows Desktop App after changing this option. Quality and power use depend on your GPU and NVIDIA settings." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" MaxWidth="680" />
+                                <TextBlock x:Name="RtxUpscalingHardwareText" Text="Checking graphics hardware…" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch x:Name="RtxUpscalingToggle" Grid.Column="1" VerticalAlignment="Center" IsEnabled="False" OnContent="" OffContent="" AutomationProperties.Name="NVIDIA RTX AI upscaling preview" Toggled="RtxUpscalingToggle_Toggled" />
+                        </Grid>
                     </StackPanel>
                 </Border>
             </StackPanel>

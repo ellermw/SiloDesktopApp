@@ -1964,6 +1964,8 @@ public class PlayerService : IDisposable
             // exactly like the opening transcode segment replaying once.
             // FileLoaded is the single authority that restores play/pause.
             mpv.Pause();
+            // Do not carry an original file's aid into a single-track remux/HLS load.
+            mpv.SetProperty("aid", "auto");
             mpv.LoadFile(prepared.LocalUrl, null, prepared.MpvLoadStartSeconds);
         }
         catch
@@ -3461,7 +3463,8 @@ public class PlayerService : IDisposable
         WireVideoWindowEvents();
 
         _mpv = new MpvPlayer();
-        _mpv.InitializeWithWindow(_videoWindow.Hwnd);
+        _mpv.UpscalingStatusChanged += status => LogToFile("upscaling_log.txt", status);
+        _mpv.InitializeWithWindow(_videoWindow.Hwnd, _settingsService.Load().NvidiaVideoUpscaling);
         _videoWindow.SetMpv(_mpv);
         WireMpvEvents();
         SendThemeToOsc();
@@ -3822,6 +3825,26 @@ public class PlayerService : IDisposable
         {
             var wasPrematureEofRecovery = _prematureEofRecoveryActive;
             var restorePaused = _restorePausedAfterLoad == true;
+            // v3 original_http is byte-for-byte source media: the server's
+            // selected audio ordinal must be applied locally, before unpausing
+            // or publishing the selected language to the OSC.
+            try
+            {
+                if (_mpv is { } mpv && _playbackManager?.CurrentSession is { } session &&
+                    _activeTransportPlan is { } plan)
+                {
+                    var audioIds = mpv.GetAudioTrackIds();
+                    NativeAudioSelection.Apply(plan.TransportKind, session.AudioTrackIndex,
+                        audioIds, mpv.SetAudioTrack, () => (int)mpv.GetPropertyDouble("aid"));
+                    LogToFile("state_trace.txt", $"Audio selection verified: sourceIndex={session.AudioTrackIndex} " +
+                        $"mpvAid={mpv.GetPropertyDouble("aid")} transport={plan.TransportKind} audioTracks={audioIds.Count}");
+                }
+            }
+            catch (Exception ex)
+            {
+                EnterPlaybackTerminalState(ex, CurrentMediaPosition, "audio-selection-failed", restorePaused);
+                return;
+            }
             ClearPlaybackTerminalState();
             ReconcilePlaybackSurfaceStateAfterLoad();
             CancelPendingFileLoadTimeout();
@@ -4843,7 +4866,8 @@ public class PlayerService : IDisposable
         var vcDisplay = $"{(pi?.VideoCodec ?? version.CodecVideo ?? "").ToUpper()} {vcSuffix}";
         var acDisplay = $"{(pi?.AudioCodec ?? version.CodecAudio ?? "").ToUpper()} {acSuffix}";
 
-        _mpv.SendScriptMessage("osc-set-stream-info", playMethodDisplay, streamType, protocol, vcDisplay, acDisplay);
+        _mpv.SendScriptMessage("osc-set-stream-info", playMethodDisplay, streamType, protocol, vcDisplay, acDisplay,
+            (pi?.TargetVideoBitrateKbps ?? 0).ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
     private string BuildRequestedSourceLabel(FileVersion currentVersion)
@@ -5458,8 +5482,6 @@ public class PlayerService : IDisposable
             {
                 var quality = tierId.ToLowerInvariant() switch
                 {
-                    "1080p-high" => "1080p",
-                    "720p-high" => "720p",
                     "420p" => "480p",
                     _ => tierId,
                 };
@@ -5481,8 +5503,10 @@ public class PlayerService : IDisposable
                 PlayMethod = session.PlayMethod;
                 ApplyPreparedTransport(prepared);
                 BeginMpvLoad(prepared, restorePaused: wasPaused);
-                _activeQualityTier = quality;
-                _mpv?.SendScriptMessage("osc-set-active-quality", quality);
+                // Show the quality actually accepted by the server, including
+                // any fallback; a requested tier is not proof of delivery.
+                _activeQualityTier = session.ActiveQuality;
+                _mpv?.SendScriptMessage("osc-set-active-quality", _activeQualityTier);
                 SendQualityInfoToOsc();
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)

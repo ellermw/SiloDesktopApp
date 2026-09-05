@@ -31,6 +31,10 @@ public partial class LibraryViewModel : ObservableObject
     private CancellationTokenSource _catalogQueryCts = new();
     private CancellationTokenSource? _windowLoadCts;
     private IReadOnlyList<MediaItem> _windowItems = [];
+    private readonly LinkedList<(int Start, CatalogResponse Response, bool IncludesTotal)> _recentWindows = new();
+    private Task? _pendingWindowTask;
+    private int _pendingWindowStart = -1;
+    private int _pendingWindowEnd = -1;
 
     public LibraryViewModel(CatalogApi catalogApi)
     {
@@ -462,14 +466,72 @@ public partial class LibraryViewModel : ObservableObject
 
     public MediaItem? GetWindowItem(int absoluteIndex)
     {
-        if (absoluteIndex < WindowStartIndex || absoluteIndex > WindowEndIndex)
-            return null;
-
         var relativeIndex = absoluteIndex - WindowStartIndex;
-        if (relativeIndex < 0 || relativeIndex >= _windowItems.Count)
-            return null;
+        if (WindowStartIndex >= 0 && relativeIndex >= 0 && relativeIndex < _windowItems.Count)
+            return _windowItems[relativeIndex];
 
-        return _windowItems[relativeIndex];
+        foreach (var cached in _recentWindows)
+        {
+            relativeIndex = absoluteIndex - cached.Start;
+            if (relativeIndex >= 0 && relativeIndex < cached.Response.Items.Count)
+                return cached.Response.Items[relativeIndex];
+        }
+        return null;
+    }
+
+    /// <summary>Fills a bounded neighborhood without replacing or notifying the visible window.</summary>
+    public async Task<IReadOnlyList<MediaItem>> PrefetchAroundAsync(
+        int startIndex, int endIndex, bool forward, CancellationToken ct = default)
+    {
+        if (Library == null || TotalCount <= 0 || startIndex < 0 || endIndex < startIndex)
+            return [];
+
+        var screen = Math.Clamp(endIndex - startIndex + 1, 1, 100);
+        var first = Math.Max(0, startIndex - screen * (forward ? 1 : 3));
+        var last = Math.Min(TotalCount - 1, endIndex + screen * (forward ? 3 : 1));
+        var version = _queryVersion;
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, _catalogQueryCts.Token);
+        var token = linked.Token;
+        // Work nearest-first in the direction of travel, then behind. Never
+        // launch one request per wheel tick or fan out across the whole library.
+        var indices = forward
+            ? Enumerable.Range(startIndex, Math.Max(0, last - startIndex + 1))
+                .Concat(Enumerable.Range(first, startIndex - first).Reverse())
+            : Enumerable.Range(first, Math.Max(0, endIndex - first + 1)).Reverse()
+                .Concat(Enumerable.Range(endIndex + 1, Math.Max(0, last - endIndex)));
+        try
+        {
+            foreach (var index in indices)
+            {
+                token.ThrowIfCancellationRequested();
+                if (GetWindowItem(index) != null) continue;
+                var fetchStart = first + (index - first) / 100 * 100;
+                var fetchEnd = Math.Min(last, fetchStart + 99);
+                var response = await FetchWindowPageAsync(fetchStart, fetchEnd - fetchStart + 1,
+                    false, _snapshot, token);
+                if (token.IsCancellationRequested || version != _queryVersion) return [];
+                RememberWindow(fetchStart, response, false);
+                if (response.Items.Count == 0) break;
+            }
+            return indices.Select(GetWindowItem).OfType<MediaItem>().ToArray();
+        }
+        catch (OperationCanceledException) { return []; }
+        // Speculative loading must not replace the visible catalog with an error.
+        catch { return []; }
+    }
+
+    private void RememberWindow(int startIndex, CatalogResponse response, bool includeTotal)
+    {
+        _recentWindows.AddFirst((startIndex, response, includeTotal));
+        while (_recentWindows.Count > 8 || _recentWindows.Sum(window => window.Response.Items.Count) > 1200)
+            _recentWindows.RemoveLast();
+    }
+
+    private bool HasCachedRange(int startIndex, int endIndex)
+    {
+        for (var index = startIndex; index <= endIndex; index++)
+            if (GetWindowItem(index) == null) return false;
+        return true;
     }
 
     /// <summary>
@@ -482,6 +544,7 @@ public partial class LibraryViewModel : ObservableObject
         if (string.IsNullOrWhiteSpace(contentId)) return 0;
 
         var matches = _windowItems
+            .Concat(_recentWindows.SelectMany(window => window.Response.Items))
             .Concat(_pageResponses.Values.SelectMany(response => response.Items))
             .Where(item => string.Equals(item.ContentId, contentId, StringComparison.OrdinalIgnoreCase))
             .Distinct<MediaItem>(ReferenceEqualityComparer.Instance)
@@ -495,7 +558,58 @@ public partial class LibraryViewModel : ObservableObject
         return changed;
     }
 
-    public async Task LoadWindowAsync(int startIndex, int itemCount, bool force = false)
+    public Task LoadWindowAsync(int startIndex, int itemCount, bool force = false)
+    {
+        if (Library == null || itemCount <= 0) return Task.CompletedTask;
+        startIndex = TotalCount > 0 ? Math.Clamp(startIndex, 0, TotalCount - 1) : 0;
+        itemCount = TotalCount > 0 ? Math.Min(itemCount, TotalCount - startIndex) : itemCount;
+        var endIndex = startIndex + itemCount - 1;
+        if (!force && HasWindow(startIndex, endIndex))
+        {
+            CancelWindowLoad();
+            IsLoading = false;
+            return Task.CompletedTask;
+        }
+
+        if (!force && _pendingWindowTask is { IsCompleted: false } &&
+            startIndex >= _pendingWindowStart && endIndex <= _pendingWindowEnd)
+            return _pendingWindowTask;
+
+        if (force) _recentWindows.Clear();
+        if (!force && HasCachedRange(startIndex, endIndex))
+        {
+            CancelWindowLoad();
+            IsLoading = false;
+            return Task.CompletedTask;
+        }
+        for (var node = _recentWindows.First; node != null; node = node.Next)
+        {
+            var cached = node.Value;
+            if (startIndex < cached.Start || endIndex >= cached.Start + cached.Response.Items.Count) continue;
+            CancelWindowLoad();
+            _recentWindows.Remove(node);
+            _recentWindows.AddFirst(cached);
+            ApplyWindowResponse(cached.Start, cached.Response, cached.IncludesTotal);
+            IsLoading = false;
+            ErrorMessage = null;
+            WindowLoaded?.Invoke();
+            return Task.CompletedTask;
+        }
+
+        // Keep a small buffer around the viewport without requesting the whole
+        // library. Stable boundaries allow nearby scroll events to share work.
+        if (TotalCount > 0 && itemCount <= 100)
+        {
+            var alignedStart = startIndex / PageSize * PageSize;
+            if (endIndex < alignedStart + 100) startIndex = alignedStart;
+            itemCount = Math.Min(100, TotalCount - startIndex);
+        }
+        _pendingWindowStart = startIndex;
+        _pendingWindowEnd = startIndex + itemCount - 1;
+        return _pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force);
+    }
+
+    private async Task LoadWindowCoreAsync(int startIndex, int itemCount, bool force)
     {
         if (Library == null || itemCount <= 0)
             return;
@@ -533,6 +647,7 @@ public partial class LibraryViewModel : ObservableObject
                 return;
 
             ApplyWindowResponse(startIndex, response, includeTotal);
+            RememberWindow(startIndex, response, includeTotal);
             WindowLoaded?.Invoke();
         }
         catch (OperationCanceledException) { }
@@ -562,6 +677,7 @@ public partial class LibraryViewModel : ObservableObject
         _queryVersion++;
         _loadingPages.Clear();
         _pageResponses.Clear();
+        _recentWindows.Clear();
         _snapshot = null;
         _estimatedTotalItems = 0;
         _hasExactTotal = false;
@@ -582,6 +698,7 @@ public partial class LibraryViewModel : ObservableObject
         _queryVersion++;
         _loadingPages.Clear();
         _pageResponses.Clear();
+        _recentWindows.Clear();
         ClearActiveWindow(notify: true);
         IsLoading = false;
     }
@@ -609,6 +726,7 @@ public partial class LibraryViewModel : ObservableObject
 
     private void CancelWindowLoad()
     {
+        _pendingWindowTask = null;
         var cts = _windowLoadCts;
         if (cts == null)
             return;
@@ -746,7 +864,22 @@ public partial class LibraryViewModel : ObservableObject
             snapshot: snapshot,
             ct: ct);
 
-    private Task<CatalogResponse> FetchWindowAsync(int startIndex, int itemCount, bool includeTotal, string? snapshot = null, CancellationToken ct = default)
+    private async Task<CatalogResponse> FetchWindowAsync(int startIndex, int itemCount, bool includeTotal, string? snapshot = null, CancellationToken ct = default)
+    {
+        var response = await FetchWindowPageAsync(startIndex, Math.Min(100, itemCount), includeTotal, snapshot, ct);
+        while (response.Items.Count < itemCount && response.HasMore)
+        {
+            ct.ThrowIfCancellationRequested();
+            var next = await FetchWindowPageAsync(startIndex + response.Items.Count,
+                Math.Min(100, itemCount - response.Items.Count), false, response.Snapshot ?? snapshot, ct);
+            response.HasMore = next.HasMore;
+            if (next.Items.Count == 0) break;
+            response.Items.AddRange(next.Items);
+        }
+        return response;
+    }
+
+    private Task<CatalogResponse> FetchWindowPageAsync(int startIndex, int itemCount, bool includeTotal, string? snapshot, CancellationToken ct)
         => _catalogApi.GetCatalogAsync(
             libraryId: Library!.Id,
             sort: SelectedSort,

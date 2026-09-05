@@ -40,6 +40,7 @@ public sealed partial class HomePage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        App.RecordUiDiagnostic($"Home loaded built={_contentBuilt} revision={ViewModel.RenderRevision} rows={ViewModel.Sections.Count}");
         try
         {
             AttachViewModelEvents();
@@ -266,6 +267,7 @@ public sealed partial class HomePage : Page
 
     private void OnSectionsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
+        App.RecordUiDiagnostic($"Home sections action={e.Action} oldIndex={e.OldStartingIndex} newIndex={e.NewStartingIndex} rows={ViewModel.Sections.Count} refreshing={_isRefreshingLayout}");
         if (_isRefreshingLayout)
         {
             // A layout refresh clears and repopulates both collections. Fold
@@ -375,6 +377,12 @@ public sealed partial class HomePage : Page
         {
             HeroLoadingSkeleton.Visibility = Visibility.Visible;
         }
+    }
+
+    private void ContentScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (!e.IsIntermediate)
+            App.RecordUiDiagnostic($"Home scrolled offset={ContentScrollViewer.VerticalOffset:F0} extent={ContentScrollViewer.ExtentHeight:F0} viewport={ContentScrollViewer.ViewportHeight:F0}");
     }
 
     private void RetryHero_Click(object sender, RoutedEventArgs e)

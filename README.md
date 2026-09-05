@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.95**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.95/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.100**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.100/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `F0238CA6E778A8AB5A3999EB118CE5019963AB4EC95C76F1EBC93440460FF992`
+The release includes a SHA-256 checksum for the installer.
 
 The installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 
@@ -43,14 +43,29 @@ Status meanings:
 
 ## Latest release
 
-### 1.1.95
+### 1.1.100
 
-- Kept multi-gigabyte progressive direct-play and remux streams on exact HTTP/1.1 after live 1.1.94 playback exposed repeated HTTP/2 `INTERNAL_ERROR` resets through the server/CDN path.
-- Preserved HTTP/2 negotiation for normal API traffic while retaining byte-range continuation, strong-ETag entity protection, watchdog coordination, and protocol-v3 fallback behavior.
-- Added a regression test that rejects HTTP/2 progressive requests and verifies successful HTTP/1.1 media delivery with an exact version policy.
-- Audited against official Silo Server `main` commit `7c1cb2d3f34e7a37d2864b63735386300e81ef31`; verified 788 passing tests and CodeRabbit's zero-issue review of PR #7.
+- Added optional NVIDIA RTX AI upscaling for eligible SDR video, with a 2× limit per dimension and normal-rendering fallback.
+- Fixed quality choices such as 720p Medium being sent as Auto. Resolution and bitrate tiers now survive playback starts and quality/audio replans.
+- Playback Info distinguishes input frames, processed frames, server target video bitrate, measured video/audio bitrates, and original-file metadata.
+- Improved library scrolling with native scrolling, bounded card reuse, nearby catalog/artwork prefetching, and adjustable poster sizes.
+- Applied the selected source audio track during direct playback and reset audio selection when loading packaged streams.
+- Verified 888 x64 Release tests. Dense-grid performance and the separately reported Home crash remain under investigation; this release does not claim full WebUI parity.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release history.
+
+## NVIDIA RTX AI upscaling (preview)
+
+Enable **Settings → Playback → Desktop playback → NVIDIA RTX AI upscaling (preview)** and restart **Silo for Windows Desktop App**. Enable Video Super Resolution in the NVIDIA App's video settings as well. The setting is off by default and saved on this PC.
+
+The preview supports NVIDIA RTX adapters with compatible drivers. Intel and AMD AI upscaling are not included; normal playback remains available. Enhancement applies to eligible SDR video up to 1080p when the playback area is larger. HDR, unknown color transfers, rotated/anamorphic content, and native 4K bypass the preview.
+
+The maximum is **2× per dimension**: 1080p can produce 4K frames; 720p can produce 1440p frames, followed by normal rendering to a 4K display. This creates four times the pixels, not native-4K source detail. Upscaling does not increase the streamed bitrate or convert SDR to HDR.
+
+Press **I** during playback to compare **Source video** and **Processed video**. **RTX VSR (requested)** identifies the requested processing mode; NVIDIA's own indicator confirms driver activation. **Target video bitrate** is the server encoder target. The measured video/audio rates fluctuate with the compressed stream and are separate from the original file's bitrate and buffering/download speed.
+
+See [implementation and verification notes](docs/ai-upscaling-feasibility.md) for preview limits and test coverage.
+
 ## Playback goals
 
 - Prefer direct play whenever libmpv can decode the source.

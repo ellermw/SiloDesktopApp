@@ -71,6 +71,12 @@ public partial class App : Application
             var sb = new System.Text.StringBuilder();
             sb.AppendLine($"{DateTime.Now}");
             sb.AppendLine($"args.Message: {args.Message}");
+            sb.AppendLine($"Version: {typeof(App).Assembly.GetName().Version}");
+            sb.AppendLine($"Last UI operation: {PerfBreadcrumb}");
+            sb.AppendLine("Recent Home collection/layout events:");
+            lock (UiDiagnosticEvents)
+                foreach (var entry in UiDiagnosticEvents)
+                    sb.AppendLine(entry);
             sb.AppendLine();
 
             var ex = args.Exception;
@@ -170,6 +176,20 @@ public partial class App : Application
     }
 
     public static string PerfBreadcrumb { get; private set; } = "";
+
+    // Kept in memory and written only on an unhandled exception. Record counts,
+    // indices and lifecycle events rather than media titles or credentials.
+    private static readonly Queue<string> UiDiagnosticEvents = new();
+
+    public static void RecordUiDiagnostic(string value)
+    {
+        lock (UiDiagnosticEvents)
+        {
+            while (UiDiagnosticEvents.Count >= 64)
+                UiDiagnosticEvents.Dequeue();
+            UiDiagnosticEvents.Enqueue($"{DateTime.Now:HH:mm:ss.fff} {value}");
+        }
+    }
 
     public static void SetPerfBreadcrumb(string value) => PerfBreadcrumb = value;
 

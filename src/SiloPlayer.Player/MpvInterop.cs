@@ -21,6 +21,7 @@ public static class MpvInterop
 
     public const int MPV_EVENT_NONE            = 0;
     public const int MPV_EVENT_SHUTDOWN         = 1;
+    public const int MPV_EVENT_LOG_MESSAGE      = 2;
     public const int MPV_EVENT_END_FILE         = 7;
     public const int MPV_EVENT_FILE_LOADED      = 8;
     public const int MPV_EVENT_CLIENT_MESSAGE    = 16;
@@ -110,6 +111,10 @@ public static class MpvInterop
         [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string data);
 
+    [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr mpv_get_property_string(IntPtr ctx,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
+
     [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl, EntryPoint = "mpv_get_property")]
     public static extern int mpv_get_property_int(IntPtr ctx,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
@@ -133,6 +138,19 @@ public static class MpvInterop
 
     [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
     public static extern void mpv_wakeup(IntPtr ctx);
+
+    [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
+    public static extern int mpv_request_log_messages(IntPtr ctx,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string level);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MpvEventLogMessage
+    {
+        public IntPtr Prefix;
+        public IntPtr Level;
+        public IntPtr Text;
+        public int LogLevel;
+    }
 
     [DllImport(LibMpv, CallingConvention = CallingConvention.Cdecl)]
     public static extern void mpv_free(IntPtr data);

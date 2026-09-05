@@ -14,7 +14,7 @@ namespace SiloPlayer.Player;
 /// This completely decouples mpv from WinUI 3's D3D11 compositor, eliminating the thread
 /// contention that blocked the UI when using wid/vo=gpu.
 /// </summary>
-public sealed class MpvPlayer : IDisposable
+public sealed partial class MpvPlayer : IDisposable
 {
     private IntPtr _mpvHandle;
     private IntPtr _renderCtx;
@@ -292,7 +292,7 @@ public sealed class MpvPlayer : IDisposable
     /// Creates the mpv instance using GPU rendering into a provided window handle.
     /// mpv renders directly via D3D11 -- zero frame copies, hardware accelerated.
     /// </summary>
-    public void InitializeWithWindow(IntPtr windowHandle)
+    public void InitializeWithWindow(IntPtr windowHandle, bool nvidiaVideoUpscaling = false)
     {
         if (_mpvHandle != IntPtr.Zero)
             throw new InvalidOperationException("MpvPlayer is already initialized.");
@@ -311,6 +311,7 @@ public sealed class MpvPlayer : IDisposable
         SetOption("vo", "gpu-next,gpu");
         SetOption("gpu-api", "d3d11");
         SetOption("gpu-context", "d3d11");
+        ConfigureUpscaling(nvidiaVideoUpscaling);
 
         // Set the target window handle
         SetOption("wid", windowHandle.ToString());
@@ -415,6 +416,9 @@ public sealed class MpvPlayer : IDisposable
             Name = "MpvEventLoop"
         };
         _eventThread.Start();
+
+        if (_upscalingEnabled)
+            mpv_request_log_messages(_mpvHandle, "warn");
 
         // No render thread needed -- mpv handles rendering internally via vo=gpu
     }
@@ -554,6 +558,7 @@ public sealed class MpvPlayer : IDisposable
     public void LoadFile(string url, string? authHeader = null, double startSeconds = 0)
     {
         ThrowIfNotInitialized();
+        ResetUpscalingForLoad();
 
         mpv_set_property_string(_mpvHandle, "http-header-fields",
             !string.IsNullOrEmpty(authHeader) ? $"Authorization: {authHeader}" : "");
@@ -666,6 +671,32 @@ public sealed class MpvPlayer : IDisposable
         if (mpv_get_property_double(_mpvHandle, name, MPV_FORMAT_DOUBLE, out double val) == 0)
             return val;
         return 0;
+    }
+
+    /// <summary>Returns mpv audio IDs in source order, excluding video/subtitle tracks.</summary>
+    public IReadOnlyList<int> GetAudioTrackIds()
+    {
+        ThrowIfNotInitialized();
+        if (mpv_get_property_int(_mpvHandle, "track-list/count", MPV_FORMAT_INT64, out var count) < 0)
+            throw new InvalidOperationException("The player audio inventory is unavailable.");
+        var ids = new List<int>();
+        for (var i = 0; i < count; i++)
+        {
+            var typePtr = mpv_get_property_string(_mpvHandle, $"track-list/{i}/type");
+            try
+            {
+                if (Marshal.PtrToStringUTF8(typePtr) != "audio")
+                    continue;
+                if (mpv_get_property_int(_mpvHandle, $"track-list/{i}/id", MPV_FORMAT_INT64, out var id) < 0)
+                    throw new InvalidOperationException("The player audio track ID is unavailable.");
+                ids.Add(checked((int)id));
+            }
+            finally
+            {
+                if (typePtr != IntPtr.Zero) mpv_free(typePtr);
+            }
+        }
+        return ids;
     }
 
     /// <summary>
@@ -794,7 +825,7 @@ public sealed class MpvPlayer : IDisposable
     /// Sends a command to mpv. Each arg is converted to a UTF-8 null-terminated byte array,
     /// pinned, and passed as a null-terminated IntPtr array to mpv_command.
     /// </summary>
-    private void Command(params string[] args)
+    private bool Command(params string[] args)
     {
         ThrowIfNotInitialized();
 
@@ -827,6 +858,7 @@ public sealed class MpvPlayer : IDisposable
                 string errMsg = GetErrorString(err);
                 ReportErrorSafely($"mpv_command [{string.Join(" ", args.Select(RedactCommandArgument))}] failed: {errMsg}");
             }
+            return err >= 0;
         }
         finally
         {
@@ -894,7 +926,12 @@ public sealed class MpvPlayer : IDisposable
                         break;
 
                     case MPV_EVENT_FILE_LOADED:
+                        lock (_upscalingLock) _upscalingFileLoaded = true;
                         InvokeSafely(FileLoaded, nameof(FileLoaded));
+                        break;
+
+                    case MPV_EVENT_LOG_MESSAGE:
+                        HandleUpscalingLog(ev);
                         break;
 
                     case MPV_EVENT_PLAYBACK_RESTART:
@@ -902,6 +939,7 @@ public sealed class MpvPlayer : IDisposable
                         break;
 
                     case MPV_EVENT_END_FILE:
+                        lock (_upscalingLock) _upscalingFileLoaded = false;
                         if (ev.Data != IntPtr.Zero)
                         {
                             var endFile = Marshal.PtrToStructure<MpvEventEndFile>(ev.Data);
@@ -932,6 +970,7 @@ public sealed class MpvPlayer : IDisposable
                     case MPV_EVENT_SHUTDOWN:
                         return; // Exit the event loop
                 }
+                UpdateUpscaling();
             }
             catch (Exception ex)
             {
@@ -1161,6 +1200,7 @@ public sealed class MpvPlayer : IDisposable
         PlaybackError = null;
         EofReached = null;
         FileLoaded = null;
+        UpscalingStatusChanged = null;
         BufferingChanged = null;
         FrameReady = null;
         ScriptMessageReceived = null;

@@ -43,7 +43,7 @@ public sealed class ChapterThumbnailRealtimeParitySourceTests
 
     private static string SourcePath(params string[] parts)
     {
-        var root = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var root = TestRepository.Root;
         return Path.Combine(new[] { root }.Concat(parts).ToArray());
     }
 }

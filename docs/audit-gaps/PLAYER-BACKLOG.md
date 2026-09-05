@@ -4,6 +4,70 @@ Player regressions completed in the 1.1.74/1.1.75 player milestone. New
 regressions should be added here with their own reproduction and acceptance
 evidence.
 
+## P1 — Selected English audio still plays Korean in Tomb Raider King
+
+Reported September 4, 2026. User explicitly prioritized an immediate fix and
+approved the focused audio-selection correction. Implemented for QA 1.1.100;
+runtime track-selection checks passed, awaiting audible user confirmation.
+
+### Reported reproduction
+
+1. Open **Tomb Raider King** from the **Anime** library and play an episode.
+2. The file has two audio tracks: Korean first, English second.
+3. The app automatically shows English selected, but the audible track is Korean.
+4. The user reports that it continues playing the first track regardless of selection.
+
+Confirmed from the actual local playback trace: episode-tvdb-452039-1-1,
+file 18495166, v3 DirectProgressive. mpv repeatedly selected Korean aid=1 while
+the OSC announced source index 1 (English; available as aid=2). The v3 audio
+replan reloaded the original file without applying the selected audio locally;
+the legacy direct-selection branch was bypassed by the v3 branch.
+
+The load-completion path now maps the source audio ordinal through mpv's actual
+audio inventory, applies it, and verifies aid before restoring play/pause.
+Packaged transports select their delivered audio instead of reusing the source
+ordinal. Each new load resets stale aid selection. Missing/rejected selection
+surfaces an error rather than silently continuing with the default language.
+
+Verification: the original log reproduced three English-OSC/Korean-mpv
+mismatches. Nine focused tests cover original/packaged selection, non-contiguous
+native IDs, missing/rejected selection, and silent video; all 837 x64 Release
+tests passed. Official upstream reference: 658be10eb03615f104790fba0431a4d19fd02d15,
+playback-protocol-v3 original_http/client_selected_audio_track_v1 contract.
+
+September 4 runtime QA (separate 1.1.100 process, real episode via normal OSC):
+
+- Automatic English on resume: sourceIndex=1, mpvAid=2, two source audio tracks.
+- Manual Korean while paused: sourceIndex=0, mpvAid=1; remained paused at 6:00.
+- Manual English while playing: sourceIndex=1, mpvAid=2; playback continued.
+- 720p-high quality: TranscodeHls, sourceIndex=1, mpvAid=1, one delivered track.
+- Return to Original: DirectProgressive, sourceIndex=1, mpvAid=2; remained paused.
+- mpv's own log confirms active --alang=en for aid=2, not merely the OSC label.
+- Not audibly verified by the agent; remux and episode-autoplay cases have not
+  been runtime-tested in this focused pass. Remux mapping has unit coverage.
+- Existing quality-menu behavior briefly resumed the outgoing paused stream
+  before restoring pause after loading, and showed generic 'Quality' for the
+  transcode. Keep those separate from this audio-selection fix for player work.
+
+QA installer: `D:\SiloPlayer\installer\output\SiloInstaller-1.1.100-Setup.exe`.
+SHA-256: `40168FBF973D5BC2032DE71D8B5A8464CBA41B2191C8D0D7C232F306F9290D9B`.
+Built with the existing multi-file packaging workflow, no Windows security or
+certificate changes. Published binaries launched and played during QA; installer
+installation itself was not repeated. No commit, push, or PR was performed.
+
+### Diagnosis and acceptance checks
+
+- Reproduce automatic English preference and manual Korean/English switching.
+- Compare the selected file's track metadata, playback start/switch request,
+  server response, mpv track list and actual selected mpv audio ID. Distinguish
+  server stream indices from mpv track IDs rather than assuming they match.
+- Confirm audibly that English selection plays English and Korean plays Korean;
+  the OSC label alone is not sufficient verification.
+- Check direct play, remux and transcode where available; repeat after resume
+  and automatic episode advance. Preserve timestamp and playing/paused state.
+- Add a regression at the real failing seam once the cause is established.
+
+
 ## P1 — OSC can disappear after automatic episode advance
 
 Reported July 28, 2026. Deferred to the next player/OSC major milestone.

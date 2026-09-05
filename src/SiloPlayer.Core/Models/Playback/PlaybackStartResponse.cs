@@ -77,6 +77,8 @@ public class SubtitleTrackSignature
 
 public class PlaybackInfo
 {
+    // Server encoder target, in kbps; not a measurement or source-file bitrate.
+    public int? TargetVideoBitrateKbps { get; set; }
     public string StreamType { get; set; } = "";
     public bool TranscodeAudio { get; set; }
     public string VideoCodec { get; set; } = "";

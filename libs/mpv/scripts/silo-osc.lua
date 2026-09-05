@@ -2158,11 +2158,47 @@ local function render_stats()
 
     -- Section 2: Video Info (live)
     local s2 = { header = "VIDEO INFO", rows = {} }
-    table.insert(s2.rows, { label = "Player dimensions", value = string.format("%dx%d", W, H) })
+    table.insert(s2.rows, { label = "Display area", value = string.format("%dx%d", W, H) })
     local vw = mp.get_property_number("video-params/w")
     local vh = mp.get_property_number("video-params/h")
-    table.insert(s2.rows, { label = "Video resolution", value =
-        vw and vh and vw > 0 and string.format("%dx%d", vw, vh) or fallback })
+    -- These are real frames after video filters, before the renderer fits
+    -- them to the window. Never infer processing resolution from the monitor.
+    local ow = mp.get_property_number("video-out-params/w")
+    local oh = mp.get_property_number("video-out-params/h")
+    local source_known = vw and vh and vw > 0 and vh > 0
+    local output_known = ow and oh and ow > 0 and oh > 0
+    local processed = output_known and string.format("%dx%d", ow, oh) or fallback
+    if output_known and (ow == 3840 or ow == 4096) and oh == 2160 then
+        processed = processed .. " (4K)"
+    end
+    table.insert(s2.rows, { label = "Source video", value =
+        source_known and string.format("%dx%d", vw, vh) or fallback })
+    table.insert(s2.rows, { label = "Processed video", value = processed })
+    local factor = fallback
+    local pixel_factor = fallback
+    local enlarged = source_known and output_known and ow > vw and oh > vh
+    if source_known and output_known then
+        pixel_factor = string.format("%.2fx", (ow * oh) / (vw * vh))
+        if enlarged then
+            local sx, sy = ow / vw, oh / vh
+            factor = math.abs(sx - sy) < 0.01 and string.format("%.2fx", sx)
+                or string.format("%.2fx / %.2fx", sx, sy)
+        else
+            factor = "None"
+        end
+    end
+    local rtx_requested = false
+    for _, filter in ipairs(mp.get_property_native("vf", {}) or {}) do
+        if filter.name == "d3d11vpp" and filter.enabled ~= false and
+            filter.params and filter.params["scaling-mode"] == "nvidia" then
+            rtx_requested = true
+            break
+        end
+    end
+    table.insert(s2.rows, { label = "Scale per dimension", value = factor })
+    table.insert(s2.rows, { label = "Pixel count", value = pixel_factor })
+    table.insert(s2.rows, { label = "Upscaler", value = rtx_requested and "RTX VSR (requested)"
+        or (enlarged and "Other video filter" or "Normal renderer") })
     local dropped = (mp.get_property_number("frame-drop-count") or 0)
                   + (mp.get_property_number("decoder-frame-drop-count") or 0)
     table.insert(s2.rows, { label = "Dropped frames", value = tostring(dropped) })
@@ -2173,6 +2209,17 @@ local function render_stats()
     local s3 = { header = "PLAYBACK STREAM INFO", rows = {} }
     table.insert(s3.rows, { label = "Video codec", value = shown(state.stream_codec_video) })
     table.insert(s3.rows, { label = "Audio codec", value = shown(state.stream_codec_audio) })
+    local target = state.stream_target_video_kbps or 0
+    table.insert(s3.rows, { label = "Target video bitrate", value = target > 0 and
+        format_mbps_from_kbps(target) or (state.play_method_str == "Transcode" and "Unavailable" or "Not applicable") })
+    -- mpv measures compressed packets in bits/second, before video processing.
+    -- These are media rates, not download speed (which includes buffering).
+    local video_bps = mp.get_property_number("video-bitrate") or 0
+    local audio_bps = mp.get_property_number("audio-bitrate") or 0
+    table.insert(s3.rows, { label = "Video bitrate (measured)", value = video_bps > 0 and
+        format_mbps_from_kbps(video_bps / 1000) or "Unavailable" })
+    table.insert(s3.rows, { label = "Audio bitrate (measured)", value = audio_bps > 0 and
+        format_kbps(audio_bps / 1000) or "Unavailable" })
     table.insert(sections, s3)
 
     -- Section 4: current source file, matching playback-info.ts.
@@ -2190,14 +2237,14 @@ local function render_stats()
         end
         table.insert(s4.rows, { label = "Video codec", value = shown(video_codec) })
         table.insert(s4.rows, { label = "Video bitrate", value = mi.video_bitrate and mi.video_bitrate > 0 and
-            format_mbps_from_kbps(mi.video_bitrate) or fallback })
+            format_mbps_from_kbps(mi.video_bitrate) or "Not supplied" })
         table.insert(s4.rows, { label = "Video range type", value = shown(mi.video_range) })
         table.insert(s4.rows, { label = "Color range", value = shown(format_color_range(mi.color_range)) })
         local audio_codec = mi.audio_title and mi.audio_title ~= "" and mi.audio_title or
             (mi.codec_audio and string.upper(mi.codec_audio) or "")
         table.insert(s4.rows, { label = "Audio codec", value = shown(audio_codec) })
         table.insert(s4.rows, { label = "Audio bitrate", value = mi.audio_bitrate and mi.audio_bitrate > 0 and
-            format_kbps(mi.audio_bitrate) or fallback })
+            format_kbps(mi.audio_bitrate) or "Not supplied" })
         table.insert(s4.rows, { label = "Audio channels", value = mi.audio_channels and mi.audio_channels > 0 and
             tostring(mi.audio_channels) or fallback })
         local sample_rate = fallback
@@ -5105,12 +5152,13 @@ local function observe_properties()
         end
     end)
 
-    mp.register_script_message("osc-set-stream-info", function(play_method, stream_type, protocol, video_codec, audio_codec)
+    mp.register_script_message("osc-set-stream-info", function(play_method, stream_type, protocol, video_codec, audio_codec, target_video_kbps)
         state.play_method_str = play_method or ""
         state.stream_type_str = stream_type or ""
         state.protocol_str = protocol or ""
         state.stream_codec_video = video_codec or ""
         state.stream_codec_audio = audio_codec or ""
+        state.stream_target_video_kbps = tonumber(target_video_kbps) or 0
     end)
 
     mp.register_script_message("osc-set-subtitles", function(json_str)

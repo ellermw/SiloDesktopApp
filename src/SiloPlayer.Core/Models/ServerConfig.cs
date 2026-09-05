@@ -19,6 +19,7 @@ public class AppSettings
     public string? LastProfileId { get; set; }
     public string? LastTheme { get; set; }
     public bool DesktopSidebarOpen { get; set; } = true;
+    public double? LibraryPosterWidth { get; set; }
     public List<int> HiddenLibraryIds { get; set; } = [];
     public string? LastUserRole { get; set; }
     public string? LastUsername { get; set; }
@@ -31,6 +32,9 @@ public class AppSettings
 
     /// <summary>Whether the player was last in a muted state.</summary>
     public bool PlayerMuted { get; set; } = false;
+
+    /// <summary>Local, opt-in RTX video enhancement. Never changes server quality preferences.</summary>
+    public bool NvidiaVideoUpscaling { get; set; }
 
     public int AudiobookSkipBackSeconds { get; set; } = 10;
     public int AudiobookSkipForwardSeconds { get; set; } = 30;

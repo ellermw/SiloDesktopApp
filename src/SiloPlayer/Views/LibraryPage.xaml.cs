@@ -27,6 +27,9 @@ public sealed partial class LibraryPage : Page,
     private readonly UICustomizationService _uiCustomizationService;
     private readonly EventChannelClient _eventChannel;
     private readonly AuthService _authService;
+    private double? _posterWidthOverride;
+    private DispatcherTimer? _posterSizeTimer;
+    private bool _settingPosterSize;
     public sealed record NavigationArgs(
         Library Library,
         string? InitialTab = null,
@@ -152,11 +155,14 @@ public sealed partial class LibraryPage : Page,
     private bool _isLoadingAudiobookGroups;
     private double _collectionCardWidth;
     private DispatcherTimer? _visibleRangeDebounceTimer;
+    private CancellationTokenSource? _libraryReadAheadCts;
+    private static readonly AsyncWorkThrottle s_artworkWarmupThrottle = new(2);
     private bool _forceVisibleRangeLoad;
     private int _lastRequestedStartIndex = -1;
     private int _lastRequestedEndIndex = -1;
     private int _currentFirstRow;
-    private bool _suppressScrollBarValueChanged;
+    private double _libraryVerticalOffset;
+    private double? _pendingLibraryOffset;
     private readonly Dictionary<int, LibraryGridCard> _visibleLibraryCards = [];
     private readonly List<LibraryGridCard> _libraryCardSlots = [];
     private readonly Queue<int> _pendingCardBinds = [];
@@ -170,7 +176,7 @@ public sealed partial class LibraryPage : Page,
     private bool _viewModelEventsAttached;
     private bool _messengerRegistered;
     private int? _activeLibraryId;
-    private const int CardBindsPerTick = 12;
+    private const int CardBindsPerTick = 4;
     private const int MaxRealizedLibraryCards = 40;
     private const int LibraryOverscanRows = 1;
     private const double LibraryHeaderGlassThreshold = 160;
@@ -183,6 +189,17 @@ public sealed partial class LibraryPage : Page,
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
+        var savedWidth = App.Services.GetRequiredService<SettingsService>().Load().LibraryPosterWidth;
+        _posterWidthOverride = savedWidth is { } width && double.IsFinite(width) ? Math.Clamp(width, 100, 300) : null;
+        _settingPosterSize = true;
+        PosterSizeSlider.Value = _posterWidthOverride ?? 180;
+        _settingPosterSize = false;
+        _posterSizeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
+        _posterSizeTimer.Tick += (_, _) =>
+        {
+            _posterSizeTimer.Stop();
+            ApplyPosterWidth(PosterSizeSlider.Value);
+        };
         NavigationCacheMode = NavigationCacheMode.Required;
         AttachViewModelEvents();
         UpdateVirtualGridMetrics();
@@ -335,6 +352,8 @@ public sealed partial class LibraryPage : Page,
                 ViewModel.CancelCatalogLoads();
                 ClearVirtualCards();
                 _currentFirstRow = 0;
+                _libraryVerticalOffset = 0;
+                _pendingLibraryOffset = 0;
                 _lastRequestedStartIndex = -1;
                 _lastRequestedEndIndex = -1;
                 _recommendedLoaded = false;
@@ -478,6 +497,10 @@ public sealed partial class LibraryPage : Page,
         DetachRecommendedRealtimeEvents();
         CancelRecommendedRefresh();
         _visibleRangeDebounceTimer?.Stop();
+        _libraryReadAheadCts?.Cancel();
+        _libraryReadAheadCts?.Dispose();
+        _libraryReadAheadCts = null;
+        _posterSizeTimer?.Stop();
         _cardBindTimer?.Stop();
         _audiobookGroupSearchTimer?.Stop();
         _collectionsResizeTimer.Stop();
@@ -674,7 +697,7 @@ public sealed partial class LibraryPage : Page,
         var type = libraryType.Trim().ToLowerInvariant();
         var scope = type switch
         {
-            "movie" => "movie",
+            "movie" or "movies" => "movie",
             "series" or "tv" when browseType == "episode" => "episode",
             "series" or "tv" => "series",
             "audiobook" or "audiobooks" => "audiobook",
@@ -1676,12 +1699,17 @@ public sealed partial class LibraryPage : Page,
         SaveViewState(_currentTab);
     }
 
-    private void LibraryScrollBar_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    private void LibraryScroller_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
-        if (!_isNavigated || _suppressScrollBarValueChanged)
-            return;
+        if (!_isNavigated || _pendingLibraryOffset.HasValue) return;
+        UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset);
+    }
 
-        SetLibraryFirstRow((int)Math.Round(e.NewValue));
+    private void LibraryScroller_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (!_isNavigated) return;
+        UpdateVirtualGridMetrics();
+        ApplyPendingLibraryOffset();
     }
 
     private void LibraryViewport_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -1694,52 +1722,47 @@ public sealed partial class LibraryPage : Page,
         ScheduleVisibleRangeLoad(force: true);
     }
 
-    private void LibraryViewport_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    private void SetLibraryVerticalOffset(double offset, bool force = false)
     {
-        if (!_isNavigated)
-            return;
-
-        var delta = e.GetCurrentPoint(LibraryViewportHost).Properties.MouseWheelDelta;
-        if (delta == 0)
-            return;
-
         var layout = GetGridLayout();
-        var visibleRows = VirtualGridScrollGate.GetVisibleRowCount(GetLibraryViewportHeight(), layout.RowHeight);
-        var rows = delta < 0 ? visibleRows : -visibleRows;
-        SetLibraryFirstRow(_currentFirstRow + rows);
-        e.Handled = true;
+        var maximum = VirtualGridScrollGate.GetMaxVerticalOffset(
+            ViewModel.TotalCount, layout.Columns, layout.RowHeight, GetLibraryViewportHeight());
+        var clamped = Math.Clamp(offset, 0, maximum);
+
+        if (!force && clamped == _libraryVerticalOffset)
+            return;
+
+        _pendingLibraryOffset = clamped;
+        UpdateLibraryScrollPosition(clamped, force);
+        ApplyPendingLibraryOffset();
     }
 
-    private void SetLibraryFirstRow(int firstRow, bool force = false)
+    private void UpdateLibraryScrollPosition(double offset, bool force = false)
     {
         var layout = GetGridLayout();
-        var visibleRows = VirtualGridScrollGate.GetVisibleRowCount(GetLibraryViewportHeight(), layout.RowHeight);
-        var maxFirstRow = VirtualGridScrollGate.GetMaxFirstVisibleRow(ViewModel.TotalCount, layout.Columns, visibleRows);
-        var clamped = Math.Clamp(firstRow, 0, maxFirstRow);
+        _libraryVerticalOffset = offset;
+        _currentFirstRow = VirtualGridScrollGate.GetFirstVisibleRow(offset, layout.RowHeight);
 
-        if (!force && clamped == _currentFirstRow)
-            return;
-
-        _currentFirstRow = clamped;
-        SetScrollBarValue(clamped);
-
-        var scrollToTopVisibility = clamped > 1 ? Visibility.Visible : Visibility.Collapsed;
+        var scrollToTopVisibility = offset > layout.RowHeight ? Visibility.Visible : Visibility.Collapsed;
         if (ScrollToTopButton.Visibility != scrollToTopVisibility)
             ScrollToTopButton.Visibility = scrollToTopVisibility;
 
-        App.SetPerfBreadcrumb($"Library scroll row={clamped} cards={_visibleLibraryCards.Count} pending={_pendingCardBinds.Count} loading={ViewModel.IsLoading}");
+        App.SetPerfBreadcrumb($"Library native scroll offset={offset:F1} cards={_visibleLibraryCards.Count} pending={_pendingCardBinds.Count} loading={ViewModel.IsLoading}");
         QueueRenderVirtualGrid(force);
         ScheduleVisibleRangeLoad(force);
     }
 
-    private void SetScrollBarValue(double value)
+    private void ApplyPendingLibraryOffset()
     {
-        if (LibraryScrollBar.Value == value)
-            return;
-
-        _suppressScrollBarValueChanged = true;
-        try { LibraryScrollBar.Value = value; }
-        finally { _suppressScrollBarValueChanged = false; }
+        if (_pendingLibraryOffset is not double offset || LibraryScroller.ViewportHeight <= 0) return;
+        // Wait for the new extent to be arranged (initial load or density change).
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_isNavigated || _pendingLibraryOffset != offset) return;
+            _pendingLibraryOffset = null;
+            LibraryScroller.ChangeView(null, Math.Min(offset, LibraryScroller.ScrollableHeight), null, disableAnimation: true);
+            UpdateLibraryScrollPosition(LibraryScroller.VerticalOffset, force: true);
+        });
     }
 
     private void OnLibraryWindowLoaded()
@@ -1763,7 +1786,7 @@ public sealed partial class LibraryPage : Page,
         if (_renderQueued) return;
 
         _renderQueued = true;
-        DispatcherQueue.TryEnqueue(() =>
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
             if (!_isNavigated)
             {
@@ -1784,19 +1807,12 @@ public sealed partial class LibraryPage : Page,
         var total = ViewModel.TotalCount;
         var layout = GetGridLayout();
         var viewportHeight = GetLibraryViewportHeight();
-        var visibleRows = VirtualGridScrollGate.GetVisibleRowCount(viewportHeight, layout.RowHeight);
-        var maxFirstRow = VirtualGridScrollGate.GetMaxFirstVisibleRow(total, layout.Columns, visibleRows);
+        var contentHeight = VirtualGridScrollGate.GetMaxVerticalOffset(total, layout.Columns, layout.RowHeight, 0);
 
         VirtualGridCanvas.Width = layout.AvailableWidth;
-        VirtualGridCanvas.Height = Math.Max(layout.RowHeight, viewportHeight);
-
-        LibraryScrollBar.Maximum = maxFirstRow;
-        LibraryScrollBar.ViewportSize = Math.Max(1, visibleRows);
-        LibraryScrollBar.LargeChange = Math.Max(1, visibleRows - 1);
-
-        if (_currentFirstRow > maxFirstRow)
-            _currentFirstRow = maxFirstRow;
-        SetScrollBarValue(_currentFirstRow);
+        VirtualGridCanvas.Height = Math.Max(viewportHeight, contentHeight);
+        _currentFirstRow = VirtualGridScrollGate.GetFirstVisibleRow(_libraryVerticalOffset, layout.RowHeight);
+        ApplyPendingLibraryOffset();
     }
 
     private void RenderVirtualGrid(bool force = false)
@@ -1816,11 +1832,10 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
-        EnsureVirtualCardSlots();
-
         var layout = GetGridLayout();
         var range = GetVisibleItemRange(layout);
         range = ClampRealizedRange(range, layout);
+        EnsureVirtualCardSlots(range.EndIndex - range.StartIndex + 1);
         var windowStartRow = range.StartIndex / layout.Columns;
 
         App.SetPerfBreadcrumb($"Library render range {range.StartIndex}-{range.EndIndex} row={windowStartRow} last={_lastRenderedStartIndex}-{_lastRenderedEndIndex} cards={_visibleLibraryCards.Count}");
@@ -1828,6 +1843,7 @@ public sealed partial class LibraryPage : Page,
             range.StartIndex == _lastRenderedStartIndex &&
             range.EndIndex == _lastRenderedEndIndex)
         {
+            // Native composition moves the content. No per-pixel XAML layout work.
             App.SetPerfBreadcrumb($"Library render unchanged end cards={_visibleLibraryCards.Count} pending={_pendingCardBinds.Count}");
             return;
         }
@@ -1838,21 +1854,19 @@ public sealed partial class LibraryPage : Page,
         _cardBindTimer?.Stop();
         _pendingCardBinds.Clear();
         _pendingCardBindSet.Clear();
+        var assignments = VirtualGridSlotAllocator.Assign(
+            _libraryCardSlots, _visibleLibraryCards, range.StartIndex, range.EndIndex);
         _visibleLibraryCards.Clear();
 
-        var slotIndex = 0;
-        for (int index = range.StartIndex; index <= range.EndIndex; index++)
+        foreach (var (index, card) in assignments)
         {
-            if (slotIndex >= _libraryCardSlots.Count)
-                break;
-
-            var card = _libraryCardSlots[slotIndex];
             _visibleLibraryCards[index] = card;
+            if (card.Tag is not int previousIndex || previousIndex != index)
+                card.BindPlaceholder();
             card.Tag = index;
-            PositionVirtualCardSlot(card, slotIndex, layout);
+            PositionVirtualCardSlot(card, index, layout);
             if (card.Visibility != Visibility.Visible)
                 card.Visibility = Visibility.Visible;
-            slotIndex++;
 
             var item = ViewModel.GetWindowItem(index);
             if (item == null)
@@ -1864,8 +1878,9 @@ public sealed partial class LibraryPage : Page,
             QueueCardBind(index);
         }
 
-        for (int i = slotIndex; i < _libraryCardSlots.Count; i++)
-            HideVirtualCardSlot(_libraryCardSlots[i]);
+        var assignedCards = assignments.Values.ToHashSet();
+        foreach (var card in _libraryCardSlots)
+            if (!assignedCards.Contains(card)) HideVirtualCardSlot(card);
 
         App.SetPerfBreadcrumb($"Library render end cards={_visibleLibraryCards.Count} pending={_pendingCardBinds.Count} row={windowStartRow} total={ViewModel.TotalCount}");
     }
@@ -1899,15 +1914,21 @@ public sealed partial class LibraryPage : Page,
         QueueRenderVirtualGrid(force: true);
     }
 
-    private void EnsureVirtualCardSlots()
+    private void EnsureVirtualCardSlots(int requiredCount)
     {
-        while (_libraryCardSlots.Count < MaxRealizedLibraryCards)
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        var created = 0;
+        while (_libraryCardSlots.Count < requiredCount && created < 4)
         {
             var card = new LibraryGridCard();
             HideVirtualCardSlot(card);
             _libraryCardSlots.Add(card);
             VirtualGridCanvas.Children.Add(card);
+            created++;
+            if (started.ElapsedMilliseconds >= 4) break;
         }
+        if (_libraryCardSlots.Count < requiredCount)
+            QueueRenderVirtualGrid(force: true);
     }
 
     private async void BrowseTypeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -2308,6 +2329,7 @@ public sealed partial class LibraryPage : Page,
 
     private static void HideVirtualCardSlot(LibraryGridCard card)
     {
+        if (card.Tag == null && card.Visibility == Visibility.Collapsed) return;
         card.Tag = null;
         card.Reset();
         Canvas.SetLeft(card, -10000);
@@ -2329,6 +2351,7 @@ public sealed partial class LibraryPage : Page,
 
     private void CardBindTimer_Tick(object? sender, object e)
     {
+        var started = System.Diagnostics.Stopwatch.StartNew();
         App.SetPerfBreadcrumb($"Library bind tick pending={_pendingCardBinds.Count} cards={_visibleLibraryCards.Count}");
         int attempts = 0;
         int processed = 0;
@@ -2351,6 +2374,7 @@ public sealed partial class LibraryPage : Page,
                 card.Bind(item, ViewModel.SelectedSort);
 
             processed++;
+            if (started.ElapsedMilliseconds >= 4) break;
         }
 
         if (_pendingCardBinds.Count == 0)
@@ -2358,15 +2382,11 @@ public sealed partial class LibraryPage : Page,
         App.SetPerfBreadcrumb($"Library bind end pending={_pendingCardBinds.Count} processed={processed} attempts={attempts}");
     }
 
-    private static void PositionVirtualCardSlot(LibraryGridCard card, int slotIndex, GridLayoutInfo layout)
+    private void PositionVirtualCardSlot(LibraryGridCard card, int itemIndex, GridLayoutInfo layout)
     {
         card.SetLayout(layout.ItemWidth, layout.PosterHeight, layout.ItemHeight);
-        var (left, top) = VirtualGridScrollGate.GetSlotPosition(
-            slotIndex,
-            layout.Columns,
-            layout.ItemWidth,
-            layout.ColumnGap,
-            layout.RowHeight);
+        var left = (itemIndex % layout.Columns) * (layout.ItemWidth + layout.ColumnGap);
+        var top = VirtualGridScrollGate.GetItemTop(itemIndex, layout.Columns, layout.RowHeight, 0);
         SetCanvasCoordinateIfChanged(card, left, top);
     }
 
@@ -2400,8 +2420,10 @@ public sealed partial class LibraryPage : Page,
     private void ScheduleVisibleRangeLoad(bool force = false)
     {
         _forceVisibleRangeLoad |= force;
-        _visibleRangeDebounceTimer?.Stop();
-        _visibleRangeDebounceTimer?.Start();
+        // Throttle to the latest viewport, rather than postponing all requests
+        // indefinitely while a high-resolution wheel keeps producing events.
+        if (_visibleRangeDebounceTimer?.IsEnabled == false)
+            _visibleRangeDebounceTimer.Start();
     }
 
     private async void VisibleRangeDebounceTimer_Tick(object? sender, object e)
@@ -2429,9 +2451,49 @@ public sealed partial class LibraryPage : Page,
             return;
         }
 
+        var forward = range.StartIndex >= _lastRequestedStartIndex;
+        _libraryReadAheadCts?.Cancel();
+        _libraryReadAheadCts?.Dispose();
+        var readAhead = _libraryReadAheadCts = new CancellationTokenSource();
+        var token = readAhead.Token;
         _lastRequestedStartIndex = range.StartIndex;
         _lastRequestedEndIndex = range.EndIndex;
         await ViewModel.EnsureRangeLoadedAsync(range.StartIndex, range.EndIndex);
+        if (token.IsCancellationRequested || !_isNavigated) return;
+        _ = WarmLibraryNeighborhoodAsync(range.StartIndex, range.EndIndex, forward, token);
+    }
+
+    private async Task WarmLibraryNeighborhoodAsync(int start, int end, bool forward, CancellationToken ct)
+    {
+        try
+        {
+            // Visible cards are bound first. The buffer then fills even if the
+            // user stops touching the wheel, without adding off-screen XAML.
+            await Task.Delay(150, ct);
+            var items = await ViewModel.PrefetchAroundAsync(start, end, forward, ct);
+            ct.ThrowIfCancellationRequested();
+            var images = App.Services.GetRequiredService<ImageService>();
+            var http = App.Services.GetRequiredService<HttpClient>();
+            await Parallel.ForEachAsync(items,
+                new ParallelOptions { MaxDegreeOfParallelism = 2, CancellationToken = ct },
+                async (item, token) =>
+                {
+                    var poster = !string.IsNullOrWhiteSpace(item.PosterUrl);
+                    var url = poster ? item.PosterUrl : item.BackdropUrl;
+                    if (string.IsNullOrWhiteSpace(url)) return;
+                    await s_artworkWarmupThrottle.RunAsync(async _ =>
+                    {
+                        token.ThrowIfCancellationRequested();
+                        // Shared downloads outlive a caller's cancellation.
+                        // Keep this slot until completion so rapid reversals
+                        // cannot accumulate unbounded background downloads.
+                        await images.GetImageDiskPathAsync(item.ContentId,
+                            poster ? "poster" : "backdrop", url, http, CancellationToken.None);
+                    }, token);
+                });
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { App.SetPerfBreadcrumb($"library read-ahead failed: {ex.GetType().Name}"); }
     }
 
     private (int StartIndex, int EndIndex) GetVisibleItemRange(GridLayoutInfo layout)
@@ -2440,14 +2502,14 @@ public sealed partial class LibraryPage : Page,
         if (total <= 0)
             return (0, -1);
 
-        var visibleRows = VirtualGridScrollGate.GetVisibleRowCount(GetLibraryViewportHeight(), layout.RowHeight);
+        var visibleRows = VirtualGridScrollGate.GetVisibleRowCount(GetLibraryViewportHeight(), layout.RowHeight, _libraryVerticalOffset);
         return VirtualGridScrollGate.GetWindowedItemRange(
             total,
             layout.Columns,
             _currentFirstRow,
             visibleRows,
             LibraryOverscanRows,
-            MaxRealizedLibraryCards);
+            Math.Max(MaxRealizedLibraryCards, (visibleRows + 2 * LibraryOverscanRows) * layout.Columns));
     }
 
     private (int StartIndex, int EndIndex) ClampRealizedRange(
@@ -2458,7 +2520,8 @@ public sealed partial class LibraryPage : Page,
         if (total <= 0 || range.EndIndex < range.StartIndex)
             return range;
 
-        var maxItems = Math.Max(layout.Columns, MaxRealizedLibraryCards);
+        var visibleRows = VirtualGridScrollGate.GetVisibleRowCount(GetLibraryViewportHeight(), layout.RowHeight, _libraryVerticalOffset);
+        var maxItems = Math.Max((visibleRows + 2 * LibraryOverscanRows) * layout.Columns, MaxRealizedLibraryCards);
         var (startIndex, endIndex) = VirtualGridScrollGate.ClampRealizedItemRange(
             total,
             layout.Columns,
@@ -2473,10 +2536,10 @@ public sealed partial class LibraryPage : Page,
     private double GetLibraryViewportWidth()
     {
         var padding = LibraryViewportHost?.Padding ?? default;
-        var scrollBarWidth = (LibraryScrollBar?.ActualWidth ?? 0) + 12;
         return Math.Max(
             (double)Application.Current.Resources["PosterCardWidth"],
-            (LibraryViewportHost?.ActualWidth ?? 0) - padding.Left - padding.Right - scrollBarWidth);
+            (LibraryScroller?.ViewportWidth > 0 ? LibraryScroller.ViewportWidth :
+                (LibraryViewportHost?.ActualWidth ?? 0) - padding.Left - padding.Right) - 16);
     }
 
     private double GetLibraryViewportHeight()
@@ -2484,7 +2547,42 @@ public sealed partial class LibraryPage : Page,
         var padding = LibraryViewportHost?.Padding ?? default;
         return Math.Max(
             (double)Application.Current.Resources["PosterCardTotalHeight"],
-            (LibraryViewportHost?.ActualHeight ?? 0) - padding.Top - padding.Bottom);
+            LibraryScroller?.ViewportHeight > 0 ? LibraryScroller.ViewportHeight :
+                (LibraryViewportHost?.ActualHeight ?? 0) - padding.Top - padding.Bottom);
+    }
+
+    private void PosterSizeSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
+    {
+        if (_settingPosterSize || _posterSizeTimer == null) return;
+        _posterSizeTimer.Stop();
+        _posterSizeTimer.Start();
+    }
+
+    private void ResetPosterSize_Click(object sender, RoutedEventArgs e)
+    {
+        _posterSizeTimer?.Stop();
+        ApplyPosterWidth(null);
+        _settingPosterSize = true;
+        PosterSizeSlider.Value = GetGridLayout().ItemWidth;
+        _settingPosterSize = false;
+    }
+
+    private void ApplyPosterWidth(double? width)
+    {
+        var old = GetGridLayout();
+        var anchor = _currentFirstRow * old.Columns;
+        var fraction = _libraryVerticalOffset % old.RowHeight / old.RowHeight;
+        _posterWidthOverride = width;
+        var layout = GetGridLayout();
+        _libraryVerticalOffset = (anchor / layout.Columns + fraction) * layout.RowHeight;
+        _pendingLibraryOffset = _libraryVerticalOffset;
+        UpdateVirtualGridMetrics();
+        QueueRenderVirtualGrid(force: true);
+        ScheduleVisibleRangeLoad(force: true);
+        var settings = App.Services.GetRequiredService<SettingsService>();
+        var saved = settings.Load();
+        saved.LibraryPosterWidth = width;
+        settings.Save(saved);
     }
 
     private GridLayoutInfo GetGridLayout()
@@ -2509,6 +2607,8 @@ public sealed partial class LibraryPage : Page,
                 >= 1280 => 8, >= 1024 => 7, >= 768 => 5, >= 640 => 4, _ => 3,
             },
         };
+        if (_posterWidthOverride is { } posterWidth)
+            columns = LibraryPosterSizing.GetColumnCount(availableWidth, posterWidth);
         columns = Math.Max(1, Math.Min(columns, (int)Math.Floor((availableWidth + columnGap) / (100 + columnGap))));
         var itemWidth = Math.Max(100, (availableWidth - columnGap * (columns - 1)) / columns);
         var isAudiobook = ViewModel.Library?.Type is "audiobook" or "audiobooks";
@@ -2544,7 +2644,7 @@ public sealed partial class LibraryPage : Page,
 
     private void ScrollToTop_Click(object sender, RoutedEventArgs e)
     {
-        SetLibraryFirstRow(0, force: true);
+        SetLibraryVerticalOffset(0, force: true);
         ScrollToTopButton.Visibility = Visibility.Collapsed;
         _ = EnsureVisibleRangeLoadedAsync(force: true);
     }
@@ -2613,25 +2713,35 @@ public sealed partial class LibraryPage : Page,
         var secondary = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"];
         var tertiary = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"];
         var primary = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"];
-        var surface = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceBrush"];
-        var surfaceHover = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceHoverBrush"];
         var border = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BorderBrush"];
 
         static Microsoft.UI.Xaml.Media.SolidColorBrush Color(byte alpha, byte red, byte green, byte blue) =>
             new(Windows.UI.Color.FromArgb(alpha, red, green, blue));
 
+        static Microsoft.UI.Xaml.Media.Brush Translucent(Microsoft.UI.Xaml.Media.Brush brush, double opacity)
+        {
+            if (brush is Microsoft.UI.Xaml.Media.SolidColorBrush solid)
+            {
+                var color = solid.Color;
+                return Color((byte)Math.Round(color.A * opacity * solid.Opacity), color.R, color.G, color.B);
+            }
+            return brush;
+        }
+
         LibraryEyebrowPrefix.Foreground = overlay ? Color(0xB3, 0xFF, 0xFF, 0xFF) : tertiary;
         LibraryEyebrowDivider.Foreground = overlay ? Color(0x73, 0xFF, 0xFF, 0xFF) : tertiary;
         LibraryEyebrowName.Foreground = overlay ? Color(0xEB, 0xFF, 0xFF, 0xFF) : secondary;
-        TabBarBorder.Background = overlay ? Color(0x14, 0xFF, 0xFF, 0xFF) : surface;
-        TabBarBorder.BorderBrush = overlay ? Color(0x1A, 0xFF, 0xFF, 0xFF) : border;
+        TabBarBorder.Background = overlay ? Color(0x14, 0xFF, 0xFF, 0xFF) : Translucent(primary, 0.06);
+        TabBarBorder.BorderBrush = overlay ? Color(0x1A, 0xFF, 0xFF, 0xFF) : Translucent(border, 0.6);
         HeaderDivider.Opacity = overlay && !glass ? 0 : 0.55;
 
         var tabs = new[] { RecommendedTab, LibraryTab, CollectionsTab };
         foreach (var tab in tabs)
         {
-            tab.Foreground = overlay ? Color(0xAD, 0xFF, 0xFF, 0xFF) : secondary;
+            tab.Foreground = overlay ? Color(0xAD, 0xFF, 0xFF, 0xFF) : Translucent(primary, 0.62);
             tab.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            tab.FontSize = 12.48;
+            tab.CharacterSpacing = 10;
         }
 
         var activeTab = _currentTab switch
@@ -2641,7 +2751,23 @@ public sealed partial class LibraryPage : Page,
             _ => RecommendedTab,
         };
         activeTab.Foreground = overlay ? Color(0xFF, 0x0A, 0x0A, 0x0B) : primary;
-        activeTab.Background = overlay ? Color(0xEB, 0xFF, 0xFF, 0xFF) : surfaceHover;
+        activeTab.Background = overlay ? Color(0xEB, 0xFF, 0xFF, 0xFF) : Translucent(primary, 0.12);
+        foreach (var tab in tabs)
+        {
+            // The default WinUI pointer states otherwise add an opaque grey fill.
+            tab.Resources["ButtonBackgroundPointerOver"] = tab.Background;
+            tab.Resources["ButtonBackgroundPressed"] = tab.Background;
+            tab.Resources["ButtonForegroundPointerOver"] = ReferenceEquals(tab, activeTab)
+                ? activeTab.Foreground : overlay ? Color(0xFF, 0xFF, 0xFF, 0xFF) : primary;
+            tab.Resources["ButtonForegroundPressed"] = tab.Resources["ButtonForegroundPointerOver"];
+        }
+    }
+
+    private void TabBarBorder_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        // CSS clamps rounded-full to half the height. An oversized WinUI
+        // corner radius instead distorts the whole border into an ellipse.
+        TabBarBorder.CornerRadius = new CornerRadius(e.NewSize.Height / 2);
     }
 
     private async void Tab_Click(object sender, RoutedEventArgs e)

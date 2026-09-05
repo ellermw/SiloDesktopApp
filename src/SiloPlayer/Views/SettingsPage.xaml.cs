@@ -256,6 +256,7 @@ public sealed partial class SettingsPage : Page
                 App.Services.GetRequiredService<SiloPlayer.Core.Services.SettingsService>().Load().LastUserRole,
                 "admin", StringComparison.OrdinalIgnoreCase) ? Visibility.Visible : Visibility.Collapsed;
             AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Services.SettingsService>().Load().AudioBitstreamPassthrough;
+            await InitializeRtxUpscalingSettingAsync();
             _pageInitialized = true;
             _loadedAtUtc = DateTime.UtcNow;
         }
@@ -417,6 +418,35 @@ public sealed partial class SettingsPage : Page
         var settings = settingsService.Load();
         settings.AudioBitstreamPassthrough = AudioPassthroughToggle.IsOn;
         settingsService.Save(settings);
+    }
+
+    private bool _initializingRtxUpscaling = true;
+
+    private async Task InitializeRtxUpscalingSettingAsync()
+    {
+        _initializingRtxUpscaling = true;
+        try
+        {
+            var settings = App.Services.GetRequiredService<SettingsService>().Load();
+            RtxUpscalingToggle.IsOn = settings.NvidiaVideoUpscaling;
+            var adapter = await Task.Run(() => SiloPlayer.Player.RtxVideoAdapter.Name);
+            // A migrated preference can always be turned off on another PC.
+            RtxUpscalingToggle.IsEnabled = adapter != null || RtxUpscalingToggle.IsOn;
+            RtxUpscalingHardwareText.Text = adapter != null
+                ? $"Detected: {adapter}. AI activation also requires NVIDIA driver support."
+                : "No NVIDIA RTX GPU detected. Normal scaling is available.";
+        }
+        finally { _initializingRtxUpscaling = false; }
+    }
+
+    private void RtxUpscalingToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_initializingRtxUpscaling || _suppressEvents) return;
+        var service = App.Services.GetRequiredService<SettingsService>();
+        var settings = service.Load();
+        settings.NvidiaVideoUpscaling = RtxUpscalingToggle.IsOn;
+        service.Save(settings);
+        RtxUpscalingHardwareText.Text = "Saved for this PC. Restart Silo for Windows Desktop App to apply.";
     }
 
     private async Task LoadRememberLibraryPagesAsync()

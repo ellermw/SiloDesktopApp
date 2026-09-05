@@ -4,6 +4,127 @@ namespace SiloPlayer.Tests;
 
 public sealed class MpvOscRuntimeTests
 {
+    [Theory]
+    [InlineData(1920, 1080, 3840, 2160, true, "3840x2160 (4K)", "2.00x", "4.00x", "RTX VSR (requested)")]
+    [InlineData(1920, 1080, 1920, 1080, false, "1920x1080", "None", "1.00x", "Normal renderer")]
+    [InlineData(3840, 2160, 3840, 2160, false, "3840x2160 (4K)", "None", "1.00x", "Normal renderer")]
+    [InlineData(1920, 800, 3840, 1600, true, "3840x1600", "2.00x", "4.00x", "RTX VSR (requested)")]
+    [InlineData(1920, 1080, 2880, 1620, true, "2880x1620", "1.50x", "2.25x", "RTX VSR (requested)")]
+    public void PlaybackInfoDistinguishesProcessedVideoFromFullscreenWindow(int sourceWidth, int sourceHeight,
+        int outputWidth, int outputHeight, bool rtx, string processed, string factor, string pixels, string upscaler)
+    {
+        var text = CaptureStats(sourceWidth, sourceHeight, outputWidth, outputHeight, rtx);
+        Assert.Contains($"Source video{sourceWidth}x{sourceHeight}", text);
+        Assert.Contains($"Processed video{processed}", text);
+        Assert.Contains($"Scale per dimension{factor}", text);
+        Assert.Contains($"Pixel count{pixels}", text);
+        Assert.Contains($"Upscaler{upscaler}", text);
+        Assert.DoesNotContain("VSR active", text);
+    }
+
+    [Theory]
+    [InlineData(2000, 1800000, 128000, "2.0 Mbps", "1.8 Mbps", "128 kbps")]
+    [InlineData(1500, 1200000, 96000, "1.5 Mbps", "1.2 Mbps", "96 kbps")]
+    [InlineData(0, 8400000, 192000, "Not applicable", "8.4 Mbps", "192 kbps")]
+    [InlineData(2000, 0, 0, "2.0 Mbps", "Unavailable", "Unavailable")]
+    [InlineData(-1, 0, 0, "Unavailable", "Unavailable", "Unavailable")]
+    public void PlaybackInfoSeparatesTargetAndMeasuredBitratesFromSource(int targetKbps,
+        int videoBps, int audioBps, string target, string video, string audio)
+    {
+        var setup = $$"""
+            mp.commandv('script-message', 'osc-set-media-info', '{"bitrate":8400,"video_bitrate":0}')
+            mp.commandv('script-message', 'osc-set-stream-info', 'Transcode', 'HLS', 'https', 'H264', 'AAC', '6000')
+            mp.commandv('script-message', 'osc-set-stream-info', '{{(targetKbps != 0 ? "Transcode" : "Direct Play")}}', 'HLS', 'https', 'H264', 'AAC', '{{targetKbps}}')
+            """;
+        var text = CaptureStats(1280, 720, 2560, 1440, true, setup, videoBps, audioBps);
+        var stream = text.Split("PLAYBACK STREAM INFO")[1].Split("CURRENT SOURCE FILE")[0];
+        var source = text.Split("CURRENT SOURCE FILE")[1];
+        Assert.Contains($"Target video bitrate{target}", stream);
+        Assert.Contains($"Video bitrate (measured){video}", stream);
+        Assert.Contains($"Audio bitrate (measured){audio}", stream);
+        Assert.Contains("Bitrate8.4 Mbps", source);
+        Assert.Contains("Video bitrateNot supplied", source);
+    }
+
+    private static string CaptureStats(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight,
+        bool rtx, string setup = "", int videoBps = 0, int audioBps = 0)
+    {
+        var root = FindRepositoryRoot();
+        var probe = Path.Combine(Path.GetTempPath(), $"silo-stats-{Guid.NewGuid():N}.lua");
+        var script = Path.Combine(root, "libs", "mpv", "scripts", "silo-osc.lua").Replace('\\', '/');
+        // Run the real OSC inside bundled mpv with controlled input/output
+        // properties. Capture the rendered ASS, not the Lua source text.
+        File.WriteAllText(probe, $$"""
+            local mp = require 'mp'
+            local get_number = mp.get_property_number
+            local get_native = mp.get_property_native
+            local create_overlay = mp.create_osd_overlay
+            local values = {
+                ['osd-width']=3840, ['osd-height']=2160,
+                ['video-params/w']={{sourceWidth}}, ['video-params/h']={{sourceHeight}},
+                ['video-out-params/w']={{outputWidth}}, ['video-out-params/h']={{outputHeight}},
+                ['video-bitrate']={{videoBps}}, ['audio-bitrate']={{audioBps}}
+            }
+            mp.get_property_number = function(name, fallback)
+                if values[name] ~= nil then return values[name] end
+                return get_number(name, fallback)
+            end
+            mp.get_property_native = function(name, fallback)
+                if name == 'vf' then return {{(rtx ? "{{name='d3d11vpp',label='silo-rtx',enabled=true,params={['scaling-mode']='nvidia'}}}" : "{}")}} end
+                return get_native(name, fallback)
+            end
+            mp.create_osd_overlay = function(kind)
+                local overlay = create_overlay(kind)
+                overlay.update = function(self)
+                    if self.data and self.data:find('Playback Info', 1, true) then
+                        mp.set_property('user-data/stats-test-output', self.data)
+                    end
+                end
+                return overlay
+            end
+            dofile([[{{script}}]])
+            mp.add_timeout(0.05, function()
+                {{setup}}
+                mp.commandv('script-message', 'osc-toggle-stats')
+            end)
+            """);
+        var library = NativeLibrary.Load(Path.Combine(root, "libs", "mpv", "libmpv-2.dll"));
+        var handle = LoadDelegate<MpvCreate>(library, "mpv_create")();
+        try
+        {
+            var option = LoadDelegate<MpvSetOptionString>(library, "mpv_set_option_string");
+            foreach (var (key, value) in new[] { ("vo", "null"), ("ao", "null"), ("idle", "yes"), ("osc", "no"), ("scripts", probe) })
+                Assert.True(option(handle, key, value) >= 0);
+            Assert.True(LoadDelegate<MpvInitialize>(library, "mpv_initialize")(handle) >= 0);
+            var get = LoadDelegate<MpvGetPropertyString>(library, "mpv_get_property_string");
+            var free = LoadDelegate<MpvFree>(library, "mpv_free");
+            string? rendered = null;
+            for (var attempt = 0; attempt < 100 && rendered == null; attempt++)
+            {
+                var ptr = get(handle, "user-data/stats-test-output");
+                try { if (ptr != IntPtr.Zero) rendered = Marshal.PtrToStringUTF8(ptr); }
+                finally { if (ptr != IntPtr.Zero) free(ptr); }
+                if (rendered == null) Thread.Sleep(10);
+            }
+            Assert.NotNull(rendered);
+            var ass = rendered!.StartsWith('"') ? System.Text.Json.JsonSerializer.Deserialize<string>(rendered)! : rendered;
+            var text = System.Text.RegularExpressions.Regex.Replace(ass, @"\{[^}]*\}|\\N", "")
+                .Replace("\r", "").Replace("\n", "");
+            return text;
+        }
+        finally
+        {
+            LoadDelegate<MpvTerminateDestroy>(library, "mpv_terminate_destroy")(handle);
+            NativeLibrary.Free(library);
+            File.Delete(probe);
+        }
+    }
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate IntPtr MpvGetPropertyString(IntPtr handle, [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    private delegate void MpvFree(IntPtr value);
+
     [Fact]
     public void BundledLibMpv_LoadsOscWithoutLuaErrors()
     {

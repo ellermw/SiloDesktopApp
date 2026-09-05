@@ -2,8 +2,7 @@ namespace SiloPlayer.Tests;
 
 public sealed class DateTimePreferenceSourceTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+    private static readonly string RepoRoot = TestRepository.Root;
 
     [Fact]
     public void UserFacingAppCodeDoesNotBypassTheSharedDateTimePreferenceFormatter()

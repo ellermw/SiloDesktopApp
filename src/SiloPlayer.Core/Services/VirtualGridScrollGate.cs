@@ -2,6 +2,18 @@ namespace SiloPlayer.Core.Services;
 
 public static class VirtualGridScrollGate
 {
+    public static double GetMaxVerticalOffset(int totalItems, int columns, double rowHeight, double viewportHeight)
+    {
+        if (totalItems <= 0 || columns <= 0 || rowHeight <= 0)
+            return 0;
+        return Math.Max(0, Math.Ceiling(totalItems / (double)columns) * rowHeight - Math.Max(0, viewportHeight));
+    }
+
+    public static double GetItemTop(int itemIndex, int columns, double rowHeight, double verticalOffset) =>
+        columns <= 0 ? 0 : (Math.Max(0, itemIndex) / columns) * rowHeight - verticalOffset;
+
+    public static double GetWheelOffsetDelta(int mouseWheelDelta) => -mouseWheelDelta;
+
     public static int GetFirstVisibleRow(double verticalOffset, double rowHeight)
     {
         if (rowHeight <= 0)
@@ -33,12 +45,13 @@ public static class VirtualGridScrollGate
         return Math.Max(0, itemRow - Math.Max(0, windowStartRow)) * rowHeight;
     }
 
-    public static int GetVisibleRowCount(double viewportHeight, double rowHeight)
+    public static int GetVisibleRowCount(double viewportHeight, double rowHeight, double verticalOffset = 0)
     {
         if (viewportHeight <= 0 || rowHeight <= 0)
             return 1;
 
-        return Math.Max(1, (int)Math.Ceiling(viewportHeight / rowHeight));
+        var partialFirstRow = Math.Max(0, verticalOffset) % rowHeight;
+        return Math.Max(1, (int)Math.Ceiling((viewportHeight + partialFirstRow) / rowHeight));
     }
 
     public static int GetMaxFirstVisibleRow(int totalItems, int columns, int visibleRows)

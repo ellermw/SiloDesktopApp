@@ -109,12 +109,14 @@ public sealed partial class SectionRow : UserControl
         UpdateThemeFadeColors();
         Loaded += (_, _) =>
         {
+            App.RecordUiDiagnostic($"SectionRow loaded type={Section?.SectionType} count={Section?.Items.Count}");
             ObserveItems(Section?.Items);
             _uiCustomizationService.Changed += UICustomization_Changed;
             ApplyResponsiveCardWidths(ActualWidth);
         };
         Unloaded += (_, _) =>
         {
+            App.RecordUiDiagnostic($"SectionRow unloaded type={Section?.SectionType} count={Section?.Items.Count}");
             ObserveItems(null);
             _uiCustomizationService.Changed -= UICustomization_Changed;
         };
@@ -153,6 +155,7 @@ public sealed partial class SectionRow : UserControl
         System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
         if (Section == null) return;
+        App.RecordUiDiagnostic($"SectionRow collection type={Section.SectionType} action={e.Action} oldIndex={e.OldStartingIndex} newIndex={e.NewStartingIndex} count={Section.Items.Count} loaded={IsLoaded}");
         // A removal can change Continue Watching from a mixed episode row to
         // an all-cover row (or vice versa), so recompute both visibility and
         // the WebUI card variant instead of only hiding an emptied row.
@@ -593,6 +596,7 @@ public sealed partial class SectionRow : UserControl
 
     private void CardsRepeater_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
     {
+        App.RecordUiDiagnostic($"SectionRow prepared type={Section?.SectionType} index={args.Index} count={Section?.Items.Count} loaded={IsLoaded}");
         if (args.Element is PosterCard card)
             card.SetCatalogGridLayout(_posterWidth);
         else if (args.Element is LandscapeCard landscape)

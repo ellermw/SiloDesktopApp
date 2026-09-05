@@ -226,7 +226,10 @@ public sealed class LibraryGridCard : Canvas
 
     public void Bind(MediaItem item, string? sortKey)
     {
-        CancelPosterLoad(clearImage: true);
+        var preservePoster = !LibraryPosterBinding.RequiresReload(MediaItem, item) &&
+            (_posterImage.Source != null || (_posterLoadCts != null &&
+                MediaItem?.PosterUrl == item.PosterUrl && MediaItem?.BackdropUrl == item.BackdropUrl));
+        if (!preservePoster) CancelPosterLoad(clearImage: true);
         CancelPlaybackPrefetch();
 
         // ItemGrid uses square artwork for audiobook items even inside a mixed
@@ -246,7 +249,7 @@ public sealed class LibraryGridCard : Canvas
             ? "Untitled"
             : MediaItemDisplayText.BuildTitle(item);
         _fallbackTitle.Text = title;
-        _fallbackTitle.Visibility = Visibility.Visible;
+        _fallbackTitle.Visibility = _posterImage.Source == null ? Visibility.Visible : Visibility.Collapsed;
         _titleText.Text = MediaItemDisplayText.BuildTitle(item);
         var episodeTitle = MediaItemDisplayText.BuildEpisodeTitle(item);
         _episodeTitleText.Text = episodeTitle ?? "";
@@ -258,7 +261,7 @@ public sealed class LibraryGridCard : Canvas
         UpdateQuickActionState(item);
 
         var imageUrl = !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
-        if (!string.IsNullOrWhiteSpace(imageUrl))
+        if (!preservePoster && !string.IsNullOrWhiteSpace(imageUrl))
         {
             _posterLoadCts = new CancellationTokenSource();
             var version = ++_posterLoadVersion;
@@ -417,13 +420,21 @@ public sealed class LibraryGridCard : Canvas
         }
         catch (OperationCanceledException) { }
         catch { }
+        finally
+        {
+            if (version == _posterLoadVersion)
+            {
+                _posterLoadCts?.Dispose();
+                _posterLoadCts = null;
+            }
+        }
     }
 
     private bool IsCurrentPosterLoad(MediaItem item, int version, CancellationToken ct)
     {
         return !ct.IsCancellationRequested &&
             version == _posterLoadVersion &&
-            ReferenceEquals(MediaItem, item);
+            MediaItem?.ContentId == item.ContentId;
     }
 
     private void CancelPosterLoad(bool clearImage)

@@ -2,6 +2,18 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.1.100 (RTX upscaling preview and playback clarity)
+
+- Added an opt-in NVIDIA RTX AI upscaling preview for eligible SDR input up to 1080p. Detects RTX adapters through DXGI, requests NVIDIA D3D11 processing, and falls back after processing errors. GPU support remains NVIDIA RTX only, with a 2× cap per dimension; HDR/native 4K and unsupported input bypass enhancement.
+- Clarified that changing the option requires restarting Silo for Windows Desktop App, not the server.
+- Fixed compound quality tiers such as `720p-medium` being normalized to Auto. Preserve both resolution and bitrate preferences across starts and replans; label the returned plan using its dimensions and bitrate, including source-limited recipes.
+- Playback Info now separates display size, decoded input dimensions, processed dimensions, scale per dimension, pixel multiplier, target video bitrate, measured video/audio bitrates, and source-file metadata. Missing measurements and missing source metadata have distinct labels.
+- Corrected native direct-play audio selection and cleared stale audio IDs before loading remux/HLS streams.
+- Consolidated the local 1.1.96–1.1.99 library improvements: native pixel scrolling, safe card-slot reuse, bounded nearby catalog caching and artwork warming, retention of unchanged posters across renewed signed URLs, and adjustable poster density.
+- Added bounded Home/section diagnostics. The separately reported Home crash and dense-grid realization latency remain open; no complete visual-parity or sustained-performance claim is made.
+- Quality protocol reference: official Silo Server `main` commit `658be10eb03615f104790fba0431a4d19fd02d15`. This is a focused contract check, not a new full WebUI parity audit.
+- Verified 888 passing x64 Release tests. Local RTX 5080 smoke checks and user playback confirmed upscaling; the user also confirmed the corrected lower-resolution quality selection. Other GPU/driver combinations and sustained performance still need broader validation.
+
 ## 1.1.95 (progressive playback stability hotfix)
 
 - Pinned progressive direct-play and remux media requests to exact HTTP/1.1 after live 1.1.94 sessions repeatedly received HTTP/2 `INTERNAL_ERROR` stream resets during multi-gigabyte transfers.

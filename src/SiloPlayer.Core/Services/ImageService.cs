@@ -322,7 +322,7 @@ public class ImageService : IDisposable
             _negativeCache.TryRemove(negativeCacheKey, out _);
     }
 
-    private static string NormalizeImageUrlForCache(string url)
+    internal static string NormalizeImageUrlForCache(string url)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
             return url.Trim();

@@ -133,7 +133,7 @@ public class PlaybackManager : IDisposable
         LogToStateTrace($"StartSession v3: fileId={fileId}, pos={startPosition}, force={forceStartPosition}, attempt={request.PlaybackAttemptId}, codecs_video=[{string.Join(",", capabilities.CodecsVideo)}], codecs_audio=[{string.Join(",", capabilities.CodecsAudio)}], max_res={capabilities.MaxResolution}, hdr={capabilities.Hdr}");
 
         var decision = await _playbackApi.StartPlaybackV3Async(request, ct).ConfigureAwait(false);
-        var response = AdoptProtocolV3Decision(decision, request.PlaybackAttemptId);
+        var response = AdoptProtocolV3Decision(decision, request.PlaybackAttemptId, request.QualityPreference);
         _recoveryAttemptHistory.Reset();
         _currentPlanV3 = decision.PlaybackPlan;
         _clientCapabilitiesV3 = capabilities;
@@ -185,19 +185,53 @@ public class PlaybackManager : IDisposable
     }
 
     private static string NormalizeQualityPreference(string? qualityPreference)
-        => (qualityPreference ?? "").Trim().ToLowerInvariant() switch
+    {
+        var normalized = (qualityPreference ?? "").Trim().ToLowerInvariant();
+        return normalized switch
         {
-            "original" => "original",
+            "original" or "source" or "max" => "original",
             "2160p" or "4k" or "uhd" => "2160p",
-            "1080p" => "1080p",
-            "720p" => "720p",
-            "480p" => "480p",
+            "1080p" or "fhd" => "1080p",
+            "720p" or "hd" => "720p",
+            "480p" or "sd" => "480p",
+            // Server menu labels pin bitrate as well as resolution. Reducing
+            // them to a resolution (or auto) discards the user's bandwidth cap.
+            "2160p-high" or "2160p-medium" or "2160p-low" or
+            "1080p-high" or "1080p-medium" or "1080p-low" or
+            "720p-high" or "720p-medium" or "720p-low" => normalized,
             _ => "auto",
         };
+    }
+
+    private static string ResolveActiveQuality(PlaybackPlanV3 plan, string qualityPreference)
+    {
+        if (plan.Delivery != "server_transcode_hls")
+            return "original";
+
+        var requested = plan.AvailableQualities.FirstOrDefault(quality =>
+            !quality.PreservesSource && quality.Label == qualityPreference);
+        var source = plan.AvailableQualities.FirstOrDefault(quality =>
+            quality.PreservesSource && quality.Label == "original");
+
+        // The server advertises nominal tiers, but bounds the actual recipe by
+        // source height (including cinema crops) and bitrate. Prefer the user's
+        // tier when those bounds explain the recipe; never trust the request alone.
+        if (requested?.Height is > 0 && requested.BitrateKbps is > 0 &&
+            source?.Height is > 0 && source.BitrateKbps is > 0 &&
+            plan.EffectiveRecipe.Height == Math.Min(requested.Height.Value, source.Height.Value) &&
+            plan.EffectiveRecipe.BitrateKbps == Math.Min(requested.BitrateKbps.Value, source.BitrateKbps.Value))
+            return requested.Label;
+
+        return plan.AvailableQualities.FirstOrDefault(quality =>
+            !quality.PreservesSource && quality.Height is > 0 &&
+            quality.Height == plan.EffectiveRecipe.Height &&
+            quality.BitrateKbps is > 0 && quality.BitrateKbps == plan.EffectiveRecipe.BitrateKbps)?.Label ?? "auto";
+    }
 
     private static PlaybackStartResponse AdoptProtocolV3Decision(
         PlaybackDecisionResponseV3 decision,
-        string playbackAttemptId)
+        string playbackAttemptId,
+        string qualityPreference)
     {
         ArgumentNullException.ThrowIfNull(decision);
         if (!string.Equals(decision.Outcome, "playable", StringComparison.OrdinalIgnoreCase) ||
@@ -247,13 +281,12 @@ public class PlaybackManager : IDisposable
             SubtitleMode = plan.Subtitle.Mode,
             SelectedSubtitleArtifactUrl = plan.Subtitle.Artifact?.Url,
             SubtitleTimingOriginSeconds = plan.Subtitle.Artifact?.TimingOriginSeconds ?? 0,
-            ActiveQuality = plan.Delivery == "server_transcode_hls"
-                ? plan.AvailableQualities.FirstOrDefault(quality =>
-                    quality.Height.HasValue && quality.Height == plan.EffectiveRecipe.Height)?.Label ?? "auto"
-                : "original",
+            ActiveQuality = ResolveActiveQuality(plan, qualityPreference),
             AvailableQualities = plan.AvailableQualities,
             PlaybackInfo = new PlaybackInfo
             {
+                TargetVideoBitrateKbps = plan.Delivery == "server_transcode_hls" &&
+                    plan.EffectiveRecipe.BitrateKbps is > 0 ? plan.EffectiveRecipe.BitrateKbps : null,
                 StreamType = hls ? "hls" : "progressive",
                 TranscodeAudio = plan.Delivery is "server_transcode_hls",
                 VideoCodec = plan.EffectiveRecipe.VideoCodec ?? "",
@@ -483,7 +516,7 @@ public class PlaybackManager : IDisposable
             _recoveryAttemptHistory.CommitFailure(recoveryAttempt);
         else
             _recoveryAttemptHistory.Reset();
-        var response = AdoptProtocolV3Decision(decision, playbackAttemptId);
+        var response = AdoptProtocolV3Decision(decision, playbackAttemptId, request.QualityPreference);
         _currentPlanV3 = decision.PlaybackPlan;
         _planAttemptIdV3 = Guid.NewGuid().ToString();
         _qualityPreferenceV3 = qualityPreference;
@@ -492,7 +525,7 @@ public class PlaybackManager : IDisposable
         _lastReportedPosition = Math.Max(0, response.Position);
         ApplyStreamUrl(response);
         LogToStateTrace(
-            $"Replan v3: operation={operation}, plan={response.PlanId}, delivery={response.Delivery}, position={response.Position:F1}");
+            $"Replan v3: operation={operation}, requested_quality={qualityPreference}, active_quality={response.ActiveQuality}, plan={response.PlanId}, delivery={response.Delivery}, position={response.Position:F1}");
         return response;
     }
 

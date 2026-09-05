@@ -139,6 +139,7 @@
         <!-- Main content -->
         <ScrollViewer
             x:Name="ContentScrollViewer"
+            ViewChanged="ContentScrollViewer_ViewChanged"
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True"
             CanContentRenderOutsideBounds="True">
