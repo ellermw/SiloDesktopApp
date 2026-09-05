@@ -8,7 +8,7 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 [**Download Silo Desktop Player 1.1.100**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.100/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-The release includes a SHA-256 checksum for the installer.
+SHA-256: `9D62A30613B3627CEBB0022C0A8644D4BB91323ECA5CC08E4D71271051A3AA6F`
 
 The installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 

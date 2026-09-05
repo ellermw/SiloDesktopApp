@@ -13,6 +13,9 @@ Historical release notes for Silo Desktop Player. The current installer and proj
 - Added bounded Home/section diagnostics. The separately reported Home crash and dense-grid realization latency remain open; no complete visual-parity or sustained-performance claim is made.
 - Quality protocol reference: official Silo Server `main` commit `658be10eb03615f104790fba0431a4d19fd02d15`. This is a focused contract check, not a new full WebUI parity audit.
 - Verified 888 passing x64 Release tests. Local RTX 5080 smoke checks and user playback confirmed upscaling; the user also confirmed the corrected lower-resolution quality selection. Other GPU/driver combinations and sustained performance still need broader validation.
+- Clean release packaging passed published-resource guards, native libmpv hash/load checks, and Inno compilation. The release app created a responsive window and closed normally in a separate startup smoke check.
+- Installer SHA-256:
+  `9D62A30613B3627CEBB0022C0A8644D4BB91323ECA5CC08E4D71271051A3AA6F`.
 
 ## 1.1.95 (progressive playback stability hotfix)
 

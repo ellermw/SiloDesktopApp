@@ -32,6 +32,8 @@ Reference: [mpv bitrate property documentation](https://mpv.io/manual/stable/#co
 
 Local install: rebuilt the 1.1.100 installer in `installer/output/rtx-bitrate` and updated `C:\Program Files\Silo Desktop Player` successfully (installer exit 0). No GitHub release or source push was performed.
 
+GitHub release preparation: source commit `e1ba550308985c490ec738c0e234d2f24edba569`, 888 x64 Release tests passing, clean installer/build.ps1 packaging, bundled libmpv hash/create validation, and responsive-window startup/normal-close smoke test. Final payload is `.codex-tmp/release-1.1.100`; installer SHA-256 is `9D62A30613B3627CEBB0022C0A8644D4BB91323ECA5CC08E4D71271051A3AA6F`. Source changes since that commit are release documentation only.
+
 ## Quality selection follow-up
 
 The desktop normalized compound menu choices such as `720p-medium` to `auto`, so the server could return original 1080p while the menu continued to show the requested 720p tier. Preserve all nine explicit resolution/bitrate tiers in both initial playback and replans, including subsequent audio changes. Reflect the returned plan in the quality menu and validate both resolution and bitrate, accounting for source-limited bitrate and cropped video. Original delivery reports Original even if a lower tier was requested.
