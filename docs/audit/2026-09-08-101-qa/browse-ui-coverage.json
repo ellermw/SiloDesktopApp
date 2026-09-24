@@ -1,0 +1,1107 @@
+[
+  {
+    "path": "src/SiloPlayer/App.xaml",
+    "lines": 18,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      18
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/AddToCollectionDialog.xaml",
+    "lines": 79,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      79
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/AddToCollectionDialog.xaml.cs",
+    "lines": 182,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      182
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/AudiobookNowListening.xaml",
+    "lines": 134,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      134
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/AudiobookNowListening.xaml.cs",
+    "lines": 304,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      304
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/AudiobookSquareCard.xaml",
+    "lines": 54,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      54
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/AudiobookSquareCard.xaml.cs",
+    "lines": 173,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      173
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/BackdropImage.xaml",
+    "lines": 17,
+    "status": "full-read",
+    "read_ranges": [
+      "1-17"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/BackdropImage.xaml.cs",
+    "lines": 259,
+    "status": "full-read",
+    "read_ranges": [
+      "1-259"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/CustomSeekBar.xaml",
+    "lines": 61,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      61
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/CustomSeekBar.xaml.cs",
+    "lines": 219,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      219
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/GlobalSearchDialog.xaml",
+    "lines": 94,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      94
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/GlobalSearchDialog.xaml.cs",
+    "lines": 563,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      563
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/HeroCarousel.xaml",
+    "lines": 245,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      245
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/HeroCarousel.xaml.cs",
+    "lines": 838,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      838
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/LandscapeCard.xaml",
+    "lines": 298,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      298
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/LandscapeCard.xaml.cs",
+    "lines": 727,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      727
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/LibraryGridCard.cs",
+    "lines": 844,
+    "status": "full-read",
+    "read_ranges": [
+      "1-844"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/MangaFilesDialog.cs",
+    "lines": 208,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      208
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/MatchItemDialog.xaml",
+    "lines": 227,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      227
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/MatchItemDialog.xaml.cs",
+    "lines": 733,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      733
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/MediaItemCardActions.cs",
+    "lines": 84,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      84
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/MediaItemMenu.cs",
+    "lines": 310,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      310
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/MiniPlayerBar.xaml",
+    "lines": 172,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      172
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/MiniPlayerBar.xaml.cs",
+    "lines": 431,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      431
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/NotificationSettingsControl.xaml",
+    "lines": 205,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      205
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/NotificationSettingsControl.xaml.cs",
+    "lines": 347,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      347
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/NowListeningHero.xaml",
+    "lines": 66,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      66
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/NowListeningHero.xaml.cs",
+    "lines": 86,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      86
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/PlayerOverlay.xaml",
+    "lines": 434,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      434
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/PlayerOverlay.xaml.cs",
+    "lines": 2302,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      2302
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/PosterCard.xaml",
+    "lines": 265,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      265
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/PosterCard.xaml.cs",
+    "lines": 1043,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      1043
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/RefreshMetadataDialog.cs",
+    "lines": 151,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      151
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/SectionRow.xaml",
+    "lines": 238,
+    "status": "full-read",
+    "read_ranges": [
+      "1-238"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/SectionRow.xaml.cs",
+    "lines": 648,
+    "status": "full-read",
+    "read_ranges": [
+      "1-648"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/SkeletonBox.cs",
+    "lines": 131,
+    "status": "full-read",
+    "read_ranges": [
+      "1-131"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/SlideSheet.xaml",
+    "lines": 68,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      68
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/SlideSheet.xaml.cs",
+    "lines": 165,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      165
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/SubtitleAiDialog.xaml",
+    "lines": 163,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      163
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/SubtitleAiDialog.xaml.cs",
+    "lines": 242,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      242
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/SubtitleAppearanceDialog.xaml",
+    "lines": 269,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      269
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/SubtitleAppearanceDialog.xaml.cs",
+    "lines": 437,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      437
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/SubtitleSearchDialog.xaml",
+    "lines": 296,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      296
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/SubtitleSearchDialog.xaml.cs",
+    "lines": 785,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      785
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/ToastContainer.xaml",
+    "lines": 22,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      22
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/ToastContainer.xaml.cs",
+    "lines": 168,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      168
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/WatchTonightDialog.xaml",
+    "lines": 332,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      332
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/WatchTonightDialog.xaml.cs",
+    "lines": 1214,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      1214
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Controls/WrapPanel.cs",
+    "lines": 137,
+    "status": "full-read",
+    "read_ranges": [
+      "1-137"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Converters/BoolToVisibilityConverter.cs",
+    "lines": 22,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      22
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Converters/InverseBoolConverter.cs",
+    "lines": 19,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      19
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Converters/NullToVisibilityConverter.cs",
+    "lines": 31,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      31
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Converters/StringToInitialConverter.cs",
+    "lines": 22,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      22
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Converters/UrlToImageSourceConverter.cs",
+    "lines": 85,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      85
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Helpers/BulkObservableCollection.cs",
+    "lines": 57,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      57
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Helpers/DateTimeDisplay.cs",
+    "lines": 44,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      44
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Helpers/DocumentTitle.cs",
+    "lines": 88,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      88
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Helpers/InviteDeepLink.cs",
+    "lines": 52,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      52
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Helpers/NavigationService.cs",
+    "lines": 97,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      97
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Helpers/PageTransitionHelper.cs",
+    "lines": 16,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      16
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Helpers/VirtualCatalogItems.cs",
+    "lines": 166,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      166
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/MainWindow.xaml",
+    "lines": 779,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      779
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/MainWindow.xaml.cs",
+    "lines": 3357,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      3357
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Messaging/MediaSurfaceMessages.cs",
+    "lines": 86,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      86
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Themes/DarkTheme.xaml",
+    "lines": 487,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      487
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/CalendarViewModel.cs",
+    "lines": 260,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      260
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/CollectionEditorViewModel.cs",
+    "lines": 739,
+    "status": "delegated-parent",
+    "read_ranges": []
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/CollectionsViewModel.cs",
+    "lines": 590,
+    "status": "delegated-parent",
+    "read_ranges": []
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/FavoritesViewModel.cs",
+    "lines": 122,
+    "status": "full-read",
+    "read_ranges": [
+      "1-122"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/HistoryViewModel.cs",
+    "lines": 280,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      280
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/HomeViewModel.cs",
+    "lines": 764,
+    "status": "full-read",
+    "read_ranges": [
+      "1-764"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/ItemDetailViewModel.cs",
+    "lines": 534,
+    "status": "full-read",
+    "read_ranges": [
+      "1-534"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/LibraryViewModel.cs",
+    "lines": 1341,
+    "status": "full-read",
+    "read_ranges": [
+      "1-1341"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/PersonDetailViewModel.cs",
+    "lines": 275,
+    "status": "full-read",
+    "read_ranges": [
+      "1-275"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/RecommendationSectionViewModel.cs",
+    "lines": 83,
+    "status": "full-read",
+    "read_ranges": [
+      "1-83"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/RecommendationsViewModel.cs",
+    "lines": 211,
+    "status": "full-read",
+    "read_ranges": [
+      "1-211"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/SearchViewModel.cs",
+    "lines": 476,
+    "status": "full-read",
+    "read_ranges": [
+      "1-476"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/SmartCollectionWizardViewModel.cs",
+    "lines": 366,
+    "status": "delegated-parent",
+    "read_ranges": []
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/WatchlistViewModel.cs",
+    "lines": 116,
+    "status": "full-read",
+    "read_ranges": [
+      "1-116"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/CalendarPage.xaml",
+    "lines": 353,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      353
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/CalendarPage.xaml.cs",
+    "lines": 886,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      886
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/CatalogPage.xaml",
+    "lines": 277,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      277
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/CatalogPage.xaml.cs",
+    "lines": 1007,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      1007
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/CollectionBrowsePage.xaml",
+    "lines": 335,
+    "status": "delegated-parent",
+    "read_ranges": []
+  },
+  {
+    "path": "src/SiloPlayer/Views/CollectionBrowsePage.xaml.cs",
+    "lines": 720,
+    "status": "delegated-parent",
+    "read_ranges": []
+  },
+  {
+    "path": "src/SiloPlayer/Views/CollectionEditorPage.xaml",
+    "lines": 785,
+    "status": "delegated-parent",
+    "read_ranges": []
+  },
+  {
+    "path": "src/SiloPlayer/Views/CollectionEditorPage.xaml.cs",
+    "lines": 1144,
+    "status": "delegated-parent",
+    "read_ranges": []
+  },
+  {
+    "path": "src/SiloPlayer/Views/CollectionsPage.xaml",
+    "lines": 288,
+    "status": "delegated-parent",
+    "read_ranges": []
+  },
+  {
+    "path": "src/SiloPlayer/Views/CollectionsPage.xaml.cs",
+    "lines": 2164,
+    "status": "delegated-parent",
+    "read_ranges": []
+  },
+  {
+    "path": "src/SiloPlayer/Views/Dialogs/RecipeGalleryDialog.cs",
+    "lines": 1328,
+    "status": "delegated-parent",
+    "read_ranges": []
+  },
+  {
+    "path": "src/SiloPlayer/Views/FavoritesPage.xaml",
+    "lines": 216,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      216
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/FavoritesPage.xaml.cs",
+    "lines": 127,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      127
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/HistoryPage.xaml",
+    "lines": 230,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      230
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/HistoryPage.xaml.cs",
+    "lines": 586,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      586
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/HomePage.xaml",
+    "lines": 244,
+    "status": "full-read",
+    "read_ranges": [
+      "1-244"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/HomePage.xaml.cs",
+    "lines": 546,
+    "status": "full-read",
+    "read_ranges": [
+      "1-546"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/ItemDetailPage.xaml",
+    "lines": 1267,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      1267
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/ItemDetailPage.xaml.cs",
+    "lines": 7833,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      7833
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/LibraryPage.xaml",
+    "lines": 839,
+    "status": "full-read",
+    "read_ranges": [
+      "1-839"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/LibraryPage.xaml.cs",
+    "lines": 4196,
+    "status": "full-read",
+    "read_ranges": [
+      "1-4196"
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/PersonDetailPage.xaml",
+    "lines": 301,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      301
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/PersonDetailPage.xaml.cs",
+    "lines": 276,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      276
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/RecommendationSectionPage.xaml",
+    "lines": 113,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      113
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/RecommendationSectionPage.xaml.cs",
+    "lines": 136,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      136
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/RecommendationsPage.xaml",
+    "lines": 246,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      246
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/RecommendationsPage.xaml.cs",
+    "lines": 249,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      249
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/SearchPage.xaml",
+    "lines": 540,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      540
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/SearchPage.xaml.cs",
+    "lines": 812,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      812
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/SmartCollectionWizardPage.xaml",
+    "lines": 343,
+    "status": "delegated-parent",
+    "read_ranges": []
+  },
+  {
+    "path": "src/SiloPlayer/Views/SmartCollectionWizardPage.xaml.cs",
+    "lines": 750,
+    "status": "delegated-parent",
+    "read_ranges": []
+  },
+  {
+    "path": "src/SiloPlayer/Views/WatchlistPage.xaml",
+    "lines": 210,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      210
+    ]
+  },
+  {
+    "path": "src/SiloPlayer/Views/WatchlistPage.xaml.cs",
+    "lines": 106,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      106
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/CurrentHomeParitySourceTests.cs",
+    "lines": 334,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      334
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/CurrentLibraryParitySourceTests.cs",
+    "lines": 241,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      241
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/CurrentCatalogParitySourceTests.cs",
+    "lines": 203,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      203
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/MainWindowSourceTests.cs",
+    "lines": 331,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      331
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/GlobalSearchInteractionParitySourceTests.cs",
+    "lines": 56,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      56
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/HomeHeroCurrentParityTests.cs",
+    "lines": 68,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      68
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/CalendarInteractionParitySourceTests.cs",
+    "lines": 29,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      29
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/CalendarCurrentParitySourceTests.cs",
+    "lines": 66,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      66
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/MatchItemDialogParitySourceTests.cs",
+    "lines": 66,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      66
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/WatchTonightCurrentParitySourceTests.cs",
+    "lines": 42,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      42
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/UserFacingKeyboardParitySourceTests.cs",
+    "lines": 69,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      69
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/UserVisibleStateParitySourceTests.cs",
+    "lines": 56,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      56
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/RecommendationSectionCurrentParitySourceTests.cs",
+    "lines": 50,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      50
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/CurrentPeopleOnboardingParitySourceTests.cs",
+    "lines": 108,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      108
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/UserDialogParitySourceTests.cs",
+    "lines": 235,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      235
+    ]
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/CurrentItemCardParityTests.cs",
+    "lines": 199,
+    "status": "full-read",
+    "read_ranges": [
+      1,
+      199
+    ]
+  }
+]

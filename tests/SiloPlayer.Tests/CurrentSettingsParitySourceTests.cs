@@ -69,8 +69,8 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("setting_choice", dialog);
         Assert.Contains("Skip tour", dialog);
         Assert.Contains("ReportOnboardingProgressAsync", dialog);
-        Assert.Contains("/api/v1/onboarding/flow?surface=", api);
-        Assert.Contains("/api/v1/onboarding/progress", api);
+        Assert.Contains("/api/v2/onboarding/flow?surface=", api);
+        Assert.Contains("/api/v2/onboarding/progress", api);
     }
 
     [Fact]
@@ -188,7 +188,7 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("ThemeImport_Click", page);
         Assert.Contains("LoadThemeCatalogAsync", page);
         Assert.Contains("DownloadThemeAsync", api);
-        Assert.Contains("/api/v1/theme/catalog", api);
+        Assert.Contains("/api/v2/theme/catalog", api);
         Assert.Contains("x:Name=\"ThemeCustomCssBox\"", ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml"));
         Assert.Contains("PutSettingAsync(\"ui_custom_css\"", page);
         Assert.Contains("SanitizeThemeCss", page);
@@ -248,8 +248,8 @@ public sealed class CurrentSettingsParitySourceTests
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "TasteSeedPage.xaml");
         var code = ReadRepoFile("src", "SiloPlayer", "Views", "TasteSeedPage.xaml.cs");
 
-        Assert.Contains("/api/v1/recommendations/taste-seed/items", api);
-        Assert.Contains("/api/v1/recommendations/taste-seed", api);
+        Assert.Contains("/api/v2/recommendations/taste-seed/items", api);
+        Assert.Contains("/api/v2/recommendations/taste-seed", api);
         Assert.Contains("MinimumPicks = 3", viewModel);
         Assert.Contains("!item.WasFavorite", viewModel);
         Assert.Contains("ItemsScrollViewer_ViewChanged", page);
@@ -277,10 +277,10 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("OpenWebhookDialogAsync", code);
         Assert.Contains("RotateWebhookSecretAsync", viewModel);
         Assert.Contains("DeleteWebPushSubscriptionAsync", viewModel);
-        Assert.Contains("/api/v1/notifications/email-preferences", api);
-        Assert.Contains("/api/v1/notifications/discord-preferences", api);
-        Assert.Contains("/api/v1/notifications/webhooks", api);
-        Assert.Contains("/api/v1/notifications/web-push/subscriptions", api);
+        Assert.Contains("/api/v2/notifications/email-preferences", api);
+        Assert.Contains("/api/v2/notifications/discord-preferences", api);
+        Assert.Contains("/api/v2/notifications/webhooks", api);
+        Assert.Contains("/api/v2/notifications/web-push/subscriptions", api);
     }
 
     [Fact]

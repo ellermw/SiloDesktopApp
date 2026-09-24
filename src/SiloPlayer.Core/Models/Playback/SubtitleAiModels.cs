@@ -37,7 +37,7 @@ public sealed class SubtitleAiJob
     public string Status { get; set; } = "";
     public double Progress { get; set; }
     public string ProgressMessage { get; set; } = "";
-    public int? ResultSubtitleId { get; set; }
+    public long? ResultSubtitleId { get; set; }
     public string? ErrorMessage { get; set; }
 }
 

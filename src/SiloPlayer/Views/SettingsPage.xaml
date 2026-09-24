@@ -826,12 +826,18 @@
                         <Grid ColumnSpacing="20">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <StackPanel Spacing="6">
-                                <TextBlock Text="NVIDIA RTX AI upscaling (preview)" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Enhance 1080p and lower-resolution SDR video on larger displays, up to 2×. Uses this PC's RTX GPU. Original 4K and HDR video keep normal playback." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" MaxWidth="680" />
-                                <TextBlock Text="Enable Video Super Resolution in NVIDIA App → System → Video. Restart Silo for Windows Desktop App after changing this option. Quality and power use depend on your GPU and NVIDIA settings." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" MaxWidth="680" />
+                                <TextBlock Text="AI video upscaling (experimental)" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Enhance 1080p and lower-resolution SDR video on larger displays. NVIDIA and Intel use driver video processing. AMD uses FSRCNNX neural upscaling; FSRCNNX can also be tested on NVIDIA and Intel GPUs. Original 4K and HDR video keep normal playback." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" MaxWidth="680" />
+                                <TextBlock Text="Restart Silo for Windows Desktop App after changing this option. Intel and AMD support is experimental and needs hardware testing. Quality and power use depend on your GPU." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" MaxWidth="680" />
                                 <TextBlock x:Name="RtxUpscalingHardwareText" Text="Checking graphics hardware…" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                             </StackPanel>
-                            <ToggleSwitch x:Name="RtxUpscalingToggle" Grid.Column="1" VerticalAlignment="Center" IsEnabled="False" OnContent="" OffContent="" AutomationProperties.Name="NVIDIA RTX AI upscaling preview" Toggled="RtxUpscalingToggle_Toggled" />
+                            <ComboBox x:Name="VideoUpscalingComboBox" Grid.Column="1" VerticalAlignment="Center" Width="240" IsEnabled="False" AutomationProperties.Name="AI video upscaling mode" SelectionChanged="VideoUpscalingComboBox_SelectionChanged">
+                                <ComboBoxItem Content="Off" Tag="off" />
+                                <ComboBoxItem Content="Automatic" Tag="automatic" />
+                                <ComboBoxItem Content="NVIDIA RTX VSR" Tag="nvidia" />
+                                <ComboBoxItem Content="Intel VSR (experimental)" Tag="intel" />
+                                <ComboBoxItem Content="FSRCNNX AI (AMD / any GPU)" Tag="fsrcnnx" />
+                            </ComboBox>
                         </Grid>
                     </StackPanel>
                 </Border>

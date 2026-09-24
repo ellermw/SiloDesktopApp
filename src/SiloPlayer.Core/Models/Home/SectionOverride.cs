@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using System.Text.Json;
 
 namespace SiloPlayer.Core.Models.Home;
 
@@ -29,28 +30,38 @@ public class SaveOverridesRequest
 
 public class ProfileSectionOverridesResponse
 {
+    [JsonPropertyName("items")]
     public List<RawSectionOverride> Overrides { get; set; } = [];
 }
 
-/// <summary>The profile override read endpoint currently emits Go field names
-/// verbatim. Keep this distinct from the snake_case PUT wire model so a load/save
-/// round trip cannot erase recipe configuration.</summary>
+/// <summary>The v2 read endpoint emits snake_case fields and structured recipe
+/// configuration. String accessors preserve the editor's existing JSON editing API.</summary>
 public class RawSectionOverride
 {
-    [JsonPropertyName("ID")] public string Id { get; set; } = "";
-    [JsonPropertyName("SectionID")] public string SectionId { get; set; } = "";
-    [JsonPropertyName("Position")] public int? Position { get; set; }
-    [JsonPropertyName("Hidden")] public bool Hidden { get; set; }
-    [JsonPropertyName("Removed")] public bool Removed { get; set; }
-    [JsonPropertyName("SectionType")] public string SectionType { get; set; } = "";
-    [JsonPropertyName("Title")] public string Title { get; set; } = "";
-    [JsonPropertyName("Featured")] public bool? Featured { get; set; }
-    [JsonPropertyName("ItemLimit")] public int? ItemLimit { get; set; }
-    [JsonPropertyName("Config")] public string Config { get; set; } = "";
-    [JsonPropertyName("IsUserAdded")] public bool IsUserAdded { get; set; }
-    [JsonPropertyName("UserSectionType")] public string UserSectionType { get; set; } = "";
-    [JsonPropertyName("UserConfig")] public string UserConfig { get; set; } = "";
-    [JsonPropertyName("UserTitle")] public string UserTitle { get; set; } = "";
+    [JsonPropertyName("id")] public string Id { get; set; } = "";
+    [JsonPropertyName("section_id")] public string SectionId { get; set; } = "";
+    [JsonPropertyName("position")] public int? Position { get; set; }
+    [JsonPropertyName("hidden")] public bool Hidden { get; set; }
+    [JsonPropertyName("removed")] public bool Removed { get; set; }
+    [JsonPropertyName("section_type")] public string SectionType { get; set; } = "";
+    [JsonPropertyName("title")] public string Title { get; set; } = "";
+    [JsonPropertyName("featured")] public bool? Featured { get; set; }
+    [JsonPropertyName("item_limit")] public int? ItemLimit { get; set; }
+    [JsonIgnore] public string Config { get; set; } = "";
+    [JsonPropertyName("config")] public JsonElement? ConfigDocument
+    {
+        get => string.IsNullOrEmpty(Config) ? null : JsonSerializer.Deserialize<JsonElement>(Config);
+        set => Config = value?.GetRawText() ?? "";
+    }
+    [JsonPropertyName("is_user_added")] public bool IsUserAdded { get; set; }
+    [JsonPropertyName("user_section_type")] public string UserSectionType { get; set; } = "";
+    [JsonIgnore] public string UserConfig { get; set; } = "";
+    [JsonPropertyName("user_config")] public JsonElement? UserConfigDocument
+    {
+        get => string.IsNullOrEmpty(UserConfig) ? null : JsonSerializer.Deserialize<JsonElement>(UserConfig);
+        set => UserConfig = value?.GetRawText() ?? "";
+    }
+    [JsonPropertyName("user_title")] public string UserTitle { get; set; } = "";
 }
 
 public class SidebarPin

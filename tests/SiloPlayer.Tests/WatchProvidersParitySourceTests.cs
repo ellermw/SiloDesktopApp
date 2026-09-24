@@ -23,7 +23,7 @@ public sealed class WatchProvidersParitySourceTests
         var vm = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "ViewModels", "SettingsViewModel.cs"));
         var app = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "App.xaml.cs"));
 
-        Assert.Contains("/api/v1/watch-providers", api);
+        Assert.Contains("/api/v2/watch-providers", api);
         Assert.Contains("/connection", api);
         Assert.Contains("/auth/device-code", api);
         Assert.Contains("/auth/poll", api);

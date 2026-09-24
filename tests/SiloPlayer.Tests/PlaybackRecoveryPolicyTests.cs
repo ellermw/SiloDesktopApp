@@ -9,6 +9,8 @@ public sealed class PlaybackRecoveryPolicyTests
     [InlineData("buffering-stalled")]
     [InlineData("position-stalled")]
     [InlineData("end-file")]
+    [InlineData("eof-reached")]
+    [InlineData("direct-transport-error")]
     public void DirectProgressiveNetworkInterruptionsReloadInsideCurrentSession(string reason)
     {
         Assert.True(PlaybackRecoveryPolicy.CanReloadCurrentDirectSession(

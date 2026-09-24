@@ -39,7 +39,7 @@ public sealed class NotificationsTests
         await new NotificationsApi(client).GetNotificationsAsync("unread", "cursor/value", 25);
 
         Assert.Equal(
-            "/api/v1/notifications?limit=25&status=unread&before=cursor%2Fvalue",
+            "/api/v2/notifications?limit=25&status=unread&cursor=cursor%2Fvalue",
             handler.LastUri?.PathAndQuery);
     }
 

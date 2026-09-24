@@ -892,11 +892,23 @@ local function request_tick()
     if state.tick_timer then state.tick_timer:resume() end
 end
 
+local function each_marker_range(visit)
+    for _, marker in ipairs(marker_regions) do
+        if type(state.marker_segments) == "table" then
+            for _, segment in ipairs(state.marker_segments) do
+                if segment.kind == marker.key then
+                    visit(marker, tonumber(segment.start_seconds) or 0, tonumber(segment.end_seconds) or 0)
+                end
+            end
+        else
+            visit(marker, tonumber(state[marker.key .. "_start"]) or 0, tonumber(state[marker.key .. "_end"]) or 0)
+        end
+    end
+end
+
 local function marker_at_time(seconds)
     local match = nil
-    for _, marker in ipairs(marker_regions) do
-        local marker_start = tonumber(state[marker.key .. "_start"]) or 0
-        local marker_end = tonumber(state[marker.key .. "_end"]) or 0
+    each_marker_range(function(marker, marker_start, marker_end)
         if marker_end > marker_start and seconds >= marker_start and seconds <= marker_end then
             if not match or (marker_end - marker_start) < (match.finish - match.start) then
                 match = {
@@ -907,7 +919,7 @@ local function marker_at_time(seconds)
                 }
             end
         end
-    end
+    end)
     return match
 end
 
@@ -1581,12 +1593,10 @@ local function render_osc()
                 color, is_hovered and "48" or alpha, ma)
         end
     end
-    for _, marker in ipairs(marker_regions) do
-        local marker_start = tonumber(state[marker.key .. "_start"]) or 0
-        local marker_end = tonumber(state[marker.key .. "_end"]) or 0
+    each_marker_range(function(marker, marker_start, marker_end)
         draw_marker_region(marker_start, marker_end, marker.color, "99",
-            hover_marker and hover_marker.label == marker.label)
-    end
+            hover_marker and hover_marker.label == marker.label and hover_marker.start == marker_start)
+    end)
 
     -- Chapter boundaries are one-pixel, ten-pixel-high ticks in the WebUI.
     if state.duration > 0 then
@@ -2187,18 +2197,35 @@ local function render_stats()
             factor = "None"
         end
     end
-    local rtx_requested = false
+    local driver_upscaler = nil
     for _, filter in ipairs(mp.get_property_native("vf", {}) or {}) do
         if filter.name == "d3d11vpp" and filter.enabled ~= false and
-            filter.params and filter.params["scaling-mode"] == "nvidia" then
-            rtx_requested = true
-            break
+            filter.params then
+            local mode = filter.params["scaling-mode"]
+            if mode == "nvidia" then driver_upscaler = "RTX VSR (requested)" end
+            if mode == "intel" then driver_upscaler = "Intel VSR (requested)" end
+        end
+    end
+    local neural_requested = false
+    for _, shader in ipairs(mp.get_property_native("glsl-shaders", {}) or {}) do
+        if tostring(shader):match("FSRCNNX_x2_8%-0%-4%-1%.glsl$") then
+            neural_requested = true
         end
     end
     table.insert(s2.rows, { label = "Scale per dimension", value = factor })
     table.insert(s2.rows, { label = "Pixel count", value = pixel_factor })
-    table.insert(s2.rows, { label = "Upscaler", value = rtx_requested and "RTX VSR (requested)"
+    table.insert(s2.rows, { label = "Upscaler", value = driver_upscaler or (neural_requested and "FSRCNNX AI (requested)")
         or (enlarged and "Other video filter" or "Normal renderer") })
+    if neural_requested and source_known then
+        -- GLSL hooks run after video-out-params. Their requested reconstruction
+        -- must not be presented as a measured video-filter output resolution.
+        table.insert(s2.rows, { label = "AI luma reconstruction (requested)",
+            value = string.format("%dx%d (2x)", vw * 2, vh * 2) })
+    end
+    local enhancement_status = mp.get_property("user-data/silo-upscaling-status", "")
+    if enhancement_status ~= "" then
+        table.insert(s2.rows, { label = "Enhancement status", value = enhancement_status })
+    end
     local dropped = (mp.get_property_number("frame-drop-count") or 0)
                   + (mp.get_property_number("decoder-frame-drop-count") or 0)
     table.insert(s2.rows, { label = "Dropped frames", value = tostring(dropped) })
@@ -3611,6 +3638,28 @@ check_skip_markers = function()
     local pos = state.time_pos
     if pos < 0 then return end
 
+    -- API v2 may contain several ranges of one kind. Select only the active
+    -- segment; never merge separated intros/credits across normal content.
+    if type(state.marker_segments) == "table" then
+        state.auto_skipped_segments = state.auto_skipped_segments or {}
+        for _, kind in ipairs({"intro", "recap", "credits", "preview"}) do
+            local first, last = 0, 0
+            for _, segment in ipairs(state.marker_segments) do
+                local a, b = tonumber(segment.start_seconds), tonumber(segment.end_seconds)
+                if segment.kind == kind and a and b and b > a and pos >= a and pos < b then
+                    first, last = a, b
+                    break
+                end
+            end
+            local key = kind .. ":" .. tostring(first) .. ":" .. tostring(last)
+            if state[kind .. "_segment_key"] ~= key then
+                state[kind .. "_segment_key"] = key
+                state[kind .. "_auto_skipped"] = state.auto_skipped_segments[key] == true
+            end
+            state[kind .. "_start"], state[kind .. "_end"] = first, last
+        end
+    end
+
     -- Auto-skip uses the same transport-aware host seek as a manual marker
     -- click. That keeps direct, remux, and HLS semantics identical and also
     -- preserves the current paused state. Watch-together guests never issue
@@ -3621,6 +3670,7 @@ check_skip_markers = function()
             and state.intro_end > state.intro_start
             and pos >= state.intro_start and pos < state.intro_end then
             state.intro_auto_skipped = true
+            if state.auto_skipped_segments and state.intro_segment_key then state.auto_skipped_segments[state.intro_segment_key] = true end
             seek_and_resume(state.intro_end, "absolute+keyframes")
             return
         end
@@ -3628,6 +3678,7 @@ check_skip_markers = function()
             and state.recap_end > state.recap_start
             and pos >= state.recap_start and pos < state.recap_end then
             state.recap_auto_skipped = true
+            if state.auto_skipped_segments and state.recap_segment_key then state.auto_skipped_segments[state.recap_segment_key] = true end
             seek_and_resume(state.recap_end, "absolute+keyframes")
             return
         end
@@ -3635,6 +3686,7 @@ check_skip_markers = function()
             and credits_marker_is_plausible()
             and pos >= state.credits_start and pos < state.credits_end then
             state.credits_auto_skipped = true
+            if state.auto_skipped_segments and state.credits_segment_key then state.auto_skipped_segments[state.credits_segment_key] = true end
             seek_and_resume(state.credits_end, "absolute+keyframes")
             return
         end
@@ -4990,6 +5042,7 @@ local function observe_properties()
             local reset_auto_skip = data.reset_auto_skip == true
                 or state.marker_content_id ~= incoming_content_id
             state.marker_content_id = incoming_content_id
+            state.marker_segments = type(data.marker_segments) == "table" and data.marker_segments or nil
             state.intro_start = tonumber(data.intro_start) or 0
             state.intro_end = tonumber(data.intro_end) or 0
             state.recap_start = tonumber(data.recap_start) or 0
@@ -4999,6 +5052,7 @@ local function observe_properties()
             state.preview_start = tonumber(data.preview_start) or 0
             state.preview_end = tonumber(data.preview_end) or 0
             if reset_auto_skip then
+                state.auto_skipped_segments = {}
                 state.intro_auto_skipped = false
                 state.recap_auto_skipped = false
                 state.credits_auto_skipped = false

@@ -186,8 +186,8 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
     public double CardCaptionHeight => CardPresentation.Caption switch
     {
         "artwork" => 0,
-        "title" => 28,
-        _ => 44,
+        "title" => 36,
+        _ => 56,
     };
 
     private void Reset(bool supported, bool unavailable)

@@ -28,9 +28,9 @@
         <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
 
         <!-- Version -->
-    <Version>1.1.100</Version>
-    <FileVersion>1.1.100.0</FileVersion>
-    <AssemblyVersion>1.1.100.0</AssemblyVersion>
+    <Version>1.1.102</Version>
+    <FileVersion>1.1.102.0</FileVersion>
+    <AssemblyVersion>1.1.102.0</AssemblyVersion>
 
         <!-- App Options -->
         <ApplicationIcon>Assets\app.ico</ApplicationIcon>
@@ -102,6 +102,11 @@
       <None Include="..\..\libs\mpv\scripts\silo-osc.lua">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         <Link>libs\mpv\scripts\silo-osc.lua</Link>
+      </None>
+      <None Include="..\..\libs\mpv\shaders\*">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <Link>libs\mpv\shaders\%(Filename)%(Extension)</Link>
       </None>
       <None Include="..\..\libs\mpv\fonts\material-design-iconic-font.ttf">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

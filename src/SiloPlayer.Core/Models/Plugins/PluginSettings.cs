@@ -2,6 +2,7 @@ namespace SiloPlayer.Core.Models.Plugins;
 
 public class PluginSettingsSummary
 {
+    [System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.AllowReadingFromString)]
     public int Id { get; set; }
     public string PluginId { get; set; } = "";
     public string Version { get; set; } = "";
@@ -13,6 +14,7 @@ public class PluginSettingsSummary
 
 public class PluginSettingsListResponse
 {
+    [System.Text.Json.Serialization.JsonPropertyName("items")]
     public List<PluginSettingsSummary> Installations { get; set; } = [];
 }
 

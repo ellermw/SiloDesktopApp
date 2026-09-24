@@ -106,16 +106,17 @@ public sealed class CollectionsParitySourceTests
         var root = FindRepositoryRoot();
         var api = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Api", "CollectionsApi.cs"));
 
-        Assert.Contains("/api/v1/collections/templates", api);
-        Assert.Contains("/api/v1/collections/import/mdblist/search", api);
-        Assert.Contains("/api/v1/collections/import/mdblist/top", api);
-        Assert.Contains("/api/v1/collections/import/mdblist", api);
-        Assert.Contains("/api/v1/collections/import/tmdb", api);
-        Assert.Contains("/api/v1/collections/import/trakt", api);
+        Assert.Contains("/api/v2/collections/templates", api);
+        Assert.Contains("/api/v2/collections/import/mdblist/search", api);
+        Assert.Contains("/api/v2/collections/import/mdblist/top", api);
+        Assert.Contains("/api/v2/collections/import/mdblist", api);
+        Assert.Contains("/api/v2/collections/import/tmdb", api);
+        Assert.Contains("/api/v2/collections/import/trakt", api);
         Assert.Contains("/sync", api);
         Assert.Contains("/image?type=poster", api);
         Assert.Contains("/collections/capabilities", api);
-        Assert.Contains("PutJsonWithFileAsync", api);
+        Assert.Contains("PutMultipartAsync", api);
+        Assert.Contains("/poster", api);
     }
 
     [Fact]

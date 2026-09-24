@@ -13,7 +13,7 @@ public sealed class ApiPathEncodingTests
 
         await api.AddFavoriteAsync("movie/one two");
 
-        Assert.Equal("/api/v1/favorites/movie%2Fone%20two", handler.LastUri?.AbsolutePath);
+        Assert.Equal("/api/v2/favorites/movie%2Fone%20two", handler.LastUri?.AbsolutePath);
     }
 
     [Fact]
@@ -22,9 +22,10 @@ public sealed class ApiPathEncodingTests
         var handler = new CaptureHandler();
         var api = new PlaybackApi(CreateClient(handler));
 
+        await api.StartPlaybackV3Async(new SiloPlayer.Core.Models.Playback.PlaybackStartRequestV3 { FileId = 42 });
         await api.StopPlaybackAsync("session/one two");
 
-        Assert.Equal("/api/v1/playback/session%2Fone%20two", handler.LastUri?.AbsolutePath);
+        Assert.Equal("/api/v2/playback/session%2Fone%20two", handler.LastUri?.AbsolutePath);
     }
 
     [Fact]
@@ -35,7 +36,7 @@ public sealed class ApiPathEncodingTests
 
         await api.VerifyPinAsync("profile/one two", "1234");
 
-        Assert.Equal("/api/v1/profiles/profile%2Fone%20two/verify-pin", handler.LastUri?.AbsolutePath);
+        Assert.Equal("/api/v2/profiles/profile%2Fone%20two/verify-pin", handler.LastUri?.AbsolutePath);
     }
 
     private static SiloApiClient CreateClient(HttpMessageHandler handler)
@@ -54,6 +55,15 @@ public sealed class ApiPathEncodingTests
             CancellationToken cancellationToken)
         {
             LastUri = request.RequestUri;
+            if (LastUri!.AbsolutePath.StartsWith("/api/v2/playback/"))
+            {
+                var body = LastUri.AbsolutePath.EndsWith("/capabilities")
+                    ? """{"allowed":true,"state":"available","installation_id":"installation","protocol_versions":[3]}"""
+                    : LastUri.AbsolutePath.EndsWith("/start")
+                        ? """{"outcome":"playable","session_id":"session/one two"}"""
+                        : """{"outcome":"stopped"}""";
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
+            }
             return Task.FromResult(new HttpResponseMessage(
                 request.Method == HttpMethod.Delete || request.Method == HttpMethod.Put
                     ? HttpStatusCode.NoContent

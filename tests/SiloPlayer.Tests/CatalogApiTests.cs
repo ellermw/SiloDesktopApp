@@ -1,4 +1,6 @@
 using System.Net;
+using System.Text.Json;
+using Microsoft.AspNetCore.WebUtilities;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Collections;
 
@@ -17,14 +19,14 @@ public sealed class CatalogApiTests
             null,
             limit: 60,
             offset: 120,
-            snapshot: "2026-07-11T12:34:56Z",
+            snapshot: "opaque-signed-window-cursor",
             source: "history");
 
         var query = Uri.UnescapeDataString(handler.LastUri!.Query);
         Assert.Contains("source=history", query);
         Assert.Contains("limit=60", query);
-        Assert.Contains("offset=120", query);
-        Assert.Contains("snapshot=2026-07-11T12:34:56Z", query);
+        Assert.Contains("seek=120", query);
+        Assert.Contains("cursor=opaque-signed-window-cursor", query);
         Assert.DoesNotContain("sort=", query);
         Assert.DoesNotContain("order=", query);
     }
@@ -41,12 +43,13 @@ public sealed class CatalogApiTests
             country: "United States",
             resolution: "2160p");
 
-        var query = Uri.UnescapeDataString(handler.LastUri!.Query);
-        Assert.Contains("groups[0][match]=all", query);
-        Assert.Contains("groups[0][rules][0][field]=country", query);
-        Assert.Contains("groups[0][rules][0][value]=United States", query);
-        Assert.Contains("groups[0][rules][1][field]=resolution", query);
-        Assert.Contains("groups[0][rules][1][value]=2160p", query);
+        using var groups = ReadGroups(handler.LastUri!);
+        Assert.Equal("all", groups.RootElement[0].GetProperty("match").GetString());
+        var rules = groups.RootElement[0].GetProperty("rules");
+        Assert.Equal("country", rules[0].GetProperty("field").GetString());
+        Assert.Equal("United States", rules[0].GetProperty("value").GetString());
+        Assert.Equal("resolution", rules[1].GetProperty("field").GetString());
+        Assert.Equal("2160p", rules[1].GetProperty("value").GetString());
     }
 
     [Fact]
@@ -64,12 +67,13 @@ public sealed class CatalogApiTests
                 new QueryRule { Field = "hdr", Op = "is", Value = true },
             ]);
 
-        var query = Uri.UnescapeDataString(handler.LastUri!.Query);
-        Assert.Contains("groups[0][rules][0][field]=rating_imdb", query);
-        Assert.Contains("groups[0][rules][0][op]=gte", query);
-        Assert.Contains("groups[0][rules][0][value]=7.5", query);
-        Assert.Contains("groups[0][rules][1][field]=hdr", query);
-        Assert.Contains("groups[0][rules][1][value]=true", query);
+        using var groups = ReadGroups(handler.LastUri!);
+        var rules = groups.RootElement[0].GetProperty("rules");
+        Assert.Equal("rating_imdb", rules[0].GetProperty("field").GetString());
+        Assert.Equal("gte", rules[0].GetProperty("op").GetString());
+        Assert.Equal(7.5, rules[0].GetProperty("value").GetDouble());
+        Assert.Equal("hdr", rules[1].GetProperty("field").GetString());
+        Assert.True(rules[1].GetProperty("value").GetBoolean());
     }
 
     [Fact]
@@ -88,10 +92,11 @@ public sealed class CatalogApiTests
             ],
             extraRulesMatch: "any");
 
-        var query = Uri.UnescapeDataString(handler.LastUri!.Query);
-        Assert.Contains("groups[0][match]=any", query);
-        Assert.Contains("groups[0][rules][0][field]=genre", query);
-        Assert.Contains("groups[0][rules][1][field]=year", query);
+        using var groups = ReadGroups(handler.LastUri!);
+        Assert.Equal("any", groups.RootElement[0].GetProperty("match").GetString());
+        var rules = groups.RootElement[0].GetProperty("rules");
+        Assert.Equal("genre", rules[0].GetProperty("field").GetString());
+        Assert.Equal("year", rules[1].GetProperty("field").GetString());
     }
 
     [Fact]
@@ -120,14 +125,16 @@ public sealed class CatalogApiTests
 
         var query = Uri.UnescapeDataString(handler.LastUri!.Query);
         Assert.Contains("match=any", query);
-        Assert.Contains("groups[0][rules][0][value][0]=1990", query);
-        Assert.Contains("groups[0][rules][0][value][1]=1999", query);
-        Assert.Contains("groups[1][match]=any", query);
-        Assert.Contains("groups[1][rules][0][field]=hdr", query);
+        using var groups = ReadGroups(handler.LastUri!);
+        var range = groups.RootElement[0].GetProperty("rules")[0].GetProperty("value");
+        Assert.Equal(1990, range[0].GetInt32());
+        Assert.Equal(1999, range[1].GetInt32());
+        Assert.Equal("any", groups.RootElement[1].GetProperty("match").GetString());
+        Assert.Equal("hdr", groups.RootElement[1].GetProperty("rules")[0].GetProperty("field").GetString());
     }
 
     [Fact]
-    public async Task GetFiltersAsync_ScopesFacetWorkToTheVisibleSearch()
+    public async Task GetFiltersAsync_UsesV2SupportedScopeWithoutSearchText()
     {
         var handler = new CaptureHandler();
         var client = new SiloApiClient(new HttpClient(handler));
@@ -139,9 +146,9 @@ public sealed class CatalogApiTests
             type: "video");
 
         var query = Uri.UnescapeDataString(handler.LastUri!.Query);
-        Assert.Equal("/api/v1/catalog/filters", handler.LastUri.AbsolutePath);
+        Assert.Equal("/api/v2/catalog/filters", handler.LastUri.AbsolutePath);
         Assert.Contains("source=query", query);
-        Assert.Contains("q=Here Comes The Boom", query);
+        Assert.DoesNotContain("q=", query);
         Assert.Contains("type=video", query);
     }
 
@@ -156,14 +163,17 @@ public sealed class CatalogApiTests
             52, "author", "count", "King", offset: 60, includeTotal: false);
 
         var query = Uri.UnescapeDataString(handler.LastUri!.Query);
-        Assert.Equal("/api/v1/catalog/audiobook-groups", handler.LastUri.AbsolutePath);
+        Assert.Equal("/api/v2/catalog/audiobook-groups", handler.LastUri.AbsolutePath);
         Assert.Contains("library_id=52", query);
         Assert.Contains("group_by=author", query);
         Assert.Contains("sort=count", query);
         Assert.Contains("q=King", query);
-        Assert.Contains("offset=60", query);
-        Assert.Contains("include_total=false", query);
+        Assert.DoesNotContain("offset=", query);
+        Assert.Contains("skip_total=true", query);
     }
+
+    private static JsonDocument ReadGroups(Uri uri)
+        => JsonDocument.Parse(QueryHelpers.ParseQuery(uri.Query)["groups"].ToString());
 
     private sealed class CaptureHandler : HttpMessageHandler
     {

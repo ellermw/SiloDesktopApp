@@ -34,6 +34,7 @@ public class WatchDetailResponse
 
 public class FileVersion
 {
+    public List<PlaybackMarkerSegment>? MarkerSegments { get; set; }
     public int FileId { get; set; }
     public string? FileName { get; set; }
     public string? FilePath { get; set; }
@@ -67,6 +68,13 @@ public class FileVersion
     public TimeRange? Credits { get; set; }
     public TimeRange? Recap { get; set; }
     public TimeRange? Preview { get; set; }
+}
+
+public sealed class PlaybackMarkerSegment
+{
+    [JsonPropertyName("kind")] public string Kind { get; set; } = "";
+    [JsonPropertyName("start_seconds")] public double StartSeconds { get; set; }
+    [JsonPropertyName("end_seconds")] public double EndSeconds { get; set; }
 }
 
 public class PlaybackVariant

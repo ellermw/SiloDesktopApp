@@ -99,6 +99,8 @@ public sealed class PlaybackQualitySelectionTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/v2/playback/capabilities")
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"allowed":true,"state":"available","installation_id":"11111111-1111-4111-8111-111111111111","protocol_versions":[3]}""") };
             if (path.EndsWith("/start") || path.EndsWith("/replan"))
             {
                 using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
@@ -132,7 +134,7 @@ public sealed class PlaybackQualitySelectionTests
                 return new HttpResponseMessage(HttpStatusCode.OK)
                 { Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json") };
             }
-            return new HttpResponseMessage(HttpStatusCode.NoContent);
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(request.Method == HttpMethod.Delete ? "{\"outcome\":\"stopped\"}" : "{\"outcome\":\"applied\"}") };
         }
     }
 }

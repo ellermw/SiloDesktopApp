@@ -20,12 +20,9 @@ public sealed partial class PosterCard : UserControl
     {
         var safeWidth = Math.Max(96, width);
         var posterHeight = safeWidth * 1.5;
-        var captionHeight = _uiCustomizationService.CardPresentation.Caption switch
-        {
-            "artwork" => 0,
-            "title" => 36,
-            _ => 56,
-        };
+        // Repeater rows and cards must reserve the same caption space;
+        // a shorter row clips the year/type line even when the card is taller.
+        var captionHeight = _uiCustomizationService.CardCaptionHeight;
         var totalHeight = posterHeight + captionHeight;
         Width = safeWidth;
         Height = totalHeight;

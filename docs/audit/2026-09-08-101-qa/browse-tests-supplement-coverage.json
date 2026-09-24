@@ -1,0 +1,31 @@
+{
+  "reviewer": "client_backend",
+  "scope": "Explicit three-test transfer from browse_ui",
+  "unreadable": [],
+  "files": [
+    {
+      "path": "tests/SiloPlayer.Tests/SearchRuntimeRegressionTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\SearchRuntimeRegressionTests.cs",
+      "lines": 292,
+      "review": "full read",
+      "confidence": "high source coverage; tests not executed by this reviewer",
+      "disposition": "keep minimal source invariants; replace behavioral source assertions with executable tests"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/LibraryWindowLoadingTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\LibraryWindowLoadingTests.cs",
+      "lines": 509,
+      "review": "full read",
+      "confidence": "high source coverage; tests not executed by this reviewer",
+      "disposition": "keep meaningful asynchronous behavior tests; broaden adversarial server/context cases"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/ItemDetailCurrentParityTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\ItemDetailCurrentParityTests.cs",
+      "lines": 699,
+      "review": "full read",
+      "confidence": "high source coverage; tests not executed by this reviewer",
+      "disposition": "keep minimal source invariants; replace behavioral source assertions with executable tests"
+    }
+  ]
+}

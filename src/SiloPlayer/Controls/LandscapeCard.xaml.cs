@@ -59,6 +59,11 @@ public sealed partial class LandscapeCard : UserControl
         };
         this.Unloaded += (_, _) =>
         {
+            // WinUI can deliver a queued Unloaded after this card has already
+            // been reattached and received Loaded (detail-section reordering).
+            // That stale event must not cancel the current artwork load.
+            if (IsLoaded) return;
+
             try { _loadCts?.Cancel(); } catch { }
             _loadCts?.Dispose();
             _loadCts = null;

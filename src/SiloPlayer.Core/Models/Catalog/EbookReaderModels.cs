@@ -13,6 +13,7 @@ public sealed class EbookReaderProgress
 
 public sealed class EbookReaderProgressInput
 {
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
     public int FileId { get; set; }
     public string Location { get; set; } = "";
     public double Progress { get; set; }
@@ -27,6 +28,8 @@ public sealed class EbookReaderConfigEnvelope
 
 public sealed class EbookReaderAnnotation
 {
+    [System.Text.Json.Serialization.JsonPropertyName("etag")]
+    public string? ETag { get; set; }
     public string Id { get; set; } = "";
     public string ContentId { get; set; } = "";
     public string Kind { get; set; } = "bookmark";
@@ -48,6 +51,7 @@ public sealed class EbookReaderAnnotationsEnvelope
 
 public sealed class EbookReaderAnnotationInput
 {
+    public string Id { get; set; } = Guid.NewGuid().ToString();
     public string Kind { get; set; } = "bookmark";
     public string? CfiRange { get; set; }
     public string? Location { get; set; }

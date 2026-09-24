@@ -1,6 +1,7 @@
 namespace SiloPlayer.Core.Models.Auth;
 public class ProfilesResponse
 {
+    [System.Text.Json.Serialization.JsonPropertyName("items")]
     public List<Profile> Profiles { get; set; } = [];
     public bool AvatarUploadEnabled { get; set; }
 }
@@ -37,6 +38,7 @@ public class Profile
     public bool AutoPlayNextPreview { get; set; }
     public bool ShowForcedSubtitles { get; set; }
     public bool LibraryRestrictionsEnabled { get; set; }
+    [System.Text.Json.Serialization.JsonNumberHandling(System.Text.Json.Serialization.JsonNumberHandling.AllowReadingFromString | System.Text.Json.Serialization.JsonNumberHandling.WriteAsString)]
     public List<int>? AllowedLibraryIds { get; set; }
     public string MaxPlaybackQuality { get; set; } = "";
     public string CreatedAt { get; set; } = "";

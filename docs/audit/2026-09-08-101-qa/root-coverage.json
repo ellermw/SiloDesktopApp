@@ -1,0 +1,485 @@
+[
+  {
+    "path": ".gitattributes",
+    "lines": 3,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "D955D413CC2C6EA3F129215076E0562F7D929B52E445FD1AFC3F976BBBD09801"
+  },
+  {
+    "path": ".gitignore",
+    "lines": 60,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "BA918FDAC578EEBF988A7EFB35A5E2801835236198F3ECCC09928949D225D8C2"
+  },
+  {
+    "path": "installer/build.ps1",
+    "lines": 294,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "9D5DEA2AEC08AA0FD244C7107ACDD6D801223E8D31E8982274A3AD83741D5C11"
+  },
+  {
+    "path": "installer/sign-file.ps1",
+    "lines": 40,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "C6DC7F6658F090B821D6E630C70873F3E0E2939040A3391E8003BEAC50CDBE8E"
+  },
+  {
+    "path": "installer/SiloInstaller.iss",
+    "lines": 90,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "B24A746DB8944A32BB7E1FCAE8597DD03665069B5FB6087200DDA729EAE8EF8E"
+  },
+  {
+    "path": "README.md",
+    "lines": 128,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "8A2DFE4351675C62477B48DB1FF68BCE7B3E26EACDEA72566F7A6E43CEFAF156"
+  },
+  {
+    "path": "scripts/audit-bump.ps1",
+    "lines": 126,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "DFEAF00BD7A4FB00C5A829F623BDEBFFDB8055EA89FB8BD88B996FF93C791A26"
+  },
+  {
+    "path": "scripts/audit-common.ps1",
+    "lines": 16,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "4EA4A919DF89BC705B414829D0F7D0FDA4B78CB86657FCCFFD2AEF515519E99D"
+  },
+  {
+    "path": "scripts/audit-delta.ps1",
+    "lines": 212,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "023679768F54C5051EC44B496912F3B23D1CF97605E5857B3D1005E7F7EE6D8C"
+  },
+  {
+    "path": "scripts/audit-scan.ps1",
+    "lines": 287,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "A78CCB59F7CFBDA18D2FB403D46CFF6DFB8FCD309CF8D7E1B056A7FC791E6419"
+  },
+  {
+    "path": "SiloPlayer.sln",
+    "lines": 55,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "CB74C403E5CF5F0442A0C885D884258C43512367E115B4165586A276AD2FBD51"
+  },
+  {
+    "path": "src/SiloPlayer.Player/MpvInterop.cs",
+    "lines": 293,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "2F7B5FD1D65B29FED853F1E532280652E03B2DF0F37C37C9B37478401DF3FB78"
+  },
+  {
+    "path": "src/SiloPlayer.Player/MpvPlayer.cs",
+    "lines": 1299,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "7C8A2F577E15FB7E0114CBAB27D54DB3A42981D8C2E440F18305F9AB4AC898D1"
+  },
+  {
+    "path": "src/SiloPlayer.Player/MpvPlayer.Upscaling.cs",
+    "lines": 187,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "C0EC458B0F80AA0FF095A23B76BF0AF50A56DD58F0829EEC6B3942336A2C209E"
+  },
+  {
+    "path": "src/SiloPlayer.Player/RtxVideoAdapter.cs",
+    "lines": 60,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "895E5C7902C494BC7FFF67BEEFEFB3C4A9AACFDC65C81AC3CEB8EA97E426498B"
+  },
+  {
+    "path": "src/SiloPlayer.Player/SiloPlayer.Player.csproj",
+    "lines": 31,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "EB35B92FCB8E108DAE8D252339F4BD0AE4FA5842995904567F727CCCE4BE89A4"
+  },
+  {
+    "path": "src/SiloPlayer.Player/VideoUpscalingPolicy.cs",
+    "lines": 71,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "2856991EFE02E4389698AAAD0EBE464AF1554BAB6EB73C5A32A020FBC0F5AD88"
+  },
+  {
+    "path": "src/SiloPlayer/app.manifest",
+    "lines": 24,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "375A8FB53801A223C4B5CB4CEF94B099EB92CE78C5D8CBC1E96FA4E39DDC7043"
+  },
+  {
+    "path": "src/SiloPlayer/App.xaml.cs",
+    "lines": 373,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "5A3B2AC0576A3421CCDB9EFF22A4E664280C8F863B34FA15145D04F536BD807F"
+  },
+  {
+    "path": "src/SiloPlayer/Imports.cs",
+    "lines": 4,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "33144D09EB40901FA72E92D835E7602FEAFA6F7DE4D374594ED04AF71A34D553"
+  },
+  {
+    "path": "src/SiloPlayer/Package.appxmanifest",
+    "lines": 51,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "2A16185CE0CA3953D450EB746A4E51D4B46FB7376C2471B42C7A1E22BE27AEAA"
+  },
+  {
+    "path": "src/SiloPlayer/Properties/launchSettings.json",
+    "lines": 10,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "0A537345D492B5D95632518C3C5EFBFA319965C777FAA51F899D1B23A812F7D6"
+  },
+  {
+    "path": "src/SiloPlayer/Properties/PublishProfiles/win-arm64.pubxml",
+    "lines": 20,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "098F916151512CA18A7DF337A513AE0AFC9EE85981B0D1AB9BA5E2B4E29ACCEB"
+  },
+  {
+    "path": "src/SiloPlayer/Properties/PublishProfiles/win-x64.pubxml",
+    "lines": 20,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "7047E2391967516D4219FC8205ADAF26B512544FFBBEADE93F1D8D0F5CBB795E"
+  },
+  {
+    "path": "src/SiloPlayer/Properties/PublishProfiles/win-x86.pubxml",
+    "lines": 20,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "887FA2BC108C47A3F6C1F84A44428B4B227F77FF0D7F755DE626A64D847603DC"
+  },
+  {
+    "path": "src/SiloPlayer/Services/HlsProxy.cs",
+    "lines": 712,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "A83F3B4F9E6917658C447C49C68913C0DACF19FC4CC37F5A2A8B2E3301FFB165"
+  },
+  {
+    "path": "src/SiloPlayer/Services/MpvVideoHost.cs",
+    "lines": 97,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "FC9358F727FAE2967FDE108A172AC815CCF3CD1F4197BE49308E193BD4A73665"
+  },
+  {
+    "path": "src/SiloPlayer/Services/MpvVideoWindow.cs",
+    "lines": 774,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "6A432AD71DDDE33022A74240AC3E7660F5DFA0B3525548E9209ACEBB501527B0"
+  },
+  {
+    "path": "src/SiloPlayer/Services/PlaybackDialogHost.cs",
+    "lines": 135,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "30AC6F92192CDA90873226E0659C4D9A418BD3FDF7B5BA26BFB7BA5053048115"
+  },
+  {
+    "path": "src/SiloPlayer/Services/PlaybackWebSocket.cs",
+    "lines": 340,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "4878CB1FB60310F8FAE62990135F63135358F54AA52EDCBC20481DD5D637BE19"
+  },
+  {
+    "path": "src/SiloPlayer/Services/PlayerService.cs",
+    "lines": 7129,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "9FCF3C43ADEC7D84C7EB65239802BD64DE68D6A1E9D82E300797828ECC95B507"
+  },
+  {
+    "path": "src/SiloPlayer/SiloPlayer.csproj",
+    "lines": 131,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "AB3E30C788D5BDE20AFF84B2E3865D1D358B4ECAB9A1C42B491561D3DC4C52A6"
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/CollectionEditorViewModel.cs",
+    "lines": 739,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "06384EA01D22EA267B14BE3B0710AA93F32F48F983C8769857C44167548C6BE5"
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/CollectionsViewModel.cs",
+    "lines": 590,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "34047089FD259B224D2DF51EBF30D5097C864EE3D241D8FD5F8077E363D99490"
+  },
+  {
+    "path": "src/SiloPlayer/ViewModels/SmartCollectionWizardViewModel.cs",
+    "lines": 366,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "CB0CBADE7485EA88EB1A311937C532BE0CCF1067CB32EF7F7FF60102E2F0C12E"
+  },
+  {
+    "path": "src/SiloPlayer/Views/CollectionBrowsePage.xaml",
+    "lines": 335,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "FEF4BB778767D168990CB91562F87F08E394BFD2265FB0BC295033A3F2E69C87"
+  },
+  {
+    "path": "src/SiloPlayer/Views/CollectionBrowsePage.xaml.cs",
+    "lines": 720,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "D3D28785AEDF8CCB0904FE01BE5AE5AF2E06292307932F82525912E4BC605C99"
+  },
+  {
+    "path": "src/SiloPlayer/Views/CollectionEditorPage.xaml",
+    "lines": 785,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "D26583D4D303EEDB9A8C7879D8CFAE201D4E20B76A570315DEC0267D66F1209A"
+  },
+  {
+    "path": "src/SiloPlayer/Views/CollectionEditorPage.xaml.cs",
+    "lines": 1144,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "5986F28FA34FF2C5E727CE1A671431D895A6956610AC805C882239B8ED55EB5C"
+  },
+  {
+    "path": "src/SiloPlayer/Views/CollectionsPage.xaml",
+    "lines": 288,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "903C71B4E78B9002F22905947F4F31D438383EB7BEA32C46AFA575CA96706ED7"
+  },
+  {
+    "path": "src/SiloPlayer/Views/CollectionsPage.xaml.cs",
+    "lines": 2164,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "EED7AC7A31BF3B78A5227774AFB3BF7C2819D99A120D3BFEF0660556098EBE60"
+  },
+  {
+    "path": "src/SiloPlayer/Views/Dialogs/RecipeGalleryDialog.cs",
+    "lines": 1328,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "DF62FFCD103719CEFDBB409766FE4E3C4B624F594CDF4F10DE367726184BA66B"
+  },
+  {
+    "path": "src/SiloPlayer/Views/SmartCollectionWizardPage.xaml",
+    "lines": 343,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "E0EEE4CB5216DE3E79FAAB3CAAB5C0B958DA0F6A147896DCF966699BEA10B503"
+  },
+  {
+    "path": "src/SiloPlayer/Views/SmartCollectionWizardPage.xaml.cs",
+    "lines": 750,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "D218B346E7395A6F7646E30DEB6411B22D8DC79FC268147B3C4118CE3B83E11F"
+  },
+  {
+    "path": "tests/SiloPlayer.NativeRegressionTests/Program.cs",
+    "lines": 193,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "2D0C084519B2EB4A5A8F63B985E7212B61EA1A86AE3477F1AA9C92DCA8CC9D20"
+  },
+  {
+    "path": "tests/SiloPlayer.NativeRegressionTests/README.md",
+    "lines": 19,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "5F67E1277CEDE4B7D730ABE5A8C5C846DAD024C9169CA38FBC4BED1DCC416326"
+  },
+  {
+    "path": "tests/SiloPlayer.NativeRegressionTests/run.ps1",
+    "lines": 41,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "AD7271113E0040281218693D2850F5BDEA98E16E7F57714DFDBE404C47DC4AED"
+  },
+  {
+    "path": "tests/SiloPlayer.NativeRegressionTests/SiloPlayer.NativeRegressionTests.csproj",
+    "lines": 19,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "E57327AC957B221E4578EF37384354CB5284416BC853EA0BD7A3CF342F333DBA"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/CollectionsInteractionParitySourceTests.cs",
+    "lines": 29,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "BF6F48E8278B7820B5142899001AF47F5FB7D6721FA33A95981E771C646B8D20"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/CollectionsParitySourceTests.cs",
+    "lines": 235,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "5E3A5644C795EFDAB489634E46D61E71F766F9BC7C47870B9DAAB96B6056C97E"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/CurrentCollectionsParitySourceTests.cs",
+    "lines": 108,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "D9C8799166A3EF3C86F80B0A7E21645B5EACAD9B9B581EA0BDFF44D9C6DBF1A0"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/HlsProxySourceTests.cs",
+    "lines": 61,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "B8C82DECE4D502B005D6FCC5C585CA77E20FDC55DD18239A00C2C2561656919E"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/PlaybackWebSocketCommandTests.cs",
+    "lines": 49,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "E3F8ABB8B6819EA7431E170932DBE01132124ED46E5D4CEC9FF67A3AF4620375"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/PlayerServiceSourceTests.cs",
+    "lines": 1269,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "F67A77BF3E9CF27D4450B847F49BD1AAE7486B483B97FBF538A7554DEDA6354E"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/SiloPlayer.Tests.csproj",
+    "lines": 31,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "615DF42454E71E2D35412062DEC8DFF2281AD5266A2E7F8756DF0019D71DFBCF"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/TestLogIsolation.cs",
+    "lines": 19,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "B8DA295B9643220EA395DC029382422ACA44326D2AE79BCFD688ACCDDF1AC328"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/TestRepository.cs",
+    "lines": 14,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "E8C10117D834709110168A67D60F7E3715A67D476E238F5EC0073C9EA80957AA"
+  },
+  {
+    "path": "tests/SiloPlayer.UpscalingRegressionTests/Program.cs",
+    "lines": 94,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "BBFD6AB97D0773CB1EB994389EA7371897CAF6322073AB23825B4E2888EAD55C"
+  },
+  {
+    "path": "tests/SiloPlayer.UpscalingRegressionTests/README.md",
+    "lines": 22,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "006E324A83AB827C8579DBDF8F8B78BBAD9A61486A6D2F5C486502B4620339E9"
+  },
+  {
+    "path": "tests/SiloPlayer.UpscalingRegressionTests/SiloPlayer.UpscalingRegressionTests.csproj",
+    "lines": 4,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "F0AF28514FB726E18CB59E270406EA42CD036D5DE186776F746FD3942ED6DEA5"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/CodeRabbitFollowUpRegressionTests.cs",
+    "lines": 157,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "0697851E466CE7EBE8D3CFDE9FAE5E2CED42B5FF194B5E1D6BA3FA5BE6E4FB17"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/CodeRabbitPr5RegressionTests.cs",
+    "lines": 190,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "62823F8AFC1E0B77721128632300C2F5600D63F7FA182B43E0ED48CE091509AB"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/CodeRabbitPr6RegressionTests.cs",
+    "lines": 56,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "09F4830C9AD3BCB44B26A7F9F9310C32BEC15C843BC8CEC2003B7C6ED8BED18B"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/CurrentServerContractDeltaTests.cs",
+    "lines": 78,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "F6C1D4DBB13DDA6247EE722B558887D885DF25F7A3FFD09BAEA04C6923416036"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/UserOnlyClientArchitectureTests.cs",
+    "lines": 117,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "9AAFF488B10BA39E72CBA0B2874ED57DCE0A9C6E075B0886DE98ECD0883C3A83"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/FullscreenStateSyncSourceTests.cs",
+    "lines": 133,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "7ACD2745F938005765D7165887D0A6488ED529008AC3B39C3DD46AEE24DFA503"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/NavigationResourceRegressionTests.cs",
+    "lines": 57,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "70B972121577739FA468A2385993EE8774F7185078EB64E5A52B6B2474096710"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/ChapterThumbnailRealtimeParitySourceTests.cs",
+    "lines": 49,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "020771DD62FAB65FF26B45F2B4B9D18EDF97D9624E45252D3600793B011F2BAC"
+  },
+  {
+    "path": "tests/SiloPlayer.Tests/Fixtures/SiloWebUi/20ae82ae05edcfef151a02738e323cf1a97034ef/search-contract.json",
+    "lines": 19,
+    "status": "full-read",
+    "reviewer": "root",
+    "sha256": "FD9CF48645BC4918652DC7EC412D9C556651D94DAD737CAF83B0C0D0AB155DA2"
+  }
+]

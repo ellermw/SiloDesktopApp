@@ -111,6 +111,7 @@ public sealed class MangaChapter
 public sealed class MangaSeriesFiles
 {
     public List<string>? FolderPaths { get; set; }
+    [JsonPropertyName("items")]
     public List<MangaChapterFile> Files { get; set; } = [];
 }
 

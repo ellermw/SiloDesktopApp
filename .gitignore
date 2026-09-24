@@ -3,6 +3,8 @@ bin/
 obj/
 .vs/
 *.user
+TestResults/
+*.trx
 
 # Superpowers plugin cache
 .superpowers/

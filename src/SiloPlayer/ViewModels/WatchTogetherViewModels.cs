@@ -526,7 +526,8 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     private async Task WebSocketRunLoopAsync(CancellationToken ct)
     {
         var backoffMs = 500;
-        while (!ct.IsCancellationRequested)
+        var authority = _apiClient.CaptureContext();
+        while (!ct.IsCancellationRequested && _apiClient.IsCurrentContext(authority))
         {
             try
             {
@@ -534,6 +535,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
                 backoffMs = 500;
             }
             catch (OperationCanceledException) { return; }
+            catch (ApiException ex) when (ex.StatusCode is 401 or 403 or 404 or 409 or 410) { return; }
             catch { /* swallow; reconnect with backoff */ }
 
             if (ct.IsCancellationRequested) return;
@@ -553,21 +555,22 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
             .Replace("https://", "wss://", StringComparison.OrdinalIgnoreCase)
             .Replace("http://", "ws://", StringComparison.OrdinalIgnoreCase)
             .TrimEnd('/');
-        wsUrl += $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(RoomId)}/ws";
-        wsUrl += $"?room_token={Uri.EscapeDataString(RoomToken)}";
-        if (!string.IsNullOrEmpty(_apiClient.AccessToken))
-            wsUrl += $"&token={Uri.EscapeDataString(_apiClient.AccessToken)}";
-        if (!string.IsNullOrEmpty(_apiClient.ProfileId))
-            wsUrl += $"&profile_id={Uri.EscapeDataString(_apiClient.ProfileId)}";
-        if (!string.IsNullOrEmpty(_apiClient.ProfileToken))
-            wsUrl += $"&profile_token={Uri.EscapeDataString(_apiClient.ProfileToken)}";
-
+        wsUrl += $"/api/v2/watch-together/rooms/{Uri.EscapeDataString(RoomId)}/ws";
+        var authority = _apiClient.CaptureContext();
+        var roomId = RoomId;
+        var roomToken = RoomToken;
+        var ticket = await _playbackApi.CreateRoomControlTicketAsync(roomId, roomToken, ct);
+        if (!_apiClient.IsCurrentContext(authority) || RoomId != roomId || RoomToken != roomToken)
+            throw new OperationCanceledException("Room authority changed.", ct);
         await RunOnUiThreadAsync(() => ConnectionState = "connecting");
         var ws = new ClientWebSocket();
+        ws.Options.AddSubProtocol(ticket.Protocol);
+        ws.Options.AddSubProtocol("silo.ticket." + ticket.Ticket);
         _ws = ws;
         try
         {
             await ws.ConnectAsync(new Uri(wsUrl), ct);
+            if (ws.SubProtocol != ticket.Protocol) throw new InvalidOperationException("Room socket protocol was not negotiated.");
             await RunOnUiThreadAsync(() => ConnectionState = "connected");
 
             var buffer = new byte[16 * 1024];
@@ -591,7 +594,11 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
                 var json = Encoding.UTF8.GetString(message.GetBuffer(), 0, checked((int)message.Length));
                 message.SetLength(0);
 
-                await RunOnUiThreadAsync(() => HandleFrame(json));
+                if (!_apiClient.IsCurrentContext(authority) || RoomId != roomId || RoomToken != roomToken) return;
+                await RunOnUiThreadAsync(() =>
+                {
+                    if (_apiClient.IsCurrentContext(authority) && RoomId == roomId && RoomToken == roomToken) HandleFrame(json);
+                });
             }
         }
         finally

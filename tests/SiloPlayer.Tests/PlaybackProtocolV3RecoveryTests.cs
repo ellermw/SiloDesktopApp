@@ -8,14 +8,57 @@ namespace SiloPlayer.Tests;
 public sealed class PlaybackProtocolV3RecoveryTests
 {
     [Fact]
+    public async Task RepeatedDirectStallsWithoutProgressStopWithoutEscalatingToRemux()
+    {
+        var handler = new RecoveryPlaybackHandler();
+        using var manager = CreateManager(handler);
+        var original = await manager.StartSessionAsync(42, forceStartPosition: true);
+        for (var attempt = 0; attempt < 3; attempt++)
+            Assert.Same(original, await manager.RecoverPlaybackFailureAsync(687.3, "playback_interrupted", "buffering-stalled"));
+
+        var error = await Assert.ThrowsAsync<PlaybackPlanTerminalException>(() =>
+            manager.RecoverPlaybackFailureAsync(687.3, "playback_interrupted", "buffering-stalled"));
+
+        Assert.True(error.Retryable);
+        Assert.Equal("direct_recovery_exhausted", error.Reason);
+        Assert.Empty(handler.ReplanBodies);
+        Assert.Equal("direct", manager.CurrentSession!.PlayMethod);
+        // Actual advancement permits recovery of a later, unrelated interruption.
+        Assert.Same(original, await manager.RecoverPlaybackFailureAsync(747.3, "playback_interrupted", "buffering-stalled"));
+        await manager.StopSessionAsync();
+    }
+
+    [Theory]
+    [InlineData("eof-reached")]
+    [InlineData("end-file")]
+    [InlineData("buffering-stalled")]
+    [InlineData("position-stalled")]
+    [InlineData("direct-transport-error")]
+    public async Task DirectNetworkInterruptionKeepsTheOriginalPlanAndSession(string reason)
+    {
+        var handler = new RecoveryPlaybackHandler();
+        using var manager = CreateManager(handler);
+        var original = await manager.StartSessionAsync(42, forceStartPosition: true);
+
+        var recovered = await manager.RecoverPlaybackFailureAsync(687.3, "playback_interrupted", reason);
+
+        Assert.Same(original, recovered);
+        Assert.Same(original, manager.CurrentSession);
+        Assert.Empty(handler.ReplanBodies);
+        Assert.Single(handler.StartBodies);
+        Assert.Equal("direct", recovered.PlayMethod);
+        await manager.StopSessionAsync();
+    }
+
+    [Fact]
     public async Task FailureReplansCarryTheCompleteAttemptChain()
     {
         var handler = new RecoveryPlaybackHandler();
         using var manager = CreateManager(handler);
 
         await manager.StartSessionAsync(42, forceStartPosition: true);
-        await manager.ReplanFailureAsync(10, "network_error");
-        await manager.ReplanFailureAsync(11, "network_error");
+        await manager.RecoverPlaybackFailureAsync(10, "network_error");
+        await manager.RecoverPlaybackFailureAsync(11, "network_error");
 
         Assert.Equal(2, handler.ReplanBodies.Count);
         AssertRequest(handler.ReplanBodies[0], 1, ["v3:0000000000000001"]);
@@ -32,9 +75,9 @@ public sealed class PlaybackProtocolV3RecoveryTests
         using var manager = CreateManager(handler);
 
         await manager.StartSessionAsync(42, forceStartPosition: true);
-        await manager.ReplanFailureAsync(10, "network_error");
+        await manager.RecoverPlaybackFailureAsync(10, "network_error");
         await manager.ReplanQualityAsync("720p", 10);
-        await manager.ReplanFailureAsync(11, "network_error");
+        await manager.RecoverPlaybackFailureAsync(11, "network_error");
 
         AssertRequest(handler.ReplanBodies[1], 1, []);
         AssertRequest(handler.ReplanBodies[2], 1, ["v3:0000000000000003"]);
@@ -108,7 +151,7 @@ public sealed class PlaybackProtocolV3RecoveryTests
     private static int ReadFileId(string json)
     {
         using var document = JsonDocument.Parse(json);
-        return document.RootElement.GetProperty("file_id").GetInt32();
+        return int.Parse(document.RootElement.GetProperty("file_id").GetString()!);
     }
 
     private sealed class RecoveryPlaybackHandler : HttpMessageHandler
@@ -123,7 +166,9 @@ public sealed class PlaybackProtocolV3RecoveryTests
             CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? "";
-            if (request.Method == HttpMethod.Post && path == "/api/v1/playback/start")
+            if (path == "/api/v2/playback/capabilities")
+                return JsonResponse("""{"allowed":true,"state":"available","installation_id":"11111111-1111-4111-8111-111111111111","protocol_versions":[3],"features":["fixed_media_file_v1"]}""");
+            if (request.Method == HttpMethod.Post && path == "/api/v2/playback/start")
             {
                 StartBodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
                 if (ReturnTerminalOnStart)
@@ -144,18 +189,18 @@ public sealed class PlaybackProtocolV3RecoveryTests
                 return JsonResponse(PlayableDecision(NextPlanNumber()));
             }
 
-            if (request.Method == HttpMethod.Post && path == "/api/v1/playback/session-1/replan")
+            if (request.Method == HttpMethod.Post && path == "/api/v2/playback/session-1/replan")
             {
                 ReplanBodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
                 return JsonResponse(PlayableDecision(NextPlanNumber()));
             }
 
             if (request.Method == HttpMethod.Post && path.EndsWith("/progress", StringComparison.Ordinal))
-                return new HttpResponseMessage(HttpStatusCode.NoContent);
-            if (request.Method == HttpMethod.Delete && path == "/api/v1/playback/session-1")
-                return new HttpResponseMessage(HttpStatusCode.NoContent);
-            if (request.Method == HttpMethod.Post && path == "/api/v1/sync/progress")
-                return new HttpResponseMessage(HttpStatusCode.NoContent);
+                return JsonResponse(request.Method == HttpMethod.Delete ? "{\"outcome\":\"stopped\"}" : "{\"outcome\":\"applied\"}");
+            if (request.Method == HttpMethod.Delete && path == "/api/v2/playback/session-1")
+                return JsonResponse(request.Method == HttpMethod.Delete ? "{\"outcome\":\"stopped\"}" : "{\"outcome\":\"applied\"}");
+            if (request.Method == HttpMethod.Post && path == "/api/v2/sync/progress")
+                return JsonResponse(request.Method == HttpMethod.Delete ? "{\"outcome\":\"stopped\"}" : "{\"outcome\":\"applied\"}");
 
             return new HttpResponseMessage(HttpStatusCode.NotFound);
         }

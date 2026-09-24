@@ -9,7 +9,6 @@ public class PlaybackManager : IDisposable
     private static readonly string s_appVersion = ResolveAppVersion();
 
     private readonly PlaybackApi _playbackApi;
-    private readonly CatalogApi _catalogApi;
     private readonly AuthService _authService;
     private readonly SiloApiClient _apiClient;
     private readonly AudioPassthroughCapabilities? _audioPassthrough;
@@ -28,6 +27,9 @@ public class PlaybackManager : IDisposable
     private string? _planAttemptIdV3;
     private string _qualityPreferenceV3 = "original";
     private readonly PlaybackRecoveryAttemptHistory _recoveryAttemptHistory = new();
+    private PlaybackStartResponse? _directRecoverySession;
+    private double _directRecoveryPosition;
+    private int _directRecoveryAttempts;
 
     /// <summary>
     /// Fires when progress reporting has failed 3 consecutive times (network
@@ -41,7 +43,6 @@ public class PlaybackManager : IDisposable
     public PlaybackManager(PlaybackApi playbackApi, CatalogApi catalogApi, AuthService authService, SiloApiClient apiClient, AudioPassthroughCapabilities? audioPassthrough = null)
     {
         _playbackApi = playbackApi;
-        _catalogApi = catalogApi;
         _authService = authService;
         _apiClient = apiClient;
         _audioPassthrough = audioPassthrough;
@@ -148,13 +149,7 @@ public class PlaybackManager : IDisposable
 
         LogToStateTrace($"StartSession response: play_method={response.PlayMethod}, session={response.SessionId}, position={response.Position:F1}");
 
-        var baseUrl = _apiClient.BaseUrl;
-        var streamPath = response.StreamUrl;
-
-        // The API returns paths like "/stream/{session}" -- prefix with /api/v1 if not already there
-        if (!streamPath.StartsWith("http") && !streamPath.StartsWith("/api/v1"))
-            streamPath = "/api/v1" + streamPath;
-        var url = streamPath.StartsWith("http") ? streamPath : $"{baseUrl}{streamPath}";
+        var url = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
         if (response.ProtocolVersion < 3 &&
             response.PlayMethod == "remux" &&
             response.Position > 0 &&
@@ -164,6 +159,7 @@ public class PlaybackManager : IDisposable
 
         StreamUrl = url;
         StartProgressReporting();
+        _ = RecordRouteEventAsync(response, "plan_selected");
         return response;
     }
 
@@ -363,12 +359,40 @@ public class PlaybackManager : IDisposable
             failure: null,
             ct);
 
-    public Task<PlaybackStartResponse> ReplanFailureAsync(
+    public Task<PlaybackStartResponse> RecoverPlaybackFailureAsync(
         double positionSeconds,
         string classification,
         string? message = null,
         CancellationToken ct = default)
-        => ReplanAsync(
+    {
+        ct.ThrowIfCancellationRequested();
+        // A byte-stream interruption does not invalidate codec/container support.
+        // Replanning marks original_http as failed and unnecessarily escalates to
+        // remux. Reopen the same executable direct plan at the requested position.
+        if (classification == "playback_interrupted" &&
+            CurrentSession is { CanSeekAnywhere: true } session &&
+            PlaybackRecoveryPolicy.CanReloadCurrentDirectSession(
+                PlaybackTransportPlanner.Plan(session).TransportKind, message ?? ""))
+        {
+            if (!ReferenceEquals(_directRecoverySession, session) ||
+                positionSeconds >= _directRecoveryPosition + 30)
+            {
+                _directRecoverySession = session;
+                _directRecoveryPosition = positionSeconds;
+                _directRecoveryAttempts = 0;
+            }
+            if (_directRecoveryAttempts >= 3)
+            {
+                throw new PlaybackPlanTerminalException(
+                    "direct_recovery_exhausted",
+                    "Direct playback could not resume after three attempts. Retry to reopen it at your saved position.",
+                    retryable: true);
+            }
+            _directRecoveryAttempts++;
+            return Task.FromResult(session);
+        }
+
+        return ReplanAsync(
             "failure_recovery",
             positionSeconds,
             _qualityPreferenceV3,
@@ -379,6 +403,7 @@ public class PlaybackManager : IDisposable
                 Message = message,
             },
             ct);
+    }
 
     /// <summary>
     /// Replans only when the server invalidated the plan that is still active.
@@ -524,6 +549,7 @@ public class PlaybackManager : IDisposable
         CurrentSession = response;
         _lastReportedPosition = Math.Max(0, response.Position);
         ApplyStreamUrl(response);
+        _ = RecordRouteEventAsync(response, "plan_selected");
         LogToStateTrace(
             $"Replan v3: operation={operation}, requested_quality={qualityPreference}, active_quality={response.ActiveQuality}, plan={response.PlanId}, delivery={response.Delivery}, position={response.Position:F1}");
         return response;
@@ -531,13 +557,7 @@ public class PlaybackManager : IDisposable
 
     private void ApplyStreamUrl(PlaybackStartResponse response)
     {
-        var streamPath = response.StreamUrl;
-        if (!streamPath.StartsWith("http", StringComparison.OrdinalIgnoreCase) &&
-            !streamPath.StartsWith("/api/v1", StringComparison.OrdinalIgnoreCase))
-            streamPath = "/api/v1" + (streamPath.StartsWith('/') ? "" : "/") + streamPath;
-        StreamUrl = streamPath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-            ? streamPath
-            : $"{_apiClient.BaseUrl}{streamPath}";
+        StreamUrl = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
     }
 
     /// <summary>
@@ -579,7 +599,7 @@ public class PlaybackManager : IDisposable
 
     private async Task RetireSupersededSessionAsync(string sessionId, double finalPosition)
     {
-        if (finalPosition > 0)
+        if (double.IsFinite(finalPosition))
         {
             try
             {
@@ -631,13 +651,7 @@ public class PlaybackManager : IDisposable
         if (!string.IsNullOrWhiteSpace(response.StreamUrl))
         {
             CurrentSession.StreamUrl = response.StreamUrl;
-            var streamPath = response.StreamUrl;
-            if (!streamPath.StartsWith("http", StringComparison.OrdinalIgnoreCase) &&
-                !streamPath.StartsWith("/api/v1", StringComparison.OrdinalIgnoreCase))
-                streamPath = "/api/v1" + (streamPath.StartsWith('/') ? "" : "/") + streamPath;
-            StreamUrl = streamPath.StartsWith("http", StringComparison.OrdinalIgnoreCase)
-                ? streamPath
-                : $"{_apiClient.BaseUrl}{streamPath}";
+            StreamUrl = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
         }
         if (response.PlaybackInfo != null)
             CurrentSession.PlaybackInfo = response.PlaybackInfo;
@@ -701,7 +715,7 @@ public class PlaybackManager : IDisposable
             if (!string.Equals(_sessionId, sessionId, StringComparison.Ordinal))
                 return;
 
-            if (position > 0)
+            if (double.IsFinite(position))
             {
                 try
                 {
@@ -757,25 +771,7 @@ public class PlaybackManager : IDisposable
             }
         }
 
-        // Sync progress across devices after stopping. This is best-effort and
-        // deliberately detached so a slow server never blocks player teardown.
-        _ = SyncProgressAsync();
-    }
-
-    /// <summary>
-    /// Triggers a cross-device progress sync with the server.
-    /// Called after stopping playback to ensure other devices see updated state.
-    /// </summary>
-    public async Task SyncProgressAsync()
-    {
-        try
-        {
-            await _catalogApi.SyncProgressAsync(new { });
-        }
-        catch
-        {
-            // Sync failure is non-fatal -- progress was already saved by the stop call
-        }
+        // API v2 stop already persists and synchronizes the final sample.
     }
 
     public List<(SubtitleTrackInfo Track, string FullUrl)> GetSubtitleUrls()
@@ -787,10 +783,7 @@ public class PlaybackManager : IDisposable
             .Where(s => !string.IsNullOrWhiteSpace(s.Url))
             .Select(s =>
         {
-            var subPath = s.Url;
-            if (!subPath.StartsWith("http") && !subPath.StartsWith("/api/v1"))
-                subPath = "/api/v1" + subPath;
-            var url = subPath.StartsWith("http") ? subPath : $"{baseUrl}{subPath}";
+            var url = PlaybackDeliveryUrl.Resolve(baseUrl, s.Url);
             url = UrlHelper.AppendToken(url, token);
             return (s, url);
         }).ToList();
@@ -862,6 +855,15 @@ public class PlaybackManager : IDisposable
         Interlocked.Exchange(ref _progressTimer, null)?.Dispose();
     }
 
+    private async Task RecordRouteEventAsync(PlaybackStartResponse session, string eventName)
+    {
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            await _playbackApi.ReportRouteEventAsync(session, eventName, timeout.Token).ConfigureAwait(false);
+        }
+        catch { /* Server route telemetry is best effort; local diagnostics remain authoritative. */ }
+    }
     private static void LogToStateTrace(string msg)
     {
         LocalLog.AppendLine("state_trace.txt", $"PlaybackManager: {msg}");

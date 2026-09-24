@@ -1,0 +1,109 @@
+{
+  "baseline": "1.1.101-multigpu-preview.1 plus current working tree",
+  "reviewer": "client_backend",
+  "scope": "Full OSC, all shader assets and notices, five matching native-player test files",
+  "unreadable": [],
+  "files": [
+    {
+      "path": "libs/mpv/scripts/silo-osc.lua",
+      "absolutePath": "D:\\SiloPlayer\\libs\\mpv\\scripts\\silo-osc.lua",
+      "lines": 5804,
+      "review": "full read",
+      "confidence": "high source coverage; runtime not executed by this reviewer",
+      "findingIds": [
+        "O01",
+        "O02",
+        "O03",
+        "O04",
+        "O05",
+        "O06",
+        "O07",
+        "O08",
+        "O09",
+        "O10"
+      ],
+      "disposition": "replace monolithic OSC; retain behavior and host bridge"
+    },
+    {
+      "path": "libs/mpv/shaders/FSRCNNX_x2_8-0-4-1.glsl",
+      "absolutePath": "D:\\SiloPlayer\\libs\\mpv\\shaders\\FSRCNNX_x2_8-0-4-1.glsl",
+      "lines": 426,
+      "review": "full read",
+      "confidence": "high source coverage; runtime not executed by this reviewer",
+      "findingIds": null,
+      "disposition": "keep"
+    },
+    {
+      "path": "libs/mpv/shaders/README.md",
+      "absolutePath": "D:\\SiloPlayer\\libs\\mpv\\shaders\\README.md",
+      "lines": 17,
+      "review": "full read",
+      "confidence": "high source coverage; runtime not executed by this reviewer",
+      "findingIds": null,
+      "disposition": "keep"
+    },
+    {
+      "path": "libs/mpv/shaders/COPYING",
+      "absolutePath": "D:\\SiloPlayer\\libs\\mpv\\shaders\\COPYING",
+      "lines": 674,
+      "review": "full read",
+      "confidence": "high source coverage; runtime not executed by this reviewer",
+      "findingIds": null,
+      "disposition": "keep"
+    },
+    {
+      "path": "libs/mpv/shaders/COPYING.LESSER",
+      "absolutePath": "D:\\SiloPlayer\\libs\\mpv\\shaders\\COPYING.LESSER",
+      "lines": 165,
+      "review": "full read",
+      "confidence": "high source coverage; runtime not executed by this reviewer",
+      "findingIds": null,
+      "disposition": "keep"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/MpvOscRuntimeTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\MpvOscRuntimeTests.cs",
+      "lines": 254,
+      "review": "full read",
+      "confidence": "high source coverage; runtime not executed by this reviewer",
+      "findingIds": null,
+      "disposition": "keep useful contracts; change source assertions to behavioral tests"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/MpvOscScriptTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\MpvOscScriptTests.cs",
+      "lines": 696,
+      "review": "full read",
+      "confidence": "high source coverage; runtime not executed by this reviewer",
+      "findingIds": null,
+      "disposition": "keep useful contracts; change source assertions to behavioral tests"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/MpvPlayerLoggingTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\MpvPlayerLoggingTests.cs",
+      "lines": 28,
+      "review": "full read",
+      "confidence": "high source coverage; runtime not executed by this reviewer",
+      "findingIds": null,
+      "disposition": "keep useful contracts; change source assertions to behavioral tests"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/MpvPlayerSourceTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\MpvPlayerSourceTests.cs",
+      "lines": 325,
+      "review": "full read",
+      "confidence": "high source coverage; runtime not executed by this reviewer",
+      "findingIds": null,
+      "disposition": "keep useful contracts; change source assertions to behavioral tests"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/VideoUpscalingTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\VideoUpscalingTests.cs",
+      "lines": 101,
+      "review": "full read",
+      "confidence": "high source coverage; runtime not executed by this reviewer",
+      "findingIds": null,
+      "disposition": "keep useful contracts; change source assertions to behavioral tests"
+    }
+  ]
+}

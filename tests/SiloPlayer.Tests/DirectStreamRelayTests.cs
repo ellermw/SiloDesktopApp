@@ -7,6 +7,61 @@ namespace SiloPlayer.Tests;
 public sealed class DirectStreamRelayTests
 {
     [Fact]
+    public async Task RelayAsync_ReconnectHeaderTimeoutResumesWithoutClosingMediaResponse()
+    {
+        var calls = 0;
+        var handler = new AsyncSequenceHandler(async (_, ct) =>
+        {
+            var call = Interlocked.Increment(ref calls);
+            if (call == 2)
+                await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return call == 1
+                ? CreateResponse(HttpStatusCode.PartialContent, new MemoryStream(new byte[] { 1, 2, 3, 4 }), 8,
+                    new ContentRangeHeaderValue(0, 7, 8))
+                : CreateResponse(HttpStatusCode.PartialContent, new MemoryStream(new byte[] { 5, 6, 7, 8 }), 4,
+                    new ContentRangeHeaderValue(4, 7, 8));
+        });
+        using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
+        var relay = new DirectStreamRelay(client, new Uri("https://fixture.invalid/media"), () => null,
+            maxRetries: 3, upstreamIdleTimeout: TimeSpan.FromMilliseconds(50));
+        using var output = new MemoryStream();
+        using var safety = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+
+        await relay.RelayAsync(output, "bytes=0-", null, safety.Token);
+
+        Assert.Equal(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, output.ToArray());
+        Assert.False(relay.IsRecovering);
+    }
+
+    [Fact]
+    public async Task RelayAsync_ReconnectErrorPageDoesNotReplaceMediaEntityOrAppendErrorBytes()
+    {
+        var calls = 0;
+        var handler = new SequenceHandler(_ =>
+        {
+            var call = ++calls;
+            var response = call switch
+            {
+                1 => CreateResponse(HttpStatusCode.PartialContent,
+                    new MemoryStream(new byte[] { 1, 2, 3, 4 }), 8, new ContentRangeHeaderValue(0, 7, 8)),
+                2 => CreateResponse(HttpStatusCode.BadGateway,
+                    new MemoryStream(new byte[] { 99, 99 }), 2, null),
+                _ => CreateResponse(HttpStatusCode.PartialContent,
+                    new MemoryStream(new byte[] { 5, 6, 7, 8 }), 4, new ContentRangeHeaderValue(4, 7, 8))
+            };
+            response.Headers.ETag = new EntityTagHeaderValue(call == 2 ? "\"error-page\"" : "\"media\"");
+            return response;
+        });
+        using var client = new HttpClient(handler);
+        var relay = new DirectStreamRelay(client, new Uri("https://fixture.invalid/media"), () => null, maxRetries: 3);
+        using var output = new MemoryStream();
+
+        await relay.RelayAsync(output, "bytes=0-", null, CancellationToken.None);
+
+        Assert.Equal(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 }, output.ToArray());
+    }
+
+    [Fact]
     public async Task RelayAsync_UsesHttp11WhenHttp2ProgressiveStreamsAreRejected()
     {
         var media = new byte[] { 1, 2, 3 };

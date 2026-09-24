@@ -26,8 +26,11 @@ public class DiscoverResponse
 public class DiscoverRow
 {
     public string Type { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("title")]
     public string Label { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("kind")]
     public string? SectionKind { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("key")]
     public string? SectionKey { get; set; }
     public List<MediaItem> Items { get; set; } = [];
 }
@@ -37,6 +40,7 @@ public class RecommendationSectionResponse
     public string Kind { get; set; } = "";
     public string? Key { get; set; }
     public string Type { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("title")]
     public string Label { get; set; } = "";
     public List<MediaItem> Items { get; set; } = [];
 }
@@ -75,21 +79,27 @@ public class SwipeCardCastMember
 /// </summary>
 public class SwipeCardsPage
 {
+    [System.Text.Json.Serialization.JsonPropertyName("items")]
     public List<SwipeCard> Cards { get; set; } = [];
     public bool HasMore { get; set; }
+    public bool PagingLimited { get; set; }
     public bool IsCold { get; set; }
 }
 
 public class RecommendationRow
 {
     public string Type { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("title")]
     public string Label { get; set; } = "";
+    public string? Kind { get; set; }
+    public string? Key { get; set; }
     public List<RecommendationItem> Items { get; set; } = [];
 }
 
-public class RecommendationItem
+public class RecommendationItem : MediaItem
 {
-    public string MediaItemId { get; set; } = "";
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string MediaItemId { get => ContentId; set => ContentId = value; }
     public double Score { get; set; }
 }
 

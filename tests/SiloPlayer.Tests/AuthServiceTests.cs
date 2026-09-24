@@ -26,7 +26,7 @@ public sealed class AuthServiceTests
 
         var handler = new DelegateHandler((request, _) =>
         {
-            if (request.RequestUri?.AbsolutePath == "/api/v1/auth/refresh")
+            if (request.RequestUri?.AbsolutePath == "/api/v2/auth/refresh")
             {
                 refreshObserved.TrySetResult();
                 return Task.FromResult(JsonResponse(
@@ -34,7 +34,7 @@ public sealed class AuthServiceTests
             }
 
             return Task.FromResult(JsonResponse(
-                """{"id":1,"username":"tester","role":"user","permissions":[]}"""));
+                """{"id":"1","username":"tester","role":"user","permissions":[]}"""));
         });
         var apiClient = new SiloApiClient(new HttpClient(handler));
         apiClient.SetBaseUrl("https://example.test");
@@ -58,8 +58,8 @@ public sealed class AuthServiceTests
         var refreshCalls = 0;
         var handler = new DelegateHandler(async (request, _) =>
         {
-            if (request.RequestUri?.AbsolutePath == "/api/v1/auth/me")
-                return JsonResponse("""{"id":1,"username":"tester","role":"user","permissions":[],"download_allowed":true}""");
+            if (request.RequestUri?.AbsolutePath == "/api/v2/account/me")
+                return JsonResponse("""{"id":"1","username":"tester","role":"user","permissions":[],"download_allowed":true}""");
 
             Interlocked.Increment(ref refreshCalls);
             await Task.Delay(25);
@@ -87,7 +87,7 @@ public sealed class AuthServiceTests
         var refreshCalls = 0;
         var handler = new DelegateHandler((request, _) =>
         {
-            if (request.RequestUri?.AbsolutePath == "/api/v1/auth/refresh")
+            if (request.RequestUri?.AbsolutePath == "/api/v2/auth/refresh")
             {
                 Interlocked.Increment(ref refreshCalls);
                 return Task.FromResult(JsonResponse(
@@ -172,7 +172,7 @@ public sealed class AuthServiceTests
         var userLoadStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var handler = new DelegateHandler(async (request, ct) =>
         {
-            if (request.RequestUri?.AbsolutePath == "/api/v1/auth/refresh")
+            if (request.RequestUri?.AbsolutePath == "/api/v2/auth/refresh")
                 return JsonResponse("""{"access_token":"new-access","refresh_token":"new-refresh","expires_in":86400}""");
 
             userLoadStarted.TrySetResult(true);
@@ -237,7 +237,7 @@ public sealed class AuthServiceTests
         var releaseLogout = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var handler = new DelegateHandler(async (request, _) =>
         {
-            if (request.RequestUri?.AbsolutePath == "/api/v1/auth/logout")
+            if (request.RequestUri?.AbsolutePath == "/api/v2/auth/logout")
             {
                 logoutStarted.TrySetResult(true);
                 await releaseLogout.Task;

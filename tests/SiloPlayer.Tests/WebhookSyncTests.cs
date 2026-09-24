@@ -6,10 +6,40 @@ namespace SiloPlayer.Tests;
 public sealed class WebhookSyncTests
 {
     [Fact]
+    public async Task RelativeReceiverUrlsAreResolvedForListCreateUpdateAndRotate()
+    {
+        const string receiver = "/api/v2/webhook-sync/webhooks/synthetic-receiver";
+        const string absolute = "https://silo.test" + receiver;
+        var connectionJson = "{\"id\":\"c1\",\"webhook_url\":\"" + receiver + "\"}";
+        SiloApiClient Client(string json)
+        {
+            var client = new SiloApiClient(new HttpClient(new JsonHandler(json)));
+            client.SetBaseUrl("https://silo.test");
+            client.SetAccessToken("token");
+            return client;
+        }
+
+        var listed = await new WebhookSyncApi(Client("{\"items\":[" + connectionJson + "],\"page\":{\"has_more\":false}}"))
+            .GetConnectionsAsync();
+        Assert.Equal(absolute, Assert.Single(listed).WebhookUrl);
+
+        var created = await new WebhookSyncApi(Client("{\"connection\":" + connectionJson + ",\"webhook_url\":\"" + receiver + "\"}"))
+            .CreateConnectionAsync(new() { ["provider"] = "plex", ["server_name"] = "Test", ["default_profile_id"] = "p1" });
+        Assert.Equal(absolute, created.WebhookUrl);
+        Assert.Equal(absolute, created.Connection.WebhookUrl);
+
+        var updated = await new WebhookSyncApi(Client(connectionJson)).UpdateConnectionAsync("c1", new() { ["server_name"] = "Renamed" });
+        Assert.Equal(absolute, updated.WebhookUrl);
+
+        var rotated = await new WebhookSyncApi(Client("{\"webhook_url\":\"" + receiver + "\"}")).RotateWebhookAsync("c1");
+        Assert.Equal(absolute, rotated.WebhookUrl);
+    }
+
+    [Fact]
     public async Task ConnectionsUseCurrentServerContract()
     {
         var handler = new JsonHandler("""
-        [{"id":"c1","provider":"plex","server_id":"machine-1","server_name":"Living Room Plex","default_profile_id":"p1","webhook_url":"https://silo.test/api/v1/webhook-sync/webhooks/secret","user_count":2,"account_discovery_available":true,"last_webhook_received_at":"2026-07-11T12:00:00Z"}]
+        {"items":[{"id":"c1","provider":"plex","server_id":"machine-1","server_name":"Living Room Plex","default_profile_id":"p1","webhook_url":"https://silo.test/api/v2/webhook-sync/webhooks/secret","user_count":2,"account_discovery_available":true,"last_webhook_received_at":"2026-07-11T12:00:00Z"}],"page":{"has_more":false}}
         """);
         var client = new SiloApiClient(new HttpClient(handler));
         client.SetBaseUrl("https://silo.test");

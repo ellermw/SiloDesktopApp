@@ -9,7 +9,8 @@ public static class ServerWebUiUri
             throw new ArgumentException("A valid HTTP or HTTPS server URL is required.", nameof(apiBaseUrl));
 
         var path = apiUri.AbsolutePath.TrimEnd('/');
-        if (path.EndsWith("/api/v1", StringComparison.OrdinalIgnoreCase))
+        if (path.EndsWith("/api/v1", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith("/api/v2", StringComparison.OrdinalIgnoreCase))
             path = path[..^"/api/v1".Length];
 
         var builder = new UriBuilder(apiUri)

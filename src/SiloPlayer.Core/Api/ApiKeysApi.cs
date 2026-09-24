@@ -12,11 +12,11 @@ public class UserApiKey
 public class ApiKeysApi(SiloApiClient client)
 {
     public Task<UserApiKey> CreateApiKeyAsync(string label, CancellationToken ct = default)
-        => client.PostAsync<UserApiKey>("/api/v1/api-keys", new { label }, ct);
+        => client.PostAsync<UserApiKey>("/api/v2/api-keys", new { label }, ct);
 
     public Task<List<UserApiKey>> GetApiKeysAsync(CancellationToken ct = default)
-        => client.GetAsync<List<UserApiKey>>("/api/v1/api-keys", ct);
+        => client.GetAllItemsAsync<UserApiKey>("/api/v2/api-keys", ct);
 
     public Task DeleteApiKeyAsync(int id, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/api-keys/{id}", ct);
+        => client.DeleteAsync($"/api/v2/api-keys/{id}", ct);
 }

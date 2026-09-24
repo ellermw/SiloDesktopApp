@@ -1,3 +1,7 @@
+using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Models.Sessions;
 
@@ -12,7 +16,7 @@ public class AuthApi(SiloApiClient client)
         => LoginAsync(client.BaseUrl, username, password, provider, ct);
 
     public Task<LoginResponse> LoginAsync(string baseUrl, string username, string password, string? provider, CancellationToken ct = default)
-        => client.PostUnauthenticatedAsync<LoginResponse>(baseUrl, "/api/v1/auth/login", new LoginRequest
+        => client.PostUnauthenticatedAsync<LoginResponse>(baseUrl, "/api/v2/auth/login", new LoginRequest
         {
             Username = username,
             Password = password,
@@ -23,16 +27,33 @@ public class AuthApi(SiloApiClient client)
         => RefreshAsync(client.BaseUrl, refreshToken, ct);
 
     public Task<RefreshResponse> RefreshAsync(string baseUrl, string refreshToken, CancellationToken ct = default)
-        => client.PostUnauthenticatedAsync<RefreshResponse>(baseUrl, "/api/v1/auth/refresh", new RefreshRequest { RefreshToken = refreshToken }, ct);
+        => client.PostUnauthenticatedAsync<RefreshResponse>(baseUrl, "/api/v2/auth/refresh", new RefreshRequest { RefreshToken = refreshToken }, ct);
 
     public Task<ProfilesResponse> GetProfilesAsync(CancellationToken ct = default)
-        => client.GetAsync<ProfilesResponse>("/api/v1/profiles", ct);
+        => client.GetAsync<ProfilesResponse>("/api/v2/profiles", ct);
 
-    public Task<List<PlaybackSessionSummary>> GetHouseholdSessionsAsync(CancellationToken ct = default)
-        => client.GetAsync<List<PlaybackSessionSummary>>("/api/v1/profiles/household/sessions", ct);
+    public async Task<List<PlaybackSessionSummary>> GetHouseholdSessionsAsync(CancellationToken ct = default)
+    {
+        var response = await client.GetAsync<JsonObject>("/api/v2/profiles/household/sessions", ct);
+        var result = new List<PlaybackSessionSummary>();
+        var options = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            NumberHandling = JsonNumberHandling.AllowReadingFromString,
+        };
+        foreach (var item in response["items"]?.AsArray() ?? throw new JsonException("Missing household sessions."))
+        {
+            var row = item?.AsObject() ?? throw new JsonException("Invalid household session.");
+            // This UI model is also used by legacy admin reads. Adapt the v2 resource
+            // name and string identifiers only at this verified v2 boundary.
+            row["session_id"] = row["id"]?.DeepClone();
+            result.Add(row.Deserialize<PlaybackSessionSummary>(options) ?? throw new JsonException("Invalid household session."));
+        }
+        return result;
+    }
 
     public Task<VerifyPinResponse> VerifyPinAsync(string profileId, string pin, CancellationToken ct = default)
-        => client.PostAsync<VerifyPinResponse>($"/api/v1/profiles/{Uri.EscapeDataString(profileId)}/verify-pin", new VerifyPinRequest { Pin = pin }, ct);
+        => client.PostAsync<VerifyPinResponse>($"/api/v2/profiles/{Uri.EscapeDataString(profileId)}/verify-pin", new VerifyPinRequest { Pin = pin }, ct);
 
     public Task<Profile> CreateProfileAsync(string name, string? pin = null, bool isChild = false, CancellationToken ct = default)
         => CreateProfileAsync(new CreateProfileRequest
@@ -43,10 +64,10 @@ public class AuthApi(SiloApiClient client)
         }, ct);
 
     public Task<Profile> CreateProfileAsync(CreateProfileRequest request, CancellationToken ct = default)
-        => client.PostAsync<Profile>("/api/v1/profiles", request, ct);
+        => client.PostAsync<Profile>("/api/v2/profiles", ProfileBody(request, updating: false), ct);
 
     public Task DeleteProfileAsync(string profileId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/profiles/{Uri.EscapeDataString(profileId)}", ct);
+        => client.DeleteAsync($"/api/v2/profiles/{Uri.EscapeDataString(profileId)}", ct);
 
     /// <summary>
     /// Updates a profile's name and optional PIN. Pass an empty string for
@@ -61,12 +82,31 @@ public class AuthApi(SiloApiClient client)
             ["name"] = name,
         };
         // Send pin explicitly so server can tell "clear" ("") from "unchanged" (missing).
-        if (pin != null) body["pin"] = pin;
-        return client.PutAsync<Profile>($"/api/v1/profiles/{Uri.EscapeDataString(profileId)}", body, ct);
+        if (pin != null) body["pin"] = pin.Length == 0 ? null : pin;
+        return client.PatchAsync<Profile>($"/api/v2/profiles/{Uri.EscapeDataString(profileId)}", body, ct);
     }
 
     public Task<Profile> UpdateProfileAsync(string profileId, CreateProfileRequest request, CancellationToken ct = default)
-        => client.PutAsync<Profile>($"/api/v1/profiles/{Uri.EscapeDataString(profileId)}", request, ct);
+        => client.PatchAsync<Profile>($"/api/v2/profiles/{Uri.EscapeDataString(profileId)}", ProfileBody(request, updating: true), ct);
+
+    private static Dictionary<string, object?> ProfileBody(CreateProfileRequest request, bool updating)
+    {
+        var body = new Dictionary<string, object?>
+        {
+            ["name"] = request.Name,
+            ["is_child"] = request.IsChild,
+            ["max_content_rating"] = request.MaxContentRating,
+            ["library_restrictions_enabled"] = request.LibraryRestrictionsEnabled,
+            ["allowed_library_ids"] = request.AllowedLibraryIds.Select(id => id.ToString(CultureInfo.InvariantCulture)).ToArray(),
+        };
+        if (request.Avatar != null)
+            body["avatar"] = updating && request.Avatar.Length == 0 ? null : request.Avatar;
+        if (!string.IsNullOrEmpty(request.Pin)) body["pin"] = request.Pin;
+        else if (updating && request.Pin != null) body["pin"] = null;
+        if (!string.IsNullOrEmpty(request.MaxPlaybackQuality)) body["max_playback_quality"] = request.MaxPlaybackQuality;
+        else if (updating) body["max_playback_quality"] = null;
+        return body;
+    }
 
     public Task<Profile> UploadProfileAvatarAsync(
         string profileId,
@@ -75,7 +115,7 @@ public class AuthApi(SiloApiClient client)
         string contentType,
         CancellationToken ct = default)
         => client.PutMultipartAsync<Profile>(
-            $"/api/v1/profiles/{Uri.EscapeDataString(profileId)}/avatar",
+            $"/api/v2/profiles/{Uri.EscapeDataString(profileId)}/avatar",
             "avatar",
             fileName,
             fileBytes,
@@ -83,7 +123,7 @@ public class AuthApi(SiloApiClient client)
             ct);
 
     public Task<Profile> DeleteProfileAvatarAsync(string profileId, CancellationToken ct = default)
-        => client.DeleteReturningAsync<Profile>($"/api/v1/profiles/{Uri.EscapeDataString(profileId)}/avatar", ct);
+        => client.DeleteReturningAsync<Profile>($"/api/v2/profiles/{Uri.EscapeDataString(profileId)}/avatar", ct);
 
     // ===== Signup =====
 
@@ -91,20 +131,20 @@ public class AuthApi(SiloApiClient client)
         => SignupAsync(client.BaseUrl, request, ct);
 
     public Task<LoginResponse> SignupAsync(string baseUrl, SignupRequest request, CancellationToken ct = default)
-        => client.PostUnauthenticatedAsync<LoginResponse>(baseUrl, "/api/v1/auth/signup", request, ct);
+        => client.PostUnauthenticatedAsync<LoginResponse>(baseUrl, "/api/v2/auth/signup", request, ct);
 
     public Task<SignupStatusResponse> GetSignupStatusAsync(CancellationToken ct = default)
-        => client.GetUnauthenticatedAsync<SignupStatusResponse>("/api/v1/auth/signup", ct);
+        => client.GetUnauthenticatedAsync<SignupStatusResponse>("/api/v2/auth/signup", ct);
 
     // ===== Emailed invitations =====
 
     public Task<InvitationLookupResponse> GetInvitationAsync(string token, CancellationToken ct = default)
         => client.GetUnauthenticatedAsync<InvitationLookupResponse>(
-            $"/api/v1/invitations/{Uri.EscapeDataString(token)}", ct);
+            $"/api/v2/invitations/{Uri.EscapeDataString(token)}", ct);
 
-    public Task<LoginResponse> AcceptInvitationAsync(string token, string password, CancellationToken ct = default)
-        => client.PostUnauthenticatedAsync<LoginResponse>(
-            $"/api/v1/invitations/{Uri.EscapeDataString(token)}/accept",
+    public Task<InvitationAcceptanceResponse> AcceptInvitationAsync(string token, string password, CancellationToken ct = default)
+        => client.PostUnauthenticatedAsync<InvitationAcceptanceResponse>(
+            $"/api/v2/invitations/{Uri.EscapeDataString(token)}/accept",
             new AcceptInvitationRequest { Password = password },
             ct);
 
@@ -114,15 +154,15 @@ public class AuthApi(SiloApiClient client)
         => SetupAsync(client.BaseUrl, request, ct);
 
     public Task<LoginResponse> SetupAsync(string baseUrl, SetupRequest request, CancellationToken ct = default)
-        => client.PostUnauthenticatedAsync<LoginResponse>(baseUrl, "/api/v1/auth/setup", request, ct);
+        => client.PostUnauthenticatedAsync<LoginResponse>(baseUrl, "/api/v2/auth/setup", request, ct);
 
     public Task<SetupStatusResponse> GetSetupStatusAsync(CancellationToken ct = default)
-        => client.GetUnauthenticatedAsync<SetupStatusResponse>("/api/v1/auth/setup", ct);
+        => client.GetUnauthenticatedAsync<SetupStatusResponse>("/api/v2/system/setup", ct);
 
     // ===== Auth Providers =====
 
-    public Task<List<AuthProvider>> GetAuthProvidersAsync(CancellationToken ct = default)
-        => client.GetUnauthenticatedAsync<List<AuthProvider>>("/api/v1/auth/providers", ct);
+    public async Task<List<AuthProvider>> GetAuthProvidersAsync(CancellationToken ct = default)
+        => (await client.GetUnauthenticatedAsync<AuthProvidersResponse>("/api/v2/auth/providers", ct)).Providers;
 
     public async Task<Uri> StartOAuthAsync(int installationId, CancellationToken ct = default)
     {
@@ -134,7 +174,7 @@ public class AuthApi(SiloApiClient client)
         using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
         using var request = new HttpRequestMessage(
             HttpMethod.Post,
-            $"{client.BaseUrl}/api/v1/auth/oauth/{installationId}/init");
+            $"{client.BaseUrl}/api/v2/auth/oauth/{installationId}/init");
         using var response = await http.SendAsync(request, ct);
 
         if ((int)response.StatusCode is >= 300 and < 400 && response.Headers.Location != null)
@@ -154,7 +194,7 @@ public class AuthApi(SiloApiClient client)
         => CompleteOAuthAsync(client.BaseUrl, code, ct);
 
     public Task<OAuthCompleteResponse> CompleteOAuthAsync(string baseUrl, string code, CancellationToken ct = default)
-        => client.PostUnauthenticatedAsync<OAuthCompleteResponse>(baseUrl, "/api/v1/auth/oauth/complete",
+        => client.PostUnauthenticatedAsync<OAuthCompleteResponse>(baseUrl, "/api/v2/auth/oauth/complete",
             new Dictionary<string, object?> { ["code"] = code }, ct);
 
     // ===== Device Login (approver-side flow) =====
@@ -168,7 +208,7 @@ public class AuthApi(SiloApiClient client)
     // included for completeness so the same AuthApi covers the whole flow.
 
     public Task<DeviceLoginStartResponse> DeviceStartAsync(string? deviceName = null, string? devicePlatform = null, CancellationToken ct = default)
-        => client.PostUnauthenticatedAsync<DeviceLoginStartResponse>("/api/v1/auth/device/start",
+        => client.PostUnauthenticatedAsync<DeviceLoginStartResponse>("/api/v2/auth/device/start",
             new Dictionary<string, object?>
             {
                 ["device_name"] = deviceName ?? "",
@@ -186,50 +226,50 @@ public class AuthApi(SiloApiClient client)
         if (!string.IsNullOrEmpty(token)) qs.Add($"token={Uri.EscapeDataString(token)}");
         else if (!string.IsNullOrEmpty(code)) qs.Add($"code={Uri.EscapeDataString(code)}");
         var query = qs.Count > 0 ? "?" + string.Join("&", qs) : "";
-        return client.GetAsync<DeviceLoginLookupResponse>($"/api/v1/auth/device{query}", ct);
+        return client.GetUnauthenticatedAsync<DeviceLoginLookupResponse>($"/api/v2/auth/device{query}", ct);
     }
 
     public Task<DeviceLoginPollResponse> DevicePollAsync(string deviceCode, CancellationToken ct = default)
-        => client.PostUnauthenticatedAsync<DeviceLoginPollResponse>("/api/v1/auth/device/poll",
+        => client.PostUnauthenticatedAsync<DeviceLoginPollResponse>("/api/v2/auth/device/poll",
             new Dictionary<string, object?> { ["device_code"] = deviceCode }, ct);
 
     public Task<DeviceLoginCapabilityResponse> GetDeviceCapabilityAsync(CancellationToken ct = default)
-        => client.GetUnauthenticatedAsync<DeviceLoginCapabilityResponse>("/api/v1/auth/device/capability", ct);
+        => client.GetUnauthenticatedAsync<DeviceLoginCapabilityResponse>("/api/v2/auth/device/capability", ct);
 
     public Task DeviceApproveAsync(string? token, string? code, CancellationToken ct = default)
-        => client.PostNoContentAsync("/api/v1/auth/device/approve",
+        => client.PostNoContentAsync("/api/v2/auth/device/approve",
             new DeviceDecisionRequest { Token = token, Code = code }, ct);
 
     public Task DeviceApproveHandoffAsync(string? token, string? code, CancellationToken ct = default)
-        => client.PostNoContentAsync("/api/v1/auth/device/approve-handoff",
+        => client.PostNoContentAsync("/api/v2/auth/device/approve-handoff",
             new DeviceDecisionRequest { Token = token, Code = code }, ct);
 
     public Task DeviceDenyAsync(string? token, string? code, CancellationToken ct = default)
-        => client.PostNoContentAsync("/api/v1/auth/device/deny",
+        => client.PostNoContentAsync("/api/v2/auth/device/deny",
             new DeviceDecisionRequest { Token = token, Code = code }, ct);
 
     // ===== Session Management =====
 
     public Task LogoutAsync(CancellationToken ct = default)
-        => client.PostNoContentWithoutRefreshAsync("/api/v1/auth/logout", new Dictionary<string, object?>(), ct);
+        => client.PostNoContentWithoutRefreshAsync("/api/v2/auth/logout", new Dictionary<string, object?>(), ct);
 
     public Task LogoutAsync(string baseUrl, string accessToken, CancellationToken ct = default)
         => client.PostNoContentWithBearerAsync(
             baseUrl,
-            "/api/v1/auth/logout",
+            "/api/v2/auth/logout",
             accessToken,
             new Dictionary<string, object?>(),
             ct);
 
     public Task<UserInfo> GetMeAsync(CancellationToken ct = default)
-        => client.GetAsync<UserInfo>("/api/v1/auth/me", ct);
+        => client.GetAsync<UserInfo>("/api/v2/account/me", ct);
 
     public Task<UserInfo> GetMeAsync(string baseUrl, string accessToken, CancellationToken ct = default)
-        => client.GetWithBearerAsync<UserInfo>(baseUrl, "/api/v1/auth/me", accessToken, ct);
+        => client.GetWithBearerAsync<UserInfo>(baseUrl, "/api/v2/account/me", accessToken, ct);
 
-    public Task<AuthSessionsResponse> GetSessionsAsync(CancellationToken ct = default)
-        => client.GetAsync<AuthSessionsResponse>("/api/v1/auth/sessions", ct);
+    public async Task<AuthSessionsResponse> GetSessionsAsync(CancellationToken ct = default)
+        => new() { Sessions = await client.GetAllItemsAsync<AuthSession>("/api/v2/auth/sessions?limit=100", ct) };
 
     public Task RevokeSessionAsync(string id, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/auth/sessions/{Uri.EscapeDataString(id)}", ct);
+        => client.DeleteAsync($"/api/v2/auth/sessions/{Uri.EscapeDataString(id)}", ct);
 }

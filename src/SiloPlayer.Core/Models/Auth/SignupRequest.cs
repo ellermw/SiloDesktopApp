@@ -7,6 +7,7 @@ public class SignupRequest
     public string Password { get; set; } = "";
     public string InviteCode { get; set; } = "";
     public bool CreateDefaultProfile { get; set; } = true;
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? DefaultProfileName { get; set; }
 }
 

@@ -1,0 +1,956 @@
+{
+  "app_run": false,
+  "supplement": "secondary-ui-xaml-supplement.md",
+  "unreviewed_implementation_files": [],
+  "unverified": [
+    "Rendered visual parity and responsive behavior",
+    "Native UI Automation/accessibility/contrast behavior",
+    "Production endpoint behavior and runtime authorization",
+    "Host transition ordering for conditional cross-server/plugin cases",
+    "Complete API/model/test source outside delegated assignment"
+  ],
+  "implementation_line_count": 27437.0,
+  "report": "secondary-ui.md",
+  "scope": "Secondary UI .101 preview dirty working tree",
+  "files": [
+    {
+      "lines": 277,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/ActivateDevicePage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "client_backend",
+        "end": 277
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 128,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/ActivateDevicePage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 128
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 130,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/DownloadsPage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "client_backend",
+        "end": 130
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 317,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/DownloadsPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 317
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 230,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/EbookReaderPage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 230
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 1037,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/EbookReaderPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 1037
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 113,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/HouseholdSetupPage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "client_backend",
+        "end": 113
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 192,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/HouseholdSetupPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 192
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 111,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/InviteClaimPage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "client_backend",
+        "end": 111
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 114,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/InviteClaimPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 114
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 278,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/LoginPage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "client_backend",
+        "end": 278
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 240,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/LoginPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 240
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 99,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/NotificationsPage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 99
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 222,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/NotificationsPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 222
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 31,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/PluginRoutePage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 31
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 78,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/PluginRoutePage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 78
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 76,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/ProfileSelectPage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "client_backend",
+        "end": 76
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 332,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/ProfileSelectPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 332
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 99,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/RequestBrowsePage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 99
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 270,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/RequestBrowsePage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 270
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 71,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/RequestDetailPage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 71
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 367,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/RequestDetailPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 367
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 150,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/RequestsPage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 150
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 827,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/RequestsPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 827
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 127,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/ServerSelectPage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "client_backend",
+        "end": 127
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 94,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/ServerSelectPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 94
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 61,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/ServerSetupRequiredPage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "client_backend",
+        "end": 61
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 122,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/ServerSetupRequiredPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 122
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 2233,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/SettingsPage.xaml",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 1910
+        },
+        {
+          "start": 1911,
+          "reviewer": "client_backend",
+          "end": 2233
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 6796,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/SettingsPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 6796
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 209,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/SignupPage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "client_backend",
+        "end": 209
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 101,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/SignupPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 101
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 90,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/TasteSeedPage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "client_backend",
+        "end": 90
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 88,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/TasteSeedPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 88
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 223,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/WatchTogetherJoinPage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 223
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 189,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/WatchTogetherJoinPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 189
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 355,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/WatchTogetherRoomPage.xaml",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 355
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 698,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/WatchTogetherRoomPage.xaml.cs",
+      "ranges": {
+        "start": 1,
+        "reviewer": "secondary_ui",
+        "end": 698
+      },
+      "runtime_verified": false
+    },
+    {
+      "lines": 944,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/SettingsPage.Account.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 944
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 302,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/Dialogs/FeatureTourDialog.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 302
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 808,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Views/Dialogs/ProfileEditorDialog.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 808
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 741,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/ViewModels/WatchTogetherViewModels.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 741
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 356,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/ViewModels/ActivateDeviceViewModel.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 356
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 79,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/ViewModels/DownloadsViewModel.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 79
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 146,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/ViewModels/InviteClaimViewModel.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 146
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 394,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/ViewModels/LoginViewModel.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 394
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 78,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/ViewModels/MainViewModel.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 78
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 308,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/ViewModels/NotificationSettingsViewModel.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 308
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 289,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/ViewModels/NotificationsViewModel.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 289
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 315,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/ViewModels/ProfileSelectViewModel.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 315
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 269,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/ViewModels/RequestsViewModel.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 269
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 125,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/ViewModels/ServerSelectViewModel.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 125
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 2142,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/ViewModels/SettingsViewModel.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 2142
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 227,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/ViewModels/SignupViewModel.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 227
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 189,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/ViewModels/TasteSeedViewModel.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 189
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 76,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Services/AccessibilityService.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 76
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 439,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Services/CardOverlayService.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 439
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 206,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Services/EbookPackageExtractor.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 206
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 1143,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Services/ThemeService.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 1143
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 47,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Services/ToastService.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 47
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 288,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Services/UICustomizationService.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 288
+        }
+      ],
+      "runtime_verified": false
+    },
+    {
+      "lines": 351,
+      "status": "full_source_read",
+      "path": "src/SiloPlayer/Services/WatchTogetherCoordinator.cs",
+      "ranges": [
+        {
+          "start": 1,
+          "reviewer": "secondary_ui",
+          "end": 351
+        }
+      ],
+      "runtime_verified": false
+    }
+  ],
+  "tests": [
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/CurrentAuthSetupParitySourceTests.cs",
+      "lines": 47,
+      "ranges": [
+        {
+          "end": 47,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/CurrentProfilesParitySourceTests.cs",
+      "lines": 92,
+      "ranges": [
+        {
+          "end": 92,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "initial_audit"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/CurrentSettingsParitySourceTests.cs",
+      "lines": 385,
+      "ranges": [
+        {
+          "end": 385,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "initial_audit"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/DateTimePreferenceSourceTests.cs",
+      "lines": 46,
+      "ranges": [
+        {
+          "end": 46,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/DownloadsCurrentParityTests.cs",
+      "lines": 77,
+      "ranges": [
+        {
+          "end": 77,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "initial_audit"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/EbookReaderCurrentParityTests.cs",
+      "lines": 93,
+      "ranges": [
+        {
+          "end": 93,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "initial_audit"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/NotificationsCurrentParitySourceTests.cs",
+      "lines": 43,
+      "ranges": [
+        {
+          "end": 43,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/NotificationsInteractionParitySourceTests.cs",
+      "lines": 29,
+      "ranges": [
+        {
+          "end": 29,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/RequestBrowseCurrentParitySourceTests.cs",
+      "lines": 54,
+      "ranges": [
+        {
+          "end": 54,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/RequestDetailCurrentParitySourceTests.cs",
+      "lines": 42,
+      "ranges": [
+        {
+          "end": 42,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/RequestsCurrentParitySourceTests.cs",
+      "lines": 51,
+      "ranges": [
+        {
+          "end": 51,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/WatchProvidersParitySourceTests.cs",
+      "lines": 68,
+      "ranges": [
+        {
+          "end": 68,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/WatchTogetherCurrentParityTests.cs",
+      "lines": 87,
+      "ranges": [
+        {
+          "end": 87,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "initial_audit"
+    },
+    {
+      "lines": 43,
+      "status": "full_source_read",
+      "executed": false,
+      "path": "tests/SiloPlayer.Tests/EbookReaderWebPolicyTests.cs"
+    }
+  ],
+  "production_changes": false,
+  "implementation_file_count": 62,
+  "test_suite_rerun": false,
+  "cross_repository_verification": {
+    "live_endpoint_test": false,
+    "official_repository": "https://github.com/Silo-Server/silo-server",
+    "status": "source_contract_verified",
+    "reviewer": "root",
+    "finding": 29,
+    "commit": "aeb82e1c935336eba7a4a7b22233134dbee13c4c"
+  },
+  "tests_coverage_supplement": "secondary-ui-tests-coverage.json"
+}

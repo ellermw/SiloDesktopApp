@@ -1,0 +1,2230 @@
+{
+  "reviewer": "client_backend",
+  "baseline": "installed 1.1.101-multigpu-preview.1 +721add16; source PDB hashes matched by parent",
+  "scope": "all non-generated src/SiloPlayer.Core files plus listed tests",
+  "excluded": "bin/obj generated artifacts",
+  "unreadable": [],
+  "files": [
+    {
+      "path": "src/SiloPlayer.Core/SiloPlayer.Core.csproj",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\SiloPlayer.Core.csproj",
+      "lines": 18,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/ApiKeysApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\ApiKeysApi.cs",
+      "lines": 22,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/AuthApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\AuthApi.cs",
+      "lines": 235,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/CatalogApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\CatalogApi.cs",
+      "lines": 423,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/CollectionsApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\CollectionsApi.cs",
+      "lines": 132,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/DownloadsApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\DownloadsApi.cs",
+      "lines": 28,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/EbooksApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\EbooksApi.cs",
+      "lines": 36,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/HistoryImportApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\HistoryImportApi.cs",
+      "lines": 29,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/HomeApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\HomeApi.cs",
+      "lines": 37,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/MediaMaintenanceApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\MediaMaintenanceApi.cs",
+      "lines": 59,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/NotificationsApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\NotificationsApi.cs",
+      "lines": 110,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/PeopleApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\PeopleApi.cs",
+      "lines": 20,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/PlaybackApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\PlaybackApi.cs",
+      "lines": 387,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/PlexBrowserAuthApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\PlexBrowserAuthApi.cs",
+      "lines": 72,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/RecommendationsApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\RecommendationsApi.cs",
+      "lines": 99,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/RequestsApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\RequestsApi.cs",
+      "lines": 90,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/SettingsApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\SettingsApi.cs",
+      "lines": 580,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/SiloApiClient.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\SiloApiClient.cs",
+      "lines": 731,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": [
+        "B03",
+        "B07",
+        "B08"
+      ],
+      "disposition": "change or replace ownership/contract implementation; see finding"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/SiloHttpClientFactory.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\SiloHttpClientFactory.cs",
+      "lines": 36,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/WatchProvidersApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\WatchProvidersApi.cs",
+      "lines": 51,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Api/WebhookSyncApi.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\WebhookSyncApi.cs",
+      "lines": 32,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Helpers/PlaybackQuality.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Helpers\\PlaybackQuality.cs",
+      "lines": 74,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Helpers/TimeAgo.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Helpers\\TimeAgo.cs",
+      "lines": 85,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Helpers/UrlHelper.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Helpers\\UrlHelper.cs",
+      "lines": 14,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": "B12",
+      "disposition": "change or replace ownership/contract implementation; see finding"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Json/FlexibleNullableDateTimeOffsetConverter.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Json\\FlexibleNullableDateTimeOffsetConverter.cs",
+      "lines": 60,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Json/StringOrNumberJsonConverter.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Json\\StringOrNumberJsonConverter.cs",
+      "lines": 39,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/ApiError.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\ApiError.cs",
+      "lines": 6,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/ServerConfig.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\ServerConfig.cs",
+      "lines": 59,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Auth/AuthProvider.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\AuthProvider.cs",
+      "lines": 27,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Auth/AuthSession.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\AuthSession.cs",
+      "lines": 17,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Auth/CreateProfileRequest.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\CreateProfileRequest.cs",
+      "lines": 17,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Auth/DeviceAuth.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\DeviceAuth.cs",
+      "lines": 77,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Auth/Invitation.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\Invitation.cs",
+      "lines": 19,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Auth/LoginRequest.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\LoginRequest.cs",
+      "lines": 7,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Auth/LoginResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\LoginResponse.cs",
+      "lines": 18,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Auth/ProfilesResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\ProfilesResponse.cs",
+      "lines": 44,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Auth/RefreshRequest.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\RefreshRequest.cs",
+      "lines": 5,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Auth/RefreshResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\RefreshResponse.cs",
+      "lines": 7,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Auth/SetupRequest.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\SetupRequest.cs",
+      "lines": 13,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Auth/SignupRequest.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\SignupRequest.cs",
+      "lines": 16,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Auth/VerifyPinRequest.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\VerifyPinRequest.cs",
+      "lines": 5,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Auth/VerifyPinResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\VerifyPinResponse.cs",
+      "lines": 7,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/AudiobookGroupsResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\AudiobookGroupsResponse.cs",
+      "lines": 19,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/AudioPreference.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\AudioPreference.cs",
+      "lines": 26,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/CalendarResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\CalendarResponse.cs",
+      "lines": 38,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/CatalogFiltersResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\CatalogFiltersResponse.cs",
+      "lines": 16,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/CatalogResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\CatalogResponse.cs",
+      "lines": 11,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/EbookReaderModels.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\EbookReaderModels.cs",
+      "lines": 59,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/EpisodesResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\EpisodesResponse.cs",
+      "lines": 40,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/HistoryEntry.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\HistoryEntry.cs",
+      "lines": 24,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/ItemListResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\ItemListResponse.cs",
+      "lines": 9,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/ItemSplitModels.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\ItemSplitModels.cs",
+      "lines": 60,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/Library.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\Library.cs",
+      "lines": 81,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/LibraryCollections.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\LibraryCollections.cs",
+      "lines": 51,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/LibraryPlaybackPrefs.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\LibraryPlaybackPrefs.cs",
+      "lines": 15,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/MediaItemDetail.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\MediaItemDetail.cs",
+      "lines": 206,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/Person.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\Person.cs",
+      "lines": 31,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/PersonRefreshResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\PersonRefreshResponse.cs",
+      "lines": 7,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/ProgressResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\ProgressResponse.cs",
+      "lines": 15,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/RatingResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\RatingResponse.cs",
+      "lines": 19,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/RecommendationsResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\RecommendationsResponse.cs",
+      "lines": 102,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/SeasonsResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\SeasonsResponse.cs",
+      "lines": 26,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Catalog/SimilarResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\SimilarResponse.cs",
+      "lines": 14,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Collections/Collection.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Collections\\Collection.cs",
+      "lines": 131,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Collections/CollectionImports.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Collections\\CollectionImports.cs",
+      "lines": 223,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Collections/CollectionItem.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Collections\\CollectionItem.cs",
+      "lines": 21,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Collections/CollectionPreview.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Collections\\CollectionPreview.cs",
+      "lines": 20,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Collections/CreateCollectionRequest.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Collections\\CreateCollectionRequest.cs",
+      "lines": 15,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Collections/UpdateCollectionRequest.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Collections\\UpdateCollectionRequest.cs",
+      "lines": 18,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Downloads/Download.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Downloads\\Download.cs",
+      "lines": 57,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/HistoryImport/CreateHistoryImportRunRequest.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\HistoryImport\\CreateHistoryImportRunRequest.cs",
+      "lines": 19,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/HistoryImport/EmbyConnectLogin.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\HistoryImport\\EmbyConnectLogin.cs",
+      "lines": 23,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/HistoryImport/HistoryImportMapping.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\HistoryImport\\HistoryImportMapping.cs",
+      "lines": 47,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/HistoryImport/HistoryImportRun.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\HistoryImport\\HistoryImportRun.cs",
+      "lines": 31,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/HistoryImport/HistoryImportSource.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\HistoryImport\\HistoryImportSource.cs",
+      "lines": 46,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/HistoryImport/HistoryImportUnmatchedSample.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\HistoryImport\\HistoryImportUnmatchedSample.cs",
+      "lines": 9,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/HistoryImport/PlexAuth.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\HistoryImport\\PlexAuth.cs",
+      "lines": 29,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Home/HomeLayoutResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Home\\HomeLayoutResponse.cs",
+      "lines": 15,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Home/HomeSectionsResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Home\\HomeSectionsResponse.cs",
+      "lines": 190,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Home/RecipeCatalog.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Home\\RecipeCatalog.cs",
+      "lines": 26,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Home/SectionOverride.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Home\\SectionOverride.cs",
+      "lines": 61,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Home/SectionSettings.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Home\\SectionSettings.cs",
+      "lines": 20,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/MediaMaintenance/MatchModels.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\MediaMaintenance\\MatchModels.cs",
+      "lines": 50,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/MediaMaintenance/MetadataRefreshReceipt.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\MediaMaintenance\\MetadataRefreshReceipt.cs",
+      "lines": 8,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Notifications/NotificationsModels.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Notifications\\NotificationsModels.cs",
+      "lines": 381,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Playback/NativePlaybackCapabilityProfile.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\NativePlaybackCapabilityProfile.cs",
+      "lines": 15,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Playback/PlaybackProtocolV3.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\PlaybackProtocolV3.cs",
+      "lines": 292,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Playback/PlaybackStartRequest.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\PlaybackStartRequest.cs",
+      "lines": 39,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Playback/PlaybackStartResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\PlaybackStartResponse.cs",
+      "lines": 86,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Playback/PlaybackTransportPlan.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\PlaybackTransportPlan.cs",
+      "lines": 34,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Playback/SubtitleAiModels.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\SubtitleAiModels.cs",
+      "lines": 51,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Playback/TranscodeStartRequest.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\TranscodeStartRequest.cs",
+      "lines": 15,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Playback/TranscodeStartResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\TranscodeStartResponse.cs",
+      "lines": 14,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Playback/WatchDetailResponse.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\WatchDetailResponse.cs",
+      "lines": 313,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Plugins/PluginCapability.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Plugins\\PluginCapability.cs",
+      "lines": 90,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Plugins/PluginRoute.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Plugins\\PluginRoute.cs",
+      "lines": 13,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Plugins/PluginSettings.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Plugins\\PluginSettings.cs",
+      "lines": 28,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Requests/MediaRequests.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Requests\\MediaRequests.cs",
+      "lines": 291,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Sessions/PlaybackSessionSummary.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Sessions\\PlaybackSessionSummary.cs",
+      "lines": 60,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Settings/OnboardingModels.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Settings\\OnboardingModels.cs",
+      "lines": 45,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Settings/PluginUserSettings.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Settings\\PluginUserSettings.cs",
+      "lines": 7,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Settings/SubtitleAppearance.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Settings\\SubtitleAppearance.cs",
+      "lines": 114,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Settings/UICustomizationModels.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Settings\\UICustomizationModels.cs",
+      "lines": 69,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/Settings/WebhookSyncModels.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Settings\\WebhookSyncModels.cs",
+      "lines": 120,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Models/WatchProviders/WatchProviderModels.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\WatchProviders\\WatchProviderModels.cs",
+      "lines": 133,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep wire fields; separate immutable transport DTOs from mutable presentation state"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/AppInstanceNames.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\AppInstanceNames.cs",
+      "lines": 19,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/AsyncLoadVersionGate.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\AsyncLoadVersionGate.cs",
+      "lines": 12,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/AsyncWorkThrottle.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\AsyncWorkThrottle.cs",
+      "lines": 49,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/AuthorizationPolicy.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\AuthorizationPolicy.cs",
+      "lines": 44,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/AuthService.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\AuthService.cs",
+      "lines": 765,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": "B02",
+      "disposition": "change or replace ownership/contract implementation; see finding"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/AutoSkipMarkerIdentity.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\AutoSkipMarkerIdentity.cs",
+      "lines": 37,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/BrandingAssetSelector.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\BrandingAssetSelector.cs",
+      "lines": 23,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/CardOverlayGeometry.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\CardOverlayGeometry.cs",
+      "lines": 25,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/CardPointerInteractionPolicy.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\CardPointerInteractionPolicy.cs",
+      "lines": 11,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/CredentialStore.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\CredentialStore.cs",
+      "lines": 117,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/DeferredSurfaceRefreshGate.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\DeferredSurfaceRefreshGate.cs",
+      "lines": 33,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/DirectPlaybackRecoveryPolicy.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\DirectPlaybackRecoveryPolicy.cs",
+      "lines": 23,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/DirectStreamProxy.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\DirectStreamProxy.cs",
+      "lines": 474,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": "B11",
+      "disposition": "change or replace ownership/contract implementation; see finding"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/DirectStreamRelay.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\DirectStreamRelay.cs",
+      "lines": 493,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": "B11",
+      "disposition": "change or replace ownership/contract implementation; see finding"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/EbookReaderFormat.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\EbookReaderFormat.cs",
+      "lines": 25,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/EbookReaderWebPolicy.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\EbookReaderWebPolicy.cs",
+      "lines": 30,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/EpisodeCardPresentation.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\EpisodeCardPresentation.cs",
+      "lines": 28,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/EpisodeNavigationState.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\EpisodeNavigationState.cs",
+      "lines": 107,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/EventChannelClient.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\EventChannelClient.cs",
+      "lines": 639,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": "B04",
+      "disposition": "change or replace ownership/contract implementation; see finding"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/ExternalBrowserUrlPolicy.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ExternalBrowserUrlPolicy.cs",
+      "lines": 23,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/HomeRealtimeRefreshGate.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\HomeRealtimeRefreshGate.cs",
+      "lines": 68,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/HomeSectionCollectionReconciler.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\HomeSectionCollectionReconciler.cs",
+      "lines": 63,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/HomeSectionReconciler.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\HomeSectionReconciler.cs",
+      "lines": 86,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/ICredentialStore.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ICredentialStore.cs",
+      "lines": 9,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/ImageService.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ImageService.cs",
+      "lines": 468,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": "B05",
+      "disposition": "change or replace ownership/contract implementation; see finding"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/ItemDetailPrefetchCache.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ItemDetailPrefetchCache.cs",
+      "lines": 167,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/ItemMaintenanceActionPolicy.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ItemMaintenanceActionPolicy.cs",
+      "lines": 23,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/LibraryPerformanceTrace.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\LibraryPerformanceTrace.cs",
+      "lines": 39,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/LibraryPosterBinding.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\LibraryPosterBinding.cs",
+      "lines": 16,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/LibraryPosterSizing.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\LibraryPosterSizing.cs",
+      "lines": 11,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/LocalLog.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\LocalLog.cs",
+      "lines": 140,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/MediaCardProgressGeometry.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MediaCardProgressGeometry.cs",
+      "lines": 27,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/MediaItemActionExecutor.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MediaItemActionExecutor.cs",
+      "lines": 51,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/MediaItemCollectionReconciler.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MediaItemCollectionReconciler.cs",
+      "lines": 199,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/MediaItemDisplayText.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MediaItemDisplayText.cs",
+      "lines": 187,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/MediaItemStateUpdater.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MediaItemStateUpdater.cs",
+      "lines": 65,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/MediaLanguageCatalog.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MediaLanguageCatalog.cs",
+      "lines": 90,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/MediaVideoRange.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MediaVideoRange.cs",
+      "lines": 56,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/MpvNativePlaybackCapabilities.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MpvNativePlaybackCapabilities.cs",
+      "lines": 251,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/MpvNetworkBufferSizing.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MpvNetworkBufferSizing.cs",
+      "lines": 26,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/NativeAudioSelection.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\NativeAudioSelection.cs",
+      "lines": 25,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/NextEpisodeResolver.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\NextEpisodeResolver.cs",
+      "lines": 36,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/OAuthCompletionUrl.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\OAuthCompletionUrl.cs",
+      "lines": 67,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/PersonalCatalogSortPolicy.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PersonalCatalogSortPolicy.cs",
+      "lines": 18,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/PlaybackFailureDescription.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackFailureDescription.cs",
+      "lines": 125,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/PlaybackManager.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackManager.cs",
+      "lines": 889,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": [
+        "B01",
+        "B12"
+      ],
+      "disposition": "change or replace ownership/contract implementation; see finding"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/PlaybackPlanInvalidation.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackPlanInvalidation.cs",
+      "lines": 29,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/PlaybackPlanTerminalException.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackPlanTerminalException.cs",
+      "lines": 30,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/PlaybackRecoveryAttemptHistory.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackRecoveryAttemptHistory.cs",
+      "lines": 59,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/PlaybackRecoveryPolicy.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackRecoveryPolicy.cs",
+      "lines": 27,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/PlaybackStallDetector.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackStallDetector.cs",
+      "lines": 101,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": "B10",
+      "disposition": "change or replace ownership/contract implementation; see finding"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/PlaybackTimeline.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackTimeline.cs",
+      "lines": 38,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/PlaybackTransportPlanner.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackTransportPlanner.cs",
+      "lines": 112,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/PlaybackUrlRedactor.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackUrlRedactor.cs",
+      "lines": 54,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/PosterActionGeometry.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PosterActionGeometry.cs",
+      "lines": 25,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/SeriesPrimaryActionResolver.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\SeriesPrimaryActionResolver.cs",
+      "lines": 45,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/ServerUrlIdentity.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ServerUrlIdentity.cs",
+      "lines": 119,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/ServerWebUiUri.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ServerWebUiUri.cs",
+      "lines": 23,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/SessionDisplayText.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\SessionDisplayText.cs",
+      "lines": 47,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/SettingsService.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\SettingsService.cs",
+      "lines": 141,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": "B06",
+      "disposition": "change or replace ownership/contract implementation; see finding"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/SubtitleAutoSelect.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\SubtitleAutoSelect.cs",
+      "lines": 264,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/ThumbhashDecoder.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ThumbhashDecoder.cs",
+      "lines": 208,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/TranscodeQualityPolicy.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\TranscodeQualityPolicy.cs",
+      "lines": 97,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/VersionRanking.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\VersionRanking.cs",
+      "lines": 239,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": "B09",
+      "disposition": "change or replace ownership/contract implementation; see finding"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/VirtualGridScrollGate.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\VirtualGridScrollGate.cs",
+      "lines": 126,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/VirtualGridSlotAllocator.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\VirtualGridSlotAllocator.cs",
+      "lines": 24,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "src/SiloPlayer.Core/Services/WatchDetailPrefetchCache.cs",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\WatchDetailPrefetchCache.cs",
+      "lines": 150,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep intent; incremental cleanup and explicit context/lifetime as applicable"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/ApiPathEncodingTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\ApiPathEncodingTests.cs",
+      "lines": 66,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/ApiPayloadSourceTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\ApiPayloadSourceTests.cs",
+      "lines": 36,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/ApiTransportVersionTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\ApiTransportVersionTests.cs",
+      "lines": 49,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/AppInstanceNamesTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\AppInstanceNamesTests.cs",
+      "lines": 28,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/AudiobookPlaybackPreferenceTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\AudiobookPlaybackPreferenceTests.cs",
+      "lines": 47,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/AuthorizationPolicyTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\AuthorizationPolicyTests.cs",
+      "lines": 46,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/AuthServiceTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\AuthServiceTests.cs",
+      "lines": 388,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/AutoSkipMarkerIdentityTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\AutoSkipMarkerIdentityTests.cs",
+      "lines": 36,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/CalendarTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\CalendarTests.cs",
+      "lines": 43,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/CardOverlayGeometryTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\CardOverlayGeometryTests.cs",
+      "lines": 41,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/CardPointerInteractionPolicyTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\CardPointerInteractionPolicyTests.cs",
+      "lines": 18,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/CatalogApiTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\CatalogApiTests.cs",
+      "lines": 181,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/DeferredSurfaceRefreshGateTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\DeferredSurfaceRefreshGateTests.cs",
+      "lines": 39,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/DesktopSidebarPreferenceTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\DesktopSidebarPreferenceTests.cs",
+      "lines": 30,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/DirectStreamProxyTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\DirectStreamProxyTests.cs",
+      "lines": 199,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/DirectStreamRelayTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\DirectStreamRelayTests.cs",
+      "lines": 729,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/EbookReaderWebPolicyTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\EbookReaderWebPolicyTests.cs",
+      "lines": 43,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/EpisodeCardPresentationTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\EpisodeCardPresentationTests.cs",
+      "lines": 45,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/EpisodeNavigationStateTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\EpisodeNavigationStateTests.cs",
+      "lines": 113,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/ExternalBrowserUrlPolicyTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\ExternalBrowserUrlPolicyTests.cs",
+      "lines": 28,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/HomeRealtimeRefreshGateTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\HomeRealtimeRefreshGateTests.cs",
+      "lines": 87,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/HomeSectionCollectionReconcilerTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\HomeSectionCollectionReconcilerTests.cs",
+      "lines": 83,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/HomeSectionReconcilerTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\HomeSectionReconcilerTests.cs",
+      "lines": 175,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/ImageServiceTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\ImageServiceTests.cs",
+      "lines": 436,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/ItemDetailPrefetchCacheTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\ItemDetailPrefetchCacheTests.cs",
+      "lines": 93,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/ItemMaintenanceActionPolicyTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\ItemMaintenanceActionPolicyTests.cs",
+      "lines": 36,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/LibraryPosterBindingTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\LibraryPosterBindingTests.cs",
+      "lines": 36,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/LibraryPosterSizingTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\LibraryPosterSizingTests.cs",
+      "lines": 14,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/LocalLogTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\LocalLogTests.cs",
+      "lines": 60,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/MediaCardProgressGeometryTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\MediaCardProgressGeometryTests.cs",
+      "lines": 38,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/MediaItemActionExecutorTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\MediaItemActionExecutorTests.cs",
+      "lines": 69,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/MediaItemCollectionReconcilerTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\MediaItemCollectionReconcilerTests.cs",
+      "lines": 49,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/MediaItemStateUpdaterTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\MediaItemStateUpdaterTests.cs",
+      "lines": 39,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/MediaMaintenanceApiTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\MediaMaintenanceApiTests.cs",
+      "lines": 177,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/MediaVideoRangeTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\MediaVideoRangeTests.cs",
+      "lines": 67,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/MpvNativePlaybackCapabilitiesTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\MpvNativePlaybackCapabilitiesTests.cs",
+      "lines": 162,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/MpvNetworkBufferSizingTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\MpvNetworkBufferSizingTests.cs",
+      "lines": 28,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/NativeAudioSelectionTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\NativeAudioSelectionTests.cs",
+      "lines": 63,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/NextEpisodeResolverTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\NextEpisodeResolverTests.cs",
+      "lines": 59,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/NotificationsTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\NotificationsTests.cs",
+      "lines": 59,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/OAuthCompletionUrlTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\OAuthCompletionUrlTests.cs",
+      "lines": 42,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/PersonalCatalogSortPolicyTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\PersonalCatalogSortPolicyTests.cs",
+      "lines": 32,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/PlaybackFailureDescriptionTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\PlaybackFailureDescriptionTests.cs",
+      "lines": 91,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/PlaybackManagerTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\PlaybackManagerTests.cs",
+      "lines": 391,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/PlaybackProtocolV3RecoveryTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\PlaybackProtocolV3RecoveryTests.cs",
+      "lines": 196,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/PlaybackQualitySelectionTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\PlaybackQualitySelectionTests.cs",
+      "lines": 138,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/PlaybackRecoveryAttemptHistoryTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\PlaybackRecoveryAttemptHistoryTests.cs",
+      "lines": 77,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/PlaybackRecoveryPolicyTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\PlaybackRecoveryPolicyTests.cs",
+      "lines": 40,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/PlaybackSeekBehaviorTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\PlaybackSeekBehaviorTests.cs",
+      "lines": 76,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/PlaybackStallDetectorTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\PlaybackStallDetectorTests.cs",
+      "lines": 275,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/PlaybackTimelineTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\PlaybackTimelineTests.cs",
+      "lines": 46,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/PlaybackTransportPlannerTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\PlaybackTransportPlannerTests.cs",
+      "lines": 98,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/PlaybackUrlRedactorTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\PlaybackUrlRedactorTests.cs",
+      "lines": 36,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/PosterActionGeometryTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\PosterActionGeometryTests.cs",
+      "lines": 52,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/ProfileSectionsTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\ProfileSectionsTests.cs",
+      "lines": 86,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/ProfilesTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\ProfilesTests.cs",
+      "lines": 34,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/RecommendationsTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\RecommendationsTests.cs",
+      "lines": 59,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/RequestsTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\RequestsTests.cs",
+      "lines": 64,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/SeriesPrimaryActionResolverTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\SeriesPrimaryActionResolverTests.cs",
+      "lines": 75,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/ServerBrandingParityTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\ServerBrandingParityTests.cs",
+      "lines": 86,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/ServerContractSourceTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\ServerContractSourceTests.cs",
+      "lines": 519,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/ServerWebUiUriTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\ServerWebUiUriTests.cs",
+      "lines": 25,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/SiloApiClientTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\SiloApiClientTests.cs",
+      "lines": 421,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/StringOrNumberJsonConverterTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\StringOrNumberJsonConverterTests.cs",
+      "lines": 18,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/SubtitleAppearanceTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\SubtitleAppearanceTests.cs",
+      "lines": 63,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/SubtitleAutoSelectCurrentParityTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\SubtitleAutoSelectCurrentParityTests.cs",
+      "lines": 68,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/TimeAgoTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\TimeAgoTests.cs",
+      "lines": 23,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/TranscodeQualityPolicyTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\TranscodeQualityPolicyTests.cs",
+      "lines": 66,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/UpgradeAuthenticationRegressionTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\UpgradeAuthenticationRegressionTests.cs",
+      "lines": 241,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/VersionRankingCurrentParityTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\VersionRankingCurrentParityTests.cs",
+      "lines": 102,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/VirtualGridScrollGateTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\VirtualGridScrollGateTests.cs",
+      "lines": 60,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/VirtualGridSlotAllocatorTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\VirtualGridSlotAllocatorTests.cs",
+      "lines": 38,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/WatchDetailPrefetchCacheTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\WatchDetailPrefetchCacheTests.cs",
+      "lines": 58,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    },
+    {
+      "path": "tests/SiloPlayer.Tests/WebhookSyncTests.cs",
+      "absolutePath": "D:\\SiloPlayer\\tests\\SiloPlayer.Tests\\WebhookSyncTests.cs",
+      "lines": 74,
+      "review": "full read",
+      "confidence": "high source coverage; runtime behavior not independently executed",
+      "findingIds": null,
+      "disposition": "keep behavior tests; replace source-text assertions with behavioral/contract evidence where feasible"
+    }
+  ]
+}

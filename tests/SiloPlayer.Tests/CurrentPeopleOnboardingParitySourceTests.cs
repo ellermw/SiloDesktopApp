@@ -51,7 +51,7 @@ public sealed class CurrentPeopleOnboardingParitySourceTests
         var householdPage = ReadRepoFile("src", "SiloPlayer", "Views", "HouseholdSetupPage.xaml.cs");
         var installer = ReadRepoFile("installer", "SiloInstaller.iss");
 
-        Assert.Contains("/api/v1/invitations/{Uri.EscapeDataString(token)}", authApi);
+        Assert.Contains("/api/v2/invitations/{Uri.EscapeDataString(token)}", authApi);
         Assert.Contains("/accept", authApi);
         Assert.Contains("uri.Scheme, \"silo\"", deepLink);
         Assert.Contains("uri.Host, \"invite\"", deepLink);

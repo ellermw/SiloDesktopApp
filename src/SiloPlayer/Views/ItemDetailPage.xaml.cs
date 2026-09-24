@@ -3454,11 +3454,9 @@ public sealed partial class ItemDetailPage : Page
 
             var apiClient = App.Services.GetRequiredService<SiloApiClient>();
             var path = DownloadsApi.GetDirectDownloadPath(version.FileId);
-            var token = apiClient.AccessToken;
-            var url = apiClient.BaseUrl + path +
-                      (string.IsNullOrWhiteSpace(token) ? "" : $"&token={Uri.EscapeDataString(token)}");
             var http = App.Services.GetRequiredService<HttpClient>();
-            using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            using var request = apiClient.CreateAuthenticatedRequest(HttpMethod.Get, path);
+            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
             if (response.StatusCode == System.Net.HttpStatusCode.Forbidden)
                 throw new InvalidOperationException("You are not allowed to download this file.");
             if ((int)response.StatusCode == 429)

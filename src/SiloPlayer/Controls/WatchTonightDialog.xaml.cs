@@ -264,7 +264,7 @@ public sealed partial class WatchTonightDialog : ContentDialog
             var genres = _selectedGenres.Count > 0 ? _selectedGenres.ToList() : null;
             var page = await _api.GetWatchTonightCardsAsync(_mode, genres, excludeIds, 12);
             _cards.AddRange(page.Cards);
-            _hasMore = page.HasMore;
+            _hasMore = page.HasMore && !page.PagingLimited;
             _prefetchTriggered = false;
 
             DeckLoadingPanel.Visibility = Visibility.Collapsed;

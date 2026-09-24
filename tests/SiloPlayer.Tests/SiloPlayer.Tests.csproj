@@ -18,14 +18,15 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\SiloPlayer.Core\SiloPlayer.Core.csproj" />
+    <ProjectReference Include="..\..\src\SiloPlayer.Player\SiloPlayer.Player.csproj" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.cs" Link="Production\LibraryViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\VirtualCatalogItems.cs" Link="Production\VirtualCatalogItems.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\BulkObservableCollection.cs" Link="Production\BulkObservableCollection.cs" />
-    <Compile Include="..\..\src\SiloPlayer.Player\VideoUpscalingPolicy.cs" Link="Production\VideoUpscalingPolicy.cs" />
   </ItemGroup>
 
 </Project>

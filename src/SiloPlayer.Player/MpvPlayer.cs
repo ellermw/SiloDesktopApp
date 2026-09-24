@@ -100,6 +100,7 @@ public sealed partial class MpvPlayer : IDisposable
 
     /// <summary>Fired when a file fails to load or a playback error occurs (END_FILE with reason=error).</summary>
     public event Action<string>? PlaybackError;
+    public event Action<string>? DirectStreamError;
 
     /// <summary>Fired when an error occurs.</summary>
     public event Action<string>? Error;
@@ -190,9 +191,7 @@ public sealed partial class MpvPlayer : IDisposable
         SetOption("vo", "libmpv");
 
         // Logging (production: status only, not verbose)
-        var logPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "SiloPlayer", "mpv_log.txt");
+        var logPath = GetPlayerLogPath();
         Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
         RotateLogIfNeeded(logPath);
         SetOption("log-file", logPath);
@@ -232,6 +231,7 @@ public sealed partial class MpvPlayer : IDisposable
         mpv_observe_property(_mpvHandle, UD_PAUSE, "pause", MPV_FORMAT_FLAG);
         mpv_observe_property(_mpvHandle, UD_EOF_REACHED, "eof-reached", MPV_FORMAT_FLAG);
         mpv_observe_property(_mpvHandle, UD_PAUSED_FOR_CACHE, "paused-for-cache", MPV_FORMAT_FLAG);
+        ObserveDiagnostics();
 
         // Start background event loop thread
         _eventThread = new Thread(EventLoop)
@@ -292,7 +292,8 @@ public sealed partial class MpvPlayer : IDisposable
     /// Creates the mpv instance using GPU rendering into a provided window handle.
     /// mpv renders directly via D3D11 -- zero frame copies, hardware accelerated.
     /// </summary>
-    public void InitializeWithWindow(IntPtr windowHandle, bool nvidiaVideoUpscaling = false)
+    public void InitializeWithWindow(IntPtr windowHandle, bool nvidiaVideoUpscaling = false,
+        VideoUpscalingMode? upscalingMode = null)
     {
         if (_mpvHandle != IntPtr.Zero)
             throw new InvalidOperationException("MpvPlayer is already initialized.");
@@ -311,7 +312,7 @@ public sealed partial class MpvPlayer : IDisposable
         SetOption("vo", "gpu-next,gpu");
         SetOption("gpu-api", "d3d11");
         SetOption("gpu-context", "d3d11");
-        ConfigureUpscaling(nvidiaVideoUpscaling);
+        ConfigureUpscaling(upscalingMode ?? (nvidiaVideoUpscaling ? VideoUpscalingMode.Nvidia : VideoUpscalingMode.Off));
 
         // Set the target window handle
         SetOption("wid", windowHandle.ToString());
@@ -384,9 +385,7 @@ public sealed partial class MpvPlayer : IDisposable
         SetOption("replaygain", "no");
 
         // Logging
-        var logPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "SiloPlayer", "mpv_log.txt");
+        var logPath = GetPlayerLogPath();
         Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
         RotateLogIfNeeded(logPath);
         SetOption("log-file", logPath);
@@ -408,6 +407,7 @@ public sealed partial class MpvPlayer : IDisposable
         mpv_observe_property(_mpvHandle, UD_PAUSE, "pause", MPV_FORMAT_FLAG);
         mpv_observe_property(_mpvHandle, UD_EOF_REACHED, "eof-reached", MPV_FORMAT_FLAG);
         mpv_observe_property(_mpvHandle, UD_PAUSED_FOR_CACHE, "paused-for-cache", MPV_FORMAT_FLAG);
+        ObserveDiagnostics();
 
         // Start event loop thread
         _eventThread = new Thread(EventLoop)
@@ -417,6 +417,7 @@ public sealed partial class MpvPlayer : IDisposable
         };
         _eventThread.Start();
 
+        SetProperty("user-data/silo-upscaling-status", _upscalingStatus);
         if (_upscalingEnabled)
             mpv_request_log_messages(_mpvHandle, "warn");
 
@@ -560,14 +561,30 @@ public sealed partial class MpvPlayer : IDisposable
         ThrowIfNotInitialized();
         ResetUpscalingForLoad();
 
+        // Original files use a seekable HTTP reader directly through mpv's
+        // stream API, retaining connection reuse and byte-level recovery.
+        var nativeDirect = CanOpenSignedDirectStream(url);
+        StartDiagnostics(nativeDirect, startSeconds);
+        SetProperty("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5");
+        SetProperty("network-timeout", nativeDirect ? "10" : "30");
         mpv_set_property_string(_mpvHandle, "http-header-fields",
-            !string.IsNullOrEmpty(authHeader) ? $"Authorization: {authHeader}" : "");
+            !nativeDirect && !string.IsNullOrEmpty(authHeader) ? $"Authorization: {authHeader}" : "");
+
+        if (nativeDirect) url = PrepareNativeDirectInput(url);
+        else Volatile.Write(ref _directRequest, null);
 
         if (startSeconds > 0.001)
             Command("loadfile", url, "replace", "-1", $"start={FormatSeconds(startSeconds)}");
         else
             Command("loadfile", url);
     }
+
+    /// <summary>Signed direct-node URLs need no rotating account-token relay.</summary>
+    public static bool CanOpenSignedDirectStream(string url) =>
+        Uri.TryCreate(url, UriKind.Absolute, out var uri) &&
+        (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp) &&
+        uri.AbsolutePath.StartsWith("/stream/direct/", StringComparison.OrdinalIgnoreCase) &&
+        uri.AbsolutePath.Length > "/stream/direct/".Length;
 
     /// <summary>Applies a bounded cache profile before the next network load.</summary>
     public void ConfigureNetworkBuffer(int maxMiB, int backMiB, int readAheadSeconds, int streamMiB)
@@ -584,13 +601,17 @@ public sealed partial class MpvPlayer : IDisposable
     public void Stop()
     {
         ThrowIfNotInitialized();
+        _diagnostics?.Record("stop_requested", new { position = Position });
         Command("stop");
+        // Keep the flight recorder through stop/reload recovery and episode changes.
+        // Its bounded history and incident windows finish independently of playback.
     }
 
     /// <summary>Resumes playback.</summary>
     public void Play()
     {
         ThrowIfNotInitialized();
+        _diagnostics?.Record("play_requested", new { position = Position });
         mpv_set_property_string(_mpvHandle, "pause", "no");
     }
 
@@ -598,6 +619,7 @@ public sealed partial class MpvPlayer : IDisposable
     public void Pause()
     {
         ThrowIfNotInitialized();
+        _diagnostics?.Record("pause_requested", new { position = Position });
         mpv_set_property_string(_mpvHandle, "pause", "yes");
     }
 
@@ -614,6 +636,7 @@ public sealed partial class MpvPlayer : IDisposable
     public void Seek(double seconds)
     {
         ThrowIfNotInitialized();
+        _diagnostics?.Record("seek_requested", new { from = Position, to = seconds });
         Command("seek", FormatSeconds(seconds), "absolute+exact");
     }
 
@@ -908,6 +931,7 @@ public sealed partial class MpvPlayer : IDisposable
         while (!_disposed)
         {
             IntPtr evPtr = mpv_wait_event(_mpvHandle, 0.5);
+            Volatile.Write(ref _lastEventTick, System.Diagnostics.Stopwatch.GetTimestamp());
             if (evPtr == IntPtr.Zero)
                 continue;
 
@@ -926,6 +950,7 @@ public sealed partial class MpvPlayer : IDisposable
                         break;
 
                     case MPV_EVENT_FILE_LOADED:
+                        _diagnostics?.Record("file_loaded", new { position = Position, duration = Duration });
                         lock (_upscalingLock) _upscalingFileLoaded = true;
                         InvokeSafely(FileLoaded, nameof(FileLoaded));
                         break;
@@ -935,6 +960,7 @@ public sealed partial class MpvPlayer : IDisposable
                         break;
 
                     case MPV_EVENT_PLAYBACK_RESTART:
+                        _diagnostics?.Record("playback_restart", new { position = Position });
                         InvokeSafely(PlaybackRestarted, nameof(PlaybackRestarted));
                         break;
 
@@ -943,6 +969,13 @@ public sealed partial class MpvPlayer : IDisposable
                         if (ev.Data != IntPtr.Zero)
                         {
                             var endFile = Marshal.PtrToStructure<MpvEventEndFile>(ev.Data);
+                            _diagnostics?.Record("end_file", new { reason = endFile.Reason, error = endFile.Error, position = Position });
+                            if (endFile.Reason == MPV_END_FILE_REASON_ERROR) _diagnostics?.Incident("native_playback_error");
+                            if (endFile.Reason is MPV_END_FILE_REASON_ERROR or MPV_END_FILE_REASON_EOF &&
+                                ReportDirectStreamFailure())
+                            {
+                                break;
+                            }
                             if (endFile.Reason == MPV_END_FILE_REASON_ERROR)
                             {
                                 var errMsg = GetErrorString(endFile.Error);
@@ -990,6 +1023,17 @@ public sealed partial class MpvPlayer : IDisposable
 
         switch (ev.ReplyUserdata)
         {
+            case UdDiagnosticCache:
+            case UdDiagnosticSpeed:
+            case UdDiagnosticDropped:
+                if (prop.Format == MPV_FORMAT_DOUBLE && prop.Data != IntPtr.Zero)
+                {
+                    var value = Marshal.PtrToStructure<double>(prop.Data);
+                    if (ev.ReplyUserdata == UdDiagnosticCache) _diagnosticCache = value;
+                    if (ev.ReplyUserdata == UdDiagnosticSpeed) _diagnosticSpeed = value;
+                    if (ev.ReplyUserdata == UdDiagnosticDropped) _diagnosticDropped = value;
+                }
+                break;
             case UD_TIME_POS:
                 if (prop.Format == MPV_FORMAT_DOUBLE && prop.Data != IntPtr.Zero)
                 {
@@ -1004,6 +1048,7 @@ public sealed partial class MpvPlayer : IDisposable
                 {
                     double dur = Marshal.PtrToStructure<double>(prop.Data);
                     Duration = dur;
+                    Volatile.Write(ref _directDuration, dur);
                     InvokeSafely(DurationChanged, dur, nameof(DurationChanged));
                 }
                 break;
@@ -1022,7 +1067,7 @@ public sealed partial class MpvPlayer : IDisposable
                 if (prop.Format == MPV_FORMAT_FLAG && prop.Data != IntPtr.Zero)
                 {
                     int flag = Marshal.PtrToStructure<int>(prop.Data);
-                    if (flag != 0)
+                    if (flag != 0 && !ReportDirectStreamFailure())
                         InvokeSafely(EofReached, nameof(EofReached));
                 }
                 break;
@@ -1035,6 +1080,7 @@ public sealed partial class MpvPlayer : IDisposable
                     if (buffering != IsBufferingForCache)
                     {
                         IsBufferingForCache = buffering;
+                        RecordBuffering(buffering);
                         InvokeSafely(BufferingChanged, buffering, nameof(BufferingChanged));
                     }
                 }
@@ -1158,6 +1204,11 @@ public sealed partial class MpvPlayer : IDisposable
 
     // ── Helpers ──────────────────────────────────────────────────────────
 
+    private static string GetPlayerLogPath() => Path.Combine(
+        Environment.GetEnvironmentVariable("SILOPLAYER_LOG_DIRECTORY") ??
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer"),
+        "mpv_log.txt");
+
     private void SetOption(string name, string value)
     {
         int err = mpv_set_option_string(_mpvHandle, name, value);
@@ -1190,6 +1241,7 @@ public sealed partial class MpvPlayer : IDisposable
         if (_disposed)
             return;
         _disposed = true;
+        _diagnostics?.Dispose();
 
         // Clear event subscribers to prevent external memory leaks
         PositionChanged = null;
@@ -1198,6 +1250,7 @@ public sealed partial class MpvPlayer : IDisposable
         PlaybackEnded = null;
         PlaybackRestarted = null;
         PlaybackError = null;
+        DirectStreamError = null;
         EofReached = null;
         FileLoaded = null;
         UpscalingStatusChanged = null;

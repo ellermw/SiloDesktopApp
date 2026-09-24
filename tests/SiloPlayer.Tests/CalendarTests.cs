@@ -23,7 +23,7 @@ public sealed class CalendarTests
             "2026-07-06", "2026-07-12", "trending", libraryId: 4);
 
         Assert.Equal(
-            "/api/v1/calendar?start=2026-07-06&end=2026-07-12&filter=trending&library_id=4",
+            "/api/v2/calendar?start=2026-07-06&end=2026-07-12&filter=trending&library_id=4",
             handler.LastUri?.PathAndQuery);
     }
 

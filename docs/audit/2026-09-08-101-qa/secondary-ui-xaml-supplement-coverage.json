@@ -1,0 +1,139 @@
+{
+  "reviewer": "client_backend",
+  "scope": "Explicit transferred XAML slice from secondary_ui",
+  "unreadable": [],
+  "files": [
+    {
+      "path": "src/SiloPlayer/Views/ActivateDevicePage.xaml",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\ActivateDevicePage.xaml",
+      "lines": 277,
+      "review": "full read",
+      "readRanges": [
+        1,
+        277
+      ],
+      "confidence": "high source coverage; no visual reproduction",
+      "disposition": "keep native XAML; change shared shell, accessibility and bounded presentation as report details"
+    },
+    {
+      "path": "src/SiloPlayer/Views/DownloadsPage.xaml",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\DownloadsPage.xaml",
+      "lines": 130,
+      "review": "full read",
+      "readRanges": [
+        1,
+        130
+      ],
+      "confidence": "high source coverage; no visual reproduction",
+      "disposition": "keep native XAML; change shared shell, accessibility and bounded presentation as report details"
+    },
+    {
+      "path": "src/SiloPlayer/Views/HouseholdSetupPage.xaml",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\HouseholdSetupPage.xaml",
+      "lines": 113,
+      "review": "full read",
+      "readRanges": [
+        1,
+        113
+      ],
+      "confidence": "high source coverage; no visual reproduction",
+      "disposition": "keep native XAML; change shared shell, accessibility and bounded presentation as report details"
+    },
+    {
+      "path": "src/SiloPlayer/Views/InviteClaimPage.xaml",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\InviteClaimPage.xaml",
+      "lines": 111,
+      "review": "full read",
+      "readRanges": [
+        1,
+        111
+      ],
+      "confidence": "high source coverage; no visual reproduction",
+      "disposition": "keep native XAML; change shared shell, accessibility and bounded presentation as report details"
+    },
+    {
+      "path": "src/SiloPlayer/Views/LoginPage.xaml",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\LoginPage.xaml",
+      "lines": 278,
+      "review": "full read",
+      "readRanges": [
+        1,
+        278
+      ],
+      "confidence": "high source coverage; no visual reproduction",
+      "disposition": "keep native XAML; change shared shell, accessibility and bounded presentation as report details"
+    },
+    {
+      "path": "src/SiloPlayer/Views/ProfileSelectPage.xaml",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\ProfileSelectPage.xaml",
+      "lines": 76,
+      "review": "full read",
+      "readRanges": [
+        1,
+        76
+      ],
+      "confidence": "high source coverage; no visual reproduction",
+      "disposition": "keep native XAML; change shared shell, accessibility and bounded presentation as report details"
+    },
+    {
+      "path": "src/SiloPlayer/Views/ServerSelectPage.xaml",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\ServerSelectPage.xaml",
+      "lines": 127,
+      "review": "full read",
+      "readRanges": [
+        1,
+        127
+      ],
+      "confidence": "high source coverage; no visual reproduction",
+      "disposition": "keep native XAML; change shared shell, accessibility and bounded presentation as report details"
+    },
+    {
+      "path": "src/SiloPlayer/Views/ServerSetupRequiredPage.xaml",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\ServerSetupRequiredPage.xaml",
+      "lines": 61,
+      "review": "full read",
+      "readRanges": [
+        1,
+        61
+      ],
+      "confidence": "high source coverage; no visual reproduction",
+      "disposition": "keep native XAML; change shared shell, accessibility and bounded presentation as report details"
+    },
+    {
+      "path": "src/SiloPlayer/Views/SignupPage.xaml",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\SignupPage.xaml",
+      "lines": 209,
+      "review": "full read",
+      "readRanges": [
+        1,
+        209
+      ],
+      "confidence": "high source coverage; no visual reproduction",
+      "disposition": "keep native XAML; change shared shell, accessibility and bounded presentation as report details"
+    },
+    {
+      "path": "src/SiloPlayer/Views/TasteSeedPage.xaml",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\TasteSeedPage.xaml",
+      "lines": 90,
+      "review": "full read",
+      "readRanges": [
+        1,
+        90
+      ],
+      "confidence": "high source coverage; no visual reproduction",
+      "disposition": "keep native XAML; change shared shell, accessibility and bounded presentation as report details"
+    },
+    {
+      "path": "src/SiloPlayer/Views/SettingsPage.xaml",
+      "absolutePath": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\SettingsPage.xaml",
+      "lines": 2233,
+      "review": "partial read here; secondary_ui reviewed1–1910",
+      "readRanges": [
+        1911,
+        2233
+      ],
+      "confidence": "high source coverage",
+      "disposition": "split independently loaded feature panels"
+    }
+  ]
+}

@@ -7,6 +7,7 @@ public sealed class ServerWebUiUriTests
     [Theory]
     [InlineData("https://silo.example/api/v1", "https://silo.example/")]
     [InlineData("https://silo.example/api/v1/", "https://silo.example/")]
+    [InlineData("https://silo.example/api/v2/", "https://silo.example/")]
     [InlineData("https://silo.example/", "https://silo.example/")]
     [InlineData("https://silo.example/custom/api/v1", "https://silo.example/custom/")]
     public void ApiBaseMapsToTheConnectedWebUiOrigin(string apiBase, string expected)

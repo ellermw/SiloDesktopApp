@@ -68,6 +68,7 @@ public class NavigationService
     /// </summary>
     public bool NavigateImmediately(Type pageType, object? parameter = null)
     {
+        using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure("navigation-commit", 16);
         if (Frame == null) return false;
         if (_currentPageType == pageType && ParametersEqual(_currentParameter, parameter))
             return false;

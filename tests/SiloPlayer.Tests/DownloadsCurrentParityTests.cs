@@ -46,8 +46,8 @@ public sealed class DownloadsCurrentParityTests
         var itemPage = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs"));
         var downloadsPage = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "DownloadsPage.xaml.cs"));
 
-        Assert.Contains("/api/v1/downloads/capability", api);
-        Assert.Contains("/api/v1/direct-download?file_id=", api);
+        Assert.Contains("/api/v2/capabilities/downloads", api);
+        Assert.Contains("/api/v2/direct-download-proxy?file_id=", api);
         Assert.Contains("SaveDirectDownloadAsync", itemPage);
         Assert.Contains("Choose a file to download", itemPage);
         Assert.Contains("CanCurrentUserDownload", itemPage);
@@ -55,9 +55,8 @@ public sealed class DownloadsCurrentParityTests
         Assert.Contains("dl.EffectiveQuality", downloadsPage);
         Assert.Contains("dl.DeliveryFormat", downloadsPage);
         Assert.Contains("dl.BytesSent", downloadsPage);
-        Assert.Contains("AuthenticationHeaderValue", downloadsPage);
-        Assert.Contains("new HttpRequestMessage(HttpMethod.Get, url)", downloadsPage, StringComparison.Ordinal);
-        Assert.Contains("request.Headers.Authorization", downloadsPage, StringComparison.Ordinal);
+        Assert.Contains("CreateAuthenticatedRequest(HttpMethod.Get, downloadPath)", downloadsPage, StringComparison.Ordinal);
+        Assert.Contains("CreateAuthenticatedRequest(HttpMethod.Get, path)", itemPage, StringComparison.Ordinal);
         Assert.Contains("DownloadsApi.GetDownloadFilePath(downloadId)", downloadsPage, StringComparison.Ordinal);
         Assert.DoesNotMatch(new Regex(@"(?i)[?&]token\s*="), downloadsPage);
         Assert.DoesNotContain("AppendToken", downloadsPage, StringComparison.Ordinal);

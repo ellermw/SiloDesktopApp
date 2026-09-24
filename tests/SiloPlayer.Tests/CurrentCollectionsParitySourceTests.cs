@@ -32,10 +32,10 @@ public sealed class CurrentCollectionsParitySourceTests
     {
         var api = ReadRepoFile("src", "SiloPlayer.Core", "Api", "CollectionsApi.cs");
 
-        Assert.Contains("/api/v1/collections/server", api);
-        Assert.Contains("/api/v1/collections/groups", api);
-        Assert.Contains("/api/v1/collections/groups/order", api);
-        Assert.Contains("/api/v1/collections/order", api);
+        Assert.Contains("/api/v2/collections/server", api);
+        Assert.Contains("/api/v2/collections/groups", api);
+        Assert.Contains("/api/v2/collections/groups/order", api);
+        Assert.Contains("/api/v2/collections/order", api);
         Assert.Contains("[\"group_id\"] = groupId", api);
     }
 

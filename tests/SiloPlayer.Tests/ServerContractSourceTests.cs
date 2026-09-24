@@ -93,8 +93,8 @@ public sealed class ServerContractSourceTests
         var models = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Models", "Catalog", "RecommendationsResponse.cs"));
         var viewModel = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "ViewModels", "RecommendationsViewModel.cs"));
 
-        Assert.Contains("/api/v1/recommendations/discover", api);
-        Assert.Contains("/api/v1/recommendations/section/", api);
+        Assert.Contains("/api/v2/recommendations/discover", api);
+        Assert.Contains("/api/v2/recommendations/section/", api);
         Assert.Contains("DiscoverResponse", models);
         Assert.Contains("SectionKind", models);
         Assert.Contains("GetDiscoverRowsAsync", viewModel);
@@ -131,12 +131,12 @@ public sealed class ServerContractSourceTests
         Assert.Contains("IconUrl", providerModel);
         Assert.Contains("InstallationId", providerModel);
         Assert.Contains("List<AuthProvider>", authApi);
-        Assert.Contains("/api/v1/auth/oauth/", authApi);
+        Assert.Contains("/api/v2/auth/oauth/", authApi);
         Assert.Contains("/init", authApi);
-        Assert.Contains("/api/v1/auth/oauth/complete", authApi);
+        Assert.Contains("/api/v2/auth/oauth/complete", authApi);
         Assert.Contains("CompleteOAuthAsync", loginViewModel);
         Assert.Contains("WebView2", loginPage);
-        Assert.DoesNotContain("/api/v1/auth/providers/{Uri.EscapeDataString(providerId)}/authorize", loginPage);
+        Assert.DoesNotContain("/api/v2/auth/providers/{Uri.EscapeDataString(providerId)}/authorize", loginPage);
     }
 
     [Fact]
@@ -179,10 +179,10 @@ public sealed class ServerContractSourceTests
 
         var api = File.ReadAllText(requestsApi);
         var models = File.ReadAllText(requestModels);
-        Assert.Contains("/api/v1/requests/status", api);
-        Assert.Contains("/api/v1/requests/discover", api);
-        Assert.Contains("/api/v1/requests/search", api);
-        Assert.Contains("/api/v1/requests/mine", api);
+        Assert.Contains("/api/v2/requests/status", api);
+        Assert.Contains("/api/v2/requests/discover", api);
+        Assert.Contains("/api/v2/requests/search", api);
+        Assert.Contains("/api/v2/requests/mine", api);
         Assert.DoesNotContain("/api/v1/admin/requests", api);
         Assert.Contains("RequestFeatureStatus", models);
         Assert.Contains("RequestMediaResult", models);
@@ -208,7 +208,7 @@ public sealed class ServerContractSourceTests
         var playbackResponse = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Models", "Playback", "PlaybackStartResponse.cs"));
         var playbackManager = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Services", "PlaybackManager.cs"));
 
-        Assert.Contains("/api/v1/playback/sessions/", playbackWebSocket);
+        Assert.Contains("/api/v2/playback/sessions/", playbackWebSocket);
         Assert.Contains("/control/ws", playbackWebSocket);
         Assert.DoesNotContain("/api/v1/playback/ws/", playbackWebSocket);
 
@@ -273,12 +273,12 @@ public sealed class ServerContractSourceTests
         var api = File.ReadAllText(notificationApi);
         var models = File.ReadAllText(notificationModels);
 
-        Assert.Contains("/api/v1/notifications?", api);
-        Assert.Contains("/api/v1/notifications/unread-count", api);
-        Assert.Contains("/api/v1/notifications/preferences", api);
-        Assert.Contains("/api/v1/notifications/email-preferences", api);
-        Assert.Contains("/api/v1/notifications/discord-preferences", api);
-        Assert.Contains("/api/v1/notifications/webhooks", api);
+        Assert.Contains("/api/v2/notifications?", api);
+        Assert.Contains("/api/v2/notifications/unread-count", api);
+        Assert.Contains("/api/v2/notifications/preferences", api);
+        Assert.Contains("/api/v2/notifications/email-preferences", api);
+        Assert.Contains("/api/v2/notifications/discord-preferences", api);
+        Assert.Contains("/api/v2/notifications/webhooks", api);
         Assert.DoesNotContain("/api/v1/admin/notifications/server-channels", api);
         Assert.Contains("AppNotification", models);
         Assert.Contains("NotificationPreferences", models);
@@ -291,8 +291,9 @@ public sealed class ServerContractSourceTests
         Assert.Contains("Tag=\"Notifications\"", mainWindow);
         Assert.Contains("Navigate<NotificationsPage>", mainWindowCode);
         Assert.Contains("NotificationsPage", documentTitle);
-        Assert.Contains("/api/v1/events/ws-ticket", eventChannel);
-        Assert.Contains("ticket=", eventChannel);
+        Assert.Contains("/api/v2/events/ws-ticket", eventChannel);
+        Assert.Contains("silo.ticket.", eventChannel);
+        Assert.DoesNotContain("ticket=", eventChannel);
     }
 
     [Fact]
@@ -343,7 +344,7 @@ public sealed class ServerContractSourceTests
         Assert.Contains("""["score"] = result.Score""", api);
         Assert.Contains("""["hearing_impaired"] = result.HearingImpaired""", api);
         Assert.Contains("SplitReleaseNames", dialog);
-        Assert.Contains("Action<int?>? SubtitleDownloaded", dialog);
+        Assert.Contains("Action<long?>? SubtitleDownloaded", dialog);
         Assert.Contains("GetDownloadedSubtitleId(response)", dialog);
         Assert.Contains("Downloads", dialog);
         Assert.Contains("_downloadInProgress", dialog);
@@ -449,7 +450,7 @@ public sealed class ServerContractSourceTests
         var settingsXaml = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "SettingsPage.xaml"));
         var session = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Models", "Sessions", "PlaybackSessionSummary.cs"));
 
-        Assert.Contains("/api/v1/profiles/household/sessions", authApi);
+        Assert.Contains("/api/v2/profiles/household/sessions", authApi);
         Assert.Contains("LoadHouseholdSessionsAsync", settingsPage);
         Assert.Contains("HouseholdStreamsPanel", settingsXaml);
         Assert.Contains("EpisodeName", session);

@@ -5,6 +5,7 @@ using SiloPlayer.Core.Models.Plugins;
 using SiloPlayer.Core.Models.Settings;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Nodes;
 
 namespace SiloPlayer.Core.Api;
 
@@ -285,14 +286,14 @@ public sealed class ContractEffectiveSettingEntry
     [JsonPropertyName("scope")] public string? Scope { get; set; }
     [JsonPropertyName("device_id")] public string? DeviceId { get; set; }
     [JsonPropertyName("client_family")] public string? ClientFamily { get; set; }
-    [JsonPropertyName("library_id")] public int? LibraryId { get; set; }
+    [JsonPropertyName("library_id"), JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)] public int? LibraryId { get; set; }
     [JsonPropertyName("series_id")] public string? SeriesId { get; set; }
 }
 
 public sealed class SettingsContractCapabilities
 {
     [JsonPropertyName("api_version")] public int ApiVersion { get; set; }
-    [JsonPropertyName("revision")] public int Revision { get; set; }
+    [JsonPropertyName("manifest_revision")] public int Revision { get; set; }
     [JsonPropertyName("contract_etag")] public string ContractEtag { get; set; } = "";
     [JsonPropertyName("definition_count")] public int DefinitionCount { get; set; }
     [JsonPropertyName("scopes")] public List<string> Scopes { get; set; } = [];
@@ -309,7 +310,7 @@ public sealed class SettingsContractCapabilities
 
 public sealed class ContractEffectiveSettingsResponse
 {
-    [JsonPropertyName("settings")] public List<ContractEffectiveSettingEntry> Settings { get; set; } = [];
+    [JsonPropertyName("items")] public List<ContractEffectiveSettingEntry> Settings { get; set; } = [];
     [JsonPropertyName("revision")] public long Revision { get; set; }
 }
 
@@ -327,7 +328,7 @@ public sealed class UserDevice
 
 public sealed class UserDeviceListResponse
 {
-    [JsonPropertyName("devices")] public List<UserDevice> Devices { get; set; } = [];
+    [JsonPropertyName("items")] public List<UserDevice> Devices { get; set; } = [];
 }
 
 public sealed class CompatConnectInfo
@@ -374,10 +375,10 @@ public class ThemeCatalogEntry
     public string Name { get; set; } = "";
     public string Description { get; set; } = "";
     public string Author { get; set; } = "";
-    public string PreviewAccent { get; set; } = "#ffffff";
-    public string PreviewBg { get; set; } = "#111111";
+    [JsonPropertyName("previewAccent")] public string PreviewAccent { get; set; } = "#ffffff";
+    [JsonPropertyName("previewBg")] public string PreviewBg { get; set; } = "#111111";
     public List<string> Tags { get; set; } = [];
-    public string DownloadUrl { get; set; } = "";
+    [JsonPropertyName("downloadUrl")] public string DownloadUrl { get; set; } = "";
     public string Version { get; set; } = "";
 }
 
@@ -385,44 +386,62 @@ public class ThemeFileResponse
 {
     public int Version { get; set; }
     public string Name { get; set; } = "";
-    public string BaseTheme { get; set; } = "";
+    [JsonPropertyName("baseTheme")] public string BaseTheme { get; set; } = "";
     public Dictionary<string, string> Vars { get; set; } = [];
-    public string CustomCss { get; set; } = "";
+    [JsonPropertyName("customCss")] public string CustomCss { get; set; } = "";
 }
 
 public class SettingsApi(SiloApiClient client)
 {
+    private readonly SemaphoreSlim _onboardingGuard = new(1, 1);
+    private static readonly JsonSerializerOptions WireOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
     public Task<SettingsContractCapabilities> GetContractCapabilitiesAsync(CancellationToken ct = default)
-        => client.GetAsync<SettingsContractCapabilities>("/api/v1/settings/contract/capabilities", ct);
+        => client.GetAsync<SettingsContractCapabilities>("/api/v2/settings/contract/capabilities", ct);
 
     public Task<ServerBrandingResponse> GetServerBrandingAsync(CancellationToken ct = default)
-        => client.GetUnauthenticatedAsync<ServerBrandingResponse>("/api/v1/theme/branding", ct);
+        => client.GetUnauthenticatedAsync<ServerBrandingResponse>("/api/v2/theme/branding", ct);
 
-    public Task<SettingEntry> GetSettingAsync(string key, CancellationToken ct = default)
-        => client.GetAsync<SettingEntry>($"/api/v1/settings/{Uri.EscapeDataString(key)}", ct);
+    public async Task<SettingEntry> GetSettingAsync(string key, CancellationToken ct = default)
+    {
+        var value = await client.GetAsync<ContractEffectiveSettingEntry>(BuildContractSettingPath(SettingsV2Values.CanonicalKey(key), "profile", null, null), ct);
+        return new SettingEntry { Key = key, Value = SettingsV2Values.Display(value.Value) };
+    }
 
     public Task PutSettingAsync(string key, string value, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/settings/{Uri.EscapeDataString(key)}",
-            // Use dictionary body to survive .NET 8 Release trimming (feedback_build_release).
-            new Dictionary<string, object?> { ["value"] = value }, ct);
+        => SetContractSettingValueAsync(SettingsV2Values.CanonicalKey(key), "profile", SettingsV2Values.Parse(key, value), ct: ct);
 
     public Task DeleteSettingAsync(string key, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/settings/{Uri.EscapeDataString(key)}", ct);
+        => DeleteContractSettingValueAsync(SettingsV2Values.CanonicalKey(key), "profile", ct: ct);
 
-    public Task<EffectiveSettingsResponse> GetEffectiveSettingsAsync(IEnumerable<string> keys, CancellationToken ct = default)
+    public async Task<EffectiveSettingsResponse> GetEffectiveSettingsAsync(IEnumerable<string> keys, CancellationToken ct = default)
     {
-        var joinedKeys = string.Join(",", keys.Where(key => !string.IsNullOrWhiteSpace(key)).Distinct());
-        return client.GetAsync<EffectiveSettingsResponse>(
-            $"/api/v1/settings/effective?keys={Uri.EscapeDataString(joinedKeys)}",
-            ct);
+        var requested = keys.Where(key => !string.IsNullOrWhiteSpace(key)).Distinct().ToArray();
+        var response = await GetContractEffectiveSettingsAsync(requested.Select(SettingsV2Values.CanonicalKey), ct: ct);
+        return new EffectiveSettingsResponse
+        {
+            Settings = requested.Select(key => (Key: key, Entry: response.Settings.FirstOrDefault(item => item.Key == SettingsV2Values.CanonicalKey(key))))
+                .Where(pair => pair.Entry != null)
+                .Select(pair => new EffectiveSettingEntry
+                {
+                    Key = pair.Key,
+                    EffectiveValue = SettingsV2Values.Display(pair.Entry!.Value),
+                    Source = pair.Entry.Source,
+                    HasDeviceOverride = pair.Entry.Source == "profile_device",
+                    DeviceId = pair.Entry.DeviceId,
+                }).ToList(),
+        };
     }
 
     public Task PutDeviceSettingAsync(string key, string value, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/settings/device/{Uri.EscapeDataString(key)}",
-            new Dictionary<string, object?> { ["value"] = value }, ct);
+        => SetContractSettingValueAsync(SettingsV2Values.CanonicalKey(key), "profile_device", SettingsV2Values.Parse(key, value), ct: ct);
 
     public Task DeleteDeviceSettingAsync(string key, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/settings/device/{Uri.EscapeDataString(key)}", ct);
+        => DeleteContractSettingValueAsync(SettingsV2Values.CanonicalKey(key), "profile_device", ct: ct);
 
     public Task<ContractEffectiveSettingsResponse> GetContractEffectiveSettingsAsync(
         IEnumerable<string> keys,
@@ -431,15 +450,13 @@ public class SettingsApi(SiloApiClient client)
         CancellationToken ct = default)
     {
         var query = new List<string>();
-        var joinedKeys = string.Join(",", keys.Where(key => !string.IsNullOrWhiteSpace(key)).Distinct());
-        if (!string.IsNullOrWhiteSpace(joinedKeys))
-            query.Add($"keys={Uri.EscapeDataString(joinedKeys)}");
+        query.AddRange(keys.Where(key => !string.IsNullOrWhiteSpace(key)).Distinct().Select(key => $"keys={Uri.EscapeDataString(key)}"));
         if (!string.IsNullOrWhiteSpace(deviceId))
             query.Add($"device_id={Uri.EscapeDataString(deviceId)}");
         if (!string.IsNullOrWhiteSpace(profileId))
             query.Add($"profile_id={Uri.EscapeDataString(profileId)}");
         var suffix = query.Count == 0 ? "" : "?" + string.Join("&", query);
-        return client.GetAsync<ContractEffectiveSettingsResponse>($"/api/v1/settings/values/effective{suffix}", ct);
+        return client.GetAsync<ContractEffectiveSettingsResponse>($"/api/v2/settings/values/effective{suffix}", ct);
     }
 
     public Task SetContractSettingValueAsync(
@@ -461,9 +478,9 @@ public class SettingsApi(SiloApiClient client)
         CancellationToken ct = default)
         => client.DeleteAsync(BuildContractSettingPath(key, scope, deviceId, profileId), ct);
 
-    public Task<UserDeviceListResponse> GetUserDevicesAsync(bool household = false, CancellationToken ct = default)
-        => client.GetAsync<UserDeviceListResponse>(
-            household ? "/api/v1/devices?scope=household" : "/api/v1/devices", ct);
+    public async Task<UserDeviceListResponse> GetUserDevicesAsync(bool household = false, CancellationToken ct = default)
+        => new() { Devices = await client.GetAllItemsAsync<UserDevice>(
+            household ? "/api/v2/devices?scope=household&limit=100" : "/api/v2/devices?limit=100", ct) };
 
     public Task ClearUserDeviceSettingsAsync(string deviceId, string? profileId = null, CancellationToken ct = default)
         => client.DeleteAsync(BuildDevicePath(deviceId, "/settings", profileId), ct);
@@ -472,7 +489,7 @@ public class SettingsApi(SiloApiClient client)
         => client.DeleteAsync(BuildDevicePath(deviceId, "", profileId), ct);
 
     public Task<CompatConnectInfo> GetCompatConnectInfoAsync(CancellationToken ct = default)
-        => client.GetAsync<CompatConnectInfo>("/api/v1/compat/connect-info", ct);
+        => client.GetAsync<CompatConnectInfo>("/api/v2/compat/connect-info", ct);
 
     private static string BuildContractSettingPath(string key, string scope, string? deviceId, string? profileId)
     {
@@ -481,95 +498,128 @@ public class SettingsApi(SiloApiClient client)
             query.Add($"device_id={Uri.EscapeDataString(deviceId)}");
         if (!string.IsNullOrWhiteSpace(profileId))
             query.Add($"profile_id={Uri.EscapeDataString(profileId)}");
-        return $"/api/v1/settings/values/{Uri.EscapeDataString(key)}?{string.Join("&", query)}";
+        return $"/api/v2/settings/values/{Uri.EscapeDataString(key)}?{string.Join("&", query)}";
     }
 
     private static string BuildDevicePath(string deviceId, string suffix, string? profileId)
     {
-        var path = $"/api/v1/devices/{Uri.EscapeDataString(deviceId)}{suffix}";
+        var path = $"/api/v2/devices/{Uri.EscapeDataString(deviceId)}{suffix}";
         return string.IsNullOrWhiteSpace(profileId)
             ? path
             : $"{path}?profile_id={Uri.EscapeDataString(profileId)}";
     }
 
-    public Task<ThemeCatalogResponse> GetThemeCatalogAsync(CancellationToken ct = default)
-        => client.GetAsync<ThemeCatalogResponse>("/api/v1/theme/catalog", ct);
+    public async Task<ThemeCatalogResponse> GetThemeCatalogAsync(CancellationToken ct = default)
+        => (await client.GetAsync<ThemeDocument<ThemeCatalogResponse>>("/api/v2/theme/catalog", ct)).Document;
 
-    public Task<ThemeFileResponse> DownloadThemeAsync(string url, CancellationToken ct = default)
-        => client.GetAsync<ThemeFileResponse>($"/api/v1/theme/download?url={Uri.EscapeDataString(url)}", ct);
+    public async Task<ThemeFileResponse> DownloadThemeAsync(string url, CancellationToken ct = default)
+        => (await client.GetAsync<ThemeDocument<ThemeFileResponse>>($"/api/v2/theme/download?url={Uri.EscapeDataString(url)}", ct)).Document;
 
-    public Task<ThemeCatalogResponse> RefreshThemeCatalogAsync(CancellationToken ct = default)
-        => client.PostAsync<ThemeCatalogResponse>("/api/v1/theme/catalog/refresh", new Dictionary<string, object?>(), ct);
+    public async Task<ThemeCatalogResponse> RefreshThemeCatalogAsync(CancellationToken ct = default)
+        => (await client.PostAsync<ThemeDocument<ThemeCatalogResponse>>("/api/v2/theme/catalog/refresh", new Dictionary<string, object?>(), ct)).Document;
+
+    private sealed class ThemeDocument<T> where T : new()
+    {
+        public T Document { get; set; } = new();
+    }
 
     /// <summary>
     /// Fetches the admin's overlay config (kill switch + default prefs).
-    /// Server: <c>GET /api/v1/settings/overlay-config</c>.
+    /// Server: <c>GET /api/v2/settings/overlay-config</c>.
     /// </summary>
     public Task<OverlayConfigResponse> GetOverlayConfigAsync(CancellationToken ct = default)
-        => client.GetAsync<OverlayConfigResponse>("/api/v1/settings/overlay-config", ct);
+        => client.GetAsync<OverlayConfigResponse>("/api/v2/settings/overlay-config", ct);
 
     public Task<Profile> UpdateProfileAsync(string profileId, object updates, CancellationToken ct = default)
-        => client.PutAsync<Profile>($"/api/v1/profiles/{Uri.EscapeDataString(profileId)}", updates, ct);
+    {
+        var body = JsonSerializer.SerializeToNode(updates, WireOptions)!.AsObject();
+        foreach (var key in new[] { "pin", "avatar", "max_playback_quality" })
+            if (body[key] is JsonValue value && value.TryGetValue<string>(out var text) && text.Length == 0)
+                body[key] = null;
+        if (body["allowed_library_ids"] is JsonArray ids)
+            body["allowed_library_ids"] = new JsonArray(ids.Select(id => JsonValue.Create(id!.ToString())).ToArray<JsonNode?>());
+        return client.PatchAsync<Profile>($"/api/v2/profiles/{Uri.EscapeDataString(profileId)}", JsonSerializer.SerializeToElement(body), ct);
+    }
 
     public Task<ProfilesResponse> GetProfilesAsync(CancellationToken ct = default)
-        => client.GetAsync<ProfilesResponse>("/api/v1/profiles", ct);
+        => client.GetAsync<ProfilesResponse>("/api/v2/profiles", ct);
 
     public Task<OnboardingFlow> GetOnboardingFlowAsync(string surface = "web", CancellationToken ct = default)
         => client.GetAsync<OnboardingFlow>(
-            $"/api/v1/onboarding/flow?surface={Uri.EscapeDataString(surface)}", ct);
+            $"/api/v2/onboarding/flow?surface={Uri.EscapeDataString(surface)}", ct);
 
-    public Task ReportOnboardingProgressAsync(
+    public async Task ReportOnboardingProgressAsync(
         string tourId,
         string? lastStep = null,
         bool? completed = null,
         bool? skipped = null,
         CancellationToken ct = default)
-        => client.PostNoContentAsync("/api/v1/onboarding/progress", new Dictionary<string, object?>
+    {
+        await _onboardingGuard.WaitAsync(ct);
+        try
         {
-            ["tour_id"] = tourId,
-            ["last_step"] = lastStep,
-            ["completed"] = completed,
-            ["skipped"] = skipped,
-        }, ct);
+            var context = client.CaptureContext();
+            var state = await client.GetWithETagAsync<JsonElement>("/api/v2/onboarding/state", ct);
+            if (!client.IsCurrentContext(context)) throw new OperationCanceledException("The selected profile changed.", ct);
+            var tag = state.ETag ?? throw new InvalidDataException("The onboarding state did not include a revision.");
+            var body = new Dictionary<string, object?> { ["tour_id"] = tourId };
+            if (lastStep != null) body["last_step"] = lastStep;
+            if (completed.HasValue) body["completed"] = completed.Value;
+            if (skipped.HasValue) body["skipped"] = skipped.Value;
+            await client.PutWithETagAsync<JsonElement>("/api/v2/onboarding/progress", body, tag, ct);
+        }
+        finally { _onboardingGuard.Release(); }
+    }
 
     // ===== Library Playback Preferences =====
 
     public Task<LibraryPlaybackPrefsResponse> GetLibraryPlaybackPrefsAsync(CancellationToken ct = default)
-        => client.GetAsync<LibraryPlaybackPrefsResponse>("/api/v1/library-playback-prefs", ct);
+        => client.GetAsync<LibraryPlaybackPrefsResponse>("/api/v2/library-playback-prefs", ct);
 
     public Task SetLibraryPlaybackPrefsAsync(int libraryId, object prefs, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/library-playback-prefs/{libraryId}", prefs, ct);
+        => client.SendNoContentRequestAsync(HttpMethod.Patch, $"/api/v2/library-playback-prefs/{libraryId}", prefs, null, ct);
 
     public Task DeleteLibraryPlaybackPrefsAsync(int libraryId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/library-playback-prefs/{libraryId}", ct);
+        => client.DeleteAsync($"/api/v2/library-playback-prefs/{libraryId}", ct);
 
     // ===== Plugin Settings =====
 
     public Task<PluginSettingsListResponse> GetPluginSettingsListAsync(CancellationToken ct = default)
-        => client.GetAsync<PluginSettingsListResponse>("/api/v1/settings/plugins", ct);
+        => client.GetAsync<PluginSettingsListResponse>("/api/v2/settings/plugins", ct);
 
     public Task<PluginSettingsDetailResponse> GetPluginSettingsAsync(int installationId, CancellationToken ct = default)
-        => client.GetAsync<PluginSettingsDetailResponse>($"/api/v1/settings/plugins/{installationId}", ct);
+        => client.GetAsync<PluginSettingsDetailResponse>($"/api/v2/settings/plugins/{installationId}", ct);
 
     public Task UpdatePluginSettingsAsync(int installationId, UpdatePluginSettingsRequest request, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/settings/plugins/{installationId}", request, ct);
+        => client.PutNoContentAsync($"/api/v2/settings/plugins/{installationId}", request, ct);
 
     // ===== Profile Sections =====
 
     public Task<ProfileSectionOverridesResponse> GetProfileSectionsAsync(string scope = "home", string? libraryId = null, CancellationToken ct = default)
-        => client.GetAsync<ProfileSectionOverridesResponse>($"/api/v1/profile/sections{SectionQuery(scope, libraryId)}", ct);
+        => client.GetAsync<ProfileSectionOverridesResponse>($"/api/v2/profile/sections{SectionQuery(scope, libraryId)}", ct);
 
     public Task UpdateProfileSectionsAsync(SaveOverridesRequest request, CancellationToken ct = default)
-        => client.PutNoContentAsync("/api/v1/profile/sections", request, ct);
+        => client.PutNoContentAsync($"/api/v2/profile/sections{SectionQuery(request.Scope, request.LibraryId)}",
+            new Dictionary<string, object?> { ["overrides"] = JsonSerializer.SerializeToElement(request.Overrides, WireOptions) }, ct);
 
     public Task ResetProfileSectionsAsync(string scope = "home", string? libraryId = null, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/profile/sections/reset{SectionQuery(scope, libraryId)}", ct);
+        => client.DeleteAsync($"/api/v2/profile/sections{SectionQuery(scope, libraryId)}", ct);
 
     public Task<SettingsSectionsResponse> GetProfileSectionSettingsAsync(string scope = "home", string? libraryId = null, CancellationToken ct = default)
-        => client.GetAsync<SettingsSectionsResponse>($"/api/v1/profile/sections/settings{SectionQuery(scope, libraryId)}", ct);
+        => client.GetAsync<SettingsSectionsResponse>($"/api/v2/profile/sections/settings{SectionQuery(scope, libraryId)}", ct);
 
-    public Task<RecipeCatalogResponse> GetRecipeCatalogAsync(CancellationToken ct = default)
-        => client.GetAsync<RecipeCatalogResponse>("/api/v1/sections/recipes", ct);
+    public async Task<RecipeCatalogResponse> GetRecipeCatalogAsync(CancellationToken ct = default)
+    {
+        var response = await client.GetAsync<RecipeCategories>("/api/v2/sections/recipes", ct);
+        return new RecipeCatalogResponse { Categories = response.Categories.ToDictionary(category => category.Category, category => category.Recipes) };
+    }
+
+    private sealed class RecipeCategories { public List<RecipeCategory> Categories { get; set; } = []; }
+    private sealed class RecipeCategory
+    {
+        public string Category { get; set; } = "";
+        public List<RecipeDefinition> Recipes { get; set; } = [];
+    }
 
     private static string SectionQuery(string scope, string? libraryId)
     {

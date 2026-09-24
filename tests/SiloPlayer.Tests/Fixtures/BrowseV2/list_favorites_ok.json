@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "content_id": "movie:c",
+      "type": "movie",
+      "title": "Title movie:c",
+      "genres": [],
+      "keywords": [],
+      "status": "matched"
+    }
+  ],
+  "page": {
+    "next_cursor": "eyJ2IjoxLCJwIjp7ImEiOiIyMDI2LTAxLTAyVDAzOjA0OjA1WiIsIm0iOiJtb3ZpZTpjIn19.hRfCrVJ0-ojaIuwjyGYST1kQNiJig-Y15YAyNu8rTDA",
+    "has_more": true
+  }
+}

@@ -1,0 +1,18 @@
+# Transferred browse test review
+
+Explicit transfer from browse_ui completed: three entire test files, 1,500 physical lines. All lines read; no tests executed by this reviewer, no app/source changes. Source coverage is high confidence. These files supplement the parent/browse review; they do not establish a second full review of the production files referenced by test strings.
+
+| File under D:/SiloPlayer/tests/SiloPlayer.Tests/ | Lines | Assessment and decision |
+| --- | ---: | --- |
+| SearchRuntimeRegressionTests.cs | 292 | Full read. Despite the name, these tests inspect source strings and a pinned JSON fixture; none execute search, focus, cancellation, result publication or real transport. Keep a few architectural invariants and pinned-contract provenance; replace behavioral claims with actual delayed-response ViewModel and UI focus tests. |
+| LibraryWindowLoadingTests.cs | 509 | Full read. Keep: genuine asynchronous LibraryViewModel execution through a fake HTTP handler, cancellation/late-response races, partial publication, viewport overlap reuse, read-ahead, eviction and page-size caps. This is substantially stronger evidence than source checks. |
+| ItemDetailCurrentParityTests.cs | 699 | Full read. Mostly source presence/order/style assertions plus one real DTO-deserialization test at :103. Keep that fixture and small policy boundaries; move UI geometry/accessibility/navigation/state claims to executable tests and visual verification. |
+
+Specific limitations:
+
+* SearchRuntimeRegressionTests.cs:6 pins 20ae82ae05edcfef151a02738e323cf1a97034ef. This is useful reproducible historical provenance, not verification against the freshly fetched main used for this audit. Assertions such as :138 AllowConcurrentExecutions text and :141 ReferenceEquals text do not prove old queries cannot publish. :163 asserts fire-and-forget preference persistence exists, but does not test out-of-order saves or account changes.
+* ItemDetailCurrentParityTests.cs:482 checks cancellation/generation code substrings anywhere in the file; a wrong placement or missing guard on another branch still passes. :676 validates lexical order of card-paint before an await, not that slow optional queries actually allow an initial frame. :523 compares markup strings, not rendered layout or accessible-tree reachability. Names claiming current WebUI parity should be understood as implementation expectations, not a completed side-by-side parity result.
+* LibraryWindowLoadingTests.cs:179 intentionally allows a late transport response after cancellation, and :202 holds a later page while asserting first-page publication. These are valuable reproducible race tests and a pattern to extend across search/details/realtime/playback. The fixture at :501 always manufactures the requested number of sequential results, :502 fixed total=100000 and :504 has_more=true with one snapshot. It does not cover server snapshot replacement, shrinking totals, short pages, duplicate/reordered IDs, authorization context switches, or transient retry semantics. The actual WinUI realized-control count, image decode allocations and frame latency remain outside these VM tests.
+* LibraryWindowLoadingTests.cs:27/:132 require immediate synchronous completion when the fake handler is synchronous. That is narrower than the user-visible requirement of publishing before an optional count/filter request and can reject harmless scheduler changes. Prefer a signaled first-page publication with a bounded wait while deliberately held optional work stays pending.
+
+No new production bug is claimed from these tests alone. The important rebuild action is to retain strong fault-injection/state tests and stop treating source-pattern coverage as runtime or visual acceptance.

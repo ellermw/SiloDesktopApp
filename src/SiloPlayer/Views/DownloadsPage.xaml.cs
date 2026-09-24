@@ -256,14 +256,8 @@ public sealed partial class DownloadsPage : Page
             // Download the file from the server
             var apiClient = App.Services.GetRequiredService<SiloApiClient>();
             var downloadPath = DownloadsApi.GetDownloadFilePath(downloadId);
-            var url = $"{apiClient.BaseUrl}{downloadPath}";
-
             var httpClient = App.Services.GetRequiredService<HttpClient>();
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            if (!string.IsNullOrWhiteSpace(apiClient.AccessToken))
-                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue(
-                    "Bearer",
-                    apiClient.AccessToken);
+            using var request = apiClient.CreateAuthenticatedRequest(HttpMethod.Get, downloadPath);
             using var response = await httpClient.SendAsync(
                 request,
                 HttpCompletionOption.ResponseHeadersRead);

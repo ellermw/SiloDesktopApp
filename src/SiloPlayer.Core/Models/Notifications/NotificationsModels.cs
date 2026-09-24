@@ -111,14 +111,23 @@ public sealed class AppNotification
 
 public sealed class NotificationListResponse
 {
+    [JsonPropertyName("items")]
     public List<AppNotification> Notifications { get; set; } = [];
-    public string? NextCursor { get; set; }
+    public SiloPlayer.Core.Api.BrowsePage? Page { get; set; }
+    public string? ReadCutoff { get; set; }
+    [JsonIgnore]
+    public string? NextCursor { get => Page?.NextCursor; set => Page = new() { NextCursor = value, HasMore = value != null }; }
 }
 
 public sealed class NotificationSyncResponse
 {
+    [JsonPropertyName("items")]
     public List<AppNotification> Notifications { get; set; } = [];
-    public string? NextCursor { get; set; }
+    public SiloPlayer.Core.Api.BrowsePage? Page { get; set; }
+    public string? SyncCursor { get; set; }
+    public bool InitialSnapshot { get; set; }
+    [JsonIgnore]
+    public string? NextCursor { get => Page?.NextCursor; set => Page = new() { NextCursor = value, HasMore = value != null }; }
     public int UnreadCount { get; set; }
 }
 
@@ -215,6 +224,8 @@ public sealed class NotificationDiscordLinkInit
 
 public sealed class NotificationWebhook
 {
+    [JsonPropertyName("etag")]
+    public string? ETag { get; set; }
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public string Type { get; set; } = "discord";

@@ -50,6 +50,8 @@ public sealed partial class PluginRoutePage : Page
             };
 
             var path = NormalizeRoutePath(args.RoutePath);
+            // Official v2 migration ledger excludes dynamic plugin-owned routes;
+            // the plugin proxy intentionally retains this versioned prefix.
             var url = $"{apiClient.BaseUrl.TrimEnd('/')}/api/v1/plugins/{args.InstallationId}{path}";
             url += "?theme=dark";
             PluginWebView.Source = new Uri(url);

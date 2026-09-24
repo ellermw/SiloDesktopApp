@@ -5,6 +5,10 @@ namespace SiloPlayer.Core.Models.Playback;
 public sealed class PlaybackCapabilityV3
 {
     public bool Enabled { get; set; }
+    public string InstallationId { get; set; } = "";
+    public string Revision { get; set; } = "";
+    public string State { get; set; } = "";
+    public bool Allowed { get; set; }
     public List<int> ProtocolVersions { get; set; } = [];
     public List<string> Features { get; set; } = [];
     public List<string> Deliveries { get; set; } = [];
@@ -17,6 +21,8 @@ public sealed class PlaybackCapabilityV3
 /// </summary>
 public sealed class PlaybackStartRequestV3
 {
+    public string InstallationId { get; set; } = "";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? AllowAlternateVersions { get; set; }
     public int ProtocolVersion { get; set; } = 3;
     public List<string> ClientFeatures { get; set; } = ["playback_plan_v3"];
     public int FileId { get; set; }
@@ -254,6 +260,7 @@ public sealed class PlaybackDegradationWarningV3
 
 public sealed class PlaybackReplanRequestV3
 {
+    public string InstallationId { get; set; } = "";
     public int ProtocolVersion { get; set; } = 3;
     public List<string> ClientFeatures { get; set; } = ["playback_plan_v3"];
     public string Operation { get; set; } = "";

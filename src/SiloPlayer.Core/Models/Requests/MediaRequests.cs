@@ -74,6 +74,7 @@ public class RequestMediaPage
 
 public class RequestDiscoverySection : RequestMediaPage
 {
+    public int? NextPage { get; set; }
     public string Key { get; set; } = "";
     public string Title { get; set; } = "";
 }

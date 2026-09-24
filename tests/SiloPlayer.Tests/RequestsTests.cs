@@ -16,7 +16,7 @@ public sealed class RequestsTests
 
         Assert.Equal(3, result.Page);
         Assert.Equal(150, result.TotalResults);
-        Assert.Equal("/api/v1/requests/search?q=star%20wars&media_type=series&page=3", handler.LastUri?.PathAndQuery);
+        Assert.Equal("/api/v2/requests/search?q=star%20wars&media_type=series&page=3", handler.LastUri?.PathAndQuery);
     }
 
     [Fact]
@@ -29,7 +29,7 @@ public sealed class RequestsTests
         var result = await new RequestsApi(client).BrowseDiscoverAsync("genre", "science-fiction", "movie", "vote_average", 2);
 
         Assert.Equal("Science Fiction", result.DisplayName);
-        Assert.Equal("/api/v1/requests/discover/browse/genre/science-fiction?sort=vote_average&page=2&media_type=movie", handler.LastUri?.PathAndQuery);
+        Assert.Equal("/api/v2/requests/discover/browse/genre/science-fiction?sort=vote_average&page=2&media_type=movie", handler.LastUri?.PathAndQuery);
     }
 
     [Fact]

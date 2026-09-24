@@ -141,6 +141,7 @@ public sealed class SiloApiClientTests
         var handler = new DelegateHandler((request, _) =>
         {
             path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/capabilities")) return Task.FromResult<HttpResponseMessage>(JsonResponse(HttpStatusCode.OK, "{\"allowed\":true,\"state\":\"available\",\"installation_id\":\"installation\",\"protocol_versions\":[3]}"));
             clientName = request.Headers.TryGetValues("X-Silo-Client", out var names)
                 ? names.SingleOrDefault()
                 : null;
@@ -158,49 +159,52 @@ public sealed class SiloApiClientTests
         client.SetClientMetadata(SiloApiClient.DefaultClientName);
         var api = new PlaybackApi(client);
 
-        await api.StartPlaybackAsync(new PlaybackStartRequest
+        await api.StartPlaybackV3Async(new PlaybackStartRequestV3
         {
             FileId = 7,
             ProfileId = "profile-1",
         });
 
-        Assert.Equal("/api/v1/playback/start", path);
+        Assert.Equal("/api/v2/playback/start", path);
         Assert.Equal("Silo for Windows", clientName);
         Assert.Equal("desktop", clientFamily);
         Assert.Null(clientVersion);
     }
 
     [Fact]
-    public async Task AudioChange_DeserializesAuthoritativeRestartTimeline()
+    public async Task AudioReplan_DeserializesAuthoritativeRestartTimeline()
     {
         var handler = new DelegateHandler((request, _) =>
         {
-            Assert.Equal(HttpMethod.Patch, request.Method);
-            Assert.Equal("/api/v1/playback/session-1/audio", request.RequestUri!.AbsolutePath);
+            if (request.RequestUri!.AbsolutePath.EndsWith("/capabilities"))
+                return Task.FromResult<HttpResponseMessage>(JsonResponse(HttpStatusCode.OK, """{"allowed":true,"state":"available","installation_id":"installation","protocol_versions":[3]}"""));
+            if (request.RequestUri.AbsolutePath.EndsWith("/start"))
+                return Task.FromResult<HttpResponseMessage>(JsonResponse(HttpStatusCode.Created, """{"outcome":"playable","session_id":"session-1"}"""));
+            Assert.Equal(HttpMethod.Post, request.Method);
+            Assert.Equal("/api/v2/playback/session-1/replan", request.RequestUri.AbsolutePath);
             return Task.FromResult<HttpResponseMessage>(JsonResponse(HttpStatusCode.OK,
                 """
                 {
-                  "audio_track_index": 2,
-                  "play_method": "remux",
-                  "stream_url": "/api/v1/stream/session-1",
-                  "switch_mode": "reload",
-                  "player_start_seconds": 1.75,
-                  "stream_origin_seconds": 418.25,
-                  "timeline_offset_seconds": 418.25,
-                  "can_seek_anywhere": false
+                  "outcome":"playable",
+                  "playback_plan": {
+                    "delivery":"remux",
+                    "timeline": {
+                      "player_start_seconds":1.75,
+                      "stream_origin_seconds":418.25,
+                      "timeline_offset_seconds":418.25
+                    }
+                  }
                 }
                 """));
         });
         var api = new PlaybackApi(CreateClient(handler));
 
-        var response = await api.ChangeAudioTrackAsync("session-1", 2, 420);
-
-        Assert.Equal(2, response.AudioTrackIndex);
-        Assert.Equal("remux", response.PlayMethod);
-        Assert.Equal(1.75, response.PlayerStartSeconds);
-        Assert.Equal(418.25, response.StreamOriginSeconds);
-        Assert.Equal(418.25, response.TimelineOffsetSeconds);
-        Assert.False(response.CanSeekAnywhere);
+        await api.StartPlaybackV3Async(new() { FileId = 7 });
+        var response = await api.ReplanPlaybackV3Async("session-1", new() { Operation = "audio", PositionSeconds = 420 });
+        Assert.Equal("remux", response.PlaybackPlan!.Delivery);
+        Assert.Equal(1.75, response.PlaybackPlan.Timeline.PlayerStartSeconds);
+        Assert.Equal(418.25, response.PlaybackPlan.Timeline.StreamOriginSeconds);
+        Assert.Equal(418.25, response.PlaybackPlan.Timeline.TimelineOffsetSeconds);
     }
 
     [Fact]
@@ -212,18 +216,18 @@ public sealed class SiloApiClientTests
             requests.Add((request.Method.Method, request.RequestUri!.PathAndQuery,
                 request.Content is null ? null : await request.Content.ReadAsStringAsync(ct)));
             return request.Method == HttpMethod.Get
-                ? JsonResponse(HttpStatusCode.OK, """{"items":[],"next_offset":30}""")
+                ? JsonResponse(HttpStatusCode.OK, """{"items":[{"content_id":"movie-1"},{"content_id":"movie-2"}],"page":{"has_more":true,"next_cursor":"next-page"}}""")
                 : JsonResponse(HttpStatusCode.OK, """{"added":2}""");
         });
         var api = new RecommendationsApi(CreateClient(handler));
 
-        var page = await api.GetTasteSeedItemsAsync(30, 0);
+        var page = await api.GetTasteSeedItemsAsync(2, 0);
         var result = await api.SubmitTasteSeedAsync(["movie-1", "movie-2"]);
 
-        Assert.Equal(30, page.NextOffset);
+        Assert.Equal(2, page.NextOffset);
         Assert.Equal(2, result.Added);
-        Assert.Equal("/api/v1/recommendations/taste-seed/items?limit=30&offset=0", requests[0].Path);
-        Assert.Equal("/api/v1/recommendations/taste-seed", requests[1].Path);
+        Assert.Equal("/api/v2/recommendations/taste-seed/items?limit=2", requests[0].Path);
+        Assert.Equal("/api/v2/recommendations/taste-seed", requests[1].Path);
         using var body = JsonDocument.Parse(requests[1].Body!);
         Assert.Equal(new[] { "movie-1", "movie-2" },
             body.RootElement.GetProperty("item_ids").EnumerateArray().Select(value => value.GetString()));

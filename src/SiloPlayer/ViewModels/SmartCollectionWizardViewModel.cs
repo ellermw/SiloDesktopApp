@@ -115,8 +115,7 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
 
             if (!string.IsNullOrWhiteSpace(_collectionId))
             {
-                var response = await _collectionsApi.GetCollectionsAsync(ct);
-                var collection = response.Collections.FirstOrDefault(item => item.Id == _collectionId);
+                var collection = await _collectionsApi.GetCollectionAsync(_collectionId, ct);
                 if (collection == null)
                     throw new InvalidOperationException("The selected collection could not be loaded.");
 

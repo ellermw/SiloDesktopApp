@@ -8,10 +8,10 @@ namespace SiloPlayer.Tests;
 public sealed class ProfileSectionsTests
 {
     [Fact]
-    public async Task RawGoOverrideFieldsArePreservedForRoundTrip()
+    public async Task StructuredOverrideFieldsArePreservedForRoundTrip()
     {
         var handler = new CaptureHandler("""
-        {"overrides":[{"ID":"custom-1","SectionID":"","Position":2,"Hidden":false,"Removed":false,"SectionType":"","Title":"","Featured":true,"ItemLimit":12,"Config":"","IsUserAdded":true,"UserSectionType":"recipe","UserConfig":"{\"genre\":\"Drama\"}","UserTitle":"Drama night"}]}
+        {"items":[{"id":"custom-1","section_id":"","position":2,"hidden":false,"removed":false,"section_type":"","title":"","featured":true,"item_limit":12,"is_user_added":true,"user_section_type":"recipe","user_config":{"genre":"Drama"},"user_title":"Drama night"}]}
         """);
         var client = new SiloApiClient(new HttpClient(handler));
         client.SetBaseUrl("https://example.test");
@@ -59,7 +59,7 @@ public sealed class ProfileSectionsTests
     public async Task RecipeCatalogUsesCurrentGalleryContract()
     {
         var handler = new CaptureHandler("""
-        {"categories":{"discovery":[{"type":"genre","category":"discovery","avoid_duplicates":true,"supports_rotation":false,"admin_only":false,"presets":[{"key":"drama","display_name":"Drama night","icon":"film","description_short":"Popular drama","default_params":{"genre":"Drama"}}]}]}}
+        {"categories":[{"category":"discovery","recipes":[{"type":"genre","category":"discovery","avoid_duplicates":true,"supports_rotation":false,"admin_only":false,"presets":[{"key":"drama","display_name":"Drama night","icon":"film","description_short":"Popular drama","default_params":{"genre":"Drama"}}]}]}]}
         """);
         var client = new SiloApiClient(new HttpClient(handler));
         client.SetBaseUrl("https://example.test");

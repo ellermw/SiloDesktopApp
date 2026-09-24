@@ -87,7 +87,7 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("public IReadOnlyList<string> SelectedOriginalLanguages", viewModel);
         Assert.Contains("Match = \"any\"", viewModel);
         Assert.Contains("extraRules", api);
-        Assert.Contains("FormatRuleValue", api);
+        Assert.Contains("JsonSerializer.Serialize(groups, BrowseV2.Json)", api);
     }
 
     [Fact]

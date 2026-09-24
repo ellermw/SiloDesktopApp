@@ -38,7 +38,11 @@ public class DownloadRequest
 {
     public string ContentId { get; set; } = "";
     public string? EpisodeId { get; set; }
+    [System.Text.Json.Serialization.JsonPropertyName("media_file_id")]
     public int? FileId { get; set; }
+    public int ExpectedRevision { get; set; }
+    public string? ExpectedDownloadId { get; set; }
+    public string? BatchId { get; set; }
     public string Quality { get; set; } = "original";
     public bool Series { get; set; }
     public int? SeasonNumber { get; set; }

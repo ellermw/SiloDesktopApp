@@ -5,25 +5,23 @@ namespace SiloPlayer.Core.Api;
 public class HistoryImportApi(SiloApiClient client)
 {
     public Task<List<HistoryImportSource>> GetImportSourcesAsync(CancellationToken ct = default)
-        => client.GetAsync<List<HistoryImportSource>>("/api/v1/history-imports/sources", ct);
+        => client.GetAllItemsAsync<HistoryImportSource>("/api/v2/history-imports/sources", ct);
 
     public Task<EmbyConnectLoginResponse> EmbyConnectLoginAsync(EmbyConnectLoginRequest request, CancellationToken ct = default)
-        => client.PostAsync<EmbyConnectLoginResponse>("/api/v1/history-imports/emby-connect/login", request, ct);
+        => client.PostAsync<EmbyConnectLoginResponse>("/api/v2/history-imports/emby-connect/login", request, ct);
 
     public Task<PlexPinResponse> PlexAuthPinAsync(CancellationToken ct = default)
-        => client.PostAsync<PlexPinResponse>("/api/v1/history-imports/plex/auth/pin", new { }, ct);
+        => client.SendRequestAsync<PlexPinResponse>(HttpMethod.Post, "/api/v2/history-imports/plex/auth/pin", null, null, ct);
 
     public Task<PlexCheckResponse> PlexAuthCheckAsync(PlexCheckRequest request, CancellationToken ct = default)
-        => client.PostAsync<PlexCheckResponse>("/api/v1/history-imports/plex/auth/check", request, ct);
+        => client.PostAsync<PlexCheckResponse>("/api/v2/history-imports/plex/auth/check", request, ct);
 
-    // NOTE: /history-imports/runs returns a bare JSON array of runs, not a wrapper
-    // object. WebUI types this as `HistoryImportRun[]` and passes ?limit={n}.
-    public Task<List<HistoryImportRun>> GetImportRunsAsync(int limit = 20, CancellationToken ct = default)
-        => client.GetAsync<List<HistoryImportRun>>($"/api/v1/history-imports/runs?limit={limit}", ct);
+    public async Task<List<HistoryImportRun>> GetImportRunsAsync(int limit = 20, CancellationToken ct = default)
+        => (await client.GetAsync<ApiCollectionPage<HistoryImportRun>>($"/api/v2/history-imports/runs?limit={Math.Clamp(limit, 1, 200)}", ct)).Items;
 
     public Task<HistoryImportRun> CreateImportRunAsync(CreateHistoryImportRunRequest request, CancellationToken ct = default)
-        => client.PostAsync<HistoryImportRun>("/api/v1/history-imports/runs", request, ct);
+        => client.PostAsync<HistoryImportRun>("/api/v2/history-imports/runs", V2Json.Body(request), ct);
 
     public Task<HistoryImportRun> GetImportRunAsync(string id, CancellationToken ct = default)
-        => client.GetAsync<HistoryImportRun>($"/api/v1/history-imports/runs/{Uri.EscapeDataString(id)}", ct);
+        => client.GetAsync<HistoryImportRun>($"/api/v2/history-imports/runs/{Uri.EscapeDataString(id)}", ct);
 }

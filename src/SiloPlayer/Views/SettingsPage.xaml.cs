@@ -428,25 +428,42 @@ public sealed partial class SettingsPage : Page
         try
         {
             var settings = App.Services.GetRequiredService<SettingsService>().Load();
-            RtxUpscalingToggle.IsOn = settings.NvidiaVideoUpscaling;
-            var adapter = await Task.Run(() => SiloPlayer.Player.RtxVideoAdapter.Name);
-            // A migrated preference can always be turned off on another PC.
-            RtxUpscalingToggle.IsEnabled = adapter != null || RtxUpscalingToggle.IsOn;
-            RtxUpscalingHardwareText.Text = adapter != null
-                ? $"Detected: {adapter}. AI activation also requires NVIDIA driver support."
-                : "No NVIDIA RTX GPU detected. Normal scaling is available.";
+            var mode = SiloPlayer.Player.VideoUpscalingPolicy.ResolveMode(settings.VideoUpscalingMode, settings.NvidiaVideoUpscaling);
+            VideoUpscalingComboBox.SelectedItem = VideoUpscalingComboBox.Items.OfType<ComboBoxItem>()
+                .First(item => string.Equals(item.Tag?.ToString(), mode.ToString(), StringComparison.OrdinalIgnoreCase));
+            await Task.Run(() => SiloPlayer.Player.RtxVideoAdapter.Adapters);
+            VideoUpscalingComboBox.IsEnabled = true;
+            UpdateUpscalingHardwareText(mode);
         }
         finally { _initializingRtxUpscaling = false; }
     }
 
-    private void RtxUpscalingToggle_Toggled(object sender, RoutedEventArgs e)
+    private void UpdateUpscalingHardwareText(SiloPlayer.Player.VideoUpscalingMode mode)
+    {
+        var selection = SiloPlayer.Player.VideoUpscalingPolicy.SelectAdapter(mode, SiloPlayer.Player.RtxVideoAdapter.Adapters);
+        var hint = selection.Mode switch
+        {
+            SiloPlayer.Player.VideoUpscalingMode.Nvidia => "Enable Video Super Resolution in NVIDIA App → System → Video. Processing is limited to 2× per dimension.",
+            SiloPlayer.Player.VideoUpscalingMode.Intel => "Intel GPU detected; VSR driver support is not yet verified. Processing is limited to 2× per dimension.",
+            _ => "FSRCNNX reconstructs luma at 2×, then fits the display. It runs when the display is more than 1.3× larger per dimension. This is a portable neural shader, not AMD driver VSR.",
+        };
+        RtxUpscalingHardwareText.Text = mode == SiloPlayer.Player.VideoUpscalingMode.Off
+            ? "AI enhancement is off."
+            : selection.Adapter == null ? "No matching hardware detected for this mode. Playback will use normal scaling."
+            : $"Selected GPU: {selection.Adapter.Name}. {hint}";
+    }
+
+    private void VideoUpscalingComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_initializingRtxUpscaling || _suppressEvents) return;
+        if (VideoUpscalingComboBox.SelectedItem is not ComboBoxItem { Tag: string mode }) return;
         var service = App.Services.GetRequiredService<SettingsService>();
         var settings = service.Load();
-        settings.NvidiaVideoUpscaling = RtxUpscalingToggle.IsOn;
+        settings.VideoUpscalingMode = mode;
+        settings.NvidiaVideoUpscaling = mode == "nvidia"; // Safe preference if an older build is opened again.
         service.Save(settings);
-        RtxUpscalingHardwareText.Text = "Saved for this PC. Restart Silo for Windows Desktop App to apply.";
+        UpdateUpscalingHardwareText(SiloPlayer.Player.VideoUpscalingPolicy.ResolveMode(mode, false));
+        RtxUpscalingHardwareText.Text += " Saved for this PC. Restart Silo for Windows Desktop App to apply.";
     }
 
     private async Task LoadRememberLibraryPagesAsync()

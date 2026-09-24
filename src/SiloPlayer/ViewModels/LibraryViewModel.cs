@@ -35,6 +35,12 @@ public partial class LibraryViewModel : ObservableObject
     private Task? _pendingWindowTask;
     private int _pendingWindowStart = -1;
     private int _pendingWindowEnd = -1;
+    private int _viewportRequestVersion;
+    private Task? _filtersTask;
+    private int _filtersQueryVersion = -1;
+    private int? _filtersLibraryId;
+    private int? _loadedFiltersLibraryId;
+    private int _exactCountQueryVersion = -1;
 
     public LibraryViewModel(CatalogApi catalogApi)
     {
@@ -275,13 +281,14 @@ public partial class LibraryViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadAsync()
     {
+        using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure("catalog-initial-load");
         if (Library == null) return;
 
-        var version = StartNewCatalogQuery();
-        var ct = _catalogQueryCts.Token;
+        StartNewCatalogQuery();
         Items.Clear();
-        // Load items and filters in parallel — independent operations
-        await Task.WhenAll(LoadWindowAsync(0, PageSize, force: true), LoadFiltersAsync(version, ct));
+        // Cards load immediately; optional facets are requested when the
+        // filter sheet is opened, matching the WebUI's browsing path.
+        await LoadWindowAsync(0, PageSize, force: true);
     }
 
     [RelayCommand]
@@ -522,6 +529,15 @@ public partial class LibraryViewModel : ObservableObject
 
     private void RememberWindow(int startIndex, CatalogResponse response, bool includeTotal)
     {
+        // A large visible window is published one server page at a time.
+        // Replace its earlier partial entry instead of counting it twice.
+        for (var node = _recentWindows.First; node != null;)
+        {
+            var next = node.Next;
+            if (node.Value.Start == startIndex && ReferenceEquals(node.Value.Response, response))
+                _recentWindows.Remove(node);
+            node = next;
+        }
         _recentWindows.AddFirst((startIndex, response, includeTotal));
         while (_recentWindows.Count > 8 || _recentWindows.Sum(window => window.Response.Items.Count) > 1200)
             _recentWindows.RemoveLast();
@@ -561,6 +577,8 @@ public partial class LibraryViewModel : ObservableObject
     public Task LoadWindowAsync(int startIndex, int itemCount, bool force = false)
     {
         if (Library == null || itemCount <= 0) return Task.CompletedTask;
+        var viewportVersion = ++_viewportRequestVersion;
+        EnsureExactCountRequested();
         startIndex = TotalCount > 0 ? Math.Clamp(startIndex, 0, TotalCount - 1) : 0;
         itemCount = TotalCount > 0 ? Math.Min(itemCount, TotalCount - startIndex) : itemCount;
         var endIndex = startIndex + itemCount - 1;
@@ -574,6 +592,13 @@ public partial class LibraryViewModel : ObservableObject
         if (!force && _pendingWindowTask is { IsCompleted: false } &&
             startIndex >= _pendingWindowStart && endIndex <= _pendingWindowEnd)
             return _pendingWindowTask;
+
+        // A dense viewport spans multiple API pages. Keep an overlapping
+        // fetch alive as the viewport moves, then satisfy only the latest
+        // outstanding range instead of restarting on every new row.
+        if (!force && _pendingWindowTask is { IsCompleted: false } pending &&
+            startIndex <= _pendingWindowEnd && endIndex >= _pendingWindowStart)
+            return CompleteOverlappingRangeAsync(pending, startIndex, itemCount, viewportVersion, _queryVersion);
 
         if (force) _recentWindows.Clear();
         if (!force && HasCachedRange(startIndex, endIndex))
@@ -604,9 +629,32 @@ public partial class LibraryViewModel : ObservableObject
             if (endIndex < alignedStart + 100) startIndex = alignedStart;
             itemCount = Math.Min(100, TotalCount - startIndex);
         }
+        if (!force)
+        {
+            // Keep already displayed objects/artwork when only an edge of
+            // the viewport is missing. Apply the buffer before trimming so
+            // alignment never expands a request back over cached cards.
+            while (itemCount > 0 && GetWindowItem(startIndex) != null)
+            {
+                startIndex++;
+                itemCount--;
+            }
+            while (itemCount > 0 && GetWindowItem(startIndex + itemCount - 1) != null)
+                itemCount--;
+            if (itemCount == 0) return Task.CompletedTask;
+        }
         _pendingWindowStart = startIndex;
         _pendingWindowEnd = startIndex + itemCount - 1;
         return _pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force);
+    }
+
+    private async Task CompleteOverlappingRangeAsync(Task pending, int startIndex, int itemCount,
+        int viewportVersion, int queryVersion)
+    {
+        await pending;
+        if (viewportVersion != _viewportRequestVersion || queryVersion != _queryVersion)
+            return;
+        await LoadWindowAsync(startIndex, itemCount);
     }
 
     private async Task LoadWindowCoreAsync(int startIndex, int itemCount, bool force)
@@ -641,14 +689,17 @@ public partial class LibraryViewModel : ObservableObject
 
         try
         {
-            var includeTotal = !_hasExactTotal || TotalCount <= 0;
-            var response = await FetchWindowAsync(startIndex, itemCount, includeTotal, _snapshot, ct);
-            if (ct.IsCancellationRequested || queryVersion != _queryVersion || windowVersion != _windowLoadVersion)
-                return;
+            const bool includeTotal = false;
+            await FetchWindowAsync(startIndex, itemCount, includeTotal, response =>
+            {
+                if (ct.IsCancellationRequested || queryVersion != _queryVersion || windowVersion != _windowLoadVersion)
+                    return;
 
-            ApplyWindowResponse(startIndex, response, includeTotal);
-            RememberWindow(startIndex, response, includeTotal);
-            WindowLoaded?.Invoke();
+                ApplyWindowResponse(startIndex, response, includeTotal, preserveAdjacent: !force);
+                RememberWindow(startIndex, response, includeTotal);
+                WindowLoaded?.Invoke();
+                EnsureExactCountRequested();
+            }, _snapshot, ct);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -687,11 +738,16 @@ public partial class LibraryViewModel : ObservableObject
         HasMore = false;
         ErrorMessage = null;
         ClearActiveWindow(notify: true);
+        // Sorting or jumping to a letter cancels the query token. Retry any
+        // filter load that was already requested but had not finished yet.
+        if (_filtersTask != null && _loadedFiltersLibraryId != Library?.Id)
+            _ = EnsureFiltersLoadedAsync();
         return _queryVersion;
     }
 
     public void CancelCatalogLoads()
     {
+        _loadedFiltersLibraryId = null;
         CancelWindowLoad();
         CancelCurrentCatalogQuery();
         _catalogQueryCts = new CancellationTokenSource();
@@ -864,19 +920,55 @@ public partial class LibraryViewModel : ObservableObject
             snapshot: snapshot,
             ct: ct);
 
-    private async Task<CatalogResponse> FetchWindowAsync(int startIndex, int itemCount, bool includeTotal, string? snapshot = null, CancellationToken ct = default)
+    private async Task FetchWindowAsync(int startIndex, int itemCount, bool includeTotal,
+        Action<CatalogResponse> publishPage, string? snapshot = null, CancellationToken ct = default)
     {
+        using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure(
+            includeTotal ? "catalog-request-with-total" : "catalog-request-window");
         var response = await FetchWindowPageAsync(startIndex, Math.Min(100, itemCount), includeTotal, snapshot, ct);
+        ct.ThrowIfCancellationRequested();
+        publishPage(response);
         while (response.Items.Count < itemCount && response.HasMore)
         {
             ct.ThrowIfCancellationRequested();
             var next = await FetchWindowPageAsync(startIndex + response.Items.Count,
                 Math.Min(100, itemCount - response.Items.Count), false, response.Snapshot ?? snapshot, ct);
+            ct.ThrowIfCancellationRequested();
             response.HasMore = next.HasMore;
             if (next.Items.Count == 0) break;
             response.Items.AddRange(next.Items);
+            publishPage(response);
         }
-        return response;
+    }
+
+    private void EnsureExactCountRequested()
+    {
+        if (_hasExactTotal || WindowStartIndex < 0 || Library == null || _exactCountQueryVersion == _queryVersion)
+            return;
+        _exactCountQueryVersion = _queryVersion;
+        _ = LoadExactCountAsync(_queryVersion, _snapshot, _catalogQueryCts.Token);
+    }
+
+    private async Task LoadExactCountAsync(int version, string? snapshot, CancellationToken ct)
+    {
+        using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure("catalog-exact-count");
+        try
+        {
+            var result = await FetchWindowPageAsync(0, 1, true, snapshot, ct);
+            if (ct.IsCancellationRequested || version != _queryVersion || !result.TotalExact) return;
+            _hasExactTotal = true;
+            _estimatedTotalItems = Math.Max(0, result.Total);
+            DisplayTotalCount = _estimatedTotalItems;
+            TotalCount = _estimatedTotalItems;
+            Items.SetCount(_estimatedTotalItems);
+            WindowLoaded?.Invoke();
+        }
+        catch (OperationCanceledException) { }
+        catch
+        {
+            // Keep the estimated extent and usable cards if the optional
+            // count fails; a later navigation/query can retry it.
+        }
     }
 
     private Task<CatalogResponse> FetchWindowPageAsync(int startIndex, int itemCount, bool includeTotal, string? snapshot, CancellationToken ct)
@@ -1030,13 +1122,37 @@ public partial class LibraryViewModel : ObservableObject
         return group;
     }
 
-    private void ApplyWindowResponse(int startIndex, CatalogResponse response, bool includeTotal)
+    private void ApplyWindowResponse(int startIndex, CatalogResponse response, bool includeTotal, bool preserveAdjacent = false)
     {
         if (!string.IsNullOrWhiteSpace(response.Snapshot))
             _snapshot = response.Snapshot;
 
-        _windowItems = response.Items;
-        WindowStartIndex = response.Items.Count == 0 ? -1 : startIndex;
+        if (preserveAdjacent && response.Items.Count > 0 && WindowStartIndex >= 0 &&
+            startIndex <= WindowEndIndex + 1 && startIndex + response.Items.Count >= WindowStartIndex)
+        {
+            // Small edge fetches must not fragment the active viewport across
+            // more cache entries than the eviction limit. Keep a bounded,
+            // contiguous active window and retain the existing item objects.
+            var first = Math.Min(WindowStartIndex, startIndex);
+            var last = Math.Max(WindowEndIndex, startIndex + response.Items.Count - 1);
+            if (last - first + 1 > 1200)
+            {
+                if (startIndex < WindowStartIndex) last = first + 1199;
+                else first = last - 1199;
+            }
+            var merged = new MediaItem[last - first + 1];
+            for (var i = first; i <= last; i++)
+                merged[i - first] = i >= startIndex && i < startIndex + response.Items.Count
+                    ? response.Items[i - startIndex]
+                    : _windowItems[i - WindowStartIndex];
+            _windowItems = merged;
+            WindowStartIndex = first;
+        }
+        else
+        {
+            _windowItems = response.Items;
+            WindowStartIndex = response.Items.Count == 0 ? -1 : startIndex;
+        }
         HasMore = response.HasMore;
 
         var hasTrustworthyExactTotal = response.TotalExact &&
@@ -1064,7 +1180,7 @@ public partial class LibraryViewModel : ObservableObject
         else if (!response.HasMore)
             _estimatedTotalItems = loadedEnd;
         else
-            _estimatedTotalItems = Math.Max(_estimatedTotalItems, loadedEnd + PageSize);
+            _estimatedTotalItems = Math.Max(_estimatedTotalItems, loadedEnd + PageSize * 5);
 
         TotalCount = _estimatedTotalItems;
         Items.SetCount(_estimatedTotalItems);
@@ -1144,14 +1260,26 @@ public partial class LibraryViewModel : ObservableObject
         HasMore = highestPageHasMore;
     }
 
-    private async Task LoadFiltersAsync(int version, CancellationToken ct)
+    public Task EnsureFiltersLoadedAsync()
     {
-        if (Library == null) return;
+        if (Library == null || _loadedFiltersLibraryId == Library.Id)
+            return Task.CompletedTask;
+        if (_filtersTask is { IsCompleted: false } && _filtersQueryVersion == _queryVersion
+            && _filtersLibraryId == Library.Id)
+            return _filtersTask;
 
+        _filtersQueryVersion = _queryVersion;
+        _filtersLibraryId = Library.Id;
+        return _filtersTask = LoadFiltersAsync(Library.Id, _queryVersion, _catalogQueryCts.Token);
+    }
+
+    private async Task LoadFiltersAsync(int libraryId, int version, CancellationToken ct)
+    {
+        using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure("catalog-filters");
         try
         {
-            var filters = await _catalogApi.GetFiltersAsync(Library.Id, ct);
-            if (version != _queryVersion) return;
+            var filters = await _catalogApi.GetFiltersAsync(libraryId, ct);
+            if (ct.IsCancellationRequested || version != _queryVersion || Library?.Id != libraryId) return;
 
             // Single AddRange per filter → one CollectionChanged event → one ComboBox rebuild.
             // Previously each .Add() fired CollectionChanged, causing ~192 redundant ComboBox
@@ -1179,6 +1307,7 @@ public partial class LibraryViewModel : ObservableObject
 
               Networks.Clear();
               Networks.AddRange(filters.Networks.Prepend(""));
+            _loadedFiltersLibraryId = libraryId;
         }
         catch (OperationCanceledException) { }
         catch

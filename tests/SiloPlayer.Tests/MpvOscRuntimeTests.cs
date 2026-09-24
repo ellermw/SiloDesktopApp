@@ -4,6 +4,24 @@ namespace SiloPlayer.Tests;
 
 public sealed class MpvOscRuntimeTests
 {
+    [Fact]
+    public void IntelStatsIdentifyRequestedDriverProcessing()
+    {
+        var text = CaptureStats(1920, 1080, 3840, 2160, false, processor: "intel");
+        Assert.Contains("UpscalerIntel VSR (requested)", text);
+        Assert.DoesNotContain("RTX", text);
+    }
+
+    [Fact]
+    public void NeuralStatsSeparateRendererReconstructionFromDecodedVideo()
+    {
+        var text = CaptureStats(1920, 1080, 1920, 1080, false, neural: true);
+        Assert.Contains("Processed video1920x1080", text);
+        Assert.Contains("UpscalerFSRCNNX AI (requested)", text);
+        Assert.Contains("AI luma reconstruction (requested)3840x2160 (2x)", text);
+        Assert.DoesNotContain("VSR active", text);
+    }
+
     [Theory]
     [InlineData(1920, 1080, 3840, 2160, true, "3840x2160 (4K)", "2.00x", "4.00x", "RTX VSR (requested)")]
     [InlineData(1920, 1080, 1920, 1080, false, "1920x1080", "None", "1.00x", "Normal renderer")]
@@ -47,7 +65,7 @@ public sealed class MpvOscRuntimeTests
     }
 
     private static string CaptureStats(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight,
-        bool rtx, string setup = "", int videoBps = 0, int audioBps = 0)
+        bool rtx, string setup = "", int videoBps = 0, int audioBps = 0, string? processor = null, bool neural = false)
     {
         var root = FindRepositoryRoot();
         var probe = Path.Combine(Path.GetTempPath(), $"silo-stats-{Guid.NewGuid():N}.lua");
@@ -70,7 +88,8 @@ public sealed class MpvOscRuntimeTests
                 return get_number(name, fallback)
             end
             mp.get_property_native = function(name, fallback)
-                if name == 'vf' then return {{(rtx ? "{{name='d3d11vpp',label='silo-rtx',enabled=true,params={['scaling-mode']='nvidia'}}}" : "{}")}} end
+                if name == 'vf' then return {{(rtx || processor != null ? "{{name='d3d11vpp',label='silo-rtx',enabled=true,params={['scaling-mode']='" + (processor ?? "nvidia") + "'}}}" : "{}")}} end
+                if name == 'glsl-shaders' then return {{(neural ? "{'C:/fixture/FSRCNNX_x2_8-0-4-1.glsl'}" : "{}")}} end
                 return get_native(name, fallback)
             end
             mp.create_osd_overlay = function(kind)

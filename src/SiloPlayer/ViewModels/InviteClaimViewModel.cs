@@ -95,10 +95,15 @@ public partial class InviteClaimViewModel(
         IsSubmitting = true;
         try
         {
-            var response = await authApi.AcceptInvitationAsync(
+            var acceptance = await authApi.AcceptInvitationAsync(
                 _navigation.Token,
                 Password,
                 _lifetime?.Token ?? CancellationToken.None);
+            if (acceptance.LoginStatus != "signed_in" || acceptance.Tokens is not { } response)
+            {
+                ErrorMessage = "Your account was created. Use Sign in to continue with your new password.";
+                return;
+            }
             var generation = authService.SetTokens(
                 response.AccessToken,
                 response.RefreshToken,

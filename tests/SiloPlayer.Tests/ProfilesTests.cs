@@ -9,7 +9,7 @@ public sealed class ProfilesTests
     public async Task ProfileListUsesCurrentAvatarAndAccessContract()
     {
         var handler = new JsonHandler("""
-        {"avatar_upload_enabled":true,"profiles":[{"id":"p1","name":"Alex","avatar":"dicebear:identicon:alex","avatar_url":"https://example.test/avatar.png","avatar_source":"preset","has_pin":true,"is_child":false,"is_primary":true,"max_content_rating":"R","quality_preference":"original","language":"en","preferred_metadata_language":"en","subtitle_language":"en","subtitle_mode":"auto","auto_skip_intro":true,"auto_skip_credits":false,"library_restrictions_enabled":true,"allowed_library_ids":[2,4],"max_playback_quality":"2160p","created_at":"","updated_at":""}]}
+        {"avatar_upload_enabled":true,"items":[{"id":"p1","name":"Alex","avatar":"dicebear:identicon:alex","avatar_url":"https://example.test/avatar.png","avatar_source":"preset","has_pin":true,"is_child":false,"is_primary":true,"max_content_rating":"R","quality_preference":"original","language":"en","preferred_metadata_language":"en","subtitle_language":"en","subtitle_mode":"auto","auto_skip_intro":true,"auto_skip_credits":false,"library_restrictions_enabled":true,"allowed_library_ids":["2","4"],"max_playback_quality":"2160p","created_at":"","updated_at":""}]}
         """);
         var client = new SiloApiClient(new HttpClient(handler));
         client.SetBaseUrl("https://example.test");

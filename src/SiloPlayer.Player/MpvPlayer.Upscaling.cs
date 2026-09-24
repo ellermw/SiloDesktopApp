@@ -7,6 +7,9 @@ namespace SiloPlayer.Player;
 public sealed partial class MpvPlayer
 {
     private const string UpscalingFilterLabel = "@silo-rtx";
+    private const string NeuralShaderFile = "FSRCNNX_x2_8-0-4-1.glsl";
+    private VideoUpscalingMode _upscalingMode;
+    private string? _neuralShaderPath;
     private readonly object _upscalingLock = new();
     private bool _upscalingEnabled;
     private bool _upscalingFileLoaded;
@@ -21,27 +24,47 @@ public sealed partial class MpvPlayer
     public string UpscalingStatus => _upscalingStatus;
     public event Action<string>? UpscalingStatusChanged;
 
-    private void ConfigureUpscaling(bool enabled)
+    private void ConfigureUpscaling(VideoUpscalingMode mode)
     {
-        var adapter = enabled ? RtxVideoAdapter.Name : null;
+        var selection = VideoUpscalingPolicy.SelectAdapter(mode, RtxVideoAdapter.Adapters);
+        var adapter = selection.Adapter?.Name;
+        _upscalingMode = selection.Mode;
         _upscalingEnabled = adapter != null;
-        if (!enabled) return;
+        if (mode == VideoUpscalingMode.Off) return;
         if (adapter == null)
         {
-            SetUpscalingStatus("Unavailable: no NVIDIA RTX adapter detected");
+            SetUpscalingStatus($"Unavailable: no hardware candidate for {mode}; normal playback");
             return;
+        }
+
+        if (_upscalingMode == VideoUpscalingMode.Fsrcnnx)
+        {
+            _neuralShaderPath = Path.Combine(AppContext.BaseDirectory, "libs", "mpv", "shaders", NeuralShaderFile);
+            if (!File.Exists(_neuralShaderPath))
+            {
+                _upscalingEnabled = false;
+                SetUpscalingStatus("Unavailable: bundled FSRCNNX shader is missing; normal playback");
+                return;
+            }
         }
 
         // A driver may expose an integrated and a discrete adapter. Use the
         // same explicit DXGI adapter for both mpv's decoder and D3D11 renderer.
         SetOption("d3d11-adapter", adapter);
-        SetUpscalingStatus($"Ready on {adapter}; NVIDIA Video Super Resolution must be enabled in NVIDIA App");
+        SetUpscalingStatus(_upscalingMode switch
+        {
+            VideoUpscalingMode.Nvidia => $"Ready on {adapter}; enable Video Super Resolution in NVIDIA App",
+            VideoUpscalingMode.Intel => $"Intel VSR candidate: {adapter}; experimental, driver support must be verified",
+            _ => $"FSRCNNX AI ready on {adapter}; experimental neural shader, hardware validation pending",
+        });
     }
 
     private void SetUpscalingStatus(string status)
     {
         if (_upscalingStatus == status) return;
         _upscalingStatus = status;
+        // Exposed to Playback Info; contains no media URL or authentication data.
+        if (_eventThread != null) SetProperty("user-data/silo-upscaling-status", status);
         InvokeSafely(UpscalingStatusChanged, status, nameof(UpscalingStatusChanged));
     }
 
@@ -68,7 +91,10 @@ public sealed partial class MpvPlayer
     private void RemoveUpscalingFilter()
     {
         if (_upscalingScale <= 1) return;
-        Command("vf", "remove", UpscalingFilterLabel);
+        if (_upscalingMode == VideoUpscalingMode.Fsrcnnx && _neuralShaderPath != null)
+            Command("change-list", "glsl-shaders", "remove", _neuralShaderPath);
+        else
+            Command("vf", "remove", UpscalingFilterLabel);
         _upscalingScale = 1;
     }
 
@@ -94,7 +120,7 @@ public sealed partial class MpvPlayer
             // here would create a double-upscale / remove-filter feedback loop.
             var width = (int)GetPropertyDouble("video-params/w");
             var height = (int)GetPropertyDouble("video-params/h");
-            var scale = VideoUpscalingPolicy.GetScale(true, width, height,
+            var scale = VideoUpscalingPolicy.GetScale(_upscalingMode, width, height,
                 (int)GetPropertyDouble("osd-width"), (int)GetPropertyDouble("osd-height"),
                 ReadUpscalingProperty("video-params/gamma"),
                 GetPropertyDouble("video-params/par"), (int)GetPropertyDouble("video-params/rotate"));
@@ -120,14 +146,23 @@ public sealed partial class MpvPlayer
 
             // A labeled add replaces just our own filter. Preserve all other
             // filters, subtitles, tone mapping and playback state.
-            var filter = $"{UpscalingFilterLabel}:d3d11vpp=scale={scale.ToString("0.###", CultureInfo.InvariantCulture)}:scaling-mode=nvidia";
-            if (!Command("vf", "add", filter))
+            var driverMode = _upscalingMode == VideoUpscalingMode.Intel ? "intel" : "nvidia";
+            var filter = $"{UpscalingFilterLabel}:d3d11vpp=scale={scale.ToString("0.###", CultureInfo.InvariantCulture)}:scaling-mode={driverMode}";
+            var applied = _upscalingMode == VideoUpscalingMode.Fsrcnnx
+                ? Command("change-list", "glsl-shaders", "append", _neuralShaderPath!)
+                : Command("vf", "add", filter);
+            if (!applied)
             {
                 DisableUpscalingForFile("the video filter is unavailable");
                 return;
             }
             _upscalingScale = scale;
-            SetUpscalingStatus($"RTX processing requested: {width}x{height} at {scale:0.###}x; confirm activation in NVIDIA App");
+            SetUpscalingStatus(_upscalingMode switch
+            {
+                VideoUpscalingMode.Nvidia => $"RTX processing requested: {width}x{height} at {scale:0.###}x; confirm activation in NVIDIA App",
+                VideoUpscalingMode.Intel => $"Intel VSR requested: {width}x{height} at {scale:0.###}x; driver activation is unverified",
+                _ => $"FSRCNNX AI requested: {width}x{height} luma reconstructed at 2x, then fitted to display",
+            });
         }
     }
 
@@ -141,8 +176,12 @@ public sealed partial class MpvPlayer
             // Input-view failures are warning-level and drop frames without
             // necessarily ending playback. Treat warnings from our requested
             // processor as a failure too, before they can freeze the picture.
-            if (VideoUpscalingPolicy.IsProcessingFailure(prefix, message.LogLevel, _upscalingScale > 1))
-                DisableUpscalingForFile("NVIDIA video processing failed; check NVIDIA App and driver support");
+            var text = Marshal.PtrToStringUTF8(message.Text) ?? "";
+            if (VideoUpscalingPolicy.IsProcessingFailure(prefix, message.LogLevel, _upscalingScale > 1) ||
+                (_upscalingMode == VideoUpscalingMode.Fsrcnnx && _upscalingScale > 1 && message.LogLevel <= 20 &&
+                 prefix.StartsWith("vo/", StringComparison.OrdinalIgnoreCase) &&
+                 (text.Contains("shader", StringComparison.OrdinalIgnoreCase) || text.Contains("hook", StringComparison.OrdinalIgnoreCase))))
+                DisableUpscalingForFile($"{_upscalingMode} processing failed; check graphics driver support");
         }
     }
 }

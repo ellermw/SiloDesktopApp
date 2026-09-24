@@ -47,7 +47,9 @@ public class DeviceLoginLookupResponse
 /// </summary>
 public class DeviceDecisionRequest
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? Token { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? Code { get; set; }
 }
 
@@ -60,10 +62,15 @@ public class DeviceLoginPollResponse
 {
     public string Status { get; set; } = "";
     public int PollAfter { get; set; }
-    public string? AccessToken { get; set; }
-    public string? RefreshToken { get; set; }
-    public int? ExpiresIn { get; set; }
-    public UserInfo? User { get; set; }
+    public LoginResponse? Tokens { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? AccessToken => Tokens?.AccessToken;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? RefreshToken => Tokens?.RefreshToken;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public int? ExpiresIn => Tokens?.ExpiresIn;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public UserInfo? User => Tokens?.User;
     public string? ProfileId { get; set; }
     public string? ProfileToken { get; set; }
     public bool Temporary { get; set; }

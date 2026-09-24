@@ -222,17 +222,10 @@ public partial class NotificationsViewModel : ObservableObject
     {
         try
         {
-            foreach (var notification in Notifications) notification.ReadAt = DateTimeOffset.UtcNow.ToString("O");
-            UnreadCount = 0;
-            if (StatusFilter == "unread") Notifications.Clear();
-            else
-            {
-                var snapshot = Notifications.ToList();
-                Notifications.Clear();
-                foreach (var notification in snapshot) Notifications.Add(notification);
-            }
-            IsEmpty = Notifications.Count == 0;
             await _notificationsApi.MarkAllReadAsync();
+            // V2 marks only through the observed cutoff. New arrivals remain unread.
+            _lastLoadedAt = DateTime.MinValue;
+            await LoadPageAsync(reset: true);
         }
         catch (Exception ex)
         {

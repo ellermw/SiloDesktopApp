@@ -7,27 +7,35 @@ namespace SiloPlayer.Core.Api;
 
 public class CatalogApi(SiloApiClient client)
 {
-    public Task<MetadataAiStatus> GetMetadataAiStatusAsync(CancellationToken ct = default)
-        => client.GetAsync<MetadataAiStatus>("/api/v1/metadata/ai/status", ct);
+    public async Task<MetadataAiStatus> GetMetadataAiStatusAsync(CancellationToken ct = default)
+    {
+        var capability = await client.GetAsync<MetadataAiCapability>("/api/v2/capabilities/metadata-ai", ct);
+        return new() { Enabled = capability.State == "available" && capability.Allowed, OnView = capability.OnView };
+    }
 
     public Task TranslateItemDescriptionAsync(
         string contentId,
         string targetLanguage,
         CancellationToken ct = default)
         => client.PostNoContentAsync(
-            $"/api/v1/items/{Uri.EscapeDataString(contentId)}/translate-description",
+            $"/api/v2/catalog/items/{Uri.EscapeDataString(contentId)}/translate-description",
             new Dictionary<string, object?> { ["target_language"] = targetLanguage },
             ct);
     private List<Library>? _librariesCache;
     private DateTime _librariesCachedAt = DateTime.MinValue;
+    private ApiRequestContext? _librariesContext;
     private static readonly TimeSpan LibraryCacheDuration = TimeSpan.FromMinutes(5);
 
     public async Task<List<Library>> GetLibrariesAsync(CancellationToken ct = default)
     {
-        if (_librariesCache != null && DateTime.UtcNow - _librariesCachedAt < LibraryCacheDuration)
+        var context = client.CaptureContext();
+        if (_librariesCache != null && _librariesContext == context && DateTime.UtcNow - _librariesCachedAt < LibraryCacheDuration)
             return _librariesCache;
 
-        _librariesCache = await client.GetAsync<List<Library>>("/api/v1/user/libraries", ct);
+        var libraries = (await client.GetAsync<BrowseCollection<Library>>("/api/v2/user/libraries", ct)).Items;
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Library context changed.", ct);
+        _librariesCache = libraries;
+        _librariesContext = context;
         _librariesCachedAt = DateTime.UtcNow;
         return _librariesCache;
     }
@@ -39,10 +47,10 @@ public class CatalogApi(SiloApiClient client)
     }
 
     public Task<HomeSectionsResponse> GetLibrarySectionsAsync(int libraryId, CancellationToken ct = default)
-        => client.GetAsync<HomeSectionsResponse>($"/api/v1/library/{libraryId}/sections", ct);
+        => client.GetAsync<HomeSectionsResponse>($"/api/v2/library/{libraryId}/sections", ct);
 
     public Task<HomeLayoutResponse> GetLibraryLayoutAsync(int libraryId, CancellationToken ct = default)
-        => client.GetAsync<HomeLayoutResponse>($"/api/v1/library/{libraryId}/layout", ct);
+        => client.GetAsync<HomeLayoutResponse>($"/api/v2/library/{libraryId}/layout", ct);
 
     public Task<CatalogResponse> GetCatalogAsync(
         int? libraryId,
@@ -60,30 +68,23 @@ public class CatalogApi(SiloApiClient client)
         string? collectionId = null,
         CancellationToken ct = default)
     {
-        var query = $"/api/v1/catalog?limit={limit}&offset={offset}";
+        var query = $"/api/v2/catalog?limit={Math.Clamp(limit, 1, 200)}&seek={Math.Max(0, offset)}";
         if (!string.IsNullOrWhiteSpace(source)) query += $"&source={Uri.EscapeDataString(source)}";
         if (!string.IsNullOrWhiteSpace(scope)) query += $"&scope={Uri.EscapeDataString(scope)}";
         if (!string.IsNullOrWhiteSpace(sectionId)) query += $"&section_id={Uri.EscapeDataString(sectionId)}";
         if (!string.IsNullOrWhiteSpace(collectionId)) query += $"&collection_id={Uri.EscapeDataString(collectionId)}";
         if (libraryId is > 0) query += $"&library_id={libraryId.Value}";
-        if (sort != null) query += $"&sort={Uri.EscapeDataString(sort)}";
-        if (order != null) query += $"&order={Uri.EscapeDataString(order)}";
+        if (sort != null) query += $"&sort={Uri.EscapeDataString(BrowseV2.Sort(sort, order))}";
         if (genre != null) query += $"&genre={Uri.EscapeDataString(genre)}";
-        if (studio != null) query += $"&studio={Uri.EscapeDataString(studio)}";
         if (contentRating != null) query += $"&content_rating={Uri.EscapeDataString(contentRating)}";
-        if (country != null) query += $"&country={Uri.EscapeDataString(country)}";
-        if (resolution != null) query += $"&resolution={Uri.EscapeDataString(resolution)}";
-        if (audioLanguage != null) query += $"&audio_language={Uri.EscapeDataString(audioLanguage)}";
         if (yearMin != null) query += $"&year_min={Uri.EscapeDataString(yearMin)}";
         if (yearMax != null) query += $"&year_max={Uri.EscapeDataString(yearMax)}";
         if (q != null) query += $"&q={Uri.EscapeDataString(q)}";
         if (type != null) query += $"&type={Uri.EscapeDataString(type)}";
-        if (!includeTotal) query += "&include_total=false";
-        if (!string.IsNullOrWhiteSpace(snapshot)) query += $"&snapshot={Uri.EscapeDataString(snapshot)}";
+        if (!includeTotal) query += "&skip_total=true";
+        if (!string.IsNullOrWhiteSpace(snapshot)) query += $"&cursor={Uri.EscapeDataString(snapshot)}";
 
-        // The current catalog API represents these facets as query-definition
-        // rules. Keep the legacy scalar parameters above for older servers,
-        // and also send the authoritative rule form used by the WebUI.
+        // V2 accepts structured JSON rule groups, not bracketed query keys.
         var groups = new List<QueryGroup>();
         if (queryGroups != null)
         {
@@ -102,38 +103,10 @@ public class CatalogApi(SiloApiClient client)
                 groups.Add(new QueryGroup { Match = extraRulesMatch == "any" ? "any" : "all", Rules = rules });
         }
 
-        for (var groupIndex = 0; groupIndex < groups.Count; groupIndex++)
-        {
-            var group = groups[groupIndex];
-            query += $"&groups%5B{groupIndex}%5D%5Bmatch%5D={Uri.EscapeDataString(group.Match == "any" ? "any" : "all")}";
-            for (var ruleIndex = 0; ruleIndex < group.Rules.Count; ruleIndex++)
-            {
-                var rule = group.Rules[ruleIndex];
-                var prefix = $"groups%5B{groupIndex}%5D%5Brules%5D%5B{ruleIndex}%5D";
-                query += $"&{prefix}%5Bfield%5D={Uri.EscapeDataString(rule.Field)}";
-                query += $"&{prefix}%5Bop%5D={Uri.EscapeDataString(rule.Op)}";
-                if (rule.Value is System.Collections.IEnumerable values and not string)
-                {
-                    var valueIndex = 0;
-                    foreach (var value in values)
-                        query += $"&{prefix}%5Bvalue%5D%5B{valueIndex++}%5D={Uri.EscapeDataString(FormatRuleValue(value))}";
-                }
-                else
-                {
-                    query += $"&{prefix}%5Bvalue%5D={Uri.EscapeDataString(FormatRuleValue(rule.Value))}";
-                }
-            }
-        }
+        if (groups.Count > 0)
+            query += "&groups=" + Uri.EscapeDataString(System.Text.Json.JsonSerializer.Serialize(groups, BrowseV2.Json));
         return client.GetAsync<CatalogResponse>(query, ct);
     }
-
-    private static string FormatRuleValue(object? value) => value switch
-    {
-        null => "",
-        bool boolean => boolean ? "true" : "false",
-        IFormattable formattable => formattable.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
-        _ => value.ToString() ?? "",
-    };
 
     public Task<CatalogFiltersResponse> GetFiltersAsync(
         int? libraryId = null,
@@ -149,13 +122,12 @@ public class CatalogApi(SiloApiClient client)
         if (!string.IsNullOrWhiteSpace(source)) parameters.Add($"source={Uri.EscapeDataString(source)}");
         if (!string.IsNullOrWhiteSpace(scope)) parameters.Add($"scope={Uri.EscapeDataString(scope)}");
         if (!string.IsNullOrWhiteSpace(sectionId)) parameters.Add($"section_id={Uri.EscapeDataString(sectionId)}");
-        if (!string.IsNullOrWhiteSpace(q)) parameters.Add($"q={Uri.EscapeDataString(q)}");
         if (!string.IsNullOrWhiteSpace(type)) parameters.Add($"type={Uri.EscapeDataString(type)}");
-        var query = "/api/v1/catalog/filters" + (parameters.Count > 0 ? "?" + string.Join("&", parameters) : "");
+        var query = "/api/v2/catalog/filters" + (parameters.Count > 0 ? "?" + string.Join("&", parameters) : "");
         return client.GetAsync<CatalogFiltersResponse>(query, ct);
     }
 
-    public Task<AudiobookGroupsResponse> GetAudiobookGroupsAsync(
+    public async Task<AudiobookGroupsResponse> GetAudiobookGroupsAsync(
         int libraryId,
         string groupBy,
         string sort = "name",
@@ -165,81 +137,83 @@ public class CatalogApi(SiloApiClient client)
         bool includeTotal = true,
         CancellationToken ct = default)
     {
-        var query = $"/api/v1/catalog/audiobook-groups?library_id={libraryId}" +
+        var query = $"/api/v2/catalog/audiobook-groups?library_id={libraryId}" +
             $"&group_by={Uri.EscapeDataString(groupBy)}" +
-            $"&sort={Uri.EscapeDataString(sort)}&limit={limit}&offset={offset}" +
-            $"&include_total={includeTotal.ToString().ToLowerInvariant()}";
+            $"&sort={Uri.EscapeDataString(sort)}&skip_total={(!includeTotal).ToString().ToLowerInvariant()}";
         if (!string.IsNullOrWhiteSpace(search))
             query += $"&q={Uri.EscapeDataString(search.Trim())}";
-        return client.GetAsync<AudiobookGroupsResponse>(query, ct);
+        var page = await BrowseV2.WindowAsync<AudiobookGroup>(client, query, limit, offset, ct);
+        return new() { Groups = page.Items, Total = page.Total, TotalExact = page.TotalExact, HasMore = page.Page?.HasMore == true };
     }
 
     public Task<CatalogResponse> SearchAsync(string query, int limit = 40, string? type = null, CancellationToken ct = default)
     {
         var encoded = Uri.EscapeDataString(query);
-        var path = $"/api/v1/catalog?q={encoded}&limit={limit}";
+        var path = $"/api/v2/catalog?q={encoded}&limit={limit}";
         if (!string.IsNullOrWhiteSpace(type) && type != "all") path += $"&type={Uri.EscapeDataString(type)}";
         return client.GetAsync<CatalogResponse>(path, ct);
     }
 
     public Task<MediaItemDetail> GetItemDetailAsync(string contentId, CancellationToken ct = default)
-        => client.GetAsync<MediaItemDetail>($"/api/v1/catalog/items/{Uri.EscapeDataString(contentId)}", ct);
+        => client.GetAsync<MediaItemDetail>($"/api/v2/catalog/items/{Uri.EscapeDataString(contentId)}", ct);
 
     public Task<ItemListResponse> GetFavoritesAsync(CancellationToken ct = default)
         => GetFavoritesAsync(limit: 50, offset: 0, ct);
 
-    public Task<ItemListResponse> GetFavoritesAsync(int limit, int offset, CancellationToken ct = default)
-        => client.GetAsync<ItemListResponse>(
-            $"/api/v1/favorites?limit={Math.Max(1, limit)}&offset={Math.Max(0, offset)}",
-            ct);
+    public async Task<ItemListResponse> GetFavoritesAsync(int limit, int offset, CancellationToken ct = default)
+    {
+        var page = await BrowseV2.WindowAsync<MediaItem>(client, "/api/v2/favorites", limit, offset, ct);
+        return new() { Items = page.Items, HasMore = page.Page?.HasMore == true };
+    }
 
     public Task<ItemListResponse> GetWatchlistAsync(CancellationToken ct = default)
         => GetWatchlistAsync(limit: 50, offset: 0, ct);
 
-    public Task<ItemListResponse> GetWatchlistAsync(int limit, int offset, CancellationToken ct = default)
-        => client.GetAsync<ItemListResponse>(
-            $"/api/v1/watchlist?limit={Math.Max(1, limit)}&offset={Math.Max(0, offset)}",
-            ct);
+    public async Task<ItemListResponse> GetWatchlistAsync(int limit, int offset, CancellationToken ct = default)
+    {
+        var page = await BrowseV2.WindowAsync<MediaItem>(client, "/api/v2/watchlist", limit, offset, ct);
+        return new() { Items = page.Items, HasMore = page.Page?.HasMore == true };
+    }
 
-    public Task<ProgressResponse> GetProgressAsync(CancellationToken ct = default)
-        => client.GetAsync<ProgressResponse>("/api/v1/progress?status=in_progress&limit=50", ct);
+    public async Task<ProgressResponse> GetProgressAsync(CancellationToken ct = default)
+        => new() { Progress = (await client.GetAsync<BrowseCollection<ProgressItem>>("/api/v2/progress?status=in_progress&limit=50", ct)).Items };
 
     public Task<RecommendationsResponse> GetRecommendationsAsync(CancellationToken ct = default)
-        => client.GetAsync<RecommendationsResponse>("/api/v1/recommendations/for-you/rows", ct);
+        => new RecommendationsApi(client).GetForYouRowsAsync(ct);
 
     public Task AddFavoriteAsync(string contentId, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/favorites/{Uri.EscapeDataString(contentId)}", null, ct);
+        => client.PutNoContentAsync($"/api/v2/favorites/{Uri.EscapeDataString(contentId)}", null, ct);
 
     public Task RemoveFavoriteAsync(string contentId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/favorites/{Uri.EscapeDataString(contentId)}", ct);
+        => client.DeleteAsync($"/api/v2/favorites/{Uri.EscapeDataString(contentId)}", ct);
 
     public Task AddToWatchlistAsync(string contentId, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/watchlist/{Uri.EscapeDataString(contentId)}", null, ct);
+        => client.PutNoContentAsync($"/api/v2/watchlist/{Uri.EscapeDataString(contentId)}", null, ct);
 
     public Task RemoveFromWatchlistAsync(string contentId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/watchlist/{Uri.EscapeDataString(contentId)}", ct);
+        => client.DeleteAsync($"/api/v2/watchlist/{Uri.EscapeDataString(contentId)}", ct);
 
-    public Task<SeasonsResponse> GetSeasonsAsync(string seriesId, CancellationToken ct = default)
-        => client.GetAsync<SeasonsResponse>($"/api/v1/catalog/series/{Uri.EscapeDataString(seriesId)}/seasons", ct);
+    public async Task<SeasonsResponse> GetSeasonsAsync(string seriesId, CancellationToken ct = default)
+        => new() { Seasons = (await client.GetAsync<BrowseCollection<Season>>($"/api/v2/catalog/series/{Uri.EscapeDataString(seriesId)}/seasons", ct)).Items };
 
-    public Task<EpisodesResponse> GetEpisodesAsync(string seriesId, int seasonNumber, CancellationToken ct = default)
-        => client.GetAsync<EpisodesResponse>($"/api/v1/catalog/series/{Uri.EscapeDataString(seriesId)}/seasons/{seasonNumber}/episodes", ct);
+    public async Task<EpisodesResponse> GetEpisodesAsync(string seriesId, int seasonNumber, CancellationToken ct = default)
+        => new() { Episodes = (await client.GetAsync<BrowseCollection<Episode>>($"/api/v2/catalog/series/{Uri.EscapeDataString(seriesId)}/seasons/{seasonNumber}/episodes", ct)).Items };
 
     /// <summary>
     /// Fetches the episodes that belong to a season item. This is the canonical
     /// endpoint used by the current WebUI and, unlike the legacy series/number
     /// route, also handles Specials (season zero) without discarding them.
     /// </summary>
-    public Task<EpisodesResponse> GetItemEpisodesAsync(string seasonContentId, CancellationToken ct = default)
-        => client.GetAsync<EpisodesResponse>($"/api/v1/catalog/items/{Uri.EscapeDataString(seasonContentId)}/episodes", ct);
+    public async Task<EpisodesResponse> GetItemEpisodesAsync(string seasonContentId, CancellationToken ct = default)
+        => new() { Episodes = (await client.GetAsync<BrowseCollection<Episode>>($"/api/v2/catalog/items/{Uri.EscapeDataString(seasonContentId)}/episodes", ct)).Items };
 
     // ===== Watched State =====
 
     public Task MarkWatchedAsync(string contentId, CancellationToken ct = default)
-        => client.PostNoContentAsync($"/api/v1/watched/{Uri.EscapeDataString(contentId)}", new { }, ct);
+        => client.PostNoContentAsync($"/api/v2/watched/{Uri.EscapeDataString(contentId)}", new { }, ct);
 
     public Task MarkUnwatchedAsync(string contentId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/watched/{Uri.EscapeDataString(contentId)}", ct);
+        => client.DeleteAsync($"/api/v2/watched/{Uri.EscapeDataString(contentId)}", ct);
 
     // ===== Ratings =====
 
@@ -247,7 +221,7 @@ public class CatalogApi(SiloApiClient client)
     {
         try
         {
-            var r = await client.GetAsync<RatingResponse>($"/api/v1/ratings/{Uri.EscapeDataString(contentId)}", ct);
+            var r = await client.GetAsync<RatingResponse>($"/api/v2/ratings/{Uri.EscapeDataString(contentId)}", ct);
             return r.Rating;
         }
         catch (ApiException ex) when (ex.StatusCode == 404)
@@ -257,59 +231,58 @@ public class CatalogApi(SiloApiClient client)
     }
 
     public Task SetRatingAsync(string contentId, int rating, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/ratings/{Uri.EscapeDataString(contentId)}", new { rating }, ct);
+        => client.PutNoContentAsync($"/api/v2/ratings/{Uri.EscapeDataString(contentId)}", new { rating }, ct);
 
     public Task DeleteRatingAsync(string contentId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/ratings/{Uri.EscapeDataString(contentId)}", ct);
+        => client.DeleteAsync($"/api/v2/ratings/{Uri.EscapeDataString(contentId)}", ct);
 
     // ===== Recommendations =====
 
     public Task<SimilarResponse> GetSimilarAsync(string contentId, CancellationToken ct = default)
-        => client.GetAsync<SimilarResponse>($"/api/v1/recommendations/similar/{Uri.EscapeDataString(contentId)}", ct);
+        => client.GetAsync<SimilarResponse>($"/api/v2/recommendations/similar/{Uri.EscapeDataString(contentId)}", ct);
 
     // ===== Item Versions =====
 
-    public Task<List<FileVersion>> GetItemVersionsAsync(string contentId, CancellationToken ct = default)
-        => client.GetAsync<List<FileVersion>>($"/api/v1/catalog/items/{Uri.EscapeDataString(contentId)}/versions", ct);
+    public async Task<List<FileVersion>> GetItemVersionsAsync(string contentId, CancellationToken ct = default)
+        => (await client.GetAsync<BrowseCollection<FileVersion>>($"/api/v2/catalog/items/{Uri.EscapeDataString(contentId)}/versions", ct)).Items;
 
     public Task<MangaSeriesFiles> GetMangaSeriesFilesAsync(string contentId, CancellationToken ct = default)
-        => client.GetAsync<MangaSeriesFiles>($"/api/v1/catalog/items/{Uri.EscapeDataString(contentId)}/manga-files", ct);
+        => client.GetAsync<MangaSeriesFiles>($"/api/v2/catalog/items/{Uri.EscapeDataString(contentId)}/manga-files", ct);
 
     // ===== Library Collections =====
 
     public Task<LibraryTabResponse> GetLibraryCollectionsAsync(int libraryId, CancellationToken ct = default)
-        => client.GetAsync<LibraryTabResponse>($"/api/v1/library/{libraryId}/collections", ct);
+        => client.GetAsync<LibraryTabResponse>($"/api/v2/library/{libraryId}/collections", ct);
 
-    public Task<CatalogResponse> GetLibraryCollectionItemsAsync(int libraryId, string collectionId, CancellationToken ct = default)
-        => client.GetAsync<CatalogResponse>($"/api/v1/library/{libraryId}/collections/{Uri.EscapeDataString(collectionId)}/items", ct);
+    public async Task<CatalogResponse> GetLibraryCollectionItemsAsync(int libraryId, string collectionId, CancellationToken ct = default)
+    {
+        var items = await BrowseV2.AllAsync<MediaItem>(client, $"/api/v2/library/{libraryId}/collections/{Uri.EscapeDataString(collectionId)}/items", ct);
+        return new() { Items = items, Total = items.Count, TotalExact = true };
+    }
 
     // ===== Library Sections =====
 
-    public Task<HomeSectionItemsResponse> GetLibrarySectionItemsAsync(int libraryId, string sectionId, CancellationToken ct = default)
-        => client.GetAsync<HomeSectionItemsResponse>($"/api/v1/library/{libraryId}/sections/{Uri.EscapeDataString(sectionId)}/items", ct);
+    public async Task<HomeSectionItemsResponse> GetLibrarySectionItemsAsync(int libraryId, string sectionId, CancellationToken ct = default)
+        => new() { Section = await client.GetAsync<HomeSectionWithItems>($"/api/v2/library/{libraryId}/sections/{Uri.EscapeDataString(sectionId)}/items", ct) };
 
     // ===== History =====
 
-    public Task<HistoryResponse> GetHistoryAsync(int? limit = null, int? offset = null, CancellationToken ct = default)
+    public async Task<HistoryResponse> GetHistoryAsync(int? limit = null, int? offset = null, CancellationToken ct = default)
     {
-        var path = "/api/v1/history";
-        var queryParts = new List<string>();
-        if (limit.HasValue) queryParts.Add($"limit={limit.Value}");
-        if (offset.HasValue) queryParts.Add($"offset={offset.Value}");
-        if (queryParts.Count > 0) path += "?" + string.Join("&", queryParts);
-        return client.GetAsync<HistoryResponse>(path, ct);
+        var page = await BrowseV2.WindowAsync<MediaItem>(client, "/api/v2/history", limit ?? 50, offset ?? 0, ct);
+        return new() { Items = page.Items, HasMore = page.Page?.HasMore == true };
     }
 
     public Task RemoveHistoryAsync(IEnumerable<HistoryRemovalTarget> targets, CancellationToken ct = default)
-        => client.PostNoContentAsync("/api/v1/history/remove", new RemoveHistoryRequest
+        => client.PostNoContentAsync("/api/v2/history/remove", new RemoveHistoryRequest
         {
             Targets = targets.ToList()
         }, ct);
 
     // ===== Ratings List =====
 
-    public Task<RatingListResponse> GetRatingsListAsync(CancellationToken ct = default)
-        => client.GetAsync<RatingListResponse>("/api/v1/ratings", ct);
+    public async Task<RatingListResponse> GetRatingsListAsync(CancellationToken ct = default)
+        => new() { Ratings = await BrowseV2.AllAsync<RatingListItem>(client, "/api/v2/ratings", ct) };
 
     // ===== Watchlist / Favorites Check =====
 
@@ -317,7 +290,7 @@ public class CatalogApi(SiloApiClient client)
     {
         try
         {
-            await client.GetAsync<object>($"/api/v1/watchlist/{Uri.EscapeDataString(itemId)}", ct);
+            await client.GetAsync<object>($"/api/v2/watchlist/{Uri.EscapeDataString(itemId)}", ct);
             return true;
         }
         catch (ApiException ex) when (ex.StatusCode == 404)
@@ -330,7 +303,7 @@ public class CatalogApi(SiloApiClient client)
     {
         try
         {
-            await client.GetAsync<object>($"/api/v1/favorites/{Uri.EscapeDataString(itemId)}", ct);
+            await client.GetAsync<object>($"/api/v2/favorites/{Uri.EscapeDataString(itemId)}", ct);
             return true;
         }
         catch (ApiException ex) when (ex.StatusCode == 404)
@@ -342,20 +315,20 @@ public class CatalogApi(SiloApiClient client)
     // ===== Audio Preferences =====
 
     public Task<AudioPreferenceResponse> GetAudioPrefsAsync(string seriesId, CancellationToken ct = default)
-        => client.GetAsync<AudioPreferenceResponse>($"/api/v1/audio-prefs/{Uri.EscapeDataString(seriesId)}", ct);
+        => client.GetAsync<AudioPreferenceResponse>($"/api/v2/audio-prefs/{Uri.EscapeDataString(seriesId)}", ct);
 
     public Task SetAudioPrefsAsync(string seriesId, AudioPreference request, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/audio-prefs/{Uri.EscapeDataString(seriesId)}", request, ct);
+        => client.PutNoContentAsync($"/api/v2/audio-prefs/{Uri.EscapeDataString(seriesId)}", request, ct);
 
     public Task DeleteAudioPrefsAsync(string seriesId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/audio-prefs/{Uri.EscapeDataString(seriesId)}", ct);
+        => client.DeleteAsync($"/api/v2/audio-prefs/{Uri.EscapeDataString(seriesId)}", ct);
 
     // ===== Person Filmography =====
 
     // B33: personId is a string — supports non-numeric IDs from third-party providers.
     public Task<CatalogResponse> GetPersonFilmographyAsync(string personId, string? type = null, int limit = 60, int offset = 0, CancellationToken ct = default)
     {
-        var query = $"/api/v1/catalog?source=person&person_id={Uri.EscapeDataString(personId)}&limit={limit}&offset={offset}&sort=year&order=desc";
+        var query = $"/api/v2/catalog?source=person&person_id={Uri.EscapeDataString(personId)}&limit={Math.Clamp(limit, 1, 200)}&seek={Math.Max(0, offset)}&sort=-year";
         if (!string.IsNullOrEmpty(type) && type != "all")
             query += $"&type={Uri.EscapeDataString(type)}";
         return client.GetAsync<CatalogResponse>(query, ct);
@@ -369,9 +342,8 @@ public class CatalogApi(SiloApiClient client)
     /// </summary>
     public Task<CatalogResponse> BrowseUserCollectionAsync(string collectionId, string? sort = null, string? order = null, int limit = 60, int offset = 0, CancellationToken ct = default)
     {
-        var query = $"/api/v1/catalog?source=user_collection&collection_id={Uri.EscapeDataString(collectionId)}&limit={limit}&offset={offset}";
-        if (sort != null) query += $"&sort={Uri.EscapeDataString(sort)}";
-        if (order != null) query += $"&order={Uri.EscapeDataString(order)}";
+        var query = $"/api/v2/catalog?source=user_collection&collection_id={Uri.EscapeDataString(collectionId)}&limit={Math.Clamp(limit, 1, 200)}&seek={Math.Max(0, offset)}";
+        if (sort != null) query += $"&sort={Uri.EscapeDataString(BrowseV2.Sort(sort, order))}";
         return client.GetAsync<CatalogResponse>(query, ct);
     }
 
@@ -381,23 +353,22 @@ public class CatalogApi(SiloApiClient client)
     /// </summary>
     public Task<CatalogResponse> BrowseLibraryCollectionAsync(string collectionId, string? sort = null, string? order = null, int limit = 60, int offset = 0, CancellationToken ct = default)
     {
-        var query = $"/api/v1/catalog?source=library_collection&collection_id={Uri.EscapeDataString(collectionId)}&limit={limit}&offset={offset}";
-        if (sort != null) query += $"&sort={Uri.EscapeDataString(sort)}";
-        if (order != null) query += $"&order={Uri.EscapeDataString(order)}";
+        var query = $"/api/v2/catalog?source=library_collection&collection_id={Uri.EscapeDataString(collectionId)}&limit={Math.Clamp(limit, 1, 200)}&seek={Math.Max(0, offset)}";
+        if (sort != null) query += $"&sort={Uri.EscapeDataString(BrowseV2.Sort(sort, order))}";
         return client.GetAsync<CatalogResponse>(query, ct);
     }
 
     // ===== Sync =====
 
     public Task SyncProgressAsync(object request, CancellationToken ct = default)
-        => client.PostNoContentAsync("/api/v1/sync/progress", request, ct);
+        => client.PostNoContentAsync("/api/v2/sync/progress", request, ct);
 
     // ===== Calendar =====
 
     /// <summary>
     /// Fetches calendar events for a date range. Mirrors the web client's
     /// <c>useCalendarWeek</c> hook which calls
-    /// <c>GET /api/v1/calendar?start=&amp;end=&amp;filter=&amp;library_id=</c>.
+    /// <c>GET /api/v2/calendar?start=&amp;end=&amp;filter=&amp;library_id=</c>.
     /// </summary>
     /// <param name="start">Inclusive start date (YYYY-MM-DD).</param>
     /// <param name="end">Inclusive end date (YYYY-MM-DD), max 31 days after start.</param>
@@ -411,7 +382,7 @@ public class CatalogApi(SiloApiClient client)
         string? timezone = null,
         CancellationToken ct = default)
     {
-        var query = $"/api/v1/calendar?start={Uri.EscapeDataString(start)}" +
+        var query = $"/api/v2/calendar?start={Uri.EscapeDataString(start)}" +
                     $"&end={Uri.EscapeDataString(end)}" +
                     $"&filter={Uri.EscapeDataString(filter)}";
         if (!string.IsNullOrWhiteSpace(timezone))
@@ -420,4 +391,11 @@ public class CatalogApi(SiloApiClient client)
             query += $"&library_id={libraryId.Value}";
         return client.GetAsync<CalendarResponse>(query, ct);
     }
+}
+
+internal sealed class MetadataAiCapability
+{
+    public string State { get; set; } = "";
+    public bool Allowed { get; set; }
+    public string OnView { get; set; } = "off";
 }

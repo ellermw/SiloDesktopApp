@@ -1,5 +1,45 @@
 # Player Backlog
 
+## P1 — September 5 progressive-stream buffering/recovery stalls
+
+Reported on installed 1.1.100 (e1ba550). Read-only diagnosis; no playback
+interruption, server mutation, production code change, or packaging performed.
+
+Latest observed episode: episode-tvdb-379169-1-3, file 775321. Direct started at
+22:47:26; relay resumed at five offsets from 1,106,935,969 through 5,472,879,512.
+Successive failures followed another 1055.7, 1030.4, 1029.4, 1039.5, 1064.3 MiB.
+At 23:21:11 mpv buffered; 23:21:42 stall recovery began; progressive remux
+loaded at 23:21:47. That relay failed at 23:28:49; mpv buffered at 23:29:20;
+the stall detector fired at 23:29:50; remux HLS loaded at 23:29:56 and advanced
+30 seconds by 23:30:26. Prior episode followed the same route ladder. This
+supports the reported repeated progressive failures and HLS recovery, not a
+claim that the server's file is corrupt or that the full root cause is proven.
+
+Confirmed client weaknesses:
+
+- DirectStreamRelay forwards open-ended ranges, holding large responses open
+  until completion or failure instead of issuing bounded byte ranges.
+- DirectStreamProxy uses an infinite HttpClient timeout. RelayAsync's
+  ResponseHeadersRead SendAsync has only session cancellation; the configured
+  upstream idle timeout protects body reads, not connection/header acquisition.
+- Reproduced this timeout gap twice with real production relay source and a
+  deterministic fixture: 4/8 media bytes delivered, second request waits on
+  headers, 50ms upstream timeout never fires, outer 2s safety cancellation exits
+  with failure. Harness is local-only .codex-tmp/relay-stall-diagnostic.
+- Terminal relay logs omit inner read errors/status/validator details, so the
+  exact large-response termination and a previous entity-change rejection
+  cannot be assigned a cause from current evidence. The shared mpv log was
+  overwritten by an unrelated GPU probe; it is not tonight's viewing trace.
+
+Proposed scoped correction pending prioritization: bounded sequential byte-range
+fetches for direct media (unchanged bytes/codecs, no forced transcode), bounded
+header acquisition/reconnect, and safe diagnostic context for terminal failures.
+Tests must cover continuous output, offsets/seeking, validator consistency,
+ignored ranges, header/body stalls, cancellation, and bounded work. Preserve
+real entity-change protection. Progressive remux cannot use source byte-range
+stitching; keep its recovery path separate. Verify against an extended live
+stream before declaring the user's buffering resolved.
+
 Player regressions completed in the 1.1.74/1.1.75 player milestone. New
 regressions should be added here with their own reproduction and acceptance
 evidence.
@@ -258,3 +298,13 @@ position as a live resume point even when `played` remains true during a
 rewatch; the desktop's final playback-start policy now follows that rule.
 Automated coverage passes, but installed direct/remux/transcode verification is
 still required before this regression is closed.
+# Initial-interruption diagnosis follow-up (September 5–6)
+
+See [the controlled playback-stall investigation](2026-09-05-playback-stall-diagnosis.md).
+Two playback-paced HTTP reads outside the relay/mpv failed at ~1.099 GB. An
+independent curl read failed at ~1.090 GB with 2.895 GB missing. Sequential
+32 MiB ranges passed 1,200 MiB at the same pace (38 requests, 400 seconds).
+The likely long-response buffering/write-timeout interaction is now supported
+by a live reproduction; exact deployed edge configuration remains unverified.
+Do not describe relay removal alone as the proven fix. No application or server
+configuration change was applied during this investigation.

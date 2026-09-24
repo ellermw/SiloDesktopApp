@@ -1,0 +1,22 @@
+{
+  "verifiedAtUtc": "2026-09-08T05:10:20.8087486Z",
+  "baseline": "1.1.101-multigpu-preview.1",
+  "reviewedFiles": 518,
+  "reviewedPhysicalLines": 138439.0,
+  "productionCSharp": 300,
+  "productionXaml": 59,
+  "sourceChecksumMismatches": 0,
+  "pdbDocuments": 358,
+  "pdbChecksumMismatches": 0,
+  "testsPassed": 919,
+  "testsFailed": 0,
+  "testsSkipped": 0,
+  "nativeArtwork": "12 transitions; 22/22 images each; 139 stale unloads; detach passed",
+  "knownNugetVulnerabilityQuery": "No known vulnerable packages reported by nuget.org during audit; native binaries excluded",
+  "sourceFilesChangedByAudit": false,
+  "runtimeLimitations": [
+    "No full interactive/visual page certification",
+    "No physical multi-GPU matrix or production infrastructure load test",
+    "Historical buffering diagnostic not rerun"
+  ]
+}

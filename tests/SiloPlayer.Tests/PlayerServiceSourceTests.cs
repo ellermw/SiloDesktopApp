@@ -461,7 +461,7 @@ public sealed class PlayerServiceSourceTests
         Assert.True(methodEnd > methodStart);
 
         var method = source[methodStart..methodEnd];
-        Assert.Contains("RecoverInterruptedStreamAsync(mediaPosition, \"file-load-error\")", method);
+        Assert.Contains("RecoverInterruptedStreamAsync(mediaPosition, directTransport ? \"direct-transport-error\" : \"file-load-error\")", method);
         Assert.Contains("if (attempt == 1)", method);
         Assert.Contains("EnterPlaybackTerminalState", method);
         Assert.DoesNotContain("CloseAsync()", method);
@@ -567,7 +567,7 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
-    public void PlaybackWebSocketReconnectsWithTheCurrentAccessToken()
+    public void PlaybackWebSocketReconnectsWithFreshTicketsUnderCapturedAuthority()
     {
         var playerService = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
@@ -583,10 +583,12 @@ public sealed class PlayerServiceSourceTests
             "PlaybackWebSocket.cs"));
 
         Assert.Contains("ReconnectDelays", websocket);
-        Assert.Contains("while (!ct.IsCancellationRequested)", websocket);
-        Assert.Contains("_tokenProvider()", websocket);
+        Assert.Contains("while (!ct.IsCancellationRequested && _apiClient.IsCurrentContext(_authority))", websocket);
+        Assert.Contains("CreateControlTicketAsync(_sessionId, ct)", websocket);
+        Assert.Contains("ws.Options.AddSubProtocol(\"silo.ticket.\" + ticket.Ticket)", websocket);
+        Assert.DoesNotContain("AppendToken", websocket);
         Assert.Contains("_seenCommandIds", websocket);
-        Assert.Contains("() => _apiClient.AccessToken", playerService);
+        Assert.Contains("new PlaybackWebSocket(_apiClient, _playbackApi, sessionId)", playerService);
     }
 
     [Fact]

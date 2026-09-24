@@ -1,0 +1,13 @@
+episode transition 1: 22/22 artwork images visible; stale unloads=0
+episode transition 2: 22/22 artwork images visible; stale unloads=21
+episode transition 3: 22/22 artwork images visible; stale unloads=21
+episode transition 4: 22/22 artwork images visible; stale unloads=21
+episode transition 5: 22/22 artwork images visible; stale unloads=43
+episode transition 6: 22/22 artwork images visible; stale unloads=64
+episode transition 7: 22/22 artwork images visible; stale unloads=64
+episode transition 8: 22/22 artwork images visible; stale unloads=78
+episode transition 9: 22/22 artwork images visible; stale unloads=100
+episode transition 10: 22/22 artwork images visible; stale unloads=121
+episode transition 11: 22/22 artwork images visible; stale unloads=121
+episode transition 12: 22/22 artwork images visible; stale unloads=139
+PASS: episode artwork survives reattachment and is released on real detach.

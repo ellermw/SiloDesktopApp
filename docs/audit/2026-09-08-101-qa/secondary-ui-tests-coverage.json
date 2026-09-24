@@ -1,0 +1,199 @@
+{
+  "files": [
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/CurrentAuthSetupParitySourceTests.cs",
+      "lines": 47,
+      "ranges": [
+        {
+          "end": 47,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/CurrentProfilesParitySourceTests.cs",
+      "lines": 92,
+      "ranges": [
+        {
+          "end": 92,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "initial_audit"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/CurrentSettingsParitySourceTests.cs",
+      "lines": 385,
+      "ranges": [
+        {
+          "end": 385,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "initial_audit"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/DateTimePreferenceSourceTests.cs",
+      "lines": 46,
+      "ranges": [
+        {
+          "end": 46,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/DownloadsCurrentParityTests.cs",
+      "lines": 77,
+      "ranges": [
+        {
+          "end": 77,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "initial_audit"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/EbookReaderCurrentParityTests.cs",
+      "lines": 93,
+      "ranges": [
+        {
+          "end": 93,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "initial_audit"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/NotificationsCurrentParitySourceTests.cs",
+      "lines": 43,
+      "ranges": [
+        {
+          "end": 43,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/NotificationsInteractionParitySourceTests.cs",
+      "lines": 29,
+      "ranges": [
+        {
+          "end": 29,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/RequestBrowseCurrentParitySourceTests.cs",
+      "lines": 54,
+      "ranges": [
+        {
+          "end": 54,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/RequestDetailCurrentParitySourceTests.cs",
+      "lines": 42,
+      "ranges": [
+        {
+          "end": 42,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/RequestsCurrentParitySourceTests.cs",
+      "lines": 51,
+      "ranges": [
+        {
+          "end": 51,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/WatchProvidersParitySourceTests.cs",
+      "lines": 68,
+      "ranges": [
+        {
+          "end": 68,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "test_inventory_reconciliation"
+    },
+    {
+      "executed": false,
+      "status": "full_source_read",
+      "path": "tests/SiloPlayer.Tests/WatchTogetherCurrentParityTests.cs",
+      "lines": 87,
+      "ranges": [
+        {
+          "end": 87,
+          "reviewer": "secondary_ui",
+          "start": 1
+        }
+      ],
+      "read_phase": "initial_audit"
+    }
+  ],
+  "additional_previously_read_test": "tests/SiloPlayer.Tests/EbookReaderWebPolicyTests.cs",
+  "line_count": 1114.0,
+  "source_test_limitations": [
+    "String assertions verify source tokens rather than behavior",
+    "No live server or WinUI visual/accessibility execution",
+    "Response version checks do not demonstrate server write ordering"
+  ],
+  "unreviewed_files": [],
+  "newly_read_file_count": 8,
+  "test_execution": "not_run",
+  "newly_read_line_count": 380,
+  "file_count": 13,
+  "scope": "Requested secondary UI test-source reconciliation"
+}

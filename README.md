@@ -6,15 +6,17 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.100**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.100/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.102**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.102/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `9D62A30613B3627CEBB0022C0A8644D4BB91323ECA5CC08E4D71271051A3AA6F`
+SHA-256: `CEC056DED1B56219A319C01C38B80BD2CCDA9A25541AB6C560BF4DC97B9BCEBC`
 
 The installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 
 ## License / private use
 
 This repository and its contents are proprietary and private. All rights are reserved by the project owner. No license is granted to copy, distribute, publish, sublicense, sell, host, modify, or use this software, source code, installers, artwork, branding, documentation, or related assets except with explicit written permission from the owner.
+
+Third-party components retain their own licenses. The externally loaded FSRCNNX shader is LGPL-3.0-or-later; its source, notices, and license texts are included under [libs/mpv/shaders](libs/mpv/shaders/README.md).
 
 ## Current parity
 
@@ -43,28 +45,38 @@ Status meanings:
 
 ## Latest release
 
-### 1.1.100
+### 1.1.102
 
-- Added optional NVIDIA RTX AI upscaling for eligible SDR video, with a 2× limit per dimension and normal-rendering fallback.
-- Fixed quality choices such as 720p Medium being sent as Auto. Resolution and bitrate tiers now survive playback starts and quality/audio replans.
-- Playback Info distinguishes input frames, processed frames, server target video bitrate, measured video/audio bitrates, and original-file metadata.
-- Improved library scrolling with native scrolling, bounded card reuse, nearby catalog/artwork prefetching, and adjustable poster sizes.
-- Applied the selected source audio track during direct playback and reset audio selection when loading packaged streams.
-- Verified 888 x64 Release tests. Dense-grid performance and the separately reported Home crash remain under investigation; this release does not claim full WebUI parity.
+- Updated authentication, browsing, settings, collections, notifications, downloads, and playback for the current Silo API v2 contracts, retaining native direct play and playback protocol v3.
+- Added a native direct-stream reader, bounded stall recovery, and detailed playback diagnostics that redact credentials and signed URLs. Long-session buffering remains under investigation.
+- Fixed clipped year and media-type labels beneath search results and other shared poster grids.
+- Added experimental Intel VSR and portable FSRCNNX upscaling alongside NVIDIA RTX VSR, with fallback to normal rendering.
+- Corrected audiobook progress units and playback marker ranges, and retained the recent library scrolling and playback-quality improvements.
+- Removed the test-build version suffix. This release is **1.1.102**; complete WebUI visual parity and broader GPU validation remain ongoing.
+- Verified **1,045 Release tests**, **six published playback-service checks**, and clean installer packaging with native libmpv load/hash checks.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release history.
 
-## NVIDIA RTX AI upscaling (preview)
+## AI video upscaling (experimental)
 
-Enable **Settings → Playback → Desktop playback → NVIDIA RTX AI upscaling (preview)** and restart **Silo for Windows Desktop App**. Enable Video Super Resolution in the NVIDIA App's video settings as well. The setting is off by default and saved on this PC.
+Version **1.1.102** includes Intel and AMD options alongside NVIDIA RTX VSR. Select **Settings → Playback → Desktop playback → AI video upscaling (experimental)** and restart **Silo for Windows Desktop App**. Preferences are local and off by default; existing NVIDIA opt-ins are preserved.
 
-The preview supports NVIDIA RTX adapters with compatible drivers. Intel and AMD AI upscaling are not included; normal playback remains available. Enhancement applies to eligible SDR video up to 1080p when the playback area is larger. HDR, unknown color transfers, rotated/anamorphic content, and native 4K bypass the preview.
+| Mode | Processing | Verification |
+|---|---|---|
+| NVIDIA RTX VSR | Driver video enhancement; enable Video Super Resolution in NVIDIA App | Existing RTX path; the NVIDIA indicator verifies driver activation |
+| Intel VSR | mpv's Intel D3D11 video-processing extension | Experimental; detected Intel hardware is a candidate, not a guarantee of VSR support |
+| FSRCNNX AI | Bundled trained neural-network shader; used for AMD and selectable on NVIDIA/Intel | Actual shader execution verified on RTX 5080; AMD/Intel performance and compatibility need testers |
+| Automatic | Prefer RTX VSR, then FSRCNNX on AMD, then Intel VSR | Same experimental limitations apply |
+
+FSRCNNX is a portable neural shader, not AMD driver VSR or FSR. It reconstructs luma at 2× when both display/source dimension ratios exceed 1.3, then mpv fits the result to the display. Enhancement applies to eligible SDR video up to 1080p. HDR, unknown color transfers, rotated/anamorphic content, and native 4K bypass it. Missing hardware, missing shader assets, and detected processing errors use normal playback.
 
 The maximum is **2× per dimension**: 1080p can produce 4K frames; 720p can produce 1440p frames, followed by normal rendering to a 4K display. This creates four times the pixels, not native-4K source detail. Upscaling does not increase the streamed bitrate or convert SDR to HDR.
 
-Press **I** during playback to compare **Source video** and **Processed video**. **RTX VSR (requested)** identifies the requested processing mode; NVIDIA's own indicator confirms driver activation. **Target video bitrate** is the server encoder target. The measured video/audio rates fluctuate with the compressed stream and are separate from the original file's bitrate and buffering/download speed.
+Press **I** during playback to compare **Source video**, **Processed video**, **Upscaler**, and **Enhancement status**. Intel/NVIDIA statuses say **requested**, because installing a video filter does not prove driver AI activation. FSRCNNX runs after video-filter output, so **AI luma reconstruction (requested)** is shown separately; **Processed video** may remain 1080p while a renderer shader reconstructs it. **Target video bitrate** and measured rates describe the stream, not the local enhancement.
 
 See [implementation and verification notes](docs/ai-upscaling-feasibility.md) for preview limits and test coverage.
+
+See [the multi-GPU test guide](docs/multigpu-upscaling-testing.md) for the tester checklist and remaining hardware validation.
 
 ## Playback goals
 

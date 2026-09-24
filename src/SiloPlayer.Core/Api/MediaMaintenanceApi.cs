@@ -15,8 +15,8 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
     {
         EnsureSecureBaseUrl();
         return client.PostAsync<ItemMatchSearchResponse>(
-            $"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/match/search",
-            request,
+            $"/api/v2/admin/items/{Uri.EscapeDataString(itemId)}/match/search",
+            V2Json.Body(request),
             ct);
     }
 
@@ -27,8 +27,8 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
     {
         EnsureSecureBaseUrl();
         return client.PostNoContentAsync(
-            $"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/match/apply",
-            request,
+            $"/api/v2/admin/items/{Uri.EscapeDataString(itemId)}/match/apply",
+            V2Json.Body(request),
             ct);
     }
 
@@ -42,7 +42,7 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
 
         EnsureSecureBaseUrl();
         return client.PostAsync<MetadataRefreshReceipt>(
-            $"/api/v1/admin/items/{Uri.EscapeDataString(itemId)}/refresh-metadata",
+            $"/api/v2/admin/items/{Uri.EscapeDataString(itemId)}/refresh-metadata",
             new Dictionary<string, object?> { ["mode"] = mode },
             ct);
     }

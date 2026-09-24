@@ -24,14 +24,14 @@ public sealed class RecommendationsTests
         Assert.Equal(new[] { "Drama", "Science Fiction" }, profile.TopGenres);
         Assert.Equal(new[] { "Denis Villeneuve" }, profile.FavoriteDirectors);
         Assert.Equal(7, profile.SignalCounts.Values.Sum());
-        Assert.Equal("/api/v1/recommendations/taste-profile", handler.LastUri?.AbsolutePath);
+        Assert.Equal("/api/v2/recommendations/taste-profile", handler.LastUri?.AbsolutePath);
     }
 
     [Fact]
     public async Task DiscoverUsesCurrentEndpointAndSectionMetadata()
     {
         var handler = new CaptureHandler("""
-        {"rows":[{"type":"genre","label":"Popular in Drama","section_kind":"genre","section_key":"Drama","items":[]}]}
+        {"items":[{"type":"genre","title":"Popular in Drama","kind":"genre","key":"Drama","items":[]}]}
         """);
         var client = new SiloApiClient(new HttpClient(handler));
         client.SetBaseUrl("https://example.test");
@@ -40,7 +40,7 @@ public sealed class RecommendationsTests
 
         Assert.Equal("genre", response.Rows[0].SectionKind);
         Assert.Equal("Drama", response.Rows[0].SectionKey);
-        Assert.Equal("/api/v1/recommendations/discover", handler.LastUri?.AbsolutePath);
+        Assert.Equal("/api/v2/recommendations/discover", handler.LastUri?.AbsolutePath);
     }
 
     private sealed class CaptureHandler(string responseJson) : HttpMessageHandler

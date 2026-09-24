@@ -11,6 +11,15 @@ public sealed class InvitationLookupResponse
     public string ServerName { get; set; } = "Silo";
     public string ExpiresAt { get; set; } = "";
     public bool ShowTour { get; set; }
+    public bool AcceptanceAvailable { get; set; }
+}
+
+public sealed class InvitationAcceptanceResponse
+{
+    public string Status { get; set; } = "";
+    public string LoginStatus { get; set; } = "";
+    public string Username { get; set; } = "";
+    public LoginResponse? Tokens { get; set; }
 }
 
 public sealed class AcceptInvitationRequest

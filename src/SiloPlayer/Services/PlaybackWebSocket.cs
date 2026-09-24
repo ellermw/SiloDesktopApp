@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using SiloPlayer.Core.Helpers;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Api;
 
 namespace SiloPlayer.Services;
 
@@ -15,7 +16,9 @@ public sealed class PlaybackWebSocket : IDisposable
 {
     private readonly string _baseUrl;
     private readonly string _sessionId;
-    private readonly Func<string?> _tokenProvider;
+    private readonly SiloApiClient _apiClient;
+    private readonly PlaybackApi _playbackApi;
+    private readonly ApiRequestContext _authority;
     private ClientWebSocket? _ws;
     private CancellationTokenSource? _cts;
     private readonly HashSet<string> _seenCommandIds = new(StringComparer.Ordinal);
@@ -39,16 +42,13 @@ public sealed class PlaybackWebSocket : IDisposable
     public event Func<WebSocketCommand, Task<CommandResult>>? CommandReceived;
     public event Action<PlaybackRealtimeEvent>? EventReceived;
 
-    public PlaybackWebSocket(string baseUrl, string sessionId, string? token)
-        : this(baseUrl, sessionId, () => token)
+    public PlaybackWebSocket(SiloApiClient apiClient, PlaybackApi playbackApi, string sessionId)
     {
-    }
-
-    public PlaybackWebSocket(string baseUrl, string sessionId, Func<string?> tokenProvider)
-    {
-        _baseUrl = baseUrl.TrimEnd('/');
+        _apiClient = apiClient;
+        _playbackApi = playbackApi;
+        _authority = apiClient.CaptureContext();
+        _baseUrl = _authority.BaseUrl.TrimEnd('/');
         _sessionId = sessionId;
-        _tokenProvider = tokenProvider;
     }
 
     public async Task ConnectAsync()
@@ -58,7 +58,7 @@ public sealed class PlaybackWebSocket : IDisposable
         var ct = _cts.Token;
         var attempt = 0;
 
-        while (!ct.IsCancellationRequested)
+        while (!ct.IsCancellationRequested && _apiClient.IsCurrentContext(_authority))
         {
             var connected = await ConnectOnceAsync(ct);
             if (ct.IsCancellationRequested) break;
@@ -75,18 +75,23 @@ public sealed class PlaybackWebSocket : IDisposable
     private async Task<bool> ConnectOnceAsync(CancellationToken ct)
     {
         var wsUrl = _baseUrl.Replace("https://", "wss://").Replace("http://", "ws://");
-        wsUrl += $"/api/v1/playback/sessions/{_sessionId}/control/ws";
-        // Pass token as query param (matching web player) — CDN may strip Auth headers on WebSocket upgrades
-        wsUrl = UrlHelper.AppendToken(wsUrl, _tokenProvider());
+        wsUrl += $"/api/v2/playback/sessions/{Uri.EscapeDataString(_sessionId)}/control/ws";
 
         var ws = new ClientWebSocket();
         _ws = ws;
 
         try
         {
+            // Tickets are single-use and must be freshly minted on every reconnect.
+            var ticket = await _playbackApi.CreateControlTicketAsync(_sessionId, ct);
+            if (!_apiClient.IsCurrentContext(_authority)) return false;
+            ws.Options.AddSubProtocol(ticket.Protocol);
+            ws.Options.AddSubProtocol("silo.ticket." + ticket.Ticket);
             var logUrl = wsUrl.Contains('?') ? wsUrl[..wsUrl.IndexOf('?')] : wsUrl;
             Log($"Connecting to: {logUrl}");
             await ws.ConnectAsync(new Uri(wsUrl), ct);
+            if (ws.SubProtocol != ticket.Protocol)
+                throw new InvalidOperationException("Playback control protocol was not negotiated.");
             Log($"Connected successfully");
 
             // Send hello (use dictionaries — anonymous types break with .NET trimmer)
@@ -101,6 +106,12 @@ public sealed class PlaybackWebSocket : IDisposable
             lock (_seenCommandGate) _seenCommandIds.Clear();
             await ReceiveLoop(ws, ct);
             return true;
+        }
+        catch (ApiException ex) when (ex.StatusCode is 401 or 403 or 404 or 409 or 410)
+        {
+            Log($"Playback control access ended ({ex.StatusCode}).");
+            _cts?.Cancel();
+            return false;
         }
         catch (Exception ex)
         {
@@ -151,6 +162,7 @@ public sealed class PlaybackWebSocket : IDisposable
 
                 if (result.EndOfMessage)
                 {
+                    if (!_apiClient.IsCurrentContext(_authority)) break;
                     var message = Encoding.UTF8.GetString(
                         messageBuffer.GetBuffer(),
                         0,

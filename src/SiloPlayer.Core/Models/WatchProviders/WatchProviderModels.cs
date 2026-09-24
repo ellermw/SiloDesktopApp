@@ -47,6 +47,10 @@ public sealed class WatchProviderConnection
     public bool ImportFavoritesEnabled { get; set; }
     public bool ExportFavoritesEnabled { get; set; }
     public bool SyncFavoriteRemovalsEnabled { get; set; }
+    public bool ImportWatchlistEnabled { get; set; }
+    public bool ExportWatchlistEnabled { get; set; }
+    public bool SyncWatchlistRemovalsEnabled { get; set; }
+    public bool SyncWatchlistOrderEnabled { get; set; }
     public bool ScrobbleEnabled { get; set; }
     public bool CredentialsConfigured { get; set; }
     public string? LastInboundSyncAt { get; set; }

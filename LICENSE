@@ -10,3 +10,8 @@ holder.
 
 Unauthorized use, reproduction, distribution, or creation of derivative works
 is prohibited.
+
+Third-party components and assets retain their respective licenses and are
+excluded from the restrictions above to the extent granted by those licenses.
+In particular, libs/mpv/shaders/FSRCNNX_x2_8-0-4-1.glsl is LGPL-3.0-or-later;
+its source, copyright notice, and license texts are distributed alongside it.

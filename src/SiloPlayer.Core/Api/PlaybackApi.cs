@@ -2,65 +2,60 @@ using SiloPlayer.Core.Models.Playback;
 
 namespace SiloPlayer.Core.Api;
 
-public class PlaybackApi(SiloApiClient client)
+public partial class PlaybackApi(SiloApiClient client)
 {
     public Task<WatchDetailResponse> GetWatchDetailAsync(string contentId, CancellationToken ct = default)
-        => client.GetAsync<WatchDetailResponse>($"/api/v1/watch/{Uri.EscapeDataString(contentId)}", ct);
+        => client.GetAsync<WatchDetailResponse>($"/api/v2/watch/{Uri.EscapeDataString(contentId)}", ct);
 
     public Task<PlaybackStartResponse> StartPlaybackAsync(PlaybackStartRequest request, CancellationToken ct = default)
-        => client.PostAsync<PlaybackStartResponse>("/api/v1/playback/start", request, ct);
+        => throw new NotSupportedException("Playback API v2 requires a protocol-v3 playback plan.");
 
     public Task<PlaybackDecisionResponseV3> StartPlaybackV3Async(PlaybackStartRequestV3 request, CancellationToken ct = default)
-        => client.PostAsync<PlaybackDecisionResponseV3>("/api/v1/playback/start", request, ct);
+        => StartV2Async(request, ct);
 
     public Task<PlaybackCapabilityV3> GetPlaybackCapabilityAsync(CancellationToken ct = default)
-        => client.GetAsync<PlaybackCapabilityV3>("/api/v1/playback/capability", ct);
+        => client.GetAsync<PlaybackCapabilityV3>("/api/v2/playback/capabilities", ct);
 
     public Task<PlaybackDecisionResponseV3> ReplanPlaybackV3Async(
         string sessionId,
         PlaybackReplanRequestV3 request,
         CancellationToken ct = default)
-        => client.PostAsync<PlaybackDecisionResponseV3>(
-            $"/api/v1/playback/{Uri.EscapeDataString(sessionId)}/replan",
-            request,
-            ct);
+        => ReplanV2Async(sessionId, request, ct);
 
-    public Task ReportProgressAsync(string sessionId, double position, bool isPaused, CancellationToken ct = default)
-        => client.PostNoContentAsync($"/api/v1/playback/{Uri.EscapeDataString(sessionId)}/progress",
-            new Dictionary<string, object?>
-            {
-                ["position"] = position,
-                ["is_paused"] = isPaused,
-            }, ct);
+    public Task<PlaybackMutationReceipt> ReportProgressAsync(string sessionId, double position, bool isPaused, CancellationToken ct = default)
+        => ReportProgressV2Async(sessionId, position, isPaused, ct);
 
-    public Task StopPlaybackAsync(string sessionId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/playback/{Uri.EscapeDataString(sessionId)}", ct);
-
+    public Task<PlaybackMutationReceipt> StopPlaybackAsync(string sessionId, CancellationToken ct = default)
+        => StopV2Async(sessionId, ct);
     public Task<TranscodeStartResponse> StartTranscodeAsync(TranscodeStartRequest request, CancellationToken ct = default)
-        => client.PostAsync<TranscodeStartResponse>("/api/v1/playback/transcode/start", request, ct);
+        => throw new NotSupportedException("Playback API v2 changes delivery through a playback replan.");
 
     public Task<ChangeAudioResponse> ChangeAudioTrackAsync(string sessionId, int trackIndex, double position, CancellationToken ct = default)
-        => client.PatchAsync<ChangeAudioResponse>($"/api/v1/playback/{Uri.EscapeDataString(sessionId)}/audio",
-            new Dictionary<string, object?>
-            {
-                ["audio_track_index"] = trackIndex,
-                ["position"] = position,
-            }, ct);
+        => throw new NotSupportedException("Playback API v2 changes audio through a playback replan.");
 
     public Task<SubtitleAiStatus> GetSubtitleAiStatusAsync(CancellationToken ct = default)
-        => client.GetAsync<SubtitleAiStatus>("/api/v1/subtitles/ai/status", ct);
+        => client.GetAsync<SubtitleAiStatus>("/api/v2/subtitles/ai/status", ct);
 
     public Task<SubtitleProviderStatus> GetSubtitleProviderStatusAsync(CancellationToken ct = default)
-        => client.GetAsync<SubtitleProviderStatus>("/api/v1/subtitles/providers/status", ct);
+        => client.GetAsync<SubtitleProviderStatus>("/api/v2/subtitles/providers/status", ct);
 
     public Task<SubtitleAiStartResponse> StartSubtitleAiAsync(SubtitleAiRequest request, CancellationToken ct = default)
-        => client.PostAsync<SubtitleAiStartResponse>("/api/v1/subtitles/ai/translate", request, ct);
+        => client.PostAsync<SubtitleAiStartResponse>("/api/v2/subtitles/ai/translate", new Dictionary<string, object?>
+        {
+            ["media_file_id"] = request.MediaFileId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["kind"] = request.Kind ?? "translate",
+            ["source_index"] = request.SourceIndex,
+            ["source_language"] = request.SourceLanguage,
+            ["target_language"] = request.TargetLanguage,
+            ["session_id"] = request.SessionId,
+            ["start_position"] = request.StartPosition,
+        }, ct);
 
-    public Task<SubtitleAiJob> GetSubtitleAiJobAsync(long jobId, CancellationToken ct = default)
-        => client.GetAsync<SubtitleAiJob>($"/api/v1/subtitles/ai/jobs/{jobId}", ct);
+    public async Task<SubtitleAiJob> GetSubtitleAiJobAsync(long jobId, CancellationToken ct = default)
+        => (await client.GetAsync<SubtitleAiStartResponse>($"/api/v2/subtitles/ai/jobs/{jobId}", ct).ConfigureAwait(false)).Job;
 
     public Task<SubtitleAiQuota> GetSubtitleAiQuotaAsync(CancellationToken ct = default)
-        => client.GetAsync<SubtitleAiQuota>("/api/v1/subtitles/ai/quota", ct);
+        => client.GetAsync<SubtitleAiQuota>("/api/v2/subtitles/ai/quota", ct);
 
     // ===== Subtitle Preferences =====
 
@@ -98,48 +93,47 @@ public class PlaybackApi(SiloApiClient client)
         }
         if (request.ShowForcedSubtitles.HasValue)
             body["show_forced_subtitles"] = request.ShowForcedSubtitles.Value;
-        return client.PutNoContentAsync($"/api/v1/subtitle-prefs/{Uri.EscapeDataString(seriesId)}", body, ct);
+        return client.PutNoContentAsync($"/api/v2/subtitle-prefs/{Uri.EscapeDataString(seriesId)}", body, ct);
     }
 
     public Task DeleteSubtitlePrefsAsync(string seriesId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/subtitle-prefs/{Uri.EscapeDataString(seriesId)}", ct);
+        => client.DeleteAsync($"/api/v2/subtitle-prefs/{Uri.EscapeDataString(seriesId)}", ct);
 
     // ===== Home Dismissals =====
 
     public Task DismissContinueWatchingAsync(string itemId, string progressUpdatedAt, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/home/dismissals/continue_watching/{Uri.EscapeDataString(itemId)}",
+        => client.PutNoContentAsync($"/api/v2/home/dismissals/continue_watching/{Uri.EscapeDataString(itemId)}",
             new Dictionary<string, object?> { ["progress_updated_at"] = progressUpdatedAt }, ct);
 
     public Task DismissNextUpAsync(string itemId, string seriesId, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v1/home/dismissals/next_up/{Uri.EscapeDataString(itemId)}",
+        => client.PutNoContentAsync($"/api/v2/home/dismissals/next_up/{Uri.EscapeDataString(itemId)}",
             new Dictionary<string, object?> { ["series_id"] = seriesId }, ct);
 
     // ===== Subtitles =====
 
     public Task<SubtitleListResponse> GetSubtitlesAsync(int mediaFileId, CancellationToken ct = default)
-        => client.GetAsync<SubtitleListResponse>($"/api/v1/subtitles/{mediaFileId}", ct);
+        => client.GetAsync<SubtitleListResponse>($"/api/v2/subtitles/{mediaFileId}", ct);
 
-    public Task DeleteSubtitleAsync(int id, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/subtitles/{id}", ct);
+    public Task DeleteSubtitleAsync(long id, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v2/subtitles/stored/{id}", ct);
 
     public Task<SubtitleSearchResponse> SearchSubtitlesAsync(int mediaFileId, string[] languages, CancellationToken ct = default)
-        => client.PostAsync<SubtitleSearchResponse>("/api/v1/subtitles/search",
+        => client.PostAsync<SubtitleSearchResponse>("/api/v2/subtitles/search",
             new Dictionary<string, object?>
             {
-                ["media_file_id"] = mediaFileId,
+                ["media_file_id"] = mediaFileId.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["languages"] = languages,
             }, ct);
 
     public Task<SubtitleDownloadResponse> DownloadSubtitleAsync(int mediaFileId, SubtitleSearchResult result, CancellationToken ct = default)
-        => client.PostAsync<SubtitleDownloadResponse>("/api/v1/subtitles/download",
+        => client.PostAsync<SubtitleDownloadResponse>("/api/v2/subtitles/download",
             new Dictionary<string, object?>
             {
-                ["media_file_id"] = mediaFileId,
+                ["media_file_id"] = mediaFileId.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["provider"] = result.Provider,
                 ["subtitle_id"] = result.SubtitleId,
                 ["language"] = result.Language,
                 ["release_name"] = result.ReleaseName,
-                ["format"] = result.Format,
                 ["score"] = result.Score,
                 ["hearing_impaired"] = result.HearingImpaired,
             }, ct);
@@ -164,7 +158,7 @@ public class PlaybackApi(SiloApiClient client)
             ["hearing_impaired"] = hearingImpaired ? "true" : null,
         };
         return client.PostMultipartAsync<SubtitleDownloadResponse>(
-            "/api/v1/subtitles/upload",
+            "/api/v2/subtitles/upload",
             fields,
             "file",
             fileName,
@@ -185,7 +179,7 @@ public class PlaybackApi(SiloApiClient client)
             ["language"] = fallbackLanguage,
         };
         return client.PostMultipartAsync<SubtitleLanguageDetection>(
-            "/api/v1/subtitles/detect-language",
+            "/api/v2/subtitles/detect-language",
             fields,
             "file",
             fileName,
@@ -194,127 +188,6 @@ public class PlaybackApi(SiloApiClient client)
             ct);
     }
 
-    // ===== Watch Together (Watch Party) =====
-    // Thin wrappers around /api/v1/watch-together/*. Mirrors webui's lib/watchTogether.ts.
-    // The room_token is an opaque JWT returned by create/join; for suggestion endpoints it
-    // travels as a query param (not the session token). Room write endpoints (selection,
-    // policy, close) are profile-scoped and authenticated via the usual Bearer header.
-
-    public Task<WatchTogetherRoomResponse> CreateWatchTogetherRoomAsync(
-        string selectionMode = "host_pick",
-        int? fileId = null,
-        int? libraryId = null,
-        CancellationToken ct = default)
-    {
-        var body = new Dictionary<string, object?>
-        {
-            ["selection_mode"] = selectionMode,
-        };
-        if (fileId.HasValue && libraryId.HasValue)
-        {
-            body["file_id"] = fileId.Value;
-            body["library_id"] = libraryId.Value;
-        }
-        return client.PostAsync<WatchTogetherRoomResponse>("/api/v1/watch-together/rooms", body, ct);
-    }
-
-    public Task<WatchTogetherRoomResponse> JoinWatchTogetherRoomAsync(string? code, string? joinToken, CancellationToken ct = default)
-    {
-        var body = !string.IsNullOrEmpty(joinToken)
-            ? new Dictionary<string, object?> { ["join_token"] = joinToken! }
-            : new Dictionary<string, object?> { ["code"] = code ?? "" };
-        return client.PostAsync<WatchTogetherRoomResponse>("/api/v1/watch-together/join", body, ct);
-    }
-
-    public Task<WatchTogetherRoomResponse> GetWatchTogetherRoomAsync(string roomId, string roomToken, CancellationToken ct = default)
-        => client.GetAsync<WatchTogetherRoomResponse>(
-            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}?room_token={Uri.EscapeDataString(roomToken)}", ct);
-
-    public Task<WatchTogetherRoomResponse> UpdateWatchTogetherRoomPolicyAsync(string roomId, string guestControlPolicy, CancellationToken ct = default)
-        => client.PatchAsync<WatchTogetherRoomResponse>(
-            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/policy",
-            new Dictionary<string, object?> { ["guest_control_policy"] = guestControlPolicy }, ct);
-
-    public Task<WatchTogetherRoomResponse> SelectWatchTogetherRoomItemAsync(
-        string roomId, string contentId, int? fileId = null, int? libraryId = null, CancellationToken ct = default)
-    {
-        var body = new Dictionary<string, object?>
-        {
-            ["content_id"] = contentId,
-        };
-        if (fileId.HasValue)
-            body["file_id"] = fileId.Value;
-        if (libraryId.HasValue)
-            body["library_id"] = libraryId.Value;
-
-        return client.PutAsync<WatchTogetherRoomResponse>(
-            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/selection", body, ct);
-    }
-
-    public Task CloseWatchTogetherRoomAsync(string roomId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}", ct);
-
-    public Task<WatchTogetherSuggestionsResponse> ListWatchTogetherSuggestionsAsync(string roomId, string roomToken, CancellationToken ct = default)
-        => client.GetAsync<WatchTogetherSuggestionsResponse>(
-            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/suggestions?room_token={Uri.EscapeDataString(roomToken)}", ct);
-
-    public Task<WatchTogetherSuggestionsResponse> CreateWatchTogetherSuggestionAsync(
-        string roomId, string roomToken,
-        string contentId, string contentType, string title,
-        string? subtitle = null, string? posterUrl = null, string? note = null,
-        CancellationToken ct = default)
-    {
-        var body = new Dictionary<string, object?>
-        {
-            ["content_id"] = contentId,
-            ["content_type"] = contentType,
-            ["title"] = title,
-            ["subtitle"] = subtitle ?? "",
-            ["poster_url"] = posterUrl ?? "",
-            ["note"] = note ?? "",
-        };
-        return client.PostAsync<WatchTogetherSuggestionsResponse>(
-            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/suggestions?room_token={Uri.EscapeDataString(roomToken)}",
-            body, ct);
-    }
-
-    public Task<WatchTogetherSuggestionsResponse> DeleteWatchTogetherSuggestionAsync(
-        string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
-    {
-        // server returns the updated suggestions list, so we can't use DeleteAsync (no return).
-        // Use a manual Patch-style call isn't available either — fall back to PutAsync with a
-        // pseudo body? No — the proper approach is to keep a distinct delete-with-response helper.
-        // Simpler: fire the DELETE, then re-fetch the list.
-        return DeleteAndRefetchSuggestionsAsync(roomId, roomToken, suggestionId, ct);
-    }
-
-    private async Task<WatchTogetherSuggestionsResponse> DeleteAndRefetchSuggestionsAsync(
-        string roomId, string roomToken, string suggestionId, CancellationToken ct)
-    {
-        await client.DeleteAsync(
-            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/suggestions/{Uri.EscapeDataString(suggestionId)}?room_token={Uri.EscapeDataString(roomToken)}", ct);
-        return await ListWatchTogetherSuggestionsAsync(roomId, roomToken, ct);
-    }
-
-    public Task<WatchTogetherSuggestionsResponse> VoteWatchTogetherSuggestionAsync(
-        string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
-        => client.PostAsync<WatchTogetherSuggestionsResponse>(
-            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/suggestions/{Uri.EscapeDataString(suggestionId)}/vote?room_token={Uri.EscapeDataString(roomToken)}",
-            new Dictionary<string, object?>(), ct);
-
-    public async Task<WatchTogetherSuggestionsResponse> UnvoteWatchTogetherSuggestionAsync(
-        string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
-    {
-        await client.DeleteAsync(
-            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/suggestions/{Uri.EscapeDataString(suggestionId)}/vote?room_token={Uri.EscapeDataString(roomToken)}", ct);
-        return await ListWatchTogetherSuggestionsAsync(roomId, roomToken, ct);
-    }
-
-    public Task<WatchTogetherRoomResponse> PromoteWatchTogetherSuggestionAsync(
-        string roomId, string roomToken, string suggestionId, CancellationToken ct = default)
-        => client.PostAsync<WatchTogetherRoomResponse>(
-            $"/api/v1/watch-together/rooms/{Uri.EscapeDataString(roomId)}/suggestions/promote?room_token={Uri.EscapeDataString(roomToken)}",
-            new Dictionary<string, object?> { ["suggestion_id"] = suggestionId }, ct);
 }
 
 public class SubtitleListResponse
@@ -324,7 +197,7 @@ public class SubtitleListResponse
 
 public class SubtitleEntry
 {
-    public int Id { get; set; }
+    public long Id { get; set; }
     public int MediaFileId { get; set; }
     public string Provider { get; set; } = "";
     public string Language { get; set; } = "";
@@ -362,7 +235,7 @@ public class SubtitleSearchResult
 public class SubtitleDownloadResponse
 {
     public SubtitleEntry? Subtitle { get; set; }
-    public int Id { get; set; }
+    public long Id { get; set; }
     public string Language { get; set; } = "";
     public string Format { get; set; } = "";
 }

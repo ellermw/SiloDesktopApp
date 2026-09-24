@@ -129,10 +129,7 @@ public sealed class DirectStreamRelay
                         requestedRange is not null,
                         headOnly,
                         resumeEntityTag);
-                    using var response = await _httpClient.SendAsync(
-                        request,
-                        HttpCompletionOption.ResponseHeadersRead,
-                        cancellationToken);
+                    using var response = await SendHeadersAsync(request, cancellationToken);
 
                     // CDN edges and a just-started server stream can briefly return
                     // 404/429/5xx before media bytes are available. Retry these
@@ -149,6 +146,12 @@ public sealed class DirectStreamRelay
                         continue;
                     }
 
+                    // Error documents have their own ETags and must never be
+                    // classified as replacement media or copied into an already
+                    // open media response. Retry the same offset instead.
+                    if (headersWritten && !response.IsSuccessStatusCode)
+                        response.EnsureSuccessStatusCode();
+
                     // A strong If-Range validator returning 200 means the source
                     // entity changed. Never splice bytes from the replacement into
                     // mpv's active representation; close this relay so the player
@@ -156,7 +159,7 @@ public sealed class DirectStreamRelay
                     var responseEntityTag = response.Headers.ETag is { IsWeak: false } strongTag
                         ? strongTag.ToString()
                         : null;
-                    if (_supportsRanges &&
+                    if (_supportsRanges && response.IsSuccessStatusCode &&
                         !string.IsNullOrWhiteSpace(resumeEntityTag) &&
                         (nextOffset > 0 || requestedRange is not null) &&
                         (response.StatusCode == HttpStatusCode.OK ||
@@ -165,7 +168,7 @@ public sealed class DirectStreamRelay
                     {
                         throw new DirectStreamEntityChangedException();
                     }
-                    if (!string.IsNullOrWhiteSpace(responseEntityTag))
+                    if (response.IsSuccessStatusCode && !string.IsNullOrWhiteSpace(responseEntityTag))
                         Volatile.Write(ref _strongEntityTag, responseEntityTag);
 
                     await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -297,6 +300,21 @@ public sealed class DirectStreamRelay
         var shift = Math.Clamp(attempt - 1, 0, 3);
         var delayMs = 100 * (1 << shift);
         return Task.Delay(delayMs, cancellationToken);
+    }
+
+    private async Task<HttpResponseMessage> SendHeadersAsync(
+        HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        using var headerTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        headerTimeout.CancelAfter(_upstreamIdleTimeout);
+        try
+        {
+            return await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, headerTimeout.Token);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException($"Upstream sent no response headers for {_upstreamIdleTimeout.TotalSeconds:0} seconds.");
+        }
     }
 
     private HttpRequestMessage CreateRequest(

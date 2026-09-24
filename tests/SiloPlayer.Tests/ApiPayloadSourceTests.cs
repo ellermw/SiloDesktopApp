@@ -10,14 +10,14 @@ public sealed class ApiPayloadSourceTests
             "src",
             "SiloPlayer.Core",
             "Api",
-            "PlaybackApi.cs"));
+            "PlaybackApi.cs")) + File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer.Core", "Api", "PlaybackApi.V2.cs"));
 
         Assert.DoesNotContain("new { position", source);
         Assert.DoesNotContain("new { audio_track_index", source);
         Assert.DoesNotContain("new { progress_updated_at", source);
         Assert.DoesNotContain("new { media_file_id", source);
-        Assert.Contains("""["is_paused"] = isPaused""", source);
-        Assert.Contains("""["audio_track_index"] = trackIndex""", source);
+        Assert.Contains("""["is_paused"] = sample.IsPaused""", source);
+        Assert.Contains("""Optional("audio_track_index", request.AudioTrackIndex)""", source);
     }
 
     private static string FindRepositoryRoot()

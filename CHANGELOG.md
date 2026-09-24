@@ -2,6 +2,20 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.1.102 (API v2 compatibility and desktop playback updates)
+
+- Migrated current authentication, profile, browse, home, collection, settings, notification, download, ebook, and integration contracts to Silo API v2. Added context-aware pagination, conditional settings/collection updates, and current error handling.
+- Updated playback protocol v3 for API v2 plans, installation and retry identities, ordered progress/stop receipts, server-restart handling, fresh WebSocket tickets, subtitles, and Watch Party contracts. Preserved native direct play and fixed-source selection.
+- Added a native direct HTTP reader for eligible signed streams, removing the local relay from that path. Corrected the combined response-header/body recovery deadline and added bounded, credential-redacted playback/network diagnostics. These verified repairs do not establish that every cause of recurring buffering has been resolved.
+- Fixed search and shared poster-grid caption sizing so the year and media-type label are fully visible.
+- Corrected audiobook progress conversion to milliseconds and handling of separate intro/credits marker ranges.
+- Added experimental Intel VSR and FSRCNNX neural upscaling alongside the existing NVIDIA RTX path. Included shader source and third-party license notices; AMD/Intel hardware validation remains incomplete.
+- Included recent library performance tracing and native playback/frame-pacing improvements.
+- Server contract reference: official Silo Server `main` commit `c80c5169f8e58f354fba35551e0c2bbcabb70b8a`, fetched September 22, 2026. This compatibility update is not a claim of complete WebUI visual parity.
+- Promoted the tested API-v2 candidate to the clean release version **1.1.102**.
+- Verified 1,045 Release tests and six published playback-service checks. Clean packaging passed native libmpv hash/load and published-resource checks; Inno Setup compiled successfully.
+- Installer SHA-256: `CEC056DED1B56219A319C01C38B80BD2CCDA9A25541AB6C560BF4DC97B9BCEBC`.
+
 ## 1.1.100 (RTX upscaling preview and playback clarity)
 
 - Added an opt-in NVIDIA RTX AI upscaling preview for eligible SDR input up to 1080p. Detects RTX adapters through DXGI, requests NVIDIA D3D11 processing, and falls back after processing errors. GPU support remains NVIDIA RTX only, with a 2× cap per dimension; HDR/native 4K and unsupported input bypass enhancement.

@@ -14,7 +14,7 @@ public sealed class CurrentCatalogParitySourceTests
         Assert.Contains("_sortPreferenceTail", page);
         Assert.Contains("string.Equals(_authService.SelectedProfileId, profileId", page);
         Assert.Contains("SetCollectionSortPreferenceAsync", page);
-        Assert.Contains("/api/v1/collections/sort-preference", api);
+        Assert.Contains("/api/v2/collections/sort-preference", api);
     }
 
     [Fact]

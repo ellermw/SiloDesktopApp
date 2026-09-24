@@ -13,8 +13,8 @@ public sealed class CurrentServerContractDeltaTests
         var watchlistPage = Read("src", "SiloPlayer", "Views", "WatchlistPage.xaml.cs");
 
         Assert.Contains("public bool HasMore", model);
-        Assert.Contains("/api/v1/favorites?limit=", api);
-        Assert.Contains("/api/v1/watchlist?limit=", api);
+        Assert.Contains("/api/v2/favorites", api);
+        Assert.Contains("/api/v2/watchlist", api);
         Assert.Contains("response.HasMore", favorites);
         Assert.Contains("response.HasMore", watchlist);
         Assert.Contains("_offset += PageSize", favorites);

@@ -57,7 +57,7 @@ public sealed class UserOnlyClientArchitectureTests
         Assert.Contains("/match/search", source);
         Assert.Contains("/match/apply", source);
         Assert.Contains("/refresh-metadata", source);
-        Assert.Equal(3, source.Split("/api/v1/admin/", StringSplitOptions.None).Length - 1);
+        Assert.Equal(3, source.Split("/api/v2/admin/", StringSplitOptions.None).Length - 1);
     }
 
     [Fact]

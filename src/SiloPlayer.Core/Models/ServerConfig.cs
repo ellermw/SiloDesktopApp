@@ -36,6 +36,9 @@ public class AppSettings
     /// <summary>Local, opt-in RTX video enhancement. Never changes server quality preferences.</summary>
     public bool NvidiaVideoUpscaling { get; set; }
 
+    /// <summary>Local experimental processor selection. Null preserves the legacy RTX preference.</summary>
+    public string? VideoUpscalingMode { get; set; }
+
     public int AudiobookSkipBackSeconds { get; set; } = 10;
     public int AudiobookSkipForwardSeconds { get; set; } = 30;
     public bool AudiobookSmartRewind { get; set; } = true;

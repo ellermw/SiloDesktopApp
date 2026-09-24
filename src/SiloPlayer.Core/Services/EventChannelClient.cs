@@ -8,7 +8,7 @@ namespace SiloPlayer.Core.Services;
 
 /// <summary>
 /// WebSocket client for the Silo server's realtime event channel at
-/// <c>/api/v1/events/ws</c>. Handles the handshake (hello → subscribe → subscribed →
+/// <c>/api/v2/events/ws</c>. Handles the handshake (hello → subscribe → subscribed →
 /// snapshot → event stream), dispatches frames to per-channel subscribers, and
 /// reconnects with exponential backoff.
 ///
@@ -350,7 +350,8 @@ public sealed class EventChannelClient : IDisposable
             return;
         }
 
-        var baseUrl = _apiClient.BaseUrl;
+        var context = _apiClient.CaptureContext();
+        var baseUrl = context.BaseUrl;
         if (string.IsNullOrEmpty(baseUrl))
         {
             throw new InvalidOperationException("API client base URL is not set");
@@ -359,19 +360,20 @@ public sealed class EventChannelClient : IDisposable
         var wsUrl = baseUrl.Replace("https://", "wss://", StringComparison.OrdinalIgnoreCase)
                            .Replace("http://", "ws://", StringComparison.OrdinalIgnoreCase)
                            .TrimEnd('/');
-        wsUrl += "/api/v1/events/ws";
-        wsUrl = UrlHelper.AppendToken(wsUrl, _apiClient.AccessToken);
-        var ticket = await MintEventsTicketIfNeededAsync(channelsSnapshot, ct).ConfigureAwait(false);
-        if (!string.IsNullOrWhiteSpace(ticket))
-            wsUrl += (wsUrl.Contains('?') ? "&" : "?") + $"ticket={Uri.EscapeDataString(ticket)}";
+        wsUrl += "/api/v2/events/ws";
+        var ticket = await MintEventsTicketAsync(ct).ConfigureAwait(false);
+        if (!_apiClient.IsCurrentContext(context)) throw new OperationCanceledException("Event authority changed.", ct);
 
         var ws = new ClientWebSocket();
+        ws.Options.AddSubProtocol("silo.events.v2");
+        ws.Options.AddSubProtocol("silo.ticket." + ticket);
         _ws = ws;
         try
         {
             var logUrl = wsUrl.Contains('?') ? wsUrl[..wsUrl.IndexOf('?')] : wsUrl;
             Log($"Connecting to {logUrl} (channels: {string.Join(",", channelsSnapshot)})");
             await ws.ConnectAsync(new Uri(wsUrl), ct);
+            if (!_apiClient.IsCurrentContext(context)) throw new OperationCanceledException("Event authority changed.", ct);
             StateChanged?.Invoke(ws.State);
             Log("Connected");
         }
@@ -385,7 +387,7 @@ public sealed class EventChannelClient : IDisposable
 
         try
         {
-            await ReceiveLoop(ws, channelsSnapshot, ct);
+            await ReceiveLoop(ws, channelsSnapshot, context, ct);
         }
         finally
         {
@@ -405,6 +407,7 @@ public sealed class EventChannelClient : IDisposable
     private async Task ReceiveLoop(
         ClientWebSocket ws,
         string[] channelsToSubscribe,
+        ApiRequestContext context,
         CancellationToken ct)
     {
         var buffer = new byte[16 * 1024];
@@ -416,6 +419,7 @@ public sealed class EventChannelClient : IDisposable
             try
             {
                 result = await ws.ReceiveAsync(buffer, ct);
+                if (!_apiClient.IsCurrentContext(context)) throw new OperationCanceledException("Event authority changed.", ct);
             }
             catch (OperationCanceledException)
             {
@@ -591,29 +595,19 @@ public sealed class EventChannelClient : IDisposable
         await ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
     }
 
-    private async Task<string?> MintEventsTicketIfNeededAsync(string[] channels, CancellationToken ct)
+    private async Task<string> MintEventsTicketAsync(CancellationToken ct)
     {
-        if (!channels.Any(ch => string.Equals(ch, "notifications", StringComparison.OrdinalIgnoreCase)))
-            return null;
-
-        try
-        {
-            var response = await _apiClient.PostAsync<EventsWsTicketResponse>(
-                "/api/v1/events/ws-ticket",
-                new Dictionary<string, object?>(),
-                ct).ConfigureAwait(false);
-            return response.Ticket;
-        }
-        catch (Exception ex)
-        {
-            Log($"Failed to mint notifications websocket ticket: {ex.Message}");
-            return null;
-        }
+        var response = await _apiClient.SendRequestAsync<EventsWsTicketResponse>(HttpMethod.Post,
+            "/api/v2/events/ws-ticket", null, null, ct).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(response.Ticket) || response.Protocol != "silo.events.v2")
+            throw new InvalidDataException("Invalid event socket ticket response.");
+        return response.Ticket;
     }
 
     private sealed class EventsWsTicketResponse
     {
         public string Ticket { get; set; } = "";
+        public string Protocol { get; set; } = "";
     }
 
     private static void Log(string msg)

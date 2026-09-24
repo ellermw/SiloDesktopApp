@@ -1,0 +1,1792 @@
+[
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\App.xaml.cs",
+    "Match": true,
+    "Expected": "5A3B2AC0576A3421CCDB9EFF22A4E664280C8F863B34FA15145D04F536BD807F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\AddToCollectionDialog.xaml.cs",
+    "Match": true,
+    "Expected": "791B2145DFF95AB79375893D5C68B65EA853BB714CB56945DF933D6FCE929ECE"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\AudiobookNowListening.xaml.cs",
+    "Match": true,
+    "Expected": "6319F668B2656260665176A290069A95C3F5F0978B80A3B4AE279B4CFC66B04B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\AudiobookSquareCard.xaml.cs",
+    "Match": true,
+    "Expected": "46B929EB10B66BC5CD836F7E021D987B8C8E152EB3276BE8941A8ED18D8EBA38"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\BackdropImage.xaml.cs",
+    "Match": true,
+    "Expected": "276CC1CC5246D22D1501DF4F5EE83BE6BA0755928A217A3A749399E16CE97D3A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\CustomSeekBar.xaml.cs",
+    "Match": true,
+    "Expected": "9DAE171CA1E272668EA9084E8088A48F47F61086CF4C02E60A451F11FEB1379A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\GlobalSearchDialog.xaml.cs",
+    "Match": true,
+    "Expected": "DAB2CD475EBA905273D137E383E0D8B4FA7B21342791E9A0700247ACE51A3217"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\HeroCarousel.xaml.cs",
+    "Match": true,
+    "Expected": "E77B1E9D5E814629880B223F347664501944B78C8F793376971750B1C2A6CD54"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\LandscapeCard.xaml.cs",
+    "Match": true,
+    "Expected": "F93CDC9941C861529F3E5778F4BCCD07231A4EDDE083699C0FC8A5161630A489"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\LibraryGridCard.cs",
+    "Match": true,
+    "Expected": "EABF606E5FAD5841436FD7EF679C93D686748D2BCFA321C33FFDD2AF0455E624"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\MangaFilesDialog.cs",
+    "Match": true,
+    "Expected": "E97B7677ABE0366F880D3146BFD057E1611C68030E6C18CAADD3C2C16188203B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\MatchItemDialog.xaml.cs",
+    "Match": true,
+    "Expected": "1D7D70A42B607F5A3DF6858B32E84FF2F9AC8CB81006D01D6D440AE6F21D3C15"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\MediaItemCardActions.cs",
+    "Match": true,
+    "Expected": "BBA37A6A82CAB6FFBF2A442024A3D780ECB454A643BEF58FD450FAF57556F69B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\MediaItemMenu.cs",
+    "Match": true,
+    "Expected": "5BDFACE3E37E86C1785857BA74145275AD1213ABC39E0E1CC58078428A1E7FE6"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\MiniPlayerBar.xaml.cs",
+    "Match": true,
+    "Expected": "5CA3F82CE3799938E942B6625D650939333694124D9754580E4961BF4ED2E385"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\NotificationSettingsControl.xaml.cs",
+    "Match": true,
+    "Expected": "FA9B550F96DC2207EA900D0B10DC8A94DDFDD6ABBE59E80C66F7394DFA7B9C1B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\NowListeningHero.xaml.cs",
+    "Match": true,
+    "Expected": "91C9B9AABD481A2D27DBEEEE5532C976F531EE972D50790652A902C63DD6B5E0"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\PlayerOverlay.xaml.cs",
+    "Match": true,
+    "Expected": "5D53B27B5E11817F6B6A9C98EE1F289CC0BE47507B922E7DD5FC71EBA16D2CCE"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\PosterCard.xaml.cs",
+    "Match": true,
+    "Expected": "05B868CA522827B52A05432FEE2572889AD7EA643CF08C35D031700C70709B41"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\RefreshMetadataDialog.cs",
+    "Match": true,
+    "Expected": "2D14993E735D486366F96D38AA1B73BB7DFB5337DEF25F7780F137564F1F17F0"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\SectionRow.xaml.cs",
+    "Match": true,
+    "Expected": "8D8F8B11FAECC1FAD9A022D5F0A1EE64E22E1EF65FA7479A80AA4B82BBA867F1"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\SkeletonBox.cs",
+    "Match": true,
+    "Expected": "25E1C3646B561F0842A23A335DABFF83A709250055ABE40DA68D1EE0E0661ACB"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\SlideSheet.xaml.cs",
+    "Match": true,
+    "Expected": "4F4BEA14AABD3CE6C5B234451DA9BFCD7692CE9576A947CF92DA00E363E32D54"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\SubtitleAiDialog.xaml.cs",
+    "Match": true,
+    "Expected": "0FF94DE938414F65E4CE278CE05065D9D76CE2EDE3089C12512B28D3FF451339"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\SubtitleAppearanceDialog.xaml.cs",
+    "Match": true,
+    "Expected": "90634FF1D720305C0291444A17C7295D0E6B023D7EF10D808B84FE1892F3E384"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\SubtitleSearchDialog.xaml.cs",
+    "Match": true,
+    "Expected": "ABDBBA8C0BC6601D4435B6389E4EA010DE61EDB66B20BD9C10BBB21DA349B145"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\ToastContainer.xaml.cs",
+    "Match": true,
+    "Expected": "F282D26B3A4AC4EF3081AEFB3CFF62B6799A2DD7482A674F579D9840729A017F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\WatchTonightDialog.xaml.cs",
+    "Match": true,
+    "Expected": "889A4ED3A6B9CCA2256D0FC66F9862F7ADCF416C6C6D189F375523041AC1F0B6"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\WrapPanel.cs",
+    "Match": true,
+    "Expected": "ACF49EE46391F96AD8E4574E1770FDF343FEAAC60E36143F2DB922FDB8FE8CBC"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Converters\\BoolToVisibilityConverter.cs",
+    "Match": true,
+    "Expected": "A07610C1AE21B19A98F490709708E3DA49BE1BC25942F0882810F6D499DB1198"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Converters\\InverseBoolConverter.cs",
+    "Match": true,
+    "Expected": "397FF06CD6E11365A2F3478B57227C9CA4F0E0DEB02D777A4D2C557FE806D624"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Converters\\NullToVisibilityConverter.cs",
+    "Match": true,
+    "Expected": "23EBF81661943AC60CBBC661F9C8F1BF453D170A0CF642FE869B464A76354F64"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Converters\\StringToInitialConverter.cs",
+    "Match": true,
+    "Expected": "4BB6666AA3DC1726D14C197624AE6429F507B26BA521CEC8DC2E3E080F8017D4"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Converters\\UrlToImageSourceConverter.cs",
+    "Match": true,
+    "Expected": "216734008E89563522257BC8FF4344E167D4A73A1F0F21325252DC990381A707"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Helpers\\BulkObservableCollection.cs",
+    "Match": true,
+    "Expected": "8F39A1F4F21D0AE01A439B9E97E88AB8C6A9F6380206BCC09C6E63CAE1D0E05B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Helpers\\DateTimeDisplay.cs",
+    "Match": true,
+    "Expected": "5A8A1EE56A0108BE8EE89F6DD9B9D84D7E9DE1897A1FBBA5A1BF0129922C9FF1"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Helpers\\DocumentTitle.cs",
+    "Match": true,
+    "Expected": "CD3FB8E30F48D9427FEAF4F7468A7BDAC9DF08BEBC865E838DB0AF1D7DD8022C"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Helpers\\InviteDeepLink.cs",
+    "Match": true,
+    "Expected": "E8A553D13463A500FB36EAB4CFE2CA5E54E9FF4ED729DD43539C55405885EAC9"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Helpers\\NavigationService.cs",
+    "Match": true,
+    "Expected": "15325A6BE5EB79778AFAEF293331B24E8F294312ACD3A509408939BD77C080B6"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Helpers\\PageTransitionHelper.cs",
+    "Match": true,
+    "Expected": "221C5EBEEE72380761116D68594741CE99C87382C67BE44996C77320E8A1A961"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Helpers\\VirtualCatalogItems.cs",
+    "Match": true,
+    "Expected": "A18210CD716F22C387F9440F9AF93CEA89DACFF4BE8FA009439C410731ECAE59"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Imports.cs",
+    "Match": true,
+    "Expected": "33144D09EB40901FA72E92D835E7602FEAFA6F7DE4D374594ED04AF71A34D553"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\MainWindow.xaml.cs",
+    "Match": true,
+    "Expected": "C1154A1ECFD978D817766B70128EF3037ACB0B73FFEF75006660C9307C626DB0"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Messaging\\MediaSurfaceMessages.cs",
+    "Match": true,
+    "Expected": "BA69C26EED52C87C982C9D393DBE6EB7D8DD90E3AF77D9DC11BBACEAB76CD2AD"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Services\\AccessibilityService.cs",
+    "Match": true,
+    "Expected": "39FAE902328D441A744439E1F4475A798F91DF43EBB5AD4AE555AD27412421CF"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Services\\CardOverlayService.cs",
+    "Match": true,
+    "Expected": "67750A87C8A0C0595797B33135E0C77F0E627B468764E15C4ED3F5242FF01F3F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Services\\EbookPackageExtractor.cs",
+    "Match": true,
+    "Expected": "69EE056FB7A56B3056F3FE32949CB70AA1E9140C89689A51B7E11476F91B1FFA"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Services\\HlsProxy.cs",
+    "Match": true,
+    "Expected": "A83F3B4F9E6917658C447C49C68913C0DACF19FC4CC37F5A2A8B2E3301FFB165"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Services\\MpvVideoHost.cs",
+    "Match": true,
+    "Expected": "FC9358F727FAE2967FDE108A172AC815CCF3CD1F4197BE49308E193BD4A73665"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Services\\MpvVideoWindow.cs",
+    "Match": true,
+    "Expected": "6A432AD71DDDE33022A74240AC3E7660F5DFA0B3525548E9209ACEBB501527B0"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Services\\PlaybackDialogHost.cs",
+    "Match": true,
+    "Expected": "30AC6F92192CDA90873226E0659C4D9A418BD3FDF7B5BA26BFB7BA5053048115"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Services\\PlaybackWebSocket.cs",
+    "Match": true,
+    "Expected": "4878CB1FB60310F8FAE62990135F63135358F54AA52EDCBC20481DD5D637BE19"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Services\\PlayerService.cs",
+    "Match": true,
+    "Expected": "9FCF3C43ADEC7D84C7EB65239802BD64DE68D6A1E9D82E300797828ECC95B507"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Services\\ThemeService.cs",
+    "Match": true,
+    "Expected": "18D2C67358E785BB95072161015174F2122F2547C5DDBB290A99FE629644E435"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Services\\ToastService.cs",
+    "Match": true,
+    "Expected": "03A4B7B9A10310EF32A2ADEB956EC1F640B371071BA06A26D96C4D7C8F3E56A0"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Services\\UICustomizationService.cs",
+    "Match": true,
+    "Expected": "4230C2CCC8D38DA3A8D47AC022EE008AFF1B2C57B511D84FA47220A881D4918F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Services\\WatchTogetherCoordinator.cs",
+    "Match": true,
+    "Expected": "76AF991FD65E4C6A7A19B487539981C5E4DB5F4194B77A7F8932469623A729D0"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\ActivateDeviceViewModel.cs",
+    "Match": true,
+    "Expected": "DD7EFCC83C6363E3C6E727FC44E9598AC61298100484A2050E549A90EF2A7378"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\CalendarViewModel.cs",
+    "Match": true,
+    "Expected": "B4CE63312A28F053BDA6239F843985B9A76366C7E79721BEDE0E493D4460B9AF"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\CollectionEditorViewModel.cs",
+    "Match": true,
+    "Expected": "06384EA01D22EA267B14BE3B0710AA93F32F48F983C8769857C44167548C6BE5"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\CollectionsViewModel.cs",
+    "Match": true,
+    "Expected": "34047089FD259B224D2DF51EBF30D5097C864EE3D241D8FD5F8077E363D99490"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\DownloadsViewModel.cs",
+    "Match": true,
+    "Expected": "D95CB101BCE53D84855EFF37010A916E800AD357EA79240EE8456C8A9E477456"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\FavoritesViewModel.cs",
+    "Match": true,
+    "Expected": "4C99D5931BD8BB5722412FD785F5E993B5F1E0233E687739B71F5E3EED5DAA72"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\HistoryViewModel.cs",
+    "Match": true,
+    "Expected": "F9B061B5136847BAE89679EA0FF6345BFA87CD0DFE1E0BBD914E102C9E6B52C6"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\HomeViewModel.cs",
+    "Match": true,
+    "Expected": "642B45BBD830D01294195E37F451780AAF1B63E46E1B4EF161C1F771D56F34AF"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\InviteClaimViewModel.cs",
+    "Match": true,
+    "Expected": "CF82C8423ED2A08ACDF2741A73A0D0096890E2D0FF081788EAD9CA4A2E2710DE"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\ItemDetailViewModel.cs",
+    "Match": true,
+    "Expected": "BDC260C4E3156AD15003B02759E767FB2BD613DBB5663A9487192F3A60372927"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\LibraryViewModel.cs",
+    "Match": true,
+    "Expected": "2F507D4F86773D09BE31D9079EB0B7ABFB84A7BF8342C6F45CC9B3B1FA8144BD"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\LoginViewModel.cs",
+    "Match": true,
+    "Expected": "85F5DCE2B6A5AD697C44D4F7369CE1A1D27AEA9A9EF396B12E1891E63EC4803C"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\MainViewModel.cs",
+    "Match": true,
+    "Expected": "27D5DCB5EDA95D70D64FC99782257A0266B5A4DBAE7ABA83365F7DE838040AE2"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\NotificationSettingsViewModel.cs",
+    "Match": true,
+    "Expected": "50F6EC03FAB644120C539A55AACFAD3C8A2190C3DEBC0D69AFF0C5FEE6D78FC5"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\NotificationsViewModel.cs",
+    "Match": true,
+    "Expected": "FBAEB2826A4B93D05CB0BE6378F9D69CF3194489D8F80E4F691F457C0AFCEE3A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\PersonDetailViewModel.cs",
+    "Match": true,
+    "Expected": "DE26A9D795EF51CC8197E8C9D93729D68EF3B5488CECC5ECCB2CAA71B995C325"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\ProfileSelectViewModel.cs",
+    "Match": true,
+    "Expected": "3AD19F0ECCDD0413CD156A184E29125390CB0C44DEF9A2165E9DE8D72DFCFA78"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\RecommendationSectionViewModel.cs",
+    "Match": true,
+    "Expected": "151D2B77CDD92ABE219BB6544D98A7831353F4E46D9EDB713CE54A5731C6FA42"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\RecommendationsViewModel.cs",
+    "Match": true,
+    "Expected": "6B5CEA78FE591FF8B3B7FAFA310469A90246D85419071E6BB3E62B23BD2FACFD"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\RequestsViewModel.cs",
+    "Match": true,
+    "Expected": "0D54EF8BB51685E86B54421B5BC95570C995ADB03853AB02B202A70BC38093EC"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\SearchViewModel.cs",
+    "Match": true,
+    "Expected": "C608460375D5C256474131316C4A96A0F6766A16752D6FE8F52F9DEDD2A23CC2"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\ServerSelectViewModel.cs",
+    "Match": true,
+    "Expected": "099E0EBD1C5410A0CD25A76C3E665BFF56CE72618A546BC055E57133BB2DD4BA"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\SettingsViewModel.cs",
+    "Match": true,
+    "Expected": "FE3C2A5D28590B12A2FF6B68CC1B998585C75840FC26A88EA6C42ACF871FF724"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\SignupViewModel.cs",
+    "Match": true,
+    "Expected": "3B9E55E261F2CB3D280F72371D70B5C4EB7EE908F3D6B51145E39D8F7524EC26"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\SmartCollectionWizardViewModel.cs",
+    "Match": true,
+    "Expected": "CB0CBADE7485EA88EB1A311937C532BE0CCF1067CB32EF7F7FF60102E2F0C12E"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\TasteSeedViewModel.cs",
+    "Match": true,
+    "Expected": "97876117A410679847AE7773D9982BB0B08C2147DCE9FB13E5B59C185BC82A22"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\WatchlistViewModel.cs",
+    "Match": true,
+    "Expected": "F2F57A50299C195B2A6D9AB94C92E73AA964687D90BC95054C683A96A9153808"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\ViewModels\\WatchTogetherViewModels.cs",
+    "Match": true,
+    "Expected": "20767B09E17A5E544EB4855B9EF06D5AF1C25949A98F6FA725BE1222681F13B6"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\ActivateDevicePage.xaml.cs",
+    "Match": true,
+    "Expected": "1B52951441512BE12B588D2A99EDD910C6CFF4A9E59343E851E92C3BA6E7494D"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\CalendarPage.xaml.cs",
+    "Match": true,
+    "Expected": "F99ABF9FFBB2DA1473B057CA10504718D8C4BE1934F07EA23673466A67516F25"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\CatalogPage.xaml.cs",
+    "Match": true,
+    "Expected": "032134A6680D521AD066D30CDA40A91A5561C86AC1800815D79801B49F8F3DC1"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\CollectionBrowsePage.xaml.cs",
+    "Match": true,
+    "Expected": "D3D28785AEDF8CCB0904FE01BE5AE5AF2E06292307932F82525912E4BC605C99"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\CollectionEditorPage.xaml.cs",
+    "Match": true,
+    "Expected": "5986F28FA34FF2C5E727CE1A671431D895A6956610AC805C882239B8ED55EB5C"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\CollectionsPage.xaml.cs",
+    "Match": true,
+    "Expected": "EED7AC7A31BF3B78A5227774AFB3BF7C2819D99A120D3BFEF0660556098EBE60"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\Dialogs\\FeatureTourDialog.cs",
+    "Match": true,
+    "Expected": "062DAEE39BDE0357084DABB1DC394115B91022497E02D15DA7BE4545E77780CD"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\Dialogs\\ProfileEditorDialog.cs",
+    "Match": true,
+    "Expected": "5D732877B1C310CD7A63B3453D02C1485B68FA5BB08D3E02A7D0E9475011A29D"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\Dialogs\\RecipeGalleryDialog.cs",
+    "Match": true,
+    "Expected": "DF62FFCD103719CEFDBB409766FE4E3C4B624F594CDF4F10DE367726184BA66B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\DownloadsPage.xaml.cs",
+    "Match": true,
+    "Expected": "56AD66356DA4965C48BE2C05FCE02FE7A11693C60775CB997415D507F77D632C"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\EbookReaderPage.xaml.cs",
+    "Match": true,
+    "Expected": "A750F9603DC42F87232499FE4EDB34E0942FFE72276B31FF0EC43E6B21D1E923"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\FavoritesPage.xaml.cs",
+    "Match": true,
+    "Expected": "25607158476C1F7191C12FD6129FF4BDEB954D7B0917F37D961B9B376AEC14F0"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\HistoryPage.xaml.cs",
+    "Match": true,
+    "Expected": "20BE301D1E080162E3C553536ECB38EFE841FB45660A36373A79BC00FA37FE05"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\HomePage.xaml.cs",
+    "Match": true,
+    "Expected": "EF4801D5C1B243E8A77611FA6702398024638412C7894CA828BD7568705FDAE0"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\HouseholdSetupPage.xaml.cs",
+    "Match": true,
+    "Expected": "CF755CDB82CEE39AA62A1088CD12AD261F6AD31CB883B551EB47CF21749DA135"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\InviteClaimPage.xaml.cs",
+    "Match": true,
+    "Expected": "5F6D1085C4A85AEC964A538D2782F59FB951D6833CB1E7569CA3DD16BBFF08F5"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\ItemDetailPage.xaml.cs",
+    "Match": true,
+    "Expected": "0973C2A89B970E7A4A32B2E50FF9C570CA5BEC587A0591A7CA1DBB045394DBEA"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\LibraryPage.xaml.cs",
+    "Match": true,
+    "Expected": "428D6E687FA3F1EEF9605778D4794B029E6EB708E7DBACFD546F48D96ABC6E0F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\LoginPage.xaml.cs",
+    "Match": true,
+    "Expected": "9D2AADC0CF41E5F429173224C5020F07AAA9B59145A1A34D2229922FBED6DB43"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\NotificationsPage.xaml.cs",
+    "Match": true,
+    "Expected": "90FD54FB9AED20930378BEBEA6533CD32E3BDD3C28E5F5E669C76FCAC1537F37"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\PersonDetailPage.xaml.cs",
+    "Match": true,
+    "Expected": "E3E684D64FF39B0A6A247516E70D2BC9A48B66FC459177121325C5B2662BE9D8"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\PluginRoutePage.xaml.cs",
+    "Match": true,
+    "Expected": "43E308D57B16E9FBEA620BFE079907E2C12B569AD0DF518BC5A2D1422A360247"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\ProfileSelectPage.xaml.cs",
+    "Match": true,
+    "Expected": "66B619ADBCC4B7478A63D7B9ADAAF58C00CDE5B9052BBF1B717CE9354B8F4CEC"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\RecommendationSectionPage.xaml.cs",
+    "Match": true,
+    "Expected": "6442F5D85AC2A7FCA1B0C4D9FDD5B6FB6AC8CB5D0F8ED2F7F015E42EA8B0D98F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\RecommendationsPage.xaml.cs",
+    "Match": true,
+    "Expected": "78999CC1BEFC0AA9A66B56A749BC31C5BFC4E7932DAEA4B4C73B7EE7DEDB5170"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\RequestBrowsePage.xaml.cs",
+    "Match": true,
+    "Expected": "F8F94FD525BB581968B1D86493E65BA52E474F9E2A86F2C5AD524285B4285508"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\RequestDetailPage.xaml.cs",
+    "Match": true,
+    "Expected": "F890976DF22820567B8ECB7A7399B4C91A13391ECDAD6491A4B43112BCDEFD0E"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\RequestsPage.xaml.cs",
+    "Match": true,
+    "Expected": "FF7220190A2AD6CC2B0B145015B13D08A5C975AD89A8935DA63EDABFF88360D1"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\SearchPage.xaml.cs",
+    "Match": true,
+    "Expected": "C81BE67D8DDB001AF4FBA1BE83CE4EFEEB9D0951FA05786032698B5273EF8747"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\ServerSelectPage.xaml.cs",
+    "Match": true,
+    "Expected": "E82363EF5F5F0FE11FF534EDEB257F92F269C0285CCEAEBA7DABFF4EF56C6D28"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\ServerSetupRequiredPage.xaml.cs",
+    "Match": true,
+    "Expected": "0E45A915B4263BCEB73FB65AC84EFFEC9B7F3732E9E78F167F8DB7EE8025105E"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\SettingsPage.Account.cs",
+    "Match": true,
+    "Expected": "2A539D54B984286A5F748E7DDF0EAF0D026FE15EE6F1160F86103A6BC9FB8F95"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\SettingsPage.xaml.cs",
+    "Match": true,
+    "Expected": "115C7F60F3DE4C35BA072B4EA8A200ADBC4AE4B90E88E347F6A8C8A10D196E22"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\SignupPage.xaml.cs",
+    "Match": true,
+    "Expected": "B55766646023C20BAF5FEE3B07E2974EFAD3D915E6B51880DA614FC46219412E"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\SmartCollectionWizardPage.xaml.cs",
+    "Match": true,
+    "Expected": "D218B346E7395A6F7646E30DEB6411B22D8DC79FC268147B3C4118CE3B83E11F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\TasteSeedPage.xaml.cs",
+    "Match": true,
+    "Expected": "2EBDC1C85E2FC32DBEFB583FB66451ED088F8A1861E166AC758C2D33AB7F852D"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\WatchlistPage.xaml.cs",
+    "Match": true,
+    "Expected": "33A20C2CC217CDCF3559EBA1960C7834B47936FCF4AA2DC5826A59BB650AA2D7"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\WatchTogetherJoinPage.xaml.cs",
+    "Match": true,
+    "Expected": "37AB856827B0ED5EDC97B1F8C8EC89F289FA750017FE94369275148936B98F86"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\WatchTogetherRoomPage.xaml.cs",
+    "Match": true,
+    "Expected": "651B1F00F3198291F99AFA61DF14B416F5AE6D8C4CE79237BBC3547C9541AA2F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\ApiKeysApi.cs",
+    "Match": true,
+    "Expected": "1CAE1561497CB9BA1AA48920376BAAE7C09A4B56AA549F4CEF3F30316AF692ED"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\AuthApi.cs",
+    "Match": true,
+    "Expected": "3B114569B18A56C95F8B9AA006612C7BA9B68278D3366E3BFD47489C963450CB"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\CatalogApi.cs",
+    "Match": true,
+    "Expected": "DE85C1F540A40E93E2998D7DF743D9DD62E143D5F0AB90423AB141C45C4567B3"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\CollectionsApi.cs",
+    "Match": true,
+    "Expected": "428E8B3C15BD1F1D72D19BE411FB3BBB0544C6D1167711B0C1F00134FC93B404"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\DownloadsApi.cs",
+    "Match": true,
+    "Expected": "ADD7800F25C7A9FE0D23269711D52BC0BBFA45340347237DB0BDFE94C6D7B47B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\EbooksApi.cs",
+    "Match": true,
+    "Expected": "18A16D0CFE01AA01BD933B158EBBDE26B6A286F2499F43ED68D952841AAE8A75"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\HistoryImportApi.cs",
+    "Match": true,
+    "Expected": "A680FBC1FC3D6EF26F9AB989BAC6FFCF4E869E15CECD25316977D4857EC56B7E"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\HomeApi.cs",
+    "Match": true,
+    "Expected": "C3AE9DF72C614DF2E1937E62B0BD77CEADC2009A3E66069B58B0796CFB42B0F4"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\MediaMaintenanceApi.cs",
+    "Match": true,
+    "Expected": "94BF90DCDEFB8D1EAC455087C4D71B2AD73A4C34EBB45CDF6DCAF25F9638E8B1"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\NotificationsApi.cs",
+    "Match": true,
+    "Expected": "C13E209FDFD090236F2B2E22F06CF6EA887BCC21917334D1929C7210DDB43A24"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\PeopleApi.cs",
+    "Match": true,
+    "Expected": "8AE428EA7A66851FC1C928C6403D8D8180624698455737BC89D9A6278CF4470F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\PlaybackApi.cs",
+    "Match": true,
+    "Expected": "366EFF9F7A3F8E84EFD0C7DE8137A754E38999A4C025B520B4BB72A154CB908B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\PlexBrowserAuthApi.cs",
+    "Match": true,
+    "Expected": "77F00F07D81F75FFB503E8ACFE25BAC2B10294F3C143C3A1D3F57792ABBA262F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\RecommendationsApi.cs",
+    "Match": true,
+    "Expected": "47AFFA8E2E2EC4D132B0671E3D3109C78BD461AFC4ABE866FF9227007A540C38"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\RequestsApi.cs",
+    "Match": true,
+    "Expected": "0C83A99446CF29B8F1F941872515B7DE4E65A725E34773CBF722990E0F83BCC4"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\SettingsApi.cs",
+    "Match": true,
+    "Expected": "48602CB66062350859DE03CB9C0664D552F6B0BC420EE5BE2135AD679DE07461"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\SiloApiClient.cs",
+    "Match": true,
+    "Expected": "7801061E7C0FE10A6B0E8E19761E86EA8A9F267182B4C384C85421316250AD79"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\SiloHttpClientFactory.cs",
+    "Match": true,
+    "Expected": "FA321C2A51DA8F2F5842F435E4AFC8979FEBA95DC50B0250A6BCB9D3233ACFBB"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\WatchProvidersApi.cs",
+    "Match": true,
+    "Expected": "9C5197B05E9D9CBF68C31779475B4CAD64B1C52FF7EE84EB28FD2462C02FA2A6"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Api\\WebhookSyncApi.cs",
+    "Match": true,
+    "Expected": "8B9850BEA7842D96B1E699F686F7F9F75BF79B6F487495E65D066872C017B62A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Helpers\\PlaybackQuality.cs",
+    "Match": true,
+    "Expected": "5963C3D12A61EB1281023EEC99D90F0A44A532EA0A179F4CAA96F47D7EFF4236"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Helpers\\TimeAgo.cs",
+    "Match": true,
+    "Expected": "740498683A4385E64207FA70D633A56968DDE8B192BD3CB83FCB0F31B9BFEE73"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Helpers\\UrlHelper.cs",
+    "Match": true,
+    "Expected": "5A3FC0DA77680471841920E579B2A9675209F52095A46DBDD5D3EB4CB34B28FE"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Json\\FlexibleNullableDateTimeOffsetConverter.cs",
+    "Match": true,
+    "Expected": "4D595E4229EF0CF557BD383BAA666DD121A09ED515EC076E3CDAC2BF7C10A095"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Json\\StringOrNumberJsonConverter.cs",
+    "Match": true,
+    "Expected": "ED97575F8A429357EE3693802C44EC2DCFA0A035C0F1726C5B6F4A79CEAF5E4E"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\ApiError.cs",
+    "Match": true,
+    "Expected": "89ECFD4ADD9575EAEE1CABB7F9A49418CEE917118568C20C5333266E27BF3757"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\AuthProvider.cs",
+    "Match": true,
+    "Expected": "D00BAE4D8E3DB2C9E0C38BF4F9B70677CC480FAC44C42E9D04DF113EB875677D"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\AuthSession.cs",
+    "Match": true,
+    "Expected": "C4FC6F4ECC445C16BA531D4B9374A64D4CF35FEA8B47F0686DC3ED6BF3FA2B7F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\CreateProfileRequest.cs",
+    "Match": true,
+    "Expected": "992DF461720BCDB1C3A4D8F3BC7DE7F7E165C6F28FA8A4A1D80CB6E0355A667C"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\DeviceAuth.cs",
+    "Match": true,
+    "Expected": "00F06D86200FD53ABA8F61E6FE16EB3FE23EEF36B482842102497619A085FD5E"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\Invitation.cs",
+    "Match": true,
+    "Expected": "F8F3D44A2DEA8CF48F3AE11EF4035FC2DEE6BE3BDC2A090B6A792B3E113FF45A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\LoginRequest.cs",
+    "Match": true,
+    "Expected": "065EE5915F8565562F94044C8360FA872B2E35072B31FF1C5B1E4C9B87E2F6E0"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\LoginResponse.cs",
+    "Match": true,
+    "Expected": "4E09DB65CBF0B008DE45DED01E90FBD58A14CBB6748A84B85758291CAADE93FD"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\ProfilesResponse.cs",
+    "Match": true,
+    "Expected": "CE804EA4AC3E4B15F1944E426424335C62708355AF78025691240FCB1728B6E4"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\RefreshRequest.cs",
+    "Match": true,
+    "Expected": "548E1BB44683637BACCA04F0F09374E105BA45F2A21A75A822BDB9BED3060718"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\RefreshResponse.cs",
+    "Match": true,
+    "Expected": "7CC2485A0E423F14AA0E86DF8C454DD4466F956F19476A35AEFD45B08EC6E9AF"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\SetupRequest.cs",
+    "Match": true,
+    "Expected": "0630CD224C0AB84403FA6282C79CD7C4829254DE23A569F9345379B61755559C"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\SignupRequest.cs",
+    "Match": true,
+    "Expected": "4BFC5C669B21DCD78CC9D97BEC2FDACBD10B72A4CD8FB4AF70E47A239D314DCD"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\VerifyPinRequest.cs",
+    "Match": true,
+    "Expected": "EB10C7F3F340914C89899DDF8FA60BB84467309AD4FFFDA26F99CFD89D61108F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Auth\\VerifyPinResponse.cs",
+    "Match": true,
+    "Expected": "CE129F33B73B7E6E0760727EB8A4BFFA3CF44C28D0D0CEC32C987C6128982999"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\AudiobookGroupsResponse.cs",
+    "Match": true,
+    "Expected": "77B8B078D70B1CB4F46863B1AB3B92BC9EA0D3F3E4B83E5497E75F75DDCEB9FD"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\AudioPreference.cs",
+    "Match": true,
+    "Expected": "AD7747458005ACACEBB82A7780F0CEC8B48BB1A5495B99E77A59B3825C186151"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\CalendarResponse.cs",
+    "Match": true,
+    "Expected": "0441653221027781A31CA9A18BD6802BE1F2AA81622C3B13AD3261E719DEDE2B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\CatalogFiltersResponse.cs",
+    "Match": true,
+    "Expected": "41AA585CA223391704FCF954290AC2E19C0A9FD81B847E1A4D4865301D8E8BF3"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\CatalogResponse.cs",
+    "Match": true,
+    "Expected": "744AE5E7413174C9BA816C49DFFAE1B864062E0A400CC461E0B766B6A2740937"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\EbookReaderModels.cs",
+    "Match": true,
+    "Expected": "5A8A691248D9F872643A83E4EE0E1E96ECEB9F3756DB006759320CC76D463EC3"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\EpisodesResponse.cs",
+    "Match": true,
+    "Expected": "4992A96595F54F24C34E3399EA1C9D6B5BD058E43FDDF99A5104AC9D52ADE94D"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\HistoryEntry.cs",
+    "Match": true,
+    "Expected": "A4D8CBEB59D3068193B6764CC42DD903DFC7BD14C83B73F811A9A3F3725D4E5A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\ItemListResponse.cs",
+    "Match": true,
+    "Expected": "E6A80186E4AE7E49FEE044E8A523F1AE395941BF28B01C4F7A42F65D2899D32E"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\ItemSplitModels.cs",
+    "Match": true,
+    "Expected": "A3F44B4DCA14494564F44802D3312E04D5EA3D5A7A215F842FEBEBB4FF1A7D9C"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\Library.cs",
+    "Match": true,
+    "Expected": "CA6599CC039655DB732C16E205E6065EBCB9BACE2F389822D60FD4750A09A6FD"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\LibraryCollections.cs",
+    "Match": true,
+    "Expected": "B0C1C190D982BBA52835BC5BE653FF646367C14C6912764C2B506E1B9472F61B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\LibraryPlaybackPrefs.cs",
+    "Match": true,
+    "Expected": "30347986828FEA1DD87FCF55785E6E2550CD1A56E0A2BF3A333BC3A581E9BF4D"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\MediaItemDetail.cs",
+    "Match": true,
+    "Expected": "5EFD43101014140228E82DFBFA23A9B1A8BA8B905EA9A9B8DBE9899049EA4B0A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\Person.cs",
+    "Match": true,
+    "Expected": "FB7C9E6495B3542F7CA0B3EBEEF7B338635A31DA6FE51DD513D0CD74243A3FFC"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\PersonRefreshResponse.cs",
+    "Match": true,
+    "Expected": "6BDFC2FBA7975631E2659F1671496345B6E0F2DB3C3CCEB3D3E88666DEEAC4E4"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\ProgressResponse.cs",
+    "Match": true,
+    "Expected": "F8656D52A171FF9A7193959FE08D7FDEA1C5D09E639BF86E00ADA75ACCDC5393"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\RatingResponse.cs",
+    "Match": true,
+    "Expected": "0D95ED44E5AF397D29F3C3502258BAAB56E5832DE06E868505AAFE9706933547"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\RecommendationsResponse.cs",
+    "Match": true,
+    "Expected": "06599F2FB6CE2F5540E2D990F3E2A7B83F0F95B6B48723D2B217200E02ADDB01"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\SeasonsResponse.cs",
+    "Match": true,
+    "Expected": "9F12C818C716E74AA8E658CC7CEF12DA57CDF60440470436274CCE39F5068F91"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Catalog\\SimilarResponse.cs",
+    "Match": true,
+    "Expected": "9A172F27C4D0B1399DF766798040E4F643EF35E75C65ABCB5039D82FFD1C744C"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Collections\\Collection.cs",
+    "Match": true,
+    "Expected": "7DB11FA588584F766EAC5E031593BD0260A2C104AE570CBF95CA85390471CC21"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Collections\\CollectionImports.cs",
+    "Match": true,
+    "Expected": "676580D81F7FECA2A10B3115A5ED5A7269E14556061950F2B0F90E9324285C16"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Collections\\CollectionItem.cs",
+    "Match": true,
+    "Expected": "3D351E23B2A753F8A3A92AF29D5475CFDE21F759290598889EA7E0E0C8B3BF0E"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Collections\\CollectionPreview.cs",
+    "Match": true,
+    "Expected": "78FA9A2C87C6F9B60A9D0681023797820C15455E2CA0D94A5AE4735CA5CC9DC5"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Collections\\CreateCollectionRequest.cs",
+    "Match": true,
+    "Expected": "C10660428DDF7D916493B37005292E180F19AF00D825FB583CD756A27F90BE48"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Collections\\UpdateCollectionRequest.cs",
+    "Match": true,
+    "Expected": "AE737F9BB7E0E8975FF3060E14D14F12D576C7AD47FB1723C6208E0734F26BAA"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Downloads\\Download.cs",
+    "Match": true,
+    "Expected": "9617E1F8C00A4B456E508848EA54553582081C79921D02E5780BA35589BFE829"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\HistoryImport\\CreateHistoryImportRunRequest.cs",
+    "Match": true,
+    "Expected": "2E9A5F9787695D4C61C6631D5EF782285A7A62640E7B4B95595AE63733398BBA"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\HistoryImport\\EmbyConnectLogin.cs",
+    "Match": true,
+    "Expected": "9EE9C44CAC4945BD8EBCDB6729FFCE9BEC7D21A1DD11E9A4F7DFF6D8157D671F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\HistoryImport\\HistoryImportMapping.cs",
+    "Match": true,
+    "Expected": "1599BFF62D173217833DBCE10FA4F26C100A8D1718BE3B76F8478E4CA343F28A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\HistoryImport\\HistoryImportRun.cs",
+    "Match": true,
+    "Expected": "F5C29710BD9FAC7C9CACD7D145460CD98495BE0FDB73470C32B4448E47F0EAA0"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\HistoryImport\\HistoryImportSource.cs",
+    "Match": true,
+    "Expected": "8D89E9174353453186B1D3650A85204C1DBC5E468063A6B4CE411441EF78D4DB"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\HistoryImport\\HistoryImportUnmatchedSample.cs",
+    "Match": true,
+    "Expected": "4D37ED6BACEDC1C7599C66517A34219BF9DBBABB8884C82AEB9E834F84A53639"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\HistoryImport\\PlexAuth.cs",
+    "Match": true,
+    "Expected": "37249131E0C60B764E20256A659FA5342CC601898392C206B4B116438A15C4BB"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Home\\HomeLayoutResponse.cs",
+    "Match": true,
+    "Expected": "252D73A88E50BE9548C10CF37167D1338B99226692151372BE5C4F473EE85E34"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Home\\HomeSectionsResponse.cs",
+    "Match": true,
+    "Expected": "D2D3A7B98C54FFFAF29146606EE946D4B30EE2916F7C50505213603BD4CEE864"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Home\\RecipeCatalog.cs",
+    "Match": true,
+    "Expected": "D83D3FFD65DCACBD34699B54433D29DE16EC5F91BB5DFFB575B9BF606062D1D9"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Home\\SectionOverride.cs",
+    "Match": true,
+    "Expected": "666016A2C8938B8769F43AAF576BCDE4E21EE4532B493475FC097141C5BA4E37"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Home\\SectionSettings.cs",
+    "Match": true,
+    "Expected": "1DFB7E44FCE0232E5C476B944C5ECD0E12261D0CDE69D958F05C2ECD7E961974"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\MediaMaintenance\\MatchModels.cs",
+    "Match": true,
+    "Expected": "27EF030E25892F5414BD55CF474008442EA4F42E07160BE199AC236D446FE733"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\MediaMaintenance\\MetadataRefreshReceipt.cs",
+    "Match": true,
+    "Expected": "C7D3ADCDDA4CBFCCBCB847E0E69C9C49CC4D8B8AD14FA55E32A596CAB45A6436"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Notifications\\NotificationsModels.cs",
+    "Match": true,
+    "Expected": "3CC99B6F73251B8A2A6D7E63D55AD2C4D0EF8939192538D64A803CB185B7CEA8"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\NativePlaybackCapabilityProfile.cs",
+    "Match": true,
+    "Expected": "FAFBE14A6EB31F5372A2CBA060BCB899553101A1FF7AEF9003FBE34E78CE69F2"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\PlaybackProtocolV3.cs",
+    "Match": true,
+    "Expected": "BB9378029C42C2588242027AD691FCA709DAF60954FBC50208A2AE55D0A13C9D"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\PlaybackStartRequest.cs",
+    "Match": true,
+    "Expected": "D10D09086ADA27597FDEF7BE370630C1D9785DE0B1751D4066305F286FADD0BD"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\PlaybackStartResponse.cs",
+    "Match": true,
+    "Expected": "DEB6B2DE89E22AAD1824306BA0F29A9C49D34D851A044C4870331D6E0D6DC8C5"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\PlaybackTransportPlan.cs",
+    "Match": true,
+    "Expected": "C15602365C8DCEF7B8FB636C65C243A7407E9A93D0AB432464ABDEC77D08D5A4"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\SubtitleAiModels.cs",
+    "Match": true,
+    "Expected": "18A10DC5F2AB95CC2646F87F79F4E06A1F4C0DDFDA868176AA51FCDFE5A4AF03"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\TranscodeStartRequest.cs",
+    "Match": true,
+    "Expected": "C068A626E35F217ADF608B60B2E70E019B50AE5AE0FAA26C795351655619D786"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\TranscodeStartResponse.cs",
+    "Match": true,
+    "Expected": "49B79203197EF345DD3959F1BE1FF6DF32AD5B3921027D853EA463E5D64346D2"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Playback\\WatchDetailResponse.cs",
+    "Match": true,
+    "Expected": "E14B292A217748D9B6055DF6DCC87A832F214FC3291A60983F56956BA61A7A80"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Plugins\\PluginCapability.cs",
+    "Match": true,
+    "Expected": "038F025C09D0C6DFF857FC4AA8AD25E336DC3274EE81F00994E48ABEFBDD5319"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Plugins\\PluginRoute.cs",
+    "Match": true,
+    "Expected": "36A4675A7B452491FBDF2791CBB671034D7A1D2C332313F617167725E7DFD5BD"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Plugins\\PluginSettings.cs",
+    "Match": true,
+    "Expected": "7CF74D078C18014D59D547D09B6FE99C85A9C1E68E24B2EB3CAB0B320141CEE3"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Requests\\MediaRequests.cs",
+    "Match": true,
+    "Expected": "60EE4DF0259617064B95309A4584000992EB486427BF697E3D9D787F286F79BB"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\ServerConfig.cs",
+    "Match": true,
+    "Expected": "FB7E6372312A5570F39A954CA10BDCB029D525E4883F792B63196A5ED28727AF"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Sessions\\PlaybackSessionSummary.cs",
+    "Match": true,
+    "Expected": "2E5BC8D3C60A49918B93ED0B2527F10E436555867A1EE2564F31464281830C50"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Settings\\OnboardingModels.cs",
+    "Match": true,
+    "Expected": "76F9B8E24AF3C52B125DBD46E74978561BCFB6BE0ED1C7F7E42A5430463A276D"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Settings\\PluginUserSettings.cs",
+    "Match": true,
+    "Expected": "00854FB79D7066B08C1A7B4FCA191836F561252FA95312E7C4F635F393961F54"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Settings\\SubtitleAppearance.cs",
+    "Match": true,
+    "Expected": "69AEA93B96E10F18F8B0CD33E083594F44FD0B45D40DE7D0A86F98BEDDF2157E"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Settings\\UICustomizationModels.cs",
+    "Match": true,
+    "Expected": "5CA850FBCA7E675DDB4AE14097A112E0877FCC8C46101CC925AD661D96B645BB"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\Settings\\WebhookSyncModels.cs",
+    "Match": true,
+    "Expected": "A395EFFA242CB45AF88087C936D5CB9A48345F61B970CFF176AA01751B37E79D"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Models\\WatchProviders\\WatchProviderModels.cs",
+    "Match": true,
+    "Expected": "F86AA4DE40DB6A16A2FB99958FA3F330FCB86AEBC1CE3A6AFF46DBEEF82A1840"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\AppInstanceNames.cs",
+    "Match": true,
+    "Expected": "8EDA5CE25CE78CA4F25672C106A1F79B28665DE78BF54BB163AC465A443EBF1F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\AsyncLoadVersionGate.cs",
+    "Match": true,
+    "Expected": "2AE7EA4696E90E27E3BAA19249A6B60868F2FD803CD9D9AB7310D35ED6AF863F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\AsyncWorkThrottle.cs",
+    "Match": true,
+    "Expected": "0B67D6276501928962C2615E2762E8F93FE56EF7CF0AF31C69BE753F78EF4C6A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\AuthorizationPolicy.cs",
+    "Match": true,
+    "Expected": "AFC91C4585C5E78ED7F6D5A33FB56CA308BEFBCE676158A933852CDEDAB2B46D"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\AuthService.cs",
+    "Match": true,
+    "Expected": "376C860862FA348F4D024C5B6726BFB3D645BD5672238B53EB836354C33FB1D3"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\AutoSkipMarkerIdentity.cs",
+    "Match": true,
+    "Expected": "1A829BD8E4FFA1642F49F8B8C0C4C4D644F307A90CEE23D24BB1A5A30947CBF5"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\BrandingAssetSelector.cs",
+    "Match": true,
+    "Expected": "4A58E3887C9B407D08919F3763F057B448CED865CF7F8F933D9638DE82E078C1"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\CardOverlayGeometry.cs",
+    "Match": true,
+    "Expected": "B8552E32F95D8F7F45C9F5F49EE8772BF699606A175869866AEF37109CDD0AA3"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\CardPointerInteractionPolicy.cs",
+    "Match": true,
+    "Expected": "C87C005B1F4F27E34EA554AF24E17082CAD921ED5560728E8A5730BB85BA7DF0"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\CredentialStore.cs",
+    "Match": true,
+    "Expected": "BE6F928B79D077AC16AF93D72250EAC1DEB6FD321E6D226F9E56D6832BE44CA1"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\DeferredSurfaceRefreshGate.cs",
+    "Match": true,
+    "Expected": "140FB5EF40728939A48C1D3C7872E66D9AEC98ADA9A24E42DA5CE516CFDB9D5D"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\DirectPlaybackRecoveryPolicy.cs",
+    "Match": true,
+    "Expected": "70F095F5A9EE49A8FFC83E14C4D0CE63F3F035827CE2FC9B1384DC2CF335AB28"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\DirectStreamProxy.cs",
+    "Match": true,
+    "Expected": "588610298082F9645A82D43EA49592187B2DCF26BD0157FCA39D760423197E52"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\DirectStreamRelay.cs",
+    "Match": true,
+    "Expected": "5E83121D059166E5657B41E7456A26300A0F24A8D3D74CD3FA8D25C3CF985149"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\EbookReaderFormat.cs",
+    "Match": true,
+    "Expected": "5780421B8E05D9361A2DED4C3A3FA87AA301E1AD44073CA1DEAFB2B66F3797A3"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\EbookReaderWebPolicy.cs",
+    "Match": true,
+    "Expected": "BB0258B005CEF31FF9FB09EC79B9E50C386592C05A3EE231FB0F415CF12DC455"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\EpisodeCardPresentation.cs",
+    "Match": true,
+    "Expected": "8C96706CF9AF137188FFF92723925590F8D7EC07539890C1C29D79B99CDA65AB"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\EpisodeNavigationState.cs",
+    "Match": true,
+    "Expected": "393C5B24321F7BA2EFD59F4CA5460F3F162886676795E14566CEB98F880B8AF4"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\EventChannelClient.cs",
+    "Match": true,
+    "Expected": "61DBD606C0474613955C4B598923F91185E30934E370710E66EA1BF7EC52A9AF"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ExternalBrowserUrlPolicy.cs",
+    "Match": true,
+    "Expected": "B5D8C4BE039637236B04213627802E8D59E623669C78B765DBC33AB6B14EE93F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\HomeRealtimeRefreshGate.cs",
+    "Match": true,
+    "Expected": "7EA19A32958679D503C83D98E02FCF8DA417D447D3294AAC7ADF6E237E3664DB"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\HomeSectionCollectionReconciler.cs",
+    "Match": true,
+    "Expected": "97F599DF902B5BF4FDB311B79D0CFE5351F4833009D6228CB9F4F9FCC1B68C47"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\HomeSectionReconciler.cs",
+    "Match": true,
+    "Expected": "8DA94CD29D541D1DCD79900A22BB38BD0927DCA77538B2BBFBEA0C02D980F2A4"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ICredentialStore.cs",
+    "Match": true,
+    "Expected": "A5F73CCD94DF4FE4CA0698FDEE0424FFCEC9204D59052DF6894692EF2B8E6585"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ImageService.cs",
+    "Match": true,
+    "Expected": "2CBC1ACE569BA62CB8F8E1CBB71617D741AF894E1CD37E96E26D2E64857A7592"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ItemDetailPrefetchCache.cs",
+    "Match": true,
+    "Expected": "0F91B0E3B94921B4C02949FBE7DD04A9437109133A934891658D76D4447934F8"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ItemMaintenanceActionPolicy.cs",
+    "Match": true,
+    "Expected": "2441A9A5B9A9E1D734C395C1E933A455DA544AEF38315E239498B01D80FA00C9"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\LibraryPerformanceTrace.cs",
+    "Match": true,
+    "Expected": "EEA5FB5B2306DA5A0BAC7C98E0B417123BCA452085DF243D27798E265851059C"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\LibraryPosterBinding.cs",
+    "Match": true,
+    "Expected": "7C7FE216F36433366CAEEB1453E544FE754A21B4B6FD7C29B7F464BD9F7CA532"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\LibraryPosterSizing.cs",
+    "Match": true,
+    "Expected": "208F5B12AFE2DAD7EBEF25F8C4F37BB6677C4F79EAF82054A98560860881BD26"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\LocalLog.cs",
+    "Match": true,
+    "Expected": "CDEF285BE67ADF3C0B097511D8604A6E48A2C662FCBEF8012A530BCDE28CCD0A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MediaCardProgressGeometry.cs",
+    "Match": true,
+    "Expected": "EAFAF7AF7172A25B342BE27D2667DC4BD1E4D1F61B03D3D66D0A103976BA6F5A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MediaItemActionExecutor.cs",
+    "Match": true,
+    "Expected": "897036CA35CB725E86D0027397A759198F7429180FBAB742077BA7F122DA08F9"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MediaItemCollectionReconciler.cs",
+    "Match": true,
+    "Expected": "DFBBA9C0CA394D238932786FEC22C43B6C9D0C83EEDAF1CA63D6D21473ACA6E2"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MediaItemDisplayText.cs",
+    "Match": true,
+    "Expected": "3F359DFB339899CFDAF6EC7D531BA39EFAB9323F0D549C0C04AD7A805921FC13"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MediaItemStateUpdater.cs",
+    "Match": true,
+    "Expected": "E455A18DDFFE4940B55162DB1F3FE8854B313C4C2FB368A1938A698A1314B870"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MediaLanguageCatalog.cs",
+    "Match": true,
+    "Expected": "576E35E279416DE99325271C14070A056341C2F718EF2467F5FCD4CE2EADD559"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MediaVideoRange.cs",
+    "Match": true,
+    "Expected": "2D499A1E0EC654856A7C1AEB1AB6D42DAA080F47219120EA90FFB74D3FBBAE22"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MpvNativePlaybackCapabilities.cs",
+    "Match": true,
+    "Expected": "3210C71242428B84D2E9E0EAC8B4111B6C8F74A50E7EB5503D898F2FBFFD9193"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\MpvNetworkBufferSizing.cs",
+    "Match": true,
+    "Expected": "21D4122E62ECFD85110BD491B63145162C19C048B11B813AD8F152008172A48D"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\NativeAudioSelection.cs",
+    "Match": true,
+    "Expected": "555ADEDB4AA32562E8C0FBD54CA2D5F67132B34CBE75CDF24C6299F0F95CF1EF"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\NextEpisodeResolver.cs",
+    "Match": true,
+    "Expected": "57F410B8C503B8B8DDFD6FD17026E605C88EA47EA5AF900DA2A4F9B15BED779B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\OAuthCompletionUrl.cs",
+    "Match": true,
+    "Expected": "A5E121648FF4EBB832EF0CEC02E910BD8935AEAAC4FD30EA75CB87E133F1EDFF"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PersonalCatalogSortPolicy.cs",
+    "Match": true,
+    "Expected": "EF0584F8D294F68D15F926B089375E6DBEE82396E85FA17E982382D9C6FA0EC2"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackFailureDescription.cs",
+    "Match": true,
+    "Expected": "10CBA46267A1B4DE3FDD085B5712F362E1B121371957FE05FD4BC1CDB88C87EE"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackManager.cs",
+    "Match": true,
+    "Expected": "A46F7B35885BC1D14F4356DEF9098B55CA8B14D5FC037643B25B9C0DEB8E1FAE"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackPlanInvalidation.cs",
+    "Match": true,
+    "Expected": "97D62EBC527B5C757A73BB1EFD4C4794322022B773308F7EE1A44A8B9F964DCA"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackPlanTerminalException.cs",
+    "Match": true,
+    "Expected": "D03AA88109D8CC24FF11852655520D2E41BE6B7DD3DF0915C1909439393DC60B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackRecoveryAttemptHistory.cs",
+    "Match": true,
+    "Expected": "3F22B733D8271D71D5EEA18EBF4EF9D6AC101345118B953BCC92BBE46FA8A30B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackRecoveryPolicy.cs",
+    "Match": true,
+    "Expected": "FE777E9E5715AA48A6F37FF9E063CD89A4849DA42172D1CA8F85904DE6210F93"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackStallDetector.cs",
+    "Match": true,
+    "Expected": "098936574A5025C88234BA76B185CC8B329F663F0050EF03FEBB3F08039E06CB"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackTimeline.cs",
+    "Match": true,
+    "Expected": "9719A859D25B838E9E5E991CAF20278C4B6488868EEC0224B2F08291257B72B2"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackTransportPlanner.cs",
+    "Match": true,
+    "Expected": "D8D346A8A0DF4B1CF10278348F908FAB4DAD3375F21D189EC7519E3FBDBD5322"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PlaybackUrlRedactor.cs",
+    "Match": true,
+    "Expected": "66583ECB6B8DB8ECCCA5F937DC1B3E84D6419A6D2BE9D9AEE0F197658FDC9AC3"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\PosterActionGeometry.cs",
+    "Match": true,
+    "Expected": "5E4C4440C72C227BC7CEB1B5CD50071FDC2C917CBAB4E663D944EB61925E9315"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\SeriesPrimaryActionResolver.cs",
+    "Match": true,
+    "Expected": "F426BE6783B948B5D94A156D534A3BB7E23EEF45D831B596CF3FD2BE3FB70804"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ServerUrlIdentity.cs",
+    "Match": true,
+    "Expected": "2ABC8C0CA5484C3786FD20E8DFB70C21B5BE331A4B97B696B9449343548C3ECD"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ServerWebUiUri.cs",
+    "Match": true,
+    "Expected": "8BF08AEB43D7E3D1B415CB165018C730011273D32A8DC2EC1677D67C3B3570B8"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\SessionDisplayText.cs",
+    "Match": true,
+    "Expected": "A950598F3DFBD2FADFE90E9CBA236346077C50ECF29D01D75F8D81B23FEA6689"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\SettingsService.cs",
+    "Match": true,
+    "Expected": "117E885A5A463DD521D78D3DF21007C05012597B130B3E3D76DFD1D4432B4C6E"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\SubtitleAutoSelect.cs",
+    "Match": true,
+    "Expected": "591F71142B66CF7514F6FF2C23AA27B77439B2F5F6EC499C97A16390F954893D"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\ThumbhashDecoder.cs",
+    "Match": true,
+    "Expected": "72648C5D12F63887AA02B64C0FCA206A9F4F5D3F59BC3A77AAE410B20883A69C"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\TranscodeQualityPolicy.cs",
+    "Match": true,
+    "Expected": "C05EDC2FA89DC7FF50855AE8F11C4C0695CBF868C48BA6B54B8FEB3CC1D132BC"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\VersionRanking.cs",
+    "Match": true,
+    "Expected": "6B01C7BC133C6C77D2DC4B77A3A112679394D90B2ABE9D59464BF07E99815E5B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\VirtualGridScrollGate.cs",
+    "Match": true,
+    "Expected": "942007986B8A1A27D5AB652690BB086191A8F9DC3FA361C2BBA2DEE812852478"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\VirtualGridSlotAllocator.cs",
+    "Match": true,
+    "Expected": "E05687385D9D8C46610F91DDBC33CE78611BC94EE7041C22BEB7955344DCF8EE"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Core\\Services\\WatchDetailPrefetchCache.cs",
+    "Match": true,
+    "Expected": "58338DE219B5748B04BC67C7406DEF7A62A352242FE57651226A76A0336A91EA"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Player\\MpvInterop.cs",
+    "Match": true,
+    "Expected": "2F7B5FD1D65B29FED853F1E532280652E03B2DF0F37C37C9B37478401DF3FB78"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Player\\MpvPlayer.cs",
+    "Match": true,
+    "Expected": "7C8A2F577E15FB7E0114CBAB27D54DB3A42981D8C2E440F18305F9AB4AC898D1"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Player\\MpvPlayer.Upscaling.cs",
+    "Match": true,
+    "Expected": "C0EC458B0F80AA0FF095A23B76BF0AF50A56DD58F0829EEC6B3942336A2C209E"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Player\\RtxVideoAdapter.cs",
+    "Match": true,
+    "Expected": "895E5C7902C494BC7FFF67BEEFEFB3C4A9AACFDC65C81AC3CEB8EA97E426498B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer.Player\\VideoUpscalingPolicy.cs",
+    "Match": true,
+    "Expected": "2856991EFE02E4389698AAAD0EBE464AF1554BAB6EB73C5A32A020FBC0F5AD88"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\App.xaml",
+    "Match": true,
+    "Expected": "619E1F2661FA2F07487F9DF4421D4A0FB7BED4F42318BEE130A9A80C864B459D"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\AddToCollectionDialog.xaml",
+    "Match": true,
+    "Expected": "9C8765E89F1EC6C1714D5C1F7D7686DE1C943475D4C5D9F2398A4BD58983AF14"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\AudiobookNowListening.xaml",
+    "Match": true,
+    "Expected": "3047E0982530267FBB60521B1AA7E31690F9168A8CAD64EAA5CE84C656507DEA"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\AudiobookSquareCard.xaml",
+    "Match": true,
+    "Expected": "CB4F392367D4D4406F84515B2FA3DF4317CCB91662DC0018040D6D1C38A2C40C"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\BackdropImage.xaml",
+    "Match": true,
+    "Expected": "82901307A4305BC994E825F6302082E3B0D1BA4EA149D51E9847CB447F349369"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\CustomSeekBar.xaml",
+    "Match": true,
+    "Expected": "B79100100DEBED872E1892527D12A2412F97BDDE7C7432C72551E28420A32732"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\GlobalSearchDialog.xaml",
+    "Match": true,
+    "Expected": "08F483712EC8B61C92493676E538829F8A3CFD7804461382ABC04C6D26E1E5FE"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\HeroCarousel.xaml",
+    "Match": true,
+    "Expected": "F216B1C679776B2E31C02ECB3DEAF348E8D7D49506177446F2C7001E10DF201B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\LandscapeCard.xaml",
+    "Match": true,
+    "Expected": "EF2B7209A7E51831849884147FC1C81656EA967611A1AF999575500FE7C893CE"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\MatchItemDialog.xaml",
+    "Match": true,
+    "Expected": "F6D49A73B4FF8369DBEDB86F6F34521A7A9099083369CBFC95ECBBD790DE7DE1"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\MiniPlayerBar.xaml",
+    "Match": true,
+    "Expected": "584F2194818BF6B863D3C8A67DA29A67BF5EF6C2577F162C166477EABD70526A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\NotificationSettingsControl.xaml",
+    "Match": true,
+    "Expected": "1805DEDAC177BC22F569C1C02C0643021387281C1534B2FE96954D79917AEE5B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\NowListeningHero.xaml",
+    "Match": true,
+    "Expected": "40AF0BF0B49DB2CCE985B8F6730230B06A8CA13735133DA3B15902FAF313D17A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\PlayerOverlay.xaml",
+    "Match": true,
+    "Expected": "CD29549DC2371C02A4EC9A5DC3E7075227A9EA2A96105EB36CBBBE4BAA30D41D"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\PosterCard.xaml",
+    "Match": true,
+    "Expected": "7FE1DFE873F38BCD59C9170FFE77DA7EBDAD11B6DE124F115F1E0064911EEBF8"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\SectionRow.xaml",
+    "Match": true,
+    "Expected": "7D86CD28F1D9FD73D336CBF316B58C64F578B94194DA3CB1DF41D9AFF4F58226"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\SlideSheet.xaml",
+    "Match": true,
+    "Expected": "54533234AEC72CF4261A27382B0C2EB69C1001D321EA186F4274DA02A33AEBF3"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\SubtitleAiDialog.xaml",
+    "Match": true,
+    "Expected": "BB4DE5CCA19A242734B2FD1B27000BA5A8C751A0251C7F2E5B6845C0CC995D93"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\SubtitleAppearanceDialog.xaml",
+    "Match": true,
+    "Expected": "E65B2EF9DAEF960938F16697BFB46754CF3010998FD3A23DF0679E6B035838F3"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\SubtitleSearchDialog.xaml",
+    "Match": true,
+    "Expected": "DF949B063885DE709A1414A41498A08DB8271533867BD661F6A9A692FB18AF11"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\ToastContainer.xaml",
+    "Match": true,
+    "Expected": "5F170E9C9E275EE7B65855D41787B450D9C2430252250D6BF50B93423A820B1B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Controls\\WatchTonightDialog.xaml",
+    "Match": true,
+    "Expected": "FB679100A330BA490668644E4DF98EB54B76D8953B1E161017DE4DB66C8FF7F7"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\MainWindow.xaml",
+    "Match": true,
+    "Expected": "2537AC54ADDBE795100180AB01F7FF89575D696C870283F9B1CC835AF946BF07"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\ActivateDevicePage.xaml",
+    "Match": true,
+    "Expected": "774139CBD1F42C4BE494ED873D6904B4B29F70F9DD4943B174940A7AC8F3AC7A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\CalendarPage.xaml",
+    "Match": true,
+    "Expected": "B0838ED885FF2002364610C1A09DDED22E5BF3851C54B15E767C9B82DEF63681"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\CatalogPage.xaml",
+    "Match": true,
+    "Expected": "7ECEB1D0D9450343EC8C00A45B3A5B09189B5087E0137C248A950CC5F16D3FCE"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\CollectionBrowsePage.xaml",
+    "Match": true,
+    "Expected": "FEF4BB778767D168990CB91562F87F08E394BFD2265FB0BC295033A3F2E69C87"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\CollectionEditorPage.xaml",
+    "Match": true,
+    "Expected": "D26583D4D303EEDB9A8C7879D8CFAE201D4E20B76A570315DEC0267D66F1209A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\CollectionsPage.xaml",
+    "Match": true,
+    "Expected": "903C71B4E78B9002F22905947F4F31D438383EB7BEA32C46AFA575CA96706ED7"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\DownloadsPage.xaml",
+    "Match": true,
+    "Expected": "1DA7B16B4634D6BCB540571852C698E7532DD42762C6674FB88DDCF46482FFD9"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\EbookReaderPage.xaml",
+    "Match": true,
+    "Expected": "815AE3F41E73B51655CA5AE70A1BE6E0D7E955027986335FBC16EB6435341F53"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\FavoritesPage.xaml",
+    "Match": true,
+    "Expected": "A5B050D52CD352DB111D41A58442CCAD6AA66B0A61E3E73C023E7A20BE8281AF"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\HistoryPage.xaml",
+    "Match": true,
+    "Expected": "5B9C66615841CC944ECCBA0A90B84ACA1547E0354D96528C538742EF17E72A9A"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\HomePage.xaml",
+    "Match": true,
+    "Expected": "DFB435EF57C8A3FE0FF86D0C625071DBCCE67AB78DEC7E608BC08195C74E7EB0"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\HouseholdSetupPage.xaml",
+    "Match": true,
+    "Expected": "ACDC7ECFC5EB09B2E7B20441B447FC9BC9487F0CE2706BFEEDFB4845A3D69E40"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\InviteClaimPage.xaml",
+    "Match": true,
+    "Expected": "202A552B2BFA9E6987388FDD157574C770C33B5B013F627F5BB20258457DEC79"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\ItemDetailPage.xaml",
+    "Match": true,
+    "Expected": "0BBE5E2EB00C78CA4B15B64209B1DB71A2B2E57A29F4DE600B3130495983A593"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\LibraryPage.xaml",
+    "Match": true,
+    "Expected": "B34B6C0FAB4C13C3297727DFC86A7903846C686A89F0F8BD6F16201C8845ECAF"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\LoginPage.xaml",
+    "Match": true,
+    "Expected": "BD405C8EA017C19DE9EF9EEA256EDFED1E0243D9D54D76FAC5191B16A57A8B43"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\NotificationsPage.xaml",
+    "Match": true,
+    "Expected": "4ABE36F9157CDB8ADF992E4B2E6D848E9FC6E35F18852B05319DA2BBA83E14F7"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\PersonDetailPage.xaml",
+    "Match": true,
+    "Expected": "165075E8B5376811E21869FC5AC5A5DF944CD3671D28D5745ACA1E7EBB733918"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\PluginRoutePage.xaml",
+    "Match": true,
+    "Expected": "509B6EE70042B3C0D4E54268CFAAD827A0484ADABFEACE962B7950153A47440F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\ProfileSelectPage.xaml",
+    "Match": true,
+    "Expected": "58995A424C9576964B4E142AC57327FCFD2719A80942DC9F5F9A023F7D62A419"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\RecommendationSectionPage.xaml",
+    "Match": true,
+    "Expected": "41038A567E754B38AE6BB737F5FB01AEAC110218CC835C31BB00BB4F7BC20C6E"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\RecommendationsPage.xaml",
+    "Match": true,
+    "Expected": "6B9F2B45BA3E5207D66F26A4DB2DC52C520D103C9A40C62E512E7B63CEBF1B91"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\RequestBrowsePage.xaml",
+    "Match": true,
+    "Expected": "DD9FA35CE470636ECC0631CE4C4E874C0A12411745A1438776BD859B5B8B3203"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\RequestDetailPage.xaml",
+    "Match": true,
+    "Expected": "32837ECDE071E80DFA52BAC32168EC3A9A70EEA5B3B4220804C0DE87F865A85B"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\RequestsPage.xaml",
+    "Match": true,
+    "Expected": "34DF30C4371170CB8FE1418190C4BCFE28213363DE7C0222843DEBCD2CA3665E"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\SearchPage.xaml",
+    "Match": true,
+    "Expected": "C9B28DF45EA927862A808B95E88A352F403FD58FFEDE2EBEDFABD7E89D8F610F"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\ServerSelectPage.xaml",
+    "Match": true,
+    "Expected": "49EA84922A9B06E980EF47E9B0BCBCAAC027F57F0D004AA6A538638C1977B1D3"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\ServerSetupRequiredPage.xaml",
+    "Match": true,
+    "Expected": "888168C3F0DEDDC25659C7B80ED1CBC3C00616E889AA157F606E0E7F78077D48"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\SettingsPage.xaml",
+    "Match": true,
+    "Expected": "A8451642C437535791BBB74D0AE06B226A6D75588F5DCFD05404E769E66693F3"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\SignupPage.xaml",
+    "Match": true,
+    "Expected": "4BF8D44331487D82C5BFDB30C19BB9AD82BE37B6342879CC586F3C0EC211ED32"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\SmartCollectionWizardPage.xaml",
+    "Match": true,
+    "Expected": "E0EEE4CB5216DE3E79FAAB3CAAB5C0B958DA0F6A147896DCF966699BEA10B503"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\TasteSeedPage.xaml",
+    "Match": true,
+    "Expected": "65EFF81895C6A761C4FDB1681B65540B1165B6F218574DAE3C78D7AA744B5BF0"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\WatchlistPage.xaml",
+    "Match": true,
+    "Expected": "50F2BD35B9C105D53D911D6353C983B78D2A853B84853EA25B44484A61CF86BB"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\WatchTogetherJoinPage.xaml",
+    "Match": true,
+    "Expected": "545312EAE05E9679C2B15C918B36E635224AF0E8D2E842C7C5052D5E054B7499"
+  },
+  {
+    "Path": "D:\\SiloPlayer\\src\\SiloPlayer\\Views\\WatchTogetherRoomPage.xaml",
+    "Match": true,
+    "Expected": "80E475EA561F361940C7E6545AC8E64335D4D411CD9E54A1B2ED593F8C8DF100"
+  }
+]

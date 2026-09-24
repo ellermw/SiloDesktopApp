@@ -42,7 +42,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
     /// <summary>Fired after a subtitle is successfully downloaded or uploaded.
     /// The returned server subtitle ID lets the caller refresh and select the
     /// exact track without recreating the active playback session.</summary>
-    public event Action<int?>? SubtitleDownloaded;
+    public event Action<long?>? SubtitleDownloaded;
 
     public SubtitleSearchDialog(
         int mediaFileId,
@@ -718,7 +718,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         }
     }
 
-    private static int? GetDownloadedSubtitleId(SubtitleDownloadResponse response)
+    private static long? GetDownloadedSubtitleId(SubtitleDownloadResponse response)
     {
         var id = response.Subtitle?.Id ?? response.Id;
         return id > 0 ? id : null;

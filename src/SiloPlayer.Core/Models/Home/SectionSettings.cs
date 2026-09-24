@@ -16,5 +16,6 @@ public class SettingsSectionEntry
 
 public class SettingsSectionsResponse
 {
+    [System.Text.Json.Serialization.JsonPropertyName("items")]
     public List<SettingsSectionEntry> Sections { get; set; } = [];
 }

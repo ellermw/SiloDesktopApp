@@ -5,6 +5,54 @@ namespace SiloPlayer.Tests;
 public class VideoUpscalingTests
 {
     [Theory]
+    [InlineData(null, true, VideoUpscalingMode.Nvidia)]
+    [InlineData(null, false, VideoUpscalingMode.Off)]
+    [InlineData("off", true, VideoUpscalingMode.Off)]
+    [InlineData("automatic", false, VideoUpscalingMode.Automatic)]
+    [InlineData("intel", false, VideoUpscalingMode.Intel)]
+    [InlineData("fsrcnnx", false, VideoUpscalingMode.Fsrcnnx)]
+    [InlineData("unknown", true, VideoUpscalingMode.Off)]
+    public void MigratesLegacyPreferenceWithoutEnablingUnknownModes(string? saved, bool legacy, VideoUpscalingMode expected)
+        => Assert.Equal(expected, VideoUpscalingPolicy.ResolveMode(saved, legacy));
+
+    [Fact]
+    public void AutomaticChoosesDiscreteAmdBeforeIntegratedIntelAndNeverSoftware()
+    {
+        VideoAdapterInfo[] adapters = [new("Intel UHD", 0x8086, false), new("AMD Radeon", 0x1002, false),
+            new("NVIDIA RTX software", 0x10de, true)];
+        var selection = VideoUpscalingPolicy.SelectAdapter(VideoUpscalingMode.Automatic, adapters);
+        Assert.Equal(VideoUpscalingMode.Fsrcnnx, selection.Mode);
+        Assert.Equal("AMD Radeon", selection.Adapter?.Name);
+        Assert.Equal("Intel UHD", VideoUpscalingPolicy.SelectAdapter(VideoUpscalingMode.Intel, adapters).Adapter?.Name);
+        Assert.Null(VideoUpscalingPolicy.SelectAdapter(VideoUpscalingMode.Nvidia, adapters).Adapter);
+        Assert.Null(VideoUpscalingPolicy.SelectAdapter(VideoUpscalingMode.Off, adapters).Adapter);
+    }
+
+    [Fact]
+    public void PortableNeuralShaderCanBeTestedOnRtxWithoutPretendingItIsAmdHardware()
+    {
+        VideoAdapterInfo[] adapters = [new("NVIDIA GeForce RTX 5080", 0x10de, false)];
+        var selection = VideoUpscalingPolicy.SelectAdapter(VideoUpscalingMode.Fsrcnnx, adapters);
+        Assert.Equal(VideoUpscalingMode.Fsrcnnx, selection.Mode);
+        Assert.Equal(adapters[0], selection.Adapter);
+        Assert.Equal(VideoUpscalingMode.Nvidia, VideoUpscalingPolicy.SelectAdapter(VideoUpscalingMode.Automatic, adapters).Mode);
+        Assert.Null(VideoUpscalingPolicy.SelectAdapter(VideoUpscalingMode.Intel, adapters).Adapter);
+        VideoAdapterInfo[] olderNvidia = [new("NVIDIA GeForce GTX 1080", 0x10de, false)];
+        Assert.Equal(olderNvidia[0], VideoUpscalingPolicy.SelectAdapter(VideoUpscalingMode.Fsrcnnx, olderNvidia).Adapter);
+    }
+
+    [Theory]
+    [InlineData(VideoUpscalingMode.Fsrcnnx, 1920, 1080, 3840, 2160, "bt.1886", 2)]
+    [InlineData(VideoUpscalingMode.Fsrcnnx, 1920, 1080, 2560, 1440, "bt.1886", 2)]
+    [InlineData(VideoUpscalingMode.Fsrcnnx, 1920, 1080, 2304, 1296, "bt.1886", 1)]
+    [InlineData(VideoUpscalingMode.Fsrcnnx, 1920, 1080, 3840, 2160, "pq", 1)]
+    [InlineData(VideoUpscalingMode.Fsrcnnx, 3840, 2160, 7680, 4320, "bt.1886", 1)]
+    [InlineData(VideoUpscalingMode.Intel, 1920, 1080, 2560, 1440, "bt.1886", 1.333)]
+    public void NeuralShaderUsesFixedTwoTimesReconstructionWithinItsEligibilityRules(VideoUpscalingMode mode,
+        int w, int h, int dw, int dh, string gamma, double expected)
+        => Assert.Equal(expected, VideoUpscalingPolicy.GetScale(mode, w, h, dw, dh, gamma), 3);
+
+    [Theory]
     [InlineData("d3d11vpp", 30, true, true)] // Input-view creation failure is a warning.
     [InlineData("d3d11vpp", 20, true, true)]
     [InlineData("d3d11vpp", 40, true, false)]

@@ -22,6 +22,6 @@ public static class PlaybackRecoveryPolicy
         // session. Reopening that session's URL only repeats the 404; it must
         // mint a replacement session instead. Local byte-stream stalls and
         // premature EOF remain safe same-session range reloads.
-        return reason is "buffering-stalled" or "position-stalled" or "end-file";
+        return reason is "buffering-stalled" or "position-stalled" or "end-file" or "eof-reached" or "direct-transport-error";
     }
 }

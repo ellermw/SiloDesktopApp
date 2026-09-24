@@ -146,6 +146,7 @@ public class PlayerService : IDisposable
     private Action? _mpvEofReachedHandler;
     private Action? _mpvPlaybackEndedHandler;
     private Action<string>? _mpvPlaybackErrorHandler;
+    private Action<string>? _mpvDirectStreamErrorHandler;
     private Action<string>? _mpvErrorHandler;
 
     public PlayerService(
@@ -947,10 +948,12 @@ public class PlayerService : IDisposable
     public List<FileVersion> Versions { get; private set; } = [];
     public FileVersion? ActiveVersion => Versions.FirstOrDefault(v => v.FileId == (_playbackManager?.CurrentSession?.MediaFileId ?? 0));
     public IReadOnlyList<AudiobookChapterInfo> AudiobookChapters => BuildAudiobookChapters();
-    public TimeRange? ActiveIntro => ActiveVersion?.Intro ?? WatchDetail?.Intro;
-    public TimeRange? ActiveCredits => ActiveVersion?.Credits ?? WatchDetail?.Credits;
-    public TimeRange? ActiveRecap => ActiveVersion?.Recap ?? WatchDetail?.Recap;
-    public TimeRange? ActivePreview => ActiveVersion?.Preview ?? WatchDetail?.Preview;
+    public TimeRange? ActiveIntro => ActiveMarker("intro", ActiveVersion?.Intro ?? WatchDetail?.Intro);
+    public TimeRange? ActiveCredits => ActiveMarker("credits", ActiveVersion?.Credits ?? WatchDetail?.Credits);
+    public TimeRange? ActiveRecap => ActiveMarker("recap", ActiveVersion?.Recap ?? WatchDetail?.Recap);
+    public TimeRange? ActivePreview => ActiveMarker("preview", ActiveVersion?.Preview ?? WatchDetail?.Preview);
+    private TimeRange? ActiveMarker(string kind, TimeRange? legacy) => ActiveVersion?.MarkerSegments is { } segments
+        ? PlaybackMarkerRanges.Active(segments, kind, Position) : legacy;
 
     // ── Events ───────────────────────────────────────────────────────────
 
@@ -1315,19 +1318,8 @@ public class PlayerService : IDisposable
         Interlocked.Exchange(ref _lastAudiobookProgressReportTicks, now);
         try
         {
-            await _catalogApi.SyncProgressAsync(new
-            {
-                items = new[]
-                {
-                    new
-                    {
-                        media_item_id = ContentId,
-                        position = Math.Floor(Math.Clamp(position, 0, _audiobookTotalDurationSeconds)),
-                        duration = Math.Floor(_audiobookTotalDurationSeconds),
-                        force_overwrite = true,
-                    }
-                }
-            }).ConfigureAwait(false);
+            await _catalogApi.SyncProgressAsync(AudiobookProgressSync.Create(
+                ContentId, position, _audiobookTotalDurationSeconds)).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -2277,6 +2269,17 @@ public class PlayerService : IDisposable
 
     private async Task RecoverInterruptedStreamAsync(double currentPosition, string reason)
     {
+        // Keep recovery decisions in the same bounded timeline as the reader and
+        // decoder. Only fixed classifications belong here, never error messages.
+        var diagnosticReason = reason switch
+        {
+            "progress-reporting-failed" or "file-load-timeout" or "buffering-stalled" or
+            "position-stalled" or "direct-transport-error" or "file-load-error" or
+            "playback-error" => reason,
+            _ => "other-playback-recovery"
+        };
+        _mpv?.Diagnostics?.Record("recovery_requested", new { reason = diagnosticReason, position = currentPosition });
+        _mpv?.Diagnostics?.Incident(diagnosticReason);
         if (!await _streamRecoveryGate.WaitAsync(0).ConfigureAwait(false))
         {
             LogToFile("state_trace.txt", $"Stream recovery skipped ({reason}): another recovery is active");
@@ -2344,7 +2347,8 @@ public class PlayerService : IDisposable
         try
         {
             if (session.ProtocolVersion >= 3 &&
-                !string.Equals(reason, "progress-reporting-failed", StringComparison.Ordinal))
+                !string.Equals(reason, "progress-reporting-failed", StringComparison.Ordinal) &&
+                !string.Equals(reason, "viewer-retry", StringComparison.Ordinal))
             {
                 var classification = reason switch
                 {
@@ -2352,7 +2356,7 @@ public class PlayerService : IDisposable
                     "playback-error" => "decoder_or_transport_error",
                     _ => "playback_interrupted",
                 };
-                var replannedSession = await manager.ReplanFailureAsync(
+                var replannedSession = await manager.RecoverPlaybackFailureAsync(
                     resumePosition,
                     classification,
                     reason,
@@ -2368,7 +2372,8 @@ public class PlayerService : IDisposable
                     resumePosition,
                     ct).ConfigureAwait(false);
                 if (_closing || State == PlayerState.Idle ||
-                    !ReferenceEquals(_playbackManager, manager) || ct.IsCancellationRequested)
+                    !ReferenceEquals(_playbackManager, manager) ||
+                    !ReferenceEquals(manager.CurrentSession, replannedSession) || ct.IsCancellationRequested)
                     return;
                 PlayMethod = replannedSession.PlayMethod;
                 _activeQualityTier = replannedSession.ActiveQuality;
@@ -2378,7 +2383,7 @@ public class PlayerService : IDisposable
                 _mpv.SendScriptMessage("osc-set-play-method", PlayMethod ?? "direct");
                 LogToFile(
                     "state_trace.txt",
-                    $"Stream recovery ({reason}) adopted protocol-v3 plan {replannedSession.PlanId} " +
+                    $"Stream recovery ({reason}) {(ReferenceEquals(session, replannedSession) ? "reopened existing direct" : "adopted replacement")} protocol-v3 plan {replannedSession.PlanId} " +
                     $"at mediaPos={resumePosition:F1}");
                 return;
             }
@@ -2514,7 +2519,7 @@ public class PlayerService : IDisposable
         ErrorMessage = description.Message;
         _playbackTerminalState = new PlaybackTerminalState(
             Math.Max(0, position),
-            trigger,
+            terminal?.Reason == "direct_recovery_exhausted" ? "viewer-retry" : trigger,
             wasPaused,
             description.CanRetry);
 
@@ -2554,7 +2559,7 @@ public class PlayerService : IDisposable
         _recoveryPauseIntentOverride = terminal.WasPaused;
         ShowNotice(
             "Reconnecting playback",
-            "Trying another available playback route from your current position…",
+            "Reopening playback from your current position…",
             "warning");
         LogToFile(
             "state_trace.txt",
@@ -3159,7 +3164,9 @@ public class PlayerService : IDisposable
             return new PreparedPlaybackTransport(
                 plan,
                 localUrl,
-                MpvLoadStartSeconds: Math.Max(0, session.PlayerStartSeconds),
+                MpvLoadStartSeconds: plan.TransportKind == PlaybackTransportKind.DirectProgressive
+                    ? Math.Max(0, PlaybackTimeline.ToPlayerTime(mediaStartSeconds, session.TimelineOffsetSeconds))
+                    : Math.Max(0, session.PlayerStartSeconds),
                 ResumeAfterLoadSeconds: 0,
                 TimelineOffsetSeconds: Math.Max(0, session.TimelineOffsetSeconds),
                 DurationSeconds: knownDuration,
@@ -3327,21 +3334,7 @@ public class PlayerService : IDisposable
     }
 
     private string NormalizePlaybackUrl(string pathOrUrl)
-    {
-        if (string.IsNullOrWhiteSpace(pathOrUrl))
-            throw new InvalidOperationException("The server returned an empty playback URL.");
-
-        var value = pathOrUrl.Trim();
-        if (Uri.TryCreate(value, UriKind.Absolute, out var absolute) &&
-            (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps))
-            return absolute.ToString();
-
-        if (!value.StartsWith('/'))
-            value = "/" + value;
-        if (!value.StartsWith("/api/v1", StringComparison.OrdinalIgnoreCase))
-            value = "/api/v1" + value;
-        return $"{_apiClient.BaseUrl.TrimEnd('/')}{value}";
-    }
+        => PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, pathOrUrl);
 
     private void ApplyPreparedTransport(PreparedPlaybackTransport prepared)
     {
@@ -3392,6 +3385,13 @@ public class PlayerService : IDisposable
 
         StopDirectStreamProxy();
         StopHlsProxy();
+
+        if (supportsRanges && string.Equals(playMethod, "direct", StringComparison.OrdinalIgnoreCase) &&
+            MpvPlayer.CanOpenSignedDirectStream(remoteStreamUrl))
+        {
+            LogToFile("state_trace.txt", "Direct stream via native mpv HTTP: bounded ranges, no local relay");
+            return remoteStreamUrl;
+        }
 
         _directStreamProxy = new DirectStreamProxy(remoteStreamUrl, () => _apiClient.AccessToken, supportsRanges);
         var localUrl = _directStreamProxy.Start();
@@ -3464,7 +3464,9 @@ public class PlayerService : IDisposable
 
         _mpv = new MpvPlayer();
         _mpv.UpscalingStatusChanged += status => LogToFile("upscaling_log.txt", status);
-        _mpv.InitializeWithWindow(_videoWindow.Hwnd, _settingsService.Load().NvidiaVideoUpscaling);
+        var upscalingSettings = _settingsService.Load();
+        _mpv.InitializeWithWindow(_videoWindow.Hwnd, upscalingMode: VideoUpscalingPolicy.ResolveMode(
+            upscalingSettings.VideoUpscalingMode, upscalingSettings.NvidiaVideoUpscaling));
         _videoWindow.SetMpv(_mpv);
         WireMpvEvents();
         SendThemeToOsc();
@@ -3539,6 +3541,7 @@ public class PlayerService : IDisposable
         if (_mpvEofReachedHandler != null) _mpv.EofReached -= _mpvEofReachedHandler;
         if (_mpvPlaybackEndedHandler != null) _mpv.PlaybackEnded -= _mpvPlaybackEndedHandler;
         if (_mpvPlaybackErrorHandler != null) _mpv.PlaybackError -= _mpvPlaybackErrorHandler;
+        if (_mpvDirectStreamErrorHandler != null) _mpv.DirectStreamError -= _mpvDirectStreamErrorHandler;
         if (_mpvErrorHandler != null) _mpv.Error -= _mpvErrorHandler;
         _mpv.ScriptMessageReceived -= OnScriptMessage;
     }
@@ -3933,6 +3936,8 @@ public class PlayerService : IDisposable
 
         _mpvPlaybackErrorHandler = HandleMpvPlaybackError;
         _mpv.PlaybackError += _mpvPlaybackErrorHandler;
+        _mpvDirectStreamErrorHandler = message => HandleMpvFailure(message, directTransport: true);
+        _mpv.DirectStreamError += _mpvDirectStreamErrorHandler;
 
         _mpv.ScriptMessageReceived += OnScriptMessage;
         _mpvErrorHandler = (msg) => LogToFile("mpv_error.txt", msg);
@@ -3970,6 +3975,9 @@ public class PlayerService : IDisposable
     }
 
     private void HandleMpvPlaybackError(string message)
+        => HandleMpvFailure(message, directTransport: false);
+
+    private void HandleMpvFailure(string message, bool directTransport)
     {
         LogToFile(
             "state_trace.txt",
@@ -3981,7 +3989,7 @@ public class PlayerService : IDisposable
 
         var mediaPosition = CurrentMediaPosition;
         var mediaDuration = CurrentMediaDuration;
-        if (IsAtMediaEnd(mediaPosition, mediaDuration))
+        if (!directTransport && IsAtMediaEnd(mediaPosition, mediaDuration))
             return;
 
         if (_switchingContent)
@@ -4002,7 +4010,7 @@ public class PlayerService : IDisposable
                     "Reconnecting playback",
                     "The media stream was interrupted. Resuming from your current position…",
                     "warning");
-                _ = RecoverInterruptedStreamAsync(mediaPosition, "file-load-error");
+                _ = RecoverInterruptedStreamAsync(mediaPosition, directTransport ? "direct-transport-error" : "file-load-error");
                 return;
             }
 
@@ -4018,7 +4026,7 @@ public class PlayerService : IDisposable
             EnterPlaybackTerminalState(
                 new InvalidOperationException(detail),
                 mediaPosition,
-                "file-load-error",
+                directTransport ? "direct-transport-error" : "file-load-error",
                 CaptureUserPausedState());
             return;
         }
@@ -4030,7 +4038,7 @@ public class PlayerService : IDisposable
         // suppressed, then rebuild the transport at canonical media time.
         _prematureEofRecoveryActive = true;
         _switchingContent = true;
-        _ = RecoverInterruptedStreamAsync(mediaPosition, "playback-error");
+        _ = RecoverInterruptedStreamAsync(mediaPosition, directTransport ? "direct-transport-error" : "playback-error");
     }
 
     // ── Content switching (version/audio) ────────────────────────────────
@@ -5113,14 +5121,15 @@ public class PlayerService : IDisposable
         {
             content_id = ContentId,
             reset_auto_skip = _autoSkipMarkerIdentity.ShouldResetFor(ContentId),
-            intro_start = wd.Intro?.Start ?? 0,
-            intro_end = wd.Intro?.End ?? 0,
-            recap_start = wd.Recap?.Start ?? 0,
-            recap_end = wd.Recap?.End ?? 0,
-            credits_start = wd.Credits?.Start ?? 0,
-            credits_end = wd.Credits?.End ?? 0,
-            preview_start = wd.Preview?.Start ?? 0,
-            preview_end = wd.Preview?.End ?? 0
+            marker_segments = ActiveVersion?.MarkerSegments,
+            intro_start = (ActiveVersion?.Intro ?? wd.Intro)?.Start ?? 0,
+            intro_end = (ActiveVersion?.Intro ?? wd.Intro)?.End ?? 0,
+            recap_start = (ActiveVersion?.Recap ?? wd.Recap)?.Start ?? 0,
+            recap_end = (ActiveVersion?.Recap ?? wd.Recap)?.End ?? 0,
+            credits_start = (ActiveVersion?.Credits ?? wd.Credits)?.Start ?? 0,
+            credits_end = (ActiveVersion?.Credits ?? wd.Credits)?.End ?? 0,
+            preview_start = (ActiveVersion?.Preview ?? wd.Preview)?.Start ?? 0,
+            preview_end = (ActiveVersion?.Preview ?? wd.Preview)?.End ?? 0
         };
 
         var json = System.Text.Json.JsonSerializer.Serialize(markers);
@@ -5748,7 +5757,7 @@ public class PlayerService : IDisposable
             .Select(track => track.Language)
             .FirstOrDefault(language => !string.IsNullOrWhiteSpace(language));
         var changed = false;
-        int? downloadedSubtitleId = null;
+        long? downloadedSubtitleId = null;
         var dialog = new SiloPlayer.Controls.SubtitleSearchDialog(session.MediaFileId, preferredLanguage);
         dialog.SubtitleDownloaded += subtitleId =>
         {
@@ -6303,7 +6312,7 @@ public class PlayerService : IDisposable
 
         var baseUrl = _apiClient.BaseUrl;
         var sessionId = _playbackManager.SessionId;
-        var socket = new PlaybackWebSocket(baseUrl, sessionId, () => _apiClient.AccessToken);
+        var socket = new PlaybackWebSocket(_apiClient, _playbackApi, sessionId);
         socket.CommandReceived += HandleWebSocketCommand;
         socket.EventReceived += HandleWebSocketEvent;
         _webSocket = socket;
@@ -6607,7 +6616,7 @@ public class PlayerService : IDisposable
             : "false");
     }
 
-    public async Task RefreshSubtitlesAfterAiAsync(int mediaFileId, int? preferredSubtitleId = null)
+    public async Task RefreshSubtitlesAfterAiAsync(int mediaFileId, long? preferredSubtitleId = null)
     {
         var manager = _playbackManager;
         var session = manager?.CurrentSession;

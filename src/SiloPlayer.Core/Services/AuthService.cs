@@ -390,7 +390,7 @@ public class AuthService : IDisposable
             }
             catch
             {
-                // Keep the last authoritative user during a temporary /auth/me outage.
+                // Keep the last authoritative user during a temporary /account/me outage.
             }
             return true;
         }
@@ -457,8 +457,8 @@ public class AuthService : IDisposable
                 user.Username = username.GetString() ?? "";
             if (root.TryGetProperty("role", out var role))
                 user.Role = role.GetString() ?? "user";
-            if (root.TryGetProperty("user_id", out var userId) && userId.TryGetInt32(out var uid))
-                user.Id = uid;
+            if (root.TryGetProperty("user_id", out var userId))
+                user.Id = userId.ValueKind == JsonValueKind.String ? userId.GetString() ?? "" : userId.GetRawText();
 
             return user;
         }

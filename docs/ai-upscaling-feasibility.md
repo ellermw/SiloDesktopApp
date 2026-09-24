@@ -1,5 +1,11 @@
 # AI upscaling feasibility
 
+**Development update, 2026-09-05:** the experimental build now adds Intel VSR
+and portable FSRCNNX neural upscaling for AMD/NVIDIA/Intel. See
+[the current multi-GPU test guide](multigpu-upscaling-testing.md). The NVIDIA-only
+preview described below is the original 1.1.100 implementation, retained as
+historical research and verification context.
+
 Research date: 2026-09-04. Scope: local 1080p-to-4K playback enhancement. Initial findings below are followed by the implemented preview and its validation results.
 
 ## Desktop preview

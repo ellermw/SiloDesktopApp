@@ -28,7 +28,7 @@ public sealed class MediaMaintenanceApiTests
         });
 
         Assert.Equal(HttpMethod.Post, handler.LastMethod);
-        Assert.Equal("/api/v1/admin/items/movie%2F1/match/search", handler.LastUri!.AbsolutePath);
+        Assert.Equal("/api/v2/admin/items/movie%2F1/match/search", handler.LastUri!.AbsolutePath);
         using var json = JsonDocument.Parse(handler.LastBody!);
         Assert.Equal("Arrival", json.RootElement.GetProperty("title").GetString());
         Assert.Equal(2016, json.RootElement.GetProperty("year").GetInt32());
@@ -46,7 +46,7 @@ public sealed class MediaMaintenanceApiTests
         });
 
         Assert.Equal(HttpMethod.Post, handler.LastMethod);
-        Assert.Equal("/api/v1/admin/items/movie%2F1/match/apply", handler.LastUri!.AbsolutePath);
+        Assert.Equal("/api/v2/admin/items/movie%2F1/match/apply", handler.LastUri!.AbsolutePath);
         using var json = JsonDocument.Parse(handler.LastBody!);
         Assert.Equal("329865", json.RootElement.GetProperty("provider_ids").GetProperty("tmdb").GetString());
     }
@@ -56,13 +56,14 @@ public sealed class MediaMaintenanceApiTests
     [InlineData("complete")]
     public async Task RefreshMetadataUsesOnlyTheApprovedModes(string mode)
     {
-        var handler = new RecordingHandler("{\"id\":\"job-1\",\"status\":\"queued\"}");
+        var handler = new RecordingHandler("{\"id\":\"job-1\",\"state\":\"queued\"}", HttpStatusCode.Accepted);
         var api = CreateApi(handler);
 
         var receipt = await api.RefreshMetadataAsync("movie/1", mode);
 
         Assert.Equal("job-1", receipt.Id);
-        Assert.Equal("/api/v1/admin/items/movie%2F1/refresh-metadata", handler.LastUri!.AbsolutePath);
+        Assert.Equal("queued", receipt.Status);
+        Assert.Equal("/api/v2/admin/items/movie%2F1/refresh-metadata", handler.LastUri!.AbsolutePath);
         using var json = JsonDocument.Parse(handler.LastBody!);
         Assert.Equal(mode, json.RootElement.GetProperty("mode").GetString());
     }
@@ -122,8 +123,8 @@ public sealed class MediaMaintenanceApiTests
     }
 
     [Theory]
-    [InlineData("http://downgrade.example/api/v1/admin/items/movie-1/refresh-metadata")]
-    [InlineData("https://other-host.example/api/v1/admin/items/movie-1/refresh-metadata")]
+    [InlineData("http://downgrade.example/api/v2/admin/items/movie-1/refresh-metadata")]
+    [InlineData("https://other-host.example/api/v2/admin/items/movie-1/refresh-metadata")]
     public async Task MaintenanceRequestsDoNotFollowUnsafeRedirects(string redirectUrl)
     {
         var handler = new RecordingHandler(

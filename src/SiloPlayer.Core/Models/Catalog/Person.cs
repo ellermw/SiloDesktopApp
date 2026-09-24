@@ -27,5 +27,4 @@ public class Person
     public string? PlexGuid { get; set; }
 }
 
-// NOTE: GET /people returns a bare JSON array of Person objects, not a wrapper object.
-// Deserialized directly as List<Person> in PeopleApi.
+// V2 person search returns an items collection; PeopleApi maps it to a list.

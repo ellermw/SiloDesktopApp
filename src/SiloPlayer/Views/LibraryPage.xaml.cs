@@ -184,6 +184,7 @@ public sealed partial class LibraryPage : Page,
 
     public LibraryPage()
     {
+        using var timing = LibraryPerformanceTrace.Measure("library-page-construction");
         ViewModel = App.Services.GetRequiredService<LibraryViewModel>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
@@ -1005,6 +1006,7 @@ public sealed partial class LibraryPage : Page,
         string? selectedValue,
         string breadcrumbName)
     {
+        using var timing = LibraryPerformanceTrace.Measure("library-filter-controls", 16);
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         var options = BuildFilterOptions(values, allLabel);
         App.SetPerfBreadcrumb($"Library filters {breadcrumbName} start count={options.Count}");
@@ -1242,6 +1244,7 @@ public sealed partial class LibraryPage : Page,
     private void OpenFilters_Click(object sender, RoutedEventArgs e)
     {
         FiltersSheet.IsOpen = true;
+        _ = ViewModel.EnsureFiltersLoadedAsync();
     }
 
     private void CloseFilters_Click(object sender, RoutedEventArgs e)
@@ -1817,6 +1820,7 @@ public sealed partial class LibraryPage : Page,
 
     private void RenderVirtualGrid(bool force = false)
     {
+        using var timing = LibraryPerformanceTrace.Measure("library-grid-render", 16);
         App.SetPerfBreadcrumb($"Library render start force={force} cards={_visibleLibraryCards.Count} total={ViewModel.TotalCount}");
         var total = ViewModel.TotalCount;
         LibraryEmptyText.Visibility = total <= 0 && !ViewModel.IsLoading && _libraryCatalogLoaded
@@ -2351,6 +2355,7 @@ public sealed partial class LibraryPage : Page,
 
     private void CardBindTimer_Tick(object? sender, object e)
     {
+        using var timing = LibraryPerformanceTrace.Measure("library-card-bind-batch", 16);
         var started = System.Diagnostics.Stopwatch.StartNew();
         App.SetPerfBreadcrumb($"Library bind tick pending={_pendingCardBinds.Count} cards={_visibleLibraryCards.Count}");
         int attempts = 0;
@@ -2811,7 +2816,14 @@ public sealed partial class LibraryPage : Page,
 
     private async Task EnsureLibraryCatalogLoadedAsync()
     {
-        if (_libraryCatalogLoaded) return;
+        using var timing = LibraryPerformanceTrace.Measure("library-open");
+        if (_libraryCatalogLoaded)
+        {
+            // Leaving for an item detail may have canceled optional filters
+            // before they arrived, even though the cards are already cached.
+            if (FiltersSheet.IsOpen) _ = ViewModel.EnsureFiltersLoadedAsync();
+            return;
+        }
 
         BuildLibrarySkeletons();
         LibrarySkeletonScroll.Visibility = Visibility.Visible;

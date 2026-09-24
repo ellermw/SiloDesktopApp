@@ -552,7 +552,7 @@ public partial class SettingsViewModel : ObservableObject
 
             async Task LoadSectionOverridesAsync()
             {
-                try { SectionOverrides = (await _settingsApi.GetSettingAsync("section_overrides:home:")).Value; }
+                try { SectionOverrides = System.Text.Json.JsonSerializer.Serialize((await _settingsApi.GetProfileSectionsAsync()).Overrides); }
                 catch { SectionOverrides = ""; }
             }
 

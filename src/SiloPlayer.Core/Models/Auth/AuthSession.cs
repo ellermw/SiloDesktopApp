@@ -13,5 +13,12 @@ public class AuthSession
 
 public class AuthSessionsResponse
 {
+    [System.Text.Json.Serialization.JsonPropertyName("items")]
     public List<AuthSession> Sessions { get; set; } = [];
+    public AuthSessionPage? Page { get; set; }
+}
+
+public sealed class AuthSessionPage
+{
+    public string? NextCursor { get; set; }
 }

@@ -245,8 +245,10 @@ public sealed class PlaybackManagerTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? "";
+            if (path == "/api/v2/playback/capabilities")
+                return JsonResponse("""{"allowed":true,"state":"available","installation_id":"11111111-1111-4111-8111-111111111111","protocol_versions":[3],"features":["fixed_media_file_v1"]}""");
 
-            if (request.Method == HttpMethod.Post && path == "/api/v1/playback/start")
+            if (request.Method == HttpMethod.Post && path == "/api/v2/playback/start")
             {
                 LastStartBody = request.Content == null
                     ? null
@@ -254,7 +256,7 @@ public sealed class PlaybackManagerTests
                 return JsonResponse(PlayableDecision("session-1", 123, 0));
             }
 
-            if (request.Method == HttpMethod.Post && path == "/api/v1/playback/session-1/progress")
+            if (request.Method == HttpMethod.Post && path == "/api/v2/playback/session-1/progress")
             {
                 _progressStarted.TrySetResult();
                 try
@@ -267,20 +269,20 @@ public sealed class PlaybackManagerTests
                     throw;
                 }
 
-                return new HttpResponseMessage(HttpStatusCode.NoContent);
+                return JsonResponse(request.Method == HttpMethod.Delete ? "{\"outcome\":\"stopped\"}" : "{\"outcome\":\"applied\"}");
             }
 
-            if (request.Method == HttpMethod.Delete && path == "/api/v1/playback/session-1")
+            if (request.Method == HttpMethod.Delete && path == "/api/v2/playback/session-1")
             {
                 StopPlaybackCalled = true;
                 if (BlockStopPlayback)
                     await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-                return new HttpResponseMessage(HttpStatusCode.NoContent);
+                return JsonResponse(request.Method == HttpMethod.Delete ? "{\"outcome\":\"stopped\"}" : "{\"outcome\":\"applied\"}");
             }
 
-            if (request.Method == HttpMethod.Post && path == "/api/v1/sync/progress")
+            if (request.Method == HttpMethod.Post && path == "/api/v2/sync/progress")
             {
-                return new HttpResponseMessage(HttpStatusCode.NoContent);
+                return JsonResponse(request.Method == HttpMethod.Delete ? "{\"outcome\":\"stopped\"}" : "{\"outcome\":\"applied\"}");
             }
 
             return new HttpResponseMessage(HttpStatusCode.NotFound)
@@ -333,7 +335,9 @@ public sealed class PlaybackManagerTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             var path = request.RequestUri?.AbsolutePath ?? "";
-            if (request.Method == HttpMethod.Post && path == "/api/v1/playback/start")
+            if (path == "/api/v2/playback/capabilities")
+                return JsonResponse("""{"allowed":true,"state":"available","installation_id":"11111111-1111-4111-8111-111111111111","protocol_versions":[3],"features":["fixed_media_file_v1"]}""");
+            if (request.Method == HttpMethod.Post && path == "/api/v2/playback/start")
             {
                 var number = Interlocked.Increment(ref _startCount);
                 var fileId = number == 1 ? 123 : 456;
@@ -365,20 +369,20 @@ public sealed class PlaybackManagerTests
             }
 
             if (request.Method == HttpMethod.Post && path.Contains("/progress", StringComparison.Ordinal))
-                return new HttpResponseMessage(HttpStatusCode.NoContent);
+                return JsonResponse(request.Method == HttpMethod.Delete ? "{\"outcome\":\"stopped\"}" : "{\"outcome\":\"applied\"}");
 
-            if (request.Method == HttpMethod.Delete && path == "/api/v1/playback/session-1")
+            if (request.Method == HttpMethod.Delete && path == "/api/v2/playback/session-1")
             {
                 PreviousDeleteStarted.TrySetResult();
                 await ReleasePreviousDelete.Task.WaitAsync(cancellationToken);
-                return new HttpResponseMessage(HttpStatusCode.NoContent);
+                return JsonResponse(request.Method == HttpMethod.Delete ? "{\"outcome\":\"stopped\"}" : "{\"outcome\":\"applied\"}");
             }
 
-            if (request.Method == HttpMethod.Delete && path == "/api/v1/playback/session-2")
-                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            if (request.Method == HttpMethod.Delete && path == "/api/v2/playback/session-2")
+                return JsonResponse(request.Method == HttpMethod.Delete ? "{\"outcome\":\"stopped\"}" : "{\"outcome\":\"applied\"}");
 
-            if (request.Method == HttpMethod.Post && path == "/api/v1/sync/progress")
-                return new HttpResponseMessage(HttpStatusCode.NoContent);
+            if (request.Method == HttpMethod.Post && path == "/api/v2/sync/progress")
+                return JsonResponse(request.Method == HttpMethod.Delete ? "{\"outcome\":\"stopped\"}" : "{\"outcome\":\"applied\"}");
 
             return new HttpResponseMessage(HttpStatusCode.NotFound);
         }

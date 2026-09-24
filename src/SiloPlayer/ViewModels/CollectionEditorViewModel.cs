@@ -173,14 +173,13 @@ public partial class CollectionEditorViewModel : ObservableObject
         {
             // Load the editor contract in parallel, matching the WebUI's
             // collections/libraries/profiles queries.
-            var collectionsTask = _collectionsApi.GetCollectionsAsync();
+            var collectionsTask = _collectionsApi.GetCollectionAsync(collectionId);
             var librariesTask = _catalogApi.GetLibrariesAsync();
             var profilesTask = _settingsApi.GetProfilesAsync();
             var capabilitiesTask = _collectionsApi.GetCollectionCapabilitiesAsync();
             await Task.WhenAll(collectionsTask, librariesTask, profilesTask, capabilitiesTask);
 
-            var response = collectionsTask.Result;
-            var collection = response.Collections.FirstOrDefault(c => c.Id == collectionId);
+            var collection = collectionsTask.Result;
             if (collection == null)
             {
                 ErrorMessage = "Collection not found.";

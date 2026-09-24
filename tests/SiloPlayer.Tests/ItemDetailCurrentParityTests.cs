@@ -382,7 +382,7 @@ public sealed class ItemDetailCurrentParityTests
         var model = Read("src", "SiloPlayer.Core", "Models", "Catalog", "MediaItemDetail.cs");
 
         Assert.Contains("PendingTranslationLanguage", model);
-        Assert.Contains("/api/v1/metadata/ai/status", api);
+        Assert.Contains("/api/v2/capabilities/metadata-ai", api);
         Assert.Contains("/translate-description", api);
         Assert.Contains("ConfigureOnViewTranslationAsync", page);
         Assert.Contains("TimeSpan.FromSeconds(45)", page);
@@ -459,7 +459,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("BuildSeasonBreadcrumb(item, seasonLabel)", page);
         Assert.Contains("EpisodesHeader.Text = \"Episodes\"", page);
         Assert.Contains("x:Name=\"EpisodesTotalText\"", Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml"));
-        Assert.Contains("/api/v1/catalog/items/{Uri.EscapeDataString(seasonContentId)}/episodes", api);
+        Assert.Contains("/api/v2/catalog/items/{Uri.EscapeDataString(seasonContentId)}/episodes", api);
         Assert.DoesNotContain("LoadSeasonEpisodesAsync(ViewModel.Item.SeriesId", page);
     }
 

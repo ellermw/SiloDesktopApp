@@ -8,6 +8,7 @@ public class AuthProvider
     public string DisplayName { get; set; } = "";
     public string Mode { get; set; } = "";
     public string? IconUrl { get; set; }
+    [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
     public int InstallationId { get; set; }
     [JsonPropertyName("default")]
     public bool IsDefault { get; set; }
@@ -15,6 +16,7 @@ public class AuthProvider
 
 public class AuthProvidersResponse
 {
+    [JsonPropertyName("items")]
     public List<AuthProvider> Providers { get; set; } = [];
 }
 

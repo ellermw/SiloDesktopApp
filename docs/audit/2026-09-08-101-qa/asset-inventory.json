@@ -1,0 +1,170 @@
+[
+  {
+    "path": "src/SiloPlayer/Assets/app.ico",
+    "bytes": 15086,
+    "sha256": "45934D9CC7B32EB86403F9989BE1960082E8F26249F9D22578E1F6F8D2FAB195",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "src/SiloPlayer/Assets/LockScreenLogo.scale-200.png",
+    "bytes": 1556,
+    "sha256": "7AD521F1CF4ECAEB6BE073294C16D3E0EBAB3F853F96A6F907854BF6A1DB9408",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "src/SiloPlayer/Assets/silo-icon-1024.png",
+    "bytes": 117179,
+    "sha256": "2D0885EEB8A984315385D4CE73F8FA404F01B0005552C77C4A776FAC5DB2A339",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "src/SiloPlayer/Assets/silo-mark-transparent.png",
+    "bytes": 117179,
+    "sha256": "2D0885EEB8A984315385D4CE73F8FA404F01B0005552C77C4A776FAC5DB2A339",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "src/SiloPlayer/Assets/silo-wordmark-sidebar-light.png",
+    "bytes": 30462,
+    "sha256": "D12E7286AF60E69C91E2DF9D1FF42700EFAE3A9414C838CADFD2F807D124E5BC",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "src/SiloPlayer/Assets/silo-wordmark-sidebar.png",
+    "bytes": 10049,
+    "sha256": "645712BF2DC032B6B935616F97E4BC84F8A3CA33AD48ACB45B5DB9149BD227F8",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "src/SiloPlayer/Assets/SplashScreen.scale-200.png",
+    "bytes": 64615,
+    "sha256": "3A99A6A9C90F28DF18F7A2E4DF6D39E0CCCAB836C4A9FAC77FE3767403D08153",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "src/SiloPlayer/Assets/Square150x150Logo.scale-200.png",
+    "bytes": 33375,
+    "sha256": "EC8CBE9D8443D30A613B1E6D1B6163AF19C2BC21C4CDA17A7A5E8BEE4E0F4EC0",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "src/SiloPlayer/Assets/Square44x44Logo.scale-200.png",
+    "bytes": 3990,
+    "sha256": "B3623A1C4D4891AFFB6BFC6900D56FB04F0C31FCBBD0FDA3A6066CFD3A09DE15",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "src/SiloPlayer/Assets/Square44x44Logo.targetsize-24_altform-unplated.png",
+    "bytes": 672,
+    "sha256": "7E4429221E0E54AF6329DB9622AA6290F092ED9CD712229A0390737ACFB61772",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "src/SiloPlayer/Assets/StoreLogo.png",
+    "bytes": 1618,
+    "sha256": "C0C60D996A7E5EB6B61117152FA93195485CA8B45D9C9A80E957973690BC5E7C",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "src/SiloPlayer/Assets/Wide310x150Logo.scale-200.png",
+    "bytes": 64615,
+    "sha256": "3A99A6A9C90F28DF18F7A2E4DF6D39E0CCCAB836C4A9FAC77FE3767403D08153",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "src/SiloPlayer/Assets/Fonts/Manrope-VariableFont_wght.ttf",
+    "bytes": 165420,
+    "sha256": "D0639BE45D0AF36E798172419D7BD173C4BD4F29E2B76CBB69DB1D11BF8B0A40",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "src/SiloPlayer/Assets/Fonts/Outfit-VariableFont_wght.ttf",
+    "bytes": 110884,
+    "sha256": "FC7287273E66929776E2BA54F144FE699080BEC29F61BF649D70D871468AEADE",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "src/SiloPlayer/Assets/Fonts/Sora-VariableFont_wght.ttf",
+    "bytes": 111400,
+    "sha256": "84FF7096AE3EC6C8BE47D906D1A0BA4DE7F2CE78C615275C77301964A316E16C",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "src/SiloPlayer/Assets/Fonts/Urbanist-VariableFont_wght.ttf",
+    "bytes": 84840,
+    "sha256": "748362D51EB276840E9F0023CD2D98299BF709A95FB3A5AE4FFCB624C638EBB9",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "installer/deps/SiloLocalTestingCodeSigning.cer",
+    "bytes": 1084,
+    "sha256": "DE47535CB9728E2B0E316D549D0F31C5D645928F83984367591F671F2F271D6C",
+    "classification": "public local-testing signing certificate; inventoried, no private key included"
+  },
+  {
+    "path": "installer/deps/windowsappruntimeinstall-x64.exe",
+    "bytes": 107246624,
+    "sha256": "8E21F22BF1191D7E347F6718BA8251D30B1E1C01775B9943C8E6239B7AF95EA7",
+    "classification": "bundled native dependency; inventoried/identity checked, implementation internals not audited"
+  },
+  {
+    "path": "libs/mpv/libmpv-2.dll",
+    "bytes": 120305152,
+    "sha256": "5825FFD2BEF6FD6A4B78016D5890C6C9DEDB16A31828A1C749BE89EACF9E20AE",
+    "classification": "bundled native dependency; inventoried/identity checked, implementation internals not audited"
+  },
+  {
+    "path": "libs/mpv/libmpv.dll.a",
+    "bytes": 40862,
+    "sha256": "DFDF4547719617C21071CA860B2BC243AEEB77F32A6D48BE3E8EAE5C951F1AF4",
+    "classification": "bundled native dependency; inventoried/identity checked, implementation internals not audited"
+  },
+  {
+    "path": "libs/mpv/fonts/material-design-iconic-font.ttf",
+    "bytes": 99212,
+    "sha256": "18A45BE2ECB66CE217C3BBCCF219F8BDC05DC76D61A6E63673186EFD1C7CDA1A",
+    "classification": "binary artwork/font; inventoried and hashed, no visual parity certification"
+  },
+  {
+    "path": "libs/mpv/include/mpv/client.h",
+    "bytes": 88005,
+    "sha256": "A36A8D809FF068166676BF7C98FA1EC2EF5EB7C591A3359D5AA0E4D60E5DE40E",
+    "classification": "third-party API header; dependency surface, not claimed as full source review"
+  },
+  {
+    "path": "libs/mpv/include/mpv/render_gl.h",
+    "bytes": 7539,
+    "sha256": "33CCC48EBD32437DA46673FAEA034B5C46EC2DCFC587E9655A5017BF8576B5B8",
+    "classification": "third-party API header; dependency surface, not claimed as full source review"
+  },
+  {
+    "path": "libs/mpv/include/mpv/render.h",
+    "bytes": 35031,
+    "sha256": "1FE12292DE3E79D64FFF205CFDC40EE36EE5F5B52D2BF88292DC121326F26C94",
+    "classification": "third-party API header; dependency surface, not claimed as full source review"
+  },
+  {
+    "path": "libs/mpv/include/mpv/stream_cb.h",
+    "bytes": 9836,
+    "sha256": "7AE14573FEDD735B56B8A891D219CC51E6DEAB9AAF06255146DB1292176DB9F1",
+    "classification": "third-party API header; dependency surface, not claimed as full source review"
+  },
+  {
+    "path": "libs/mpv/shaders/COPYING",
+    "bytes": 35149,
+    "sha256": "3972DC9744F6499F0F9B2DBF76696F2AE7AD8AF9B23DDE66D6AF86C9DFB36986",
+    "classification": "third-party shader documentation/license; fully read in OSC review"
+  },
+  {
+    "path": "libs/mpv/shaders/COPYING.LESSER",
+    "bytes": 7652,
+    "sha256": "E3A994D82E644B03A792A930F574002658412F62407F5FEE083F2555C5F23118",
+    "classification": "third-party shader documentation/license; fully read in OSC review"
+  },
+  {
+    "path": "libs/mpv/shaders/README.md",
+    "bytes": 924,
+    "sha256": "EB55197BA209FBEE491743DDA5B29B6A01ED953209410BAC67DBAE919F89BA90",
+    "classification": "third-party shader documentation/license; fully read in OSC review"
+  }
+]

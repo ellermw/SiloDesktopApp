@@ -169,7 +169,7 @@ public sealed class UserDialogParitySourceTests
         var authApi = ReadRepoFile("src", "SiloPlayer.Core", "Api", "AuthApi.cs");
 
         Assert.Contains("GetHouseholdSessionsAsync", authApi);
-        Assert.Contains("/api/v1/profiles/household/sessions", authApi);
+        Assert.Contains("/api/v2/profiles/household/sessions", authApi);
         Assert.Contains("StartHouseholdSessionsPolling", settings);
         Assert.Contains("TimeSpan.FromSeconds(10)", settings);
         Assert.Contains("LoadHouseholdSessionsAsync(showLoading: false)", settings);
@@ -190,7 +190,7 @@ public sealed class UserDialogParitySourceTests
 
         Assert.Contains("SubtitleProviderStatus", models);
         Assert.Contains("GetSubtitleProviderStatusAsync", api);
-        Assert.Contains("/api/v1/subtitles/providers/status", api);
+        Assert.Contains("/api/v2/subtitles/providers/status", api);
         Assert.Contains("private SubtitleProviderStatus _subtitleProviderStatus", overlay);
         Assert.Contains("if (_subtitleProviderStatus.Enabled)", overlay);
         Assert.Contains("GetSubtitleProviderStatusAsync", overlay);
