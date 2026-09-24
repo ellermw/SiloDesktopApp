@@ -4,6 +4,28 @@ namespace SiloPlayer.Tests;
 
 public sealed class MpvOscRuntimeTests
 {
+    [Theory]
+    [InlineData(960, 720)]
+    [InlineData(1920, 1080)]
+    [InlineData(3840, 2160)]
+    public void LongEnhancementStatusUsesSeparateLinesWithoutLosingText(int width, int height)
+    {
+        const string status = "Requested driver enhancement is unavailable on the current video output";
+        var ass = CaptureStats(1920, 1080, 1920, 1080, false,
+            "mp.set_property('user-data/silo-upscaling-status', '" + status + "')",
+            rawAss: true, windowWidth: width, windowHeight: height);
+        var entries = System.Text.RegularExpressions.Regex.Matches(ass,
+            @"\\pos\(([\d.]+),([\d.]+)\).*?\}([^\{\r\n]+)");
+        var label = entries.Cast<System.Text.RegularExpressions.Match>()
+            .First(m => m.Groups[3].Value == "Enhancement status");
+        var value = entries.Cast<System.Text.RegularExpressions.Match>()
+            .First(m => m.Groups[3].Value.StartsWith("Requested driver"));
+        Assert.True(double.Parse(value.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture)
+            > double.Parse(label.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture));
+        var text = System.Text.RegularExpressions.Regex.Replace(ass, @"\{[^}]*\}|\\N", "")
+            .Replace("\r", "").Replace("\n", "");
+        Assert.Contains(status, text);
+    }
     [Fact]
     public void IntelStatsIdentifyRequestedDriverProcessing()
     {
@@ -65,7 +87,8 @@ public sealed class MpvOscRuntimeTests
     }
 
     private static string CaptureStats(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight,
-        bool rtx, string setup = "", int videoBps = 0, int audioBps = 0, string? processor = null, bool neural = false)
+        bool rtx, string setup = "", int videoBps = 0, int audioBps = 0, string? processor = null, bool neural = false,
+        bool rawAss = false, int windowWidth = 3840, int windowHeight = 2160)
     {
         var root = FindRepositoryRoot();
         var probe = Path.Combine(Path.GetTempPath(), $"silo-stats-{Guid.NewGuid():N}.lua");
@@ -78,7 +101,7 @@ public sealed class MpvOscRuntimeTests
             local get_native = mp.get_property_native
             local create_overlay = mp.create_osd_overlay
             local values = {
-                ['osd-width']=3840, ['osd-height']=2160,
+                ['osd-width']={{windowWidth}}, ['osd-height']={{windowHeight}},
                 ['video-params/w']={{sourceWidth}}, ['video-params/h']={{sourceHeight}},
                 ['video-out-params/w']={{outputWidth}}, ['video-out-params/h']={{outputHeight}},
                 ['video-bitrate']={{videoBps}}, ['audio-bitrate']={{audioBps}}
@@ -127,6 +150,7 @@ public sealed class MpvOscRuntimeTests
             }
             Assert.NotNull(rendered);
             var ass = rendered!.StartsWith('"') ? System.Text.Json.JsonSerializer.Deserialize<string>(rendered)! : rendered;
+            if (rawAss) return ass;
             var text = System.Text.RegularExpressions.Regex.Replace(ass, @"\{[^}]*\}|\\N", "")
                 .Replace("\r", "").Replace("\n", "");
             return text;

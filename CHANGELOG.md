@@ -2,6 +2,26 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.1.104 (first six parity packages and watched-state refresh)
+
+- Keep calendar week navigation visible while scrolling and wrap long Playback Info values without overlapping labels or discarding diagnostic text.
+- Respect subtitle-provider availability in the shared player/detail dialog, retaining upload and allowing search when the availability check fails.
+- Refresh open person pages as background metadata and photo work completes, with cancellation and server/profile guards.
+- Show download save/delete failures, preserve actual filenames/container extensions, and stage transfers until complete; distinguish cancellation and identify incomplete output.
+- Clear consumed Emby Connect import authorization after success and correct import progress that double-counted skipped items.
+- Add capability-gated Account password settings, validation and request-context protection; clear password inputs after success or departure.
+- Includes the watched-state repair previously delivered in local build 1.1.103. Implementation and verification record: [first six packages](docs/parity/2026-09-24-first-six-implementation.md).
+- Verified 1,137 Release tests, native calendar/account/import/subtitle/watched/artwork controls, six published playback-service checks, and clean installer packaging. Installer SHA-256: `0E54B19C01707B0C4C864752E7667C87FFCB22F6204B3A9079E64B9E0EA3D6AB`.
+- Published as the clean version 1.1.104 with the Windows x64 installer linked from the README. Live account/import/provider acceptance, remaining parity packages and the separate recurring-buffering investigation stay open.
+
+## 1.1.103 (local build — watched-state refresh)
+
+- Update the detail page's watched action after movie/episode completion, including missing initial user data, autoplay and return navigation.
+- Refresh movie, episode, season and series watched state after final playback writes finish. Preserve newer manual changes and reject responses after navigation; finishing one episode does not mark the whole series watched.
+- Clarify the README's remaining parity work by separating confirmed gaps from outstanding installed, hardware and multi-client verification.
+- Verified 1,062 Release tests, six published playback-service checks, and native WinUI watched-button and artwork regression checks. The native button test reproduces the defect in 1.1.102 and passes in this build.
+- Local installer SHA-256: `455CEC0930753D64188108C2D3329F25E1BEA241DA1E3940C9A0F4C692DD28C6`. Not yet published to GitHub or installed by this task.
+
 ## 1.1.102 (API v2 compatibility and desktop playback updates)
 
 - Migrated current authentication, profile, browse, home, collection, settings, notification, download, ebook, and integration contracts to Silo API v2. Added context-aware pagination, conditional settings/collection updates, and current error handling.

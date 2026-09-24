@@ -1,4 +1,6 @@
 using SiloPlayer.Core.Models.Catalog;
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 namespace SiloPlayer.Core.Api;
 
@@ -18,4 +20,43 @@ public class PeopleApi(SiloApiClient client)
 
     public Task<PersonRefreshResponse> RefreshPersonAsync(string id, CancellationToken ct = default)
         => client.PostAsync<PersonRefreshResponse>($"/api/v2/catalog/people/{Uri.EscapeDataString(id)}/refresh", new { }, ct);
+
+    /// <summary>
+    /// Follow background provider/photo work for the lifetime of an open person
+    /// page. A complete response or rotated presigned URL does not mean the
+    /// background job has finished. Match the WebUI's 3s, then 30s backoff.
+    /// </summary>
+    public async IAsyncEnumerable<Person> ObservePersonRefreshAsync(
+        Person initial, [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        var context = client.CaptureContext();
+        var elapsed = Stopwatch.StartNew();
+        if (string.IsNullOrEmpty(initial.Bio) || string.IsNullOrEmpty(initial.PhotoUrl) ||
+            string.IsNullOrEmpty(initial.BirthDate))
+        {
+            try { await RefreshPersonAsync(initial.Id, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception)
+            {
+                // Reads can already queue a refresh. A denied/failed explicit
+                // request must not discard the displayed person or stop reads.
+            }
+        }
+
+        while (!ct.IsCancellationRequested && client.IsCurrentContext(context))
+        {
+            await Task.Delay(TimeSpan.FromSeconds(elapsed.Elapsed.TotalSeconds < 30 ? 3 : 30), ct);
+            if (!client.IsCurrentContext(context)) yield break;
+            Person? refreshed = null;
+            try { refreshed = await GetPersonAsync(initial.Id, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception)
+            {
+                // Keep existing data and retry on the next observation tick.
+            }
+            ct.ThrowIfCancellationRequested();
+            if (!client.IsCurrentContext(context)) yield break;
+            if (refreshed != null) yield return refreshed;
+        }
+    }
 }

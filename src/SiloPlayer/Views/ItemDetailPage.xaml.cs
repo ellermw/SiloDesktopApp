@@ -79,9 +79,6 @@ public sealed partial class ItemDetailPage : Page
         ComposeHeroLayout();
         UpdateThemeGradientColors();
 
-        // Listen for async property changes (e.g., rating loaded after initial UI update)
-        ViewModel.PropertyChanged += OnViewModelPropertyChanged;
-
         this.Loaded += OnPageLoaded;
     }
 
@@ -583,6 +580,8 @@ public sealed partial class ItemDetailPage : Page
     {
         if (args.PropertyName == nameof(ViewModel.UserRating))
             DispatcherQueue.TryEnqueue(UpdateStarRating);
+        else if (args.PropertyName == nameof(ViewModel.IsWatched))
+            DispatcherQueue.TryEnqueue(UpdateWatchedButton);
     }
 
     private void OnPageLoaded(object sender, RoutedEventArgs e)
@@ -604,9 +603,17 @@ public sealed partial class ItemDetailPage : Page
 
     private void OnPlayerStateChanged(Services.PlayerState state)
     {
-        if (state == Services.PlayerState.Idle && _playableContentId != null)
+        if (state == Services.PlayerState.Idle)
         {
-            DispatcherQueue?.TryEnqueue(() => _ = LoadWatchDetailAsync(_playableContentId));
+            DispatcherQueue?.TryEnqueue(() =>
+            {
+                if (_navigationCts is not { IsCancellationRequested: false }) return;
+                if (_playableContentId != null)
+                    _ = LoadWatchDetailAsync(_playableContentId);
+                _ = ViewModel.RefreshWatchedStateAsync(
+                    _playerService?.PendingProgressSave ?? Task.CompletedTask,
+                    _navigationCts.Token);
+            });
         }
     }
 
@@ -657,6 +664,9 @@ public sealed partial class ItemDetailPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        // Navigation away removes this subscription; cached revisits need it too.
+        ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
+        ViewModel.PropertyChanged += OnViewModelPropertyChanged;
         _uiCustomizationService.Changed += UICustomization_Changed;
         _navigationCts?.Cancel();
         _navigationCts?.Dispose();

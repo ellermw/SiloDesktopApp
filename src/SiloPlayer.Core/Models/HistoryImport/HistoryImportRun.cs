@@ -17,6 +17,11 @@ public class HistoryImportRun
     public int FavoritesImported { get; set; }
     public int WatchlistAdded { get; set; }
     public int Skipped { get; set; }
+    // Skipped is a subset of matched, not additional processed input.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public long Processed => (long)Matched + Unmatched;
+    [System.Text.Json.Serialization.JsonIgnore]
+    public double ProgressPercent => Fetched > 0 ? Math.Clamp(100.0 * Processed / Fetched, 0, 100) : 0;
     public List<string> Warnings { get; set; } = [];
     public List<HistoryImportUnmatchedSample> UnmatchedSamples { get; set; } = [];
     public string? ErrorMessage { get; set; }

@@ -92,7 +92,7 @@
                             <DataTemplate />
                         </TextBox.HeaderTemplate>
                     </TextBox>
-                    <TextBlock x:Name="SettingsSearchStatus" Text="17 settings sections"
+                    <TextBlock x:Name="SettingsSearchStatus" Text="18 settings sections"
                                FontSize="12" Foreground="{StaticResource TertiaryTextBrush}"
                                AutomationProperties.LiveSetting="Polite" />
                 </StackPanel>
@@ -279,6 +279,13 @@
                             <TextBlock Text="ACCOUNT" FontSize="10" FontWeight="SemiBold"
                                        CharacterSpacing="180" Foreground="{StaticResource TertiaryTextBrush}"
                                        Margin="12,0,0,6" />
+                            <Button x:Name="AccountPasswordTab" Click="Tab_Click" Tag="Account"
+                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <FontIcon Glyph="&#xE72E;" FontSize="16" />
+                                    <TextBlock Text="Account" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
                             <Button x:Name="ProfilesTab" Click="Tab_Click" Tag="Profiles"
                                     Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
@@ -324,6 +331,42 @@
             <!-- ===================================================================== -->
             <!-- ===== Navigation & Cards Panel (settings contract revision 5) ===== -->
             <!-- ===================================================================== -->
+            <StackPanel x:Name="AccountPasswordPanel" Spacing="24" Visibility="Collapsed">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="Account" FontSize="24" FontWeight="SemiBold" />
+                    <TextBlock Text="Manage the sign-in credential shared by every profile on this account."
+                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="16">
+                        <TextBlock Text="Password" FontSize="18" FontWeight="SemiBold" />
+                        <TextBlock Text="Only the primary profile can change the shared account password. Your current password is required."
+                                   Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        <ProgressRing x:Name="AccountPasswordLoading" IsActive="False" Width="24" Height="24"
+                                      HorizontalAlignment="Left" Visibility="Collapsed" AutomationProperties.Name="Loading password settings" />
+                        <StackPanel x:Name="AccountPasswordUnavailable" Spacing="4" Visibility="Collapsed">
+                            <TextBlock Text="Local password changes are unavailable." FontWeight="SemiBold" />
+                            <TextBlock Text="This account signs in through an external provider, or the active profile does not own the account credential."
+                                       Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <StackPanel x:Name="AccountPasswordForm" MaxWidth="448" HorizontalAlignment="Left" Spacing="16" Visibility="Collapsed">
+                            <PasswordBox x:Name="AccountCurrentPassword" Header="Current password" HorizontalAlignment="Stretch"
+                                         PasswordChanged="AccountPassword_Changed" />
+                            <StackPanel Spacing="6">
+                                <PasswordBox x:Name="AccountNewPassword" Header="New password" PasswordChanged="AccountPassword_Changed" />
+                                <TextBlock x:Name="AccountPasswordRequirements" FontSize="12" TextWrapping="Wrap"
+                                           Foreground="{StaticResource SecondaryTextBrush}" />
+                            </StackPanel>
+                            <PasswordBox x:Name="AccountConfirmPassword" Header="Confirm new password" PasswordChanged="AccountPassword_Changed" />
+                            <Button x:Name="AccountPasswordSubmit" Content="Change password" Style="{StaticResource AccentButtonStyle}"
+                                    Click="AccountPasswordSubmit_Click" />
+                        </StackPanel>
+                        <InfoBar x:Name="AccountPasswordMessage" IsOpen="False" IsClosable="False" />
+                        <Button x:Name="AccountPasswordRetry" Content="Try again" Visibility="Collapsed" Click="AccountPasswordRetry_Click" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
             <StackPanel x:Name="InterfacePanel" Spacing="24" Visibility="Collapsed">
                 <StackPanel Spacing="8">
                     <TextBlock Text="Navigation &amp; cards" FontSize="24" FontWeight="SemiBold"

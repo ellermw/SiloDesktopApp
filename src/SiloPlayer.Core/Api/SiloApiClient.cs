@@ -90,6 +90,32 @@ public class SiloApiClient
         await SendNoContentAsync(request, ct).ConfigureAwait(false);
     }
 
+    public async Task<T> SendRequestAsync<T>(ApiRequestContext context, HttpMethod method, string path,
+        object? body, CancellationToken ct = default)
+    {
+        using var request = CreateContextBoundRequest(context, method, path, body);
+        return await SendAsync<T>(request, ct).ConfigureAwait(false);
+    }
+
+    public async Task SendNoContentRequestAsync(ApiRequestContext context, HttpMethod method, string path,
+        object? body, CancellationToken ct = default)
+    {
+        using var request = CreateContextBoundRequest(context, method, path, body);
+        await SendNoContentAsync(request, ct).ConfigureAwait(false);
+    }
+
+    private HttpRequestMessage CreateContextBoundRequest(ApiRequestContext context, HttpMethod method,
+        string path, object? body)
+    {
+        // Check and capture identity atomically. Refresh retries also check these
+        // request generations, so a profile switch cannot re-author this write.
+        lock (_authStateGate)
+        {
+            if (!IsCurrentContext(context)) throw new OperationCanceledException("API context changed.");
+            return CreateRequest(method, path, body, null);
+        }
+    }
+
     private HttpRequestMessage CreateRequest(HttpMethod method, string path, object? body, IReadOnlyDictionary<string, string>? headers)
     {
         var request = new HttpRequestMessage(method, BuildUrl(path));

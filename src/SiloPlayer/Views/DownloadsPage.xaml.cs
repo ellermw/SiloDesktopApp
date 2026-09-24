@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Downloads;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 
@@ -10,6 +11,7 @@ public sealed partial class DownloadsPage : Page
 {
     public DownloadsViewModel ViewModel { get; }
     private bool _downloadBuildQueued;
+    private readonly Dictionary<string, CancellationTokenSource> _activeSaves = [];
 
     public DownloadsPage()
     {
@@ -18,6 +20,10 @@ public sealed partial class DownloadsPage : Page
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
 
         ViewModel.Downloads.CollectionChanged += (_, _) => QueueDownloadBuild();
+        Unloaded += (_, _) =>
+        {
+            foreach (var cancellation in _activeSaves.Values) cancellation.Cancel();
+        };
     }
 
     private void QueueDownloadBuild()
@@ -200,7 +206,7 @@ public sealed partial class DownloadsPage : Page
                 Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"]
             });
             saveContent.Children.Add(new TextBlock { Text = "Save to Disk", VerticalAlignment = VerticalAlignment.Center });
-            saveButton.Content = saveContent;
+            saveButton.Content = _activeSaves.ContainsKey(dl.Id) ? "Cancel save" : saveContent;
             saveButton.Click += SaveButton_Click;
             actionsPanel.Children.Add(saveButton);
         }
@@ -212,6 +218,7 @@ public sealed partial class DownloadsPage : Page
             Padding = new Thickness(8, 8, 8, 8),
             CornerRadius = new CornerRadius(6),
             Tag = dl.Id,
+            IsEnabled = !_activeSaves.ContainsKey(dl.Id),
             Content = new FontIcon
             {
                 Glyph = "\uE74D", // Delete
@@ -232,45 +239,88 @@ public sealed partial class DownloadsPage : Page
     private async void SaveButton_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button btn || btn.Tag is not string downloadId) return;
+        if (_activeSaves.TryGetValue(downloadId, out var activeSave))
+        {
+            activeSave.Cancel();
+            return;
+        }
 
         var dl = ViewModel.Downloads.FirstOrDefault(d => d.Id == downloadId);
         if (dl == null) return;
 
+        using var cancellation = new CancellationTokenSource();
+        _activeSaves.Add(downloadId, cancellation);
+        QueueDownloadBuild();
+        ViewModel.ErrorMessage = null;
+        var toast = App.Services.GetRequiredService<Services.ToastService>();
+        var apiClient = App.Services.GetRequiredService<SiloApiClient>();
+        var context = apiClient.CaptureContext();
+        string? selectedPath = null;
+        void EnsureCurrentContext()
+        {
+            if (!apiClient.IsCurrentContext(context)) cancellation.Cancel();
+            cancellation.Token.ThrowIfCancellationRequested();
+        }
+
         try
         {
+            var downloadPath = DownloadsApi.GetDownloadFilePath(downloadId);
+            var httpClient = App.Services.GetRequiredService<HttpClient>();
+            string suggestedName;
+            // HEAD is supported by the native proxy route. Do not hold a GET
+            // body open while the user is choosing a destination.
+            using (var metadataRequest = apiClient.CreateAuthenticatedRequest(HttpMethod.Head, downloadPath))
+            using (var metadata = await httpClient.SendAsync(metadataRequest,
+                HttpCompletionOption.ResponseHeadersRead, cancellation.Token))
+            {
+                DownloadFileTransfer.EnsureSuccessfulResponse(metadata);
+                suggestedName = DownloadFileTransfer.GetSuggestedFileName(metadata.Content.Headers);
+            }
+            EnsureCurrentContext();
             var picker = new Windows.Storage.Pickers.FileSavePicker();
 
             // Initialize the picker with the window handle (required for WinUI 3)
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance!);
             WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
 
-            // Determine file extension from file name
-            var ext = dl.DeliveryFormat == "transcode" ? ".mp4" : ".mkv";
-
-            picker.SuggestedFileName = $"{(string.IsNullOrWhiteSpace(dl.EpisodeId) ? dl.ContentId : dl.EpisodeId)}-{dl.Id[..Math.Min(8, dl.Id.Length)]}{ext}";
+            var ext = System.IO.Path.GetExtension(suggestedName);
+            picker.SuggestedFileName = suggestedName;
             picker.FileTypeChoices.Add("Media File", [ext]);
 
             var file = await picker.PickSaveFileAsync();
             if (file == null) return; // User cancelled
+            selectedPath = file.Path;
+            EnsureCurrentContext();
 
             // Download the file from the server
-            var apiClient = App.Services.GetRequiredService<SiloApiClient>();
-            var downloadPath = DownloadsApi.GetDownloadFilePath(downloadId);
-            var httpClient = App.Services.GetRequiredService<HttpClient>();
             using var request = apiClient.CreateAuthenticatedRequest(HttpMethod.Get, downloadPath);
             using var response = await httpClient.SendAsync(
                 request,
-                HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
-
-            using var sourceStream = await response.Content.ReadAsStreamAsync();
-            using var destStream = await file.OpenStreamForWriteAsync();
-            await sourceStream.CopyToAsync(destStream);
+                HttpCompletionOption.ResponseHeadersRead, cancellation.Token);
+            EnsureCurrentContext();
+            await DownloadFileTransfer.SaveAsync(response, file.Path, cancellation.Token, EnsureCurrentContext);
+            toast.Success("Download saved to disk.");
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            toast.Info("Save canceled. No completed download was saved."
+                + DownloadFileTransfer.GetEmptyDestinationNotice(selectedPath));
+        }
+        catch (DownloadCleanupException ex) when (ex.WasCanceled)
+        {
+            toast.Warning($"Save canceled. Remove the incomplete file: {ex.PartialPath}"
+                + DownloadFileTransfer.GetEmptyDestinationNotice(selectedPath));
         }
         catch (Exception ex)
         {
-            // Show error in a simple way -- non-fatal
-            System.Diagnostics.Debug.WriteLine($"Save download failed: {ex.Message}");
+            ViewModel.ErrorMessage = DownloadFileTransfer.GetSaveErrorMessage(ex)
+                + DownloadFileTransfer.GetEmptyDestinationNotice(selectedPath);
+            toast.Error(ViewModel.ErrorMessage);
+        }
+        finally
+        {
+            _activeSaves.Remove(downloadId);
+            QueueDownloadBuild();
         }
     }
 
@@ -279,6 +329,8 @@ public sealed partial class DownloadsPage : Page
         if (sender is Button btn && btn.Tag is string downloadId)
         {
             await ViewModel.DeleteDownloadCommand.ExecuteAsync(downloadId);
+            if (ViewModel.ErrorMessage is { } error)
+                App.Services.GetRequiredService<Services.ToastService>().Error(error);
         }
     }
 

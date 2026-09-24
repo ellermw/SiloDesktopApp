@@ -1953,7 +1953,14 @@ public partial class SettingsViewModel : ObservableObject
                     break;
             }
 
-            var run = await _historyImportApi.CreateImportRunAsync(request);
+            var run = await HistoryImportStart.CreateAsync(_historyImportApi, request, consumedSession =>
+            {
+                if (EmbyConnectSessionId != consumedSession) return;
+                EmbyConnectSessionId = null;
+                SelectedEmbyConnectServer = null;
+                EmbyConnectServers.Clear();
+                EmbyConnectPassword = "";
+            });
 
             // Display the new run immediately and put it at the top of the history list.
             SelectedRunId = run.Id;

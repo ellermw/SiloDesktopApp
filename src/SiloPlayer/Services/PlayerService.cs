@@ -1011,6 +1011,8 @@ public class PlayerService : IDisposable
     public event Action<double>? DurationChanged;
     public event Action<bool>? PauseChanged;
     public event Action? PlaybackEnded;
+    /// <summary>Outstanding final writes from closed and autoplay-retired sessions.</summary>
+    public Task PendingProgressSave { get; private set; } = Task.CompletedTask;
     public event Action? ContentLoaded; // fired when file is loaded and decoding starts
     public event Action? MarkersChanged;
     public event Action? ChaptersChanged;
@@ -1590,6 +1592,9 @@ public class PlayerService : IDisposable
             retiringSessionTask = retiringManager.StopSessionAsync(
                 finalPosition > 0 ? ToSessionPosition(finalPosition) : null,
                 isPaused: true);
+            PendingProgressSave = PendingProgressSave.IsCompleted
+                ? retiringSessionTask
+                : Task.WhenAll(PendingProgressSave, retiringSessionTask);
             retiringManager.ProgressReportingFailed -= OnProgressReportingFailed;
             _playbackManager = null;
             _ = FinishClosingSessionAsync(retiringManager, retiringSessionTask);
@@ -6117,6 +6122,7 @@ public class PlayerService : IDisposable
                 closedPosition > 0 ? ToSessionPosition(closedPosition) : null,
                 isPaused: true)
             : Task.CompletedTask;
+        PendingProgressSave = Task.WhenAll(PendingProgressSave, sessionStopTask, audiobookProgressTask);
 
         // B15 + F4: publish PlaybackProgressUpdated so Home / History /
         // ItemDetail view models reflect the new position without waiting

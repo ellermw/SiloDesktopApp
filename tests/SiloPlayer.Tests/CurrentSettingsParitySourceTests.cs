@@ -10,7 +10,7 @@ public sealed class CurrentSettingsParitySourceTests
 
         Assert.Contains("MaxWidth=\"1424\"", xaml);
         Assert.Contains("x:Name=\"SettingsSearchBox\"", xaml);
-        Assert.Contains("17 settings sections", xaml);
+        Assert.Contains("18 settings sections", xaml);
         Assert.Contains("x:Name=\"SettingsOverviewPanel\"", xaml);
         Assert.Contains("Home & Discovery", code);
         Assert.Contains("Connections", code);

@@ -11,6 +11,10 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
+using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Messaging;
+using SiloPlayer.ViewModels;
+using SiloPlayer.Views;
 
 internal static class Program
 {
@@ -93,7 +97,14 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 .AddSingleton(new MediaMaintenanceApi(api))
                 .AddSingleton(new AuthService(api, new AuthApi(api)))
                 .AddSingleton(new ToastService())
+                .AddSingleton(new UICustomizationService(new SettingsApi(api)))
+                .AddSingleton(new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException("Unexpected detail fetch")))
+                .AddTransient<ItemDetailViewModel>()
+                .AddTransient(_ => new CalendarViewModel(new CatalogApi(api), new SettingsService(Program.ResultDirectory)) { HasLoaded = true })
+                .AddSingleton(new PlayerService(new PlaybackApi(api), new CatalogApi(api),
+                    new AuthService(api, new AuthApi(api)), api, new SettingsService(Program.ResultDirectory), new SettingsApi(api)))
                 .AddSingleton(overlays)
+                .AddAccountSettingsFixture()
                 .BuildServiceProvider();
             typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!
                 .SetValue(null, services);
@@ -104,6 +115,15 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             // A hidden native window runs the real WinUI load/unload/decoding
             // lifecycle while leaving the user's running player untouched.
             _window = new Window { Content = parent };
+            await Task.Delay(150); // Allow the hidden native tree to acquire its XamlRoot.
+            await CalendarNavigatorRemainsVisible(parent);
+            Program.Log("PASS: calendar week navigation remains visible while scrolling at narrow and desktop widths.");
+            await AccountSettingsNativeFixture.RunAsync(parent);
+            Program.Log("PASS: account password form and history import state/progress verified in actual SettingsPage controls.");
+            await SubtitleDialogFixture.RunAsync(parent);
+            Program.Log("PASS: native subtitle dialog preserves upload and gates online search for player/detail entry points.");
+            await WatchedActionUpdatesAfterCompletionAndRevisit(parent);
+            Program.Log("PASS: movie/episode completion updates the real watched button, including return navigation and manual state changes.");
             await EpisodeArtworkSurvivesSectionReattachment(parent, section);
             Program.Log("PASS: episode artwork survives reattachment and is released on real detach.");
         }
@@ -117,6 +137,78 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             _window?.Close();
             Exit();
         }
+    }
+
+    private static async Task CalendarNavigatorRemainsVisible(StackPanel parent)
+    {
+        foreach (var width in new[] { 600d, 1280d })
+        {
+            var page = new CalendarPage { Width = width, Height = 650 };
+            parent.Children.Add(page);
+            var rows = (StackPanel)page.FindName("DaysPanel");
+            await Task.Delay(150);
+            rows.Children.Add(new Border { Height = 2400 });
+            page.Measure(new Windows.Foundation.Size(width, 650));
+            page.Arrange(new Windows.Foundation.Rect(0, 0, width, 650));
+            page.UpdateLayout();
+            await Task.Delay(150);
+            var scroll = (ScrollViewer)page.FindName("ContentScrollViewer");
+            var navigator = (Border)page.FindName("WeekNavigatorBorder");
+            scroll.ChangeView(null, 700, null, true);
+            await Task.Delay(150);
+            page.UpdateLayout();
+            var top = navigator.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point()).Y;
+            if (scroll.VerticalOffset < 600 || top < 0 || top > 20 || navigator.ActualHeight < 40)
+                throw new InvalidOperationException($"Calendar at width {width}: offset={scroll.VerticalOffset}, extent={scroll.ExtentHeight}, viewport={scroll.ViewportHeight}, rows={rows.Children.Count}, navigator top={top}, height={navigator.ActualHeight}");
+            scroll.ChangeView(null, 0, null, true);
+            await Task.Delay(150);
+            page.UpdateLayout();
+            if (navigator.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point()).Y < 50)
+                throw new InvalidOperationException("Calendar navigator did not return below its heading");
+            parent.Children.Remove(page);
+        }
+    }
+
+    private static async Task WatchedActionUpdatesAfterCompletionAndRevisit(StackPanel parent)
+    {
+        foreach (var type in new[] { "movie", "episode" })
+        {
+            var frame = new Frame { CacheSize = 2 };
+            parent.Children.Add(frame);
+            frame.Navigate(typeof(ItemDetailPage)); // No content parameter: no server loads.
+            var detail = (ItemDetailPage)frame.Content;
+            detail.NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
+            detail.ViewModel.Item = new MediaItemDetail { ContentId = "watched-fixture", Type = type };
+            var label = (TextBlock)detail.FindName("WatchedText");
+            detail.ViewModel.Receive(new PlaybackProgressUpdated("watched-fixture", 99, 100, true));
+            await DrainDispatcherAsync();
+            if (label.Text != "Mark Unwatched")
+                throw new InvalidOperationException($"{type} completion label: {label.Text}");
+
+            frame.Navigate(typeof(Page));
+            frame.GoBack();
+            detail = (ItemDetailPage)frame.Content;
+            detail.ViewModel.Item = new MediaItemDetail { ContentId = "watched-fixture", Type = type };
+            label = (TextBlock)detail.FindName("WatchedText");
+            detail.ViewModel.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "watched-fixture"));
+            await DrainDispatcherAsync();
+            if (label.Text != "Mark Unwatched") throw new InvalidOperationException("Revisited page did not observe watched state");
+            detail.ViewModel.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedCleared, "watched-fixture"));
+            await DrainDispatcherAsync();
+            if (label.Text != "Mark Watched") throw new InvalidOperationException("Revisited page did not observe unwatched state");
+            detail.ViewModel.Receive(new PlaybackProgressUpdated("watched-fixture", 99, 100, true));
+            await DrainDispatcherAsync();
+            if (label.Text != "Mark Unwatched") throw new InvalidOperationException("Revisited page did not observe completion");
+            frame.Navigate(typeof(Page));
+            parent.Children.Remove(frame);
+        }
+    }
+
+    private static Task DrainDispatcherAsync()
+    {
+        var drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        DispatcherQueue.GetForCurrentThread().TryEnqueue(() => drained.SetResult());
+        return drained.Task;
     }
 
     private static async Task EpisodeArtworkSurvivesSectionReattachment(StackPanel parent, StackPanel section)

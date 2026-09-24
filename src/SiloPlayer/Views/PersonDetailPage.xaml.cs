@@ -16,6 +16,10 @@ public sealed partial class PersonDetailPage : Page
     private readonly UICustomizationService _uiCustomizationService;
     private bool _bioExpanded;
     private double _filmographyCardWidth = 178;
+    private bool _isActive;
+    private CancellationTokenSource? _photoCts;
+    private string? _photoUrl;
+    private string? _photoPersonId;
 
     public PersonDetailPage()
     {
@@ -42,6 +46,7 @@ public sealed partial class PersonDetailPage : Page
             {
                 DispatcherQueue.TryEnqueue(() =>
                 {
+                    if (!_isActive) return;
                     FilmographyLoadingMore.Visibility = ViewModel.IsLoadingMoreFilmography
                         ? Visibility.Visible : Visibility.Collapsed;
                 });
@@ -69,6 +74,10 @@ public sealed partial class PersonDetailPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _isActive = true;
+        _photoUrl = null;
+        _photoPersonId = null;
+        PersonPhotoBorder.Child = InitialsText;
         _uiCustomizationService.Changed += UICustomization_Changed;
 
         // B33: PersonDetailPage now accepts a string ID; supports non-numeric
@@ -88,6 +97,8 @@ public sealed partial class PersonDetailPage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        _isActive = false;
+        Interlocked.Exchange(ref _photoCts, null)?.Cancel();
         ViewModel.Cancel();
         _uiCustomizationService.Changed -= UICustomization_Changed;
         base.OnNavigatedFrom(e);
@@ -95,6 +106,7 @@ public sealed partial class PersonDetailPage : Page
 
     private void UpdateUI()
     {
+        if (!_isActive) return;
         var person = ViewModel.Person;
         if (person == null) return;
 
@@ -141,9 +153,19 @@ public sealed partial class PersonDetailPage : Page
         InitialsText.Text = GetInitials(person.Name);
 
         // Load photo
-        if (!string.IsNullOrEmpty(person.PhotoUrl))
+        if (person.Id != _photoPersonId || person.PhotoUrl != _photoUrl)
         {
-            _ = LoadPersonPhotoAsync(person.PhotoUrl, person.Name);
+            Interlocked.Exchange(ref _photoCts, null)?.Cancel();
+            if (person.Id != _photoPersonId || string.IsNullOrEmpty(person.PhotoUrl))
+                PersonPhotoBorder.Child = InitialsText;
+            _photoPersonId = person.Id;
+            _photoUrl = person.PhotoUrl;
+            if (!string.IsNullOrEmpty(person.PhotoUrl))
+            {
+                var cts = new CancellationTokenSource();
+                _photoCts = cts;
+                _ = LoadPersonPhotoAsync(person.Id, person.PhotoUrl, cts);
+            }
         }
 
         UpdateFilmographyState();
@@ -192,6 +214,7 @@ public sealed partial class PersonDetailPage : Page
 
     private void UpdateFilmographyState()
     {
+        if (!_isActive) return;
         int count = ViewModel.Filmography.Count;
         FilmographyEmptyText.Visibility = count == 0 && !ViewModel.IsLoading
             ? Visibility.Visible : Visibility.Collapsed;
@@ -235,17 +258,25 @@ public sealed partial class PersonDetailPage : Page
             nav.Navigate<HomePage>();
     }
 
-    private async Task LoadPersonPhotoAsync(string photoUrl, string name)
+    private async Task LoadPersonPhotoAsync(string personId, string photoUrl, CancellationTokenSource cts)
     {
         try
         {
             var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
+            var apiClient = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>();
+            var context = apiClient.CaptureContext();
 
             var bytes = await imageService.GetImageAsync(
-                name, "person_photo", photoUrl, httpClient, CancellationToken.None);
+                $"{context.BaseUrl}/{personId}", "person_photo", photoUrl, httpClient, cts.Token);
 
-            if (bytes == null) return;
+            if (bytes == null)
+            {
+                if (ReferenceEquals(_photoCts, cts)) _photoUrl = null; // Retry a failed photo on the next refresh.
+                return;
+            }
+            if (!_isActive || !ReferenceEquals(_photoCts, cts) ||
+                cts.IsCancellationRequested || !apiClient.IsCurrentContext(context)) return;
 
             var bitmapImage = new BitmapImage
             {
@@ -254,6 +285,8 @@ public sealed partial class PersonDetailPage : Page
             };
             using var stream = new MemoryStream(bytes);
             await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
+            if (!_isActive || !ReferenceEquals(_photoCts, cts) ||
+                cts.IsCancellationRequested || !apiClient.IsCurrentContext(context)) return;
 
             var image = new Image
             {
@@ -263,7 +296,15 @@ public sealed partial class PersonDetailPage : Page
 
             PersonPhotoBorder.Child = image;
         }
-        catch { }
+        catch
+        {
+            if (ReferenceEquals(_photoCts, cts)) _photoUrl = null;
+        }
+        finally
+        {
+            Interlocked.CompareExchange(ref _photoCts, null, cts);
+            cts.Dispose();
+        }
     }
 
     private static string GetInitials(string name)

@@ -60,20 +60,28 @@ public partial class DownloadsViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private async Task DeleteDownloadAsync(string id)
+    private async Task DeleteDownloadAsync(string id, CancellationToken cancellationToken)
     {
+        ErrorMessage = null;
         try
         {
-            await _downloadsApi.DeleteDownloadAsync(id);
+            await _downloadsApi.DeleteDownloadAsync(id, cancellationToken);
             var item = Downloads.FirstOrDefault(d => d.Id == id);
             if (item != null)
                 Downloads.Remove(item);
 
             IsEmpty = Downloads.Count == 0;
         }
-        catch
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Delete failure is non-fatal
+            // Explicit cancellation leaves the registry row intact. A network
+            // timeout without user cancellation still reports a failure.
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex is ApiException { StatusCode: 403 }
+                ? "You do not have permission to delete this download. It is still listed. Check your profile permissions and try again."
+                : "Could not delete the download from the server. It is still listed; check your connection and try again.";
         }
     }
 }

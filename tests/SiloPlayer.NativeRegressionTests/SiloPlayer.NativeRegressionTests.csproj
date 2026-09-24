@@ -12,6 +12,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260317003" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.5" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
     <Reference Include="SiloPlayer">
       <HintPath>$(SiloPlayerAssemblyDirectory)/SiloPlayer.dll</HintPath>
     </Reference>

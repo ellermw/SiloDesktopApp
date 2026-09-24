@@ -39,6 +39,26 @@ public partial class PlaybackApi(SiloApiClient client)
     public Task<SubtitleProviderStatus> GetSubtitleProviderStatusAsync(CancellationToken ct = default)
         => client.GetAsync<SubtitleProviderStatus>("/api/v2/subtitles/providers/status", ct);
 
+    public async Task<bool> CanSearchSubtitlesAsync(CancellationToken ct = default)
+    {
+        var context = client.CaptureContext();
+        bool enabled;
+        try
+        {
+            // Deliberately read afresh for each dialog; availability belongs to
+            // the current server/profile, not the previous playback session.
+            enabled = (await GetSubtitleProviderStatusAsync(ct))?.Enabled != false;
+        }
+        catch (Exception)
+        {
+            enabled = true;
+        }
+        ct.ThrowIfCancellationRequested();
+        if (!client.IsCurrentContext(context))
+            throw new OperationCanceledException("Subtitle provider context changed.", ct);
+        return enabled;
+    }
+
     public Task<SubtitleAiStartResponse> StartSubtitleAiAsync(SubtitleAiRequest request, CancellationToken ct = default)
         => client.PostAsync<SubtitleAiStartResponse>("/api/v2/subtitles/ai/translate", new Dictionary<string, object?>
         {

@@ -25,6 +25,11 @@
     <ProjectReference Include="..\..\src\SiloPlayer.Core\SiloPlayer.Core.csproj" />
     <ProjectReference Include="..\..\src\SiloPlayer.Player\SiloPlayer.Player.csproj" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.cs" Link="Production\LibraryViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\ItemDetailViewModel.cs" Link="Production\ItemDetailViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\DownloadsViewModel.cs" Link="Production\DownloadsViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\PersonDetailViewModel.cs" Link="Production\PersonDetailViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\AccountPasswordViewModel.cs" Link="Production\AccountPasswordViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\Messaging\MediaSurfaceMessages.cs" Link="Production\MediaSurfaceMessages.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\VirtualCatalogItems.cs" Link="Production\VirtualCatalogItems.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\BulkObservableCollection.cs" Link="Production\BulkObservableCollection.cs" />
   </ItemGroup>

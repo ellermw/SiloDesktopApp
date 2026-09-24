@@ -110,6 +110,7 @@ public sealed partial class SettingsPage : Page
         _cardOverlayService = App.Services.GetRequiredService<CardOverlayService>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
+        InitializeAccountPassword();
         NavigationCacheMode = NavigationCacheMode.Required;
         PopulateProfileLanguageChoices();
 
@@ -293,11 +294,13 @@ public sealed partial class SettingsPage : Page
         "Notifications" or "NotificationsSettings" => NotificationsSettingsTab,
         "ConnectApps" => ConnectAppsTab,
         "Profiles" => ProfilesTab,
+        "Account" or "Password" => AccountPasswordTab,
         _ => null,
     };
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        _accountPassword.Deactivate();
         // Stop the history_import event channel subscription when leaving Settings.
         StopImportEventSubscription();
         _themeCssSaveCts?.Cancel();
@@ -991,6 +994,7 @@ public sealed partial class SettingsPage : Page
             ]),
             ("Account",
             [
+                ("Account", "Account", "Manage the shared account password.", "\uE72E", "account password credential sign in security"),
                 ("Profiles", "Profiles", "Household profile names, PINs, and library access.", "\uE77B", "profile name pin access primary household library create delete"),
                 ("NotificationsSettings", "Notifications", "New-episode alerts by email, Discord, push, or webhook.", "\uEA8F", "new episodes email discord browser push webhooks alerts digest url"),
             ]),
@@ -1075,6 +1079,7 @@ public sealed partial class SettingsPage : Page
 
     private void ShowSettingsOverview()
     {
+        _accountPassword.Deactivate();
         _showingSettingsOverview = true;
         SettingsHeaderSubtitle.Text = "Make Silo work the way you like.";
         SettingsOverviewPanel.Visibility = Visibility.Visible;
@@ -1150,6 +1155,7 @@ public sealed partial class SettingsPage : Page
             (NotificationsSettingsTab, "notifications new episodes email discord browser push webhooks per episode alerts digest url"),
             (ConnectAppsTab, "connect apps silo jellyfin compatible infuse swiftfin jellycon findroid sign in login server address username password pin"),
             (ProfilesTab, "profiles profile names pin access rules primary household library create delete"),
+            (AccountPasswordTab, "account password credential sign in security"),
         };
 
         var matches = 0;
@@ -1176,7 +1182,7 @@ public sealed partial class SettingsPage : Page
         ConnectionsNavGroup.Visibility = new[] { ConnectAppsTab, WatchProvidersTab, WebhookSyncTab, ImportTab }
             .Any(button => button.Visibility == Visibility.Visible)
             ? Visibility.Visible : Visibility.Collapsed;
-        AccountNavGroup.Visibility = new[] { ProfilesTab, NotificationsSettingsTab }
+        AccountNavGroup.Visibility = new[] { AccountPasswordTab, ProfilesTab, NotificationsSettingsTab }
             .Any(button => button.Visibility == Visibility.Visible)
             ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1193,7 +1199,7 @@ public sealed partial class SettingsPage : Page
         if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
             return;
 
-        var tabs = new[] { AppearanceTab, InterfaceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, CardOverlaysTab, PersonalizeTab, ImportTab, WebhookSyncTab, WatchProvidersTab, DevicesTab, NotificationsSettingsTab, ConnectAppsTab, ProfilesTab, ThemeEditorTab, AccessibilityTab, PluginsTab, SessionsTab };
+        var tabs = new[] { AppearanceTab, InterfaceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, CardOverlaysTab, PersonalizeTab, ImportTab, WebhookSyncTab, WatchProvidersTab, DevicesTab, NotificationsSettingsTab, ConnectAppsTab, ProfilesTab, AccountPasswordTab, ThemeEditorTab, AccessibilityTab, PluginsTab, SessionsTab };
         foreach (var tab in tabs)
         {
             tab.Style = (Style)Resources["InactiveTabStyle"];
@@ -1202,6 +1208,9 @@ public sealed partial class SettingsPage : Page
         clickedButton.Style = (Style)Resources["ActiveTabStyle"];
 
         AppearancePanel.Visibility = tag == "Appearance" ? Visibility.Visible : Visibility.Collapsed;
+        AccountPasswordPanel.Visibility = tag == "Account" ? Visibility.Visible : Visibility.Collapsed;
+        if (tag == "Account") _ = _accountPassword.LoadAsync();
+        else _accountPassword.Deactivate();
         InterfacePanel.Visibility = tag == "Interface" ? Visibility.Visible : Visibility.Collapsed;
         PlaybackPanel.Visibility = tag == "Playback" ? Visibility.Visible : Visibility.Collapsed;
         LibrariesPanel.Visibility = tag == "Libraries" ? Visibility.Visible : Visibility.Collapsed;
@@ -3669,7 +3678,18 @@ public sealed partial class SettingsPage : Page
     // ----- Start import -----
     private async void StartImport_Click(object sender, RoutedEventArgs e)
     {
+        var submittedConnectSession = ViewModel.ImportSourceType == "emby" && ViewModel.ImportEmbyMode == "connect"
+            ? ViewModel.EmbyConnectSessionId : null;
         await ViewModel.StartImportCommand.ExecuteAsync(null);
+        // Only a consumed authorization clears the native controls. PasswordChanged
+        // can still be queued when a failed request completes; copying the model
+        // back on failure would discard that usable input.
+        if (!string.IsNullOrEmpty(submittedConnectSession) &&
+            ViewModel.EmbyConnectSessionId is null && ViewModel.EmbyConnectServers.Count == 0)
+        {
+            EmbyConnectPasswordBox.Password = "";
+            EmbyConnectServerCombo.Items.Clear();
+        }
         UpdateImportPanelVisibility();
     }
 
@@ -3923,7 +3943,7 @@ public sealed partial class SettingsPage : Page
         bool isActive = run.Status == "running" || run.Status == "queued";
         if (isActive && run.Fetched > 0)
         {
-            var progressValue = 100.0 * (run.Matched + run.Unmatched + run.Skipped) / Math.Max(1, run.Fetched);
+            var progressValue = run.ProgressPercent;
             var progressBar = new ProgressBar
             {
                 Minimum = 0,
@@ -3936,7 +3956,7 @@ public sealed partial class SettingsPage : Page
             RunSummaryContainer.Children.Add(progressBar);
             RunSummaryContainer.Children.Add(new TextBlock
             {
-                Text = $"{run.Matched + run.Unmatched + run.Skipped} / {run.Fetched} processed",
+                Text = $"{run.Processed} / {run.Fetched} processed",
                 FontSize = 12,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             });

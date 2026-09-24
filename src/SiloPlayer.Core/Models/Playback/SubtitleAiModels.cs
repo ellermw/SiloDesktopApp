@@ -9,7 +9,9 @@ public sealed class SubtitleAiStatus
 public sealed class SubtitleProviderStatus
 {
     public int SchemaVersion { get; set; }
-    public bool Enabled { get; set; }
+    // Older/partial status responses must not hide online search. Only an
+    // explicit enabled:false disables it, matching the WebUI.
+    public bool Enabled { get; set; } = true;
     public List<string> Providers { get; set; } = [];
 }
 

@@ -20,6 +20,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     private long _similarLoadGeneration;
     private long _seasonsLoadGeneration;
     private long _episodesLoadGeneration;
+    private long _watchedStateGeneration;
 
     public ItemDetailViewModel(
         CatalogApi catalogApi,
@@ -84,9 +85,43 @@ public partial class ItemDetailViewModel : ObservableObject,
         // latest watch state. We don't refetch the whole detail — just patch
         // the user_data on Item in place.
         if (Item == null || message.ContentId != Item.ContentId) return;
-        if (Item.UserData == null) return;
+        Item.UserData ??= new ItemDetailUserData();
         Item.UserData.PositionSeconds = message.PositionSeconds;
-        if (message.Completed) Item.UserData.Played = true;
+        Item.UserData.DurationSeconds = message.DurationSeconds;
+        if (message.Completed)
+        {
+            Item.UserData.Played = true;
+            IsWatched = true;
+        }
+    }
+
+    /// <summary>
+    /// Read the displayed item's state after final progress saves, including
+    /// episodes retired by autoplay and aggregate season/series completion.
+    /// Keep the existing page mounted and reject results after navigation.
+    /// </summary>
+    public async Task RefreshWatchedStateAsync(
+        Task pendingProgressSave, CancellationToken cancellationToken)
+    {
+        var item = Item;
+        if (item?.Type is not ("movie" or "episode" or "series" or "season")) return;
+        var generation = Volatile.Read(ref _watchedStateGeneration);
+        try
+        {
+            await pendingProgressSave.WaitAsync(cancellationToken);
+            if (!ReferenceEquals(Item, item) || generation != Volatile.Read(ref _watchedStateGeneration)) return;
+            _detailPrefetchCache.Invalidate(item.ContentId);
+            var refreshed = await _detailPrefetchCache.GetAsync(item.ContentId, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(Item, item) || generation != Volatile.Read(ref _watchedStateGeneration)) return;
+            item.UserData = refreshed.UserData;
+            IsWatched = item.UserData?.Played ?? false;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Watched-state refresh failed: {ex.Message}");
+        }
     }
 
     [ObservableProperty]
@@ -106,6 +141,8 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     [ObservableProperty]
     private bool _isWatched;
+
+    partial void OnIsWatchedChanged(bool value) => Interlocked.Increment(ref _watchedStateGeneration);
 
     [ObservableProperty]
     private int? _userRating;

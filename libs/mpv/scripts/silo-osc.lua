@@ -2119,6 +2119,32 @@ local function format_color_range(value)
     return ""
 end
 
+-- Fixed-pitch diagnostics use a width budget, preserving every UTF-8 character.
+-- Long rows stack label above value instead of letting two columns collide.
+local function stats_text_lines(value, capacity)
+    local chars = {}
+    for char in tostring(value or ""):gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+        table.insert(chars, char)
+    end
+    local lines, start, index, used, space = {}, 1, 1, 0, nil
+    while index <= #chars do
+        local char = chars[index]
+        local units = #char > 1 and 2 or 1
+        if used + units > capacity and index > start then
+            local last = space or (index - 1)
+            table.insert(lines, table.concat(chars, "", start, last))
+            start, index, used, space = last + 1, last + 1, 0, nil
+        else
+            used = used + units
+            if char == " " then space = index end
+            index = index + 1
+        end
+    end
+    if start <= #chars then table.insert(lines, table.concat(chars, "", start)) end
+    if #lines == 0 then table.insert(lines, "") end
+    return lines
+end
+
 local function render_stats()
     if not state.stats_visible then
         state.stats_panel_rect = nil
@@ -2142,8 +2168,8 @@ local function render_stats()
     local line_h = math.floor(20 * sc)
     local section_gap = 12
     local header_h = line_h + 4
-    local box_w = math.floor(320 * sc)
     local box_x = math.floor(16 * sc)
+    local box_w = math.min(math.floor(380 * sc), W - box_x * 2)
     local box_y = math.floor(48 * sc)
 
     local fallback = "\xe2\x80\x94"
@@ -2222,7 +2248,7 @@ local function render_stats()
         table.insert(s2.rows, { label = "AI luma reconstruction (requested)",
             value = string.format("%dx%d (2x)", vw * 2, vh * 2) })
     end
-    local enhancement_status = mp.get_property("user-data/silo-upscaling-status", "")
+    local enhancement_status = mp.get_property_native("user-data/silo-upscaling-status", "")
     if enhancement_status ~= "" then
         table.insert(s2.rows, { label = "Enhancement status", value = enhancement_status })
     end
@@ -2288,12 +2314,25 @@ local function render_stats()
     end
     table.insert(sections, s4)
 
-    -- Calculate total height
+    local content_width = math.max(1, box_w - padding * 2)
+    local glyph_width = fs * 0.62 -- Consolas fixed-pitch cell, with a small safety margin
+    local capacity = math.max(1, math.floor(content_width / glyph_width))
+    local column_gap = math.ceil(16 * sc / glyph_width)
+    for _, sec in ipairs(sections) do
+        for _, row in ipairs(sec.rows) do
+            row.label_lines = stats_text_lines(row.label, capacity)
+            row.value_lines = stats_text_lines(row.value, capacity)
+            row.stacked = #row.label + #row.value + column_gap > capacity
+            row.height = line_h * (row.stacked and (#row.label_lines + #row.value_lines) or 1)
+        end
+    end
+
+    -- Calculate total height including wrapped diagnostics.
     local total_h = padding  -- top padding
     total_h = total_h + line_h + 8  -- header row ("Playback Info" + close X)
     for _, sec in ipairs(sections) do
         total_h = total_h + section_gap + header_h  -- section header
-        total_h = total_h + #sec.rows * line_h      -- rows
+        for _, row in ipairs(sec.rows) do total_h = total_h + row.height end
     end
     total_h = total_h + padding  -- bottom padding
 
@@ -2335,6 +2374,13 @@ local function render_stats()
         local half = height / 2
         return center_y + half >= content_top and center_y - half <= content_bottom
     end
+    local function draw_stats_text(x, y, text, color, alignment)
+        if not row_is_visible(y, line_h) then return end
+        local clipped = string.format("{\\clip(%d,%d,%d,%d)\\q2}%s",
+            box_x + padding, content_top, box_x + box_w - padding, content_bottom,
+            ass_escape_text(text))
+        draw_text(ass, x, y, clipped, fs, color, "00", 1.0, alignment, "Consolas")
+    end
 
     -- Draw sections
     for _, sec in ipairs(sections) do
@@ -2348,17 +2394,20 @@ local function render_stats()
 
         -- Rows
         for _, row in ipairs(sec.rows) do
-            if row_is_visible(cy + line_h / 2, line_h) then
-                -- Label (left, dim)
-                draw_text(ass, box_x + padding, cy + line_h / 2, row.label,
-                    fs, config.dim_text_color, "00", 1.0, 4)
-                -- Value (right-aligned, bright)
-                local val = row.value
-                if #val > 38 then val = string.sub(val, 1, 35) .. "..." end
-                draw_text(ass, box_x + box_w - padding, cy + line_h / 2, val,
-                    fs, config.text_color, "00", 1.0, 6)
+            if row.stacked then
+                for _, label in ipairs(row.label_lines) do
+                    draw_stats_text(box_x + padding, cy + line_h / 2, label, config.dim_text_color, 4)
+                    cy = cy + line_h
+                end
+                for _, value in ipairs(row.value_lines) do
+                    draw_stats_text(box_x + padding, cy + line_h / 2, value, config.text_color, 4)
+                    cy = cy + line_h
+                end
+            else
+                draw_stats_text(box_x + padding, cy + line_h / 2, row.label, config.dim_text_color, 4)
+                draw_stats_text(box_x + box_w - padding, cy + line_h / 2, row.value, config.text_color, 6)
+                cy = cy + line_h
             end
-            cy = cy + line_h
         end
     end
 

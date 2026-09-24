@@ -110,6 +110,7 @@
 
                     <ComboBox
                         x:Name="UploadLanguageComboBox"
+                        TabIndex="0"
                         Grid.Column="0"
                         HorizontalAlignment="Stretch"
                         PlaceholderText="Language">
@@ -183,6 +184,7 @@
         </Border>
 
         <TextBlock
+            x:Name="OnlineSearchHeading"
             Grid.Row="3"
             Text="Search online"
             Margin="0,10,0,8"
@@ -191,7 +193,7 @@
             Foreground="#99FFFFFF" />
 
         <!-- Language picker + Search -->
-        <Grid Grid.Row="4" ColumnSpacing="8">
+        <Grid x:Name="OnlineSearchControls" Grid.Row="4" ColumnSpacing="8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
@@ -199,6 +201,7 @@
             </Grid.ColumnDefinitions>
             <ComboBox
                 x:Name="LanguageComboBox"
+                TabIndex="1"
                 Grid.Column="0"
                 HorizontalAlignment="Stretch"
                 PlaceholderText="Language">
@@ -244,6 +247,7 @@
                 x:Name="SearchButton"
                 Grid.Column="1"
                 Content="Search"
+                IsEnabled="False"
                 Click="SearchButton_Click" />
             <ProgressRing
                 x:Name="SearchProgress"
@@ -269,7 +273,7 @@
         </StackPanel>
 
         <!-- Results list -->
-        <Grid Grid.Row="6" Margin="0,8,0,0">
+        <Grid x:Name="OnlineSearchResults" Grid.Row="6" Margin="0,8,0,0">
             <TextBlock
                 x:Name="EmptyStateText"
                 Text="Select a language and press Search."

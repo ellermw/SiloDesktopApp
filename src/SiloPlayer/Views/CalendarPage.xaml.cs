@@ -101,6 +101,7 @@ public sealed partial class CalendarPage : Page
 
     private void ContentScrollViewer_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
     {
+        UpdateWeekNavigatorPosition();
         var y = ContentScrollViewer.VerticalOffset;
         var delta = y - _lastMobileHeaderScrollY;
         if (Math.Abs(delta) <= 4)
@@ -112,6 +113,24 @@ public sealed partial class CalendarPage : Page
             App.MainWindowInstance?.SetMobileHeaderHidden(false);
 
         _lastMobileHeaderScrollY = y;
+    }
+
+    private void HeaderGrid_SizeChanged(object sender, SizeChangedEventArgs e)
+        => UpdateWeekNavigatorPosition();
+
+    private void WeekNavigator_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        WeekNavigatorSpace.Height = e.NewSize.Height;
+        UpdateWeekNavigatorPosition();
+    }
+
+    private void UpdateWeekNavigatorPosition()
+    {
+        // Keep one interactive navigator outside the scrolling viewport. The
+        // spacer preserves its original position and prevents content jumping.
+        if (WeekNavigatorTranslation == null) return;
+        var originalTop = HeaderGrid.Margin.Top + HeaderGrid.ActualHeight + HeaderGrid.Margin.Bottom;
+        WeekNavigatorTranslation.Y = Math.Max(8, originalTop - ContentScrollViewer.VerticalOffset);
     }
 
     // ---------- Reactive wiring ----------
@@ -405,7 +424,7 @@ public sealed partial class CalendarPage : Page
         {
             if (ContentScrollViewer.Content is not UIElement content) return;
             var point = group.TransformToVisual(content).TransformPoint(new Point(0, 0));
-            ContentScrollViewer.ChangeView(null, Math.Max(0, point.Y - 12), null, false);
+            ContentScrollViewer.ChangeView(null, Math.Max(0, point.Y - WeekNavigatorBorder.ActualHeight - 24), null, false);
         });
     }
 
@@ -848,7 +867,7 @@ public sealed partial class CalendarPage : Page
         _gutter = width < 640 ? 16 : width < 1024 ? 24 : width < 1280 ? 40 : 48;
 
         HeaderGrid.Margin = new Thickness(_gutter, width < 1024 ? 20 : 28, _gutter, 20);
-        WeekNavigatorBorder.Margin = new Thickness(_gutter, 0, _gutter, 24);
+        WeekNavigatorBorder.Margin = new Thickness(_gutter, 0, _gutter, 0);
         SelectedDayEmptyState.Margin = new Thickness(_gutter, 0, _gutter, 16);
         EmptyState.Margin = new Thickness(_gutter, 32, _gutter, 48);
         EmptyState.MinWidth = 0;

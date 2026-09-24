@@ -21,6 +21,10 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
     private const long MaxSubtitleUploadBytes = 5L * 1024L * 1024L;
 
     private readonly PlaybackApi _playbackApi;
+    private readonly SiloApiClient _apiClient;
+    private readonly ApiRequestContext _requestContext;
+    private bool _providerStatusLoaded;
+    private bool _onlineSearchEnabled = true;
     private readonly int _mediaFileId;
     private byte[]? _uploadFileBytes;
     private string? _uploadFileName;
@@ -52,6 +56,8 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         string? versionLabel = null)
     {
         _playbackApi = App.Services.GetRequiredService<PlaybackApi>();
+        _apiClient = App.Services.GetRequiredService<SiloApiClient>();
+        _requestContext = _apiClient.CaptureContext();
         _mediaFileId = mediaFileId;
         _playerMode = playerMode;
         this.InitializeComponent();
@@ -74,12 +80,35 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
             SelectLanguageByTag(UploadLanguageComboBox, defaultLanguage);
         }
 
-        Opened += (_, _) => LanguageComboBox.Focus(FocusState.Programmatic);
+        Opened += OnOpened;
         Closed += (_, _) =>
         {
             _lifetimeCts.Cancel();
             _uploadDetectionCts?.Cancel();
         };
+    }
+
+    private bool HasCurrentContext => !_lifetimeCts.IsCancellationRequested &&
+        _apiClient.IsCurrentContext(_requestContext);
+
+    private async void OnOpened(ContentDialog sender, ContentDialogOpenedEventArgs args)
+    {
+        try
+        {
+            var enabled = await _playbackApi.CanSearchSubtitlesAsync(_lifetimeCts.Token);
+            if (!HasCurrentContext) { Hide(); return; }
+            _onlineSearchEnabled = enabled;
+            _providerStatusLoaded = true;
+            var visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+            OnlineSearchHeading.Visibility = visibility;
+            OnlineSearchControls.Visibility = visibility;
+            OnlineSearchResults.Visibility = visibility;
+            SearchButton.IsEnabled = enabled && !_downloadInProgress && !_uploadInProgress;
+        }
+        catch (OperationCanceledException)
+        {
+            if (!_lifetimeCts.IsCancellationRequested) Hide();
+        }
     }
 
     private void ClearMessages()
@@ -153,6 +182,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         }
         catch (Exception ex)
         {
+            if (!HasCurrentContext) return;
             UploadStatusText.Text = $"Could not read subtitle file: {ex.Message}";
             UploadButton.IsEnabled = false;
         }
@@ -183,6 +213,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         }
         catch (Exception ex)
         {
+            if (!HasCurrentContext) return;
             UploadStatusText.Text = $"Could not read subtitle file: {ex.Message}";
             UploadButton.IsEnabled = false;
         }
@@ -190,6 +221,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
 
     private async Task LoadUploadFileAsync(Windows.Storage.StorageFile file)
     {
+        if (!HasCurrentContext) return;
         var selectionVersion = Interlocked.Increment(ref _uploadSelectionVersion);
         _uploadFileBytes = null;
         _uploadFileName = null;
@@ -214,7 +246,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         }
 
         var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
-        if (selectionVersion != Volatile.Read(ref _uploadSelectionVersion))
+        if (!HasCurrentContext || selectionVersion != Volatile.Read(ref _uploadSelectionVersion))
             return;
 
         _uploadFileBytes = buffer.ToArray();
@@ -227,7 +259,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
 
     private async Task DetectUploadLanguageAsync(int selectionVersion)
     {
-        if (_uploadFileBytes == null || string.IsNullOrWhiteSpace(_uploadFileName)) return;
+        if (!HasCurrentContext || _uploadFileBytes == null || string.IsNullOrWhiteSpace(_uploadFileName)) return;
 
         _uploadDetectionCts?.Cancel();
         _uploadDetectionCts?.Dispose();
@@ -246,7 +278,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
                 SelectedUploadLanguage,
                 detectionToken);
 
-            if (selectionVersion != Volatile.Read(ref _uploadSelectionVersion))
+            if (!HasCurrentContext || selectionVersion != Volatile.Read(ref _uploadSelectionVersion))
                 return;
 
             if (!string.IsNullOrWhiteSpace(detection.Language))
@@ -265,11 +297,12 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         }
         catch (Exception ex)
         {
+            if (!HasCurrentContext) return;
             UploadStatusText.Text = $"Language detection failed: {ex.Message}";
         }
         finally
         {
-            if (selectionVersion == Volatile.Read(ref _uploadSelectionVersion))
+            if (HasCurrentContext && selectionVersion == Volatile.Read(ref _uploadSelectionVersion))
             {
                 BrowseUploadButton.IsEnabled = true;
                 UploadButton.IsEnabled = _uploadFileBytes != null;
@@ -282,7 +315,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
 
     private async void UploadButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_uploadInProgress || _downloadInProgress ||
+        if (!HasCurrentContext || _uploadInProgress || _downloadInProgress ||
             _uploadFileBytes == null || string.IsNullOrWhiteSpace(_uploadFileName))
             return;
 
@@ -305,6 +338,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
                 hearingImpaired: UploadHearingImpairedToggle.IsOn,
                 ct: _lifetimeCts.Token);
 
+            if (!HasCurrentContext) return;
             UploadStatusText.Text = "Subtitle uploaded.";
             StatusText.Text = "Subtitle uploaded.";
             try { SubtitleDownloaded?.Invoke(GetDownloadedSubtitleId(response)); } catch { }
@@ -325,13 +359,14 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         }
         catch (Exception ex)
         {
+            if (!HasCurrentContext) return;
             UploadStatusText.Text = $"Upload failed: {ex.Message}";
             ShowError($"Upload failed: {ex.Message}");
         }
         finally
         {
             _uploadInProgress = false;
-            if (!_lifetimeCts.IsCancellationRequested)
+            if (HasCurrentContext)
             {
                 BrowseUploadButton.IsEnabled = true;
                 UploadButton.IsEnabled = _uploadFileBytes != null;
@@ -342,7 +377,8 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
 
     private async void SearchButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_downloadInProgress || _uploadInProgress)
+        if (!HasCurrentContext || !_providerStatusLoaded || !_onlineSearchEnabled ||
+            _downloadInProgress || _uploadInProgress)
             return;
 
         var searchVersion = Interlocked.Increment(ref _searchVersion);
@@ -359,7 +395,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
                 _mediaFileId,
                 [SelectedLanguage],
                 _lifetimeCts.Token);
-            if (searchVersion != Volatile.Read(ref _searchVersion))
+            if (!HasCurrentContext || searchVersion != Volatile.Read(ref _searchVersion))
                 return;
 
             if (result.Results.Count == 0)
@@ -383,16 +419,17 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         }
         catch (Exception ex)
         {
+            if (!HasCurrentContext) return;
             StatusText.Text = "Search failed.";
             ShowError(ex.Message);
         }
         finally
         {
             if (searchVersion == Volatile.Read(ref _searchVersion) &&
-                !_lifetimeCts.IsCancellationRequested)
+                HasCurrentContext)
             {
                 SearchProgress.IsActive = false;
-                SearchButton.IsEnabled = true;
+                SearchButton.IsEnabled = _providerStatusLoaded && _onlineSearchEnabled;
             }
         }
     }
@@ -674,7 +711,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
 
     private async Task DownloadAsync(SubtitleSearchResult r, Button btn)
     {
-        if (_downloadInProgress || _uploadInProgress)
+        if (!HasCurrentContext || !_onlineSearchEnabled || _downloadInProgress || _uploadInProgress)
             return;
 
         _downloadInProgress = true;
@@ -691,6 +728,7 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
                 _mediaFileId,
                 r,
                 _lifetimeCts.Token);
+            if (!HasCurrentContext) return;
             StatusText.Text = $"Downloaded {r.Language.ToUpperInvariant()} · {r.Provider}.";
             try { SubtitleDownloaded?.Invoke(GetDownloadedSubtitleId(response)); } catch { }
             if (_playerMode)
@@ -701,16 +739,17 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         }
         catch (Exception ex)
         {
+            if (!HasCurrentContext) return;
             StatusText.Text = "Download failed.";
             ShowError(ex.Message);
         }
         finally
         {
             _downloadInProgress = false;
-            if (!_lifetimeCts.IsCancellationRequested)
+            if (HasCurrentContext)
             {
                 ResultsList.IsEnabled = true;
-                SearchButton.IsEnabled = true;
+                SearchButton.IsEnabled = _providerStatusLoaded && _onlineSearchEnabled;
                 UploadButton.IsEnabled = _uploadFileBytes != null;
                 BrowseUploadButton.IsEnabled = true;
                 btn.IsEnabled = true;

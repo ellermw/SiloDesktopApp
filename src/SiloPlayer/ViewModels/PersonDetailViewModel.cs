@@ -12,14 +12,17 @@ public partial class PersonDetailViewModel : ObservableObject
 {
     private readonly PeopleApi _peopleApi;
     private readonly CatalogApi _catalogApi;
+    private readonly SiloApiClient _apiClient;
 
     private CancellationTokenSource? _pageCts;
     private CancellationTokenSource? _filmographyCts;
+    private CancellationTokenSource? _refreshCts;
 
-    public PersonDetailViewModel(PeopleApi peopleApi, CatalogApi catalogApi)
+    public PersonDetailViewModel(PeopleApi peopleApi, CatalogApi catalogApi, SiloApiClient apiClient)
     {
         _peopleApi = peopleApi;
         _catalogApi = catalogApi;
+        _apiClient = apiClient;
     }
 
     [ObservableProperty]
@@ -136,10 +139,12 @@ public partial class PersonDetailViewModel : ObservableObject
         if (string.IsNullOrEmpty(personId)) return;
 
         var cts = new CancellationTokenSource();
+        var context = _apiClient.CaptureContext();
         var previous = Interlocked.Exchange(ref _pageCts, cts);
         previous?.Cancel();
         previous?.Dispose();
         CancelFilmographyLoad();
+        CancelRefresh();
 
         IsLoading = true;
         ErrorMessage = null;
@@ -151,7 +156,7 @@ public partial class PersonDetailViewModel : ObservableObject
             var filmographyTask = _catalogApi.GetPersonFilmographyAsync(
                 personId, null, limit: FilmographyPageSize, offset: 0, cts.Token);
             await Task.WhenAll(personTask, filmographyTask);
-            if (!ReferenceEquals(_pageCts, cts)) return;
+            if (!ReferenceEquals(_pageCts, cts) || !_apiClient.IsCurrentContext(context)) return;
 
             Person = personTask.Result;
             ApplyFilmography(filmographyTask.Result);
@@ -159,6 +164,9 @@ public partial class PersonDetailViewModel : ObservableObject
             OnPropertyChanged(nameof(DatesDisplay));
             OnPropertyChanged(nameof(BirthDateDisplay));
             OnPropertyChanged(nameof(DeathDateDisplay));
+            var refreshCts = new CancellationTokenSource();
+            _refreshCts = refreshCts;
+            _ = ObservePersonRefreshAsync(Person, refreshCts);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
         catch (ApiException ex) when (ex.StatusCode == 404)
@@ -176,6 +184,31 @@ public partial class PersonDetailViewModel : ObservableObject
             cts.Dispose();
         }
     }
+
+    private async Task ObservePersonRefreshAsync(Person initial, CancellationTokenSource cts)
+    {
+        try
+        {
+            await foreach (var person in _peopleApi.ObservePersonRefreshAsync(initial, cts.Token))
+            {
+                if (!ReferenceEquals(_refreshCts, cts) || cts.IsCancellationRequested) return;
+                Person = person;
+                OnPropertyChanged(nameof(AgeDisplay));
+                OnPropertyChanged(nameof(DatesDisplay));
+                OnPropertyChanged(nameof(BirthDateDisplay));
+                OnPropertyChanged(nameof(DeathDateDisplay));
+            }
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            Interlocked.CompareExchange(ref _refreshCts, null, cts);
+            cts.Dispose();
+        }
+    }
+
+    private void CancelRefresh()
+        => Interlocked.Exchange(ref _refreshCts, null)?.Cancel();
 
     [RelayCommand]
     private async Task FilterAsync(string type)
@@ -254,6 +287,7 @@ public partial class PersonDetailViewModel : ObservableObject
         page?.Cancel();
         page?.Dispose();
         CancelFilmographyLoad();
+        CancelRefresh();
         IsLoading = false;
     }
 

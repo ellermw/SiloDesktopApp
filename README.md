@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.102**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.102/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.104**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.104/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `CEC056DED1B56219A319C01C38B80BD2CCDA9A25541AB6C560BF4DC97B9BCEBC`
+SHA-256: `0E54B19C01707B0C4C864752E7667C87FFCB22F6204B3A9079E64B9E0EA3D6AB`
 
 The installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 
@@ -20,40 +20,40 @@ Third-party components retain their own licenses. The externally loaded FSRCNNX 
 
 ## Current parity
 
-Status meanings:
+**1.1.104 implements the main user workflows and the first six finalization packages, but complete visual and behavioral parity has not been verified.** The remaining work includes specific feature gaps, playback reliability investigation, and installed-app comparisons; those are different kinds of work.
 
-- **Functional; visual parity incomplete** — principal data and actions work, but the page is not considered complete until side-by-side visual and interaction verification matches the current WebUI.
-- **Substantial** — the principal workflows exist, with additional visual or edge-case work remaining.
-- **Partial** — usable foundation exists, but meaningful WebUI behavior is still missing.
-- **Hardening** — implemented, with compatibility, performance, or reliability work still underway.
+The table describes the released build. **Known gap** means a concrete mismatch or reported defect. **Verification outstanding** means the implementation exists but current runtime evidence is insufficient; it does not mean the feature is absent. No area below is certified complete.
 
-| Area | Status | Current state |
+| Area | Implemented in 1.1.104 | Known gaps / verification outstanding |
 |---|---|---|
-| Authentication and profiles | Substantial | Login, refresh tokens, profile selection, PINs, profile management, signup, public server branding, and QR/device login are implemented. A server that still requires initial setup directs the user to finish setup in the Silo WebUI. Final installed visual comparison remains. |
-| Shared shell and navigation | Substantial | The 260 px desktop sidebar, 64 px detail immersion rail with 150 ms hover expansion, current mobile header/drawer, active-route synchronization, dynamic libraries/pins/apps, profile avatar/fallback behavior, notification chrome, Alt+Left/mouse/controller Back, cached route transitions, and playback-to-shell restoration are implemented. Installed comparison and the Playing Next close regression still require QA confirmation. |
-| Catalog and library browsing | Substantial | Virtualized browsing, filters, sorting, focused/cancelable search, collections, favorites, watchlist, history, calendar, recommendations, and requests are implemented. Shared cards now include current action, progress, episode-state, input, and personal-source presentation behavior. Installed comparison and the post-`8164fd59` WebUI drift pass remain. |
-| Home screen | Substantial | Server-defined sections, hero content, continue watching, next up, recommendations, customization, incremental refresh, current card variants, and audiobook rows are implemented. Mounted sections reconcile in place during refresh instead of blanking loaded content. Installed-build visual comparison and remaining responsive edge cases are still required. |
-| Item and person details | Substantial | Movie, series, season, episode, and person surfaces include cast/crew, versions, watched/favorite/watchlist/rating, trailers, extras, edition selection, current multi-version Media Info spec sheets, prefetched detail navigation, and current More actions. Profiles with metadata-curation permission retain Match/Fix Match for movies and series plus Quick/Complete Refresh Metadata. Navigation-aware mutations prevent an earlier item from repainting a reused detail page. Installed comparison and the current WebUI drift pass remain. |
-| Audiobooks, ebooks, and manga | Substantial | Current server contracts, grouped browsing, literary detail surfaces, manga volume/chapter reading through the shared reader, next-chapter navigation, read progress, and the WebUI-style audiobook mini/expanded player are present. The reader recognizes the current EPUB/PDF/MOBI/AZW/AZW3/CBZ/CBR/FB2/FBZ contract; remaining format-specific compatibility and final installed visual validation are still required. |
-| User collections | Substantial | Browse, create, edit, manual/smart rules, imports, and collection management exist. Current templates, guided rules, collage/scheduling details, and visual polish remain. |
-| Notifications | Substantial | Notification center and user notification settings are implemented, including current delivery configuration foundations. Additional current-server edge cases remain to be audited. |
-| Settings | Substantial | Playback, subtitles, appearance, theme editor, accessibility, date/time formats, home, card overlays, libraries, history import, webhook sync, watch providers, profiles, and notification controls are present. The server continues to add fields, so these routes remain subject to drift audits. |
-| Server administration | WebUI only | The desktop application is intentionally user-facing. Server setup, dashboards, libraries/scanning, users, activity/logs, nodes, plugins, policies, tasks, request moderation, and all other server-management workflows belong to the Silo WebUI and are not shipped in the Windows client. |
-| Player on-screen controls | Substantial | Current cinema controls, recap/intro/credits actions, marker/chapter seek regions, real chapter thumbnails, rich audio/subtitle/quality menus, live AI subtitle translation, bounded playback-info sections, credits countdown, post-roll/finished screens, On Deck, PiP, keyboard shortcuts, post-autoplay OSC restoration, fullscreen reconciliation, and an in-player Retry/Exit failure surface are implemented. Installed real-playback comparison and remaining edge-case geometry/focus validation are still required. |
-| Native playback engine | Hardening | Direct play, remux, HLS fallback, D3D11VA, HEVC/AV1/VP9/H.264, HDR paths, subtitle rendering, live track switching, progress/session keepalive, protocol-v3 route recovery, realtime plan invalidation, replacement sessions after keepalive loss, byte-range stall recovery, upstream-idle recovery, and premature-EOF guards are implemented. High-bitrate 4K, Dolby Vision, HDR/tone mapping, TrueHD/Atmos/DTS passthrough, fastest startup/seek, and long-session reliability remain active real-media validation work. |
-| Watch Party | Substantial | Create/join, room membership, suggestions, realtime synchronization, host/guest policy, transport controls, connection state, invite copy, end-room confirmation, and player sync overlay are implemented. Installed multi-client testing and remaining edge cases are still required. |
+| Login, profiles and navigation | Login/signup, token refresh, PINs, profile management, device login, branding, sidebar/drawer, Back navigation and playback return | **Verify:** installed layouts, profile/permission changes, keyboard/controller focus, narrow windows and DPI scaling. |
+| Home, library, search and personal lists | Home sections, hero, continue watching/next up, virtualized libraries, filters/sorting, search, favorites, watchlist, history, recommendations, requests and calendar | **Verify:** side-by-side cards/spacing, loading/empty/error states, refresh and cached navigation, large-library scrolling. Recheck older Home/scroll reports against the released build instead of assuming either recurrence or resolution. |
+| Movie, series, episode and person details | Versions, seasons/episodes, cast, media information, trailers/extras, watched/favorite/watchlist/rating actions, person metadata refresh and permission-gated maintenance | **Fixed in this release:** stale watched button after playback, verified with native UI regression checks. **Verify:** completion updates across cards and Home, plus installed layouts and permission states. |
+| Video controls and playback settings | Native OSC, track/quality/subtitle menus, markers, chapters, credits/next episode, PiP, shortcuts and failure/retry controls | **Known upstream gap:** profile-wide video/audiobook seek intervals added after the release reference are not integrated; video skips remain fixed and audiobook intervals remain local. **Verify:** current control geometry, focus, autoplay/close and subtitle-provider behavior. |
+| Native playback reliability | Direct/remux/HLS, codec/HDR support, live tracks, progress/session keepalive, protocol-v3 recovery, native direct reader and diagnostics | **Open investigation:** recurring buffering is not proven fully resolved. **Verify:** sustained high-bitrate 4K, seek/resume and recovery, HDR/Dolby Vision, TrueHD/Atmos/DTS on real hardware. Intel/AMD upscaling validation remains incomplete. |
+| Audiobooks, ebooks and manga | Grouped browsing, literary details, mini/expanded audiobook player, reader navigation and progress | **Verify:** supported document formats with real files, resume/next chapter, audiobook speed/sleep timer, layout and input behavior. Shared seek settings are the confirmed gap noted above. |
+| Collections | Manual/smart collections, editor, imports, grouping/order and API v2 conditional updates | **Verify:** current templates/guided rules, preservation of complex rules through edit/preview/save, collage/scheduling presentation and current WebUI layouts. Older checklist items need rechecking before being called missing. |
+| Settings, notifications, downloads and integrations | Playback/subtitles, appearance/theme/accessibility, Home/cards/libraries, profiles, Account password settings, notifications, safer download saves, corrected history import state/progress and watch-provider/webhook settings; API v2 integration | **Verify:** live password changes, imports and provider operations, effective profile values and permission/error states. API v2 migration itself is already shipped. |
+| Watch Party | Create/join, membership, suggestions, sync, host/guest controls, invitations and player overlay | **Verify:** multi-client playback, disconnect/reconnect, buffering/catch-up and quality-change behavior against the newer upstream policy. |
+| Server administration | Opens the Silo WebUI for server setup/management | **Outside desktop scope:** dashboards, users, scanning, nodes, policies, tasks and other server administration were intentionally removed in 1.1.94. They are not unfinished desktop features. |
+
+Evidence: **1.1.104 passed 1,137 Release tests, native WinUI regression checks and six published playback-service checks**. Native checks cover calendar navigation, Account and import fields, subtitle-provider states, watched-button updates and artwork reattachment. These checks do not establish every-page visual parity or sustained playback reliability. The finalization reference is official Silo `main` at `d4e35ba9df416e747822c6c9f2193b89c6b7e9fb`, fetched before implementation.
+
+See [the current remaining-work and evidence record](docs/parity/2026-09-24-status.md) for priorities, exact references and verification criteria. Historical audit counts include removed administration and superseded findings, so they are not a current completion measure.
+
+The [first finalization audit and work-package list](docs/parity/2026-09-24-finalization-audit.md) records 20 specific findings against the fetched reference, including two reproduced defects. The [first six selected packages](docs/parity/2026-09-24-first-six-implementation.md) ship in 1.1.104; that record distinguishes automated/native verification from live installed acceptance. The five remaining packages are smart-collection rule preservation, playback preferences, search, reader progress compatibility and Watch Party recovery. Recurring buffering remains a separate open investigation.
 
 ## Latest release
 
-### 1.1.102
+### 1.1.104
 
-- Updated authentication, browsing, settings, collections, notifications, downloads, and playback for the current Silo API v2 contracts, retaining native direct play and playback protocol v3.
-- Added a native direct-stream reader, bounded stall recovery, and detailed playback diagnostics that redact credentials and signed URLs. Long-session buffering remains under investigation.
-- Fixed clipped year and media-type labels beneath search results and other shared poster grids.
-- Added experimental Intel VSR and portable FSRCNNX upscaling alongside NVIDIA RTX VSR, with fallback to normal rendering.
-- Corrected audiobook progress units and playback marker ranges, and retained the recent library scrolling and playback-quality improvements.
-- Removed the test-build version suffix. This release is **1.1.102**; complete WebUI visual parity and broader GPU validation remain ongoing.
-- Verified **1,045 Release tests**, **six published playback-service checks**, and clean installer packaging with native libmpv load/hash checks.
+- Refresh the watched action after playback completes and final progress saves, including return navigation and episode transitions.
+- Keep calendar week navigation visible while scrolling and wrap long Playback Info values without overlapping labels.
+- Respect subtitle-provider availability while retaining subtitle upload, and refresh person details as background metadata work completes.
+- Preserve download filenames and formats, stage transfers until complete, and show save/delete failures.
+- Correct history import progress and clear consumed Connect authorization after successful submission.
+- Add capability-aware Account password settings with validation and safe clearing of password fields.
+- Verified **1,137 Release tests**, native WinUI regression checks, **six published playback-service checks**, and clean installer packaging with native libmpv load/hash checks. Live account/import/provider acceptance and the remaining parity packages are still outstanding.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release history.
 
