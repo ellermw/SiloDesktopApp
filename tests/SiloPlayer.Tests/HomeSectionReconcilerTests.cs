@@ -48,7 +48,7 @@ public class HomeSectionReconcilerTests
     }
 
     [Fact]
-    public void RefreshedSignedArtworkUrlNotifiesTheMountedCollection()
+    public void RefreshedSignedArtworkUrlDoesNotReplaceTheMountedCard()
     {
         var mountedItem = Item(
             "movie-1",
@@ -65,11 +65,28 @@ public class HomeSectionReconcilerTests
         var result = HomeSectionReconciler.Apply(current, incoming);
 
         Assert.Equal(HomeSectionChange.Items, result);
-        Assert.NotNull(notification);
-        Assert.Equal(
-            System.Collections.Specialized.NotifyCollectionChangedAction.Replace,
-            notification!.Action);
+        Assert.Null(notification);
         Assert.Same(mountedItem, current.Items[0]);
+    }
+
+    [Theory]
+    [InlineData("continue_watching")]
+    [InlineData("next_up")]
+    public void OmittedItemSourceDoesNotReplaceCardsNormalizedByTheRow(string surface)
+    {
+        var item = Item("episode-1", "Episode");
+        item.ItemSource = surface;
+        var current = Section(item);
+        current.SectionType = surface;
+        var incoming = Section(Item("episode-1", "Episode"));
+        incoming.SectionType = surface;
+        var notifications = 0;
+        current.Items.CollectionChanged += (_, _) => notifications++;
+
+        Assert.Equal(HomeSectionChange.None, HomeSectionReconciler.Apply(current, incoming));
+        Assert.Equal(0, notifications);
+        Assert.Same(item, current.Items[0]);
+        Assert.Equal(surface, current.Items[0].ItemSource);
     }
 
     [Fact]

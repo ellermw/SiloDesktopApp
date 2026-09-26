@@ -17,6 +17,7 @@ public sealed partial class LandscapeCard : UserControl
     private bool _isPointerOver;
     private bool _isKeyboardFocusWithin;
     private bool _quickActionPending;
+    private MediaItem? _artworkItem;
     public static readonly DependencyProperty MediaItemProperty =
         DependencyProperty.Register(
             nameof(MediaItem),
@@ -48,6 +49,7 @@ public sealed partial class LandscapeCard : UserControl
         this.InitializeComponent();
         this.Loaded += (_, _) =>
         {
+            ObserveArtwork(MediaItem);
             // HomePage is navigation-cached. Unloaded releases decoded artwork,
             // but the existing card and its MediaItem are reused when Home is
             // revisited, so the dependency property does not change again.
@@ -63,6 +65,7 @@ public sealed partial class LandscapeCard : UserControl
             // been reattached and received Loaded (detail-section reordering).
             // That stale event must not cancel the current artwork load.
             if (IsLoaded) return;
+            ObserveArtwork(null);
 
             try { _loadCts?.Cancel(); } catch { }
             _loadCts?.Dispose();
@@ -96,10 +99,26 @@ public sealed partial class LandscapeCard : UserControl
 
     private static void OnMediaItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
-        if (d is LandscapeCard card && e.NewValue is MediaItem item)
-        {
-            card.UpdateContent(item);
-        }
+        if (d is not LandscapeCard card) return;
+        card.ObserveArtwork(card.IsLoaded ? e.NewValue as MediaItem : null);
+        if (e.NewValue is MediaItem item) card.UpdateContent(item);
+    }
+
+    private void ObserveArtwork(MediaItem? item)
+    {
+        if (ReferenceEquals(_artworkItem, item)) return;
+        if (_artworkItem != null) _artworkItem.ArtworkUrlsChanged -= OnArtworkUrlsChanged;
+        _artworkItem = item;
+        if (_artworkItem != null) _artworkItem.ArtworkUrlsChanged += OnArtworkUrlsChanged;
+    }
+
+    private void OnArtworkUrlsChanged(object? sender, EventArgs e)
+    {
+        if (!IsLoaded || !ReferenceEquals(sender, MediaItem) || BackdropImage.Source != null) return;
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
+        _ = LoadImageAsync(MediaItem!, _loadCts.Token);
     }
 
     private static void OnUsePosterAspectChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)

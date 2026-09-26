@@ -13,6 +13,7 @@ public sealed partial class AudiobookSquareCard : UserControl
     private bool _isPointerOver;
     private bool _isKeyboardFocusWithin;
     private int _posterGeneration;
+    private MediaItem? _artworkItem;
 
     public static readonly DependencyProperty MediaItemProperty = DependencyProperty.Register(
         nameof(MediaItem), typeof(MediaItem), typeof(AudiobookSquareCard),
@@ -29,13 +30,31 @@ public sealed partial class AudiobookSquareCard : UserControl
         InitializeComponent();
         MoreButton.Tapped += (_, args) => args.Handled = true;
         ContextRequested += Card_ContextRequested;
+        Loaded += (_, _) => ObserveArtwork(MediaItem);
+        Unloaded += (_, _) => { if (!IsLoaded) ObserveArtwork(null); };
     }
 
     private static void OnMediaItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is not AudiobookSquareCard card) return;
+        card.ObserveArtwork(card.IsLoaded ? e.NewValue as MediaItem : null);
         if (e.NewValue is MediaItem item) card.Bind(item);
         else card.ResetCard();
+    }
+
+    private void ObserveArtwork(MediaItem? item)
+    {
+        if (ReferenceEquals(_artworkItem, item)) return;
+        if (_artworkItem != null) _artworkItem.ArtworkUrlsChanged -= OnArtworkUrlsChanged;
+        _artworkItem = item;
+        if (_artworkItem != null) _artworkItem.ArtworkUrlsChanged += OnArtworkUrlsChanged;
+    }
+
+    private void OnArtworkUrlsChanged(object? sender, EventArgs e)
+    {
+        if (!IsLoaded || !ReferenceEquals(sender, MediaItem) || CoverImage.Source != null
+            || string.IsNullOrWhiteSpace(MediaItem?.PosterUrl)) return;
+        _ = LoadPosterAsync(MediaItem!, ++_posterGeneration);
     }
 
     private void Bind(MediaItem item)

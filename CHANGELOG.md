@@ -2,6 +2,15 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.1.105 (stable Home refreshes)
+
+- Prevent unchanged Continue Watching and Next Up cards from being replaced when refreshed responses omit the display surface field.
+- Renew artwork URLs without recycling mounted cards or restarting their image fades; retry missing artwork with the fresh URL.
+- Coalesce bulk metadata-update notifications using the existing catalog cooldown while retaining prompt playback and watched-state updates.
+- Reproduced the old flashing path with the actual 1.1.104 WinUI controls. See the [diagnosis and verification record](docs/audit-gaps/2026-09-26-home-metadata-refresh-flashing.md).
+- Verified 1,140 Release tests and native controls: unchanged refreshes produce zero card rebuilds; genuine progress updates and failed-artwork recovery continue to work.
+- Published the Windows x64 installer with SHA-256 `7729DD1BCDD9F6E8986FB658CB08F6092562F17558335713417F17BDF6014431` and updated the README download link.
+
 ## 1.1.104 (first six parity packages and watched-state refresh)
 
 - Keep calendar week navigation visible while scrolling and wrap long Playback Info values without overlapping labels or discarding diagnostic text.

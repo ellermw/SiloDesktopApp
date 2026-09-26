@@ -149,6 +149,7 @@ public sealed partial class PosterCard : UserControl
         SizeChanged += (_, _) => ApplyActionGeometry();
         this.Loaded += (_, _) =>
         {
+            ObserveArtwork(MediaItem);
             if (!_observingUICustomization)
             {
                 _observingUICustomization = true;
@@ -174,6 +175,8 @@ public sealed partial class PosterCard : UserControl
         // piling up across 100k-scale libraries.
         this.Unloaded += (_, _) =>
         {
+            if (IsLoaded) return;
+            ObserveArtwork(null);
             if (_observingUICustomization)
             {
                 _observingUICustomization = false;
@@ -236,6 +239,8 @@ public sealed partial class PosterCard : UserControl
     {
         if (d is not PosterCard card) return;
 
+        card.ObserveArtwork(card.IsLoaded ? e.NewValue as MediaItem : null);
+
         if (e.NewValue is MediaItem item)
         {
             card.UpdateContent(item);
@@ -244,6 +249,26 @@ public sealed partial class PosterCard : UserControl
         {
             card.ShowPlaceholder();
         }
+    }
+
+    private MediaItem? _artworkItem;
+
+    private void ObserveArtwork(MediaItem? item)
+    {
+        if (ReferenceEquals(_artworkItem, item)) return;
+        if (_artworkItem != null) _artworkItem.ArtworkUrlsChanged -= OnArtworkUrlsChanged;
+        _artworkItem = item;
+        if (_artworkItem != null) _artworkItem.ArtworkUrlsChanged += OnArtworkUrlsChanged;
+    }
+
+    private void OnArtworkUrlsChanged(object? sender, EventArgs e)
+    {
+        if (!IsLoaded || !ReferenceEquals(sender, MediaItem) || PosterImage.Source != null
+            || SuppressImageLoading || DeferImageLoading) return;
+        _loadCts?.Cancel();
+        _loadCts?.Dispose();
+        _loadCts = new CancellationTokenSource();
+        _ = LoadPosterAsync(MediaItem!, _loadCts.Token);
     }
 
     private void ShowPlaceholder()

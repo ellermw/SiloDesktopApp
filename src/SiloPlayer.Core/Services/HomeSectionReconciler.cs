@@ -51,6 +51,12 @@ public static class HomeSectionReconciler
             : HomeSectionChange.None;
 
         incoming.Items ??= [];
+        // SectionRow applies this same surface to mounted cards. Normalize the
+        // response before comparison too, or an omitted item_source makes every
+        // unchanged Continue Watching/Next Up card appear different each time.
+        if (incoming.SectionType is "continue_watching" or "next_up")
+            foreach (var item in incoming.Items)
+                item.ItemSource = incoming.SectionType;
         if (MediaItemCollectionReconciler.Apply(current.Items, incoming.Items))
             change |= HomeSectionChange.Items;
 

@@ -27,7 +27,6 @@ public static class MediaItemCollectionReconciler
                 var mounted = current[targetIndex];
                 if (RefreshVolatileArtwork(mounted, next))
                 {
-                    current[targetIndex] = mounted;
                     changed = true;
                 }
                 continue;
@@ -76,6 +75,10 @@ public static class MediaItemCollectionReconciler
         current.PosterUrl = incoming.PosterUrl;
         current.BackdropUrl = incoming.BackdropUrl;
         current.LogoUrl = incoming.LogoUrl;
+        // A same-object CollectionChanged.Replace still recycles the WinUI
+        // card and restarts its image fade. Notify image consumers directly so
+        // missing artwork can retry without clearing already decoded artwork.
+        if (changed) current.NotifyArtworkUrlsChanged();
         return changed;
     }
 

@@ -116,6 +116,10 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             // lifecycle while leaving the user's running player untouched.
             _window = new Window { Content = parent };
             await Task.Delay(150); // Allow the hidden native tree to acquire its XamlRoot.
+            await HomeRefreshPreservesCards(parent);
+            Program.Log("PASS: Continue Watching refreshes preserve unchanged native cards.");
+            await RenewedArtworkRetriesOnlyMissingImages(parent);
+            Program.Log("PASS: renewed artwork retries failed images and preserves loaded images across Home card types.");
             await CalendarNavigatorRemainsVisible(parent);
             Program.Log("PASS: calendar week navigation remains visible while scrolling at narrow and desktop widths.");
             await AccountSettingsNativeFixture.RunAsync(parent);
@@ -211,6 +215,99 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
         return drained.Task;
     }
 
+    private static async Task HomeRefreshPreservesCards(StackPanel parent)
+    {
+        var failures = new List<string>();
+        foreach (var scenario in new[] { "omitted-source", "renewed-artwork", "progress" })
+        {
+            HomeSectionWithItems Response(int iteration) => new()
+            {
+                Id = "continue-watching", SectionType = "continue_watching", Title = "Continue Watching",
+                LoadCompleted = true, TotalCount = 3, ItemLimit = 20,
+                Items = new(Enumerable.Range(0, 3).Select(i => new MediaItem
+                {
+                    ContentId = "episode-" + i, Type = "episode", Title = "Episode " + i,
+                    ItemSource = scenario == "omitted-source" ? null : "continue_watching",
+                    BackdropUrl = scenario == "renewed-artwork" ? "https://fixture.invalid/still.png?signature=" + iteration : null,
+                    DurationSeconds = 1800, PositionSeconds = scenario == "progress" && i == 0 ? 120 + iteration : 120,
+                })),
+            };
+            var mounted = Response(0);
+            var row = new SectionRow { Section = mounted, Width = 1200 };
+            parent.Children.Add(row);
+            row.Measure(new Windows.Foundation.Size(1200, 500));
+            row.Arrange(new Windows.Foundation.Rect(0, 0, 1200, 500));
+            row.UpdateLayout();
+            await Task.Delay(250);
+            var repeater = (ItemsRepeater)row.FindName("CardsRepeater");
+            var original = Enumerable.Range(0, 3).Select(i => repeater.TryGetElement(i)).ToArray();
+            if (original.Any(card => card == null)) throw new InvalidOperationException("Home fixture did not realize cards.");
+            var prepared = 0;
+            repeater.ElementPrepared += (_, _) => prepared++;
+            for (var iteration = 1; iteration <= 3; iteration++)
+            {
+                HomeSectionReconciler.Apply(mounted, Response(iteration));
+                await DrainDispatcherAsync();
+                row.UpdateLayout();
+                await Task.Delay(100);
+            }
+            Program.Log($"Home refresh {scenario}: {prepared} card preparations across 3 refreshes.");
+            // Progress legitimately changes one card. Unchanged responses and
+            // renewed signatures must leave the entire mounted row intact.
+            if (prepared > (scenario == "progress" ? 3 : 0))
+                failures.Add($"{scenario}: {prepared} card preparations");
+            var firstStable = scenario == "progress" ? 1 : 0;
+            for (var i = firstStable; i < 3; i++)
+                if (!ReferenceEquals(original[i], repeater.TryGetElement(i)))
+                    failures.Add($"{scenario}: unchanged card {i} was recreated");
+            parent.Children.Remove(row);
+            await DrainDispatcherAsync();
+        }
+        if (failures.Count > 0) throw new InvalidOperationException(string.Join("; ", failures));
+    }
+
+    private static async Task RenewedArtworkRetriesOnlyMissingImages(StackPanel parent)
+    {
+        foreach (var kind in new[] { "landscape", "poster", "audiobook" })
+        {
+            MediaItem Item(string signature) => new()
+            {
+                ContentId = "renewal-" + kind, Type = kind == "audiobook" ? "audiobook" : "movie",
+                Title = "Renewal fixture", PosterUrl = "https://fixture.invalid/still.png?signature=" + signature,
+            };
+            var mounted = Item("expired");
+            var items = new System.Collections.ObjectModel.ObservableCollection<MediaItem> { mounted };
+            FrameworkElement card = kind switch
+            {
+                "landscape" => new LandscapeCard { MediaItem = mounted },
+                "poster" => new PosterCard { MediaItem = mounted },
+                _ => new AudiobookSquareCard { MediaItem = mounted },
+            };
+            parent.Children.Add(card);
+            var imageName = kind == "landscape" ? "BackdropImage" : kind == "poster" ? "PosterImage" : "CoverImage";
+            var image = (Image)card.FindName(imageName);
+            await Task.Delay(700);
+            if (image.Source != null) throw new InvalidOperationException(kind + ": expired fixture unexpectedly loaded");
+            MediaItemCollectionReconciler.Apply(items, new[] { Item("fresh") });
+            for (var wait = 0; wait < 30 && image.Source is not BitmapImage { PixelWidth: > 0 }; wait++)
+                await Task.Delay(100);
+            if (image.Source is not BitmapImage { PixelWidth: > 0 })
+                throw new InvalidOperationException(kind + ": renewed URL did not retry failed artwork");
+            await Task.Delay(300);
+            var decoded = image.Source;
+            MediaItemCollectionReconciler.Apply(items, new[] { Item("newer") });
+            await Task.Delay(400);
+            if (!ReferenceEquals(decoded, image.Source) || image.Opacity != 1)
+                throw new InvalidOperationException(kind + ": renewal cleared or faded an already loaded image");
+            parent.Children.Remove(card);
+            await Task.Delay(100);
+            var observers = (Delegate?)typeof(MediaItem).GetField("ArtworkUrlsChanged", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(mounted);
+            if (observers?.GetInvocationList().Length > 0)
+                throw new InvalidOperationException(kind + ": detached card retained artwork subscription");
+            Program.Log($"Home artwork {kind}: failed load recovered; decoded image retained; subscription released.");
+        }
+    }
+
     private static async Task EpisodeArtworkSurvivesSectionReattachment(StackPanel parent, StackPanel section)
     {
         var staleUnloads = 0;
@@ -273,8 +370,10 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            if (request.RequestUri?.AbsoluteUri != "https://fixture.invalid/still.png")
+            if (request.RequestUri?.GetLeftPart(UriPartial.Path) != "https://fixture.invalid/still.png")
                 throw new InvalidOperationException("Unexpected fixture request.");
+            if (request.RequestUri.Query.Contains("signature=expired", StringComparison.Ordinal))
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.Forbidden));
             return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {
                 Content = new ByteArrayContent(Convert.FromBase64String(

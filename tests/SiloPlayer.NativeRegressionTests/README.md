@@ -4,6 +4,12 @@ This Windows-only runner loads actual `ItemDetailPage` and `LandscapeCard` contr
 build in a hidden WinUI window. It uses local fixture image responses, never
 starts the Silo application, and does not access the user's settings or player.
 
+Home refresh checks mount the real SectionRow/ItemsRepeater and replay unchanged
+Continue Watching responses, renewed artwork signatures, and one-item progress
+changes. Unchanged cards must not be prepared again. Separate image checks verify
+failed images recover with renewed URLs, decoded images stay mounted, and all
+three card types release their artwork subscriptions when detached.
+
 ```powershell
 dotnet publish src/SiloPlayer/SiloPlayer.csproj -c Release -p:Platform=x64 -p:PublishDir=D:\SiloPlayer\.codex-tmp\native-test-build\
 powershell -NoProfile -ExecutionPolicy Bypass -File tests/SiloPlayer.NativeRegressionTests/run.ps1 -AppDirectory D:\SiloPlayer\.codex-tmp\native-test-build

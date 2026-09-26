@@ -10,6 +10,8 @@ public class HomeRealtimeRefreshGateTests
     [Theory]
     [InlineData("catalog:library.changed")]
     [InlineData("catalog:catalog.library.changed")]
+    [InlineData("catalog:metadata.updated")]
+    [InlineData("catalog:catalog.metadata.updated")]
     public void LibraryChangeAliasesShareTheCatalogBurstCooldown(string reason)
     {
         var gate = new HomeRealtimeRefreshGate(
@@ -28,7 +30,6 @@ public class HomeRealtimeRefreshGateTests
     [Theory]
     [InlineData("catalog:library.item_added")]
     [InlineData("catalog:catalog.item.changed")]
-    [InlineData("catalog:metadata.updated")]
     [InlineData("user_state:user_state.changed")]
     [InlineData("playback_completed")]
     public void ItemAndUserChangesRemainResponsiveDuringCatalogCooldown(string reason)

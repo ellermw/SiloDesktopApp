@@ -44,12 +44,15 @@ public sealed class HomeRealtimeRefreshGate
 
     public static bool IsCatalogBurst(string reason) =>
         string.Equals(reason, "catalog:library.changed", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(reason, "catalog:catalog.library.changed", StringComparison.OrdinalIgnoreCase);
+        || string.Equals(reason, "catalog:catalog.library.changed", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(reason, "catalog:metadata.updated", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(reason, "catalog:catalog.metadata.updated", StringComparison.OrdinalIgnoreCase);
 
     public static string ClassifyCatalogEvent(string eventName, JsonElement data)
     {
         var reason = $"catalog:{eventName}";
-        if (!IsCatalogBurst(reason))
+        if (!string.Equals(reason, "catalog:library.changed", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(reason, "catalog:catalog.library.changed", StringComparison.OrdinalIgnoreCase))
             return reason;
 
         return HasPositiveCount(data, "new")

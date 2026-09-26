@@ -32,6 +32,10 @@ public class HomeSectionWithItems
 }
 public class MediaItem
 {
+    public event EventHandler? ArtworkUrlsChanged;
+
+    internal void NotifyArtworkUrlsChanged() => ArtworkUrlsChanged?.Invoke(this, EventArgs.Empty);
+
     public string ContentId { get; set; } = "";
     public string Type { get; set; } = "";
     public string Title { get; set; } = "";

@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.1.104**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.104/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.1.105**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.1.105/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `0E54B19C01707B0C4C864752E7667C87FFCB22F6204B3A9079E64B9E0EA3D6AB`
+SHA-256: `7729DD1BCDD9F6E8986FB658CB08F6092562F17558335713417F17BDF6014431`
 
 The installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 
@@ -20,15 +20,15 @@ Third-party components retain their own licenses. The externally loaded FSRCNNX 
 
 ## Current parity
 
-**1.1.104 implements the main user workflows and the first six finalization packages, but complete visual and behavioral parity has not been verified.** The remaining work includes specific feature gaps, playback reliability investigation, and installed-app comparisons; those are different kinds of work.
+**1.1.105 implements the main user workflows and the first six finalization packages, but complete visual and behavioral parity has not been verified.** The remaining work includes specific feature gaps, playback reliability investigation, and installed-app comparisons; those are different kinds of work.
 
 The table describes the released build. **Known gap** means a concrete mismatch or reported defect. **Verification outstanding** means the implementation exists but current runtime evidence is insufficient; it does not mean the feature is absent. No area below is certified complete.
 
-| Area | Implemented in 1.1.104 | Known gaps / verification outstanding |
+| Area | Implemented in 1.1.105 | Known gaps / verification outstanding |
 |---|---|---|
 | Login, profiles and navigation | Login/signup, token refresh, PINs, profile management, device login, branding, sidebar/drawer, Back navigation and playback return | **Verify:** installed layouts, profile/permission changes, keyboard/controller focus, narrow windows and DPI scaling. |
 | Home, library, search and personal lists | Home sections, hero, continue watching/next up, virtualized libraries, filters/sorting, search, favorites, watchlist, history, recommendations, requests and calendar | **Verify:** side-by-side cards/spacing, loading/empty/error states, refresh and cached navigation, large-library scrolling. Recheck older Home/scroll reports against the released build instead of assuming either recurrence or resolution. |
-| Movie, series, episode and person details | Versions, seasons/episodes, cast, media information, trailers/extras, watched/favorite/watchlist/rating actions, person metadata refresh and permission-gated maintenance | **Fixed in this release:** stale watched button after playback, verified with native UI regression checks. **Verify:** completion updates across cards and Home, plus installed layouts and permission states. |
+| Movie, series, episode and person details | Versions, seasons/episodes, cast, media information, trailers/extras, watched/favorite/watchlist/rating actions, person metadata refresh and permission-gated maintenance | **Fixed in 1.1.104:** stale watched button after playback, verified with native UI regression checks. **Verify:** completion updates across cards and Home, plus installed layouts and permission states. |
 | Video controls and playback settings | Native OSC, track/quality/subtitle menus, markers, chapters, credits/next episode, PiP, shortcuts and failure/retry controls | **Known upstream gap:** profile-wide video/audiobook seek intervals added after the release reference are not integrated; video skips remain fixed and audiobook intervals remain local. **Verify:** current control geometry, focus, autoplay/close and subtitle-provider behavior. |
 | Native playback reliability | Direct/remux/HLS, codec/HDR support, live tracks, progress/session keepalive, protocol-v3 recovery, native direct reader and diagnostics | **Open investigation:** recurring buffering is not proven fully resolved. **Verify:** sustained high-bitrate 4K, seek/resume and recovery, HDR/Dolby Vision, TrueHD/Atmos/DTS on real hardware. Intel/AMD upscaling validation remains incomplete. |
 | Audiobooks, ebooks and manga | Grouped browsing, literary details, mini/expanded audiobook player, reader navigation and progress | **Verify:** supported document formats with real files, resume/next chapter, audiobook speed/sleep timer, layout and input behavior. Shared seek settings are the confirmed gap noted above. |
@@ -37,7 +37,7 @@ The table describes the released build. **Known gap** means a concrete mismatch 
 | Watch Party | Create/join, membership, suggestions, sync, host/guest controls, invitations and player overlay | **Verify:** multi-client playback, disconnect/reconnect, buffering/catch-up and quality-change behavior against the newer upstream policy. |
 | Server administration | Opens the Silo WebUI for server setup/management | **Outside desktop scope:** dashboards, users, scanning, nodes, policies, tasks and other server administration were intentionally removed in 1.1.94. They are not unfinished desktop features. |
 
-Evidence: **1.1.104 passed 1,137 Release tests, native WinUI regression checks and six published playback-service checks**. Native checks cover calendar navigation, Account and import fields, subtitle-provider states, watched-button updates and artwork reattachment. These checks do not establish every-page visual parity or sustained playback reliability. The finalization reference is official Silo `main` at `d4e35ba9df416e747822c6c9f2193b89c6b7e9fb`, fetched before implementation.
+Evidence: **1.1.105 passed 1,140 Release tests and native WinUI regression checks**. Native checks cover stable Home refreshes, artwork renewal and recovery, calendar navigation, Account and import fields, subtitle-provider states, watched-button updates and artwork reattachment. The preceding 1.1.104 release also passed six published playback-service checks. These checks do not establish every-page visual parity or sustained playback reliability. The finalization reference remains official Silo `main` at `d4e35ba9df416e747822c6c9f2193b89c6b7e9fb`; 1.1.105 is a focused desktop repair, not a new upstream parity pass.
 
 See [the current remaining-work and evidence record](docs/parity/2026-09-24-status.md) for priorities, exact references and verification criteria. Historical audit counts include removed administration and superseded findings, so they are not a current completion measure.
 
@@ -45,15 +45,13 @@ The [first finalization audit and work-package list](docs/parity/2026-09-24-fina
 
 ## Latest release
 
-### 1.1.104
+### 1.1.105
 
-- Refresh the watched action after playback completes and final progress saves, including return navigation and episode transitions.
-- Keep calendar week navigation visible while scrolling and wrap long Playback Info values without overlapping labels.
-- Respect subtitle-provider availability while retaining subtitle upload, and refresh person details as background metadata work completes.
-- Preserve download filenames and formats, stage transfers until complete, and show save/delete failures.
-- Correct history import progress and clear consumed Connect authorization after successful submission.
-- Add capability-aware Account password settings with validation and safe clearing of password fields.
-- Verified **1,137 Release tests**, native WinUI regression checks, **six published playback-service checks**, and clean installer packaging with native libmpv load/hash checks. Live account/import/provider acceptance and the remaining parity packages are still outstanding.
+- Fix repeated Home/Continue Watching flashing during bulk library metadata refreshes.
+- Keep unchanged cards mounted when refreshed responses omit their display surface or renew image URL signatures. Preserve loaded artwork and retry missing images with fresh URLs.
+- Coalesce metadata-event bursts through the existing 30-second catalog cooldown while retaining prompt playback and watched-state updates.
+- Verified **1,140 Release tests**, native WinUI regression checks, and clean installer packaging. The native reproduction dropped from **nine unnecessary card preparations to zero** across three refreshes, while genuine progress updates still worked.
+- Includes all 1.1.104 fixes. Remaining parity work and the separate playback-buffering investigation remain open. See the [Home refresh diagnosis](docs/audit-gaps/2026-09-26-home-metadata-refresh-flashing.md) for evidence and scope.
 
 See [CHANGELOG.md](CHANGELOG.md) for the complete release history.
 
