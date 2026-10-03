@@ -66,6 +66,10 @@
                     Text="Movies and series you want to watch later."
                     FontSize="14"
                     Foreground="{StaticResource SecondaryTextBrush}" />
+                <ComboBox x:Name="WatchlistScope" Width="240" HorizontalAlignment="Left" SelectionChanged="WatchlistScope_SelectionChanged">
+                    <ComboBoxItem Content="In your library" IsSelected="True" />
+                    <ComboBoxItem Content="Outside your library" />
+                </ComboBox>
             </StackPanel>
 
             <Border
@@ -116,6 +120,7 @@
                 <ComboBoxItem Content="Title" Tag="title" IsSelected="True" />
                 <ComboBoxItem Content="Year" Tag="year" />
                 <ComboBoxItem Content="Date Added" Tag="added_at" />
+                <ComboBoxItem Content="Soonest first" Tag="soonest" />
             </ComboBox>
 
             <Button
@@ -153,6 +158,11 @@
                       ViewChanged="ContentScrollViewer_ViewChanged"
                       Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
             <StackPanel>
+                <TextBlock x:Name="ExternalStatusText" TextWrapping="Wrap" Visibility="Collapsed" Margin="0,8,0,16" />
+                <ItemsRepeater x:Name="ExternalRepeater" Visibility="Collapsed" ElementPrepared="ExternalRepeater_ElementPrepared">
+                    <ItemsRepeater.Layout><UniformGridLayout MinItemWidth="160" MinItemHeight="315" MinColumnSpacing="12" MinRowSpacing="16" ItemsStretch="None" /></ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate><DataTemplate><StackPanel Width="160" Spacing="6" /></DataTemplate></ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
                 <ItemsRepeater x:Name="PosterRepeater">
                     <ItemsRepeater.Layout>
                         <UniformGridLayout

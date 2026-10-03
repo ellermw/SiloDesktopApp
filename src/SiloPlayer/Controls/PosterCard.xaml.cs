@@ -80,6 +80,7 @@ public sealed partial class PosterCard : UserControl
     private MediaItem? _deferredOverlayItem;
     private bool _isKeyboardFocusWithin;
     private bool _quickActionPending;
+    private bool _observingOverlayPreferences;
 
     public static readonly DependencyProperty MediaItemProperty =
         DependencyProperty.Register(
@@ -150,6 +151,7 @@ public sealed partial class PosterCard : UserControl
         this.Loaded += (_, _) =>
         {
             ObserveArtwork(MediaItem);
+            if (!_observingOverlayPreferences) { _observingOverlayPreferences = true; App.Services.GetRequiredService<CardOverlayService>().Changed += OverlayPreferences_Changed; }
             if (!_observingUICustomization)
             {
                 _observingUICustomization = true;
@@ -177,6 +179,7 @@ public sealed partial class PosterCard : UserControl
         {
             if (IsLoaded) return;
             ObserveArtwork(null);
+            if (_observingOverlayPreferences) { _observingOverlayPreferences = false; App.Services.GetRequiredService<CardOverlayService>().Changed -= OverlayPreferences_Changed; }
             if (_observingUICustomization)
             {
                 _observingUICustomization = false;
@@ -196,6 +199,8 @@ public sealed partial class PosterCard : UserControl
         // constructions + closures per recycled card.
         this.ContextRequested += PosterCard_ContextRequested;
     }
+
+    private void OverlayPreferences_Changed() => DispatcherQueue.TryEnqueue(() => { if (MediaItem is {} item) { UpdateQuickActionState(item); UpdateBadges(item); } });
 
     private void UICustomization_Changed(object? sender, EventArgs e)
         => DispatcherQueue.TryEnqueue(ApplyCardPresentation);
@@ -223,7 +228,7 @@ public sealed partial class PosterCard : UserControl
         var flyout = MediaItemMenu.Build(
             item,
             MediaItemMenu.Surface.Default,
-            stateChanged: () => UpdateQuickActionState(item));
+            stateChanged: () => UpdateQuickActionState(item), owner: this);
         if (args.TryGetPosition(this, out var pos))
         {
             flyout.ShowAt(this, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions { Position = pos });
@@ -913,7 +918,7 @@ public sealed partial class PosterCard : UserControl
         var flyout = MediaItemMenu.Build(
             item,
             MediaItemMenu.Surface.Default,
-            stateChanged: () => UpdateQuickActionState(item));
+            stateChanged: () => UpdateQuickActionState(item), owner: this);
         flyout.ShowAt(MoreButton, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions
         {
             Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.TopEdgeAlignedRight,
@@ -969,13 +974,15 @@ public sealed partial class PosterCard : UserControl
 
     private void UpdateQuickActionState(MediaItem item)
     {
-        var hasState = item.UserState != null && !SelectionMode;
-        var showWatched = hasState && item.Type is "movie" or "series";
+        var preferences = App.Services.GetRequiredService<CardOverlayService>();
+        var hasState = item.UserState != null && !SelectionMode && preferences.QuickActionsEnabled && preferences.QuickActionMode != "none";
+        var showWatched = hasState && (preferences.QuickActionMode is "both" or "watched") && (item.Type is "movie" or "series");
+        var showFavorite = hasState && (preferences.QuickActionMode is "both" or "favorites");
         var isWatched = item.UserState?.Played == true;
         var isFavorite = item.UserState?.IsFavorite == true;
 
         QuickWatchedButton.Visibility = showWatched ? Visibility.Visible : Visibility.Collapsed;
-        QuickFavoriteButton.Visibility = hasState ? Visibility.Visible : Visibility.Collapsed;
+        QuickFavoriteButton.Visibility = showFavorite ? Visibility.Visible : Visibility.Collapsed;
         QuickWatchedIcon.Glyph = isWatched ? "\uE7B3" : "\uED1A";
         QuickWatchedIcon.Foreground = isWatched
             ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80))

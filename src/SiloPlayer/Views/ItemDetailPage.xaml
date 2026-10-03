@@ -120,9 +120,13 @@
                 HorizontalAlignment="Stretch"
                 VerticalAlignment="Top">
                 <TextBlock
-                    Text="Item not found."
+                    Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
                     Foreground="{StaticResource SecondaryTextBrush}"
-                    FontSize="14" />
+                    FontSize="14" TextWrapping="Wrap" />
+                <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,16,0,0">
+                    <Button Content="Go back" Click="BackButton_Click" />
+                    <Button Content="Retry" Click="RetryDetail_Click" />
+                </StackPanel>
             </StackPanel>
         </Grid>
 
@@ -152,6 +156,7 @@
                     FontSize="14"
                     Foreground="{StaticResource SecondaryTextBrush}"
                     TextWrapping="Wrap" />
+                <Button Content="Retry" Click="RetryDetail_Click" HorizontalAlignment="Left" />
             </StackPanel>
         </Grid>
 
@@ -160,7 +165,7 @@
             x:Name="ContentScroll"
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
 
-            <StackPanel>
+            <StackPanel x:Name="DetailPageFlow">
                 <!-- Backdrop hero area: 60% of viewport height -->
                 <Grid x:Name="BackdropContainer" MinHeight="300">
                     <controls:BackdropImage
@@ -269,12 +274,16 @@
                             Width="170"
                             Height="255"
                             CornerRadius="16"
-                            Background="{StaticResource SurfaceRaisedBrush}"
+                            Background="{StaticResource SurfaceBrush}"
                             VerticalAlignment="Bottom"
                             Visibility="Collapsed">
-                            <Image
-                                x:Name="HeroPosterImage"
-                                Stretch="UniformToFill" />
+                            <Grid>
+                                <TextBlock x:Name="HeroPosterFallback" TextWrapping="Wrap"
+                                           TextAlignment="Center" HorizontalAlignment="Center"
+                                           VerticalAlignment="Center" Margin="24" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight"
+                                           Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" />
+                                <Image x:Name="HeroPosterImage" Stretch="UniformToFill" />
+                            </Grid>
                         </Border>
 
                         <!-- Title / metadata column -->
@@ -299,29 +308,16 @@
                                        Foreground="{StaticResource SecondaryTextBrush}"
                                        Visibility="Collapsed" />
 
-                            <!-- Current WebUI DetailHero context label. -->
-                            <TextBlock
-                                x:Name="HeroContextText"
-                                Margin="0,0,0,8"
-                                FontSize="14"
-                                FontWeight="Medium"
-                                Foreground="{StaticResource SecondaryTextBrush}"
-                                Visibility="Collapsed" />
-
-                            <!-- Studio/network kicker (web: mb-2 text-xs font-semibold
-                                 uppercase tracking-[0.16em]). Shown above the title when
-                                 the item has a studio or network. -->
-                            <TextBlock
-                                x:Name="StudioKickerText"
-                                FontSize="11"
-                                FontWeight="SemiBold"
-                                CharacterSpacing="160"
-                                Foreground="{StaticResource SecondaryTextBrush}"
-                                Visibility="Collapsed" />
+                            <controls:WrapPanel x:Name="HeroEyebrow" HorizontalSpacing="10" VerticalSpacing="4" Margin="0,0,0,12" Visibility="Collapsed">
+                                <TextBlock x:Name="HeroContextText" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" CharacterSpacing="160" Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed"/>
+                                <Ellipse x:Name="HeroEyebrowDot" Width="3" Height="3" Fill="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                <TextBlock x:Name="StudioKickerText" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" CharacterSpacing="160" Foreground="{StaticResource PrimaryTextBrush}" Opacity="0.85" Visibility="Collapsed"/>
+                            </controls:WrapPanel>
 
                             <!-- Logo image — when LogoUrl is present, replaces the
                                  plain title with the item's stylized logo (web parity).
                                  Falls back to TitleText when no logo is available. -->
+                            <Border x:Name="TitleArtPending" Height="80" MaxWidth="420" Background="Transparent" Visibility="Collapsed"/>
                             <Image
                                 x:Name="HeroLogoImage"
                                 Stretch="Uniform"
@@ -359,6 +355,9 @@
                                 Foreground="{StaticResource SecondaryTextBrush}"
                                 TextWrapping="Wrap"
                                 Visibility="Collapsed" />
+                            <HyperlinkButton x:Name="NarrationPickerButton" Visibility="Collapsed"
+                                             Click="NarrationPicker_Click" Padding="0" HorizontalAlignment="Left"
+                                             FontSize="15" />
                         </StackPanel>
                     </Grid>
                 </Grid>
@@ -387,6 +386,10 @@
                                            Foreground="{StaticResource SecondaryTextBrush}" />
                             </Border>
                             <TextBlock x:Name="MetaDot2" Text=" · " Foreground="{StaticResource TertiaryTextBrush}" FontSize="15" VerticalAlignment="Center" Visibility="Collapsed" />
+                            <Border x:Name="AdvisoryAgeBadge" CornerRadius="999" Padding="10,4" Background="{StaticResource SurfaceBrush}"
+                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Visibility="Collapsed">
+                                <TextBlock x:Name="AdvisoryAgeText" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Border>
                             <Border x:Name="RuntimeBadge" CornerRadius="999" Padding="10,4"
                                     Background="{StaticResource SurfaceBrush}"
                                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
@@ -724,15 +727,10 @@
                                         HorizontalSpacing="8" VerticalSpacing="8" />
 
                     <!-- Overview -->
-                    <TextBlock
+                    <controls:ExpandableDescription
                         x:Name="OverviewText"
-                        Style="{StaticResource BodyTextStyle}"
-                        Foreground="{StaticResource SecondaryTextBrush}"
-                        TextWrapping="Wrap"
                         MaxWidth="672"
-                        HorizontalAlignment="Left"
-                        LineHeight="24"
-                        FontSize="15" />
+                        HorizontalAlignment="Left" />
 
                     <Button x:Name="TranslateOverviewButton"
                             Style="{StaticResource SecondaryButtonStyle}"
@@ -1128,7 +1126,11 @@
                         <!-- Grid container populated in code-behind: responsive column count
                              driven by available width, mirrors upstream's grid-cols-1 →
                              grid-cols-5 pattern. Cards placed at (row, col) programmatically. -->
-                        <Grid x:Name="EpisodesPanel" SizeChanged="EpisodesPanel_SizeChanged" />
+                        <ScrollViewer x:Name="EpisodesScroll" HorizontalScrollMode="Disabled"
+                                      HorizontalScrollBarVisibility="Disabled" VerticalScrollMode="Disabled"
+                                      VerticalScrollBarVisibility="Disabled">
+                            <Grid x:Name="EpisodesPanel" SizeChanged="EpisodesPanel_SizeChanged" />
+                        </ScrollViewer>
                     </StackPanel>
 
                     <!-- Sibling Episodes (shown when viewing an episode — other episodes in same season) -->
@@ -1236,6 +1238,9 @@
             </StackPanel>
         </ScrollViewer>
 
+        <Border x:Name="MangaStickyHeader" Visibility="Collapsed" VerticalAlignment="Top" Background="{StaticResource AppBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Padding="20,10" Canvas.ZIndex="25">
+            <Button x:Name="MangaStickyHeaderButton" Click="MangaStickyHeader_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{StaticResource SubtleButtonStyle}"/>
+        </Border>
         <!-- Current WebUI TrailerModal: a frameless, black, in-page 16:9
              surface. Keeping it in this visual tree also preserves the loaded
              detail page and returns focus to the invoking trailer card. -->

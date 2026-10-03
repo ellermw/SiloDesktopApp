@@ -66,7 +66,7 @@ public static class RecipeGalleryDialog
     {
         var definitions = catalog.Categories
             .SelectMany(category => category.Value)
-            .Where(definition => !definition.AdminOnly)
+            .Where(definition => !definition.AdminOnly || catalog.AllowAdminOnlyRecipes)
             .GroupBy(definition => definition.Type, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
         var fallbackTypes = new (string Type, string Label)[]
@@ -236,24 +236,14 @@ public static class RecipeGalleryDialog
         root.Children.Add(paramHost);
         root.Children.Add(validation);
 
-        var dialog = CreateDialog(xamlRoot, 548);
-        dialog.Title = section is null ? "Add Section" : "Edit Section";
-        dialog.Content = new ScrollViewer { MaxHeight = 620, Content = root };
-        dialog.PrimaryButtonText = section is null ? "Add Section" : "Save";
-        dialog.CloseButtonText = "Cancel";
-        dialog.DefaultButton = ContentDialogButton.Primary;
-        dialog.Closing += (_, args) =>
+        root.Width = double.NaN;
+        if (!await SectionEditorSheet.ShowAsync(xamlRoot, section is null ? "Add Section" : "Edit Section", root, section is null ? "Add Section" : "Save", () =>
         {
-            if (args.Result != ContentDialogResult.Primary) return;
             var definition = definitions.GetValueOrDefault(selectedType) ?? new RecipeDefinition { Type = selectedType };
             var message = Validate(definition, config);
-            if (message is null) return;
-            validation.Text = message;
-            validation.Visibility = Visibility.Visible;
-            args.Cancel = true;
-        };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary)
-            return null;
+            if (message == null && !FilterEditorsValid(paramHost)) message = "Check the highlighted filter values.";
+            return message;
+        })) return null;
         return new RecipeConfigurationResult(
             selectedType,
             string.IsNullOrWhiteSpace(title.Text) ? SectionTypeLabel(selectedType) : title.Text.Trim(),
@@ -268,7 +258,7 @@ public static class RecipeGalleryDialog
     {
         var choices = catalog.Categories
             .SelectMany(category => category.Value)
-            .Where(definition => !definition.AdminOnly)
+            .Where(definition => !definition.AdminOnly || catalog.AllowAdminOnlyRecipes)
             .SelectMany(definition => definition.Presets.Select(preset => new RecipeChoice(definition, preset)))
             .ToList();
 
@@ -277,7 +267,7 @@ public static class RecipeGalleryDialog
         var search = new TextBox
         {
             PlaceholderText = "🔍 Search recipes...",
-            Width = 752,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
         };
         AutomationProperties.SetName(search, "Search recipes");
         var categoryBar = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 8 };
@@ -331,6 +321,9 @@ public static class RecipeGalleryDialog
 
         void RenderCards()
         {
+            var columnCount = xamlRoot.Size.Width < 640 ? 1 : xamlRoot.Size.Width < 900 ? 2 : 3;
+            cards.ColumnDefinitions.Clear();
+            for (var column = 0; column < columnCount; column++) cards.ColumnDefinitions.Add(new ColumnDefinition());
             cards.Children.Clear();
             cards.RowDefinitions.Clear();
             var query = search.Text.Trim();
@@ -346,7 +339,7 @@ public static class RecipeGalleryDialog
             emptyText.Text = $"No recipes match {(query.Length > 0 ? $"\"{query}\"" : "this filter")}.";
             for (var index = 0; index < filtered.Count; index++)
             {
-                if (index % 3 == 0)
+                if (index % columnCount == 0)
                     cards.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
                 var choice = filtered[index];
                 var button = CreateRecipeCard(choice);
@@ -355,8 +348,8 @@ public static class RecipeGalleryDialog
                     selected = choice;
                     dialog.Hide();
                 };
-                Grid.SetColumn(button, index % 3);
-                Grid.SetRow(button, index / 3);
+                Grid.SetColumn(button, index % columnCount);
+                Grid.SetRow(button, index / columnCount);
                 cards.Children.Add(button);
             }
         }
@@ -401,7 +394,7 @@ public static class RecipeGalleryDialog
         RenderCategories();
         RenderCards();
 
-        var root = new StackPanel { Spacing = 16, Width = 752 };
+        var root = new StackPanel { Spacing = 16, Width = Math.Min(752, Math.Max(240, xamlRoot.Size.Width - 80)) };
         root.Children.Add(header);
         root.Children.Add(search);
         root.Children.Add(categoryBar);
@@ -415,7 +408,10 @@ public static class RecipeGalleryDialog
             Content = cardHost,
         });
         dialog.Content = root;
-        await dialog.ShowAsync();
+        void ResizeGallery(XamlRoot sender, XamlRootChangedEventArgs args) { root.Width = Math.Min(752, Math.Max(240, xamlRoot.Size.Width - 80)); RenderCards(); }
+        xamlRoot.Changed += ResizeGallery;
+        try { await dialog.ShowAsync(); }
+        finally { xamlRoot.Changed -= ResizeGallery; }
         return selected;
     }
 
@@ -500,8 +496,8 @@ public static class RecipeGalleryDialog
                 TextWrapping = TextWrapping.Wrap,
             },
         };
-        var dialog = CreateDialog(xamlRoot, 548);
-        var root = new StackPanel { Width = 500, Spacing = 14 };
+        using var backCancellation = new CancellationTokenSource();
+        var root = new StackPanel { Spacing = 14 };
         var backRequested = false;
         var header = new Grid { Padding = new Thickness(0, 0, 0, 4) };
         header.ColumnDefinitions.Add(new ColumnDefinition());
@@ -522,7 +518,7 @@ public static class RecipeGalleryDialog
         back.Click += (_, _) =>
         {
             backRequested = true;
-            dialog.Hide();
+            backCancellation.Cancel();
         };
         Grid.SetColumn(back, 1);
         header.Children.Add(back);
@@ -534,28 +530,13 @@ public static class RecipeGalleryDialog
         root.Children.Add(itemLimit);
         root.Children.Add(featured);
 
-        dialog.Content = new ScrollViewer { MaxHeight = 600, Content = root };
-        dialog.PrimaryButtonText = "Add section";
-        dialog.CloseButtonText = "Cancel";
-        dialog.DefaultButton = ContentDialogButton.Primary;
-
-        dialog.Closing += (_, args) =>
+        var result = await SectionEditorSheet.ShowAsync(xamlRoot, choice.Preset.DisplayName, root, "Add section", () =>
         {
-            if (args.Result != ContentDialogResult.Primary)
-                return;
-            var message = Validate(choice.Definition, config);
-            if (message is null)
-                return;
-            validation.Text = message;
-            validation.Visibility = Visibility.Visible;
-            args.Cancel = true;
-        };
-
-        var result = await dialog.ShowAsync();
-        if (backRequested)
-            return new ConfigurationDialogResult(true, null);
-        if (result != ContentDialogResult.Primary)
-            return new ConfigurationDialogResult(false, null);
+            var error = Validate(choice.Definition, config);
+            return error ?? (FilterEditorsValid(paramHost) ? null : "Check the highlighted filter values.");
+        }, backCancellation.Token);
+        if (backRequested) return new ConfigurationDialogResult(true, null);
+        if (!result) return new ConfigurationDialogResult(false, null);
 
         return new ConfigurationDialogResult(false, new RecipeConfigurationResult(
             choice.Definition.Type,
@@ -582,6 +563,7 @@ public static class RecipeGalleryDialog
                     StringValue(config, "continue_type", "watching"),
                     value => config["continue_type"] = value);
                 break;
+            case "recently_added":
             case "watchlist":
             case "favorites":
                 await AddPersonalListFieldsAsync(config, host);
@@ -625,13 +607,14 @@ public static class RecipeGalleryDialog
         StackPanel host,
         bool seedGenreRule)
     {
+        Action? scopeChanged = null;
         AddCombo(host, "Media Scope", [
             new Option("", "All Media"), new Option("movie", "Movies"),
             new Option("series", "Series"), new Option("episode", "Episodes"),
             new Option("audiobook", "Audiobooks"), new Option("ebook", "Ebooks"),
             new Option("manga", "Manga")],
             StringValue(config, "media_scope"),
-            value => SetOptional(config, "media_scope", value));
+            value => { SetOptional(config, "media_scope", value); scopeChanged?.Invoke(); });
 
         try
         {
@@ -645,11 +628,13 @@ public static class RecipeGalleryDialog
                 {
                     selected.Add(library.Id);
                     config["library_ids"] = selected.Order().ToList();
+                    scopeChanged?.Invoke();
                 };
                 check.Unchecked += (_, _) =>
                 {
                     selected.Remove(library.Id);
                     config["library_ids"] = selected.Order().ToList();
+                    scopeChanged?.Invoke();
                 };
                 checks.Children.Add(check);
             }
@@ -660,179 +645,67 @@ public static class RecipeGalleryDialog
             host.Children.Add(Hint("Libraries could not be loaded."));
         }
 
-        var rulesSection = new StackPanel { Spacing = 8 };
-        rulesSection.Children.Add(Label("Filter Rules"));
-        var groups = ReadFilterGroups(config);
-        if (groups.Count == 0)
+        var query = JsonSerializer.Deserialize<SiloPlayer.Core.Models.Collections.QueryDefinition>(JsonSerializer.Serialize(config), V2Json.Options) ?? new();
+        if (query.Groups.Count == 0) query.Groups.Add(new() { Rules = seedGenreRule ? [new() { Field = "genre", Op = "is", Value = "" }] : [] });
+        var editor = new QueryFilterEditor();
+        var scopeGeneration = 0;
+        async Task LoadScopeAsync()
         {
-            var group = new EditableFilterGroup();
-            if (seedGenreRule) group.Rules.Add(new EditableFilterRule());
-            groups.Add(group);
+            var generation = ++scopeGeneration;
+            var scope = StringValue(config, "media_scope");
+            var selectedLibraries = IntListValue(config, "library_ids");
+            int? libraryId = selectedLibraries.Count == 1 ? selectedLibraries[0] : null;
+            CatalogFiltersResponse? filters = null;
+            try { filters = await App.Services.GetRequiredService<CatalogApi>().GetFiltersAsync(libraryId, scope: scope); }
+            catch { }
+            if (generation == scopeGeneration) editor.Load(query, scope, libraryId, filters);
         }
-        var advanced = groups.Count > 1 || StringValue(config, "match") == "any";
-        var outerMatch = StringValue(config, "match") == "any" ? "any" : "all";
-        var modeRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 5 };
-        var easy = new Button { Content = "Easy", Padding = new Thickness(10, 3, 10, 3) };
-        var advancedButton = new Button { Content = "Advanced", Padding = new Thickness(10, 3, 10, 3) };
-        modeRow.Children.Add(easy);
-        modeRow.Children.Add(advancedButton);
-        rulesSection.Children.Add(modeRow);
-        var editor = new StackPanel { Spacing = 10 };
-        rulesSection.Children.Add(editor);
-
-        void SyncConfig()
+        scopeChanged = () => _ = LoadScopeAsync();
+        await LoadScopeAsync();
+        void SaveQuery()
         {
-            config["match"] = advanced ? outerMatch : "all";
-            config["groups"] = groups.Select(group => (object)new Dictionary<string, object>
-            {
-                ["match"] = group.Match,
-                ["rules"] = group.Rules.Select(rule => (object)new Dictionary<string, object?>
-                {
-                    ["field"] = rule.Field,
-                    ["op"] = rule.Operator,
-                    ["value"] = ParseFilterValue(rule),
-                }).ToList(),
-            }).ToList();
-            if (!config.ContainsKey("sort"))
-                config["sort"] = new Dictionary<string, object> { ["field"] = "added_at", ["order"] = "desc" };
+            var snapshot = JsonSerializer.SerializeToElement(editor.Query, V2Json.Options);
+            foreach (var key in new[] { "match", "groups", "sort" })
+                if (snapshot.TryGetProperty(key, out var value)) config[key] = value.Clone();
         }
-
-        FrameworkElement BuildRule(EditableFilterGroup group, EditableFilterRule rule)
+        editor.Changed += SaveQuery;
+        var templates = new WrapPanel { HorizontalSpacing = 6, VerticalSpacing = 6 };
+        foreach (var (label, field, value) in new[] { ("Unwatched", "watched", (object)false), ("Favorites", "favorited", (object)true), ("Recently added", "added_at", (object)30) })
         {
-            var row = new Grid { ColumnSpacing = 6 };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(.8, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.2, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var fields = new (string Label, string Value)[]
+            var button = new Button { Content = label };
+            button.Click += (_, _) =>
             {
-                ("Genre", "genre"), ("Year", "year"), ("Rating (IMDb)", "rating_imdb"),
-                ("Director", "director"), ("Studio", "studio"), ("Cast", "cast"),
-                ("Library", "library"), ("Has been watched", "watched"),
-                ("Language", "language"), ("Runtime (min)", "runtime"), ("Keyword", "keyword"),
+                if (query.Groups.Count == 0) query.Groups.Add(new());
+                query.Groups[0].Rules.Add(new() { Field = field, Op = field == "added_at" ? "in_last" : "is", Value = value });
+                editor.Load(query, StringValue(config, "media_scope"), IntListValue(config, "library_ids").Count == 1 ? IntListValue(config, "library_ids")[0] : null); SaveQuery();
             };
-            var field = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-            foreach (var option in fields) field.Items.Add(new Option(option.Value, option.Label));
-            field.SelectedItem = field.Items.OfType<Option>().FirstOrDefault(option => option.Value == rule.Field) ?? field.Items[0];
-            var operators = new (string Label, string Value)[]
-            {
-                ("is", "is"), ("is not", "is_not"), (">=", "gte"), ("<=", "lte"),
-                ("between", "between"), ("contains", "contains"),
-            };
-            var op = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-            foreach (var option in operators) op.Items.Add(new Option(option.Value, option.Label));
-            op.SelectedItem = op.Items.OfType<Option>().FirstOrDefault(option => option.Value == rule.Operator) ?? op.Items[^1];
-            var value = new TextBox { Text = rule.Value, PlaceholderText = rule.Operator == "between" ? "start, end" : "value" };
-            var remove = new Button { Content = new FontIcon { Glyph = "\uE711", FontSize = 11 }, Padding = new Thickness(8, 4, 8, 4) };
-            field.SelectionChanged += (_, _) =>
-            {
-                if (field.SelectedItem is Option option) rule.Field = option.Value;
-                SyncConfig();
-            };
-            op.SelectionChanged += (_, _) =>
-            {
-                if (op.SelectedItem is Option option) rule.Operator = option.Value;
-                value.PlaceholderText = rule.Operator == "between" ? "start, end" : "value";
-                SyncConfig();
-            };
-            value.TextChanged += (_, _) => { rule.Value = value.Text; SyncConfig(); };
-            remove.Click += (_, _) => { group.Rules.Remove(rule); Rebuild(); };
-            Grid.SetColumn(field, 0); Grid.SetColumn(op, 1); Grid.SetColumn(value, 2); Grid.SetColumn(remove, 3);
-            row.Children.Add(field); row.Children.Add(op); row.Children.Add(value); row.Children.Add(remove);
-            return row;
+            templates.Children.Add(button);
         }
-
-        FrameworkElement BuildGroup(EditableFilterGroup group, int index)
+        host.Children.Add(Hint("Quick starts add a rule. Switching modes keeps every saved group and sort choice."));
+        host.Children.Add(templates);
+        host.Children.Add(editor);
+        var sort = CreateCombo("Sort by", new[] { "title", "year", "rating_imdb", "rating_tmdb", "added_at", "release_date", "runtime" }.Select(field => new Option(field, field switch { "title" => "Title", "year" => "Year", "rating_imdb" => "IMDb rating", "rating_tmdb" => "TMDb rating", "added_at" => "Date added", "release_date" => "Release date", "runtime" => "Runtime", _ => field })).ToArray(), query.Sort?.Field ?? "added_at");
+        var order = CreateCombo("Sort order", [new Option("asc", "Ascending"), new Option("desc", "Descending")], query.Sort?.Order ?? "desc");
+        var sorting = new StackPanel { Spacing = 8, Visibility = Visibility.Collapsed, Children = { sort, order } };
+        if (query.Sort != null && !sort.Items.OfType<Option>().Any(option => option.Value == query.Sort.Field))
+        { var retained = new Option(query.Sort.Field, query.Sort.Field); sort.Items.Add(retained); sort.SelectedItem = retained; }
+        sort.SelectionChanged += (_, _) =>
         {
-            var body = new StackPanel { Spacing = 7 };
-            if (advanced)
-            {
-                var header = new Grid { ColumnSpacing = 8 };
-                header.ColumnDefinitions.Add(new ColumnDefinition());
-                header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                header.Children.Add(new TextBlock
-                {
-                    Text = $"Group {index + 1}",
-                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    VerticalAlignment = VerticalAlignment.Center,
-                });
-                var match = CreateCombo("", [new Option("all", "Match all"), new Option("any", "Match any")], group.Match);
-                match.Width = 110;
-                match.SelectionChanged += (_, _) =>
-                {
-                    if (match.SelectedItem is Option option) group.Match = option.Value;
-                    SyncConfig();
-                };
-                var removeGroup = new Button { Content = "Remove", IsEnabled = groups.Count > 1, Padding = new Thickness(8, 4, 8, 4) };
-                removeGroup.Click += (_, _) => { groups.Remove(group); Rebuild(); };
-                Grid.SetColumn(match, 1); Grid.SetColumn(removeGroup, 2);
-                header.Children.Add(match); header.Children.Add(removeGroup);
-                body.Children.Add(header);
-            }
-            foreach (var rule in group.Rules.ToList()) body.Children.Add(BuildRule(group, rule));
-            var addRule = new Button { Content = "+ Add filter", HorizontalAlignment = HorizontalAlignment.Left, Padding = new Thickness(10, 4, 10, 4) };
-            addRule.Click += (_, _) => { group.Rules.Add(new EditableFilterRule()); Rebuild(); };
-            body.Children.Add(addRule);
-            return new Border
-            {
-                BorderBrush = ResourceBrush("BorderBrush"),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(7),
-                Padding = new Thickness(10),
-                Child = body,
-            };
-        }
-
-        void Rebuild()
-        {
-            easy.Style = ResourceStyle(advanced ? "SecondaryButtonStyle" : "AccentButtonStyle");
-            advancedButton.Style = ResourceStyle(advanced ? "AccentButtonStyle" : "SecondaryButtonStyle");
-            editor.Children.Clear();
-            if (!advanced)
-            {
-                var match = CreateCombo("", [new Option("all", "Match all"), new Option("any", "Match any")], groups[0].Match);
-                match.Width = 120;
-                match.HorizontalAlignment = HorizontalAlignment.Left;
-                match.SelectionChanged += (_, _) =>
-                {
-                    if (match.SelectedItem is Option option) groups[0].Match = option.Value;
-                    SyncConfig();
-                };
-                editor.Children.Add(match);
-            }
-            else
-            {
-                var match = CreateCombo("", [new Option("all", "Match all groups"), new Option("any", "Match any group")], outerMatch);
-                match.Width = 155;
-                match.HorizontalAlignment = HorizontalAlignment.Left;
-                match.SelectionChanged += (_, _) =>
-                {
-                    if (match.SelectedItem is Option option) outerMatch = option.Value;
-                    SyncConfig();
-                };
-                editor.Children.Add(match);
-            }
-            for (var index = 0; index < groups.Count; index++) editor.Children.Add(BuildGroup(groups[index], index));
-            if (advanced)
-            {
-                var addGroup = new Button { Content = "+ Add group", HorizontalAlignment = HorizontalAlignment.Left };
-                addGroup.Click += (_, _) => { groups.Add(new EditableFilterGroup()); Rebuild(); };
-                editor.Children.Add(addGroup);
-            }
-            SyncConfig();
-        }
-
-        easy.Click += (_, _) =>
-        {
-            advanced = false;
-            if (groups.Count > 1) groups.RemoveRange(1, groups.Count - 1);
-            outerMatch = "all";
-            Rebuild();
+            if (sort.SelectedItem is not Option selected) return;
+            query.Sort ??= new(); query.Sort.Field = selected.Value; query.Sort.Order = selected.Value == "title" ? "asc" : "desc";
+            order.SelectedItem = order.Items.OfType<Option>().First(item => item.Value == query.Sort.Order); SaveQuery();
         };
-        advancedButton.Click += (_, _) => { advanced = true; Rebuild(); };
-        Rebuild();
-        host.Children.Add(rulesSection);
+        order.SelectionChanged += (_, _) => { if (order.SelectedItem is Option selected) { query.Sort ??= new(); query.Sort.Order = selected.Value; SaveQuery(); } };
+        sorting.Visibility = Visibility.Visible;
+        host.Children.Add(new Expander { Header = "Sort settings", Content = sorting, HorizontalAlignment = HorizontalAlignment.Stretch });
+    }
+
+    private static bool FilterEditorsValid(DependencyObject root)
+    {
+        if (root is QueryRulesEditor editor && !editor.IsValid || root is QueryFilterEditor filter && !filter.IsValid) return false;
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+            if (!FilterEditorsValid(VisualTreeHelper.GetChild(root, index))) return false;
+        return true;
     }
 
     private static async Task AddCollectionFieldAsync(Dictionary<string, object> config, StackPanel host)
@@ -860,7 +733,7 @@ public static class RecipeGalleryDialog
             await Task.WhenAll(libraryTasks);
 
             foreach (var collection in (await userTask).Collections)
-                combo.Items.Add(new CollectionOption(collection.Id, collection.Name, "My Collections", "user"));
+                if (StringValue(config, "source_provider") != "trakt") combo.Items.Add(new CollectionOption(collection.Id, collection.Name, "My Collections", "user"));
 
             var libraryOptions = new Dictionary<string, CollectionOption>(StringComparer.Ordinal);
             foreach (var task in libraryTasks)
@@ -868,6 +741,8 @@ public static class RecipeGalleryDialog
                 var (library, response) = await task;
                 foreach (var collection in response.Collections)
                 {
+                    if (StringValue(config, "source_provider") == "trakt" && (collection.CollectionType != "trakt" || collection.SourceConfig == null
+                        || StringValue(collection.SourceConfig, "preset") != StringValue(config, "source_preset") || StringValue(collection.SourceConfig, "media_type") != StringValue(config, "media_type"))) continue;
                     if (libraryOptions.TryGetValue(collection.Id, out var existing))
                     {
                         existing.Group = $"{existing.Group}, {library.Name}";
@@ -884,12 +759,14 @@ public static class RecipeGalleryDialog
             host.Children.Add(Hint("Collections could not be loaded. Close this panel and try again."));
         }
 
+        var filtering = false;
         var selectedId = StringValue(config, "user_collection_id");
         if (selectedId.Length == 0)
             selectedId = StringValue(config, "library_collection_id");
         combo.SelectedItem = combo.Items.OfType<CollectionOption>().FirstOrDefault(option => option.Id == selectedId) ?? combo.Items[0];
         combo.SelectionChanged += (_, _) =>
         {
+            if (filtering) return;
             if (combo.SelectedItem is not CollectionOption option || option.Id.Length == 0)
             {
                 config.Remove("library_collection_id");
@@ -906,6 +783,18 @@ public static class RecipeGalleryDialog
                 config.Remove("user_collection_id");
             }
         };
+        var choices = combo.Items.OfType<CollectionOption>().ToList();
+        var search = new TextBox { PlaceholderText = "Search collection title or group" };
+        search.TextChanged += (_, _) =>
+        {
+            filtering = true;
+            var selected = combo.SelectedItem;
+            combo.Items.Clear();
+            foreach (var option in choices.Where(option => option.Id.Length == 0 || option.Id == (selected as CollectionOption)?.Id || $"{option.Title} {option.Group}".Contains(search.Text, StringComparison.CurrentCultureIgnoreCase))) combo.Items.Add(option);
+            combo.SelectedItem = selected;
+            filtering = false;
+        };
+        host.Children.Add(search);
         host.Children.Add(combo);
     }
 

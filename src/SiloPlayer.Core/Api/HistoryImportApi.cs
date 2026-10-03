@@ -4,6 +4,8 @@ namespace SiloPlayer.Core.Api;
 
 public class HistoryImportApi(SiloApiClient client)
 {
+    public ApiRequestContext CaptureContext() => client.CaptureContext();
+    public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
     public Task<List<HistoryImportSource>> GetImportSourcesAsync(CancellationToken ct = default)
         => client.GetAllItemsAsync<HistoryImportSource>("/api/v2/history-imports/sources", ct);
 

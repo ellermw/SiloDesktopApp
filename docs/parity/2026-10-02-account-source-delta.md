@@ -1,0 +1,17 @@
+# Account/settings source delta after the October 1 audit
+
+Audit acceptance remains pinned to official public Silo `8e2e840474a085c6df6571a5a2850f7eb996810c`. The coordinator fetched official GitHub main on October 2 at `478afa5257332df52f10650cd00b88596562d4c9`. This is a finite scoped source comparison, not an implementation or rendered acceptance claim for that newer source.
+
+Inspected via `git diff 8e2e840..478afa5` and `git show` from the official reference repository only. No private GitLab source or live account state was used.
+
+| New obligation | Exact current source/contract | Status |
+|---|---|---|
+| Sign-in provider readiness and routing | `web/src/pages/Login.tsx`: refresh provider discovery before form/automatic redirect; LDAP defaults **Automatic** and omits `provider` in the login body so the server chooses local vs directory; explicitly selected providers retain their ID. | Not implemented/accepted in this pinned pass. |
+| OAuth-only and recovery of a failed external session | Login hides credential form when OAuth is the sole path. A single OAuth provider auto-redirects except local bypass (`local=1`), OAuth/error return, switch-account, signed-out marker and session-restore unavailable. Structured refusal/error text and session-restore retry are surfaced. OAuth starts use the new start URL and select-account option. | Not implemented/accepted. Native selected-server navigation and external browser handoff require adaptation. |
+| Abandoned device pairing and code presentation | Login withdraws pending device requests on navigation/restart using `POST /api/v2/auth/device/cancel`; handles `canceled` terminal state; `opened` changes copy to **Continue on your phone.** Shows formatted and screen-reader-spoken user code plus verification URI, replacing old match-code/fallback presentation. | Not implemented/accepted. |
+| Account Sign-in settings | New `web/src/pages/settings/AccountSignInSection.tsx`, mounted by AccountSettings: list linked external identities, connect OAuth/directory providers after local-password reentry, success/error-return banners, safe unlink only when `can_unlink`, impersonation/session/public-address/provider availability gates. | Not implemented/accepted. API/hook dependency depth must be inspected before implementing the flow. |
+| Title pages preference | New `TitleArtSettingsGroup.tsx`, mounted by InterfaceSettings: capability-gated `ui.title_art`, device preference plus **Apply to all devices** profile-first override, pending/error disabled controls and contextual explanation. | Not implemented/accepted. |
+| Shadowed device override | DeviceSettings reads stored profile-device values for profile-first keys whose effective source is profile, so a shadowed device preference remains visible/resettable. | Not implemented/accepted. Existing effective-only device display does not establish this contract. |
+| Rating-source overlay availability | CardOverlaySettings uses `useShownRatingSources` and `isOverlayOffered` in addition to capability support to hide overlay controls for unavailable rating providers. | Not implemented/accepted. Shared rating capability integration belongs with coordinator/browse. |
+
+Scoped diff found no changes to Signup, ForgotPassword, PasswordReset or AuthCard. This does not prove every transitive auth helper stayed unchanged. New source obligations remain explicit; completed October 1 gates must not be labeled latest-main parity.

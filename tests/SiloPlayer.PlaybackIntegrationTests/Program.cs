@@ -89,6 +89,17 @@ try
     Require(PlaybackRecoveryPolicy.CanReloadCurrentDirectSession(PlaybackTransportKind.DirectProgressive,
         (string)Get(terminalState.GetValue(service)!, "Trigger")), "Startup terminal retry lost direct recovery policy.");
     Console.WriteLine("PASS published PlayerService: repeated startup transport failure preserves direct recovery when the viewer retries.");
+
+    foreach (var closeCode in new[] { 1013, 4001 })
+    {
+        await new SiloPlayer.Tests.EventAccessTransportTests().EventSocketReconnectKeepsActivePlaybackProgressAlive(closeCode);
+        Console.WriteLine($"PASS published playback: notification socket close {closeCode} retires stale reads while preserving session/progress/stop without a playback reconnect.");
+    }
+    foreach (var identityChange in new[] { "profile", "profile-return", "server", "server-return", "login", "logout", "pin-revoked" })
+    {
+        await new SiloPlayer.Tests.PlaybackApiV2Tests().RealIdentityChangesRejectOldPlaybackBeforeSendingProgress(identityChange);
+        Console.WriteLine($"PASS published playback: {identityChange} still rejects old-session progress before HTTP dispatch.");
+    }
 }
 finally
 {

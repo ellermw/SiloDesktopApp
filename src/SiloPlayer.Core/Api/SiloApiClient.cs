@@ -7,10 +7,11 @@ using SiloPlayer.Core.Models;
 
 namespace SiloPlayer.Core.Api;
 
-public class ApiException(string errorCode, string message, int statusCode) : Exception(message)
+public class ApiException(string errorCode, string message, int statusCode, string? errorLocation = null) : Exception(message)
 {
     public string ErrorCode { get; } = errorCode;
     public int StatusCode { get; } = statusCode;
+    public string? ErrorLocation { get; } = errorLocation;
 }
 
 public readonly record struct ProfileVerificationContext(
@@ -19,6 +20,8 @@ public readonly record struct ProfileVerificationContext(
     string? ProfileId);
 
 public readonly record struct ApiRequestContext(long AuthenticationGeneration, long RequestContextGeneration, string BaseUrl, string? ProfileId);
+/// <summary>Account/profile ownership, stable across read-cache/access refreshes.</summary>
+public readonly record struct ApiIdentityContext(long AuthenticationGeneration, long IdentityGeneration, string BaseUrl, string? ProfileId);
 public sealed record ApiResponse<T>(T Body, string? ETag);
 
 public class SiloApiClient
@@ -50,6 +53,7 @@ public class SiloApiClient
     private string _baseUrl = "";
     private long _authenticationGeneration;
     private long _requestContextGeneration;
+    private long _identityGeneration;
     private Func<CancellationToken, Task<bool>>? _tokenRefresher;
     private Action<ProfileVerificationContext>? _profileVerificationRequired;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
@@ -61,6 +65,57 @@ public class SiloApiClient
         lock (_authStateGate) return new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId);
     }
     public bool IsCurrentContext(ApiRequestContext context) => CaptureContext() == context;
+
+    public ApiIdentityContext CaptureIdentityContext()
+    {
+        lock (_authStateGate) return new(_authenticationGeneration, _identityGeneration, _baseUrl, _profileId);
+    }
+    public bool IsCurrentIdentityContext(ApiIdentityContext context) => CaptureIdentityContext() == context;
+
+    public async Task<T> SendIdentityBoundRequestAsync<T>(ApiIdentityContext context, HttpMethod method,
+        string path, object? body, CancellationToken ct = default)
+    {
+        using var request = CreateIdentityBoundRequest(context, method, path, body);
+        return await SendAsync<T>(request, ct).ConfigureAwait(false);
+    }
+
+    public async Task SendIdentityBoundNoContentAsync(ApiIdentityContext context, HttpMethod method,
+        string path, object? body, CancellationToken ct = default)
+    {
+        using var request = CreateIdentityBoundRequest(context, method, path, body);
+        await SendNoContentAsync(request, ct).ConfigureAwait(false);
+    }
+
+    private HttpRequestMessage CreateIdentityBoundRequest(ApiIdentityContext context, HttpMethod method, string path, object? body)
+    {
+        lock (_authStateGate)
+        {
+            if (!IsCurrentIdentityContext(context)) throw new OperationCanceledException("Playback identity changed.");
+            return CreateRequest(method, path, body, null);
+        }
+    }
+
+    /// <summary>Retire reads authorized by old account access without changing credentials or the selected PIN grant.</summary>
+    public ApiRequestContext InvalidateAccessContext()
+    {
+        lock (_authStateGate)
+        {
+            _requestContextGeneration++;
+            return new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId);
+        }
+    }
+
+    public bool TryInvalidateAccessContext(ApiRequestContext expected, out ApiRequestContext updated)
+    {
+        lock (_authStateGate)
+        {
+            updated = new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId);
+            if (updated != expected) return false;
+            _requestContextGeneration++;
+            updated = new(_authenticationGeneration, _requestContextGeneration, _baseUrl, _profileId);
+            return true;
+        }
+    }
 
     public HttpRequestMessage CreateAuthenticatedRequest(HttpMethod method, string path)
     {
@@ -102,6 +157,20 @@ public class SiloApiClient
     {
         using var request = CreateContextBoundRequest(context, method, path, body);
         await SendNoContentAsync(request, ct).ConfigureAwait(false);
+    }
+
+    public async Task<T> SendRequestWithoutRefreshAsync<T>(ApiRequestContext context, HttpMethod method,
+        string path, object? body, CancellationToken ct = default)
+    {
+        using var request = CreateContextBoundRequest(context, method, path, body);
+        return await SendAsync<T>(request, ct, allowTokenRefresh: false).ConfigureAwait(false);
+    }
+
+    public async Task SendNoContentRequestWithoutRefreshAsync(ApiRequestContext context, HttpMethod method,
+        string path, object? body, CancellationToken ct = default)
+    {
+        using var request = CreateContextBoundRequest(context, method, path, body);
+        await SendNoContentAsync(request, ct, allowTokenRefresh: false).ConfigureAwait(false);
     }
 
     private HttpRequestMessage CreateContextBoundRequest(ApiRequestContext context, HttpMethod method,
@@ -181,6 +250,7 @@ public class SiloApiClient
             }
 
             _requestContextGeneration++;
+            _identityGeneration++;
             _profileId = null;
             _profileToken = null;
             return true;
@@ -198,6 +268,7 @@ public class SiloApiClient
             _baseUrl = normalized;
             _authenticationGeneration++;
             _requestContextGeneration++;
+            _identityGeneration++;
             _accessToken = null;
             _profileId = null;
             _profileToken = null;
@@ -234,6 +305,7 @@ public class SiloApiClient
         {
             _authenticationGeneration++;
             _requestContextGeneration++;
+            _identityGeneration++;
             _accessToken = string.IsNullOrWhiteSpace(accessToken) ? null : accessToken;
             _profileId = null;
             _profileToken = null;
@@ -244,6 +316,7 @@ public class SiloApiClient
         lock (_authStateGate)
         {
             _requestContextGeneration++;
+            _identityGeneration++;
             _profileId = profileId;
             _profileToken = profileToken;
         }
@@ -253,6 +326,7 @@ public class SiloApiClient
         lock (_authStateGate)
         {
             _requestContextGeneration++;
+            _identityGeneration++;
             _profileId = null;
             _profileToken = null;
         }
@@ -280,6 +354,7 @@ public class SiloApiClient
         {
             _authenticationGeneration++;
             _requestContextGeneration++;
+            _identityGeneration++;
             _accessToken = null;
             _profileId = null;
             _profileToken = null;
@@ -333,12 +408,12 @@ public class SiloApiClient
         return await SendAsync<T>(request, ct, allowTokenRefresh: false);
     }
 
-    public async Task<T> PostAsync<T>(string path, object body, CancellationToken ct = default)
+    public async Task<T> PostAsync<T>(string path, object body, CancellationToken ct = default, bool allowTokenRefresh = true)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, BuildUrl(path));
         AddHeaders(request);
         request.Content = CreateJsonContent(body);
-        return await SendAsync<T>(request, ct);
+        return await SendAsync<T>(request, ct, allowTokenRefresh);
     }
 
     /// <summary>
@@ -402,6 +477,14 @@ public class SiloApiClient
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, BuildUrl(path));
         AddHeaders(request);
+        request.Content = CreateJsonContent(body);
+        await SendNoContentAsync(request, ct, allowTokenRefresh: false);
+    }
+
+    public async Task PostUnauthenticatedNoContentAsync(string baseUrl, string path, object body, CancellationToken ct = default)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, baseUrl.TrimEnd('/') + path);
+        AddDeviceHeaders(request);
         request.Content = CreateJsonContent(body);
         await SendNoContentAsync(request, ct, allowTokenRefresh: false);
     }
@@ -879,7 +962,7 @@ public class SiloApiClient
         HttpRequestMessage request,
         CancellationToken ct)
     {
-        string? code = null, detail = null;
+        string? code = null, detail = null, location = null;
         try
         {
             using var body = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false), cancellationToken: ct).ConfigureAwait(false);
@@ -887,6 +970,10 @@ public class SiloApiClient
             string? Text(string key) => root.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
             code = Text("error") ?? Text("code");
             detail = Text("detail") ?? Text("message") ?? Text("title");
+            if (root.TryGetProperty("errors", out var errors) && errors.ValueKind == JsonValueKind.Array && errors.GetArrayLength() > 0
+                && errors[0].ValueKind == JsonValueKind.Object && errors[0].TryGetProperty("location", out var rejectedField)
+                && rejectedField.ValueKind == JsonValueKind.String)
+                location = rejectedField.GetString();
             if (code == null && Uri.TryCreate(Text("type"), UriKind.Absolute, out var type) &&
                 type.AbsolutePath.StartsWith("/docs/api/v2/problems/", StringComparison.Ordinal))
                 code = type.Segments.LastOrDefault()?.TrimEnd('/');
@@ -900,7 +987,7 @@ public class SiloApiClient
             try { _profileVerificationRequired?.Invoke(context); }
             catch { }
         }
-        throw new ApiException(code ?? "unknown", detail ?? $"HTTP {(int)response.StatusCode}", (int)response.StatusCode);
+        throw new ApiException(code ?? "unknown", detail ?? $"HTTP {(int)response.StatusCode}", (int)response.StatusCode, location);
     }
 
     private static ProfileVerificationContext CreateProfileVerificationContext(HttpRequestMessage request)

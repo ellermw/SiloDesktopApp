@@ -696,6 +696,26 @@ public sealed partial class MpvPlayer : IDisposable
         return 0;
     }
 
+    public bool GetPropertyFlag(string name)
+    {
+        if (_mpvHandle == IntPtr.Zero) return false;
+        return mpv_get_property_int(_mpvHandle, name, MPV_FORMAT_FLAG, out var value) == 0 && value != 0;
+    }
+
+    /// <summary>Read mpv's actual cached seek ranges rather than guessing from cache duration.</summary>
+    public bool IsPositionCached(double seconds)
+    {
+        if (_mpvHandle == IntPtr.Zero || !double.IsFinite(seconds)) return false;
+        for (var i = 0; i < 32; i++)
+        {
+            if (mpv_get_property_double(_mpvHandle, $"demuxer-cache-state/seekable-ranges/{i}/start", MPV_FORMAT_DOUBLE, out var start) < 0 ||
+                mpv_get_property_double(_mpvHandle, $"demuxer-cache-state/seekable-ranges/{i}/end", MPV_FORMAT_DOUBLE, out var end) < 0)
+                break;
+            if (seconds >= start && seconds <= end) return true;
+        }
+        return false;
+    }
+
     /// <summary>Returns mpv audio IDs in source order, excluding video/subtitle tracks.</summary>
     public IReadOnlyList<int> GetAudioTrackIds()
     {

@@ -58,10 +58,24 @@ public sealed partial class MainWindow : Window
     private CancellationTokenSource? _shellHydrationCts;
     private string? _pendingActivationArgument;
     private bool _navigationHostLoaded;
+    private Style? _profileFlyoutBaseStyle;
 
     public MainWindow()
     {
         this.InitializeComponent();
+        _profileFlyoutBaseStyle = ProfileFooterFlyout.FlyoutPresenterStyle;
+        RootGrid.SizeChanged += (_, _) => ReflowProfileFlyout();
+        foreach (var item in NavView.MenuItems.OfType<NavigationViewItem>())
+        {
+            var icon = (item.Tag as string) switch
+            {
+                "Home" => "house", "Search" => "search", "Recommendations" => "sparkles",
+                "Requests" => "send", "Calendar" => "calendar-days", "Notifications" => "bell",
+                "Favorites" => "heart", "Watchlist" => "list", "WatchParty" => "users-round",
+                "Collections" => "folder-open", "History" => "clock", "Downloads" => "download", _ => null,
+            };
+            if (icon != null) item.Icon = SiloPlayer.Controls.WebUiIcon.Navigation(icon);
+        }
 
         // LeftCompact uses an in-app acrylic pane by default. Override the
         // NavigationView theme resource with Silo's live sidebar brush so the
@@ -127,6 +141,7 @@ public sealed partial class MainWindow : Window
 
         // F7: update window title on every navigation.
         _navigationService.Navigated += OnNavigated_UpdateWindowTitle;
+        _navigationService.Navigated += OnNavigated_ConsumePendingActivation;
         _navigationService.Navigated += OnNavigated_ApplyAccessibility;
         _navigationService.Navigated += OnNavigated_SynchronizeShellChrome;
         _navigationService.Navigated += OnNavigated_AnimatePageEntrance;
@@ -143,11 +158,18 @@ public sealed partial class MainWindow : Window
         // Listen for player state changes
         _playerService = App.Services.GetRequiredService<PlayerService>();
         _playerService.StateChanged += OnPlayerStateChanged;
+        MiniPlayerBarControl.SizeChanged += (_, args) =>
+        {
+            if (_playerService.State == PlayerState.Minimized && _playerService.IsAudiobook)
+                NavView.Margin = new Thickness(0, 0, 0, Controls.MiniPlayerBar.AudiobookHeightForWidth(args.NewSize.Width));
+        };
         _authService.LoggedOut += OnAuthLoggedOut;
+        _authService.UserChanged += OnAccountAuthorityChanged;
         _authService.ProfileVerificationRequired += OnProfileVerificationRequired;
         _authService.CredentialStoreFailed += OnCredentialStoreFailed;
         _eventChannel.SnapshotReceived += OnShellEventSnapshot;
         _eventChannel.EventReceived += OnShellEvent;
+        _eventChannel.AccessChanged += OnAccessChanged;
 
         // Playing Next cinematic overlay — enters during the final 30 seconds
         // of a series episode and marks true EOF separately. PlayerOverlay used to own this but its
@@ -180,6 +202,10 @@ public sealed partial class MainWindow : Window
     private void OnWindowActivated(object sender, WindowActivatedEventArgs args)
     {
         _isWindowActive = args.WindowActivationState != WindowActivationState.Deactivated;
+        if (_isWindowActive && CanExposeAuthenticatedNavigation)
+            _ = RunShellWorkAsync("shared_appearance_focus", () =>
+                _themeService.RefreshSharedAppearanceIfStaleAsync(
+                    _shellHydrationCts?.Token ?? CancellationToken.None));
     }
 
     private void ApplyResponsiveShellLayout()
@@ -348,7 +374,36 @@ public sealed partial class MainWindow : Window
             !NavView.IsPaneOpen
                 ? FlyoutPlacementMode.RightEdgeAlignedBottom
                 : FlyoutPlacementMode.Top;
+        ReflowProfileFlyout();
     }
+
+    private void ReflowProfileFlyout()
+    {
+        if (RootGrid.XamlRoot == null) return;
+        var width = Math.Min(320, Math.Max(1, RootGrid.XamlRoot.Size.Width - 24));
+        var height = Math.Max(1, RootGrid.XamlRoot.Size.Height - 24);
+        var style = new Style(typeof(FlyoutPresenter)) { BasedOn = _profileFlyoutBaseStyle };
+        style.Setters.Add(new Setter(FrameworkElement.WidthProperty, width));
+        style.Setters.Add(new Setter(FrameworkElement.MaxWidthProperty, width));
+        style.Setters.Add(new Setter(FrameworkElement.MinWidthProperty, 0d));
+        style.Setters.Add(new Setter(FrameworkElement.MaxHeightProperty, height));
+        ProfileFooterFlyout.FlyoutPresenterStyle = style;
+        ProfileMenuScroller.MaxHeight = Math.Max(1, height - 18);
+        foreach (var button in new[] { ProfileSwitchButton, ProfileLogoutButton })
+        {
+            button.Background = ProfileMenuBrush("SidebarAccentBrush", .4);
+            button.BorderBrush = ProfileMenuBrush("SidebarBorderBrush", .6);
+            button.Resources["ButtonBackgroundPointerOver"] = Application.Current.Resources["SidebarAccentBrush"];
+            button.Resources["ButtonBackgroundPressed"] = Application.Current.Resources["SidebarAccentBrush"];
+            button.Resources["ButtonBorderBrushPointerOver"] = button.BorderBrush;
+            button.Resources["ButtonBorderBrushPressed"] = button.BorderBrush;
+        }
+    }
+
+    private static Microsoft.UI.Xaml.Media.Brush ProfileMenuBrush(string resource, double opacity)
+        => Application.Current.Resources[resource] is Microsoft.UI.Xaml.Media.SolidColorBrush brush
+            ? new Microsoft.UI.Xaml.Media.SolidColorBrush(brush.Color) { Opacity = opacity }
+            : (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources[resource];
 
     private void OnAppWindowChanged(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowChangedEventArgs args)
     {
@@ -368,9 +423,11 @@ public sealed partial class MainWindow : Window
         ReleaseNotificationSubscription();
         _eventChannel.SnapshotReceived -= OnShellEventSnapshot;
         _eventChannel.EventReceived -= OnShellEvent;
+        _eventChannel.AccessChanged -= OnAccessChanged;
         _playerService.StateChanged -= OnPlayerStateChanged;
         _uiCustomizationService.Changed -= OnUICustomizationChanged;
         _authService.LoggedOut -= OnAuthLoggedOut;
+        _authService.UserChanged -= OnAccountAuthorityChanged;
         _authService.ProfileVerificationRequired -= OnProfileVerificationRequired;
         _authService.CredentialStoreFailed -= OnCredentialStoreFailed;
         _playerService.ShowPlayingNextRequested -= OnShowPlayingNextRequested;
@@ -379,6 +436,7 @@ public sealed partial class MainWindow : Window
         this.Activated -= OnWindowActivated;
         if (AppWindow != null) AppWindow.Changed -= OnAppWindowChanged;
         _navigationService.Navigated -= OnNavigated_UpdateWindowTitle;
+        _navigationService.Navigated -= OnNavigated_ConsumePendingActivation;
         _navigationService.Navigated -= OnNavigated_ApplyAccessibility;
         _navigationService.Navigated -= OnNavigated_SynchronizeShellChrome;
         _navigationService.Navigated -= OnNavigated_AnimatePageEntrance;
@@ -902,8 +960,14 @@ public sealed partial class MainWindow : Window
     private async void NavView_Loaded(object sender, RoutedEventArgs e)
     {
         _navigationHostLoaded = true;
-        if (TryConsumePendingActivation())
+        if (TryConsumePendingActivation()) return;
+        if (IsResetActivationRoute(_pendingActivationArgument) && string.IsNullOrWhiteSpace(_apiClient.BaseUrl))
+        {
+            // A reset link cannot choose a server or restore an unrelated saved account.
+            HideMainNavigation();
+            _navigationService.Navigate<ServerSelectPage>();
             return;
+        }
         await TryAutoLoginAsync();
     }
 
@@ -921,7 +985,7 @@ public sealed partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Receives custom-protocol activations from App. Initial activation is
+    /// Receives supported launch arguments from App. Initial activation is
     /// held until the frame is loaded; later activations are handled in-place.
     /// </summary>
     public void ActivateFromArgument(string? argument)
@@ -934,7 +998,23 @@ public sealed partial class MainWindow : Window
 
     private bool TryConsumePendingActivation()
     {
-        var argument = Interlocked.Exchange(ref _pendingActivationArgument, null);
+        var argument = _pendingActivationArgument;
+        if (IsResetActivationRoute(argument) && string.IsNullOrWhiteSpace(_apiClient.BaseUrl)) return false;
+        argument = Interlocked.Exchange(ref _pendingActivationArgument, null);
+        if (Uri.TryCreate(argument?.Trim().Trim('"'), UriKind.Absolute, out var callback) &&
+            callback.Scheme == "org.siloserver.silo" && callback.Host.Length == 0 && callback.AbsolutePath == "/auth/callback")
+        {
+            _autoLoginAttempted = true;
+            _ = HandleNativeOAuthActivationAsync(callback.AbsoluteUri);
+            return true;
+        }
+        if (PasswordRecovery.TryParseActivation(argument, _apiClient.BaseUrl, out var resetLink))
+        {
+            _autoLoginAttempted = true;
+            HideMainNavigation();
+            _navigationService.Navigate<PasswordRecoveryPage>(resetLink);
+            return true;
+        }
         if (!InviteDeepLink.TryParse(argument, out var invitation)) return false;
 
         // The WebUI does not let an invitation replace an existing signed-in
@@ -952,7 +1032,37 @@ public sealed partial class MainWindow : Window
         return true;
     }
 
+    private async Task HandleNativeOAuthActivationAsync(string callback)
+    {
+        try
+        {
+            if (await NativeOAuthCallbacks.TryHandleAsync(callback)) return;
+            App.Services.GetRequiredService<ToastService>().Error("This sign-in attempt has expired. Start sign-in again from Silo.");
+            if (ContentFrame.Content == null && !_authService.IsLoggedIn)
+                _navigationService.Navigate<ServerSelectPage>();
+        }
+        catch (Exception ex)
+        {
+            // Callback query values contain one-use credentials; never include the URI or exception message.
+            LocalLog.AppendLine("auth_errors.txt", $"native_callback_failed | type={ex.GetType().Name}");
+            App.Services.GetRequiredService<ToastService>().Error("Silo could not complete browser sign-in. Please try again.");
+        }
+    }
+
+    private static bool IsResetActivationRoute(string? argument)
+        => Uri.TryCreate(argument?.Trim().Trim('"'), UriKind.Absolute, out var link)
+            && link.Scheme is "http" or "https"
+            && link.AbsolutePath.Contains("/reset-password/", StringComparison.Ordinal);
+
+    private void OnNavigated_ConsumePendingActivation(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
+    {
+        if (e.SourcePageType != typeof(PasswordRecoveryPage) && _pendingActivationArgument != null
+            && !string.IsNullOrWhiteSpace(_apiClient.BaseUrl))
+            DispatcherQueue.TryEnqueue(() => TryConsumePendingActivation());
+    }
+
     private bool _autoLoginAttempted;
+    private volatile bool _savedRestoreInProgress;
 
     private async Task TryAutoLoginAsync()
     {
@@ -999,6 +1109,7 @@ public sealed partial class MainWindow : Window
             "auth_startup.txt",
             $"restore_candidate | migrated={savedSession.MigratedLegacyCredential}");
 
+        _savedRestoreInProgress = true;
         _authService.ConfigureServer(savedSession.ServerUrl);
         var restoreGeneration = _authService.SetTokens(
             "",
@@ -1058,6 +1169,7 @@ public sealed partial class MainWindow : Window
                     if (await CompleteAutoLoginAsync(server, settings, restoreGeneration, timeout.Token))
                     {
                         LocalLog.AppendLine("auth_startup.txt", $"restore_complete | attempt={attempt}");
+                        _savedRestoreInProgress = false;
                         return;
                     }
                 }
@@ -1075,10 +1187,57 @@ public sealed partial class MainWindow : Window
             }
         }
 
+        if (_authService.IsLoggedIn && _authService.SessionGeneration != restoreGeneration ||
+            _authService.ConfiguredServerUrl != savedSession.ServerUrl)
+        { _savedRestoreInProgress = false; return; }
         _authService.AbandonRestoreAttempt(restoreGeneration);
+        _savedRestoreInProgress = false;
         HideMainNavigation();
         LocalLog.AppendLine("auth_startup.txt", "restore_abandoned");
-        _navigationService.Navigate<ServerSelectPage>();
+        ShowSavedSessionRetry(server);
+    }
+
+    private void ShowSavedSessionRetry(ServerEntry server)
+    {
+        var expectedGeneration = _authService.SessionGeneration;
+        LoginNavigationRequest? request = null;
+        request = new(server, SessionRestoreUnavailable: true,
+            SessionRestoreErrorCode: "session_restore_unavailable", RetryRestoreAsync: Retry);
+        _navigationService.Navigate<LoginPage>(request);
+
+        async Task<bool> Retry(CancellationToken ct)
+        {
+            if (ct.IsCancellationRequested || !_navigationService.IsCurrentEntry(typeof(LoginPage), request) ||
+                _authService.SessionGeneration != expectedGeneration || _authService.ConfiguredServerUrl != server.Url)
+                throw new OperationCanceledException(ct);
+            // The first attempt may already have rotated its refresh token. Never reuse its snapshot.
+            var saved = new SavedSessionCredentialResolver(_credentialStore).Resolve(server.Url);
+            if (saved == null) throw new ApiException("session_expired", "The saved session has expired. Sign in again.", 401);
+            _savedRestoreInProgress = true;
+            var generation = _authService.SetTokens("", saved.RefreshToken, 0,
+                preserveStoredProfile: true, expectedServerUrl: saved.ServerUrl);
+            try
+            {
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeout.CancelAfter(TimeSpan.FromSeconds(20));
+                if (await _authService.TryRefreshAsync(timeout.Token) &&
+                    _navigationService.IsCurrentEntry(typeof(LoginPage), request))
+                    return await CompleteAutoLoginAsync(server, _settingsService.Load(), generation, timeout.Token);
+                if (new SavedSessionCredentialResolver(_credentialStore).Resolve(server.Url) == null)
+                    throw new ApiException("session_expired", "The saved session has expired. Sign in again.", 401);
+                return false;
+            }
+            finally
+            {
+                // Success has entered the authenticated route. Failure retires only this attempt.
+                if (_navigationService.IsCurrentEntry(typeof(LoginPage), request))
+                {
+                    _authService.AbandonRestoreAttempt(generation);
+                    expectedGeneration = _authService.SessionGeneration;
+                }
+                _savedRestoreInProgress = false;
+            }
+        }
     }
 
     private static void OnNavigated_AnimatePageEntrance(
@@ -1101,7 +1260,16 @@ public sealed partial class MainWindow : Window
         settings.LastUsername = user.Username;
         settings.LastUserRole = user.Role;
 
+        if (user.PasswordChangeRequired)
+        {
+            HideMainNavigation();
+            _navigationService.Navigate<ChoosePasswordPage>();
+            return true;
+        }
+
         var profilesResponse = await _authApi.GetProfilesAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_authService.SessionGeneration != restoreGeneration || _authService.ConfiguredServerUrl != server.Url) return false;
         var selectedProfile = !string.IsNullOrEmpty(settings.LastProfileId)
             ? profilesResponse.Profiles.FirstOrDefault(profile => profile.Id == settings.LastProfileId)
             : null;
@@ -1138,6 +1306,8 @@ public sealed partial class MainWindow : Window
             try
             {
                 await _catalogApi.GetLibrariesAsync(cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_authService.SessionGeneration != restoreGeneration || _authService.ConfiguredServerUrl != server.Url) return false;
             }
             catch (ApiException ex) when (ex.ErrorCode == "profile_unverified")
             {
@@ -1170,6 +1340,7 @@ public sealed partial class MainWindow : Window
     }
 
     private bool _navInitialized;
+    private bool _pendingAccessRefresh;
     private string? _hydratedShellKey;
     private bool _playerPrewarmed;
 
@@ -1177,7 +1348,53 @@ public sealed partial class MainWindow : Window
 
     private bool CanExposeAuthenticatedNavigation =>
         _authService.IsLoggedIn &&
+        !_authService.PasswordChangeRequired &&
         !string.IsNullOrWhiteSpace(_authService.SelectedProfileId);
+
+    private void OnAccessChanged(ApiRequestContext context)
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_apiClient.IsCurrentContext(context) || !CanExposeAuthenticatedNavigation) return;
+            _catalogApi.InvalidateLibraryCache();
+            _catalogApi.InvalidateFilterCache();
+            _catalogApi.InvalidateRatingCapability();
+            App.Services.GetRequiredService<ItemDetailPrefetchCache>().Clear();
+            _pendingAccessRefresh = true;
+            ApplyPendingAccessRefresh();
+        });
+    }
+
+    private void OnAccountAuthorityChanged()
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            // Initial login still belongs to the profile/bootstrap flow.
+            if (!CanExposeAuthenticatedNavigation || !NavView.IsPaneVisible) return;
+            if (_playerService.State is PlayerState.Expanded or PlayerState.Fullscreen)
+            { _pendingAccessRefresh = true; return; }
+            ShowMainNavigation();
+        });
+    }
+
+    private void ApplyPendingAccessRefresh()
+    {
+        if (!_pendingAccessRefresh || !CanExposeAuthenticatedNavigation || !NavView.IsPaneVisible ||
+            _playerService.State is PlayerState.Expanded or PlayerState.Fullscreen) return;
+        _pendingAccessRefresh = false;
+        ShowMainNavigation();
+        CancelShellHydration();
+        _shellHydrationCts = new CancellationTokenSource();
+        var shellKey = GetAuthenticatedShellKey();
+        _hydratedShellKey = shellKey;
+        var token = _shellHydrationCts.Token;
+        _viewModel.Libraries.Clear();
+        UpdateLibraryNavItems();
+        _ = RunShellWorkAsync("access_library_navigation", () => LoadShellNavigationAsync(shellKey, token));
+        _ = RunShellWorkAsync("access_navigation_capabilities", () => RefreshUserNavigationCapabilitiesAsync(shellKey, token));
+        // Foreground playback retains its surface and requests. Catch up the covered route when it becomes useful.
+        TryShellAction("access_active_route", () => _navigationService.RefreshCurrentEntry());
+    }
 
     public void ShowMainNavigation()
     {
@@ -1195,6 +1412,7 @@ public sealed partial class MainWindow : Window
             CancelShellHydration();
             _shellHydrationCts = new CancellationTokenSource();
             _notificationUnreadCount = 0;
+            TryShellAction("shared_appearance_reset", _themeService.ResetSharedAppearance);
             ResetShellBranding();
             UpdateSidebarPanePresentation(NavView.IsPaneOpen);
         }
@@ -1282,6 +1500,7 @@ public sealed partial class MainWindow : Window
                 "library_navigation_load",
                 () => LoadShellNavigationAsync(shellKey, shellToken));
         }
+        ApplyPendingAccessRefresh();
     }
 
     private bool IsCurrentShellHydration(string shellKey, CancellationToken cancellationToken) =>
@@ -1665,10 +1884,10 @@ public sealed partial class MainWindow : Window
                 _playerService.ToggleAudiobookPlayback();
                 break;
             case Windows.System.VirtualKey.Left:
-                _playerService.SeekTo(Math.Max(0, _playerService.Position - settings.AudiobookSkipBackSeconds));
+                _playerService.SeekTo(Math.Max(0, _playerService.Position - _playerService.SeekIntervals.AudiobookBack));
                 break;
             case Windows.System.VirtualKey.Right:
-                _playerService.SeekTo(Math.Min(_playerService.Duration, _playerService.Position + settings.AudiobookSkipForwardSeconds));
+                _playerService.SeekTo(Math.Min(_playerService.Duration, _playerService.Position + _playerService.SeekIntervals.AudiobookForward));
                 break;
             case Windows.System.VirtualKey.Up:
                 SetAudiobookVolume(Math.Min(100, _playerService.Volume + 5));
@@ -1746,6 +1965,12 @@ public sealed partial class MainWindow : Window
         _lastShellPageType = e.SourcePageType;
         _lastShellParameter = e.Parameter;
 
+        if (e.SourcePageType == typeof(PasswordRecoveryPage))
+        {
+            HideMainNavigation();
+            NavView.SelectedItem = null;
+            return;
+        }
         if (!CanExposeAuthenticatedNavigation)
         {
             NavView.SelectedItem = null;
@@ -2226,12 +2451,13 @@ public sealed partial class MainWindow : Window
                 PlayerOverlayControl.Deactivate();
                 PlayerOverlayControl.Visibility = Visibility.Collapsed;
                 NavView.IsPaneVisible = CanExposeAuthenticatedNavigation;
-                NavView.Margin = new Thickness(0, 0, 0, _playerService.IsAudiobook ? 108 : 132);
+                NavView.Margin = new Thickness(0, 0, 0, _playerService.IsAudiobook ? Controls.MiniPlayerBar.AudiobookHeightForWidth(MiniPlayerBarControl.ActualWidth) : 132);
                 ApplyResponsiveShellLayout();
                 MiniPlayerBarControl.Visibility = Visibility.Visible;
                 MiniPlayerBarControl.Activate();
                 break;
         }
+        ApplyPendingAccessRefresh();
     }
 
     public void ShowLoadingOverlay()
@@ -2401,6 +2627,14 @@ public sealed partial class MainWindow : Window
         });
     }
 
+    private static string LibraryNavigationIconName(string type) => type switch
+    {
+        "movies" => "film",
+        "series" => "tv",
+        "audiobook" or "audiobooks" => "book-headphones",
+        _ => "library",
+    };
+
     public void UpdateLibraryNavItems()
     {
         // Find the LibrariesHeader index
@@ -2438,18 +2672,13 @@ public sealed partial class MainWindow : Window
         {
             if (hiddenIds.Contains(lib.Id)) continue;
 
-            var icon = lib.Type switch
-            {
-                "movies" => "\uE8B2",   // Video
-                "series" => "\uE7F4",   // TV
-                _ => "\uE8F1"           // Library
-            };
+            var icon = LibraryNavigationIconName(lib.Type);
 
             var navItem = new NavigationViewItem
             {
                 Content = lib.Name,
                 Tag = lib,
-                Icon = new FontIcon { Glyph = icon },
+                Icon = SiloPlayer.Controls.WebUiIcon.Navigation(icon),
                 Visibility = NavView.IsPaneOpen && !_librariesExpanded
                     ? Visibility.Collapsed
                     : Visibility.Visible,
@@ -2471,8 +2700,9 @@ public sealed partial class MainWindow : Window
                     var pinItem = new NavigationViewItem
                     {
                         Tag = pinTag,
-                        Icon = new FontIcon { Glyph = pin.Type == "collection" ? "\uE8F0" : "\uE8A5" }, // Folder / List
+                        Icon = SiloPlayer.Controls.WebUiIcon.Navigation(pin.Type == "collection" ? "folder-open" : "layout-grid", 14),
                     };
+                    pinItem.Icon.Opacity = .6;
                     pinItem.Content = BuildPinnedSidebarContent(pinItem, pinTag);
                     navItem.MenuItems.Add(pinItem);
                 }
@@ -2542,9 +2772,9 @@ public sealed partial class MainWindow : Window
         {
             (label, icon) = source.Destination switch
             {
-                "home" => ("Home", "\uE80F"),
-                "for_you" => ("For You", "\uE735"),
-                "calendar" => ("Calendar", "\uE787"),
+                "home" => ("Home", "house"),
+                "for_you" => ("For You", "sparkles"),
+                "calendar" => ("Calendar", "calendar-days"),
                 // Global media-family routes are not available yet. Match the
                 // WebUI by omitting them instead of silently choosing a library.
                 _ => ("", ""),
@@ -2556,25 +2786,20 @@ public sealed partial class MainWindow : Window
             var library = _viewModel.Libraries.FirstOrDefault(candidate => candidate.Id == libraryId);
             if (library is null) return null;
             label = string.IsNullOrWhiteSpace(source.Label) ? library.Name : source.Label!;
-            icon = library.Type switch
-            {
-                "movies" => "\uE8B2",
-                "series" => "\uE7F4",
-                _ => "\uE8F1",
-            };
+            icon = LibraryNavigationIconName(library.Type);
         }
         else if (source.Type == "section" && source.LibraryId > 0 && !string.IsNullOrWhiteSpace(source.SectionId))
         {
             if (!_viewModel.Libraries.Any(candidate => candidate.Id == source.LibraryId)) return null;
             label = source.Label ?? "Section";
-            icon = "\uE8A5";
+            icon = "layout-grid";
         }
         else if (source.Type == "collection" && !string.IsNullOrWhiteSpace(source.CollectionId))
         {
             if (source.LibraryId is int ownerId && !_viewModel.Libraries.Any(candidate => candidate.Id == ownerId))
                 return null;
             label = source.Label ?? "Collection";
-            icon = "\uE8F0";
+            icon = "folder-open";
         }
         else
         {
@@ -2585,7 +2810,7 @@ public sealed partial class MainWindow : Window
         {
             Content = label,
             Tag = new PrimaryMenuNavTag(source.Clone()),
-            Icon = new FontIcon { Glyph = icon },
+            Icon = SiloPlayer.Controls.WebUiIcon.Navigation(icon),
         };
     }
 
@@ -2641,7 +2866,7 @@ public sealed partial class MainWindow : Window
 
         var unpinButton = new Button
         {
-            Content = new FontIcon { Glyph = "\uE77A", FontSize = 12 },
+            Content = SiloPlayer.Controls.WebUiIcon.Navigation("pin-off", 12),
             Width = 24,
             Height = 24,
             Padding = new Thickness(0),
@@ -2783,7 +3008,7 @@ public sealed partial class MainWindow : Window
                 {
                     Content = label,
                     Tag = new PluginAppNavTag(link.Installation.Id, link.Route.Path, label),
-                    Icon = new FontIcon { Glyph = "\uEA86" },
+                    Icon = SiloPlayer.Controls.WebUiIcon.Navigation("puzzle"),
                 });
             }
         }
@@ -2991,7 +3216,7 @@ public sealed partial class MainWindow : Window
     private void ToggleLibrariesSection()
     {
         _librariesExpanded = !_librariesExpanded;
-        LibrariesChevron.Glyph = _librariesExpanded ? "\uE972" : "\uE974"; // down : right
+        LibrariesChevron.Source = new Microsoft.UI.Xaml.Media.Imaging.SvgImageSource(new Uri($"ms-appx:///Assets/Icons/{(_librariesExpanded ? "chevron-down" : "chevron-right")}.svg"));
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetHelpText(
             LibrariesHeader,
             _librariesExpanded ? "Collapse libraries" : "Expand libraries");
@@ -3017,102 +3242,13 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    // ===== Theme Switcher Dots =====
-
-    private static readonly (string Id, string Label, string BgHex, string AccentHex)[] CuratedThemes =
-    [
-        ("midnight-cinema", "Cinema Dark", "#141417", "#e8e8ec"),
-        ("cinema-light", "Cinema Light", "#f4f4f6", "#1a1a1e"),
-        ("cobalt-studio", "Cobalt", "#101722", "#78aefc"),
-        ("oxblood-noir", "Oxblood", "#171113", "#d16a78"),
-        ("evergreen-studio", "Evergreen", "#101715", "#5bc39d"),
-    ];
-
-    private string _activeThemeId = "midnight-cinema";
-
+    // Appearance follows the server-wide theme. Profile theme switching was
+    // retired upstream; keep the legacy host empty for existing shell layout.
     private void BuildThemeDots()
     {
-        var themeService = App.Services.GetRequiredService<ThemeService>();
-        _activeThemeId = themeService.CurrentTheme;
         ThemeDotsPanel.Children.Clear();
-        ThemeDotsPanel.Visibility = Visibility.Visible;
-
-        var fallbackAccent = new Microsoft.UI.Xaml.Media.SolidColorBrush(ParseHexColor("#e8e8ec"));
-        var fallbackBorder = new Microsoft.UI.Xaml.Media.SolidColorBrush(ParseHexColor("#34343a"));
-        var accentBrush = Application.Current.Resources.TryGetValue("AccentBrush", out var accentResource)
-            ? accentResource as Microsoft.UI.Xaml.Media.Brush ?? fallbackAccent
-            : fallbackAccent;
-        var borderBrush = Application.Current.Resources.TryGetValue("BorderBrush", out var borderResource)
-            ? borderResource as Microsoft.UI.Xaml.Media.Brush ?? fallbackBorder
-            : fallbackBorder;
-
-        foreach (var (id, label, bgHex, accentHex) in CuratedThemes)
-        {
-            bool isActive = id == _activeThemeId;
-            var dot = new Button
-            {
-                Width = 24, Height = 24,
-                CornerRadius = new CornerRadius(12),
-                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(ParseHexColor(bgHex)),
-                BorderBrush = isActive
-                    ? accentBrush
-                    : borderBrush,
-                BorderThickness = new Thickness(isActive ? 2 : 1),
-                Padding = new Thickness(0),
-                HorizontalContentAlignment = HorizontalAlignment.Center,
-                VerticalContentAlignment = VerticalAlignment.Center,
-            };
-            // Inner accent dot
-            dot.Content = new Border
-            {
-                Width = 8, Height = 8,
-                CornerRadius = new CornerRadius(4),
-                Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(ParseHexColor(accentHex)),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            ToolTipService.SetToolTip(dot, label);
-            AutomationProperties.SetName(dot, label);
-            AutomationProperties.SetHelpText(dot, isActive ? "Selected theme" : "Theme");
-
-            var capturedId = id;
-            dot.PointerEntered += (_, _) => themeService.PreviewTheme(capturedId);
-            dot.PointerExited += (_, _) => themeService.CancelThemePreview();
-            dot.GotFocus += (_, _) => themeService.PreviewTheme(capturedId);
-            dot.LostFocus += (_, _) => themeService.CancelThemePreview();
-            dot.Click += async (_, _) =>
-            {
-                _activeThemeId = capturedId;
-                themeService.CommitThemePreview(capturedId);
-                try
-                {
-                    await _settingsApi.PutSettingAsync("ui_theme", capturedId);
-                }
-                catch
-                {
-                    App.Services.GetRequiredService<ToastService>().Error(
-                        "Theme changed locally, but Silo could not save it to this profile.");
-                }
-                BuildThemeDots();
-                var shellKey = _hydratedShellKey;
-                var shellToken = _shellHydrationCts?.Token ?? CancellationToken.None;
-                if (shellKey != null && IsCurrentShellHydration(shellKey, shellToken))
-                    await LoadShellBrandingAsync(shellKey, shellToken);
-            };
-
-            ThemeDotsPanel.Children.Add(dot);
-        }
+        ThemeDotsPanel.Visibility = Visibility.Collapsed;
     }
-
-    private static Windows.UI.Color ParseHexColor(string hex)
-    {
-        hex = hex.TrimStart('#');
-        byte r = Convert.ToByte(hex[0..2], 16);
-        byte g = Convert.ToByte(hex[2..4], 16);
-        byte b = Convert.ToByte(hex[4..6], 16);
-        return Windows.UI.Color.FromArgb(255, r, g, b);
-    }
-
     private void Settings_Click(object sender, RoutedEventArgs e)
     {
         DismissProfileFlyout();
@@ -3305,8 +3441,11 @@ public sealed partial class MainWindow : Window
 
     private void OnAuthLoggedOut()
     {
+        if (_savedRestoreInProgress) return; // Restore owns its retry/login route and preserves the selected server.
+        _pendingAccessRefresh = false;
         DispatcherQueue.TryEnqueue(async () =>
         {
+            TryShellAction("shared_appearance_logout", _themeService.ResetSharedAppearance);
             try
             {
                 await _playerService.CloseAsync();

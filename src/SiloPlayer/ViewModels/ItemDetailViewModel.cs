@@ -132,6 +132,8 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     [ObservableProperty]
     private string? _errorMessage;
+    [ObservableProperty]
+    private DetailFailureKind _failureKind;
 
     [ObservableProperty]
     private bool _isFavorite;
@@ -204,6 +206,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
         IsLoading = true;
         ErrorMessage = null;
+        FailureKind = DetailFailureKind.None;
         Item = null;
         Interlocked.Increment(ref _similarLoadGeneration);
         Interlocked.Increment(ref _seasonsLoadGeneration);
@@ -256,8 +259,11 @@ public partial class ItemDetailViewModel : ObservableObject,
         }
         catch (Exception ex)
         {
+            if (!ReferenceEquals(_loadCts, loadCts) || ct.IsCancellationRequested) return;
             System.Diagnostics.Debug.WriteLine($"Item detail load failed for {contentId}: {ex}");
-            ErrorMessage = "Silo could not load this item. Check the connection and try again.";
+            FailureKind = DetailFailurePolicy.Classify(ex);
+            if (FailureKind == DetailFailureKind.NotFound) _detailPrefetchCache.Invalidate(contentId);
+            ErrorMessage = DetailFailurePolicy.Message(FailureKind);
         }
         finally
         {

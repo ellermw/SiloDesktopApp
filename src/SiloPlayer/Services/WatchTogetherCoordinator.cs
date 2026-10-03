@@ -4,198 +4,240 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Playback;
+using SiloPlayer.Core.Services;
 using SiloPlayer.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
 
 namespace SiloPlayer.Services;
 
-/// <summary>
-/// Bridges the active <see cref="WatchTogetherRoomViewModel"/> to
-/// <see cref="PlayerService"/> for synchronized playback:
-///   1. When local playback starts inside an active room, the session is
-///      attached server-side so transport commands can be routed to it.
-///   2. Inbound <c>transport_command</c> frames (play/pause/seek) are applied
-///      to the local mpv player, respecting <c>execute_at</c> scheduling so
-///      multiple clients fire the action at the same wall-clock moment.
-///   3. Local play/pause/seek actions can be broadcast back to the room.
-///   4. Periodic <c>state_report</c> (1.5s) and on-demand <c>ready</c>/
-///      <c>buffering</c> messages keep the server's view of each client's
-///      playhead accurate for drift detection and lagging-guest policy.
-///   5. When the room phase transitions to <c>playing</c> on a new
-///      <c>selection_revision</c>, start local playback of the selected item
-///      automatically so all members share the experience.
-/// </summary>
+/// <summary>UI adapter around the deterministic room sync controller. The room socket
+/// owns transport authority; standalone playback never enters this controller.</summary>
 public sealed class WatchTogetherCoordinator
 {
     private readonly PlayerService _playerService;
     private readonly DispatcherQueue _dispatcher;
-
+    private readonly WatchPartySyncController _sync;
+    private readonly DispatcherTimer _timer;
+    private readonly AuthService _auth;
+    private (long Generation, string? Profile)? _roomAuthority;
     private WatchTogetherRoomViewModel? _activeRoom;
     private string? _attachedSessionId;
-
-    // Periodic state_report timer — matches upstream's 1.5s cadence.
-    private DispatcherTimer? _stateReportTimer;
-    private const int StateReportIntervalMs = 1500;
-
-    // Buffering dedup: only send buffering/ready once per state transition.
-    private enum ReadyState { Idle, Ready, Buffering }
-    private ReadyState _readyState = ReadyState.Idle;
+    private static long Now => Environment.TickCount64;
 
     public WatchTogetherCoordinator(PlayerService playerService)
     {
         _playerService = playerService;
         _dispatcher = DispatcherQueue.GetForCurrentThread()
-            ?? throw new InvalidOperationException(
-                "WatchTogetherCoordinator must be constructed on the UI thread.");
-
-        _playerService.SessionStarted += NotifyPlaybackStarted;
-        _playerService.BufferingChanged += OnLocalBufferingChanged;
-        _playerService.ContentLoaded += PushWatchTogetherOverlay;
-        _playerService.WatchTogetherActionRequested += OnWatchTogetherActionRequested;
+            ?? throw new InvalidOperationException("WatchTogetherCoordinator must be constructed on the UI thread.");
+        _sync = new(new NativePlayback(playerService), SendRoomMessage);
+        _sync.Notice += message =>
+        {
+            if (_activeRoom != null) _activeRoom.NoticeMessage = message;
+            playerService.ShowWatchPartyNotice(message);
+        };
+        _sync.LowerQualityRequested += playerService.OfferWatchPartyLowerQuality;
+        _sync.ClosePlaybackRequested += session =>
+        {
+            if (session != _attachedSessionId || playerService.Manager?.SessionId != session) return;
+            NotifyPlaybackEnded();
+            _ = playerService.CloseAsync(); // Close captures final progress before releasing the matching session.
+        };
+        _timer = new() { Interval = TimeSpan.FromMilliseconds(250) };
+        _timer.Tick += (_, _) => { if (EnsureCurrentAuthority()) _sync.Tick(Now); };
+        var auth = App.Services.GetRequiredService<AuthService>();
+        _auth = auth;
+        auth.LoggedOut += ClearActiveRoom;
+        auth.ProfileVerificationRequired += ClearActiveRoom;
+        auth.UserChanged += () => EnsureCurrentAuthority();
+        playerService.SessionStarted += session => Dispatch(() => NotifyPlaybackStarted(session));
+        playerService.ContentLoaded += () => Dispatch(PushWatchTogetherOverlay);
+        playerService.WatchTogetherActionRequested += OnWatchTogetherActionRequested;
+        playerService.RoomTransportRequested += RequestTransport;
+        playerService.PlaybackEnded += () => Dispatch(NotifyPlaybackEnded);
+        playerService.StateChanged += state =>
+        {
+            if (state == PlayerState.Idle) Dispatch(NotifyPlaybackEnded);
+        };
     }
 
-    public WatchTogetherRoomViewModel? ActiveRoom => _activeRoom;
+    private void Dispatch(Action action)
+    {
+        if (_dispatcher.HasThreadAccess) action();
+        else _dispatcher.TryEnqueue(() => action());
+    }
 
-    /// <summary>Fired when the coordinator decides the local client should
-    /// navigate to and start playback for a newly-selected room item. The
-    /// RoomPage listens and kicks off PlayAsync — the coordinator doesn't
-    /// own navigation itself.</summary>
-    public event Action<string /* contentId */>? PlaybackStartRequested;
+    public WatchTogetherRoomViewModel? ActiveRoom { get { EnsureCurrentAuthority(); return _activeRoom; } }
+    public event Action<string>? PlaybackStartRequested;
+
+    private bool EnsureCurrentAuthority()
+    {
+        if (_activeRoom == null) return false;
+        if (_roomAuthority == (_auth.SessionGeneration, _auth.SelectedProfileId)) return true;
+        ClearActiveRoom();
+        return false;
+    }
 
     public void SetActiveRoom(WatchTogetherRoomViewModel room)
     {
         if (ReferenceEquals(_activeRoom, room)) return;
         ClearActiveRoom();
         _activeRoom = room;
+        _roomAuthority = (_auth.SessionGeneration, _auth.SelectedProfileId);
         room.TransportCommandReceived += OnTransportCommandReceived;
         room.PropertyChanged += OnRoomPropertyChanged;
-        PushWatchTogetherOverlay();
-
-        // If a session is already in flight when the room becomes active,
-        // attach it immediately and kick off periodic state reporting.
-        var sessionId = _playerService.Manager?.SessionId;
-        if (!string.IsNullOrEmpty(sessionId))
+        _sync.SetSnapshot(room.Room);
+        _sync.SetConnected(room.ConnectionState == "connected", Now);
+        _timer.Start();
+        if (room.Room?.Phase == "playing" && room.Room.SelectedContentId == _playerService.ContentId &&
+            _playerService.Manager?.SessionId is { } session &&
+            (room.Room.SelectedFileId == null || room.Room.SelectedFileId == _playerService.ActiveMediaFileId))
         {
-            room.AttachSession(sessionId!);
-            _attachedSessionId = sessionId;
-            StartStateReportTimer();
+            NotifyPlaybackStarted(session);
+            room.AcknowledgePlaybackStart();
         }
+        ObserveRoom(); // Initial REST snapshot may already be playing before registration.
     }
 
     public void ClearActiveRoom()
     {
-        if (_activeRoom == null) return;
-        _activeRoom.TransportCommandReceived -= OnTransportCommandReceived;
-        _activeRoom.PropertyChanged -= OnRoomPropertyChanged;
-        _activeRoom.DetachSession();
+        if (_activeRoom != null)
+        {
+            _activeRoom.TransportCommandReceived -= OnTransportCommandReceived;
+            _activeRoom.PropertyChanged -= OnRoomPropertyChanged;
+            _activeRoom.DetachSession();
+            _activeRoom.Dispose();
+        }
         _activeRoom = null;
+        _roomAuthority = null;
         _attachedSessionId = null;
+        _sync.SetSession(null);
+        _sync.SetSnapshot(null);
+        _sync.SetConnected(false, Now);
+        _timer.Stop();
+        _playerService.SetWatchTogetherPlayback(false);
         _playerService.SetWatchTogetherOverlay(null);
-        StopStateReportTimer();
-        _readyState = ReadyState.Idle;
     }
 
-    /// <summary>
-    /// Called by <see cref="PlayerService"/> after a new playback session starts.
-    /// Triggers <c>attach_session</c> on the active room WS so subsequent
-    /// transport commands are routed to this session.
-    /// </summary>
     public void NotifyPlaybackStarted(string sessionId)
     {
-        if (_activeRoom == null) return;
-        if (sessionId == _attachedSessionId) return;
-        _activeRoom.AttachSession(sessionId);
+        if (!EnsureCurrentAuthority()) return;
+        if (_activeRoom?.Room is not { Phase: "playing" } room ||
+            room.SelectedContentId != _playerService.ContentId) return;
         _attachedSessionId = sessionId;
-        _readyState = ReadyState.Idle;
-        StartStateReportTimer();
+        _playerService.SetWatchTogetherPlayback(true);
+        _sync.SetSession(sessionId);
         PushWatchTogetherOverlay();
     }
 
     public void NotifyPlaybackEnded()
     {
-        if (_activeRoom == null) return;
-        _activeRoom.DetachSession();
+        _activeRoom?.DetachSession();
         _attachedSessionId = null;
-        StopStateReportTimer();
+        _sync.SetSession(null);
+        _playerService.SetWatchTogetherPlayback(false);
     }
 
-    /// <summary>
-    /// Broadcast a local transport action (user clicked play/pause/seek) to
-    /// the room. Server adjudicates based on room policy and echoes back.
-    /// </summary>
     public void RequestTransport(string action, double positionSeconds, bool isPaused)
     {
-        _activeRoom?.RequestTransport(action, positionSeconds, isPaused);
+        if (EnsureCurrentAuthority()) _sync.RequestTransport(action, positionSeconds, isPaused);
     }
-
-    // ── Room property watcher ────────────────────────────────────────────
 
     private void OnRoomPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (_activeRoom == null) return;
-        if (e.PropertyName is nameof(WatchTogetherRoomViewModel.Room)
-            or nameof(WatchTogetherRoomViewModel.ConnectionState))
+        if (!EnsureCurrentAuthority()) return;
+        if (e.PropertyName == nameof(WatchTogetherRoomViewModel.ConnectionState))
         {
+            _sync.SetConnected(_activeRoom?.ConnectionState == "connected", Now);
             PushWatchTogetherOverlay();
         }
-        if (e.PropertyName != nameof(WatchTogetherRoomViewModel.Room)) return;
+        else if (e.PropertyName == nameof(WatchTogetherRoomViewModel.Room)) ObserveRoom();
+        else if (e.PropertyName == nameof(WatchTogetherRoomViewModel.ClosedReason) && _activeRoom?.ClosedReason != null)
+            _sync.SetSnapshot(null);
+        else if (e.PropertyName == nameof(WatchTogetherRoomViewModel.ErrorMessage) && _activeRoom?.ErrorMessage is { } error)
+            _playerService.ShowWatchPartyNotice(error);
+    }
 
-        if (_activeRoom.ShouldAutoStartPlayback &&
-            !string.IsNullOrEmpty(_activeRoom.Room?.SelectedContentId))
+    private void ObserveRoom()
+    {
+        if (!EnsureCurrentAuthority()) return;
+        var viewModel = _activeRoom;
+        if (viewModel == null) return;
+        _sync.SetSnapshot(viewModel.Room);
+        PushWatchTogetherOverlay();
+        if (viewModel.ShouldAutoStartPlayback && viewModel.Room is { Phase: "playing", SelectedContentId: { } contentId })
         {
-            var contentId = _activeRoom.Room.SelectedContentId!;
-            _activeRoom.AcknowledgePlaybackStart();
-            _readyState = ReadyState.Idle;
-            _dispatcher.TryEnqueue(() =>
-            {
-                try { PlaybackStartRequested?.Invoke(contentId); }
-                catch { }
-            });
-        }
-
-        // If we're now waiting and have buffered playback, tell the server
-        // we're ready so it can release the sync gate for everyone.
-        if (_activeRoom.Room?.PlaybackState == "waiting"
-            && _readyState != ReadyState.Ready
-            && !string.IsNullOrEmpty(_attachedSessionId)
-            && _playerService.Duration > 0
-            && !_playerService.IsBufferingForCache)
-        {
-            _readyState = ReadyState.Ready;
-            _activeRoom.ReportReady(_playerService.Position, _playerService.IsPaused);
+            viewModel.AcknowledgePlaybackStart();
+            _playerService.SetWatchTogetherPlayback(true);
+            if (PlaybackStartRequested != null) PlaybackStartRequested.Invoke(contentId);
+            else _ = _playerService.PlayAsync(contentId, fileId: viewModel.Room.SelectedFileId, startPositionOverride: viewModel.Room.AnchorPositionSeconds);
         }
     }
 
     private void PushWatchTogetherOverlay()
+        => _playerService.SetWatchTogetherOverlay(_activeRoom?.Room, _activeRoom?.ConnectionState ?? "disconnected");
+
+    private void SendRoomMessage(WatchPartyMessage message)
     {
-        _playerService.SetWatchTogetherOverlay(
-            _activeRoom?.Room,
-            _activeRoom?.ConnectionState ?? "disconnected");
+        if (!EnsureCurrentAuthority()) return;
+        var room = _activeRoom;
+        if (room == null) return;
+        switch (message.Type)
+        {
+            case "attach_session": room.AttachSession(message.SessionId!); break;
+            case "transport_request": room.RequestTransport(message.Action!, message.PositionSeconds, message.IsPaused); break;
+            case "ready": room.ReportReady(message.PositionSeconds, message.IsPaused, message.CommandId); break;
+            case "buffering": room.ReportBuffering(message.PositionSeconds, message.IsPaused); break;
+            case "state_report": room.ReportState(message.PositionSeconds, message.IsPaused); break;
+        }
+    }
+
+    private void OnTransportCommandReceived(WatchTogetherTransportCommand command)
+    {
+        if (!EnsureCurrentAuthority()) return;
+        var delay = 0d;
+        if (DateTimeOffset.TryParse(command.ExecuteAt, out var executeAt))
+            delay = (executeAt - DateTimeOffset.UtcNow).TotalMilliseconds - (_activeRoom?.ServerTimeOffsetMs ?? 0);
+        _sync.QueueCommand(command, Now + (long)Math.Clamp(delay, 0, 3000));
+        _sync.Tick(Now);
     }
 
     private void OnWatchTogetherActionRequested(string action)
     {
-        var roomViewModel = _activeRoom;
-        var room = roomViewModel?.Room;
-        if (roomViewModel == null || room == null || !room.SelfCanManageRoom)
+        if (!EnsureCurrentAuthority()) return;
+        var room = _activeRoom;
+        if (action == "lower-quality")
+        {
+            _ = _playerService.AcceptWatchPartyLowerQualityAsync();
             return;
-
+        }
+        if (room?.Room?.SelfCanManageRoom != true) return;
         switch (action)
         {
-            case "invite":
-                CopyInvite(room);
-                break;
+            case "invite": CopyInvite(room.Room); break;
             case "toggle-policy":
-                if (roomViewModel.TogglePolicyCommand.CanExecute(null))
-                    roomViewModel.TogglePolicyCommand.Execute(null);
+                if (room.TogglePolicyCommand.CanExecute(null)) room.TogglePolicyCommand.Execute(null);
                 break;
             case "end":
-                if (roomViewModel.CloseRoomCommand.CanExecute(null))
-                    roomViewModel.CloseRoomCommand.Execute(null);
+                if (room.CloseRoomCommand.CanExecute(null)) room.CloseRoomCommand.Execute(null);
                 break;
         }
     }
 
+    private sealed class NativePlayback(PlayerService service) : IWatchPartyPlayback
+    {
+        public double Position => service.Position;
+        public double Duration => service.Duration;
+        public bool Paused => service.IsPaused;
+        public bool Buffering => service.IsBufferingForCache;
+        public bool Busy => service.IsLoading || service.IsSwitchingContent || service.IsNativeSeeking;
+        public bool Loaded => service.Mpv != null && service.Duration > 0;
+        public double Rate { get => service.NativePlaybackRate; set => service.NativePlaybackRate = value; }
+        public string Quality => service.ActiveQualityTier;
+        public bool CanSeekLocally(double target) => service.CanSeekRoomTargetLocally(target);
+        public bool IsTargetBuffered(double target) => service.IsRoomTargetBuffered(target);
+        public void Seek(double target) => service.SeekRoomTarget(target);
+        public void SetPaused(bool paused) => service.SetPaused(paused);
+    }
     private static void CopyInvite(WatchTogetherRoomSnapshot room)
     {
         try
@@ -220,132 +262,5 @@ public sealed class WatchTogetherCoordinator
         }
     }
 
-    // ── Inbound transport_command ────────────────────────────────────────
 
-    private void OnTransportCommandReceived(WatchTogetherTransportCommand cmd)
-    {
-        var roomAtReceipt = _activeRoom;
-        var sessionAtReceipt = _attachedSessionId;
-        if (roomAtReceipt == null) return;
-        if (!string.IsNullOrEmpty(cmd.SessionId) &&
-            cmd.SessionId != sessionAtReceipt) return;
-
-        // If the server scheduled this command for a future wall-clock time,
-        // defer execution so all clients fire together. <=0ms → execute now.
-        int delayMs = ComputeExecuteDelayMs(cmd.ExecuteAt);
-        if (delayMs <= 0)
-        {
-            _dispatcher.TryEnqueue(() => ApplyCommandIfCurrent(cmd, roomAtReceipt, sessionAtReceipt));
-        }
-        else
-        {
-            _ = Task.Run(async () =>
-            {
-                try { await Task.Delay(delayMs); } catch { }
-                _dispatcher.TryEnqueue(() => ApplyCommandIfCurrent(cmd, roomAtReceipt, sessionAtReceipt));
-            });
-        }
-    }
-
-    private void ApplyCommandIfCurrent(
-        WatchTogetherTransportCommand cmd,
-        WatchTogetherRoomViewModel roomAtReceipt,
-        string? sessionAtReceipt)
-    {
-        if (!ReferenceEquals(_activeRoom, roomAtReceipt)
-            || !string.Equals(_attachedSessionId, sessionAtReceipt, StringComparison.Ordinal)
-            || (!string.IsNullOrEmpty(cmd.SessionId)
-                && !string.Equals(cmd.SessionId, _attachedSessionId, StringComparison.Ordinal)))
-            return;
-
-        ApplyCommand(cmd);
-    }
-
-    private int ComputeExecuteDelayMs(string? executeAtIso)
-    {
-        if (string.IsNullOrEmpty(executeAtIso) || _activeRoom == null) return 0;
-        if (!DateTime.TryParse(executeAtIso, null,
-            System.Globalization.DateTimeStyles.RoundtripKind, out var executeAt))
-            return 0;
-        // execute_at is server-wall-clock; convert to local by subtracting offset.
-        var localExecute = executeAt.ToUniversalTime()
-            - TimeSpan.FromMilliseconds(_activeRoom.ServerTimeOffsetMs);
-        var delta = (int)(localExecute - DateTime.UtcNow).TotalMilliseconds;
-        // Clamp — tiny negatives fire immediately, huge positives cap at 3s
-        // (beyond that the server probably meant "now" and the clocks drifted).
-        return Math.Clamp(delta, 0, 3000);
-    }
-
-    private void ApplyCommand(WatchTogetherTransportCommand cmd)
-    {
-        try
-        {
-            switch (cmd.Action)
-            {
-                case "play":
-                    _playerService.SetPaused(false);
-                    break;
-                case "pause":
-                    _playerService.SetPaused(true);
-                    break;
-                case "seek":
-                    _playerService.SeekTo(cmd.PositionSeconds);
-                    break;
-            }
-        }
-        catch { }
-    }
-
-    // ── State reporting (1.5s polling) ───────────────────────────────────
-
-    private void StartStateReportTimer()
-    {
-        if (_stateReportTimer != null) return;
-        _dispatcher.TryEnqueue(() =>
-        {
-            if (_stateReportTimer != null) return;
-            _stateReportTimer = new DispatcherTimer
-            {
-                Interval = TimeSpan.FromMilliseconds(StateReportIntervalMs),
-            };
-            _stateReportTimer.Tick += (_, _) => TickStateReport();
-            _stateReportTimer.Start();
-        });
-    }
-
-    private void StopStateReportTimer()
-    {
-        _dispatcher.TryEnqueue(() =>
-        {
-            _stateReportTimer?.Stop();
-            _stateReportTimer = null;
-        });
-    }
-
-    private void TickStateReport()
-    {
-        if (_activeRoom == null || string.IsNullOrEmpty(_attachedSessionId)) return;
-        if (_playerService.Duration <= 0) return; // Not yet loaded.
-        _activeRoom.ReportState(_playerService.Position, _playerService.IsPaused);
-    }
-
-    // ── Buffering relay ──────────────────────────────────────────────────
-
-    private void OnLocalBufferingChanged(bool buffering)
-    {
-        if (_activeRoom == null || string.IsNullOrEmpty(_attachedSessionId)) return;
-
-        if (buffering && _readyState != ReadyState.Buffering)
-        {
-            _readyState = ReadyState.Buffering;
-            _dispatcher.TryEnqueue(() =>
-                _activeRoom?.ReportBuffering(_playerService.Position, _playerService.IsPaused));
-        }
-        else if (!buffering && _readyState == ReadyState.Buffering)
-        {
-            _readyState = ReadyState.Ready;
-            _dispatcher.TryEnqueue(() =>
-                _activeRoom?.ReportReady(_playerService.Position, _playerService.IsPaused));
-        }
-    }
 }

@@ -222,7 +222,11 @@ public sealed class LibraryGridCard : Canvas
         GotFocus += OnGotFocus;
         LostFocus += OnLostFocus;
         ContextRequested += OnContextRequested;
+        Loaded += (_, _) => { App.Services.GetRequiredService<CardOverlayService>().Changed -= OverlayPreferences_Changed; App.Services.GetRequiredService<CardOverlayService>().Changed += OverlayPreferences_Changed; };
+        Unloaded += (_, _) => App.Services.GetRequiredService<CardOverlayService>().Changed -= OverlayPreferences_Changed;
     }
+
+    private void OverlayPreferences_Changed() => DispatcherQueue.TryEnqueue(() => { if (MediaItem is {} item) { UpdateQuickActionState(item); UpdateOverlays(item); } });
 
     public void Bind(MediaItem item, string? sortKey)
     {
@@ -559,7 +563,7 @@ public sealed class LibraryGridCard : Canvas
         var flyout = MediaItemMenu.Build(
             item,
             MediaItemMenu.Surface.Default,
-            stateChanged: RefreshState);
+            stateChanged: RefreshState, owner: this);
         flyout.ShowAt(_moreButton, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions
         {
             Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.TopEdgeAlignedRight,
@@ -612,13 +616,15 @@ public sealed class LibraryGridCard : Canvas
 
     private void UpdateQuickActionState(MediaItem item)
     {
-        var hasState = item.UserState != null;
-        var showWatched = hasState && item.Type is "movie" or "series";
+        var preferences = App.Services.GetRequiredService<CardOverlayService>();
+        var hasState = item.UserState != null && preferences.QuickActionsEnabled && preferences.QuickActionMode != "none";
+        var showWatched = hasState && (preferences.QuickActionMode is "both" or "watched") && (item.Type is "movie" or "series");
+        var showFavorite = hasState && (preferences.QuickActionMode is "both" or "favorites");
         var isWatched = item.UserState?.Played == true;
         var isFavorite = item.UserState?.IsFavorite == true;
 
         _quickWatchedButton.Visibility = showWatched ? Visibility.Visible : Visibility.Collapsed;
-        _quickFavoriteButton.Visibility = hasState ? Visibility.Visible : Visibility.Collapsed;
+        _quickFavoriteButton.Visibility = showFavorite ? Visibility.Visible : Visibility.Collapsed;
         _quickWatchedIcon.Glyph = isWatched ? "\uE7B3" : "\uED1A";
         _quickWatchedIcon.Foreground = isWatched
             ? new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0x4A, 0xDE, 0x80))
@@ -809,7 +815,7 @@ public sealed class LibraryGridCard : Canvas
         var flyout = MediaItemMenu.Build(
             MediaItem,
             MediaItemMenu.Surface.Default,
-            stateChanged: RefreshState);
+            stateChanged: RefreshState, owner: this);
         if (args.TryGetPosition(this, out var pos))
         {
             flyout.ShowAt(this, new Microsoft.UI.Xaml.Controls.Primitives.FlyoutShowOptions { Position = pos });

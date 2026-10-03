@@ -3,12 +3,15 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Navigation;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using SiloPlayer.Controls;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Core.Models.Requests;
 using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
+
+public sealed record SearchNavigation(string Query, string? MediaScope = null);
 
 public sealed partial class SearchPage : Page
 {
@@ -22,12 +25,20 @@ public sealed partial class SearchPage : Page
     private bool _resultsScrollUserScrolled;
     private Task? _searchFiltersTask;
     private string? _searchFiltersTaskKey;
+    private long _navigationGeneration;
+    private readonly SiloPlayer.Core.Api.CatalogApi _catalogApi;
+    private readonly CatalogSortChoices.Choice[] _resultSortChoices;
+    private IReadOnlySet<string> _shownRatingSources = new HashSet<string>();
 
     public SearchPage()
     {
         ViewModel = App.Services.GetRequiredService<SearchViewModel>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
+        _catalogApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
+        _resultSortChoices = CatalogSortChoices.Capture(ResultSortCombo);
+        UpdateResultSortChoices();
+        ResultFiltersSheet.ConfigureFilterHeader(SearchQueryFilters.DetachModeSelector(), "Refine your catalog results");
         NavigationCacheMode = NavigationCacheMode.Required;
         SearchLoadingRepeater.ItemsSource = Enumerable.Range(0, 24).ToArray();
 
@@ -56,6 +67,9 @@ public sealed partial class SearchPage : Page
 
         ViewModel.PropertyChanged += (_, args) =>
         {
+            if (args.PropertyName is nameof(ViewModel.OutsidePage) or nameof(ViewModel.OutsideTotalPages) or nameof(ViewModel.OutsideError) or nameof(ViewModel.IsOutsideLoading))
+                DispatcherQueue.TryEnqueue(UpdateRequestResults);
+            if (args.PropertyName == nameof(ViewModel.PeopleError)) DispatcherQueue.TryEnqueue(UpdatePeopleSection);
             if (args.PropertyName == nameof(ViewModel.TotalCount) ||
                 args.PropertyName == nameof(ViewModel.IsLoading) ||
                 args.PropertyName == nameof(ViewModel.ErrorMessage))
@@ -99,6 +113,34 @@ public sealed partial class SearchPage : Page
         // scope loads without blocking typing; query facets remain deferred
         // until the user opens the filter sheet.
         _ = EnsureInitializedAsync();
+        var generation = ++_navigationGeneration;
+        _shownRatingSources = _catalogApi.CachedShownRatingSources;
+        UpdateResultSortChoices();
+        _ = RefreshRatingSortChoicesAsync(generation);
+        if (e.Parameter is string query && !string.IsNullOrWhiteSpace(query)) _ = OpenQueryAsync(query, generation);
+        else if (e.Parameter is SearchNavigation route && !string.IsNullOrWhiteSpace(route.Query)) _ = OpenQueryAsync(route.Query, generation, route.MediaScope);
+    }
+
+    private async Task OpenQueryAsync(string query, long generation, string? requestedScope = null)
+    {
+        await EnsureInitializedAsync();
+        if (!_isNavigated || generation != _navigationGeneration) return;
+        if (requestedScope != null)
+        {
+            // Apply route scope after saved preference loading but before the
+            // initial query. Clearing a cached query avoids an intermediate
+            // request at the new scope with the previous page's search term.
+            ViewModel.CancelPendingSearch(); ViewModel.Query = "";
+            await ViewModel.SetMediaTypeAsync(requestedScope);
+            if (!_isNavigated || generation != _navigationGeneration) return;
+            _filterInitializing = true;
+            SelectComboTag(ResultTypeCombo, ViewModel.MediaType ?? "all");
+            _filterInitializing = false;
+            UpdateScopeButtons();
+        }
+        SearchBox.Text = query.Trim(); ViewModel.Query = query.Trim();
+        _searchDebounce?.Stop(); ShowResultsShellForCurrentQuery();
+        await ViewModel.SearchCommand.ExecuteAsync(null);
     }
 
     private Task EnsureInitializedAsync() => _initialized
@@ -111,6 +153,11 @@ public sealed partial class SearchPage : Page
         // facet. Load only the lightweight saved scope here; query-scoped
         // filters are requested on demand when the filter sheet opens.
         await ViewModel.LoadMediaScopeAsync();
+        var context = _catalogApi.CaptureContext();
+        var shown = await CatalogSortChoices.LoadShownSourcesAsync(_catalogApi);
+        if (!_isNavigated || context != _catalogApi.CaptureContext()) return;
+        _shownRatingSources = shown;
+        UpdateResultSortChoices();
         _filterInitializing = false;
         _initialized = true;
         UpdateScopeButtons();
@@ -156,9 +203,7 @@ public sealed partial class SearchPage : Page
 
     private void UpdatePeopleSection()
     {
-        // The current full catalog search surface only renders media results;
-        // people remain available through the global command palette.
-        PeopleSection.Visibility = Visibility.Collapsed;
+        PeopleSection.Visibility = ViewModel.PeopleResults.Count > 0 || ViewModel.PeopleError != null ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private async void Scope_Click(object sender, RoutedEventArgs e)
@@ -172,6 +217,7 @@ public sealed partial class SearchPage : Page
 
     private void UpdateScopeButtons()
     {
+        UpdateResultSortChoices();
         foreach (var button in new[] { EmptyVideoScope, EmptyAudiobookScope, EmptyAllScope, ResultsVideoScope, ResultsAudiobookScope, ResultsAllScope })
         {
             var active = string.Equals(button.Tag?.ToString(), ViewModel.MediaScope, StringComparison.Ordinal);
@@ -237,7 +283,7 @@ public sealed partial class SearchPage : Page
         // the in-library catalog grid. Keep the primary count/grid visually
         // stable, but still match the WebUI by rendering Request to Add below
         // local hits when discovery is enabled and returns suggestions.
-        RequestResultsSection.Visibility = ViewModel.OutsideLibraryResults.Count > 0
+        RequestResultsSection.Visibility = ViewModel.OutsideLibraryResults.Count > 0 || ViewModel.OutsideTotalPages > 0 || ViewModel.OutsideError != null
             ? Visibility.Visible
             : Visibility.Collapsed;
         var hasLibraryHits = ViewModel.Results.Count > 0;
@@ -249,82 +295,44 @@ public sealed partial class SearchPage : Page
             : "Not in your library, but you can request";
         var count = ViewModel.OutsideLibraryResults.Count;
         RequestResultsCount.Text = $"{count} {(count == 1 ? "result" : "results")}";
+        RequestPageText.Text = ViewModel.OutsideTotalPages > 0 ? $"Page {ViewModel.OutsidePage} of {ViewModel.OutsideTotalPages}" : "";
+        RequestPreviousButton.IsEnabled = !ViewModel.IsOutsideLoading && ViewModel.OutsidePage > 1;
+        RequestNextButton.IsEnabled = !ViewModel.IsOutsideLoading && ViewModel.OutsidePage < ViewModel.OutsideTotalPages;
+        RequestPagingPanel.Visibility = ViewModel.OutsideTotalPages > 1 ? Visibility.Visible : Visibility.Collapsed;
+        RequestErrorText.Text = ViewModel.OutsideError ?? "";
     }
 
-    private void RequestResult_Click(object sender, RoutedEventArgs e)
+    private async void RetrySearch_Click(object sender, RoutedEventArgs e) => await ViewModel.SearchCommand.ExecuteAsync(null);
+    private async void RetryPeople_Click(object sender, RoutedEventArgs e) => await ViewModel.RetryPeopleAsync();
+
+    private void ExternalRequestCard_Prepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs args)
     {
-        if (sender is Button { Tag: RequestMediaResult item })
-            App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(item.MediaType, item.TmdbId));
+        if (args.Element is not ContentControl host || args.Index < 0 || args.Index >= ViewModel.OutsideLibraryResults.Count) return;
+        var item = ViewModel.OutsideLibraryResults[args.Index];
+        host.Tag = item;
+        BuildExternalRequestCard(host, item);
     }
 
-    private async void RequestNow_Click(object sender, RoutedEventArgs e)
+    private void BuildExternalRequestCard(ContentControl host, RequestMediaResult item)
     {
-        if (sender is not Button { Tag: RequestMediaResult item } button || !item.Request.Requestable)
-            return;
-
-        button.IsEnabled = false;
-        var previousContent = button.Content;
-        button.Content = "Requesting…";
-        try
-        {
-            var created = await App.Services.GetRequiredService<SiloPlayer.Core.Api.RequestsApi>()
-                .CreateAsync(new CreateMediaRequestInput
-                {
-                    MediaType = item.MediaType,
-                    TmdbId = item.TmdbId,
-                    Title = item.Title,
-                    Year = item.Year,
-                    Overview = item.Overview,
-                    PosterPath = item.PosterPath,
-                    BackdropPath = item.BackdropPath,
-                });
-            item.Request.Requestable = false;
-            item.Request.Status = created.Status;
-            item.Request.RequestId = created.Id;
-            button.Content = item.RequestLabel;
-            App.Services.GetRequiredService<ToastService>().Success("Request submitted");
-        }
-        catch (Exception ex)
-        {
-            button.Content = previousContent;
-            button.IsEnabled = true;
-            App.Services.GetRequiredService<ToastService>().Error($"Request failed: {ex.Message}");
-        }
+        host.Content = SiloPlayer.Controls.ExternalTitleCard.Build(item, _catalogCardWidth,
+            request: async () =>
+            {
+                await ViewModel.RequestOutsideTitleAsync(item);
+                if (!ReferenceEquals(host.Tag, item) || !ViewModel.OutsideLibraryResults.Contains(item)) return;
+                BuildExternalRequestCard(host, item);
+                App.Services.GetRequiredService<ToastService>().Success("Request submitted");
+            },
+            watchlist: ViewModel.OutsideWatchlistTitlesSupported ? async () =>
+            {
+                await ViewModel.ToggleOutsideWatchlistAsync(item);
+                App.Services.GetService<WatchlistViewModel>()?.InvalidateExternalTitles();
+            } : null);
     }
 
-    private static Border? FindRequestOverlay(object sender)
-        => sender is Grid grid
-            ? grid.Children.OfType<Border>().FirstOrDefault(border => Equals(border.Tag, "request-overlay"))
-            : null;
-
-    private void RequestCard_PointerEntered(object sender, PointerRoutedEventArgs e)
-    {
-        if (FindRequestOverlay(sender) is not { } overlay) return;
-        overlay.Opacity = 1;
-        overlay.IsHitTestVisible = true;
-    }
-
-    private void RequestCard_PointerExited(object sender, PointerRoutedEventArgs e)
-    {
-        if (FindRequestOverlay(sender) is not { } overlay) return;
-        overlay.Opacity = 0;
-        overlay.IsHitTestVisible = false;
-    }
-
-    private void RequestCard_GotFocus(object sender, RoutedEventArgs e)
-    {
-        if (FindRequestOverlay(sender) is not { } overlay) return;
-        overlay.Opacity = 1;
-        overlay.IsHitTestVisible = true;
-    }
-
-    private void RequestCard_LostFocus(object sender, RoutedEventArgs e)
-    {
-        if (sender is Grid grid && grid.FocusState != FocusState.Unfocused) return;
-        if (FindRequestOverlay(sender) is not { } overlay) return;
-        overlay.Opacity = 0;
-        overlay.IsHitTestVisible = false;
-    }
+    private async void RequestPrevious_Click(object sender, RoutedEventArgs e) { await ViewModel.SetOutsidePageAsync(ViewModel.OutsidePage - 1); UpdateRequestResults(); }
+    private async void RequestNext_Click(object sender, RoutedEventArgs e) { await ViewModel.SetOutsidePageAsync(ViewModel.OutsidePage + 1); UpdateRequestResults(); }
+    private async void RequestRetry_Click(object sender, RoutedEventArgs e) { await ViewModel.SetOutsidePageAsync(ViewModel.OutsideRequestedPage); UpdateRequestResults(); }
 
     private DispatcherTimer? _searchDebounce;
 
@@ -471,6 +479,7 @@ public sealed partial class SearchPage : Page
 
     private void SearchPage_SizeChanged(object sender, SizeChangedEventArgs e)
     {
+        if (e.NewSize.Width > 0) ResultFiltersSheet.PreferredWidth = Math.Min(e.NewSize.Width * .75, e.NewSize.Width >= 640 ? 448 : double.PositiveInfinity);
         var gutter = e.NewSize.Width < 640 ? 16
             : e.NewSize.Width < 1024 ? 24
             : 40;
@@ -508,7 +517,10 @@ public sealed partial class SearchPage : Page
             320,
             Math.Min(1400 - (gutter * 2), viewportWidth - (gutter * 2)));
         var columns = _uiCustomizationService.GetPosterColumnCount(contentWidth);
-        _catalogCardWidth = Math.Max(96, (contentWidth - (12 * (columns - 1))) / columns);
+        var gap = _uiCustomizationService.CardPresentation.PosterSize == "large" ? 16d : 12d;
+        ResultsGridLayout.MinColumnSpacing = ResultsGridLayout.MinRowSpacing = gap;
+        SearchLoadingGridLayout.MinColumnSpacing = SearchLoadingGridLayout.MinRowSpacing = gap;
+        _catalogCardWidth = Math.Max(96, (contentWidth - (gap * (columns - 1))) / columns);
         ResultsGridLayout.MaximumRowsOrColumns = columns;
         ResultsGridLayout.MinItemWidth = _catalogCardWidth;
         ResultsGridLayout.MinItemHeight = (_catalogCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight;
@@ -549,6 +561,7 @@ public sealed partial class SearchPage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        _navigationGeneration++;
         _isNavigated = false;
         _uiCustomizationService.Changed -= UICustomization_Changed;
         _searchDebounce?.Stop();
@@ -572,7 +585,7 @@ public sealed partial class SearchPage : Page
             return Task.CompletedTask;
 
         var mediaType = ViewModel.MediaType;
-        var key = $"{query}\u001F{mediaType ?? ""}";
+        var key = $"{_catalogApi.CaptureContext()}\u001F{_catalogApi.FilterCacheGeneration}\u001F{mediaType ?? ""}";
         if (string.Equals(_searchFiltersTaskKey, key, StringComparison.Ordinal) &&
             _searchFiltersTask is { IsCompleted: false })
             return _searchFiltersTask;
@@ -596,7 +609,6 @@ public sealed partial class SearchPage : Page
         await ViewModel.LoadFiltersAsync(query, mediaType);
         if (!_isNavigated ||
             !string.Equals(_searchFiltersTaskKey, key, StringComparison.Ordinal) ||
-            !string.Equals(ViewModel.Query.Trim(), query, StringComparison.Ordinal) ||
             !string.Equals(ViewModel.MediaType, mediaType, StringComparison.Ordinal))
         {
             return;
@@ -628,15 +640,17 @@ public sealed partial class SearchPage : Page
         {
             _filterInitializing = priorInitializing;
         }
+        SearchQueryFilters.Load(ViewModel.AdvancedQuery, ViewModel.MediaScope, filters: ViewModel.AvailableFilters);
         UpdateActiveResultFilters();
     }
 
     private static void FillResultCombo(ComboBox combo, string allLabel, IEnumerable<string> values)
     {
-        combo.Items.Clear();
-        combo.Items.Add(new ComboBoxItem { Content = allLabel, Tag = "" });
-        foreach (var value in values.Distinct(StringComparer.OrdinalIgnoreCase))
-            combo.Items.Add(new ComboBoxItem { Content = value, Tag = value });
+        // Plain options let the native popup virtualize containers instead of
+        // constructing every facet's XAML item during a filter-sheet open.
+        combo.ItemsSource = new[] { new SearchFilterOption(allLabel, "") }
+            .Concat(values.Distinct(StringComparer.OrdinalIgnoreCase).Select(value => new SearchFilterOption(value, value))).ToArray();
+        combo.DisplayMemberPath = nameof(SearchFilterOption.Label);
         combo.SelectedIndex = 0;
     }
 
@@ -645,6 +659,7 @@ public sealed partial class SearchPage : Page
         if (_filterInitializing || string.IsNullOrWhiteSpace(ViewModel.Query)) return;
         if (ReferenceEquals(sender, ResultTypeCombo))
         {
+            UpdateResultSortChoices(SelectedTag(ResultTypeCombo));
             await ViewModel.SetMediaTypeAsync(SelectedTag(ResultTypeCombo));
             UpdateScopeButtons();
             RefreshOpenSearchFilters();
@@ -660,6 +675,27 @@ public sealed partial class SearchPage : Page
         await ViewModel.SearchCommand.ExecuteAsync(null);
     }
 
+    private void UpdateResultSortChoices(string? scope = null)
+    {
+        var initializing = _filterInitializing;
+        _filterInitializing = true;
+        try
+        {
+            ViewModel.SortField = CatalogSortChoices.Apply(ResultSortCombo, _resultSortChoices,
+                _shownRatingSources, null, ViewModel.SortField);
+        }
+        finally { _filterInitializing = initializing; }
+    }
+
+    private async Task RefreshRatingSortChoicesAsync(long navigationGeneration)
+    {
+        var context = _catalogApi.CaptureContext();
+        var shown = await CatalogSortChoices.LoadShownSourcesAsync(_catalogApi);
+        if (!_isNavigated || navigationGeneration != _navigationGeneration || context != _catalogApi.CaptureContext()) return;
+        _shownRatingSources = shown;
+        UpdateResultSortChoices();
+    }
+
     private async void ResultSort_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_filterInitializing) return;
@@ -673,10 +709,47 @@ public sealed partial class SearchPage : Page
 
     private async void OpenResultFilters_Click(object sender, RoutedEventArgs e)
     {
+        if (ViewModel.AdvancedQuery.Groups.Count == 0)
+        {
+            var group = new SiloPlayer.Core.Models.Collections.QueryGroup();
+            foreach (var (field, value) in new[] { ("genre", ViewModel.Genre), ("content_rating", ViewModel.ContentRating), ("resolution", ViewModel.Resolution), ("country", ViewModel.Country) })
+                if (!string.IsNullOrWhiteSpace(value)) group.Rules.Add(new() { Field = field, Op = "is", Value = value });
+            ViewModel.AdvancedQuery.Groups.Add(group);
+            ViewModel.Genre = ViewModel.ContentRating = ViewModel.Resolution = ViewModel.Country = null;
+        }
+        SearchQueryFilters.Load(ViewModel.AdvancedQuery, ViewModel.MediaScope, filters: ViewModel.AvailableFilters);
+        ResultFiltersSheet.PreferredWidth = Math.Min(ActualWidth * .75, ActualWidth >= 640 ? 448 : double.PositiveInfinity);
         ResultFiltersSheet.IsOpen = true;
         await EnsureSearchFiltersLoadedAsync();
     }
-    private void CloseResultFilters_Click(object sender, RoutedEventArgs e) => ResultFiltersSheet.IsOpen = false;
+    private async void CloseResultFilters_Click(object sender, RoutedEventArgs e)
+    {
+        if (!SearchQueryFilters.IsValid) return;
+        UpdateActiveResultFilters(); await ViewModel.SearchCommand.ExecuteAsync(null);
+        ResultFiltersSheet.IsOpen = false;
+    }
+
+    private void AdvancedSearch_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.AdvancedQuery.Groups.Count == 0)
+        {
+            var group = new SiloPlayer.Core.Models.Collections.QueryGroup();
+            foreach (var (field, value) in new[] { ("genre", ViewModel.Genre), ("content_rating", ViewModel.ContentRating), ("resolution", ViewModel.Resolution), ("country", ViewModel.Country) })
+                if (!string.IsNullOrWhiteSpace(value)) group.Rules.Add(new() { Field = field, Op = "is", Value = value });
+            ViewModel.AdvancedQuery.Groups.Add(group);
+            ViewModel.Genre = ViewModel.ContentRating = ViewModel.Resolution = ViewModel.Country = null;
+        }
+        SearchRulesEditor.Load(ViewModel.AdvancedQuery);
+        AdvancedSearchHost.Visibility = Visibility.Visible;
+        GuidedSearchFilters.Visibility = AdvancedSearchButton.Visibility = Visibility.Collapsed;
+        UpdateActiveResultFilters();
+    }
+
+    private async void ApplyAdvancedSearch_Click(object sender, RoutedEventArgs e)
+    {
+        if (!SearchRulesEditor.IsValid) return;
+        UpdateActiveResultFilters(); await ViewModel.SearchCommand.ExecuteAsync(null);
+    }
 
     private void UpdateActiveResultFilters()
     {
@@ -685,6 +758,11 @@ public sealed partial class SearchPage : Page
         AddActiveResultFilter("rating", ViewModel.ContentRating, value => $"Rated: {value}");
         AddActiveResultFilter("resolution", ViewModel.Resolution, value => $"Resolution: {value}");
         AddActiveResultFilter("country", ViewModel.Country, value => $"Country: {value}");
+        foreach (var badge in SiloPlayer.Core.Services.CatalogFilterBadges.Create(ViewModel.AdvancedQuery, ViewModel.MediaScope))
+        {
+            var chip = CatalogFilterBadgeView.Build(badge.Label, async () => { badge.Remove(); SearchQueryFilters.Load(ViewModel.AdvancedQuery, ViewModel.MediaScope, filters: ViewModel.AvailableFilters); UpdateActiveResultFilters(); await ViewModel.SearchCommand.ExecuteAsync(null); });
+            ActiveResultFiltersPanel.Children.Add(chip);
+        }
 
         var count = ActiveResultFiltersPanel.Children.Count;
         ActiveResultFiltersPanel.Visibility = count > 0
@@ -705,49 +783,22 @@ public sealed partial class SearchPage : Page
             return;
 
         var text = label(value);
-        var content = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 5,
-        };
-        content.Children.Add(new TextBlock
-        {
-            Text = text,
-            FontSize = 12,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        content.Children.Add(new FontIcon
-        {
-            Glyph = "\uE711",
-            FontSize = 10,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-
-        var button = new Button
-        {
-            Tag = key,
-            Content = content,
-            Padding = new Thickness(8, 4, 6, 4),
-            CornerRadius = new CornerRadius(6),
-            BorderThickness = new Thickness(0),
-            Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"],
-        };
-        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, $"Remove {text}");
-        button.Click += ActiveResultFilter_Click;
-        ActiveResultFiltersPanel.Children.Add(button);
+        var chip = CatalogFilterBadgeView.Build(text, async () => await RemoveActiveResultFilterAsync(key));
+        ActiveResultFiltersPanel.Children.Add(chip);
     }
 
-    private async void ActiveResultFilter_Click(object sender, RoutedEventArgs e)
+    private async Task RemoveActiveResultFilterAsync(string key)
     {
-        if (sender is not Button { Tag: string key })
-            return;
-
         _filterInitializing = true;
         try
         {
             switch (key)
             {
+                case "advanced":
+                    ViewModel.AdvancedQuery.Groups.Clear(); ViewModel.AdvancedQuery.Match = "all";
+                    AdvancedSearchHost.Visibility = Visibility.Collapsed;
+                    GuidedSearchFilters.Visibility = AdvancedSearchButton.Visibility = Visibility.Visible;
+                    break;
                 case "genre":
                     ResultGenreCombo.SelectedIndex = 0;
                     ViewModel.Genre = null;
@@ -788,13 +839,16 @@ public sealed partial class SearchPage : Page
         ViewModel.ContentRating = null;
         ViewModel.Resolution = null;
         ViewModel.Country = null;
+        ViewModel.AdvancedQuery.Groups.Clear(); ViewModel.AdvancedQuery.Match = "all";
+        AdvancedSearchHost.Visibility = Visibility.Collapsed;
+        GuidedSearchFilters.Visibility = AdvancedSearchButton.Visibility = Visibility.Visible;
         UpdateActiveResultFilters();
         if (!string.IsNullOrWhiteSpace(ViewModel.Query)) await ViewModel.SearchCommand.ExecuteAsync(null);
     }
 
     private static string? SelectedTag(ComboBox combo)
     {
-        var value = (combo.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+        var value = combo.SelectedItem is SearchFilterOption option ? option.Value : (combo.SelectedItem as ComboBoxItem)?.Tag?.ToString();
         return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
@@ -802,11 +856,14 @@ public sealed partial class SearchPage : Page
     {
         for (var index = 0; index < combo.Items.Count; index++)
         {
-            if (combo.Items[index] is ComboBoxItem item && string.Equals(item.Tag?.ToString(), value, StringComparison.OrdinalIgnoreCase))
+            var optionValue = combo.Items[index] is SearchFilterOption option ? option.Value : (combo.Items[index] as ComboBoxItem)?.Tag?.ToString();
+            if (string.Equals(optionValue, value, StringComparison.OrdinalIgnoreCase))
             {
                 combo.SelectedIndex = index;
                 return;
             }
         }
     }
+
+    private sealed record SearchFilterOption(string Label, string Value);
 }

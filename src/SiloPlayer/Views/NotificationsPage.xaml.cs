@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Input;
 using SiloPlayer.Core.Models.Notifications;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Controls;
 using SiloPlayer.ViewModels;
 
 namespace SiloPlayer.Views;
@@ -21,6 +22,9 @@ public sealed partial class NotificationsPage : Page
         ViewModel = App.Services.GetRequiredService<NotificationsViewModel>();
         DataContext = ViewModel;
         InitializeComponent();
+        ((StackPanel)HeaderGrid.Children[0]).Children[0] = WebUiIcon.Create("bell", 24);
+        ((StackPanel)MarkAllButton.Content).Children[0] = WebUiIcon.Create("check-check", 16);
+        ((StackPanel)PreferencesButton.Content).Children[0] = WebUiIcon.Create("settings-2", 16);
         NavigationCacheMode = NavigationCacheMode.Required;
         Loaded += NotificationsPage_Loaded;
     }
@@ -58,8 +62,16 @@ public sealed partial class NotificationsPage : Page
 
     private async void MarkAll_Click(object sender, RoutedEventArgs e)
     {
-        await ViewModel.MarkAllReadCommand.ExecuteAsync(null);
+        var pending = ViewModel.MarkAllReadCommand.ExecuteAsync(null);
         UpdateVisuals();
+        await pending;
+        UpdateVisuals();
+    }
+
+    private async void Reload_Click(object sender, RoutedEventArgs e)
+    {
+        var pending = ViewModel.ReloadAsync(); UpdateVisuals();
+        await pending; UpdateVisuals();
     }
 
     private async void MarkRead_Click(object sender, RoutedEventArgs e)
@@ -73,9 +85,12 @@ public sealed partial class NotificationsPage : Page
     {
         if (e.ClickedItem is not AppNotification notification) return;
         if (notification.IsUnread) _ = ViewModel.MarkReadCommand.ExecuteAsync(notification);
-        var contentId = notification.EpisodeId ?? notification.SeriesId;
-        if (!string.IsNullOrWhiteSpace(contentId))
-            App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(contentId);
+        var destination = NotificationNavigation.Resolve(notification);
+        var navigation = App.Services.GetRequiredService<NavigationService>();
+        if (destination?.ContentId is string contentId)
+            navigation.Navigate<ItemDetailPage>(contentId);
+        else if (destination is { MediaType: string mediaType, TmdbId: int tmdbId })
+            navigation.Navigate<RequestDetailPage>(new RequestDetailNavigation(mediaType, tmdbId));
     }
 
     private async void Preference_Toggled(object sender, RoutedEventArgs e)
@@ -154,9 +169,12 @@ public sealed partial class NotificationsPage : Page
         LoadMoreButton.Visibility = ViewModel.HasMore ? Visibility.Visible : Visibility.Collapsed;
         MarkAllButton.Visibility = ViewModel.UnreadCount > 0 ? Visibility.Visible : Visibility.Collapsed;
         UnreadButtonText.Text = ViewModel.UnreadCount > 0 ? $"Unread ({ViewModel.UnreadCount})" : "Unread";
+        MarkAllButton.IsEnabled = ViewModel.CanMarkAllRead;
         ErrorText.Text = ViewModel.ErrorMessage ?? "";
-        AllButton.Background = GetTabBrush(ViewModel.StatusFilter == "all");
-        UnreadButton.Background = GetTabBrush(ViewModel.StatusFilter == "unread");
+        ReloadButton.Visibility = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage) ? Visibility.Collapsed : Visibility.Visible;
+        ReloadButton.IsEnabled = !ViewModel.IsLoading && !ViewModel.IsMarkingAllRead;
+        AllButton.Style = (Style)Application.Current.Resources[ViewModel.StatusFilter == "all" ? "SecondaryButtonStyle" : "GhostButtonStyle"];
+        UnreadButton.Style = (Style)Application.Current.Resources[ViewModel.StatusFilter == "unread" ? "SecondaryButtonStyle" : "GhostButtonStyle"];
     }
 
     private static Brush GetTabBrush(bool active)
@@ -206,9 +224,11 @@ public sealed partial class NotificationsPage : Page
     {
         var width = e.NewSize.Width;
         if (width <= 0) return;
-        PageContent.Padding = width < 640 ? new Thickness(16, 32, 16, 32) : new Thickness(24, 32, 24, 32);
+        PageContent.Padding = new Thickness(16, 32, 16, 32);
+        PageContent.Width = Math.Min(width, 768);
 
-        var compact = width < 560;
+        var compact = width < 480;
+        HeaderGrid.RowSpacing = compact ? 12 : 0;
         if (HeaderGrid.Children[0] is FrameworkElement title)
         {
             Grid.SetRow(title, 0);

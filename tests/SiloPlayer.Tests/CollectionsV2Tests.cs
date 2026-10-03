@@ -129,6 +129,41 @@ public sealed class CollectionsV2Tests
         Assert.Equal(3, calls);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ArtworkRetryUsesTheBaselineOfItsOwnSuccessfulMetadataWrite(bool changedElsewhere)
+    {
+        var name = "Original"; var writes = 0; var posters = 0;
+        var api = Api(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.EndsWith("/poster"))
+            {
+                var response = Json("{\"id\":\"c1\",\"name\":\"Saved\"}");
+                if (++posters == 1) response.StatusCode = HttpStatusCode.UnprocessableEntity;
+                return response;
+            }
+            if (request.Method == HttpMethod.Patch) { writes++; name = "Saved"; }
+            var item = new { id = "c1", name, updated_at = name };
+            var reply = Json(JsonSerializer.Serialize(path == "/api/v2/collections" ? (object)new { items = new[] { item }, groups = Array.Empty<object>() } : item));
+            // PATCH deliberately omits a revision: retry must refresh safely.
+            if (request.Method == HttpMethod.Get) reply.Headers.ETag = new("\"" + name + "\"");
+            return reply;
+        });
+        await api.GetCollectionsAsync(); await api.GetCollectionAsync("c1");
+        await Assert.ThrowsAsync<ApiException>(() => api.UpdateCollectionAsync("c1", new() { Name = "Saved" }, "cover.png", [1, 2], "image/png"));
+        if (changedElsewhere)
+        {
+            name = "Changed elsewhere";
+            var conflict = await Assert.ThrowsAsync<ApiException>(() => api.UpdateCollectionAsync("c1", new() { Name = "Saved" }, "cover.png", [1, 2], "image/png"));
+            Assert.Equal(412, conflict.StatusCode); Assert.Equal(1, writes); Assert.Equal(1, posters);
+            return;
+        }
+        await api.UpdateCollectionAsync("c1", new() { Name = "Saved" }, "cover.png", [1, 2], "image/png");
+        Assert.Equal(2, writes); Assert.Equal(2, posters);
+    }
+
     private sealed class AsyncHandler(Func<HttpRequestMessage,Task<HttpResponseMessage>> handler) : HttpMessageHandler
     { protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)=>handler(request); }
 

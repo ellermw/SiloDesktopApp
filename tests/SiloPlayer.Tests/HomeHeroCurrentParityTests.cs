@@ -25,11 +25,12 @@ public sealed class HomeHeroCurrentParityTests
         var xaml = File.ReadAllText(Path.Combine(
             root, "src", "SiloPlayer", "Controls", "HeroCarousel.xaml"));
 
-        Assert.Contains("FormatRuntime(item.DurationSeconds", code);
-        Assert.Contains("AddHeroMeta($\"IMDb", code);
+        Assert.Contains("FormatRuntime(runtimeSeconds)", code);
+        Assert.Contains("RatingPresentation.PrimaryCardRating(item.RatingImdb, item.RatingTmdb)", code);
+        Assert.Contains("DisplayRatingEntry.Create(primaryRating", code);
         Assert.Contains("width >= 1280 ? 72d", code);
         Assert.Contains("width >= 640 ? 48d", code);
-        Assert.Contains("Math.Clamp(root.ActualHeight * heightRatio, 350, 700)", code);
+        Assert.Contains("Math.Clamp(root.ActualHeight * heightRatio, 380, 760)", code);
         Assert.Contains("_sizeRoot.SizeChanged -= SizeRoot_SizeChanged", code);
         Assert.Contains("RootGrid_PointerEntered", code);
         Assert.Contains("PauseCarouselButton_Click", code);

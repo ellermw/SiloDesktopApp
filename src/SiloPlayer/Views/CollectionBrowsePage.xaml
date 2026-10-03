@@ -279,6 +279,8 @@
                                Foreground="{StaticResource SecondaryTextBrush}" />
                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                         <StackPanel Spacing="14" Padding="0,4,8,12">
+                            <controls:QueryFilterEditor x:Name="CollectionQueryFilters" />
+                            <StackPanel Visibility="Collapsed" Spacing="14">
                             <StackPanel Spacing="6">
                                 <TextBlock Text="Genres" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                                 <TextBox x:Name="GenresBox" PlaceholderText="Comma-separated genres" />
@@ -320,6 +322,7 @@
                                     <ToggleButton x:Name="DolbyVisionToggle" Content="DOVI" Height="32" Padding="12,0" />
                                 </StackPanel>
                             </StackPanel>
+                        </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
                     <Border Grid.Row="2" Padding="0,12,0,0" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">

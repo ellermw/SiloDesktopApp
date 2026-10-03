@@ -27,6 +27,9 @@ public partial class NotificationsViewModel : ObservableObject
     [ObservableProperty] private string _statusFilter = "all";
     [ObservableProperty] private bool _hasMore;
     [ObservableProperty] private bool _isEmpty;
+    [ObservableProperty] private bool _isMarkingAllRead;
+    public bool CanMarkAllRead => !IsLoading && !IsMarkingAllRead && string.IsNullOrWhiteSpace(ErrorMessage) && _notificationsApi.CanMarkAllRead;
+    public Task ReloadAsync() { _lastLoadedAt = DateTime.MinValue; return LoadPageAsync(reset: true); }
     private string? _nextCursor;
     private DateTime _lastLoadedAt = DateTime.MinValue;
     private string? _lastLoadedFilter;
@@ -211,15 +214,18 @@ public partial class NotificationsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to mark notification read: {ex.Message}";
+            // Reconcile optimistic read/count state but retain the mutation failure.
             _lastLoadedAt = DateTime.MinValue;
             await LoadPageAsync(reset: true);
+            ErrorMessage = $"Failed to mark notification read: {ex.Message}";
         }
     }
 
     [RelayCommand]
     private async Task MarkAllReadAsync()
     {
+        if (!CanMarkAllRead) return;
+        IsMarkingAllRead = true;
         try
         {
             await _notificationsApi.MarkAllReadAsync();
@@ -231,8 +237,8 @@ public partial class NotificationsViewModel : ObservableObject
         {
             ErrorMessage = $"Failed to mark notifications read: {ex.Message}";
             _lastLoadedAt = DateTime.MinValue;
-            await LoadPageAsync(reset: true);
         }
+        finally { IsMarkingAllRead = false; }
     }
 
     [RelayCommand]

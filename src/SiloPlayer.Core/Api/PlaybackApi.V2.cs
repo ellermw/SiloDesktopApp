@@ -12,10 +12,10 @@ public partial class PlaybackApi
     private readonly ConcurrentQueue<string> _retiredSessions = new();
     private const int RetainedStopAttempts = 64;
 
-    private sealed class SessionState(string installationId, ApiRequestContext context)
+    private sealed class SessionState(string installationId, ApiIdentityContext context)
     {
         public string InstallationId { get; } = installationId;
-        public ApiRequestContext Context { get; } = context;
+        public ApiIdentityContext Context { get; } = context;
         public object Gate { get; } = new();
         public long Sequence;
         public PlaybackAcceptedSample? LastSample;
@@ -24,7 +24,7 @@ public partial class PlaybackApi
 
     private async Task<PlaybackDecisionResponseV3> StartV2Async(PlaybackStartRequestV3 request, CancellationToken ct)
     {
-        var authority = client.CaptureContext();
+        var authority = client.CaptureIdentityContext();
         foreach (var entry in _sessions)
             if (entry.Value.Context != authority) _sessions.TryRemove(entry.Key, out _);
         for (var attempt = 0; ; attempt++)
@@ -41,7 +41,7 @@ public partial class PlaybackApi
             try
             {
                 var decision = await RetryDeliveryAsync(
-                    token => client.PostAsync<PlaybackDecisionResponseV3>("/api/v2/playback/start", body, token),
+                    token => client.SendIdentityBoundRequestAsync<PlaybackDecisionResponseV3>(authority, HttpMethod.Post, "/api/v2/playback/start", body, token),
                     authority, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(45), ct).ConfigureAwait(false);
                 EnsureAuthority(authority);
                 var session = decision.PlaybackPlan?.SessionId ?? decision.SessionId;
@@ -90,7 +90,7 @@ public partial class PlaybackApi
     {
         var state = Session(sessionId);
         request.InstallationId = state.InstallationId;
-        var decision = await client.PostAsync<PlaybackDecisionResponseV3>(
+        var decision = await client.SendIdentityBoundRequestAsync<PlaybackDecisionResponseV3>(state.Context, HttpMethod.Post,
             $"/api/v2/playback/{Uri.EscapeDataString(sessionId)}/replan", request, ct).ConfigureAwait(false);
         EnsureAuthority(state.Context);
         return decision;
@@ -106,7 +106,7 @@ public partial class PlaybackApi
             sample = new() { Sequence = checked(++state.Sequence), Position = position, IsPaused = isPaused };
             state.LastSample = sample;
         }
-        var receipt = await client.PostAsync<PlaybackMutationReceipt>($"/api/v2/playback/{Uri.EscapeDataString(sessionId)}/progress",
+        var receipt = await client.SendIdentityBoundRequestAsync<PlaybackMutationReceipt>(state.Context, HttpMethod.Post, $"/api/v2/playback/{Uri.EscapeDataString(sessionId)}/progress",
             new Dictionary<string, object?>
             {
                 ["installation_id"] = state.InstallationId,
@@ -154,7 +154,7 @@ public partial class PlaybackApi
             while (_retiredSessions.Count > RetainedStopAttempts && _retiredSessions.TryDequeue(out var expired))
                 _sessions.TryRemove(expired, out _);
         }
-        var receipt = await RetryDeliveryAsync(token => client.DeleteWithBodyAsync<PlaybackMutationReceipt>(
+        var receipt = await RetryDeliveryAsync(token => client.SendIdentityBoundRequestAsync<PlaybackMutationReceipt>(state.Context, HttpMethod.Delete,
             $"/api/v2/playback/{Uri.EscapeDataString(sessionId)}", body, token),
             state.Context, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(15), ct).ConfigureAwait(false);
         EnsureAuthority(state.Context);
@@ -166,7 +166,7 @@ public partial class PlaybackApi
     public async Task<PlaybackControlTicket> CreateControlTicketAsync(string sessionId, CancellationToken ct = default)
     {
         var state = Session(sessionId);
-        var ticket = await client.PostAsync<PlaybackControlTicket>(
+        var ticket = await client.SendIdentityBoundRequestAsync<PlaybackControlTicket>(state.Context, HttpMethod.Post,
             $"/api/v2/playback/sessions/{Uri.EscapeDataString(sessionId)}/control/ws-ticket",
             new Dictionary<string, object?> { ["installation_id"] = state.InstallationId }, ct).ConfigureAwait(false);
         EnsureAuthority(state.Context);
@@ -175,12 +175,13 @@ public partial class PlaybackApi
         return ticket;
     }
 
-    public async Task ReportRouteEventAsync(PlaybackStartResponse session, string eventName, CancellationToken ct = default)
+    public async Task ReportRouteEventAsync(PlaybackStartResponse session, string eventName, CancellationToken ct = default,
+        IReadOnlyDictionary<string, string>? diagnostics = null)
     {
         var state = Session(session.SessionId);
         // Best effort telemetry is sent once; 202 is queue acknowledgement, and
         // retrying a dropped event must never delay playback or teardown.
-        await client.PostNoContentAsync("/api/v2/playback/route-events", new Dictionary<string, object?>
+        await client.SendIdentityBoundNoContentAsync(state.Context, HttpMethod.Post, "/api/v2/playback/route-events", new Dictionary<string, object?>
         {
             ["installation_id"] = state.InstallationId,
             ["event_id"] = Guid.NewGuid().ToString(),
@@ -190,7 +191,7 @@ public partial class PlaybackApi
             ["plan_id"] = session.PlanId,
             ["plan_attempt_key"] = session.PlanAttemptKey,
             ["event"] = eventName,
-            ["diagnostics"] = new Dictionary<string, string>(),
+            ["diagnostics"] = diagnostics ?? new Dictionary<string, string>(),
         }, ct).ConfigureAwait(false);
         EnsureAuthority(state.Context);
     }
@@ -203,13 +204,20 @@ public partial class PlaybackApi
         return state;
     }
 
+    private void EnsureAuthority(ApiIdentityContext authority)
+    {
+        if (!client.IsCurrentIdentityContext(authority))
+            throw new OperationCanceledException("The account, profile or server changed during playback.");
+    }
+
+    // Watch Party's pending discovery/mutation reads retain their existing access-revision guard.
     private void EnsureAuthority(ApiRequestContext authority)
     {
         if (!client.IsCurrentContext(authority))
             throw new OperationCanceledException("The account, profile or server changed during playback.");
     }
 
-    private async Task<T> RetryDeliveryAsync<T>(Func<CancellationToken, Task<T>> deliver, ApiRequestContext authority,
+    private async Task<T> RetryDeliveryAsync<T>(Func<CancellationToken, Task<T>> deliver, ApiIdentityContext authority,
         TimeSpan budget, TimeSpan perRequest, CancellationToken ct)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);

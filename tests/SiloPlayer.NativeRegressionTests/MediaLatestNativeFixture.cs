@@ -1,0 +1,166 @@
+using System.Collections;
+using System.Net;
+using System.Reflection;
+using System.Text;
+using System.Text.Json;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Services;
+using SiloPlayer.ViewModels;
+using SiloPlayer.Views;
+
+internal static class MediaLatestNativeFixture
+{
+    internal static async Task RunAsync(StackPanel parent)
+    {
+        var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var original = (IServiceProvider)field.GetValue(null)!;
+        using var handler = new Handler(); using var http = new HttpClient(handler);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://media-latest-fixture.invalid"); client.SetProfile("latest-profile");
+        using var images = new ImageService(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "latest-title-cache"));
+        field.SetValue(null, new LocalServices(original, client, http, images));
+        var differences = new List<string>();
+        try
+        {
+            var owner = new Grid(); var window = new Window { Content = owner };
+            try
+            {
+                window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
+                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1280, 720)); window.AppWindow.Show(false); await Task.Delay(100);
+                var scale = owner.XamlRoot.RasterizationScale;
+                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)(1280 * scale), (int)(720 * scale)));
+                var page = new ItemDetailPage { Width = 1280, Height = 720 }; owner.Children.Add(page); await Task.Delay(100);
+                handler.HoldSetting = true;
+                page.ViewModel.Item = new MediaItemDetail { Type = "movie", ContentId = "pending", Title = "Pending title", LogoUrl = "https://media-latest-fixture.invalid/logo-pending" };
+                Call(page, "UpdateUI"); page.UpdateLayout(); await Task.Delay(100);
+                var pending = page.FindName("TitleArtPending") as FrameworkElement;
+                if (pending?.Visibility != Visibility.Visible || pending.Height != 112 || pending.MaxWidth != 480 || handler.LogoRequests != 0 || ((TextBlock)page.FindName("TitleText")).Visibility != Visibility.Collapsed)
+                    differences.Add("Latest title-art pending must hold112x480 desktop box without fetching a logo or flashing text.");
+                handler.SettingRelease.TrySetResult(false); await WaitAsync(() => ((TextBlock)page.FindName("TitleText")).Visibility == Visibility.Visible);
+                if (handler.SettingRequests == 0 || handler.LogoRequests != 0 || ((Image)page.FindName("HeroLogoImage")).Source != null)
+                    differences.Add("Latest false title-art must render text without a logo request.");
+                handler.HoldSetting = false; handler.Value = true;
+                page.ViewModel.Item = new MediaItemDetail { Type = "movie", ContentId = "true-art", Title = "Logo title", LogoUrl = "https://media-latest-fixture.invalid/logo-true" };
+                Call(page, "UpdateUI"); await WaitAsync(() => ((Image)page.FindName("HeroLogoImage")).Source != null);
+                if (((Image)page.FindName("HeroLogoImage")).Source is not BitmapImage || ((TextBlock)page.FindName("TitleText")).Visibility != Visibility.Collapsed
+                    || Microsoft.UI.Xaml.Automation.AutomationProperties.GetName((Image)page.FindName("HeroLogoImage")) != "Logo title")
+                    differences.Add("Latest true title-art must decode the actual logo and hide plain text.");
+                handler.Missing = true;
+                page.ViewModel.Item = new MediaItemDetail { Type = "movie", ContentId = "missing-art", Title = "Default title", LogoUrl = "https://media-latest-fixture.invalid/logo-default" };
+                Call(page, "UpdateUI"); await WaitAsync(() => ((Image)page.FindName("HeroLogoImage")).Source != null);
+                if (((Image)page.FindName("HeroLogoImage")).Source == null) differences.Add("Missing title-art key must resolve to contract default true.");
+                handler.Missing = false; handler.Fail = true;
+                page.ViewModel.Item = new MediaItemDetail { Type = "movie", ContentId = "failed-art", Title = "Failed default title", LogoUrl = "https://media-latest-fixture.invalid/logo-failed-default" };
+                Call(page, "UpdateUI"); await WaitAsync(() => ((Image)page.FindName("HeroLogoImage")).Source != null);
+                if (((Image)page.FindName("HeroLogoImage")).Source == null) differences.Add("Failed title-art key read must resolve to contract default true.");
+                handler.Fail = false; handler.HoldSetting = true; handler.SettingRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                page.ViewModel.Item = new MediaItemDetail { Type = "movie", ContentId = "stale", Title = "Stale title", LogoUrl = "https://media-latest-fixture.invalid/logo-stale" };
+                var before = handler.LogoRequests; Call(page, "UpdateUI"); await Task.Delay(75); client.SetProfile("next-profile"); handler.SettingRelease.TrySetResult(true); await Task.Delay(150);
+                if (handler.LogoRequests != before || ((Image)page.FindName("HeroLogoImage")).Source != null)
+                    differences.Add("Old profile title-art completion must not fetch or paint under new authority.");
+                client.SetProfile("latest-profile"); handler.HoldSetting = false;
+                page.ViewModel.Item = JsonSerializer.Deserialize<MediaItemDetail>(Handler.DetailJson, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower })!;
+                Call(page, "UpdateUI"); page.UpdateLayout(); await Task.Delay(75);
+                var modelRatings = typeof(MediaItemDetail).GetProperty("Ratings");
+                if (modelRatings?.GetValue(page.ViewModel.Item) is not IEnumerable values || values.Cast<object>().Count() != 3)
+                    differences.Add("Latest detail JSON must preserve all three ordered server ratings including unknown source.");
+                var scores = (StackPanel)page.FindName("ScoresPanel");
+                var labels = Descendants(scores).OfType<TextBlock>().Select(text => text.Text).ToArray();
+                if (scores.Visibility != Visibility.Visible || !labels.SequenceEqual(new[] { "Letterboxd", "4.2", "8.1", "RT", "91%" }))
+                    differences.Add("Latest rendered scores must preserve server order/name/display and use official TMDB logo without legacy scalar fallback.");
+                var tmdb = Descendants(scores).OfType<Image>().SingleOrDefault(image => image.Source is SvgImageSource);
+                if (tmdb == null || tmdb.Height != 10) differences.Add("Latest detail TMDB mark must use the official10px SVG asset.");
+                if (tmdb != null)
+                {
+                    await Task.Delay(100); var raster = new RenderTargetBitmap(); await raster.RenderAsync(tmdb);
+                    var pixels = System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.ToArray(await raster.GetPixelsAsync());
+                    if (!Enumerable.Range(0, pixels.Length / 4).Any(index => pixels[index * 4 + 3] > 0)) differences.Add("Official TMDB asset must paint actual nonempty pixels, not only a URI reference.");
+                }
+                var helper = typeof(MediaItemDetail).Assembly.GetType("SiloPlayer.Core.Services.RatingPresentation")?.GetMethod("PrimaryCardRating");
+                var decimalRating = helper?.Invoke(null, new object?[] { 7.35d, 9.5d });
+                var fallbackRating = helper?.Invoke(null, new object?[] { double.NaN, 8.1d });
+                if (decimalRating?.GetType().GetProperty("Display")?.GetValue(decimalRating) as string != "7.4"
+                    || fallbackRating?.GetType().GetProperty("Source")?.GetValue(fallbackRating) as string != "tmdb"
+                    || helper?.Invoke(null, new object?[] { 0d, -1d }) != null)
+                    differences.Add("Primary card rating must use valid IMDb first, valid TMDB fallback, finite positive range and half-away decimal display.");
+                var eyebrow = page.FindName("HeroEyebrow") as FrameworkElement;
+                if (eyebrow == null || ((TextBlock)page.FindName("HeroContextText")).Text != "MOVIE" || ((FrameworkElement)page.FindName("HeroEyebrowDot")).Visibility != Visibility.Visible)
+                    differences.Add("Latest plain type/studio must share uppercase eyebrow with a conditional3px dot.");
+                page.ViewModel.Item = new MediaItemDetail { Type = "movie", ContentId = "empty-ratings", Title = "No ratings", RatingImdb = 9, RatingRtCritic = 95 };
+                Call(page, "UpdateUI");
+                if (scores.Visibility != Visibility.Collapsed) differences.Add("Latest absent ordered ratings must hide scores even when old scalar fields are populated.");
+                await MediaParityNativeFixture.CaptureAsync(owner, "media-latest-title-ratings-1280.png"); owner.Children.Remove(page);
+                await CheckNaturalRailAsync(window, owner, differences);
+                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)(1280 * scale), (int)(720 * scale))); await Task.Delay(100);
+                var room = new WatchTogetherRoomPage { Width = 1280, Height = 720 }; owner.Children.Add(room); await Task.Delay(100);
+                try
+                {
+                    var candidate = new MediaItem { ContentId = "ordered-detail", Title = "Candidate", Type = "movie" };
+                    Call(room, "ShowCandidateSpotlight", candidate); await Task.Delay(150); room.UpdateLayout();
+                    var ratings = room.FindName("CandidateRatings") as SiloPlayer.Controls.WrapPanel;
+                    if (ratings == null || ratings.Children.Count != 3 || ratings.HorizontalSpacing != 6 || !Descendants(ratings).OfType<TextBlock>().Any(text => text.Text == "Letterboxd" && text.FontSize == 12))
+                        differences.Add("Latest real Party catalog detail must render ordered small rating pills without modifying readiness/selection state.");
+                    if (handler.DetailRequests < 1) differences.Add("Party ratings must consume real isolated CatalogApi detail rather than synthetic summary scores.");
+                    await MediaParityNativeFixture.CaptureAsync(owner, "media-latest-party-ratings-1280.png");
+                }
+                finally { room.ViewModel.Dispose(); owner.Children.Remove(room); }
+            }
+            finally { window.Close(); }
+            if (differences.Count > 0) throw new InvalidOperationException("Latest478 media acceptance differences:\n" + string.Join("\n", differences));
+            Program.Log("PASS: MEDIA_LATEST478_COMPLETED actual pending/false/true/default/stale title art, ordered/empty detail and Party ratings, desktop natural rail boundaries.");
+        }
+        finally { field.SetValue(null, original); }
+    }
+    private static async Task CheckNaturalRailAsync(Window window, Grid owner, List<string> differences)
+    {
+        foreach (var (width, height) in new[] { (1024d,650d), (1024d,651d), (1440d,900d) })
+        foreach (var single in new[] { false, true })
+        {
+            var scale = owner.XamlRoot.RasterizationScale;
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)Math.Round(width * scale), (int)Math.Round(height * scale))); await Task.Delay(100);
+            if (Math.Abs(owner.XamlRoot.Size.Width - width) > 2 || Math.Abs(owner.XamlRoot.Size.Height - height) > 2) throw new InvalidOperationException("Latest rail requires the true requested native client bounds.");
+            var page = new ItemDetailPage { Width = width, Height = height }; owner.Children.Add(page); await Task.Delay(75);
+            page.ViewModel.Item = new MediaItemDetail { Type = "series", ContentId = "rail", Title = "Rail fixture", Overview = string.Concat(Enumerable.Repeat("Long natural hero copy. ", 50)) };
+            page.ViewModel.IsSeries = true;
+            for (var index=1; index <= (single ? 1 : 5); index++) page.ViewModel.Seasons.Add(new Season { ContentId=$"season-{index}", SeasonNumber=index, Title=$"Season {index}" });
+            Call(page, "UpdateUI"); Call(page, "BuildSeasonCards"); Call(page, "UpdateResponsiveLayout", width);
+            page.UpdateLayout(); await Task.Delay(100);
+            var viewport = Field<Grid>(page,"_tvViewport"); var navigation = Field<ScrollViewer>(page,"_tvNavigation"); var poster = (FrameworkElement)page.FindName("HeroPosterContainer");
+            var natural = !single && height >= 651;
+            Program.Log($"TRACE: latest rail {width}x{height}/single={single}: declared={viewport.Height}; min={viewport.MinHeight}; actual={viewport.ActualHeight}; nav={navigation.ActualHeight}; scroll={navigation.VerticalScrollMode}; poster={poster.ActualHeight}.");
+            if (natural ? !double.IsNaN(viewport.Height) || viewport.MinHeight != height || navigation.VerticalScrollMode != ScrollMode.Disabled || Math.Abs(poster.ActualHeight-330)>2
+                : double.IsNaN(viewport.Height) || navigation.VerticalScrollMode != ScrollMode.Enabled)
+                differences.Add($"{width}x{height}/single={single}: latest multi-season rail must grow naturally only above650px, while episode grid and short desktop remain bounded.");
+            if (natural && navigation.ActualHeight < navigation.DesiredSize.Height-2) differences.Add("Latest natural season rail cannot clip its measured content.");
+            await MediaParityNativeFixture.CaptureAsync(owner,$"media-latest-rail-{width}x{height}-{(single ? "single" : "multi")}.png"); owner.Children.Remove(page);
+        }
+    }
+    private static async Task WaitAsync(Func<bool> completed) { for(var attempt=0; attempt<60 && !completed(); attempt++) await Task.Delay(25); }
+    private static T Field<T>(object value,string name) => (T)value.GetType().GetField(name,BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(value)!;
+    private static object? Call(object value,string name,params object?[] args) => value.GetType().GetMethod(name,BindingFlags.NonPublic|BindingFlags.Instance)!.Invoke(value,args);
+    private static IEnumerable<DependencyObject> Descendants(DependencyObject root) { for(var i=0;i<VisualTreeHelper.GetChildrenCount(root);i++){ var child=VisualTreeHelper.GetChild(root,i); yield return child; foreach(var nested in Descendants(child))yield return nested; } }
+    private sealed class LocalServices(IServiceProvider original,SiloApiClient client,HttpClient http,ImageService images):IServiceProvider
+    {
+        public object? GetService(Type type) => type==typeof(SiloApiClient)?client:type==typeof(SettingsApi)?new SettingsApi(client):type==typeof(CatalogApi)?new CatalogApi(client):type==typeof(HttpClient)?http:type==typeof(ImageService)?images:type==typeof(WatchTogetherRoomViewModel)?new WatchTogetherRoomViewModel(new PlaybackApi(client),client):original.GetService(type);
+    }
+    private sealed class Handler:HttpMessageHandler
+    {
+        internal const string DetailJson="""{"content_id":"ordered-detail","type":"movie","title":"Ordered ratings","studios":["Fixture Studio"],"rating_imdb":9.9,"ratings":[{"source":"letterboxd","name":"Letterboxd","score":84,"display":"4.2"},{"source":"tmdb","name":"TMDB","score":81,"display":"8.1"},{"source":"rt_critic","name":"RT","score":91,"display":"91%"}]}""";
+        internal int SettingRequests,LogoRequests,DetailRequests; internal bool HoldSetting,Value,Missing,Fail;
+        internal TaskCompletionSource<bool> SettingRelease=new(TaskCreationOptions.RunContinuationsAsynchronously);
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
+        {
+            var path=request.RequestUri!.AbsolutePath;
+            if(path.StartsWith("/logo-")){ Interlocked.Increment(ref LogoRequests); return new(HttpStatusCode.OK){Content=new ByteArrayContent(await File.ReadAllBytesAsync(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!,"audiobook-cover.png"),ct))}; }
+            if(path=="/api/v2/settings/values/effective") { SettingRequests++; if(Fail) return new(HttpStatusCode.InternalServerError){ Content=new StringContent("{\"error\":\"fixture_failure\",\"message\":\"setting failed\"}",Encoding.UTF8,"application/json") }; var value=HoldSetting?await SettingRelease.Task:Value; return Json(Missing?"{\"items\":[]}":JsonSerializer.Serialize(new {items=new[]{new{key="ui.title_art",value,source="profile"}}})); }
+            if(path=="/api/v2/catalog/items/ordered-detail") {DetailRequests++;return Json(DetailJson);}
+            throw new InvalidOperationException("Unexpected latest media fixture request: "+path);
+        }
+        private static HttpResponseMessage Json(string body)=>new(HttpStatusCode.OK){Content=new StringContent(body,Encoding.UTF8,"application/json")};
+    }
+}

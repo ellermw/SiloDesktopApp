@@ -1,5 +1,10 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Text;
+using System.Runtime.InteropServices.WindowsRuntime;
+using Microsoft.UI.Xaml.Media.Imaging;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Services;
+using Windows.ApplicationModel.DataTransfer;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
@@ -23,9 +28,14 @@ public sealed partial class SmartCollectionWizardPage : Page
     private Task _previewTask = Task.CompletedTask;
     private readonly SemaphoreSlim _previewLifecycleGate = new(1, 1);
     private int _currentStep = 1;
+    private QueryFilterEditor? _rulesEditor;
+    private CancellationTokenSource? _filterOptionsCts;
+    private IReadOnlySet<string> _shownRatingSources = new HashSet<string>();
+    private CatalogSortChoices.Choice[] _wizardSortChoices = [];
+    private int _pageLifetime;
 
     public bool CanSave => !ViewModel.IsSaving && !ViewModel.IsLoading
-        && !ViewModel.IsReadOnly && !string.IsNullOrWhiteSpace(ViewModel.Title);
+        && !ViewModel.IsReadOnly && !string.IsNullOrWhiteSpace(ViewModel.Title) && _rulesEditor?.IsValid != false;
     public string PreviewCountText
         => ViewModel.PreviewTotal > 0
             ? $"{ViewModel.PreviewTotal:N0} matched"
@@ -35,6 +45,10 @@ public sealed partial class SmartCollectionWizardPage : Page
     {
         ViewModel = App.Services.GetRequiredService<SmartCollectionWizardViewModel>();
         this.InitializeComponent();
+        WizardRemoveSelectedPoster.Content = WebUiIcon.Create("x", 12);
+        WizardDeletePoster.Content = WebUiIcon.Create("x", 12);
+        WizardPosterFrame.SizeChanged += (_, _) => ClipPosterPreview();
+        WizardPosterFrame.Loaded += (_, _) => ClipPosterPreview();
 
         ViewModel.Saved += OnSaved;
         ViewModel.Rules.CollectionChanged += (_, _) => DispatcherQueue.TryEnqueue(BuildRulesPanel);
@@ -59,6 +73,7 @@ public sealed partial class SmartCollectionWizardPage : Page
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        ++_pageLifetime;
         _args = e.Parameter as SmartCollectionWizardNavigationArgs;
     }
 
@@ -66,13 +81,20 @@ public sealed partial class SmartCollectionWizardPage : Page
     {
         if (_loaded) return;
         _loaded = true;
-
+        var lifetime = _pageLifetime;
+        var catalogApi = App.Services.GetRequiredService<CatalogApi>();
+        var context = catalogApi.CaptureContext();
         await ViewModel.ConfigureAsync(_args);
+        if (!IsLoaded || lifetime != _pageLifetime || context != catalogApi.CaptureContext()) return;
+        _shownRatingSources = await CatalogSortChoices.LoadShownSourcesAsync(catalogApi);
+        if (!IsLoaded || lifetime != _pageLifetime || context != catalogApi.CaptureContext()) return;
         PopulateStaticCombos();
         ApplyReadOnlyState();
         BuildLibrariesPanel();
         BuildProfilesPanel();
         BuildRulesPanel();
+        WizardDeleteButton.Visibility = !string.IsNullOrWhiteSpace(_args?.CollectionId) && !ViewModel.IsReadOnly ? Visibility.Visible : Visibility.Collapsed;
+        await UpdatePosterPreviewAsync();
         UpdatePreviewState();
         UpdateContinueState();
         WizardTitle.Text = string.IsNullOrWhiteSpace(_args?.CollectionId)
@@ -101,6 +123,11 @@ public sealed partial class SmartCollectionWizardPage : Page
             ("Manga", "manga")
         ], ViewModel.MediaScope);
 
+        SheetMediaScopeCombo.Items.Clear();
+        foreach (var item in MediaScopeCombo.Items.OfType<ComboBoxItem>())
+            SheetMediaScopeCombo.Items.Add(new ComboBoxItem { Content = item.Content, Tag = item.Tag });
+        SheetMediaScopeCombo.SelectedIndex = MediaScopeCombo.SelectedIndex;
+
         var sortOptions = new List<(string Label, string Value)>
         {
             ("Date Added", "added_at"),
@@ -125,6 +152,8 @@ public sealed partial class SmartCollectionWizardPage : Page
         sortOptions.Add(("Date Viewed", "date_viewed"));
         sortOptions.Add(("Plays", "plays"));
         AddComboItems(SortFieldCombo, sortOptions, ViewModel.SortField);
+        _wizardSortChoices = CatalogSortChoices.Capture(SortFieldCombo);
+        RefreshSortChoices();
 
         AddComboItems(SortOrderCombo, [
             ("Descending", "desc"),
@@ -200,199 +229,87 @@ public sealed partial class SmartCollectionWizardPage : Page
 
     private void BuildLibrariesPanel()
     {
-        LibrariesPanel.Children.Clear();
-
+        var flyout = new MenuFlyout();
+        var all = new MenuFlyoutItem { Text = "All Libraries", IsEnabled = ViewModel.SelectedLibraryIds.Count > 0 };
+        all.Click += (_, _) =>
+        {
+            ViewModel.SelectedLibraryIds.Clear();
+            BuildLibrariesPanel(); _ = RefreshRuleScopeAsync(); SchedulePreview(); UpdateContinueState();
+        };
+        flyout.Items.Add(all); flyout.Items.Add(new MenuFlyoutSeparator());
         foreach (var library in ViewModel.Libraries)
         {
-            var check = new CheckBox
-            {
-                Content = library.Name,
-                Tag = library.Id,
-                IsChecked = ViewModel.SelectedLibraryIds.Contains(library.Id),
-                FontSize = 13
-            };
-            check.Checked += LibraryCheck_Changed;
-            check.Unchecked += LibraryCheck_Changed;
-            LibrariesPanel.Children.Add(check);
+            var item = new ToggleMenuFlyoutItem { Text = library.Name, Tag = library.Id, IsChecked = ViewModel.SelectedLibraryIds.Contains(library.Id) };
+            item.Click += LibraryToggle_Changed; flyout.Items.Add(item);
         }
+        LibraryPickerButton.Flyout = flyout;
+        UpdateLibraryPickerCaption();
     }
 
-    private void LibraryCheck_Changed(object sender, RoutedEventArgs e)
+    private void UpdateLibraryPickerCaption()
     {
-        if (sender is not CheckBox check || check.Tag is not int libraryId)
-            return;
+        var selected = ViewModel.Libraries.Where(library => ViewModel.SelectedLibraryIds.Contains(library.Id)).Select(library => library.Name).ToArray();
+        LibraryPickerLabel.Text = selected.Length == 0 ? "All Libraries" : selected.Length == 1 ? selected[0] : $"{selected.Length} Libraries";
+    }
 
-        if (check.IsChecked == true)
+    private void LibraryToggle_Changed(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleMenuFlyoutItem item || item.Tag is not int libraryId) return;
+        if (item.IsChecked)
         {
-            if (!ViewModel.SelectedLibraryIds.Contains(libraryId))
-                ViewModel.SelectedLibraryIds.Add(libraryId);
+            if (!ViewModel.SelectedLibraryIds.Contains(libraryId)) ViewModel.SelectedLibraryIds.Add(libraryId);
         }
-        else
-        {
-            ViewModel.SelectedLibraryIds.Remove(libraryId);
-        }
-        SchedulePreview();
-        UpdateContinueState();
+        else ViewModel.SelectedLibraryIds.Remove(libraryId);
+        UpdateLibraryPickerCaption();
+        if (LibraryPickerButton.Flyout is MenuFlyout flyout && flyout.Items.FirstOrDefault() is MenuFlyoutItem all) all.IsEnabled = ViewModel.SelectedLibraryIds.Count > 0;
+        _ = RefreshRuleScopeAsync(); SchedulePreview(); UpdateContinueState();
     }
 
     private void BuildRulesPanel()
     {
         RulesPanel.Children.Clear();
-        foreach (var rule in ViewModel.Rules)
-            RulesPanel.Children.Add(BuildRuleRow(rule));
+        ViewModel.RuleDefinition.Match = ViewModel.MatchMode;
+        var editor = new SiloPlayer.Controls.QueryFilterEditor { IsEnabled = !ViewModel.IsReadOnly };
+        _rulesEditor = editor;
+        WizardFiltersSheet.ConfigureFilterHeader(editor.DetachModeSelector(), "Refine your catalog results");
+        editor.Load(ViewModel.RuleDefinition, ViewModel.MediaScope, ViewModel.SelectedLibraryIds.FirstOrDefault() is var libraryId && libraryId > 0 ? libraryId : null);
+        editor.Changed += () => { ViewModel.MatchMode = ViewModel.RuleDefinition.Match; Bindings.Update(); UpdateContinueState(); if (editor.IsValid) SchedulePreview(); };
+        RulesPanel.Children.Add(editor);
+        MatchModeCombo.Visibility = Visibility.Collapsed;
+        _ = RefreshRuleScopeAsync();
     }
 
-    private Grid BuildRuleRow(QueryRule rule)
+    private void RefreshSortChoices()
     {
-        var row = new Grid { ColumnSpacing = 8 };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.45, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(36) });
-
-        var fieldCombo = new ComboBox
+        if (_wizardSortChoices.Length == 0) return;
+        var suppressed = _suppressSelectionChanges;
+        _suppressSelectionChanges = true;
+        try
         {
-            CornerRadius = new CornerRadius(8),
-            HorizontalAlignment = HorizontalAlignment.Stretch
-        };
-        foreach (var (label, value) in RuleFields)
-        {
-            var item = new ComboBoxItem { Content = label, Tag = value };
-            fieldCombo.Items.Add(item);
-            if (value == rule.Field)
-                fieldCombo.SelectedItem = item;
+            ViewModel.SortField = CatalogSortChoices.Apply(SortFieldCombo, _wizardSortChoices,
+                _shownRatingSources, null, ViewModel.SortField, keepSavedEditorSort: true);
         }
-        if (fieldCombo.SelectedItem == null)
-            fieldCombo.SelectedIndex = 0;
-        fieldCombo.SelectionChanged += (_, _) =>
-        {
-            if (fieldCombo.SelectedItem is ComboBoxItem item && item.Tag is string field)
-            {
-                rule.Field = field;
-                rule.Op = GetRuleOperators(field)[0].Value;
-                rule.Value = IsBooleanField(field) ? false : "";
-                BuildRulesPanel();
-                SchedulePreview();
-            }
-        };
-
-        var opCombo = new ComboBox
-        {
-            CornerRadius = new CornerRadius(8),
-            HorizontalAlignment = HorizontalAlignment.Stretch
-        };
-        foreach (var (label, value) in GetRuleOperators(rule.Field))
-        {
-            var item = new ComboBoxItem { Content = label, Tag = value };
-            opCombo.Items.Add(item);
-            if (value == rule.Op)
-                opCombo.SelectedItem = item;
-        }
-        if (opCombo.SelectedItem == null)
-            opCombo.SelectedIndex = 0;
-        opCombo.SelectionChanged += (_, _) =>
-        {
-            if (opCombo.SelectedItem is ComboBoxItem item && item.Tag is string op)
-            {
-                rule.Op = op;
-                SchedulePreview();
-            }
-        };
-
-        var valueEditor = BuildRuleValueEditor(rule);
-
-        var removeButton = new Button
-        {
-            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            Width = 32,
-            Height = 32,
-            Padding = new Thickness(0),
-            Content = new FontIcon { Glyph = "\uE74D", FontSize = 12 },
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        ToolTipService.SetToolTip(removeButton, "Remove rule");
-        removeButton.Click += (_, _) => ViewModel.RemoveRule(rule);
-
-        Grid.SetColumn(fieldCombo, 0);
-        Grid.SetColumn(opCombo, 1);
-        Grid.SetColumn(valueEditor, 2);
-        Grid.SetColumn(removeButton, 3);
-        row.Children.Add(fieldCombo);
-        row.Children.Add(opCombo);
-        row.Children.Add(valueEditor);
-        row.Children.Add(removeButton);
-
-        return row;
+        finally { _suppressSelectionChanges = suppressed; }
     }
 
-    private FrameworkElement BuildRuleValueEditor(QueryRule rule)
+    private async Task RefreshRuleScopeAsync()
     {
-        if (IsBooleanField(rule.Field))
+        RefreshSortChoices();
+        if (_rulesEditor is not { } editor) return;
+        var scope = ViewModel.MediaScope;
+        int? libraryId = ViewModel.SelectedLibraryIds.FirstOrDefault() is var selected && selected > 0 ? selected : null;
+        var owner = new CancellationTokenSource(); Interlocked.Exchange(ref _filterOptionsCts, owner)?.Cancel();
+        editor.Load(ViewModel.RuleDefinition, scope, libraryId);
+        try
         {
-            var combo = new ComboBox { CornerRadius = new CornerRadius(8), HorizontalAlignment = HorizontalAlignment.Stretch };
-            combo.Items.Add(new ComboBoxItem { Content = "True", Tag = true });
-            combo.Items.Add(new ComboBoxItem { Content = "False", Tag = false });
-            var current = rule.Value is bool boolean
-                ? boolean
-                : bool.TryParse(rule.Value?.ToString(), out var parsed) && parsed;
-            combo.SelectedIndex = current ? 0 : 1;
-            combo.SelectionChanged += (_, _) =>
-            {
-                if (combo.SelectedItem is ComboBoxItem { Tag: bool value })
-                {
-                    rule.Value = value;
-                    SchedulePreview();
-                }
-            };
-            return combo;
+            var filters = await App.Services.GetRequiredService<CatalogApi>().GetFiltersAsync(libraryId, owner.Token, source: "query", type: string.IsNullOrWhiteSpace(scope) ? null : scope);
+            if (_filterOptionsCts == owner && !owner.IsCancellationRequested && _rulesEditor == editor)
+                editor.Load(ViewModel.RuleDefinition, scope, libraryId, filters);
         }
-
-        var selectValues = GetRuleSelectValues(rule.Field);
-        if (selectValues.Count > 0)
-        {
-            var combo = new ComboBox { CornerRadius = new CornerRadius(8), HorizontalAlignment = HorizontalAlignment.Stretch };
-            foreach (var value in selectValues)
-            {
-                var item = new ComboBoxItem { Content = value.Label, Tag = value.Value };
-                combo.Items.Add(item);
-                if (string.Equals(rule.Value?.ToString(), value.Value, StringComparison.OrdinalIgnoreCase))
-                    combo.SelectedItem = item;
-            }
-            if (combo.SelectedItem == null) combo.SelectedIndex = 0;
-            combo.SelectionChanged += (_, _) =>
-            {
-                if (combo.SelectedItem is ComboBoxItem { Tag: string value })
-                {
-                    rule.Value = value;
-                    SchedulePreview();
-                }
-            };
-            return combo;
-        }
-
-        var valueBox = new TextBox
-        {
-            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
-            PlaceholderText = rule.Op == "between" ? "Start, end" : rule.Op == "in_last" ? "Example: 30 days" : "Value",
-            Text = FormatRuleValue(rule.Value)
-        };
-        valueBox.TextChanged += (_, _) =>
-        {
-            rule.Value = valueBox.Text;
-            SchedulePreview();
-        };
-        valueBox.KeyDown += (_, args) =>
-        {
-            if (args.Key == Windows.System.VirtualKey.Enter)
-                _ = RunPreviewAsync();
-        };
-        return valueBox;
+        catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
+        catch (Exception ex) { if (_filterOptionsCts == owner) App.Services.GetRequiredService<ToastService>().Error($"Could not load filter options: {ex.Message}"); }
+        finally { Interlocked.CompareExchange(ref _filterOptionsCts, null, owner); owner.Dispose(); }
     }
-
-    private static string FormatRuleValue(object? value)
-        => value is System.Collections.IEnumerable values and not string
-            ? string.Join(", ", values.Cast<object?>().Select(item => item?.ToString()))
-            : value?.ToString() ?? "";
 
     private void UpdatePreviewState()
     {
@@ -417,7 +334,11 @@ public sealed partial class SmartCollectionWizardPage : Page
     private void MediaScopeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!_suppressSelectionChanges && MediaScopeCombo.SelectedItem is ComboBoxItem item && item.Tag is string value)
+        {
             ViewModel.MediaScope = value;
+            _suppressSelectionChanges = true; SheetMediaScopeCombo.SelectedIndex = MediaScopeCombo.SelectedIndex; _suppressSelectionChanges = false;
+            _ = RefreshRuleScopeAsync();
+        }
         SchedulePreview();
     }
 
@@ -450,9 +371,22 @@ public sealed partial class SmartCollectionWizardPage : Page
 
     private void FiltersButton_Click(object sender, RoutedEventArgs e)
     {
-        FiltersAdvancedPanel.Visibility = FiltersAdvancedPanel.Visibility == Visibility.Visible
-            ? Visibility.Collapsed
-            : Visibility.Visible;
+        WizardFiltersSheet.PreferredWidth = Math.Min(ActualWidth * .75, ActualWidth >= 640 ? 448 : double.PositiveInfinity);
+        WizardFiltersSheet.IsOpen = true;
+    }
+
+    private void DoneWizardFilters_Click(object sender, RoutedEventArgs e) => WizardFiltersSheet.IsOpen = false;
+
+    private void ClearWizardFilters_Click(object sender, RoutedEventArgs e)
+    {
+        ViewModel.SelectedLibraryIds.Clear(); ViewModel.RuleDefinition.Groups.Clear();
+        ViewModel.RuleDefinition.Match = "all"; ViewModel.MatchMode = "all"; ViewModel.Rules.Clear();
+        BuildLibrariesPanel(); BuildRulesPanel(); SchedulePreview();
+    }
+
+    private void SheetMediaScopeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_suppressSelectionChanges) MediaScopeCombo.SelectedIndex = SheetMediaScopeCombo.SelectedIndex;
     }
 
     private void LimitTextBox_TextChanged(object sender, TextChangedEventArgs e) => SchedulePreview();
@@ -460,16 +394,24 @@ public sealed partial class SmartCollectionWizardPage : Page
     private void UpdateContinueState()
     {
         if (ContinueButton == null) return;
-        ContinueButton.IsEnabled = ViewModel.IsPreviewing || ViewModel.PreviewTotal > 0;
+        ContinueButton.IsEnabled = _rulesEditor?.IsValid != false && (ViewModel.IsPreviewing || ViewModel.PreviewTotal > 0);
+    }
+
+    private async void PreviewScroll_ViewChanged(object sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (e.IsIntermediate || _currentStep != 1 || ViewModel.IsPreviewing || !ViewModel.PreviewHasMore) return;
+        if (PreviewScroll.ExtentHeight - PreviewScroll.VerticalOffset - PreviewScroll.ViewportHeight < 600)
+            await ViewModel.LoadMorePreviewAsync();
     }
 
     private async void Preview_Click(object sender, RoutedEventArgs e)
     {
-        await RunPreviewAsync();
+        await RunPreviewAsync(retry: true);
     }
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
+        if (!CanSave) return;
         await ViewModel.SaveAsync();
     }
 
@@ -480,6 +422,7 @@ public sealed partial class SmartCollectionWizardPage : Page
     private void ShowStep(int step)
     {
         _currentStep = step;
+        WizardFiltersSheet.IsOpen = false;
         var filtersVisible = step == 1;
         DetailsStepPanel.Visibility = filtersVisible ? Visibility.Collapsed : Visibility.Visible;
         FiltersStepRulesPanel.Visibility = filtersVisible ? Visibility.Visible : Visibility.Collapsed;
@@ -550,11 +493,79 @@ public sealed partial class SmartCollectionWizardPage : Page
             var bytes = System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.ToArray(buffer);
             ViewModel.SetPosterFile(file.Name, bytes, file.ContentType);
             SetArtworkStatus(file.Name);
+            await UpdatePosterPreviewAsync();
         }
         catch (Exception ex)
         {
             SetArtworkStatus(ex.Message);
         }
+    }
+
+    private async Task UpdatePosterPreviewAsync()
+    {
+        if (ViewModel.PosterFileBytes is { Length: > 0 } bytes)
+        {
+            var bitmap = new BitmapImage(); using var stream = new MemoryStream(bytes); await bitmap.SetSourceAsync(stream.AsRandomAccessStream()); WizardPosterImage.Source = bitmap;
+        }
+        else if (Uri.TryCreate(ViewModel.CurrentPosterUrl, UriKind.Absolute, out var uri)) WizardPosterImage.Source = new BitmapImage(uri);
+        else WizardPosterImage.Source = null;
+        WizardPosterImage.Visibility = WizardPosterImage.Source == null ? Visibility.Collapsed : Visibility.Visible;
+        WizardPosterFrame.Visibility = WizardPosterImage.Visibility;
+        WizardPosterDropTarget.Visibility = WizardPosterImage.Source == null ? Visibility.Visible : Visibility.Collapsed;
+        var selected = ViewModel.PosterFileBytes is { Length: > 0 };
+        WizardRemoveSelectedPoster.Visibility = selected && !ViewModel.IsReadOnly ? Visibility.Visible : Visibility.Collapsed;
+        WizardDeletePoster.Visibility = !selected && WizardPosterImage.Source != null && !ViewModel.IsReadOnly ? Visibility.Visible : Visibility.Collapsed;
+        ClipPosterPreview();
+    }
+
+    private void ClipPosterPreview()
+    {
+        var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(WizardPosterFrame);
+        var shape = visual.Compositor.CreateRoundedRectangleGeometry();
+        shape.Size = new((float)WizardPosterFrame.ActualWidth, (float)WizardPosterFrame.ActualHeight);
+        shape.CornerRadius = new(12, 12);
+        visual.Clip = visual.Compositor.CreateGeometricClip(shape);
+    }
+
+    private async void RemoveSelectedPoster_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.IsReadOnly || ViewModel.IsSaving) return;
+        ViewModel.ClearPosterFile();
+        SetArtworkStatus("Upload a JPG, PNG, or WebP (max 20 MB).");
+        await UpdatePosterPreviewAsync();
+    }
+
+    private async void DeletePoster_Click(object sender, RoutedEventArgs e)
+    {
+        var lifetime = _pageLifetime;
+        WizardDeletePoster.IsEnabled = false;
+        try { await ViewModel.DeletePosterAsync(); if (IsLoaded && lifetime == _pageLifetime) await UpdatePosterPreviewAsync(); }
+        finally { WizardDeletePoster.IsEnabled = true; }
+    }
+
+    private void Poster_DragOver(object sender, DragEventArgs e) { e.AcceptedOperation = e.DataView.Contains(StandardDataFormats.StorageItems) && !ViewModel.IsReadOnly ? DataPackageOperation.Copy : DataPackageOperation.None; }
+    private async void Poster_Drop(object sender, DragEventArgs e)
+    {
+        if (ViewModel.IsReadOnly || !e.DataView.Contains(StandardDataFormats.StorageItems)) return;
+        try
+        {
+            var file = (await e.DataView.GetStorageItemsAsync()).OfType<Windows.Storage.StorageFile>().FirstOrDefault();
+            if (file == null || !new[] { ".jpg", ".jpeg", ".png", ".webp" }.Contains(file.FileType.ToLowerInvariant())) { SetArtworkStatus("Choose a JPG, PNG, or WebP image."); return; }
+            if ((await file.GetBasicPropertiesAsync()).Size > 20 * 1024 * 1024) { SetArtworkStatus("Image must be smaller than 20 MB."); return; }
+            var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file); ViewModel.SetPosterFile(file.Name, buffer.ToArray(), file.ContentType); SetArtworkStatus(file.Name); await UpdatePosterPreviewAsync();
+        }
+        catch (Exception ex) { SetArtworkStatus(ex.Message); }
+    }
+
+    private async void DeleteCollection_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.IsReadOnly || string.IsNullOrWhiteSpace(_args?.CollectionId)) return;
+        var confirm = new ContentDialog { XamlRoot = XamlRoot, Title = "Delete collection?", Content = $"Delete {ViewModel.Title}? Media files remain in your library.", PrimaryButtonText = "Delete", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+        if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
+        WizardDeleteButton.IsEnabled = false;
+        try { await App.Services.GetRequiredService<CollectionsApi>().DeleteCollectionAsync(_args.CollectionId); OnSaved(); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+        finally { WizardDeleteButton.IsEnabled = true; }
     }
 
     private void SetArtworkStatus(string message) => PosterFileStatusText.Text = message;
@@ -573,8 +584,9 @@ public sealed partial class SmartCollectionWizardPage : Page
         _previewDebounceTimer.Start();
     }
 
-    private async Task RunPreviewAsync()
+    private async Task RunPreviewAsync(bool retry = false)
     {
+        if (_rulesEditor?.IsValid == false) return;
         CancellationTokenSource owner;
         Task previewTask;
 
@@ -590,7 +602,7 @@ public sealed partial class SmartCollectionWizardPage : Page
             previousCts?.Dispose();
 
             owner = new CancellationTokenSource();
-            previewTask = ViewModel.PreviewAsync(owner.Token);
+            previewTask = retry ? ViewModel.RetryPreviewAsync(owner.Token) : ViewModel.PreviewAsync(owner.Token);
             _previewCts = owner;
             _previewTask = previewTask;
         }
@@ -625,6 +637,8 @@ public sealed partial class SmartCollectionWizardPage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        ++_pageLifetime;
+        Interlocked.Exchange(ref _filterOptionsCts, null)?.Cancel();
         _previewDebounceTimer?.Stop();
         _previewDebounceTimer = null;
         _ = CancelPreviewAsync();
@@ -655,9 +669,16 @@ public sealed partial class SmartCollectionWizardPage : Page
 
     private void SmartCollectionWizardPage_SizeChanged(object sender, SizeChangedEventArgs e)
     {
+        WizardFiltersSheet.PreferredWidth = Math.Min(e.NewSize.Width * .75, e.NewSize.Width >= 640 ? 448 : double.PositiveInfinity);
         _compactLayout = e.NewSize.Width < 900;
-        var horizontalPadding = e.NewSize.Width < 600 ? 16 : _compactLayout ? 24 : 48;
-        WizardPageShell.Padding = new Thickness(horizontalPadding, _compactLayout ? 20 : 24, horizontalPadding, _compactLayout ? 36 : 48);
+        var width = e.NewSize.Width;
+        var horizontalPadding = width < 640 ? 16 : width < 1024 ? 24 : width < 1280 ? 40 : 48;
+        WizardPageShell.Padding = new Thickness(horizontalPadding, width < 640 ? 64 : 72, horizontalPadding, 96);
+        WizardBackButton.Margin = new Thickness(8, width < 640 ? 16 : 24, 0, 0);
+        WizardTitle.FontSize = Math.Clamp(width * .04, 32, 48);
+        WizardTitle.LineHeight = WizardTitle.FontSize * 1.25; WizardTitle.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        NextSummaryText.Visibility = width < 640 ? Visibility.Collapsed : Visibility.Visible;
+        FilterActionBar.Margin = new Thickness(0, 0, horizontalPadding, 16);
         UpdateWorkspaceLayout();
     }
 
@@ -685,66 +706,5 @@ public sealed partial class SmartCollectionWizardPage : Page
         }
     }
 
-    private static readonly (string Label, string Value)[] RuleFields =
-    [
-        ("Genre", "genre"),
-        ("Year", "year"),
-        ("Studio", "studio"),
-        ("Actor", "actor"),
-        ("Director", "director"),
-        ("Writer", "writer"),
-        ("Producer", "producer"),
-        ("Network", "network"),
-        ("Country", "country"),
-        ("Content Rating", "content_rating"),
-        ("Type", "type"),
-        ("Match Status", "status"),
-        ("IMDb Rating", "rating_imdb"),
-        ("Added", "added_at"),
-        ("Release Date", "release_date"),
-        ("Watched", "watched"),
-        ("Favorited", "favorited"),
-        ("In Watchlist", "in_watchlist"),
-        ("In Progress", "in_progress"),
-        ("Resolution", "resolution"),
-        ("HDR", "hdr"),
-        ("Dolby Vision", "dolby_vision"),
-        ("Bitrate", "bitrate")
-    ];
 
-    private static readonly (string Label, string Value)[] RuleOperators =
-    [
-        ("is", "is"),
-        ("is not", "is_not"),
-        ("contains", "contains"),
-        (">=", "gte"),
-        ("<=", "lte"),
-        (">", "gt"),
-        ("<", "lt"),
-        ("between", "between"),
-        ("in the last", "in_last")
-    ];
-
-    private static IReadOnlyList<(string Label, string Value)> GetRuleOperators(string field) => field switch
-    {
-        "type" or "studio" or "network" or "country" or "content_rating" or "actor" or "director" or "writer" or "producer" or "resolution" or "status"
-            => [("is", "is"), ("is not", "is_not")],
-        "genre" => [("is", "is"), ("is not", "is_not"), ("contains", "contains")],
-        "year" => [("equals", "is"), (">=", "gte"), ("<=", "lte"), (">", "gt"), ("<", "lt"), ("between", "between")],
-        "rating_imdb" or "bitrate" => [(">=", "gte"), ("<=", "lte"), (">", "gt"), ("<", "lt"), ("between", "between")],
-        "added_at" or "release_date" => [("after", "gt"), ("before", "lt"), ("between", "between"), ("in the last", "in_last")],
-        "watched" or "favorited" or "in_watchlist" or "in_progress" or "hdr" or "dolby_vision" => [("is", "is")],
-        _ => RuleOperators,
-    };
-
-    private static bool IsBooleanField(string field)
-        => field is "watched" or "favorited" or "in_watchlist" or "in_progress" or "hdr" or "dolby_vision";
-
-    private static IReadOnlyList<(string Label, string Value)> GetRuleSelectValues(string field) => field switch
-    {
-        "type" => [("Movie", "movie"), ("Series", "series")],
-        "status" => [("Pending", "pending"), ("Matched", "matched"), ("Unmatched", "unmatched")],
-        "resolution" => [("480p", "480p"), ("720p", "720p"), ("1080p", "1080p"), ("2160p", "2160p"), ("4320p", "4320p")],
-        _ => [],
-    };
 }

@@ -11,6 +11,7 @@ namespace SiloPlayer.ViewModels;
 
 public partial class HomeViewModel : ObservableObject,
     IRecipient<MediaSurfaceChanged>,
+    IRecipient<HomeDismissalApplied>,
     IRecipient<PlaybackProgressUpdated>
 {
     private readonly HomeApi _homeApi;
@@ -24,6 +25,7 @@ public partial class HomeViewModel : ObservableObject,
         // home screen's Continue Watching / Next Up rows reflect activity
         // from anywhere in the app without a full reload.
         WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this);
+        WeakReferenceMessenger.Default.Register<HomeDismissalApplied>(this);
         WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this);
     }
 
@@ -41,6 +43,21 @@ public partial class HomeViewModel : ObservableObject,
             }
 
             QueueRealtimeRefresh($"media_surface:{message.Kind}");
+        });
+    }
+
+    public void Receive(HomeDismissalApplied message)
+    {
+        _ = RunOnUiThreadAsync(() =>
+        {
+            if (!_homeApi.IsCurrentContext(message.Context) || _loadedProfileId != message.Context.ProfileId) return;
+            _lastDismissedSurface = message.Surface; _lastDismissedItemId = message.Item.ContentId;
+            _dismissContext = message.Context;
+            _dismissSnapshot = HomeDismissalSnapshot.Capture(FeaturedSections.Concat(Sections), message.Item.ContentId,
+                message.Item.SeriesId ?? (message.Item.Type == "series" ? message.Item.ContentId : null));
+            UndoMessage = message.Item.Type is "episode" or "series" ? "Show dropped" : $"\"{message.Item.Title}\" dismissed";
+            ShowUndoBanner = true;
+            _ = AutoHideUndoBannerAsync();
         });
     }
 
@@ -88,7 +105,7 @@ public partial class HomeViewModel : ObservableObject,
             {
                 var item = section.Items[i];
                 if (item.ContentId == contentId
-                    || (seriesId != null && item.SeriesId == seriesId))
+                    || (seriesId != null && (item.SeriesId == seriesId || item.ContentId == seriesId)))
                 {
                     section.Items.RemoveAt(i);
                     removedAny = true;
@@ -116,6 +133,9 @@ public partial class HomeViewModel : ObservableObject,
     private string _undoMessage = "";
 
     private string? _lastDismissedSurface;
+    private HomeDismissalSnapshot? _dismissSnapshot;
+    private ApiRequestContext? _dismissContext;
+    private long _undoGeneration;
     private string? _lastDismissedItemId;
     private MediaItem? _lastDismissedItem;
     private HomeSectionWithItems? _lastDismissedSection;
@@ -711,17 +731,21 @@ public partial class HomeViewModel : ObservableObject,
     private async Task UndoDismissalAsync()
     {
         if (_lastDismissedSurface == null || _lastDismissedItemId == null) return;
+        if (_dismissContext.HasValue && !_homeApi.IsCurrentContext(_dismissContext.Value)) { ClearDismissState(); ShowUndoBanner = false; return; }
+        var generation = _undoGeneration;
 
         ShowUndoBanner = false;
 
         try
         {
             await _homeApi.UndoDismissalAsync(_lastDismissedSurface, _lastDismissedItemId);
+            if (generation != _undoGeneration || (_dismissContext.HasValue && !_homeApi.IsCurrentContext(_dismissContext.Value))) return;
             RestoreDismissedItem();
         }
         catch
         {
-            // Undo failed -- item stays dismissed
+            if (generation == _undoGeneration) { ErrorMessage = "Could not undo the dismissal. Try again."; ShowUndoBanner = true; }
+            return;
         }
 
         ClearDismissState();
@@ -729,6 +753,10 @@ public partial class HomeViewModel : ObservableObject,
 
     private void RestoreDismissedItem()
     {
+        if (_dismissSnapshot != null)
+        {
+            _dismissSnapshot.Restore(FeaturedSections.Concat(Sections)); BumpRenderRevision(); return;
+        }
         if (_lastDismissedSection != null && _lastDismissedItem != null)
         {
             var idx = Math.Min(_lastDismissedIndex, _lastDismissedSection.Items.Count);
@@ -739,6 +767,8 @@ public partial class HomeViewModel : ObservableObject,
 
     private void ClearDismissState()
     {
+        _dismissSnapshot = null; _dismissContext = null;
+        _undoGeneration++;
         _lastDismissedSurface = null;
         _lastDismissedItemId = null;
         _lastDismissedItem = null;
@@ -748,8 +778,9 @@ public partial class HomeViewModel : ObservableObject,
 
     private async Task AutoHideUndoBannerAsync()
     {
+        var generation = ++_undoGeneration;
         await Task.Delay(5000);
-        if (ShowUndoBanner)
+        if (ShowUndoBanner && generation == _undoGeneration)
         {
             ShowUndoBanner = false;
             ClearDismissState();

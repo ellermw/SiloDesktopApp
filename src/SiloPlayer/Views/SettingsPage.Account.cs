@@ -15,34 +15,7 @@ namespace SiloPlayer.Views;
 
 public sealed partial class SettingsPage
 {
-    private static readonly string[] DeviceSettingKeys =
-    [
-        "playback.preferred_quality",
-        "playback.max_bitrate_kbps",
-        "playback.audio_language",
-        "playback.subtitle_language",
-        "playback.subtitle_mode",
-        "playback.show_forced_subtitles",
-        "playback.subtitle_appearance",
-        "playback.auto_skip_intro",
-        "playback.auto_skip_credits",
-        "playback.auto_skip_recap",
-        "playback.auto_play_next",
-        "playback.auto_play_next_preview",
-        "playback.next_up_prompt_seconds",
-        "player.hdr_enabled",
-        "player.dolby_vision_enabled",
-        "player.dv_profile7_hdr10_fallback",
-        "player.match_frame_rate",
-        "player.video_gravity",
-        "player.orientation_mode",
-        "player.seek_cache_enabled",
-        "player.audio_sync_ms",
-        "player.playback_speed",
-        "player.subtitle_sync_ms",
-        "player.sleep_timer_default_minutes",
-    ];
-
+    private int _deviceDetailGeneration;
     private async Task LoadDevicesAsync()
     {
         DevicesLoadingRing.IsActive = true;
@@ -76,11 +49,13 @@ public sealed partial class SettingsPage
             browser.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(280) });
             browser.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             var listSurface = SettingsSurface();
+            var listScroller = new ScrollViewer { Content = listSurface, MaxHeight = 520, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
             var listHost = (StackPanel)listSurface.Child;
             var detailScroller = new ScrollViewer { HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
             var detailHost = new StackPanel { Spacing = 12 };
-            detailScroller.Content = detailHost;
-            browser.Children.Add(listSurface);
+            var backToList = new Button { Content = "Back to devices", Visibility = Visibility.Collapsed };
+            detailScroller.Content = new StackPanel { Spacing = 12, Children = { backToList, detailHost } };
+            browser.Children.Add(listScroller);
             Grid.SetColumn(detailScroller, 1);
             browser.Children.Add(detailScroller);
             DevicesContentHost.Children.Add(browser);
@@ -90,6 +65,22 @@ public sealed partial class SettingsPage
             var household = false;
             string? selectedProfileId = null;
             var suppressProfileFilter = false;
+            var showDormant = false;
+            var reveal = new Button { Content = "Show inactive devices", HorizontalAlignment = HorizontalAlignment.Left };
+            DevicesContentHost.Children.Add(reveal);
+            var detailOpen = false;
+            void AdaptBrowser()
+            {
+                var narrow = browser.ActualWidth < 900;
+                backToList.Visibility = narrow && detailOpen ? Visibility.Visible : Visibility.Collapsed;
+                browser.ColumnDefinitions[0].Width = narrow ? new GridLength(1, GridUnitType.Star) : new GridLength(280);
+                browser.ColumnDefinitions[1].Width = narrow ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+                Grid.SetColumn(detailScroller, narrow ? 0 : 1);
+                listScroller.Visibility = narrow && detailOpen ? Visibility.Collapsed : Visibility.Visible;
+                detailScroller.Visibility = narrow && !detailOpen ? Visibility.Collapsed : Visibility.Visible;
+            }
+            backToList.Click += (_, _) => { detailOpen = false; AdaptBrowser(); };
+            browser.SizeChanged += (_, _) => AdaptBrowser();
 
             async Task RenderListAsync(bool chooseDefault)
             {
@@ -97,11 +88,15 @@ public sealed partial class SettingsPage
                 var visible = devices.Where(device =>
                     (string.IsNullOrWhiteSpace(selectedProfileId)
                      || string.Equals(device.ProfileId, selectedProfileId, StringComparison.Ordinal))
+                    && (showDormant || !string.IsNullOrEmpty(query) || !DeviceSettingDisplay.IsDormant(device, DateTimeOffset.UtcNow))
                     && (string.IsNullOrEmpty(query)
                         || DeviceSelectorLabel(device).Contains(query, StringComparison.CurrentCultureIgnoreCase)
                         || device.DevicePlatform.Contains(query, StringComparison.CurrentCultureIgnoreCase)
                         || device.ProfileName.Contains(query, StringComparison.CurrentCultureIgnoreCase))).ToList();
                 listHost.Children.Clear();
+                var dormantCount = devices.Count(device => DeviceSettingDisplay.IsDormant(device, DateTimeOffset.UtcNow));
+                reveal.Content = showDormant ? "Hide inactive devices" : $"Show {dormantCount} inactive devices";
+                reveal.Visibility = dormantCount > 0 && string.IsNullOrEmpty(query) ? Visibility.Visible : Visibility.Collapsed;
                 search.PlaceholderText = $"Search {devices.Count} devices";
                 if (visible.Count == 0)
                 {
@@ -149,15 +144,25 @@ public sealed partial class SettingsPage
                         {
                             selected = device;
                             await LoadDeviceDetailAsync(device, detailHost);
+                            detailOpen = true;
+                            AdaptBrowser();
                         };
                         listHost.Children.Add(button);
                     }
                 }
 
                 var now = DateTimeOffset.UtcNow;
+                if (household && string.IsNullOrWhiteSpace(selectedProfileId))
+                {
+                    foreach (var owner in visible.GroupBy(device => device.ProfileId).OrderByDescending(group => group.Key == App.Services.GetRequiredService<AuthService>().SelectedProfileId))
+                        AddGroup($"{owner.First().ProfileName} ({owner.Count()})", owner);
+                }
+                else
+                {
                 AddGroup("Using now", visible.Where(device => device.IsCurrentDevice));
                 AddGroup("This week", visible.Where(device => !device.IsCurrentDevice && now - ParseTimestamp(device.LastSeenAt) <= TimeSpan.FromDays(7)));
                 AddGroup("Earlier", visible.Where(device => !device.IsCurrentDevice && now - ParseTimestamp(device.LastSeenAt) > TimeSpan.FromDays(7)));
+                }
 
                 if (chooseDefault || selected is null || !visible.Any(device => device.DeviceId == selected.DeviceId && device.ProfileId == selected.ProfileId))
                 {
@@ -187,11 +192,12 @@ public sealed partial class SettingsPage
                                  .Where(device => !string.IsNullOrWhiteSpace(device.ProfileId))
                                  .GroupBy(device => device.ProfileId, StringComparer.Ordinal)
                                  .Select(group => group.First())
-                                 .OrderBy(device => device.ProfileName, StringComparer.CurrentCultureIgnoreCase))
+                                 .OrderByDescending(device => device.ProfileId == App.Services.GetRequiredService<AuthService>().SelectedProfileId)
+                                 .ThenBy(device => device.ProfileName, StringComparer.CurrentCultureIgnoreCase))
                     {
                         profileFilter.Items.Add(new ComboBoxItem
                         {
-                            Content = string.IsNullOrWhiteSpace(profile.ProfileName) ? "Unknown profile" : profile.ProfileName,
+                            Content = $"{(string.IsNullOrWhiteSpace(profile.ProfileName) ? "Unknown profile" : profile.ProfileName)} ({devices.Count(device => device.ProfileId == profile.ProfileId)})",
                             Tag = profile.ProfileId,
                         });
                     }
@@ -211,6 +217,7 @@ public sealed partial class SettingsPage
                 }
             }
 
+            reveal.Click += async (_, _) => { showDormant = !showDormant; await RenderListAsync(false); };
             search.TextChanged += async (_, _) => await RenderListAsync(false);
             profileFilter.SelectionChanged += async (_, _) =>
             {
@@ -238,12 +245,14 @@ public sealed partial class SettingsPage
 
     private async Task LoadDeviceDetailAsync(UserDevice device, StackPanel host)
     {
+        var generation = ++_deviceDetailGeneration;
         host.Children.Clear();
         var loading = new ProgressRing { IsActive = true, Width = 24, Height = 24, HorizontalAlignment = HorizontalAlignment.Left };
         host.Children.Add(loading);
         try
         {
             var api = App.Services.GetRequiredService<SettingsApi>();
+            var context = api.CaptureContext();
             var auth = App.Services.GetRequiredService<AuthService>();
             var forSomeoneElse = !string.IsNullOrWhiteSpace(device.ProfileId)
                 && !string.Equals(device.ProfileId, auth.SelectedProfileId, StringComparison.Ordinal);
@@ -259,6 +268,7 @@ public sealed partial class SettingsPage
             {
                 System.Diagnostics.Debug.WriteLine($"Settings capability check failed: {ex}");
             }
+            if (generation != _deviceDetailGeneration) return;
             if (capabilities is not
                 {
                     ApiVersion: 1,
@@ -277,8 +287,24 @@ public sealed partial class SettingsPage
                 host.Children.Add(unavailable);
                 return;
             }
-            var effective = await api.GetContractEffectiveSettingsAsync(DeviceSettingKeys, device.DeviceId, device.ProfileId);
+            var definitions = DeviceSettingDisplay.ForRevision(capabilities.Revision);
+            var effective = await api.GetContractEffectiveSettingsAsync(definitions.Select(definition => definition.Key), device.DeviceId, device.ProfileId);
+            if (generation != _deviceDetailGeneration || !api.IsCurrentContext(context)) return;
             var values = effective.Settings.ToDictionary(value => value.Key, StringComparer.Ordinal);
+            var retainedOnDevice = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (var definition in definitions.Where(definition => definition.ProfileFirst &&
+                values.TryGetValue(definition.Key, out var entry) && entry.Source == "profile"))
+            {
+                try
+                {
+                    var stored = await api.GetContractStoredSettingAsync(definition.Key, "profile_device", device.DeviceId, device.ProfileId);
+                    if (generation != _deviceDetailGeneration || !api.IsCurrentContext(context)) return;
+                    retainedOnDevice[definition.Key] = stored.Value.Clone();
+                }
+                catch (ApiException ex) when (ex.StatusCode == 404) { }
+                if (generation != _deviceDetailGeneration || !api.IsCurrentContext(context)) return;
+            }
+
 
             var summary = SettingsSurface();
             var summaryStack = (StackPanel)summary.Child;
@@ -360,51 +386,16 @@ public sealed partial class SettingsPage
                 (device.IsCurrentDevice ? "" : " This device picks up the changes the next time it's used.")));
             host.Children.Add(scope);
 
-            var picture = CreateSettingsGroup("Picture", "How video looks on this device");
-            AddDeviceSelect(picture, api, device, values, "playback.max_bitrate_kbps", "Maximum bitrate",
-                "Cap how much bandwidth playback may use. No cap means Silo picks for the chosen resolution.",
-                [("", "No limit"), ("1500", "1.5 Mbps"), ("2000", "2 Mbps"), ("4000", "4 Mbps"), ("6000", "6 Mbps"), ("10000", "10 Mbps"), ("15000", "15 Mbps"), ("20000", "20 Mbps"), ("40000", "40 Mbps"), ("60000", "60 Mbps"), ("100000", "100 Mbps"), ("200000", "200 Mbps")], numeric: true);
-            AddDeviceSelect(picture, api, device, values, "playback.preferred_quality", "Preferred quality",
-                "Pick the quality Silo should prefer.",
-                [("auto", "Auto"), ("original", "Original quality"), ("2160p", "2160p / 4K"), ("1080p", "1080p"), ("720p", "720p"), ("480p", "480p")]);
-            AddDeviceToggle(picture, api, device, values, "player.dolby_vision_enabled", "Dolby Vision", "Allow Dolby Vision output on this device.", true);
-            AddDeviceToggle(picture, api, device, values, "player.dv_profile7_hdr10_fallback", "Dolby Vision Profile 7 fallback", "Play Profile 7 sources as HDR10 when this device cannot decode them natively.", false);
-            AddDeviceToggle(picture, api, device, values, "player.hdr_enabled", "HDR", "Allow HDR output on this device.", true);
-            AddDeviceToggle(picture, api, device, values, "player.match_frame_rate", "Match content frame rate", "Switch the display refresh rate to match what is playing.", false);
-            AddDeviceSelect(picture, api, device, values, "player.orientation_mode", "Screen orientation",
-                "Whether the player rotates with the device.", [("landscapeLocked", "Landscape"), ("rotateFreely", "Rotate freely")]);
-            AddDeviceToggle(picture, api, device, values, "player.seek_cache_enabled", "Seek cache", "Keep recently played segments buffered for faster seeking.", true);
-            AddDeviceSelect(picture, api, device, values, "player.video_gravity", "Video sizing",
-                "How video fills the screen on this device.", [("fit", "Fit"), ("fill", "Fill"), ("stretch", "Stretch")]);
-            host.Children.Add(picture);
-
-            var sound = CreateSettingsGroup("Sound", "Audio on this device");
-            AddDeviceSelect(sound, api, device, values, "playback.audio_language", "Preferred audio language",
-                "Choose which spoken language Silo should prefer first.", DeviceLanguageOptions("No preference"));
-            AddDeviceNumber(sound, api, device, values, "player.audio_sync_ms", "Audio sync offset", "Shift audio earlier or later to correct lip sync on this device.", -5000, 5000);
-            AddDeviceDecimal(sound, api, device, values, "player.playback_speed", "Playback speed", "Default playback speed on this device.", 0.25, 3, 0.05, "x");
-            host.Children.Add(sound);
-
-            var subtitles = CreateSettingsGroup("Subtitles", "On this device");
-            AddDeviceToggle(subtitles, api, device, values, "playback.show_forced_subtitles", "Show forced subtitles", "Show subtitles for foreign-language dialogue even when subtitles are off.", true);
-            AddDevicePanelButton(subtitles, api, device, values, "playback.subtitle_appearance",
-                "Subtitle appearance", "How subtitles are drawn during playback.", "Change how they look");
-            AddDeviceSelect(subtitles, api, device, values, "playback.subtitle_language", "Preferred subtitle language",
-                "Choose which subtitle language Silo should prefer first.", DeviceLanguageOptions("None"));
-            AddDeviceSelect(subtitles, api, device, values, "playback.subtitle_mode", "Subtitles",
-                "When Silo should turn subtitles on.", [("auto", "Auto"), ("always", "Always on"), ("off", "Off")]);
-            AddDeviceNumber(subtitles, api, device, values, "player.subtitle_sync_ms", "Subtitle sync offset", "Shift subtitles earlier or later on this device.", -10000, 10000);
-            host.Children.Add(subtitles);
-
-            var episodes = CreateSettingsGroup("Episodes", "What happens between episodes");
-            AddDeviceToggle(episodes, api, device, values, "playback.auto_play_next", "Auto-play next episode", "Continue to the next episode automatically.", true);
-            AddDeviceToggle(episodes, api, device, values, "playback.auto_play_next_preview", "Preview next episode", "Show a preview of the next episode while credits play.", false);
-            AddDeviceToggle(episodes, api, device, values, "playback.auto_skip_credits", "Auto-skip credits", "Move through end credits automatically when a skip is available.", false);
-            AddDeviceToggle(episodes, api, device, values, "playback.auto_skip_intro", "Auto-skip intros", "Jump past intros automatically when Silo can detect them.", false);
-            AddDeviceToggle(episodes, api, device, values, "playback.auto_skip_recap", "Auto-skip recaps", "Skip \"previously on\" recaps automatically when Silo can detect them.", false);
-            AddDeviceNumber(episodes, api, device, values, "playback.next_up_prompt_seconds", "Next up prompt", "How long before the end of an episode the next-up prompt appears.", 0, 120, "Seconds");
-            AddDeviceNumber(episodes, api, device, values, "player.sleep_timer_default_minutes", "Default sleep timer", "Duration the sleep timer starts on when you turn it on. 0 leaves it off.", 0, 240, "Minutes");
-            host.Children.Add(episodes);
+            foreach (var groupName in new[] { "Picture", "Sound", "Subtitles", "Episodes" })
+            {
+                var visible = definitions.Where(definition => definition.Group == groupName
+                    && values.TryGetValue(definition.Key, out var entry)
+                    && (definition.AppliesTo(device.DevicePlatform) || entry.Scope == "profile_device")).ToList();
+                if (visible.Count == 0) continue;
+                var group = CreateSettingsGroup(groupName, groupName switch { "Picture" => "How video looks on this device", "Sound" => "Audio on this device", "Subtitles" => "On this device", _ => "What happens between episodes" });
+                foreach (var definition in visible) AddDefinedDeviceControl(group, api, device, values, definition, retainedOnDevice);
+                host.Children.Add(group);
+            }
 
             if (forSomeoneElse)
             {
@@ -415,6 +406,7 @@ public sealed partial class SettingsPage
         }
         catch (Exception ex)
         {
+            if (generation != _deviceDetailGeneration) return;
             host.Children.Clear();
             host.Children.Add(ErrorText($"Device settings could not be loaded: {ex.Message}"));
         }
@@ -651,6 +643,104 @@ public sealed partial class SettingsPage
         ((StackPanel)group.Child).Children.Add(row);
     }
 
+    private void AddDefinedDeviceControl(Border group, SettingsApi api, UserDevice device,
+        IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, DeviceSettingDefinition definition,
+        IReadOnlyDictionary<string, JsonElement> retainedOnDevice)
+    {
+        var entry = values[definition.Key];
+        var row = SettingsRow(definition.Label, definition.Description, out var controls);
+        var writable = DeviceSettingDisplay.CanWrite(entry);
+        var profileWide = definition.ProfileFirst && entry.Source == "profile";
+        var retainedHere = profileWide && retainedOnDevice.ContainsKey(definition.Key);
+        var mainWritable = writable && !profileWide;
+        var context = api.CaptureContext();
+        var generation = _deviceDetailGeneration;
+        if (row.Children[0] is StackPanel copy)
+        {
+            var changed = entry.Scope == "profile_device" || retainedHere;
+            var badge = new Border { CornerRadius = new CornerRadius(6), Padding = new Thickness(7, 3, 7, 3),
+                HorizontalAlignment = HorizontalAlignment.Left, Background = (Brush)Application.Current.Resources["SurfaceBrush"],
+                Child = new TextBlock { Text = !writable ? "Locked by your household" : changed ? "Changed here" : "Using inherited setting", FontSize = 11,
+                    Foreground = (Brush)Application.Current.Resources[!writable ? "SecondaryTextBrush" : "AccentBrush"] } };
+            copy.Children.Add(badge);
+            if (profileWide)
+            {
+                var choice = retainedHere ? DeviceSettingDefinition.Scalar(retainedOnDevice[definition.Key]) switch
+                    { "true" => "On", "false" => "Off", var other => other } : "";
+                copy.Children.Add(SecondaryText((retainedHere
+                    ? $"Set for all devices on this profile, so this device's own choice ({choice}) isn't used right now. "
+                    : "Set for all devices on this profile. ") + "Turn off “Apply to all devices” to choose per device."));
+            }
+        }
+        AddChangedHereIndicator(row, controls, api, device, values, definition.Key, retainedHere);
+        var busy = false;
+        async Task SaveAsync(object? value)
+        {
+            if (!mainWritable || busy || generation != _deviceDetailGeneration || !api.IsCurrentContext(context)) return;
+            busy = true; SetSettingsEnabled(row, false);
+            try
+            {
+                if (value == null) await api.DeleteContractSettingValueAsync(context, definition.Key, "profile_device", device.DeviceId, device.ProfileId);
+                else await api.SetContractSettingValueAsync(context, definition.Key, "profile_device", value, device.DeviceId, device.ProfileId);
+                if (generation == _deviceDetailGeneration && api.IsCurrentContext(context) && definition.Key == "ui.title_art") ViewModel.PublishTitleArtPreferenceChanged();
+            }
+            catch (Exception ex) { Toast($"Could not save {definition.Label}: {ex.Message}", error: true); }
+            finally
+            {
+                busy = false;
+                // Re-resolve inheritance and constraints after both success and rejection.
+                if (generation == _deviceDetailGeneration && api.IsCurrentContext(context) && group.Parent is StackPanel currentHost) await LoadDeviceDetailAsync(device, currentHost);
+                else SetSettingsEnabled(row, mainWritable);
+            }
+        }
+        var current = DeviceSettingDefinition.Scalar(entry.Value);
+        switch (definition.Control)
+        {
+            case "switch":
+                var toggle = new ToggleSwitch { IsOn = current == "true", OnContent = "", OffContent = "" };
+                toggle.Toggled += async (_, _) => await SaveAsync(toggle.IsOn);
+                controls.Children.Add(toggle);
+                break;
+            case "select":
+                var combo = new ComboBox { MinWidth = 180, MaxWidth = 280 };
+                var options = definition.Type == "language_tag" ? DeviceLanguageOptions(definition.Key.Contains("subtitle") ? "None" : "No preference") : definition.Options;
+                foreach (var option in options) combo.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Value });
+                SelectComboBoxByTag(combo, current);
+                if (definition.Type == "language_tag") ConfigureLanguageCombo(combo);
+                combo.SelectionChanged += async (_, _) =>
+                {
+                    if (combo.SelectedItem is not ComboBoxItem { Tag: string value } || value == "__other") return;
+                    await SaveAsync(value.Length == 0 ? null : definition.Type is "integer" or "number" || definition.Schema.TryGetProperty("values", out var members) && members.EnumerateArray().Any(member => member.GetProperty("value").ValueKind == JsonValueKind.Number)
+                        ? double.Parse(value, System.Globalization.CultureInfo.InvariantCulture) : value);
+                };
+                controls.Children.Add(combo);
+                break;
+            case "slider":
+            case "stepper":
+                var box = new NumberBox { Minimum = definition.Minimum, Maximum = definition.Maximum, SmallChange = definition.Step,
+                    Width = 150, Header = definition.Unit, SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
+                    Value = double.TryParse(current, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var number) ? number : double.Parse(definition.Default, System.Globalization.CultureInfo.InvariantCulture) };
+                box.LostFocus += async (_, _) =>
+                {
+                    if (double.IsFinite(box.Value)) await SaveAsync(definition.Type == "integer" ? (object)(int)box.Value : box.Value);
+                };
+                controls.Children.Add(box);
+                break;
+            case "panel" when definition.Key == "playback.subtitle_appearance":
+                AddDevicePanelButton(group, api, device, values, definition.Key, definition.Label, definition.Description, "Change how they look");
+                if (((StackPanel)group.Child).Children.LastOrDefault() is Grid panelRow) SetSettingsEnabled(panelRow, writable);
+                return;
+            default:
+                var text = new TextBox { Text = current, MinWidth = 180, MaxWidth = 280 };
+                text.LostFocus += async (_, _) => { if (text.Text != current) await SaveAsync(text.Text); };
+                controls.Children.Add(text);
+                break;
+        }
+        SetSettingsEnabled(row, writable);
+        if (profileWide) foreach (var editor in controls.Children.OfType<Control>().Where(editor => editor is not Button)) editor.IsEnabled = false;
+        ((StackPanel)group.Child).Children.Add(row);
+    }
+
     private void AddDeviceToggle(Border group, SettingsApi api, UserDevice device,
         IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, string key,
         string label, string description, bool fallback)
@@ -795,12 +885,10 @@ public sealed partial class SettingsPage
     }
 
     private void AddChangedHereIndicator(Grid row, StackPanel controls, SettingsApi api, UserDevice device,
-        IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, string key)
+        IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, string key, bool retainedHere = false)
     {
-        if (!values.TryGetValue(key, out var entry) || !string.Equals(entry.Scope, "profile_device", StringComparison.OrdinalIgnoreCase)) return;
-        var labelHost = row.Children.OfType<StackPanel>().FirstOrDefault();
-        if (labelHost?.Children.FirstOrDefault() is TextBlock label)
-            label.Text += "  ·  CHANGED HERE";
+        if (!values.TryGetValue(key, out var entry) || (!retainedHere && !string.Equals(entry.Scope, "profile_device", StringComparison.OrdinalIgnoreCase))) return;
+        if (!DeviceSettingDisplay.CanWrite(entry)) return;
 
         var auth = App.Services.GetRequiredService<AuthService>();
         var ownerLabel = !string.IsNullOrWhiteSpace(device.ProfileId)
@@ -809,12 +897,17 @@ public sealed partial class SettingsPage
             ? $"{device.ProfileName}'s"
             : "your";
         var reset = new Button { Content = $"Use {ownerLabel} setting", FontSize = 12 };
+        var resetContext = api.CaptureContext();
+        var resetGeneration = _deviceDetailGeneration;
         reset.Click += async (_, _) =>
         {
+            if (!reset.IsEnabled || resetGeneration != _deviceDetailGeneration || !api.IsCurrentContext(resetContext)) return;
             reset.IsEnabled = false;
             try
             {
-                await api.DeleteContractSettingValueAsync(key, "profile_device", device.DeviceId, device.ProfileId);
+                await api.DeleteContractSettingValueAsync(resetContext, key, "profile_device", device.DeviceId, device.ProfileId);
+                if (resetGeneration != _deviceDetailGeneration || !api.IsCurrentContext(resetContext)) return;
+                if (key == "ui.title_art") ViewModel.PublishTitleArtPreferenceChanged();
                 Toast("Device override cleared");
                 if (DevicesContentHost.Visibility == Visibility.Visible || DevicesPanel.Visibility == Visibility.Visible)
                     await LoadDevicesAsync();
@@ -840,6 +933,18 @@ public sealed partial class SettingsPage
         controls = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
         Grid.SetColumn(controls, 1);
         row.Children.Add(controls);
+        var controlHost = controls;
+        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        row.SizeChanged += (_, args) =>
+        {
+            var compact = args.NewSize.Width < 680;
+            row.ColumnDefinitions[1].Width = compact ? new GridLength(0) : GridLength.Auto;
+            Grid.SetRow(controlHost, compact ? 1 : 0);
+            Grid.SetColumn(controlHost, compact ? 0 : 1);
+            controlHost.HorizontalAlignment = compact ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+            controlHost.Margin = compact ? new Thickness(0, 10, 0, 0) : new Thickness(0);
+        };
         return row;
     }
 
@@ -848,8 +953,8 @@ public sealed partial class SettingsPage
         Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
         BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
         BorderThickness = new Thickness(1),
-        CornerRadius = new CornerRadius(16),
-        Padding = new Thickness(18),
+        CornerRadius = new CornerRadius(27.2),
+        Padding = new Thickness(24, 20, 24, 20),
         Child = new StackPanel { Spacing = 8 },
     };
 
@@ -857,7 +962,7 @@ public sealed partial class SettingsPage
     {
         var border = SettingsSurface();
         var stack = (StackPanel)border.Child;
-        stack.Children.Add(new TextBlock { Text = title, FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = PrimaryBrush() });
+        stack.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = PrimaryBrush() });
         stack.Children.Add(SecondaryText(description));
         return border;
     }

@@ -219,9 +219,9 @@ public sealed class MainWindowSourceTests
         Assert.Contains("ProfileFooterContent.Spacing = 10", code);
         Assert.Contains("FlyoutPlacementMode.RightEdgeAlignedBottom", code);
         Assert.Contains("NotificationUnreadBadge.Margin = isOpen", code);
-        Assert.Contains("var dot = new Button", code);
-        Assert.Contains("themeService.PreviewTheme(capturedId)", code);
-        Assert.Contains("_settingsApi.PutSettingAsync(\"ui_theme\", capturedId)", code);
+        Assert.Contains("ThemeDotsPanel.Visibility = Visibility.Collapsed", code);
+        Assert.DoesNotContain("themeService.PreviewTheme(capturedId)", code);
+        Assert.DoesNotContain("_settingsApi.PutSettingAsync(\"ui_theme\", capturedId)", code);
         Assert.Contains("ApplyResponsiveShellLayout();", code);
         Assert.Contains("SynchronizeSelectedNavigationItem(e.SourcePageType, e.Parameter)", code);
         Assert.Contains("ResynchronizeSelectedNavigationItem();", code);

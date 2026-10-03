@@ -51,8 +51,12 @@ public sealed class CurrentCollectionsParitySourceTests
         Assert.Contains("ChoosePoster_Click", xaml);
         Assert.Contains("SmartCollectionWizardPage_SizeChanged", code);
         Assert.Contains("SchedulePreview", code);
-        Assert.Contains("(\"Dolby Vision\", \"dolby_vision\")", code);
-        Assert.Contains("(\"between\", \"between\")", code);
+        Assert.Contains("QueryFilterEditor", code);
+        Assert.Contains("RefreshRuleScopeAsync", code);
+        Assert.Contains("editor.Load(ViewModel.RuleDefinition, scope, libraryId, filters)", code);
+        var editor = ReadRepoFile("src", "SiloPlayer", "Controls", "QueryRulesEditor.cs");
+        Assert.Contains("\"dolby_vision\"", editor);
+        Assert.Contains("\"between\"", editor);
         Assert.Contains("AllowedProfileIds = IsShared", viewModel);
         Assert.DoesNotContain("AdminApi", viewModel);
         Assert.DoesNotContain("IsAdmin", viewModel);

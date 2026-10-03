@@ -5,8 +5,23 @@ using SiloPlayer.Core.Models.Playback;
 
 namespace SiloPlayer.Core.Api;
 
-public class CatalogApi(SiloApiClient client)
+public partial class CatalogApi(SiloApiClient client)
 {
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(ApiRequestContext Context, string Scope), (DateTime LoadedAt, CatalogFiltersResponse Value)> _filterScopes = new();
+    private int _filterCacheGeneration;
+    private readonly object _filterScopesGate = new();
+    public int FilterCacheGeneration => Volatile.Read(ref _filterCacheGeneration);
+    public ApiRequestContext CaptureContext() => client.CaptureContext();
+
+    public void InvalidateFilterCache()
+    {
+        lock (_filterScopesGate)
+        {
+            Interlocked.Increment(ref _filterCacheGeneration);
+            _filterScopes.Clear();
+        }
+    }
+
     public async Task<MetadataAiStatus> GetMetadataAiStatusAsync(CancellationToken ct = default)
     {
         var capability = await client.GetAsync<MetadataAiCapability>("/api/v2/capabilities/metadata-ai", ct);
@@ -66,9 +81,12 @@ public class CatalogApi(SiloApiClient client)
         IReadOnlyList<QueryGroup>? queryGroups = null,
         string queryGroupsMatch = "all",
         string? collectionId = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        int? queryLimit = null,
+        string? nextCursor = null)
     {
-        var query = $"/api/v2/catalog?limit={Math.Clamp(limit, 1, 200)}&seek={Math.Max(0, offset)}";
+        var query = $"/api/v2/catalog?limit={Math.Clamp(limit, 1, 200)}";
+        if (string.IsNullOrWhiteSpace(nextCursor)) query += $"&seek={Math.Max(0, offset)}";
         if (!string.IsNullOrWhiteSpace(source)) query += $"&source={Uri.EscapeDataString(source)}";
         if (!string.IsNullOrWhiteSpace(scope)) query += $"&scope={Uri.EscapeDataString(scope)}";
         if (!string.IsNullOrWhiteSpace(sectionId)) query += $"&section_id={Uri.EscapeDataString(sectionId)}";
@@ -82,7 +100,9 @@ public class CatalogApi(SiloApiClient client)
         if (q != null) query += $"&q={Uri.EscapeDataString(q)}";
         if (type != null) query += $"&type={Uri.EscapeDataString(type)}";
         if (!includeTotal) query += "&skip_total=true";
-        if (!string.IsNullOrWhiteSpace(snapshot)) query += $"&cursor={Uri.EscapeDataString(snapshot)}";
+        if (queryLimit is > 0) query += $"&query_limit={queryLimit.Value}";
+        var cursor = string.IsNullOrWhiteSpace(nextCursor) ? snapshot : nextCursor;
+        if (!string.IsNullOrWhiteSpace(cursor)) query += $"&cursor={Uri.EscapeDataString(cursor)}";
 
         // V2 accepts structured JSON rule groups, not bracketed query keys.
         var groups = new List<QueryGroup>();
@@ -104,18 +124,30 @@ public class CatalogApi(SiloApiClient client)
         }
 
         if (groups.Count > 0)
-            query += "&groups=" + Uri.EscapeDataString(System.Text.Json.JsonSerializer.Serialize(groups, BrowseV2.Json));
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(groups, BrowseV2.Json);
+            // The pinned v2 contract explicitly limits GET groups to 32768
+            // characters; the JSON endpoint runs the same catalog engine.
+            if (json.Length > 32768)
+                return GetLargeCatalogQueryAsync(groups, queryGroups != null ? queryGroupsMatch : "all", libraryId,
+                    sort, order, genre, contentRating, yearMin, yearMax, q, type, limit, offset, includeTotal,
+                    snapshot, source, scope, sectionId, collectionId, queryLimit, ct, nextCursor);
+            query += "&groups=" + Uri.EscapeDataString(json);
+        }
         return client.GetAsync<CatalogResponse>(query, ct);
     }
 
-    public Task<CatalogFiltersResponse> GetFiltersAsync(
+    public async Task<CatalogFiltersResponse> GetFiltersAsync(
         int? libraryId = null,
         CancellationToken ct = default,
         string? source = null,
         string? scope = null,
         string? sectionId = null,
         string? q = null,
-        string? type = null)
+        string? type = null,
+        string? collectionId = null,
+        string? personId = null,
+        bool includeTechnical = true)
     {
         var parameters = new List<string>();
         if (libraryId is > 0) parameters.Add($"library_id={libraryId.Value}");
@@ -123,8 +155,37 @@ public class CatalogApi(SiloApiClient client)
         if (!string.IsNullOrWhiteSpace(scope)) parameters.Add($"scope={Uri.EscapeDataString(scope)}");
         if (!string.IsNullOrWhiteSpace(sectionId)) parameters.Add($"section_id={Uri.EscapeDataString(sectionId)}");
         if (!string.IsNullOrWhiteSpace(type)) parameters.Add($"type={Uri.EscapeDataString(type)}");
+        if (!string.IsNullOrWhiteSpace(collectionId)) parameters.Add($"collection_id={Uri.EscapeDataString(collectionId)}");
+        if (!string.IsNullOrWhiteSpace(personId)) parameters.Add($"person_id={Uri.EscapeDataString(personId)}");
+        if (!includeTechnical) parameters.Add("include_technical=false");
         var query = "/api/v2/catalog/filters" + (parameters.Count > 0 ? "?" + string.Join("&", parameters) : "");
-        return client.GetAsync<CatalogFiltersResponse>(query, ct);
+        ct.ThrowIfCancellationRequested();
+        var context = client.CaptureContext();
+        var generation = Volatile.Read(ref _filterCacheGeneration);
+        var key = (context, query);
+        lock (_filterScopesGate)
+        {
+            if (client.IsCurrentContext(context) && generation == Volatile.Read(ref _filterCacheGeneration)
+                && _filterScopes.TryGetValue(key, out var cached) && DateTime.UtcNow - cached.LoadedAt < TimeSpan.FromMinutes(5))
+                return cached.Value;
+        }
+
+        var filters = await client.SendRequestAsync<CatalogFiltersResponse>(context, HttpMethod.Get, query, null, ct);
+        ct.ThrowIfCancellationRequested();
+        lock (_filterScopesGate)
+        {
+            if (!client.IsCurrentContext(context) || generation != Volatile.Read(ref _filterCacheGeneration))
+                throw new OperationCanceledException("Catalog metadata scope changed.", ct);
+            // Failed or canceled requests never populate the successful metadata cache.
+            foreach (var entry in _filterScopes)
+                if (entry.Key.Context != context || DateTime.UtcNow - entry.Value.LoadedAt >= TimeSpan.FromMinutes(5))
+                    _filterScopes.TryRemove(entry.Key, out _);
+            if (_filterScopes.Count >= 64)
+                foreach (var entry in _filterScopes.OrderBy(entry => entry.Value.LoadedAt).Take(_filterScopes.Count - 63))
+                    _filterScopes.TryRemove(entry.Key, out _);
+            _filterScopes[key] = (DateTime.UtcNow, filters);
+        }
+        return filters;
     }
 
     public async Task<AudiobookGroupsResponse> GetAudiobookGroupsAsync(

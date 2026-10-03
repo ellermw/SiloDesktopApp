@@ -3,10 +3,12 @@
     x:Class="SiloPlayer.Views.SignupPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:helpers="using:SiloPlayer.Helpers"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:converters="using:SiloPlayer.Converters"
     mc:Ignorable="d"
+    FontFamily="{StaticResource ThemeFontFamily}"
     Background="{StaticResource AppBackgroundBrush}">
 
     <Page.Resources>
@@ -17,7 +19,7 @@
     </Page.Resources>
 
     <!-- Full-page centered auth shell -->
-    <Grid HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
+    <Grid helpers:AuthBackdrop.Enabled="True" HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
         <Image
             Source="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource UrlToImage}}"
             Stretch="UniformToFill"
@@ -25,13 +27,13 @@
             IsHitTestVisible="False"
             AutomationProperties.AccessibilityView="Raw" />
         <Border
-            Background="#B3000000"
+            helpers:AuthBackdrop.ReadabilityScrim="True"
             Visibility="{x:Bind ViewModel.LoginBackgroundUrl, Mode=OneWay, Converter={StaticResource NullToVis}}"
             IsHitTestVisible="False" />
-        <StackPanel
+        <StackPanel x:Name="SignupLayout"
             HorizontalAlignment="Center"
             VerticalAlignment="Center"
-            MaxWidth="400"
+            MaxWidth="384"
             Spacing="16">
 
             <ProgressRing
@@ -40,34 +42,36 @@
                 HorizontalAlignment="Center"
                 Width="32" Height="32" />
 
-            <Border
+            <Border x:Name="SignupClosedCard" Padding="52,24" CornerRadius="12" BorderThickness="0"
                 Style="{StaticResource GlassCardStyle}"
                 Visibility="{x:Bind ViewModel.ShowSignupClosed, Mode=OneWay, Converter={StaticResource BoolToVis}}">
-                <StackPanel Spacing="8">
+                <StackPanel Spacing="16">
                     <TextBlock
                         Text="{x:Bind ViewModel.ServerName, Mode=OneWay, FallbackValue='Silo'}"
                         FontSize="30"
+                        Height="36" LineHeight="36" LineStackingStrategy="BlockLineHeight"
                         FontWeight="ExtraBold"
                         Foreground="{StaticResource PrimaryTextBrush}"
                         CharacterSpacing="-40" />
                     <TextBlock
                         Text="Public signups are currently closed."
                         Style="{StaticResource SecondaryTextStyle}"
-                        FontSize="14" />
+                        FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" />
                 </StackPanel>
             </Border>
 
             <!-- Glass card -->
-            <Border
+            <Border x:Name="SignupCard" Padding="52,24" CornerRadius="12" BorderThickness="0"
                 Style="{StaticResource GlassCardStyle}"
                 Visibility="{x:Bind ViewModel.ShowSignupForm, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                 <StackPanel Spacing="24">
                     <!-- Header: Branding + subtitle -->
-                    <StackPanel Spacing="8">
+                    <StackPanel Spacing="16">
                         <TextBlock
                             x:Name="ServerNameTitle"
                             Text="{x:Bind ViewModel.ServerName, Mode=OneWay, FallbackValue='Silo'}"
                             FontSize="30"
+                            Height="36" LineHeight="36" LineStackingStrategy="BlockLineHeight"
                             FontWeight="ExtraBold"
                             Foreground="{StaticResource PrimaryTextBrush}"
                             CharacterSpacing="-40" />
@@ -75,7 +79,7 @@
                         <TextBlock
                             Text="Create a new account to get started."
                             Style="{StaticResource SecondaryTextStyle}"
-                            FontSize="14" />
+                            FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" />
                     </StackPanel>
 
                     <!-- Error message -->
@@ -93,81 +97,78 @@
 
                     <!-- Form fields -->
                     <StackPanel Spacing="16">
+                    <StackPanel Spacing="16">
                         <!-- Username -->
-                        <StackPanel Spacing="6">
+                        <StackPanel Spacing="8">
                             <TextBlock
                                 Text="Username"
-                                FontSize="14"
+                                FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight"
                                 FontWeight="Medium"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
                             <TextBox
                                 x:Name="UsernameBox"
                                 Text="{x:Bind ViewModel.Username, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 Style="{StaticResource DarkTextBoxStyle}"
-                                PlaceholderText="Choose a username"
                                 KeyDown="InputBox_KeyDown" />
                         </StackPanel>
 
                         <!-- Email -->
-                        <StackPanel Spacing="6">
+                        <StackPanel Spacing="8">
                             <TextBlock
                                 Text="Email"
-                                FontSize="14"
+                                FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight"
                                 FontWeight="Medium"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
                             <TextBox
                                 x:Name="EmailBox"
                                 Text="{x:Bind ViewModel.Email, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 Style="{StaticResource DarkTextBoxStyle}"
-                                PlaceholderText="you@example.com"
                                 KeyDown="InputBox_KeyDown" />
                         </StackPanel>
 
                         <!-- Password -->
-                        <StackPanel Spacing="6">
+                        <StackPanel x:Name="SignupPasswordGroup" Spacing="8">
                             <TextBlock
                                 Text="Password"
-                                FontSize="14"
+                                FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight"
                                 FontWeight="Medium"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
                             <TextBlock
                                 Text="At least 8 characters"
-                                FontSize="12"
+                                FontSize="12" Height="16" LineHeight="16" LineStackingStrategy="BlockLineHeight"
                                 Foreground="{StaticResource SecondaryTextBrush}" />
                             <PasswordBox
                                 x:Name="PasswordBox"
                                 Style="{StaticResource DarkPasswordBoxStyle}"
-                                PlaceholderText="Create a password"
                                 PasswordChanged="PasswordBox_PasswordChanged"
                                 KeyDown="InputBox_KeyDown" />
                         </StackPanel>
 
                         <!-- Confirm Password -->
-                        <StackPanel Spacing="6">
+                        <StackPanel x:Name="SignupConfirmationGroup" Spacing="8">
                             <TextBlock
-                                Text="Confirm Password"
-                                FontSize="14"
+                                Text="Confirm password"
+                                FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight"
                                 FontWeight="Medium"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
                             <PasswordBox
                                 x:Name="ConfirmPasswordBox"
                                 Style="{StaticResource DarkPasswordBoxStyle}"
-                                PlaceholderText="Re-enter your password"
                                 PasswordChanged="ConfirmPasswordBox_PasswordChanged"
                                 KeyDown="InputBox_KeyDown" />
                             <TextBlock
                                 x:Name="PasswordMismatchText"
                                 Text="Passwords do not match"
                                 Foreground="{StaticResource ErrorBrush}"
-                                FontSize="12"
+                                FontSize="12" Height="16" LineHeight="16" LineStackingStrategy="BlockLineHeight"
                                 Visibility="Collapsed" />
                         </StackPanel>
 
                         <!-- Invite Code -->
-                        <StackPanel Spacing="6">
+                        <StackPanel Spacing="8">
                             <TextBlock
-                                Text="Invite Code"
-                                FontSize="14"
+                                Text="Invite code"
+                                FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight"
                                 FontWeight="Medium"
                                 Foreground="{StaticResource PrimaryTextBrush}" />
                             <TextBox
@@ -183,9 +184,16 @@
                             Content="Create account"
                             Style="{StaticResource AccentButtonStyle}"
                             HorizontalAlignment="Stretch"
-                            Padding="16,12"
+                            Height="36" MinHeight="36" Padding="16,4"
                             Command="{x:Bind ViewModel.SignupCommand}"
                             IsEnabled="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBool}}" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="4" Height="20">
+                        <TextBlock Text="Already have an account?" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                        <HyperlinkButton Padding="0" MinHeight="0" MinWidth="0" Height="20" Click="BackToLoginButton_Click">
+                            <TextBlock Text="Sign in" FontSize="14" TextDecorations="Underline" Foreground="{StaticResource PrimaryTextBrush}" />
+                        </HyperlinkButton>
+                    </StackPanel>
                     </StackPanel>
 
                     <!-- Loading indicator -->
@@ -197,13 +205,6 @@
                 </StackPanel>
             </Border>
 
-            <!-- Back to login link -->
-            <Button
-                Content="Already have an account? Sign in"
-                Style="{StaticResource GhostButtonStyle}"
-                HorizontalAlignment="Center"
-                Visibility="{x:Bind ViewModel.ShowSignupForm, Mode=OneWay, Converter={StaticResource BoolToVis}}"
-                Click="BackToLoginButton_Click" />
         </StackPanel>
     </Grid>
 </Page>

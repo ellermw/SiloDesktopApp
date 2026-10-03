@@ -5,6 +5,236 @@ namespace SiloPlayer.Tests;
 public sealed class MpvOscRuntimeTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AutoplayIntroPreferenceRefreshPreservesTheLiveControlsScript(bool refreshWhileSeekPending)
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local state = osc_test_state
+            handlers['osc-set-intro-mode']('always')
+            handlers['osc-set-markers']('{"content_id":"episode-2","reset_auto_skip":true,"marker_segments":[{"kind":"intro","start_seconds":0,"end_seconds":113.032}]}')
+            state.time_pos = 0
+            osc_test_check()
+            local original_key = state.intro_prompt_key
+            if not {{(refreshWhileSeekPending ? "true" : "false")}} then
+                state.time_pos = 113.032
+                osc_test_check()
+            end
+            -- Replay the logged delayed host preference response after the
+            -- successor episode's intro seek has already started/completed.
+            handlers['osc-set-intro-mode']('always')
+            state.time_pos = 113.032
+            osc_test_check()
+            local retained = state.intro_prompt_key == original_key
+            state.intro_prompt_remaining = 0
+            osc_test_check()
+            handlers['osc-mouse-move']('100', '100')
+            state.current_alpha = 1
+            osc_test_tick()
+            keys['silo-fs-override']()
+            keys['silo-menu-escape']()
+            mp.set_property('user-data/probe-result', tostring(retained)..':'..tostring(state.visible)..':'..tostring(state.osc_overlay.data ~= '')..':'..table.concat(intents, ','))
+            """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
+            handlers, keys, intents = {}, {}, {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local add = mp.add_forced_key_binding
+            mp.add_forced_key_binding = function(key, name, fn, flags) keys[name] = fn; return add(key, name, fn, flags) end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2]:find('silo-', 1, true) == 1 then
+                    if args[2] == 'silo-fullscreen-toggle' or args[2] == 'silo-escape-unhandled' then table.insert(intents, args[2]) end
+                    return
+                end
+                return command(...)
+            end
+            """);
+        Assert.True(result == "true:true:true:silo-fullscreen-toggle,silo-escape-unhandled", result);
+    }
+
+    [Theory]
+    [InlineData("ask", false)]
+    [InlineData("ask", true)]
+    [InlineData("never", false)]
+    [InlineData("never", true)]
+    public void ChangedIntroPreferenceCancelsItsPreviousActionTogetherWithItsKey(string mode, bool pending)
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local state = osc_test_state
+            handlers['osc-set-intro-mode']('always')
+            handlers['osc-set-markers']('{"content_id":"episode","intro_start":0,"intro_end":30}')
+            state.time_pos = 0; osc_test_check()
+            if not {{(pending ? "true" : "false")}} then state.time_pos = 30; osc_test_check() end
+            handlers['osc-set-intro-mode']('{{mode}}')
+            local cancelled = state.intro_pending == nil and state.intro_undo_origin == nil
+            state.time_pos = 30; osc_test_check()
+            mp.set_property('user-data/probe-result', tostring(cancelled)..':'..tostring(state.intro_prompt_key ~= nil)..':'..tostring(not state.skip_visible))
+            """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """);
+        Assert.Equal("true:true:true", result);
+    }
+
+    [Fact]
+    public void FillControlTogglesNativeContainCoverWithoutChangingTransport()
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.controller_focus_name = 'btn_fill'
+            osc_test_activate()
+            local fill = mp.get_property_number('panscan', 0)
+            osc_test_activate()
+            mp.set_property('user-data/probe-result', tostring(fill) .. ':' .. tostring(mp.get_property_number('panscan', 0)))
+            """, rawAss: true, resultProperty: "user-data/probe-result");
+        Assert.Equal("1:0", result);
+    }
+    [Fact]
+    public void CompactControlLayoutKeepsUtilitiesReachableThroughOverflow()
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            osc_test_layout()
+            local layout = osc_test_state.layout
+            mp.set_property('user-data/probe-result', tostring(layout.btn_more ~= nil) .. ':' .. tostring(layout.btn_audio == nil) .. ':' .. tostring(layout.btn_pip == nil))
+            """, rawAss: true, windowWidth: 500, windowHeight: 450, resultProperty: "user-data/probe-result");
+        Assert.Equal("true:true:true", result);
+    }
+
+    [Fact]
+    public void QualityChoicesRespectEmptyServerTiersAndHidePartyVersionSwitching()
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.quality_info = {qualities={}, versions={{file_id=1}}}
+            local empty = not osc_test_quality()
+            state.quality_info.versions = {{file_id=1}, {file_id=2}}
+            local versions = osc_test_quality()
+            state.watch_party = true
+            local party = not osc_test_quality()
+            state.quality_info.qualities = {{id='original'}, {id='720p'}}
+            local tiers = osc_test_quality()
+            mp.set_property('user-data/probe-result', tostring(empty)..':'..tostring(versions)..':'..tostring(party)..':'..tostring(tiers))
+            """, rawAss: true, resultProperty: "user-data/probe-result");
+        Assert.Equal("true:true:true:true", result);
+    }
+    [Fact]
+    public void ExpiredAskOfferReturnsOnReentryWithoutPretendingTheIntroWasSkipped()
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.intro_mode = 'ask'; state.marker_content_id = 'episode'; state.intro_start = 0; state.intro_end = 30
+            state.time_pos = 5; osc_test_check()
+            state.intro_prompt_remaining = 0; osc_test_check()
+            local expired = not state.skip_visible
+            state.time_pos = 35; osc_test_check()
+            state.time_pos = 5; osc_test_check()
+            mp.set_property('user-data/probe-result', tostring(expired) .. ':' .. tostring(state.skip_visible))
+            """, rawAss: true, resultProperty: "user-data/probe-result");
+        Assert.Equal("true:true", result);
+    }
+    [Fact]
+    public void BundledSubRipDecoderPreservesOriginalAlignmentAndTextStyle()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"silo-original-subrip-{Guid.NewGuid():N}.srt");
+        File.WriteAllText(path, "1\n00:00:00,000 --> 00:00:04,000\n{\\an8}<b>Bold</b> <i>Italic</i>\n");
+        try
+        {
+            var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+                mp.register_event('file-loaded', function()
+                    mp.commandv('sub-add', [[{{path.Replace('\\', '/')}}]], 'select')
+                end)
+                mp.commandv('loadfile', 'av://lavfi:color=c=black:s=16x16:r=10:d=5')
+                mp.add_periodic_timer(0.05, function()
+                    local text = mp.get_property('sub-text-ass', '')
+                    if text:find('Bold', 1, true) then mp.set_property('user-data/subrip-probe', text) end
+                end)
+                """, rawAss: true, resultProperty: "user-data/subrip-probe");
+            Assert.Contains("\\an8", result); Assert.Contains("\\b1", result); Assert.Contains("\\i1", result);
+        }
+        finally { File.Delete(path); }
+    }
+    [Fact]
+    public void SharedVideoSeekIntervalsReachTheRealKeyboardTransport()
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            handlers['osc-set-seek-intervals']('45', '90')
+            keys['silo-seek-back']()
+            keys['silo-seek-fwd']()
+            mp.set_property('user-data/probe-result', table.concat(seeks, ','))
+            """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
+            handlers, keys, seeks = {}, {}, {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local add = mp.add_forced_key_binding
+            mp.add_forced_key_binding = function(key, name, fn, flags) keys[name] = fn; return add(key, name, fn, flags) end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[2] == 'silo-seek-relative' then table.insert(seeks, args[3]); return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("-45,90", result);
+    }
+
+    [Fact]
+    public void IntroUndoWaitsForMovementAndSurvivesStructuredRangeExit()
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.intro_mode = 'always'
+            state.marker_content_id = 'episode'
+            state.marker_segments = {{kind='intro', start_seconds=0, end_seconds=30}}
+            state.time_pos = 5
+            osc_test_check()
+            local waiting = state.intro_pending ~= nil and state.intro_undo_origin == nil
+            state.time_pos = 30
+            osc_test_check()
+            local undo = state.skip_visible and state.skip_label == 'Watch Intro' and state.skip_target == 0
+            state.marker_segments = {}
+            state.intro_pending = nil; state.intro_undo_origin = nil; state.intro_prompt_key = nil
+            osc_test_check()
+            mp.set_property('user-data/probe-result', tostring(waiting) .. ':' .. tostring(undo) .. ':' .. tostring(state.skip_visible))
+            """, rawAss: true, resultProperty: "user-data/probe-result");
+        Assert.Equal("true:true:false", result);
+    }
+    [Fact]
+    public void WatchPartyKeyboardTransportEmitsOneIntentWithoutMutatingPause()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local previous = mp.get_property_bool('input-default-bindings')
+            mp.set_property_bool('input-default-bindings', false)
+            room_keys['silo-play-pause-space']()
+            room_keys['silo-play-pause-k']()
+            local disabled = mp.get_property_bool('input-default-bindings') == false
+            mp.set_property_bool('input-default-bindings', previous)
+            mp.set_property('user-data/room-probe-output', tostring(room_intents) .. ':' .. tostring(room_direct_pauses) .. ':' .. tostring(disabled))
+            """, rawAss: true, resultProperty: "user-data/room-probe-output", beforeScript: """
+            room_keys = {}
+            room_intents = 0
+            room_direct_pauses = 0
+            local add_key = mp.add_forced_key_binding
+            mp.add_forced_key_binding = function(key, name, fn, flags)
+                room_keys[name] = fn
+                return add_key(key, name, fn, flags)
+            end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-pause-toggle' then
+                    room_intents = room_intents + 1
+                    return
+                end
+                if args[1] == 'cycle' and args[2] == 'pause' then room_direct_pauses = room_direct_pauses + 1 end
+                return command(...)
+            end
+            """);
+        Assert.Equal("2:0:true", output);
+    }
+
+    [Theory]
     [InlineData(960, 720)]
     [InlineData(1920, 1080)]
     [InlineData(3840, 2160)]
@@ -88,7 +318,8 @@ public sealed class MpvOscRuntimeTests
 
     private static string CaptureStats(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight,
         bool rtx, string setup = "", int videoBps = 0, int audioBps = 0, string? processor = null, bool neural = false,
-        bool rawAss = false, int windowWidth = 3840, int windowHeight = 2160)
+        bool rawAss = false, int windowWidth = 3840, int windowHeight = 2160,
+        string beforeScript = "", string resultProperty = "user-data/stats-test-output")
     {
         var root = FindRepositoryRoot();
         var probe = Path.Combine(Path.GetTempPath(), $"silo-stats-{Guid.NewGuid():N}.lua");
@@ -111,6 +342,7 @@ public sealed class MpvOscRuntimeTests
                 return get_number(name, fallback)
             end
             mp.get_property_native = function(name, fallback)
+                if name == 'osd-dimensions' then return {w={{windowWidth}}, h={{windowHeight}}} end
                 if name == 'vf' then return {{(rtx || processor != null ? "{{name='d3d11vpp',label='silo-rtx',enabled=true,params={['scaling-mode']='" + (processor ?? "nvidia") + "'}}}" : "{}")}} end
                 if name == 'glsl-shaders' then return {{(neural ? "{'C:/fixture/FSRCNNX_x2_8-0-4-1.glsl'}" : "{}")}} end
                 return get_native(name, fallback)
@@ -124,9 +356,18 @@ public sealed class MpvOscRuntimeTests
                 end
                 return overlay
             end
-            dofile([[{{script}}]])
+            {{beforeScript}}
+            local source = assert(io.open([[{{script}}]], 'r'))
+            local code = source:read('*a'); source:close()
+            assert(loadstring(code .. '\nosc_test_state = state; osc_test_check = check_skip_markers; osc_test_quality = quality_choices_available; osc_test_activate = activate_controller_focus; osc_test_layout = compute_layout; osc_test_tick = tick'))()
             mp.add_timeout(0.05, function()
-                {{setup}}
+                local ok, err = pcall(function()
+                    {{setup}}
+                end)
+                if not ok then
+                    mp.set_property('{{resultProperty}}', 'Lua error: ' .. tostring(err))
+                    return
+                end
                 mp.commandv('script-message', 'osc-toggle-stats')
             end)
             """);
@@ -143,7 +384,7 @@ public sealed class MpvOscRuntimeTests
             string? rendered = null;
             for (var attempt = 0; attempt < 100 && rendered == null; attempt++)
             {
-                var ptr = get(handle, "user-data/stats-test-output");
+                var ptr = get(handle, resultProperty);
                 try { if (ptr != IntPtr.Zero) rendered = Marshal.PtrToStringUTF8(ptr); }
                 finally { if (ptr != IntPtr.Zero) free(ptr); }
                 if (rendered == null) Thread.Sleep(10);

@@ -114,7 +114,7 @@ public class PlaybackManager : IDisposable
         var request = new PlaybackStartRequestV3
         {
             ProtocolVersion = 3,
-            ClientFeatures = ["playback_plan_v3", "plan_invalidated_v1"],
+            ClientFeatures = ["playback_plan_v3", "plan_invalidated_v1", "subrip_sidecar_v1"],
             FileId = fileId,
             ProfileId = _authService.SelectedProfileId ?? "",
             PlaybackAttemptId = Guid.NewGuid().ToString(),
@@ -856,11 +856,14 @@ public class PlaybackManager : IDisposable
     }
 
     private async Task RecordRouteEventAsync(PlaybackStartResponse session, string eventName)
+        => await ReportRouteEventAsync(session, eventName);
+
+    public async Task ReportRouteEventAsync(PlaybackStartResponse session, string eventName, IReadOnlyDictionary<string, string>? diagnostics = null)
     {
         try
         {
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            await _playbackApi.ReportRouteEventAsync(session, eventName, timeout.Token).ConfigureAwait(false);
+            await _playbackApi.ReportRouteEventAsync(session, eventName, timeout.Token, diagnostics).ConfigureAwait(false);
         }
         catch { /* Server route telemetry is best effort; local diagnostics remain authoritative. */ }
     }

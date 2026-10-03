@@ -100,8 +100,11 @@ public sealed partial class RecommendationSectionPage : Page
         PageContent.Padding = new Thickness(gutter, width < 640 ? 24 : 32, gutter, 48);
         var contentWidth = Math.Max(280, width - gutter * 2);
         var columns = _uiCustomizationService.GetPosterColumnCount(contentWidth);
+        var gap = _uiCustomizationService.CardPresentation.PosterSize == "large" ? 16d : 12d;
+        ItemsLayout.MinColumnSpacing = ItemsLayout.MinRowSpacing = gap;
+        LoadingLayout.MinColumnSpacing = LoadingLayout.MinRowSpacing = gap;
         PageTitleText.FontSize = width < 640 ? 24 : 30;
-        _cardWidth = Math.Max(96, Math.Floor((width - gutter * 2 - (columns - 1) * 16) / columns));
+        _cardWidth = Math.Max(96, Math.Floor((width - gutter * 2 - (columns - 1) * gap) / columns));
         ItemsLayout.MaximumRowsOrColumns = columns;
         ItemsLayout.MinItemWidth = _cardWidth;
         LoadingLayout.MaximumRowsOrColumns = columns;

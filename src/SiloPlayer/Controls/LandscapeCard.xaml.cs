@@ -151,7 +151,7 @@ public sealed partial class LandscapeCard : UserControl
             item,
             surface,
             showCollectionActions: item.ItemSource != "episode_carousel",
-            stateChanged: () => RefreshMenuState(item));
+            stateChanged: () => RefreshMenuState(item), owner: this);
         UpdateQuickWatchedState(item);
 
         // Show dismiss X button for CW/NU cards — enables quick-dismiss
@@ -308,7 +308,7 @@ public sealed partial class LandscapeCard : UserControl
             item,
             surface,
             showCollectionActions: item.ItemSource != "episode_carousel",
-            stateChanged: () => RefreshMenuState(item));
+            stateChanged: () => RefreshMenuState(item), owner: this);
         UpdateQuickWatchedState(item);
         EpisodeWatchedInline.Visibility = item.ItemSource == "episode_carousel" && item.UserState?.Played == true
             ? Visibility.Visible

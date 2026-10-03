@@ -42,7 +42,7 @@
                                        MinItemWidth="165"
                                        MinColumnSpacing="16"
                                        MinRowSpacing="24"
-                                       ItemsStretch="Fill" />
+                                       ItemsStretch="None" />
                 </ItemsRepeater.Layout>
                 <ItemsRepeater.ItemTemplate>
                     <DataTemplate>
@@ -100,7 +100,7 @@
                            Visibility="Collapsed"
                            ElementPrepared="ItemsGrid_ElementPrepared">
                 <ItemsRepeater.Layout>
-                    <UniformGridLayout x:Name="ItemsLayout" MinItemWidth="165" MinColumnSpacing="16" MinRowSpacing="24" ItemsStretch="Fill" />
+                    <UniformGridLayout x:Name="ItemsLayout" MinItemWidth="165" MinColumnSpacing="16" MinRowSpacing="24" ItemsStretch="None" />
                 </ItemsRepeater.Layout>
                 <ItemsRepeater.ItemTemplate>
                     <DataTemplate x:DataType="models:MediaItem">

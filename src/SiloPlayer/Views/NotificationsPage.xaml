@@ -9,7 +9,7 @@
 
     <Page.Resources><converters:BoolToVisibilityConverter x:Key="BoolToVis" /><converters:UrlToImageSourceConverter x:Key="UrlToImage" /></Page.Resources>
 
-    <Grid x:Name="PageContent" MaxWidth="768" HorizontalAlignment="Center" Padding="24,32" RowSpacing="16">
+    <Grid x:Name="PageContent" MaxWidth="768" HorizontalAlignment="Center" Padding="16,32" RowSpacing="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -17,21 +17,22 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Grid x:Name="HeaderGrid" ColumnSpacing="12" RowSpacing="10">
+        <Grid x:Name="HeaderGrid" ColumnSpacing="8" RowSpacing="12" Margin="0,0,0,8">
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
                 <FontIcon Glyph="&#xEA8F;" FontSize="24" />
-                <TextBlock Text="Notifications" FontSize="24" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Text="Notifications" FontSize="24" LineHeight="32" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" VerticalAlignment="Center" />
             </StackPanel>
-            <Button x:Name="MarkAllButton" Grid.Column="1" Click="MarkAll_Click" Style="{StaticResource OutlineButtonStyle}">
+            <Button x:Name="MarkAllButton" Grid.Column="1" Click="MarkAll_Click" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="32" Padding="12,4" FontSize="14">
                 <StackPanel Orientation="Horizontal" Spacing="7"><FontIcon Glyph="&#xE8FB;" FontSize="15" /><TextBlock Text="Mark all read" /></StackPanel>
             </Button>
-            <Button x:Name="PreferencesButton" Grid.Column="2" Style="{StaticResource OutlineButtonStyle}">
+            <Button x:Name="PreferencesButton" Grid.Column="2" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="32" Padding="12,4" FontSize="14">
                 <StackPanel Orientation="Horizontal" Spacing="7"><FontIcon Glyph="&#xE713;" FontSize="15" /><TextBlock Text="Preferences" /></StackPanel>
                 <Button.Flyout>
                     <Flyout Placement="BottomEdgeAlignedRight">
-                        <Grid Width="300" Padding="4">
+                        <Flyout.FlyoutPresenterStyle><Style TargetType="FlyoutPresenter"><Setter Property="Padding" Value="16" /><Setter Property="MaxWidth" Value="320" /></Style></Flyout.FlyoutPresenterStyle>
+                        <Grid Width="288" Padding="0">
                             <StackPanel x:Name="PreferenceControlsPanel" Spacing="14">
                             <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Notifications" FontWeight="SemiBold" /><TextBlock Text="Master switch for this profile" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel><ToggleSwitch x:Name="NotificationsEnabledToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Notifications" /></Grid>
                             <Border Height="1" Background="{StaticResource BorderBrush}" />
@@ -52,26 +53,27 @@
         </Grid>
 
         <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">
-            <Button x:Name="AllButton" Content="All" Click="Filter_Click" Tag="all" />
-            <Button x:Name="UnreadButton" Click="Filter_Click" Tag="unread"><TextBlock x:Name="UnreadButtonText" Text="Unread" /></Button>
+            <Button x:Name="AllButton" Content="All" Click="Filter_Click" Tag="all" Height="32" MinHeight="32" Padding="12,4" FontSize="14" />
+            <Button x:Name="UnreadButton" Click="Filter_Click" Tag="unread" Height="32" MinHeight="32" Padding="12,4" FontSize="14"><TextBlock x:Name="UnreadButtonText" Text="Unread" /></Button>
         </StackPanel>
 
         <Grid Grid.Row="2">
             <ListView x:Name="NotificationsList" ItemsSource="{Binding Notifications}" IsItemClickEnabled="True" ItemClick="NotificationsList_ItemClick" SelectionMode="None">
+                <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="0" /><Setter Property="Margin" Value="0,0,0,4" /></Style></ListView.ItemContainerStyle>
                 <ListView.ItemTemplate>
                     <DataTemplate x:DataType="models:AppNotification">
                         <Grid x:Name="NotificationRowRoot" Padding="12" ColumnSpacing="12" MinHeight="88" CornerRadius="12" Loaded="NotificationRow_Loaded" PointerEntered="NotificationRow_PointerEntered" PointerExited="NotificationRow_PointerExited">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <Border Width="44" Height="64" CornerRadius="6" Background="{StaticResource SurfaceBrush}"><Image Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" /></Border>
-                            <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-                                <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><Ellipse Width="8" Height="8" Fill="{StaticResource AccentBrush}" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" VerticalAlignment="Center" /><TextBlock x:Name="NotificationTitleText" Grid.Column="1" Text="{x:Bind DisplayTitle}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{x:Bind RelativeTime}" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></Grid>
-                                <TextBlock Text="{x:Bind Subtitle}" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
+                            <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Top">
+                                <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><Ellipse Width="8" Height="8" Fill="{StaticResource AccentBrush}" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" VerticalAlignment="Center" /><TextBlock x:Name="NotificationTitleText" Grid.Column="1" Text="{x:Bind DisplayTitle}" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{x:Bind RelativeTime}" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" /></Grid>
+                                <TextBlock Text="{x:Bind Subtitle}" FontSize="14" LineHeight="20" Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
                                 <ItemsControl ItemsSource="{x:Bind ReasonLabels}">
                                     <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="4" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
                                     <ItemsControl.ItemTemplate><DataTemplate><Border Padding="7,2" CornerRadius="10" Background="{StaticResource SurfaceBrush}"><TextBlock Text="{Binding}" FontSize="10" Foreground="{StaticResource SecondaryTextBrush}" /></Border></DataTemplate></ItemsControl.ItemTemplate>
                                 </ItemsControl>
                             </StackPanel>
-                            <Button x:Name="InlineMarkReadButton" Grid.Column="2" Tag="{x:Bind}" Click="MarkRead_Click" Tapped="MarkRead_Tapped" GotFocus="InlineMarkReadButton_GotFocus" LostFocus="InlineMarkReadButton_LostFocus" Width="32" Height="32" Padding="0" VerticalAlignment="Bottom" Opacity="0" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" ToolTipService.ToolTip="Mark as read" AutomationProperties.Name="Mark as read"><FontIcon Glyph="&#xE73E;" FontSize="14" /></Button>
+                            <Button x:Name="InlineMarkReadButton" Grid.Column="0" Grid.ColumnSpan="3" HorizontalAlignment="Right" Tag="{x:Bind}" Click="MarkRead_Click" Tapped="MarkRead_Tapped" GotFocus="InlineMarkReadButton_GotFocus" LostFocus="InlineMarkReadButton_LostFocus" Width="28" Height="28" Padding="0" VerticalAlignment="Bottom" Opacity="0" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" ToolTipService.ToolTip="Mark as read" AutomationProperties.Name="Mark as read"><FontIcon Glyph="&#xE73E;" FontSize="14" /></Button>
                         </Grid>
                     </DataTemplate>
                 </ListView.ItemTemplate>
@@ -92,6 +94,7 @@
         </Grid>
 
         <StackPanel Grid.Row="3" Spacing="8" HorizontalAlignment="Center">
+            <Button x:Name="ReloadButton" Content="Reload notifications" Click="Reload_Click" Visibility="Collapsed" Style="{StaticResource OutlineButtonStyle}" />
             <Button x:Name="LoadMoreButton" Content="Load more" Click="LoadMore_Click" Style="{StaticResource OutlineButtonStyle}" Visibility="Collapsed" />
             <TextBlock x:Name="ErrorText" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" TextAlignment="Center" AutomationProperties.LiveSetting="Polite" />
         </StackPanel>

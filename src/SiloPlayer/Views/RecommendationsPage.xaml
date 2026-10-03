@@ -39,7 +39,7 @@
             <StackPanel x:Name="HeaderTitlePanel" Grid.Row="0" Grid.Column="0" Spacing="4">
                 <TextBlock
                     x:Name="HeaderTitleText"
-                    Text="Recommendations"
+                    Text="For You"
                     FontSize="30"
                     FontWeight="Bold"
                     Foreground="{StaticResource PrimaryTextBrush}" />

@@ -22,7 +22,7 @@
 
         <Border Style="{StaticResource SettingsGroupStyle}">
             <StackPanel Spacing="14">
-                <TextBlock Text="New Episode Notifications" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="New Episode Notifications" FontSize="14" FontWeight="SemiBold" />
                 <TextBlock Text="Choose which series relationships notify this profile when a new episode arrives."
                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 <Grid ColumnSpacing="16">
@@ -42,11 +42,12 @@
 
         <Border Style="{StaticResource SettingsGroupStyle}" Visibility="{Binding HasWebPush, Converter={StaticResource BoolToVis}}">
             <StackPanel Spacing="14">
-                <TextBlock Text="Browser Notifications" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="Browser Notifications" FontSize="14" FontWeight="SemiBold" />
                 <TextBlock Text="Get notified even when Silo is closed. Notifications are encrypted end-to-end — the browser vendor's push service never sees their content."
                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 <TextBlock Text="Browser subscriptions are enabled from Silo's WebUI. This Windows app can review and remove the browsers registered to this profile."
                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                <Button Content="Open browser notification settings" Style="{StaticResource SecondaryButtonStyle}" HorizontalAlignment="Left" Click="OpenBrowserSettings_Click" />
                 <TextBlock Text="No browser subscriptions." Foreground="{StaticResource SecondaryTextBrush}"
                            Visibility="{Binding HasWebPushSubscriptions, Converter={StaticResource InverseBoolToVis}}" />
                 <ItemsControl ItemsSource="{Binding WebPushSubscriptions}" Visibility="{Binding HasWebPushSubscriptions, Converter={StaticResource BoolToVis}}">
@@ -56,7 +57,7 @@
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <StackPanel Spacing="3">
                                     <TextBlock Text="{x:Bind DeviceName}" FontWeight="SemiBold" />
-                                    <TextBlock Text="{x:Bind Endpoint}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{x:Bind DeliveryHealthText}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
                                 </StackPanel>
                                 <Button Grid.Column="1" Content="Remove" Tag="{x:Bind Id}" Style="{StaticResource SecondaryButtonStyle}" Click="RemovePush_Click" />
                             </Grid>
@@ -68,7 +69,7 @@
 
         <Border Style="{StaticResource SettingsGroupStyle}" Visibility="{Binding HasEmail, Converter={StaticResource BoolToVis}}">
             <StackPanel Spacing="14">
-                <TextBlock Text="Email Notifications" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="Email Notifications" FontSize="14" FontWeight="SemiBold" />
                 <TextBlock Text="Per profile: each profile verifies its own address and picks its own frequency."
                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 <Grid ColumnSpacing="16">
@@ -116,7 +117,7 @@
 
         <Border Style="{StaticResource SettingsGroupStyle}" Visibility="{Binding HasDiscord, Converter={StaticResource BoolToVis}}">
             <StackPanel Spacing="14">
-                <TextBlock Text="Discord Notifications" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="Discord Notifications" FontSize="14" FontWeight="SemiBold" />
                 <TextBlock Text="Account-wide: the Silo bot sends direct messages covering every profile on this account. You must share a Discord server with the bot."
                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 <Grid ColumnSpacing="16" Visibility="{Binding DiscordPreferences.Linked, Converter={StaticResource InverseBoolToVis}}">
@@ -159,7 +160,7 @@
 
         <Border Style="{StaticResource SettingsGroupStyle}" Visibility="{Binding HasWebhooks, Converter={StaticResource BoolToVis}}">
             <StackPanel Spacing="14">
-                <TextBlock Text="Webhooks" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="Webhooks" FontSize="14" FontWeight="SemiBold" />
                 <TextBlock Text="Send this profile's notifications to a webhook URL. Discord URLs render as native embeds; other URLs receive signed JSON."
                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 <TextBlock Text="No webhooks yet." Foreground="{StaticResource SecondaryTextBrush}"

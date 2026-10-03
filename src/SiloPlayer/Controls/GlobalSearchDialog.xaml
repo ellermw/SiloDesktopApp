@@ -5,13 +5,40 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:automation="using:Microsoft.UI.Xaml.Automation"
     mc:Ignorable="d"
     Title=""
     CloseButtonText=""
     PrimaryButtonText=""
     SecondaryButtonText="">
 
-    <Grid Width="520" MinHeight="72" RowSpacing="0">
+    <ContentDialog.Resources>
+        <!-- Native editing, selection and accessibility stay with TextBox;
+             the palette input has no Fluent fill, underline or clear button. -->
+        <ControlTemplate x:Key="QuickSearchInputTemplate" TargetType="TextBox">
+            <Grid Background="{TemplateBinding Background}">
+                <ScrollViewer x:Name="ContentElement"
+                              Padding="{TemplateBinding Padding}"
+                              Foreground="{TemplateBinding Foreground}"
+                              HorizontalScrollMode="Auto" HorizontalScrollBarVisibility="Hidden"
+                              VerticalScrollMode="Disabled" VerticalScrollBarVisibility="Hidden"
+                              IsHorizontalRailEnabled="False" IsVerticalRailEnabled="False"
+                              IsTabStop="False" ZoomMode="Disabled"
+                              automation:AutomationProperties.AccessibilityView="Raw" />
+                <TextBlock x:Name="PlaceholderTextContentPresenter"
+                           Text="{TemplateBinding PlaceholderText}"
+                           Padding="{TemplateBinding Padding}"
+                           Foreground="{StaticResource TertiaryTextBrush}"
+                           FontSize="{TemplateBinding FontSize}" FontFamily="{TemplateBinding FontFamily}"
+                           TextWrapping="NoWrap" LineHeight="20" LineStackingStrategy="BlockLineHeight"
+                           VerticalAlignment="Center"
+                           TextAlignment="{TemplateBinding TextAlignment}"
+                           IsHitTestVisible="False" />
+            </Grid>
+        </ControlTemplate>
+    </ContentDialog.Resources>
+
+    <Grid x:Name="SearchSurface" Width="464" MinHeight="72" RowSpacing="0">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -20,25 +47,25 @@
         </Grid.RowDefinitions>
 
         <!-- Search input row -->
-        <Grid Grid.Row="0" ColumnSpacing="10" Padding="6,6,6,6">
+        <Grid Grid.Row="0" ColumnSpacing="8" Padding="20,0" Height="48">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="Auto" />
             </Grid.ColumnDefinitions>
-            <FontIcon Grid.Column="0" Glyph="&#xE721;" FontSize="15"
+            <FontIcon Grid.Column="0" Glyph="&#xE721;" FontSize="16"
                       Foreground="{StaticResource SecondaryTextBrush}"
-                      VerticalAlignment="Center" Margin="8,0,0,0" />
+                      VerticalAlignment="Center" />
             <TextBox
                 Grid.Column="1"
                 x:Name="SearchBox"
                 PlaceholderText="Search library..."
                 BorderThickness="0"
                 Background="Transparent"
-                FontSize="15"
-                TextChanged="SearchBox_TextChanged"
-                KeyDown="SearchBox_KeyDown" />
-            <TextBlock Grid.Column="2"
+                FontSize="14" Height="48" MinHeight="0" Padding="0,14,0,14" VerticalContentAlignment="Center"
+                Template="{StaticResource QuickSearchInputTemplate}"
+                TextChanged="SearchBox_TextChanged" />
+            <TextBlock x:Name="EscapeHint" Grid.Column="2"
                        Text="ESC"
                        FontSize="11"
                        Foreground="{StaticResource TertiaryTextBrush}"
@@ -55,11 +82,11 @@
         <Grid Grid.Row="2">
             <ScrollViewer
                 x:Name="ResultsScroll"
-                MaxHeight="420"
+                MaxHeight="352"
                 VerticalScrollBarVisibility="Auto"
                 HorizontalScrollBarVisibility="Disabled"
                 Visibility="Collapsed">
-                <StackPanel x:Name="ResultsPanel" Spacing="2" Padding="6" />
+                <StackPanel x:Name="ResultsPanel" Spacing="0" Padding="8" />
             </ScrollViewer>
 
             <!-- Loading -->

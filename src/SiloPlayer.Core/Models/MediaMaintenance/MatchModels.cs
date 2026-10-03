@@ -2,6 +2,7 @@ namespace SiloPlayer.Core.Models.MediaMaintenance;
 
 public sealed class ItemMatchSearchRequest
 {
+    public int Limit { get; set; } = 500;
     public string? Title { get; set; }
     public int? Year { get; set; }
     public string? ImdbId { get; set; }
@@ -40,6 +41,7 @@ public sealed class MatchTitleAlias
 
 public sealed class ItemMatchSearchResponse
 {
+    public bool Truncated { get; set; }
     public List<MatchCandidate> Candidates { get; set; } = [];
 }
 

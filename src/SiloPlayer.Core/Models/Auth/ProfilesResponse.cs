@@ -4,6 +4,8 @@ public class ProfilesResponse
     [System.Text.Json.Serialization.JsonPropertyName("items")]
     public List<Profile> Profiles { get; set; } = [];
     public bool AvatarUploadEnabled { get; set; }
+    public bool MaxAdvisoryAgeSupported { get; set; }
+    public bool RequireAdvisoryAgeSupported { get; set; }
 }
 public class Profile
 {
@@ -27,6 +29,8 @@ public class Profile
     /// </summary>
     public bool IsPrimary { get; set; }
     public string MaxContentRating { get; set; } = "";
+    public int? MaxAdvisoryAge { get; set; }
+    public bool RequireAdvisoryAge { get; set; }
     public string QualityPreference { get; set; } = "";
     public string Language { get; set; } = "";
     public string? PreferredMetadataLanguage { get; set; }

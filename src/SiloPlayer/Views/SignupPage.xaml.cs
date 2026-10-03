@@ -16,6 +16,9 @@ public sealed partial class SignupPage : Page
     {
         ViewModel = App.Services.GetRequiredService<SignupViewModel>();
         this.InitializeComponent();
+        PasswordReveal.WrapInParent(PasswordBox, SignupPasswordGroup);
+        PasswordReveal.WrapInParent(ConfirmPasswordBox, SignupConfirmationGroup);
+        SizeChanged += (_, e) => SignupLayout.Width = Math.Min(384, Math.Max(1, e.NewSize.Width - 48));
 
         ViewModel.SignupSucceeded += OnSignupSucceeded;
     }

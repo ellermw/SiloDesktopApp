@@ -13,11 +13,14 @@ public sealed partial class LoginPage : Page
 {
     public LoginViewModel ViewModel { get; }
     private ServerEntry? _server;
+    private CancellationTokenSource? _appearanceCancellation;
 
     public LoginPage()
     {
         ViewModel = App.Services.GetRequiredService<LoginViewModel>();
         this.InitializeComponent();
+        PasswordReveal.WrapInParent(PasswordBox, LoginPasswordGroup);
+        SizeChanged += (_, e) => LoginLayout.Width = Math.Min(448, Math.Max(1, e.NewSize.Width - 48));
 
         ViewModel.LoginSucceeded += OnLoginSucceeded;
     }
@@ -26,7 +29,9 @@ public sealed partial class LoginPage : Page
     {
         base.OnNavigatedTo(e);
 
-        if (e.Parameter is ServerEntry server)
+        var request = e.Parameter as LoginNavigationRequest;
+        ViewModel.SetNavigationRequest(request);
+        if ((request?.Server ?? e.Parameter as ServerEntry) is { } server)
         {
             _server = server;
             ViewModel.ServerUrl = server.Url;
@@ -40,21 +45,47 @@ public sealed partial class LoginPage : Page
             ServerNameTitle.Text = ViewModel.ServerName;
         }
 
+        _appearanceCancellation?.Cancel();
+        _appearanceCancellation?.Dispose();
+        _appearanceCancellation = new CancellationTokenSource();
+        _ = RefreshSharedAppearanceAsync(_appearanceCancellation.Token);
+
         // Load auth providers and signup status
         await ViewModel.LoadAuthInfoCommand.ExecuteAsync(null);
+        if (ViewModel.ShouldAutoRedirect)
+            await StartOAuthAsync(ViewModel.OAuthProviders[0]);
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
-        ViewModel.CancelDeviceLogin();
+        _appearanceCancellation?.Cancel();
+        _appearanceCancellation?.Dispose();
+        _appearanceCancellation = null;
+        ViewModel.CancelAuthFlows();
         base.OnNavigatedFrom(e);
+    }
+
+    private static async Task RefreshSharedAppearanceAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await App.Services.GetRequiredService<SiloPlayer.Services.ThemeService>()
+                .RefreshSharedAppearanceIfStaleAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) { }
+        catch { /* Appearance must not prevent signing in. Cinema Dark remains available. */ }
     }
 
     private void OnLoginSucceeded()
     {
         var nav = App.Services.GetRequiredService<NavigationService>();
-        nav.Navigate<ProfileSelectPage>();
+        if (App.Services.GetRequiredService<AuthService>().PasswordChangeRequired)
+            nav.Navigate<ChoosePasswordPage>();
+        else nav.Navigate<ProfileSelectPage>();
     }
+
+    private void ForgotPassword_Click(object sender, RoutedEventArgs e)
+        => App.Services.GetRequiredService<NavigationService>().Navigate<PasswordRecoveryPage>();
 
     private void BackButton_Click(object sender, RoutedEventArgs e)
     {
@@ -92,21 +123,48 @@ public sealed partial class LoginPage : Page
         if (sender is not Button btn || btn.Tag is not AuthProvider provider || provider.InstallationId <= 0)
             return;
 
-        // Intercept the server's one-time completion code before the WebUI consumes it.
+        if (!ViewModel.CanStartAuthentication) return;
+        await StartOAuthAsync(provider);
+    }
+
+    private async Task StartOAuthAsync(AuthProvider provider)
+    {
         try
         {
-            btn.IsEnabled = false;
-            var authorizeUri = await ViewModel.BeginOAuthAsync(provider);
-            await ShowOAuthDialogAsync(provider, authorizeUri);
+            var authorizeUri = await ViewModel.BeginOAuthAsync(provider, _appearanceCancellation?.Token ?? CancellationToken.None);
+            if (!await Windows.System.Launcher.LaunchUriAsync(authorizeUri))
+                throw new InvalidOperationException("The sign-in browser could not be opened.");
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
+            if (_appearanceCancellation?.IsCancellationRequested != false) return;
+            ViewModel.CancelOAuth();
             ViewModel.ErrorMessage = $"Couldn't start OAuth sign-in: {ex.Message}";
         }
-        finally
+    }
+
+    private void CancelOAuth_Click(object sender, RoutedEventArgs e) => ViewModel.CancelOAuth();
+
+    private async void RetryRestore_Click(object sender, RoutedEventArgs e)
+    {
+        var request = ViewModel.NavigationRequest;
+        if (ViewModel.IsLoading || request?.RetryRestoreAsync is not { } retry) return;
+        var cancellation = _appearanceCancellation?.Token ?? CancellationToken.None;
+        bool Current() => !cancellation.IsCancellationRequested && ReferenceEquals(request, ViewModel.NavigationRequest);
+        ViewModel.IsLoading = true;
+        try { await retry(cancellation); }
+        catch (OperationCanceledException) { }
+        catch (SiloPlayer.Core.Api.ApiException ex) when (ex.StatusCode == 401)
         {
-            btn.IsEnabled = true;
+            if (!Current()) return;
+            ViewModel.SetNavigationRequest(request with { SessionRestoreUnavailable = false });
+            ViewModel.ErrorMessage = "Your sign-in has expired. Sign in again.";
         }
+        catch (SiloPlayer.Core.Api.ApiException ex)
+        { if (Current()) ViewModel.SetNavigationRequest(request with { SessionRestoreErrorCode = ex.ErrorCode }); }
+        catch (HttpRequestException) { /* The existing unavailable banner remains retryable. */ }
+        finally { if (!cancellation.IsCancellationRequested) ViewModel.IsLoading = false; }
     }
 
     private async void StartDeviceLoginButton_Click(object sender, RoutedEventArgs e)
@@ -125,116 +183,5 @@ public sealed partial class LoginPage : Page
             await Windows.System.Launcher.LaunchUriAsync(uri);
     }
 
-    private async Task ShowOAuthDialogAsync(AuthProvider provider, Uri authorizeUri)
-    {
-        using var lifetimeCts = new CancellationTokenSource();
-        var webView = new WebView2
-        {
-            Width = 840,
-            Height = 620,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-        };
-        var progress = new ProgressRing
-        {
-            Width = 18,
-            Height = 18,
-            IsActive = true,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-        var statusText = new TextBlock
-        {
-            Text = $"Opening {provider.DisplayName}...",
-            VerticalAlignment = VerticalAlignment.Center,
-            TextWrapping = TextWrapping.Wrap
-        };
-        var status = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 10,
-            Visibility = Visibility.Visible
-        };
-        status.Children.Add(progress);
-        status.Children.Add(statusText);
-        var errorText = new TextBlock
-        {
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ErrorBrush"],
-            TextWrapping = TextWrapping.Wrap,
-            Visibility = Visibility.Collapsed
-        };
-        var content = new StackPanel { Spacing = 12 };
-        content.Children.Add(status);
-        content.Children.Add(errorText);
-        content.Children.Add(webView);
-
-        var dialog = new ContentDialog
-        {
-            Title = $"Sign in with {provider.DisplayName}",
-            Content = content,
-            CloseButtonText = "Cancel",
-            XamlRoot = XamlRoot,
-            DefaultButton = ContentDialogButton.Close,
-        };
-
-        var completing = false;
-        webView.NavigationStarting += async (_, args) =>
-        {
-            if (completing ||
-                !OAuthCompletionUrl.TryGetCode(args.Uri, ViewModel.ServerUrl, out var completionCode))
-                return;
-
-            args.Cancel = true;
-            completing = true;
-            progress.IsActive = true;
-            statusText.Text = "Completing sign-in...";
-            status.Visibility = Visibility.Visible;
-            errorText.Visibility = Visibility.Collapsed;
-            try
-            {
-                await ViewModel.CompleteOAuthAsync(completionCode, lifetimeCts.Token);
-                dialog.Hide();
-            }
-            catch (OperationCanceledException) when (lifetimeCts.IsCancellationRequested)
-            {
-                // The user closed the sign-in window while completion was pending.
-            }
-            catch (Exception ex)
-            {
-                errorText.Text = ViewModel.ErrorMessage ?? $"OAuth sign-in failed: {ex.Message}";
-                errorText.Visibility = Visibility.Visible;
-                status.Visibility = Visibility.Collapsed;
-                completing = false;
-            }
-        };
-        webView.NavigationCompleted += (_, args) =>
-        {
-            if (!args.IsSuccess)
-            {
-                var message = $"OAuth page failed to load: {args.WebErrorStatus}";
-                ViewModel.ErrorMessage = message;
-                errorText.Text = message;
-                errorText.Visibility = Visibility.Visible;
-            }
-
-            if (!completing)
-            {
-                progress.IsActive = false;
-                status.Visibility = Visibility.Collapsed;
-            }
-        };
-        dialog.Closed += (_, _) => lifetimeCts.Cancel();
-
-        webView.Source = authorizeUri;
-        try
-        {
-            await dialog.ShowAsync();
-        }
-        finally
-        {
-            lifetimeCts.Cancel();
-            content.Children.Remove(webView);
-            webView.Close();
-        }
-    }
 
 }

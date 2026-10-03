@@ -4,6 +4,24 @@ namespace SiloPlayer.Core.Api;
 
 public class RequestsApi(SiloApiClient client)
 {
+    public Task<MediaRequest> GetAsync(string id, CancellationToken ct = default)
+        => client.GetAsync<MediaRequest>($"/api/v2/requests/{Uri.EscapeDataString(id)}", ct);
+
+    public Task FollowAsync(string mediaType, int tmdbId, CancellationToken ct = default)
+        => client.PutAsync<object>($"/api/v2/requests/follows/{Uri.EscapeDataString(mediaType)}/{tmdbId}", new Dictionary<string, object?>(), ct);
+
+    public Task UnfollowAsync(string mediaType, int tmdbId, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v2/requests/follows/{Uri.EscapeDataString(mediaType)}/{tmdbId}", ct);
+
+    public Task<List<WatchlistTitle>> GetWatchlistTitlesAsync(CancellationToken ct = default)
+        => BrowseV2.AllAsync<WatchlistTitle>(client, "/api/v2/watchlist/titles", ct, 200);
+
+    public Task<WatchlistTitleEntry> AddWatchlistTitleAsync(string mediaType, int tmdbId, CancellationToken ct = default)
+        => client.PutAsync<WatchlistTitleEntry>($"/api/v2/watchlist/titles/{Uri.EscapeDataString(mediaType)}/{tmdbId}", new Dictionary<string, object?>(), ct);
+
+    public Task RemoveWatchlistTitleAsync(string mediaType, int tmdbId, CancellationToken ct = default)
+        => client.DeleteAsync($"/api/v2/watchlist/titles/{Uri.EscapeDataString(mediaType)}/{tmdbId}", ct);
+
     public Task<RequestFeatureStatus> GetStatusAsync(CancellationToken ct = default)
         => client.GetAsync<RequestFeatureStatus>("/api/v2/requests/status", ct);
 

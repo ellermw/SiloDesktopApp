@@ -70,8 +70,10 @@ public sealed class CurrentCatalogParitySourceTests
         Assert.Contains("AddActiveResultFilter(\"rating\"", code);
         Assert.Contains("AddActiveResultFilter(\"resolution\"", code);
         Assert.Contains("AddActiveResultFilter(\"country\"", code);
-        Assert.Contains("ActiveResultFilter_Click", code);
-        Assert.Contains("$\"Remove {text}\"", code);
+        // Mounted chip removal/count and combined-year behavior are exercised
+        // by BrowseParityNativeFixture; a handler spelling is not a contract.
+        Assert.Contains("CatalogFilterBadgeView.Build", code);
+        Assert.Contains("RemoveActiveResultFilterAsync", code);
         Assert.Contains("x:Name=\"ResultCountPanel\"", xaml);
         Assert.Contains("ResultCountPanel.Visibility", code);
         Assert.Contains("x:Name=\"ResultFiltersSheet\"", xaml);
@@ -81,7 +83,7 @@ public sealed class CurrentCatalogParitySourceTests
         Assert.Contains("ResultsScroll.ChangeView(null, 0, null)", code);
         Assert.Contains("Discover · Outside your library", xaml);
         Assert.Contains("UpdatePeopleSection", code);
-        Assert.Contains("PeopleSection.Visibility = Visibility.Collapsed", code);
+        Assert.Contains("PeopleSection.Visibility = ViewModel.PeopleResults.Count > 0", code);
         Assert.Contains("source: \"query\"", viewModel);
         Assert.Contains("type: MediaType", viewModel);
         Assert.Contains("MediaType = MediaScope == \"all\" ? null : MediaScope", viewModel);
@@ -133,9 +135,11 @@ public sealed class CurrentCatalogParitySourceTests
         var code = ReadRepoFile("src", "SiloPlayer", "Views", "CollectionBrowsePage.xaml.cs");
 
         Assert.Contains("x:Name=\"ActiveFiltersPanel\"", xaml);
-        Assert.Contains("BuildActiveFilterBadges", code);
-        Assert.Contains("ActiveFilterBadge_Click", code);
-        Assert.Contains("Clear {badge.Label}", code);
+        Assert.Contains("CatalogFilterBadges.Create(_browseQuery", code);
+        Assert.Contains("CollectionQueryFilters.Load(_browseQuery", code);
+        // Native chip-removal coverage invokes combined Year and verifies
+        // exact query/count changes; this guard only verifies page integration.
+        Assert.Contains("ActiveFilterCountText.Text", code);
         Assert.Contains("await LoadFirstPageAsync();", code);
     }
 

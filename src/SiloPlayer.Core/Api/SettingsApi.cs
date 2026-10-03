@@ -23,6 +23,9 @@ public sealed class ServerBrandingResponse
     [JsonPropertyName("login_bg_url")] public string? LoginBackgroundUrl { get; set; }
 }
 
+public sealed class SectionCustomizationFlags { public bool AllowProfileCustomSections { get; set; } }
+public sealed class ServerIdentity { public string ServerId { get; set; } = ""; }
+
 public sealed class BrandingAssetUploadResponse
 {
     [JsonPropertyName("kind")] public string Kind { get; set; } = "";
@@ -391,8 +394,30 @@ public class ThemeFileResponse
     [JsonPropertyName("customCss")] public string CustomCss { get; set; } = "";
 }
 
+public sealed class SharedAppearanceDocument { public string? Vars { get; set; } }
+
 public class SettingsApi(SiloApiClient client)
 {
+    private readonly SemaphoreSlim _sectionWrites = new(1, 1);
+    private readonly AsyncLocal<bool> _ownsSectionWrite = new();
+    public async Task RunSectionMutationAsync(Func<Task> action, CancellationToken ct = default)
+    {
+        if (_ownsSectionWrite.Value) { await action(); return; }
+        var context = client.CaptureContext();
+        await _sectionWrites.WaitAsync(ct);
+        try
+        {
+            if (!client.IsCurrentContext(context)) throw new OperationCanceledException("The selected profile changed.", ct);
+            _ownsSectionWrite.Value = true;
+            await action();
+        }
+        finally { _ownsSectionWrite.Value = false; _sectionWrites.Release(); }
+    }
+    internal ApiRequestContext CaptureAppearanceContext() => client.CaptureContext();
+    internal bool IsAppearanceContextCurrent(ApiRequestContext context) => client.IsCurrentContext(context);
+    public Task<SharedAppearanceDocument> GetSharedAppearanceAsync(CancellationToken ct = default)
+        => client.GetUnauthenticatedAsync<SharedAppearanceDocument>("/api/v2/theme/admin-css", ct);
+
     private readonly SemaphoreSlim _onboardingGuard = new(1, 1);
     private static readonly JsonSerializerOptions WireOptions = new()
     {
@@ -470,6 +495,17 @@ public class SettingsApi(SiloApiClient client)
             BuildContractSettingPath(key, scope, deviceId, profileId),
             new Dictionary<string, object?> { ["value"] = value }, ct);
 
+    public Task SetContractSettingValueAsync(ApiRequestContext context, string key, string scope,
+        object? value, string? deviceId = null, string? profileId = null, CancellationToken ct = default)
+        => client.SendRequestAsync<ContractEffectiveSettingEntry>(context, HttpMethod.Put,
+            BuildContractSettingPath(key, scope, deviceId, profileId ?? context.ProfileId),
+            new Dictionary<string, object?> { ["value"] = value }, ct);
+
+    public Task DeleteContractSettingValueAsync(ApiRequestContext context, string key, string scope,
+        string? deviceId = null, string? profileId = null, CancellationToken ct = default)
+        => client.SendNoContentRequestAsync(context, HttpMethod.Delete,
+            BuildContractSettingPath(key, scope, deviceId, profileId ?? context.ProfileId), null, ct);
+
     public Task DeleteContractSettingValueAsync(
         string key,
         string scope,
@@ -477,6 +513,10 @@ public class SettingsApi(SiloApiClient client)
         string? profileId = null,
         CancellationToken ct = default)
         => client.DeleteAsync(BuildContractSettingPath(key, scope, deviceId, profileId), ct);
+
+    public Task<ContractEffectiveSettingEntry> GetContractStoredSettingAsync(string key, string scope,
+        string? deviceId = null, string? profileId = null, CancellationToken ct = default)
+        => client.GetAsync<ContractEffectiveSettingEntry>(BuildContractSettingPath(key, scope, deviceId, profileId), ct);
 
     public async Task<UserDeviceListResponse> GetUserDevicesAsync(bool household = false, CancellationToken ct = default)
         => new() { Devices = await client.GetAllItemsAsync<UserDevice>(
@@ -594,16 +634,30 @@ public class SettingsApi(SiloApiClient client)
         => client.PutNoContentAsync($"/api/v2/settings/plugins/{installationId}", request, ct);
 
     // ===== Profile Sections =====
+    public ApiRequestContext CaptureContext() => client.CaptureContext();
+    public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
+    public Task<SectionCustomizationFlags> GetSectionFlagsAsync(CancellationToken ct = default)
+        => client.GetAsync<SectionCustomizationFlags>("/api/v2/profile/sections/flags", ct);
+    public Task<ServerIdentity> GetServerIdentityAsync(CancellationToken ct = default)
+        => client.GetAsync<ServerIdentity>("/api/v2/system/identity", ct);
 
     public Task<ProfileSectionOverridesResponse> GetProfileSectionsAsync(string scope = "home", string? libraryId = null, CancellationToken ct = default)
         => client.GetAsync<ProfileSectionOverridesResponse>($"/api/v2/profile/sections{SectionQuery(scope, libraryId)}", ct);
 
     public Task UpdateProfileSectionsAsync(SaveOverridesRequest request, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v2/profile/sections{SectionQuery(request.Scope, request.LibraryId)}",
-            new Dictionary<string, object?> { ["overrides"] = JsonSerializer.SerializeToElement(request.Overrides, WireOptions) }, ct);
+    {
+        var context = client.CaptureContext();
+        var body = new Dictionary<string, object?> { ["overrides"] = JsonSerializer.SerializeToElement(request.Overrides, WireOptions) };
+        return RunSectionMutationAsync(() => client.SendNoContentRequestAsync(context, HttpMethod.Put,
+            $"/api/v2/profile/sections{SectionQuery(request.Scope, request.LibraryId)}", body, ct), ct);
+    }
 
     public Task ResetProfileSectionsAsync(string scope = "home", string? libraryId = null, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v2/profile/sections{SectionQuery(scope, libraryId)}", ct);
+    {
+        var context = client.CaptureContext();
+        return RunSectionMutationAsync(() => client.SendNoContentRequestAsync(context, HttpMethod.Delete,
+            $"/api/v2/profile/sections{SectionQuery(scope, libraryId)}", null, ct), ct);
+    }
 
     public Task<SettingsSectionsResponse> GetProfileSectionSettingsAsync(string scope = "home", string? libraryId = null, CancellationToken ct = default)
         => client.GetAsync<SettingsSectionsResponse>($"/api/v2/profile/sections/settings{SectionQuery(scope, libraryId)}", ct);

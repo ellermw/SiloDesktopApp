@@ -27,51 +27,23 @@
             Width="48"
             Height="48" />
 
-        <ScrollViewer
+        <ScrollViewer x:Name="PreviewScroll" ViewChanged="PreviewScroll_ViewChanged"
             Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
-            <StackPanel x:Name="WizardPageShell" Padding="48,24,48,48" Spacing="24" MaxWidth="1180">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-
-                    <Button
-                        Grid.Column="0"
-                        Style="{StaticResource GhostButtonStyle}"
-                        Margin="0,8,14,0"
-                        VerticalAlignment="Top"
-                        Click="BackButton_Click">
-                        <FontIcon Glyph="&#xE72B;" FontSize="14" />
-                    </Button>
-
-                    <StackPanel Grid.Column="1" Spacing="6">
-                        <TextBlock
-                            x:Name="WizardTitle"
-                            Text="New Collection"
-                            FontSize="{StaticResource FontSizeDisplayLarge}"
-                            FontWeight="Bold"
-                            Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock
-                            x:Name="WizardSubtitle"
-                            Text="Tune the filters until the cards below show the collection you want."
-                            FontSize="14"
-                            Foreground="{StaticResource SecondaryTextBrush}"
-                            TextWrapping="Wrap"
-                            MaxWidth="720" />
+            <StackPanel x:Name="WizardPageShell" Padding="48,24,48,48" Spacing="24">
+                <StackPanel Spacing="20">
+                    <StackPanel Spacing="4">
+                        <TextBlock x:Name="WizardTitle" Text="New Collection" FontSize="32" FontWeight="Bold" CharacterSpacing="-40" TextWrapping="Wrap" Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock x:Name="WizardSubtitle" Text="Tune the filters until the cards below show the collection you want." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                     </StackPanel>
-                    <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="10" VerticalAlignment="Bottom" Margin="24,0,0,4">
-                        <Border x:Name="FiltersStepBadge" CornerRadius="14" Padding="12,6" Background="{StaticResource AccentBackgroundBrush}">
-                            <TextBlock x:Name="FiltersStepText" Text="1  Filters" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" />
-                        </Border>
-                        <FontIcon Glyph="&#xE76C;" FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" />
-                        <Border x:Name="DetailsStepBadge" CornerRadius="14" Padding="12,6" Background="{StaticResource SurfaceBrush}">
-                            <TextBlock x:Name="DetailsStepText" Text="2  Details" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
-                        </Border>
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Border x:Name="FiltersStepBadge" CornerRadius="14" Padding="10,4" Background="{StaticResource AccentBackgroundBrush}"><TextBlock x:Name="FiltersStepText" Text="1  Filters" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" /></Border>
+                        <Border Width="24" Height="1" Background="{StaticResource BorderBrush}" VerticalAlignment="Center" />
+                        <Border x:Name="DetailsStepBadge" CornerRadius="14" Padding="10,4" Background="{StaticResource SurfaceBrush}"><TextBlock x:Name="DetailsStepText" Text="2  Details" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" /></Border>
                     </StackPanel>
-                </Grid>
+                </StackPanel>
+
+
 
                 <Border
                     Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
@@ -170,11 +142,18 @@
                                 </StackPanel>
                                 <StackPanel x:Name="PosterDetailsPanel" Grid.Column="1" Spacing="10">
                                     <TextBlock Text="Poster" FontSize="16" FontWeight="SemiBold" />
-                                    <Button Style="{StaticResource OutlineButtonStyle}"
-                                            HorizontalAlignment="Stretch" Height="128" Click="ChoosePoster_Click">
-                                        <StackPanel Spacing="8" HorizontalAlignment="Center">
-                                            <FontIcon Glyph="&#xE898;" FontSize="22" />
-                                            <TextBlock Text="Click or drop image" />
+                                    <Border x:Name="WizardPosterFrame" Height="128" CornerRadius="12" BorderThickness="1" BorderBrush="{StaticResource BorderBrush}" Visibility="Collapsed">
+                                        <Grid>
+                                            <Image x:Name="WizardPosterImage" Stretch="UniformToFill" Visibility="Collapsed" AutomationProperties.Name="Poster" />
+                                            <Button x:Name="WizardRemoveSelectedPoster" AutomationProperties.Name="Remove selected file" Click="RemoveSelectedPoster_Click" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Top" Width="24" Height="24" MinWidth="0" MinHeight="0" Padding="0" Margin="4" Style="{StaticResource SecondaryButtonStyle}" />
+                                            <Button x:Name="WizardDeletePoster" AutomationProperties.Name="Delete image" Click="DeletePoster_Click" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Top" Width="24" Height="24" MinWidth="0" MinHeight="0" Padding="0" Margin="4" Style="{StaticResource DestructiveButtonStyle}" />
+                                        </Grid>
+                                    </Border>
+                                    <Button x:Name="WizardPosterDropTarget" Style="{StaticResource OutlineButtonStyle}" BorderThickness="2" Padding="0"
+                                            HorizontalAlignment="Stretch" Height="128" Click="ChoosePoster_Click" AllowDrop="True" DragOver="Poster_DragOver" Drop="Poster_Drop">
+                                        <StackPanel x:Name="WizardPosterPlaceholder" Spacing="8" HorizontalAlignment="Center">
+                                            <FontIcon Glyph="&#xE898;" FontSize="24" />
+                                            <TextBlock Text="Click or drop image" FontSize="12" />
                                         </StackPanel>
                                     </Button>
                                     <TextBlock x:Name="PosterFileStatusText" Text="Upload a JPG, PNG, or WebP (max 20 MB)."
@@ -203,77 +182,22 @@
                                            Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" Margin="4,0,0,0" />
                             </controls:WrapPanel>
 
-                            <Border x:Name="FiltersAdvancedPanel" Visibility="Collapsed"
-                                    Background="{StaticResource CardBackgroundBrush}"
-                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                    CornerRadius="14" Padding="18">
-                                <StackPanel Spacing="14">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel Spacing="3">
-                                            <TextBlock Text="Filters" FontSize="17" FontWeight="SemiBold" />
-                                            <TextBlock Text="Choose libraries and add rules to refine this collection."
-                                                       FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" />
-                                        </StackPanel>
-                                        <Button Grid.Column="1" Style="{StaticResource GhostButtonStyle}" Click="FiltersButton_Click"
-                                                ToolTipService.ToolTip="Close filters">
-                                            <FontIcon Glyph="&#xE711;" FontSize="13" />
-                                        </Button>
-                                    </Grid>
-                                    <StackPanel Spacing="7">
-                                        <TextBlock Text="Libraries" FontSize="13" FontWeight="SemiBold" />
-                                        <TextBlock Text="Leave every library unchecked to match all visible libraries."
-                                                   FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
-                                        <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto">
-                                            <StackPanel x:Name="LibrariesPanel" Spacing="4" />
-                                        </ScrollViewer>
-                                    </StackPanel>
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <ComboBox x:Name="MatchModeCombo" MinWidth="180" HorizontalAlignment="Left" CornerRadius="8"
-                                                  SelectionChanged="MatchModeCombo_SelectionChanged" />
-                                        <Button Grid.Column="1" Style="{StaticResource GhostButtonStyle}" Click="AddRule_Click">
-                                            <StackPanel Orientation="Horizontal" Spacing="6">
-                                                <FontIcon Glyph="&#xE710;" FontSize="13" />
-                                                <TextBlock Text="Add filter" />
-                                            </StackPanel>
-                                        </Button>
-                                    </Grid>
-                                    <StackPanel x:Name="RulesPanel" Spacing="10" />
-                                </StackPanel>
-                            </Border>
-
                             <Border Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}"
                                     BorderThickness="1" CornerRadius="14" Padding="18,14">
-                                <Grid ColumnSpacing="18">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="180" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Spacing="3" VerticalAlignment="Center">
-                                        <TextBlock Text="Max items" FontSize="14" FontWeight="SemiBold" />
-                                        <TextBlock Text="Caps saved collection results. Use 1–500."
-                                                   FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
-                                    </StackPanel>
-                                    <TextBox Grid.Column="1" Style="{StaticResource DarkTextBoxStyle}" PlaceholderText="No limit"
-                                             Text="{x:Bind ViewModel.LimitText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                             TextChanged="LimitTextBox_TextChanged" />
-                                </Grid>
+                                <StackPanel Spacing="8">
+                                    <StackPanel Spacing="3"><TextBlock Text="Max items" FontSize="14" FontWeight="SemiBold" /><TextBlock Text="Caps saved collection results. Use 1–500." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" /></StackPanel>
+                                    <TextBox Style="{StaticResource DarkTextBoxStyle}" PlaceholderText="No limit" HorizontalAlignment="Stretch" Text="{x:Bind ViewModel.LimitText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" TextChanged="LimitTextBox_TextChanged" />
+                                </StackPanel>
                             </Border>
 
                             <ProgressRing x:Name="PreviewLoadingRing" Width="32" Height="32" HorizontalAlignment="Center"
                                           IsActive="{x:Bind ViewModel.IsPreviewing, Mode=OneWay}"
                                           Visibility="{x:Bind ViewModel.IsPreviewing, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
+                            <Button Content="Retry preview" Click="Preview_Click" Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}" HorizontalAlignment="Center" />
                             <StackPanel x:Name="PreviewEmptyPanel" Visibility="Collapsed" Spacing="5" HorizontalAlignment="Center" Margin="0,42">
                                 <TextBlock Text="No titles match these filters yet." FontSize="14" FontWeight="SemiBold" HorizontalAlignment="Center" />
                                 <TextBlock Text="Loosen the filters above to see what your collection would include."
-                                           FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" HorizontalAlignment="Center" />
+                                           FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" />
                             </StackPanel>
                             <ItemsRepeater x:Name="PreviewItemsRepeater"
                                            ItemsSource="{x:Bind ViewModel.PreviewMediaItems, Mode=OneWay}">
@@ -298,6 +222,7 @@
                 </Grid>
 
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="10">
+                    <Button x:Name="WizardDeleteButton" Content="Delete collection" Click="DeleteCollection_Click" Visibility="Collapsed" Style="{StaticResource DestructiveButtonStyle}" />
                     <Button
                         x:Name="CancelButton"
                         Style="{StaticResource GhostButtonStyle}"
@@ -339,5 +264,31 @@
                         Content="Next: Details" Click="ContinueToDetails_Click" />
             </StackPanel>
         </Border>
+        <Button x:Name="WizardBackButton" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="8,16,0,0" Width="34" Height="34" MinWidth="0" MinHeight="0" Padding="6" CornerRadius="17" Style="{StaticResource GhostButtonStyle}" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Click="BackButton_Click" AutomationProperties.Name="Go back"><FontIcon Glyph="&#xE76B;" FontSize="20" /></Button>
+        <controls:SlideSheet x:Name="WizardFiltersSheet" Title="Filters" Canvas.ZIndex="40">
+            <controls:SlideSheet.SheetContent>
+                <Grid RowDefinitions="*,Auto" RowSpacing="16">
+                    <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="FiltersAdvancedPanel" Spacing="16" Padding="0,0,0,16">
+                            <StackPanel Spacing="8"><TextBlock Text="Media Type" FontSize="14" FontWeight="Medium" LineHeight="14" LineStackingStrategy="BlockLineHeight" /><ComboBox x:Name="SheetMediaScopeCombo" HorizontalAlignment="Left" MinWidth="0" SelectionChanged="SheetMediaScopeCombo_SelectionChanged" /></StackPanel>
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Libraries" FontSize="14" FontWeight="Medium" LineHeight="14" LineStackingStrategy="BlockLineHeight" />
+                                <Button x:Name="LibraryPickerButton" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Style="{StaticResource OutlineButtonStyle}" Height="36" MinHeight="0" Padding="12,0">
+                                    <Grid ColumnDefinitions="*,Auto"><TextBlock x:Name="LibraryPickerLabel" Text="All Libraries" FontSize="14" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" /><FontIcon Grid.Column="1" Glyph="&#xE70D;" FontSize="12" VerticalAlignment="Center" /></Grid>
+                                </Button>
+                            </StackPanel>
+                            <ComboBox x:Name="MatchModeCombo" Visibility="Collapsed" SelectionChanged="MatchModeCombo_SelectionChanged" />
+                            <StackPanel x:Name="RulesPanel" Spacing="10" />
+                        </StackPanel>
+                    </ScrollViewer>
+                    <Border Grid.Row="1" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Button Content="Clear All" Height="32" MinHeight="0" Style="{StaticResource OutlineButtonStyle}" HorizontalAlignment="Left" Click="ClearWizardFilters_Click" />
+                            <Button Grid.Column="1" Content="Done" Height="32" MinHeight="0" Style="{StaticResource AccentButtonStyle}" Click="DoneWizardFilters_Click" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </controls:SlideSheet.SheetContent>
+        </controls:SlideSheet>
     </Grid>
 </Page>

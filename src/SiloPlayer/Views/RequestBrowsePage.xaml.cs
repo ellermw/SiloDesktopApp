@@ -1,270 +1,199 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Navigation;
-using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Shapes;
-using Microsoft.UI.Xaml.Input;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Requests;
+using SiloPlayer.Core.Services;
+using SiloPlayer.Controls;
 using SiloPlayer.Converters;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
+using SiloPlayer.ViewModels;
 
 namespace SiloPlayer.Views;
 
 public sealed partial class RequestBrowsePage : Page
 {
-    private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
     private readonly RequestsApi _api = App.Services.GetRequiredService<RequestsApi>();
+    private readonly UICustomizationService? _presentation = App.Services.GetService<UICustomizationService>();
+    private readonly RequestBrowseSession _browse = new();
     private readonly CancellationTokenSource _lifetime = new();
-    private CancellationTokenSource? _loadCts;
     private RequestBrowseNavigation? _navigation;
+    private RequestFeatureStatus _features = new();
+    private ScrollViewer? _scroll;
     private bool _initialized;
-    private int _page = 1;
-    private int _totalPages;
+    private string _mediaType = "movie";
     private double _browseCardWidth = 184;
+    private double _gap = 12;
 
-    public RequestBrowsePage() => InitializeComponent();
-
+    public RequestBrowsePage()
+    {
+        InitializeComponent(); ResultsGrid.ItemsSource = _browse.Results; UpdateMediaTabs();
+        _browse.Changed += UpdateState;
+        Unloaded += (_, _) => DetachScroll();
+    }
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
         if (e.Parameter is not RequestBrowseNavigation nav) { Fail("Browse category not found."); return; }
         _navigation = nav;
-        var fallbackTitle = HumanizeSlug(nav.Slug);
-        TitleText.Text = fallbackTitle;
-        HeaderTileText.Text = fallbackTitle;
-        HeaderTileText.Visibility = Visibility.Visible;
-        PageText.Text = "Loading...";
-        MediaTypeCombo.Visibility = nav.Kind == "genre" ? Visibility.Visible : Visibility.Collapsed;
-        if (nav.Kind == "network") MediaTypeCombo.SelectedIndex = 1;
+        var title = HumanizeSlug(nav.Slug); TitleText.Text = title; HeaderTileText.Text = title;
+        MediaTypeTabs.Visibility = nav.Kind == "genre" ? Visibility.Visible : Visibility.Collapsed;
+        SortCombo.Visibility = nav.Kind == "section" ? Visibility.Collapsed : Visibility.Visible;
+        if (_presentation != null) _presentation.Changed += Presentation_Changed;
         _initialized = true;
         await LoadAsync();
     }
-
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
-        Interlocked.Exchange(ref _loadCts, null)?.Cancel();
-        _lifetime.Cancel();
+        _initialized = false; _browse.Cancel(); _lifetime.Cancel(); DetachScroll();
+        if (_presentation != null) _presentation.Changed -= Presentation_Changed;
         base.OnNavigatedFrom(e);
     }
-
     private async Task LoadAsync()
     {
-        if (_navigation == null) return;
-        var owner = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-        var previous = Interlocked.Exchange(ref _loadCts, owner);
-        previous?.Cancel();
-        var requestedPage = _page;
-        var requestedMediaType = _navigation.Kind switch { "studio" => "movie", "network" => "series", _ => SelectedTag(MediaTypeCombo, "movie") };
-        var requestedSort = SelectedTag(SortCombo, "popularity");
-        LoadingLayer.Visibility = Visibility.Visible;
-        BrowseSkeleton.Visibility = Visibility.Visible;
-        LoadingText.Visibility = Visibility.Collapsed;
-        EmptyState.Visibility = Visibility.Collapsed;
-        try
+        if (_navigation is not { } nav) return;
+        var type = nav.Kind switch { "studio" => "movie", "network" => "series", _ => _mediaType };
+        var sort = (SortCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "popularity";
+        await _browse.ResetAsync(async (page, token) =>
         {
-            var response = await _api.BrowseDiscoverAsync(
-                _navigation.Kind,
-                _navigation.Slug,
-                requestedMediaType,
-                requestedSort,
-                requestedPage,
-                owner.Token);
-            owner.Token.ThrowIfCancellationRequested();
-            if (!ReferenceEquals(Volatile.Read(ref _loadCts), owner)) return;
-            TitleText.Text = response.DisplayName;
-            HeaderTileText.Text = response.DisplayName;
-            HeaderTileText.Visibility = string.IsNullOrWhiteSpace(response.LogoUrl) ? Visibility.Visible : Visibility.Collapsed;
-            HeaderLogo.Source = string.IsNullOrWhiteSpace(response.LogoUrl)
-                ? null
-                : (ImageSource)RemoteImageConverter.Convert(
-                    response.LogoUrl,
-                    typeof(ImageSource),
-                    null!,
-                    string.Empty);
-            _totalPages = Math.Max(1, response.TotalPages);
-            PageText.Text = response.Results.Count == 0 ? "No results." : $"Page {requestedPage} of {_totalPages}";
-            FooterPageText.Text = $"Page {requestedPage} of {_totalPages}";
-            PreviousButton.IsEnabled = requestedPage > 1; NextButton.IsEnabled = requestedPage < _totalPages;
-            FooterPanel.Visibility = _totalPages > 1 ? Visibility.Visible : Visibility.Collapsed;
-            ResultsGrid.ItemsSource = response.Results;
-            EmptyState.Visibility = response.Results.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            LoadingLayer.Visibility = Visibility.Collapsed;
-            if (App.MainWindowInstance is MainWindow window) window.SetDynamicTitle(response.DisplayName);
-        }
-        catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
-        catch (ApiException ex) when (ex.StatusCode == 404)
-        {
-            Fail($"{(_navigation.Kind == "studio" ? "Studio" : _navigation.Kind == "network" ? "Network" : "Genre")} not found.");
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"Request browse load failed: {ex}");
-            Fail("Could not load this browse page. Try a different sort or media type.");
-        }
-        finally
-        {
-            Interlocked.CompareExchange(ref _loadCts, null, owner);
-            owner.Dispose();
-        }
-    }
-
-    private async void Filter_Changed(object sender, SelectionChangedEventArgs e) { if (!_initialized) return; _page = 1; await LoadAsync(); }
-    private async void Previous_Click(object sender, RoutedEventArgs e) { if (_page <= 1) return; _page--; await LoadAsync(); ResultsGrid.StartBringIntoView(); }
-    private async void Next_Click(object sender, RoutedEventArgs e) { if (_page >= _totalPages) return; _page++; await LoadAsync(); ResultsGrid.StartBringIntoView(); }
-    private void ResultsGrid_ItemClick(object sender, ItemClickEventArgs e) { if (e.ClickedItem is RequestMediaResult item) App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(item.MediaType, item.TmdbId)); }
-
-    private void OpenLibrary_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button { Tag: string contentId } && !string.IsNullOrWhiteSpace(contentId))
-            App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(contentId);
-    }
-
-    private async void Request_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button { Tag: RequestMediaResult item } button) return;
-        button.IsEnabled = false; button.Content = "Submitting…";
-        try
-        {
-            var created = await _api.CreateAsync(new CreateMediaRequestInput { MediaType = item.MediaType, TmdbId = item.TmdbId, Title = item.Title, Year = item.Year, Overview = item.Overview, PosterPath = item.PosterPath, BackdropPath = item.BackdropPath }, _lifetime.Token);
-            item.Request = new RequestState
+            if (nav.Kind == "section")
             {
-                Status = string.IsNullOrWhiteSpace(created.Status) ? "pending" : created.Status,
-                Requestable = false,
-                RequestId = created.Id,
-            };
-            if (ResultsGrid.ContainerFromItem(item) is GridViewItem { ContentTemplateRoot: Grid card })
-                ApplyStatusRibbon(card, item);
-        }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
+                var section = await _api.GetDiscoverySectionAsync(nav.Slug, page, token);
+                return (new DiscoverBrowseResponse { DisplayName = section.Title, Results = section.Results, TotalPages = section.TotalPages }, RequestDiscoveryPaging.Next(section, page));
+            }
+            var response = await _api.BrowseDiscoverAsync(nav.Kind, nav.Slug, type, sort, page, token);
+            return (response, page < Math.Min(500, response.TotalPages) ? page + 1 : (int?)null);
+        });
+        if (_lifetime.IsCancellationRequested) return;
+        try { _features = await _api.GetStatusAsync(_lifetime.Token); RebuildRealizedCards(); }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
+        catch { _features = new(); }
+        await TraverseEmptyPagesAsync();
+    }
+    private async Task TraverseEmptyPagesAsync()
+    {
+        while (_initialized && !_browse.IsLoading && !_browse.IsLoadingMore && _browse.Results.Count == 0 && _browse.HasMore && _browse.MoreError == null)
+            await _browse.LoadMoreAsync();
+    }
+    private void UpdateState()
+    {
+        if (_browse.FirstPage is { } first)
         {
-            button.Content = item.RequestLabel;
-            button.IsEnabled = item.Request.Requestable;
+            TitleText.Text = first.DisplayName; HeaderTileText.Text = first.DisplayName;
+            HeaderTileText.Visibility = string.IsNullOrWhiteSpace(first.LogoUrl) ? Visibility.Visible : Visibility.Collapsed;
+            HeaderLogo.Source = string.IsNullOrWhiteSpace(first.LogoUrl) ? null : (ImageSource)new UrlToImageSourceConverter().Convert(first.LogoUrl, typeof(ImageSource), null!, "");
+            if (App.MainWindowInstance is MainWindow window) window.SetDynamicTitle(first.DisplayName);
         }
-        catch (Exception ex)
+        PageText.Text = _browse.IsLoading ? "Loading..." : _navigation?.Kind switch { "studio" => "Studio", "network" => "Network", "genre" => "Genre", _ => "Discover" };
+        LoadingLayer.Visibility = _browse.IsLoading || _browse.Error != null ? Visibility.Visible : Visibility.Collapsed;
+        BrowseSkeleton.Visibility = _browse.IsLoading ? Visibility.Visible : Visibility.Collapsed;
+        LoadingText.Visibility = _browse.Error != null ? Visibility.Visible : Visibility.Collapsed;
+        var missing = _browse.Error is ApiException { StatusCode: 404 };
+        LoadingText.Text = missing ? $"{PageText.Text} not found." : "Could not load this browse page. Try a different sort or media type.";
+        RetryBrowseButton.Visibility = _browse.Error != null && !missing ? Visibility.Visible : Visibility.Collapsed;
+        EmptyState.Visibility = !_browse.IsLoading && _browse.Error == null && !_browse.HasMore && _browse.Results.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        FooterPanel.Visibility = _browse.HasMore && _browse.Error == null ? Visibility.Visible : Visibility.Collapsed;
+        MoreLoadingRing.Visibility = _browse.IsLoadingMore ? Visibility.Visible : Visibility.Collapsed; MoreLoadingRing.IsActive = _browse.IsLoadingMore;
+        MoreErrorText.Visibility = _browse.MoreError != null ? Visibility.Visible : Visibility.Collapsed;
+        LoadMoreButton.Content = _browse.MoreError != null ? "Try again" : "Load more"; LoadMoreButton.IsEnabled = !_browse.IsLoadingMore;
+    }
+    private async void RetryBrowse_Click(object sender, RoutedEventArgs e) => await LoadAsync();
+    private async void Filter_Changed(object sender, SelectionChangedEventArgs e) { if (_initialized) await LoadAsync(); }
+    private async void MediaType_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string type }) return;
+        if (_mediaType == type || !_initialized) return; _mediaType = type; UpdateMediaTabs(); await LoadAsync();
+    }
+    private void UpdateMediaTabs()
+    {
+        foreach (var tab in new[] { MoviesTab, SeriesTab })
         {
-            button.Content = item.RequestLabel;
-            button.IsEnabled = item.Request.Requestable;
-            App.Services.GetRequiredService<ToastService>().Error($"Request failed: {ex.Message}");
+            var selected = tab.Tag?.ToString() == _mediaType;
+            tab.Background = selected ? (Brush)Application.Current.Resources["SurfaceRaisedBrush"] : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            tab.Foreground = (Brush)Application.Current.Resources[selected ? "PrimaryTextBrush" : "SecondaryTextBrush"];
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(tab, $"{tab.Content}{(selected ? ", selected" : "")}");
         }
     }
-
-    private void Back_Click(object sender, RoutedEventArgs e) => App.Services.GetRequiredService<NavigationService>().GoBack();
-    private void Fail(string text) { EmptyState.Visibility = Visibility.Collapsed; BrowseSkeleton.Visibility = Visibility.Collapsed; FooterPanel.Visibility = Visibility.Collapsed; LoadingText.Text = text; LoadingText.Visibility = Visibility.Visible; }
-    private static string SelectedTag(ComboBox box, string fallback) => (box.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? fallback;
-
-    private void ResultCard_PointerEntered(object sender, PointerRoutedEventArgs e)
+    private async void LoadMore_Click(object sender, RoutedEventArgs e) { await _browse.LoadMoreAsync(); await TraverseEmptyPagesAsync(); }
+    private void ResultsGrid_Loaded(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement card && card.FindName("InlineRequestButton") is Button button)
-            button.Opacity = 1;
+        DetachScroll(); _scroll = FindScroll(ResultsGrid); if (_scroll != null) _scroll.ViewChanged += Scroll_ViewChanged;
+        ApplyLayout(ActualWidth);
     }
-
-    private void ResultCard_PointerExited(object sender, PointerRoutedEventArgs e)
+    private async void Scroll_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
     {
-        if (sender is FrameworkElement card && card.FindName("InlineRequestButton") is Button button)
-            button.Opacity = button.FocusState == FocusState.Unfocused ? 0 : 1;
+        if (_scroll == null || _browse.MoreError != null || _scroll.ScrollableHeight - _scroll.VerticalOffset > 600) return;
+        await _browse.LoadMoreAsync(); await TraverseEmptyPagesAsync();
     }
-
-    private void InlineAction_Tapped(object sender, TappedRoutedEventArgs e) => e.Handled = true;
-
-    private void InlineRequest_GotFocus(object sender, RoutedEventArgs e)
+    private void DetachScroll() { if (_scroll != null) _scroll.ViewChanged -= Scroll_ViewChanged; _scroll = null; }
+    private static ScrollViewer? FindScroll(DependencyObject root)
     {
-        if (sender is Button button) button.Opacity = 1;
+        if (root is ScrollViewer scroll) return scroll;
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+            if (FindScroll(VisualTreeHelper.GetChild(root, i)) is { } found) return found;
+        return null;
     }
-
-    private void InlineRequest_LostFocus(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button button) button.Opacity = 0;
-    }
-
     private void ResultsGrid_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
     {
-        if (!args.InRecycleQueue && args.ItemContainer.ContentTemplateRoot is Grid card)
-        {
-            SizeResultCard(card);
-            if (args.Item is RequestMediaResult item)
+        if (!args.InRecycleQueue && args.Item is RequestMediaResult item && args.ItemContainer.ContentTemplateRoot is ContentControl host) BuildCard(host, item);
+    }
+    private void BuildCard(ContentControl host, RequestMediaResult item)
+    {
+        host.Tag = item; host.Margin = new Thickness(_gap / 2); host.Content = ExternalTitleCard.Build(item, _browseCardWidth,
+            request: async () =>
             {
-                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(
-                    args.ItemContainer,
-                    $"Open {item.Title} request details");
-                if (card.FindName("InlineRequestButton") is Button requestButton)
-                    Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(requestButton, $"Request {item.Title}");
-                ApplyStatusRibbon(card, item);
-            }
-        }
+                if (item.MediaType == "series") { App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(item.MediaType, item.TmdbId)); return; }
+                var created = await _api.CreateAsync(new() { MediaType = item.MediaType, TmdbId = item.TmdbId, Title = item.Title, Year = item.Year, Overview = item.Overview, PosterPath = item.PosterPath, BackdropPath = item.BackdropPath }, _lifetime.Token);
+                item.Request = new() { Status = string.IsNullOrWhiteSpace(created.Status) ? "pending" : created.Status, Requestable = false, RequestId = created.Id };
+                if (ReferenceEquals(host.Tag, item)) BuildCard(host, item);
+                App.Services.GetRequiredService<ToastService>().Success("Request submitted");
+            }, watchlist: _features.WatchlistTitlesSupported ? async () =>
+            {
+                if (item.InWatchlist == true) await _api.RemoveWatchlistTitleAsync(item.MediaType, item.TmdbId, _lifetime.Token);
+                else await _api.AddWatchlistTitleAsync(item.MediaType, item.TmdbId, _lifetime.Token);
+                item.InWatchlist = item.InWatchlist != true;
+                App.Services.GetService<WatchlistViewModel>()?.InvalidateExternalTitles();
+            } : null);
     }
-
-    private static void ApplyStatusRibbon(Grid card, RequestMediaResult item)
+    private void RebuildRealizedCards()
     {
-        if (card.FindName("StatusRibbon") is not Border ribbon ||
-            card.FindName("StatusDot") is not Ellipse dot ||
-            card.FindName("StatusRibbonText") is not TextBlock text)
-            return;
-
-        var tone = item.Request.Status switch
-        {
-            "pending" => "amber",
-            "queued" or "downloading" => "sky",
-            "approved" or "completed" => "emerald",
-            _ when item.Availability == "available" => "emerald",
-            _ => "zinc",
-        };
-        var (background, foreground, border, dotColor) = tone switch
-        {
-            "amber" => (Microsoft.UI.ColorHelper.FromArgb(191, 69, 26, 3), Microsoft.UI.ColorHelper.FromArgb(255, 254, 243, 199), Microsoft.UI.ColorHelper.FromArgb(77, 251, 191, 36), Microsoft.UI.ColorHelper.FromArgb(255, 252, 211, 77)),
-            "sky" => (Microsoft.UI.ColorHelper.FromArgb(191, 8, 47, 73), Microsoft.UI.ColorHelper.FromArgb(255, 224, 242, 254), Microsoft.UI.ColorHelper.FromArgb(89, 56, 189, 248), Microsoft.UI.ColorHelper.FromArgb(255, 125, 211, 252)),
-            "emerald" => (Microsoft.UI.ColorHelper.FromArgb(204, 2, 44, 34), Microsoft.UI.ColorHelper.FromArgb(255, 209, 250, 229), Microsoft.UI.ColorHelper.FromArgb(77, 52, 211, 153), Microsoft.UI.ColorHelper.FromArgb(255, 110, 231, 183)),
-            _ => (Microsoft.UI.ColorHelper.FromArgb(204, 24, 24, 27), Microsoft.UI.ColorHelper.FromArgb(255, 228, 228, 231), Microsoft.UI.ColorHelper.FromArgb(26, 255, 255, 255), Microsoft.UI.ColorHelper.FromArgb(255, 161, 161, 170)),
-        };
-        ribbon.Background = new SolidColorBrush(background);
-        ribbon.BorderBrush = new SolidColorBrush(border);
-        dot.Fill = new SolidColorBrush(dotColor);
-        text.Foreground = new SolidColorBrush(foreground);
+        if (ResultsGrid.ItemsPanelRoot is not { } panel) return;
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(panel); i++)
+            if (VisualTreeHelper.GetChild(panel, i) is GridViewItem { Content: RequestMediaResult item, ContentTemplateRoot: ContentControl host }) BuildCard(host, item);
     }
-
-    private void SizeResultCard(Grid card)
+    private void Presentation_Changed(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() => ApplyLayout(ActualWidth));
+    private void Page_SizeChanged(object sender, SizeChangedEventArgs e) => ApplyLayout(e.NewSize.Width);
+    private void ApplyLayout(double width)
     {
-        card.Width = _browseCardWidth;
-        if (card.RowDefinitions.Count > 0)
-            card.RowDefinitions[0].Height = new GridLength(_browseCardWidth * 1.5);
-    }
-
-    private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        var width = e.NewSize.Width;
         if (width <= 0) return;
         var gutter = width < 640 ? 16d : width < 1024 ? 24d : width < 1280 ? 40d : 48d;
-        HeaderPanel.Padding = new Thickness(gutter, width < 640 ? 24 : 32, gutter, 12);
-        ResultsGrid.Padding = new Thickness(gutter, 8, gutter, 20);
-        FooterPanel.Padding = new Thickness(gutter, 8, gutter, 18);
-        BrowseSkeleton.Padding = new Thickness(gutter, 8, gutter, 20);
-
-        var compact = width < 700;
-        Grid.SetRow(FilterPanel, compact ? 1 : 0);
-        Grid.SetColumn(FilterPanel, compact ? 0 : 1);
-        Grid.SetColumnSpan(FilterPanel, compact ? 2 : 1);
-
-        var columns = width < 640 ? 3 : width < 768 ? 4 : width < 1024 ? 5 : width < 1280 ? 7 : 8;
-        _browseCardWidth = Math.Max(96, Math.Floor((width - gutter * 2) / columns) - 12);
-        if (ResultsGrid.ItemsPanelRoot is ItemsWrapGrid panel)
+        HeaderPanel.Padding = new Thickness(gutter, width < 640 ? 64 : 72, gutter, 12);
+        BackButton.Margin = new Thickness(8, width < 640 ? 16 : 24, 0, 0);
+        TitleText.FontSize = width < 640 ? 24 : 30;
+        TitleText.LineHeight = width < 640 ? 32 : 36;
+        TitleText.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        _gap = _presentation?.CardPresentation.PosterSize == "large" ? 16 : 12;
+        ResultsGrid.Padding = new Thickness(gutter - _gap / 2, 8, gutter - _gap / 2, 20);
+        FooterPanel.Padding = new Thickness(gutter, 8, gutter, 18); BrowseSkeleton.Padding = new Thickness(gutter, 8, gutter, 20);
+        var compact = width < 700; Grid.SetRow(FilterPanel, compact ? 1 : 0); Grid.SetColumn(FilterPanel, compact ? 0 : 1); Grid.SetColumnSpan(FilterPanel, compact ? 2 : 1);
+        var size = _presentation?.CardPresentation.PosterSize;
+        _gap = size == "large" ? 16 : 12;
+        var columns = size switch
         {
-            panel.ItemWidth = _browseCardWidth + 12;
-            panel.ItemHeight = _browseCardWidth * 1.5 + 62;
-        }
-
-        foreach (var item in ResultsGrid.Items)
-        {
-            if (ResultsGrid.ContainerFromItem(item) is GridViewItem { ContentTemplateRoot: Grid card })
-                SizeResultCard(card);
-        }
+            "compact" => width < 640 ? 3 : width < 768 ? 5 : width < 1024 ? 6 : width < 1280 ? 8 : 10,
+            "large" => width < 640 ? 2 : width < 768 ? 3 : width < 1024 ? 4 : width < 1280 ? 5 : 6,
+            _ => width < 640 ? 3 : width < 768 ? 4 : width < 1024 ? 5 : width < 1280 ? 7 : 8,
+        };
+        _browseCardWidth = Math.Max(64, Math.Floor((width - gutter * 2 - (columns - 1) * _gap) / columns));
+        if (ResultsGrid.ItemsPanelRoot is ItemsWrapGrid panel) { panel.ItemWidth = _browseCardWidth + _gap; panel.ItemHeight = _browseCardWidth * 1.5 + (_presentation?.CardPresentation.Caption == "artwork" ? _gap : 72); }
+        RebuildRealizedCards();
     }
-
-    private static string HumanizeSlug(string slug) => string.Join(" ", slug
-        .Split('-', StringSplitOptions.RemoveEmptyEntries)
-        .Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
+    private void Back_Click(object sender, RoutedEventArgs e) => App.Services.GetRequiredService<NavigationService>().GoBack();
+    private void Fail(string text) { EmptyState.Visibility = Visibility.Collapsed; BrowseSkeleton.Visibility = Visibility.Collapsed; FooterPanel.Visibility = Visibility.Collapsed; LoadingText.Text = text; LoadingText.Visibility = Visibility.Visible; }
+    private static string HumanizeSlug(string slug) => string.Join(" ", slug.Split('-', StringSplitOptions.RemoveEmptyEntries).Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
 }
-
 public sealed record RequestBrowseNavigation(string Kind, string Slug);

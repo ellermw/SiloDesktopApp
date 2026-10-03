@@ -18,6 +18,13 @@ public sealed class EbooksApi(SiloApiClient client)
     public async Task<EbookReaderProgress> SaveProgressAsync(string contentId, EbookReaderProgressInput input, CancellationToken ct = default)
         => (await client.PutAsync<ProgressEnvelope>($"/api/v2/ebooks/{Content(contentId)}/progress", V2Json.Body(input), ct)).Progress ?? new();
 
+    public ApiRequestContext CaptureContext() => client.CaptureContext();
+    public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
+
+    public async Task<EbookReaderProgress> SaveProgressAsync(string contentId, EbookReaderProgressInput input, ApiRequestContext context, CancellationToken ct = default)
+        => (await client.SendRequestAsync<ProgressEnvelope>(context, HttpMethod.Put,
+            $"/api/v2/ebooks/{Content(contentId)}/progress", V2Json.Body(input), ct)).Progress ?? new();
+
     public async Task<EbookReaderConfigEnvelope> GetReaderConfigAsync(string contentId, CancellationToken ct = default)
     {
         var path = $"/api/v2/ebooks/{Content(contentId)}/reader-config";
@@ -35,6 +42,8 @@ public sealed class EbooksApi(SiloApiClient client)
         Remember(path, response.ETag, context, ct);
         return response.Body;
     }
+    public bool HasReaderConfigRevision(string contentId)
+        => _revisions.TryGetValue($"/api/v2/ebooks/{Content(contentId)}/reader-config", out var revision) && client.IsCurrentContext(revision.Context);
 
     public async Task<List<EbookReaderAnnotation>> GetAnnotationsAsync(string contentId, CancellationToken ct = default)
     {
@@ -50,6 +59,15 @@ public sealed class EbooksApi(SiloApiClient client)
         var path = $"/api/v2/ebooks/{Content(contentId)}/annotations";
         var context = client.CaptureContext();
         var annotation = await client.PostAsync<EbookReaderAnnotation>(path, JsonSerializer.SerializeToElement(input, V2Json.Options), ct);
+        Remember(path + "/" + Content(annotation.Id), annotation.ETag, context, ct);
+        return annotation;
+    }
+
+    public async Task<EbookReaderAnnotation> CreateAnnotationAsync(string contentId, EbookReaderAnnotationInput input, ApiRequestContext context, CancellationToken ct = default)
+    {
+        var path = $"/api/v2/ebooks/{Content(contentId)}/annotations";
+        var annotation = await client.SendRequestAsync<EbookReaderAnnotation>(context, HttpMethod.Post, path,
+            JsonSerializer.SerializeToElement(input, V2Json.Options), ct);
         Remember(path + "/" + Content(annotation.Id), annotation.ETag, context, ct);
         return annotation;
     }

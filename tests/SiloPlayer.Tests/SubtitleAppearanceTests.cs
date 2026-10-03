@@ -14,7 +14,7 @@ public sealed class SubtitleAppearanceTests
         Assert.Equal("sans-serif", appearance.FontFamily);
         Assert.Equal("#ffffff", appearance.FontColor);
         Assert.Equal("#000000", appearance.BackgroundColor);
-        Assert.Equal("shadow", appearance.BackgroundStyle);
+        Assert.Equal("box", appearance.BackgroundStyle);
         Assert.Equal(75, appearance.BackgroundOpacity);
         Assert.False(appearance.TextOutline);
         Assert.Equal("#000000", appearance.TextOutlineColor);
@@ -54,7 +54,7 @@ public sealed class SubtitleAppearanceTests
         Assert.Equal("large", appearance.FontSize);
         Assert.Equal("sans-serif", appearance.FontFamily);
         Assert.Equal("#ffffff", appearance.FontColor);
-        Assert.Equal("shadow", appearance.BackgroundStyle);
+        Assert.Equal("box", appearance.BackgroundStyle);
         Assert.Equal(75, appearance.BackgroundOpacity);
         Assert.True(appearance.TextOutline);
         Assert.Equal("#ef4444", appearance.TextOutlineColor);

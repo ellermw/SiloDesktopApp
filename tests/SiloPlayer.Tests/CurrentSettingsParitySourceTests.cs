@@ -8,15 +8,17 @@ public sealed class CurrentSettingsParitySourceTests
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml");
         var code = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml.cs");
 
-        Assert.Contains("MaxWidth=\"1424\"", xaml);
+        Assert.Contains("MaxWidth=\"1520\"", xaml);
         Assert.Contains("x:Name=\"SettingsSearchBox\"", xaml);
-        Assert.Contains("18 settings sections", xaml);
+        Assert.Contains("x:Name=\"SettingsSearchStatus\"", xaml);
+        Assert.Contains("_settingsOverviewCards.Count", code);
+        Assert.Contains("No matching settings", code);
         Assert.Contains("x:Name=\"SettingsOverviewPanel\"", xaml);
         Assert.Contains("Home & Discovery", code);
         Assert.Contains("Connections", code);
         Assert.Contains("Account", code);
         Assert.Contains("x:Name=\"AppearanceNavGroup\"", xaml);
-        Assert.Matches("AppearanceNavGroup[\\s\\S]+InterfaceTab[\\s\\S]+CardOverlaysTab[\\s\\S]+AccessibilityTab[\\s\\S]+ThemeEditorTab[\\s\\S]+HomeDiscoveryNavGroup[\\s\\S]+PersonalizeTab[\\s\\S]+ConnectionsNavGroup[\\s\\S]+WebhookSyncTab[\\s\\S]+ImportTab[\\s\\S]+AccountNavGroup", xaml);
+        Assert.Matches("AppearanceNavGroup[\\s\\S]+InterfaceTab[\\s\\S]+CardOverlaysTab[\\s\\S]+AccessibilityTab[\\s\\S]+HomeDiscoveryNavGroup[\\s\\S]+PersonalizeTab[\\s\\S]+ConnectionsNavGroup[\\s\\S]+WebhookSyncTab[\\s\\S]+ImportTab[\\s\\S]+AccountNavGroup", xaml);
         Assert.Contains("SettingsSearchBox_TextChanged", code);
         Assert.Contains("SettingsPage_SizeChanged", code);
         Assert.Contains("e.NewSize.Width < 1024", code);
@@ -33,7 +35,7 @@ public sealed class CurrentSettingsParitySourceTests
 
         Assert.Contains("Choose the defaults Silo should use when playback starts.", xaml);
         Assert.Contains("Text=\"Defaults\"", xaml);
-        Assert.Contains("Text=\"Auto-skip intros\"", xaml);
+        Assert.Contains("Text=\"Skip intros\"", xaml);
         Assert.Contains("Text=\"Start next at preview\"", xaml);
         Assert.Contains("Text=\"Background &amp; Position\"", xaml);
         Assert.Contains("This sample reflects the current subtitle appearance.", xaml);
@@ -175,27 +177,6 @@ public sealed class CurrentSettingsParitySourceTests
     }
 
     [Fact]
-    public void NativeThemeEditorSupportsSharedOverridesPortableFilesAndCatalog()
-    {
-        var service = ReadRepoFile("src", "SiloPlayer", "Services", "ThemeService.cs");
-        var page = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml.cs");
-        var api = ReadRepoFile("src", "SiloPlayer.Core", "Api", "SettingsApi.cs");
-
-        Assert.Contains("ui_custom_theme_vars", service);
-        Assert.Contains("SetThemeOverride", service);
-        Assert.Contains("ResetThemeOverrides", service);
-        Assert.Contains("ThemeExport_Click", page);
-        Assert.Contains("ThemeImport_Click", page);
-        Assert.Contains("LoadThemeCatalogAsync", page);
-        Assert.Contains("DownloadThemeAsync", api);
-        Assert.Contains("/api/v2/theme/catalog", api);
-        Assert.Contains("x:Name=\"ThemeCustomCssBox\"", ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml"));
-        Assert.Contains("PutSettingAsync(\"ui_custom_css\"", page);
-        Assert.Contains("SanitizeThemeCss", page);
-        Assert.Contains("ThemeEditorSectionTab_Click", page);
-    }
-
-    [Fact]
     public void LibrariesRememberPageStateAndHomeSectionsAutoSaveLikeCurrentWebUi()
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml");
@@ -209,35 +190,6 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("ViewModel.HomeSections.Move(oldIndex, newIndex)", page);
         Assert.Matches("HomeSections\\.Move\\(oldIndex, newIndex\\);[\\s\\S]{0,160}SaveHomeSectionsCommand", page);
         Assert.Matches("ToggleSectionVisibility\\(section\\);[\\s\\S]{0,160}SaveHomeSectionsCommand", page);
-    }
-
-    [Fact]
-    public void ProfileThemeIsSynchronizedOnlyAfterAuthenticatedNavigationSucceeds()
-    {
-        var service = ReadRepoFile("src", "SiloPlayer", "Services", "ThemeService.cs");
-        var window = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs");
-        var profiles = ReadRepoFile("src", "SiloPlayer", "ViewModels", "ProfileSelectViewModel.cs");
-
-        Assert.Contains("SyncFromServerAsync", service);
-        Assert.Contains("GetSettingAsync(\"ui_theme\"", service);
-        Assert.Contains("GetServerBrandingAsync", service);
-        Assert.Contains("GetSettingAsync(\"ui_custom_theme_vars\"", service);
-        var transitionStart = window.IndexOf("public bool TryEnterAuthenticatedPage", StringComparison.Ordinal);
-        Assert.True(transitionStart >= 0, "MainWindow.xaml.cs no longer defines TryEnterAuthenticatedPage.");
-        var transitionEnd = window.IndexOf("public void UpdateLibraryNavItems", transitionStart, StringComparison.Ordinal);
-        Assert.True(transitionEnd > transitionStart, "MainWindow.xaml.cs no longer defines UpdateLibraryNavItems after TryEnterAuthenticatedPage.");
-        var transition = window[transitionStart..transitionEnd];
-        var shellStart = window.IndexOf("public void ShowMainNavigation()", StringComparison.Ordinal);
-        Assert.True(shellStart >= 0, "MainWindow.xaml.cs no longer defines ShowMainNavigation.");
-        var shellEnd = window.IndexOf("private async Task LoadShellNavigationAsync", shellStart, StringComparison.Ordinal);
-        Assert.True(shellEnd > shellStart, "MainWindow.xaml.cs no longer defines LoadShellNavigationAsync after ShowMainNavigation.");
-        var shell = window[shellStart..shellEnd];
-        Assert.Contains("ShowMainNavigation();", transition);
-        Assert.DoesNotContain("RunShellWorkAsync(\"theme_sync\"", transition);
-        Assert.Contains("GetAuthenticatedShellKey()", shell);
-        Assert.Contains("shouldHydrateShell", shell);
-        Assert.Contains("RunShellWorkAsync(\"theme_sync\"", shell);
-        Assert.DoesNotContain("SyncFromServerAsync", profiles);
     }
 
     [Fact]

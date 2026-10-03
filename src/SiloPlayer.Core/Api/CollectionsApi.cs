@@ -30,6 +30,7 @@ public class CollectionsApi(SiloApiClient client)
         var result = await client.GetWithETagAsync<Collection>(path, ct);
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
         if (result.ETag != null) _revisions[path] = (context, result.ETag);
+        RememberBaseline(path, result.Body, context);
         return result.Body;
     }
 
@@ -90,6 +91,9 @@ public class CollectionsApi(SiloApiClient client)
 
     public Task<ImportUserCollectionResponse> ImportUserTMDBCollectionAsync(ImportUserTMDBCollectionRequest request, CancellationToken ct = default)
         => client.PostAsync<ImportUserCollectionResponse>("/api/v2/collections/import/tmdb", V2Json.Body(request), ct);
+
+    public Task<ImportUserCollectionResponse> ImportUserTMDBListCollectionAsync(ImportUserTMDBListCollectionRequest request, CancellationToken ct = default)
+        => client.PostAsync<ImportUserCollectionResponse>("/api/v2/collections/import/tmdb-list", V2Json.Body(request), ct);
 
     public Task<ImportUserCollectionResponse> ImportUserTraktCollectionAsync(ImportUserTraktCollectionRequest request, CancellationToken ct = default)
         => client.PostAsync<ImportUserCollectionResponse>("/api/v2/collections/import/trakt", V2Json.Body(request), ct);
@@ -208,6 +212,20 @@ public class CollectionsApi(SiloApiClient client)
         return JsonSerializer.Serialize(new[] { Value("id"), Value("updated_at"), Value("name"), Value("group_id") });
     }
 
+    public async Task<bool> IsCompleteItemOrderAsync(string collectionId, IReadOnlyList<string> displayedIds, CancellationToken ct = default)
+    {
+        var context = client.CaptureContext();
+        var path = $"/api/v2/collections/{Uri.EscapeDataString(collectionId)}/items/order";
+        var result = await client.GetWithETagAsync<JsonElement>(path, ct);
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
+        if (result.Body.TryGetProperty("has_more", out var more) && more.ValueKind == JsonValueKind.True) return false;
+        var ids = result.Body.GetProperty("ordered_ids").EnumerateArray().Select(value => value.GetString() ?? "").ToArray();
+        if (!ids.SequenceEqual(displayedIds, StringComparer.Ordinal)) return false;
+        if (string.IsNullOrWhiteSpace(result.ETag)) return false;
+        _revisions[path] = (context, result.ETag);
+        return true;
+    }
+
     public Task ReorderCollectionItemsAsync(string collectionId, IReadOnlyList<string> orderedIds, CancellationToken ct = default)
         => PutAsync(
             $"/api/v2/collections/{Uri.EscapeDataString(collectionId)}/items/order",
@@ -233,10 +251,14 @@ public class CollectionsApi(SiloApiClient client)
     }
     private async Task<T> PatchAsync<T>(string path, object body, CancellationToken ct)
     {
+        var context = client.CaptureContext();
         var tag = await RevisionAsync(path, ct);
-        var result = await client.PatchWithETagAsync<T>(path, body, tag, ct);
+        var result = await client.PatchWithETagResponseAsync<T>(path, body, tag, ct);
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
         _revisions.TryRemove(path, out _);
-        return result;
+        if (result.ETag != null) _revisions[path] = (context, result.ETag);
+        RememberBaseline(path, result.Body!, context);
+        return result.Body;
     }
     private async Task PutAsync(string path, object body, CancellationToken ct)
     {

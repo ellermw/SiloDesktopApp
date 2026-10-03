@@ -24,6 +24,10 @@ public sealed class EventChannelClient : IDisposable
     private Task? _runTask;
     private readonly object _lock = new();
     private bool _reconnectSuppressed;
+    private ClientWebSocket? _accessHandledSocket;
+    private ApiRequestContext? _activeSocketContext;
+    private int _immediateReconnectRequested;
+    private bool _hasConnected;
 
     // Ref-counted channel subscriptions — multiple features (settings/import,
     // admin/server-activity, watch-party, …) share a single WebSocket. Each call
@@ -49,6 +53,7 @@ public sealed class EventChannelClient : IDisposable
     /// <summary>Fired whenever the underlying WebSocket state changes. Use for UI
     /// connection indicators.</summary>
     public event Action<WebSocketState>? StateChanged;
+    public event Action<ApiRequestContext>? AccessChanged;
 
     /// <summary>Current transport state for controls that subscribe after the
     /// shared channel has already connected.</summary>
@@ -199,6 +204,7 @@ public sealed class EventChannelClient : IDisposable
     {
         lock (_lock)
         {
+            _hasConnected = false;
             _reconnectSuppressed = true;
             StopInternal_NoLock();
         }
@@ -310,16 +316,19 @@ public sealed class EventChannelClient : IDisposable
     private async Task RunLoop(CancellationToken ct)
     {
         var backoffMs = 1000;
+        var catchUp = false;
         while (!ct.IsCancellationRequested)
         {
             try
             {
-                await ConnectAndRunOnce(ct);
+                await ConnectAndRunOnce(ct, catchUp);
                 // Normal close — reset backoff and reconnect.
                 backoffMs = 1000;
             }
             catch (OperationCanceledException)
             {
+                if (!ct.IsCancellationRequested && Interlocked.Exchange(ref _immediateReconnectRequested, 0) != 0)
+                { catchUp = false; backoffMs = 1000; continue; }
                 return;
             }
             catch (Exception ex)
@@ -328,6 +337,12 @@ public sealed class EventChannelClient : IDisposable
             }
 
             if (ct.IsCancellationRequested) return;
+            if (Interlocked.Exchange(ref _immediateReconnectRequested, 0) != 0)
+            { catchUp = false; backoffMs = 1000; continue; }
+
+            // A transport loss may have missed permission changes. A deliberate
+            // channel/profile rebind starts a new loop and must not rebuild pages again.
+            catchUp = true;
 
             // Don't spam reconnects — capped exponential backoff up to 30s.
             Log($"Reconnecting in {backoffMs}ms");
@@ -336,7 +351,7 @@ public sealed class EventChannelClient : IDisposable
         }
     }
 
-    private async Task ConnectAndRunOnce(CancellationToken ct)
+    private async Task ConnectAndRunOnce(CancellationToken ct, bool catchUp)
     {
         string[] channelsSnapshot;
         lock (_lock)
@@ -367,13 +382,26 @@ public sealed class EventChannelClient : IDisposable
         var ws = new ClientWebSocket();
         ws.Options.AddSubProtocol("silo.events.v2");
         ws.Options.AddSubProtocol("silo.ticket." + ticket);
-        _ws = ws;
+        lock (_lock) { _ws = ws; _activeSocketContext = context; }
         try
         {
             var logUrl = wsUrl.Contains('?') ? wsUrl[..wsUrl.IndexOf('?')] : wsUrl;
             Log($"Connecting to {logUrl} (channels: {string.Join(",", channelsSnapshot)})");
             await ws.ConnectAsync(new Uri(wsUrl), ct);
             if (!_apiClient.IsCurrentContext(context)) throw new OperationCanceledException("Event authority changed.", ct);
+            var reconnect = false;
+            lock (_lock)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (!ReferenceEquals(_ws, ws) || !_apiClient.IsCurrentContext(context))
+                    throw new OperationCanceledException("Event authority changed.", ct);
+                reconnect = _hasConnected && catchUp;
+                if (reconnect && !PublishAccessInvalidation(context, out context))
+                    throw new OperationCanceledException("Event authority changed.", ct);
+                _activeSocketContext = context;
+                _hasConnected = true;
+            }
+            if (reconnect) _ = RefreshAccountSafelyAsync(ct);
             StateChanged?.Invoke(ws.State);
             Log("Connected");
         }
@@ -419,7 +447,8 @@ public sealed class EventChannelClient : IDisposable
             try
             {
                 result = await ws.ReceiveAsync(buffer, ct);
-                if (!_apiClient.IsCurrentContext(context)) throw new OperationCanceledException("Event authority changed.", ct);
+                if (!_apiClient.IsCurrentContext(context) && !ReferenceEquals(_accessHandledSocket, ws))
+                    throw new OperationCanceledException("Event authority changed.", ct);
             }
             catch (OperationCanceledException)
             {
@@ -433,9 +462,11 @@ public sealed class EventChannelClient : IDisposable
 
             if (result.MessageType == WebSocketMessageType.Close)
             {
+                if (!ct.IsCancellationRequested) HandleServerClose(ws, (int?)result.CloseStatus);
                 Log($"Server closed connection: {result.CloseStatusDescription}");
                 return;
             }
+            if (ReferenceEquals(_accessHandledSocket, ws)) return;
 
             messageBuffer.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
             if (!result.EndOfMessage) continue;
@@ -456,6 +487,7 @@ public sealed class EventChannelClient : IDisposable
         JsonDocument? doc = null;
         try
         {
+            ct.ThrowIfCancellationRequested();
             doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
             if (!root.TryGetProperty("type", out var typeEl) || typeEl.ValueKind != JsonValueKind.String)
@@ -464,6 +496,9 @@ public sealed class EventChannelClient : IDisposable
             var type = typeEl.GetString()!;
             switch (type)
             {
+                case "access_changed":
+                    HandleAccessChanged(ws);
+                    break;
                 case "hello":
                 {
                     if (root.TryGetProperty("connection_id", out var idEl) && idEl.ValueKind == JsonValueKind.String)
@@ -540,6 +575,44 @@ public sealed class EventChannelClient : IDisposable
         {
             doc?.Dispose();
         }
+    }
+
+    private void HandleServerClose(ClientWebSocket ws, int? code)
+    {
+        if (code == 4001) HandleAccessChanged(ws);
+    }
+
+    private void HandleAccessChanged(ClientWebSocket ws)
+    {
+        lock (_lock)
+        {
+            if (!ReferenceEquals(_ws, ws) || ReferenceEquals(_accessHandledSocket, ws) ||
+                !_authService.IsLoggedIn || _activeSocketContext is not { } expected ||
+                !PublishAccessInvalidation(expected, out _)) return;
+            _accessHandledSocket = ws;
+            Interlocked.Exchange(ref _immediateReconnectRequested, 1);
+        }
+        _ = RefreshAccountSafelyAsync(_cts?.Token ?? CancellationToken.None);
+    }
+
+    private bool PublishAccessInvalidation(ApiRequestContext expected, out ApiRequestContext context)
+    {
+        if (!_apiClient.TryInvalidateAccessContext(expected, out context)) return false;
+        Log($"Access reads invalidated: readGeneration={context.RequestContextGeneration}; playbackIdentityGeneration={_apiClient.CaptureIdentityContext().IdentityGeneration}");
+        lock (_snapshotLock) _latestSnapshots.Clear();
+        foreach (var subscriber in AccessChanged?.GetInvocationList() ?? [])
+        {
+            try { ((Action<ApiRequestContext>)subscriber)(context); }
+            catch (Exception ex) { Log($"Access refresh subscriber failed: {ex.GetType().Name}"); }
+        }
+        return true;
+    }
+
+    private async Task RefreshAccountSafelyAsync(CancellationToken ct)
+    {
+        try { await _authService.RefreshAccountAsync(ct).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception ex) { Log($"Authoritative account refresh failed: {ex.GetType().Name}"); }
     }
 
     private void ApplyEventToCachedSnapshot(

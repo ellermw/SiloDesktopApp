@@ -83,6 +83,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         ("#d946ef", "Magenta"),
         ("#ef4444", "Red"),
         ("#3b82f6", "Blue"),
+        ("#9ca3af", "Gray"),
         ("#000000", "Black"),
     ];
 
@@ -304,6 +305,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
 
         OutlineToggle.IsOn = _state.TextOutline;
         OpacitySlider.Value = _state.BackgroundOpacity;
+        TextOpacitySlider.Value = _state.TextOpacity;
         OpacityValueLabel.Text = $"{_state.BackgroundOpacity}%";
 
         UpdateBgRowsVisibility();
@@ -335,7 +337,9 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         PreviewLine1.FontSize = fontSize;
         PreviewLine2.FontSize = fontSize;
 
-        var fontBrush = new SolidColorBrush(ColorFromHex(_state.FontColor));
+        var textColor = ColorFromHex(_state.FontColor);
+        textColor.A = (byte)Math.Round(_state.TextOpacity * 2.55);
+        var fontBrush = new SolidColorBrush(textColor);
         PreviewLine1.Foreground = fontBrush;
         PreviewLine2.Foreground = fontBrush;
 
@@ -392,6 +396,13 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         if (_loading) return;
         _state.BackgroundOpacity = (int)Math.Round(e.NewValue);
         OpacityValueLabel.Text = $"{_state.BackgroundOpacity}%";
+        ScheduleSave();
+    }
+
+    private void TextOpacitySlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (_loading) return;
+        _state.TextOpacity = Math.Clamp((int)Math.Round(e.NewValue), 1, 100);
         ScheduleSave();
     }
 

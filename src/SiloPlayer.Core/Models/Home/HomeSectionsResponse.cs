@@ -32,6 +32,7 @@ public class HomeSectionWithItems
 }
 public class MediaItem
 {
+    public int? AdvisoryAge { get; set; }
     public event EventHandler? ArtworkUrlsChanged;
 
     internal void NotifyArtworkUrlsChanged() => ArtworkUrlsChanged?.Invoke(this, EventArgs.Empty);

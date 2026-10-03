@@ -6,33 +6,44 @@
     Background="{StaticResource AppBackgroundBrush}"
     SizeChanged="Page_SizeChanged">
     <ScrollViewer>
-        <Grid x:Name="RootGrid" MinHeight="720">
+        <Grid x:Name="RootGrid" MinHeight="720" Background="{StaticResource AppBackgroundBrush}">
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-            <Grid x:Name="HeroGrid" Grid.Row="0" MinHeight="620">
+            <Grid x:Name="HeroGrid" Grid.Row="0" MinHeight="300">
                 <Image x:Name="BackdropImage" Stretch="UniformToFill" Opacity="0.48" />
                 <Rectangle>
-                    <Rectangle.Fill><LinearGradientBrush StartPoint="0,0.5" EndPoint="1,0.5"><GradientStop Color="#FF0B0C0F" Offset="0" /><GradientStop Color="#E60B0C0F" Offset="0.45" /><GradientStop Color="#330B0C0F" Offset="1" /></LinearGradientBrush></Rectangle.Fill>
+                    <Rectangle.Fill><LinearGradientBrush StartPoint="0,0" EndPoint="1,0"><GradientStop x:Name="HeroLeftSolid" Color="{StaticResource AppBackgroundColor}" Offset="0" /><GradientStop x:Name="HeroLeftStrong" Offset="0.2" /><GradientStop x:Name="HeroLeftSoft" Offset="0.4" /><GradientStop x:Name="HeroLeftTransparent" Offset="0.6" /></LinearGradientBrush></Rectangle.Fill>
                 </Rectangle>
-                <Rectangle VerticalAlignment="Bottom" Height="250"><Rectangle.Fill><LinearGradientBrush StartPoint="0.5,0" EndPoint="0.5,1"><GradientStop Color="#000B0C0F" /><GradientStop Color="#FF0B0C0F" Offset="1" /></LinearGradientBrush></Rectangle.Fill></Rectangle>
-                <Button x:Name="BackButton" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="24" Width="44" Height="44" Click="Back_Click" AutomationProperties.Name="Go back"><FontIcon Glyph="&#xE72B;" /></Button>
+                <Rectangle><Rectangle.Fill><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop x:Name="HeroBottomTransparent" /><GradientStop x:Name="HeroBottomSoft" Offset="0.25" /><GradientStop x:Name="HeroBottomMid" Offset="0.5" /><GradientStop x:Name="HeroBottomStrong" Offset="0.8" /><GradientStop x:Name="HeroBottomSolid" Color="{StaticResource AppBackgroundColor}" Offset="1" /></LinearGradientBrush></Rectangle.Fill></Rectangle>
+                <Button x:Name="BackButton" VerticalAlignment="Top" HorizontalAlignment="Left" Margin="8,24,0,0" Width="32" Height="32" MinWidth="0" MinHeight="0" Padding="6" CornerRadius="16" Background="#33000000" BorderThickness="1" BorderBrush="{StaticResource BorderBrush}" Click="Back_Click" AutomationProperties.Name="Go back"><FontIcon Glyph="&#xE76B;" FontSize="18" /></Button>
                 <Grid x:Name="HeroContent" Margin="54,104,54,46" VerticalAlignment="Bottom" ColumnSpacing="34" RowSpacing="24">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="210" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                    <Border x:Name="PosterBorder" Width="210" Height="315" CornerRadius="10" Background="#25272D" VerticalAlignment="Bottom" HorizontalAlignment="Left"><Image x:Name="PosterImage" Stretch="UniformToFill" /></Border>
+                    <Border x:Name="PosterBorder" Width="210" Height="315" CornerRadius="12" Background="{StaticResource SurfaceBrush}" VerticalAlignment="Bottom" HorizontalAlignment="Left"><Grid><TextBlock x:Name="PosterFallback" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" TextAlignment="Center" VerticalAlignment="Center" Margin="24" /><Image x:Name="PosterImage" Stretch="UniformToFill" /></Grid></Border>
                     <StackPanel x:Name="HeroInfo" Grid.Column="1" VerticalAlignment="Bottom" Spacing="13" MaxWidth="850" HorizontalAlignment="Left">
-                        <TextBlock x:Name="ContextText" Text="REQUEST" FontSize="12" FontWeight="SemiBold" CharacterSpacing="190" Opacity="0.65" />
+                        <TextBlock x:Name="ContextText" FontSize="14" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" />
                         <TextBlock x:Name="StudioText" FontSize="13" FontWeight="SemiBold" Opacity="0.75" />
-                        <TextBlock x:Name="TitleText" FontSize="42" FontWeight="Bold" TextWrapping="Wrap" />
+                        <TextBlock x:Name="TitleText" FontSize="42" FontWeight="ExtraBold" TextWrapping="Wrap" LineStackingStrategy="BlockLineHeight" />
                         <TextBlock x:Name="TaglineText" FontSize="17" FontStyle="Italic" Opacity="0.72" TextWrapping="Wrap" />
                         <controls:WrapPanel x:Name="MetadataPanel" HorizontalSpacing="10" VerticalSpacing="8" />
                         <TextBlock x:Name="ScoreText" FontSize="13" Foreground="#FFF4C95D" />
                         <TextBlock x:Name="CrewText" FontSize="13" Opacity="0.76" TextWrapping="Wrap" />
-                        <TextBlock x:Name="OverviewText" FontSize="15" LineHeight="23" MaxWidth="800" TextWrapping="Wrap" MaxLines="6" />
+                        <TextBlock x:Name="OverviewText" MaxWidth="672" HorizontalAlignment="Left" FontSize="15" LineHeight="28" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                         <controls:WrapPanel x:Name="ActionsPanel" HorizontalSpacing="10" VerticalSpacing="8" />
+                        <controls:WrapPanel x:Name="LinksPanel" HorizontalSpacing="12" VerticalSpacing="4" />
+                        <StackPanel x:Name="AutoRequestExplanation" Spacing="2" Visibility="Collapsed">
+                            <TextBlock Text="Adding it to your watchlist also requests it. You can turn this off in" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                            <HyperlinkButton Content="Settings › Requests" Click="RequestSettings_Click" Padding="0" HorizontalAlignment="Left" FontSize="12" />
+                        </StackPanel>
+                        <StackPanel x:Name="DownloadProgressHost" MaxWidth="320" HorizontalAlignment="Left" />
+                        <TextBlock x:Name="DownloadText" Visibility="Collapsed" />
                     </StackPanel>
                 </Grid>
             </Grid>
             <StackPanel x:Name="LowerContent" Grid.Row="1" Padding="54,20,54,50" Spacing="34">
+                <StackPanel x:Name="SeasonsSection" Spacing="14" Visibility="Collapsed">
+                    <TextBlock Text="Seasons" FontSize="22" FontWeight="SemiBold" />
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"><StackPanel x:Name="SeasonsPanel" Orientation="Horizontal" Spacing="12" /></ScrollViewer>
+                </StackPanel>
                 <StackPanel x:Name="CastSection" Spacing="14">
                     <TextBlock Text="Cast" FontSize="22" FontWeight="SemiBold" />
                     <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"><StackPanel x:Name="CastPanel" Orientation="Horizontal" Spacing="12" /></ScrollViewer>
@@ -45,9 +56,9 @@
             <Grid x:Name="LoadingLayer" Grid.RowSpan="2" Background="{StaticResource AppBackgroundBrush}">
                 <Button x:Name="LoadingBackButton"
                         VerticalAlignment="Top" HorizontalAlignment="Left" Margin="24"
-                        Width="44" Height="44" Click="Back_Click"
+                        Width="32" Height="32" MinWidth="0" MinHeight="0" Padding="6" CornerRadius="16" Click="Back_Click"
                         AutomationProperties.Name="Go back">
-                    <FontIcon Glyph="&#xE72B;" />
+                    <FontIcon Glyph="&#xE76B;" FontSize="18" />
                 </Button>
                 <Grid x:Name="DetailSkeleton" Margin="54,105,54,50" VerticalAlignment="Center" ColumnSpacing="34" RowSpacing="24">
                     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
@@ -65,6 +76,7 @@
                 </Grid>
                 <ProgressRing x:Name="LoadingRing" IsActive="False" Visibility="Collapsed" />
                 <TextBlock x:Name="LoadingText" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="16" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="480" Visibility="Collapsed" />
+                <Button x:Name="RetryTitleButton" Content="Retry" Click="RetryTitle_Click" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="0,130,0,0" Visibility="Collapsed" />
             </Grid>
         </Grid>
     </ScrollViewer>

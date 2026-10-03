@@ -82,6 +82,8 @@ public class ReorderCollectionGroupsRequest
 
 public class QueryDefinition
 {
+    [System.Text.Json.Serialization.JsonExtensionData]
+    public Dictionary<string, System.Text.Json.JsonElement>? AdditionalProperties { get; set; }
     public List<int> LibraryIds { get; set; } = [];
     public string? MediaScope { get; set; }
     public string Match { get; set; } = "all";
@@ -92,6 +94,8 @@ public class QueryDefinition
 
 public class QueryGroup
 {
+    [System.Text.Json.Serialization.JsonExtensionData]
+    public Dictionary<string, System.Text.Json.JsonElement>? AdditionalProperties { get; set; }
     public string Match { get; set; } = "all";
     public List<QueryRule> Rules { get; set; } = [];
 }
@@ -104,6 +108,10 @@ public class DisplayQueryDefinition
 
 public class CollectionCapabilitiesResponse
 {
+    public bool ItemReorder { get; set; }
+    public bool Artwork { get; set; }
+    public bool? Imports { get; set; }
+    public List<string>? ImportSources { get; set; }
     public List<string> DisplayFilterFields { get; set; } = [];
     public CollectionDisplayFilterPresets DisplayFilterPresets { get; set; } = new();
     public bool CollectionDefaultSort { get; set; }
@@ -119,6 +127,8 @@ public class CollectionDisplayFilterPresets
 
 public class QueryRule
 {
+    [System.Text.Json.Serialization.JsonExtensionData]
+    public Dictionary<string, System.Text.Json.JsonElement>? AdditionalProperties { get; set; }
     public string Field { get; set; } = "";
     public string Op { get; set; } = "";
     public object? Value { get; set; }

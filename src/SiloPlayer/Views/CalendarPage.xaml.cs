@@ -15,6 +15,7 @@ using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Controls;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.Views;
 
@@ -42,6 +43,8 @@ public sealed partial class CalendarPage : Page
     private double _gutter = 48;
     private double _eventCardWidth = 185;
     private CancellationTokenSource? _imageLoadCts;
+    private readonly UICustomizationService _uiCustomization = App.Services.GetRequiredService<UICustomizationService>();
+    private readonly Dictionary<string, Border> _focusedPills = new(StringComparer.Ordinal);
     private double _lastMobileHeaderScrollY;
 
     public CalendarPage()
@@ -58,6 +61,7 @@ public sealed partial class CalendarPage : Page
         _lastMobileHeaderScrollY = ContentScrollViewer.VerticalOffset;
         App.MainWindowInstance?.SetMobileHeaderHidden(false);
         RenewImageLoadScope();
+        _uiCustomization.Changed += Presentation_Changed;
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
@@ -90,6 +94,7 @@ public sealed partial class CalendarPage : Page
         App.MainWindowInstance?.SetMobileHeaderHidden(false);
         ViewModel.CancelLoad();
         CancelImageLoads();
+        _uiCustomization.Changed -= Presentation_Changed;
         if (_eventsAttached)
         {
             ViewModel.Days.CollectionChanged -= OnDaysChanged;
@@ -403,6 +408,7 @@ public sealed partial class CalendarPage : Page
         RenewImageLoadScope();
         DaysPanel.Children.Clear();
         _dayGroups.Clear();
+        _focusedPills.Clear();
 
         foreach (var day in ViewModel.Days)
         {
@@ -419,6 +425,7 @@ public sealed partial class CalendarPage : Page
     {
         _selectedDay = date;
         BuildWeekStrip();
+        foreach (var (day, pill) in _focusedPills) pill.Visibility = day == date ? Visibility.Visible : Visibility.Collapsed;
         if (!hasEvents || !_dayGroups.TryGetValue(date, out var group)) return;
         DispatcherQueue.TryEnqueue(() =>
         {
@@ -443,7 +450,7 @@ public sealed partial class CalendarPage : Page
         var headingText = new TextBlock
         {
             Text = CalendarViewModel.FormatDayHeading(day.Date),
-            FontSize = 14,
+            FontSize = 20,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
@@ -476,6 +483,10 @@ public sealed partial class CalendarPage : Page
             headingGrid.Children.Add(todayPill);
         }
 
+        var pills = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Right };
+        foreach (var existing in headingGrid.Children.OfType<Border>().ToArray()) { headingGrid.Children.Remove(existing); pills.Children.Add(existing); }
+        var focused = new Border { Padding = new Thickness(8, 2, 8, 2), CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1), BorderBrush = (Brush)Application.Current.Resources["AccentBrush"], Visibility = day.Date == _selectedDay ? Visibility.Visible : Visibility.Collapsed, Child = new TextBlock { Text = "FOCUSED", FontSize = 10, Foreground = (Brush)Application.Current.Resources["AccentBrush"] } };
+        pills.Children.Add(focused); _focusedPills[day.Date] = focused; Grid.SetColumn(pills, 1); headingGrid.Children.Add(pills);
         Grid.SetRow(headingGrid, 0);
         container.Children.Add(headingGrid);
 
@@ -516,11 +527,19 @@ public sealed partial class CalendarPage : Page
         root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(posterHeight) });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
+        var backgroundColor = ((SolidColorBrush)Application.Current.Resources["AppBackgroundBrush"]).Color;
+        // The source grayscale filter includes the scrim and watched marker.
+        if (ev.Watched)
+        {
+            var gray = (byte)Math.Round(backgroundColor.R * .2126 + backgroundColor.G * .7152 + backgroundColor.B * .0722);
+            backgroundColor = Windows.UI.Color.FromArgb(255, gray, gray, gray);
+        }
         // --- Poster panel ---
         var posterPanel = new Grid
         {
-            CornerRadius = new CornerRadius(12),
+            CornerRadius = new CornerRadius(16),
             Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
+            Opacity = ev.Watched ? .6 : 1,
         };
 
         var posterImage = new Image
@@ -531,17 +550,24 @@ public sealed partial class CalendarPage : Page
             Opacity = 0,
         };
         posterPanel.Children.Add(posterImage);
+        if (ev.Watched)
+        {
+            var check = new Border { Width = 32, Height = 32, CornerRadius = new CornerRadius(16), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(179, backgroundColor.R, backgroundColor.G, backgroundColor.B)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false, Child = new FontIcon { Glyph = "\uE73E", FontSize = 16 } };
+            Canvas.SetZIndex(check, 2); AutomationProperties.SetName(check, "Watched"); posterPanel.Children.Add(check);
+        }
 
         // Bottom gradient overlay for legibility
         var gradient = new Border
         {
             VerticalAlignment = VerticalAlignment.Bottom,
-            Height = 80,
+            Height = 96,
+            Opacity = .9,
             IsHitTestVisible = false,
         };
         var brush = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(0, 1) };
         brush.GradientStops.Add(new GradientStop { Offset = 0.0, Color = Microsoft.UI.Colors.Transparent });
-        brush.GradientStops.Add(new GradientStop { Offset = 1.0, Color = Windows.UI.Color.FromArgb(0x8C, 0x00, 0x00, 0x00) });
+
+        brush.GradientStops.Add(new GradientStop { Offset = 1.0, Color = Windows.UI.Color.FromArgb(179, backgroundColor.R, backgroundColor.G, backgroundColor.B) });
         gradient.Background = brush;
         posterPanel.Children.Add(gradient);
 
@@ -574,7 +600,7 @@ public sealed partial class CalendarPage : Page
             Text = ev.Title,
             FontSize = 14,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
+            Foreground = (Brush)Application.Current.Resources[ev.Watched ? "SecondaryTextBrush" : "PrimaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxLines = 1,
         });
@@ -758,6 +784,7 @@ public sealed partial class CalendarPage : Page
             ct.ThrowIfCancellationRequested();
             if (bytes == null) return;
 
+            if (ev.Watched) bytes = await ArtworkEffects.TransformAsync(bytes, blur: false, ct);
             var bitmap = new BitmapImage
             {
                 DecodePixelWidth = 220,
@@ -799,10 +826,13 @@ public sealed partial class CalendarPage : Page
             {
                 "following" => "Nothing upcoming from shows you follow this week.",
                 "everything" => "Nothing scheduled this week.",
+                "trending" => "Nothing trending this week.",
                 _ => "No events this week for this view."
             };
-            EmptyActionsPanel.Visibility = ViewModel.Filter == "everything"
-                ? Visibility.Collapsed : Visibility.Visible;
+            EmptyActionsPanel.Visibility = Visibility.Visible;
+            EmptyFollowingButton.Visibility = ViewModel.Filter == "following" ? Visibility.Collapsed : Visibility.Visible;
+            EmptyTrendingButton.Visibility = ViewModel.Filter == "trending" ? Visibility.Collapsed : Visibility.Visible;
+            EmptyEverythingButton.Visibility = ViewModel.Filter is "everything" or "all" ? Visibility.Collapsed : Visibility.Visible;
         }
     }
 
@@ -860,9 +890,13 @@ public sealed partial class CalendarPage : Page
         }
     }
 
-    private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
+    private void Presentation_Changed(object? sender, EventArgs e)
+        => DispatcherQueue.TryEnqueue(() => { ApplyCalendarLayout(ActualWidth); });
+
+    private void Page_SizeChanged(object sender, SizeChangedEventArgs e) => ApplyCalendarLayout(e.NewSize.Width);
+
+    private void ApplyCalendarLayout(double width)
     {
-        var width = e.NewSize.Width;
         if (width <= 0) return;
         _gutter = width < 640 ? 16 : width < 1024 ? 24 : width < 1280 ? 40 : 48;
 
@@ -885,7 +919,13 @@ public sealed partial class CalendarPage : Page
         WeekStripPanel.ColumnSpacing = width < 640 ? 4 : 6;
 
         var bucket = width < 640 ? 0 : width < 1024 ? 1 : 2;
-        _eventCardWidth = bucket switch { 0 => 140, 1 => 160, _ => 185 };
+        var previousCardWidth = _eventCardWidth;
+        _eventCardWidth = _uiCustomization.CardPresentation.PosterSize switch
+        {
+            "compact" => bucket switch { 0 => 120, 1 => 140, _ => 160 },
+            "large" => bucket switch { 0 => 170, 1 => 195, _ => 220 },
+            _ => bucket switch { 0 => 140, 1 => 160, _ => 185 },
+        };
         foreach (var poster in _skeletonPosters)
         {
             poster.Width = _eventCardWidth;
@@ -894,7 +934,7 @@ public sealed partial class CalendarPage : Page
         foreach (var element in _skeletonRows)
             element.Margin = new Thickness(_gutter, 0, _gutter, 0);
 
-        if (_layoutBucket != bucket)
+        if (_layoutBucket != bucket || previousCardWidth != _eventCardWidth)
         {
             var hadLayout = _layoutBucket >= 0;
             _layoutBucket = bucket;

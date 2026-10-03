@@ -7,6 +7,14 @@ namespace SiloPlayer.Core.Models.Requests;
 public class RequestFeatureStatus
 {
     public bool RequestsEnabled { get; set; }
+    public bool? Allowed { get; set; }
+    public string State { get; set; } = "";
+    public bool SeasonRequestsSupported { get; set; }
+    public bool MissingSeasonsRequestable { get; set; }
+    public bool FollowSupported { get; set; }
+    public bool DownloadProgressSupported { get; set; }
+    public bool WatchlistTitlesSupported { get; set; }
+    public bool WatchlistRequests { get; set; }
 }
 
 public class RequestState
@@ -15,6 +23,10 @@ public class RequestState
     public bool Requestable { get; set; }
     public string Reason { get; set; } = "";
     public string RequestId { get; set; } = "";
+    public bool? Following { get; set; }
+    public bool? RequestedByViewer { get; set; }
+    public string? State { get; set; }
+    public RequestDownload? Download { get; set; }
 }
 
 public class RequestMediaResult : INotifyPropertyChanged
@@ -35,6 +47,7 @@ public class RequestMediaResult : INotifyPropertyChanged
     public double? VoteAverage { get; set; }
     public string Availability { get; set; } = "";
     public string? LibraryContentId { get; set; }
+    public bool? InWatchlist { get; set; }
     public RequestState Request
     {
         get => _request;
@@ -58,7 +71,7 @@ public class RequestMediaResult : INotifyPropertyChanged
             return string.Join(" \u00B7 ", parts);
         }
     }
-    [JsonIgnore] public string RequestLabel => Request.Requestable ? "Request" : Request.Status switch { "pending" => "Pending", "approved" => "Approved", "queued" => "Queued", "downloading" => "Downloading", "completed" => "Completed", _ => Availability == "available" ? "Available" : "Unavailable" };
+    [JsonIgnore] public string RequestLabel => Request.Requestable ? "Request" : Services.RequestViewerPolicy.Label(Request.Status, null, Request.State, Availability);
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
         => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
@@ -165,6 +178,53 @@ public class RequestMediaDetail
     public string Availability { get; set; } = "";
     public string? LibraryContentId { get; set; }
     public RequestState Request { get; set; } = new();
+    public bool? InWatchlist { get; set; }
+    public List<RequestMediaSeason>? Seasons { get; set; }
+}
+
+public class RequestMediaSeason
+{
+    public int SeasonNumber { get; set; }
+    public string? Name { get; set; }
+    public string? AirDate { get; set; }
+    public int EpisodeCount { get; set; }
+    public string? PosterPath { get; set; }
+    public string Availability { get; set; } = "";
+    public bool Requested { get; set; }
+}
+
+public class RequestSeasonProgress
+{
+    public int SeasonNumber { get; set; }
+    public int EpisodesAired { get; set; }
+    public int EpisodesAvailable { get; set; }
+}
+
+public class RequestDownload
+{
+    public string Phase { get; set; } = "";
+    public int? Percent { get; set; }
+    public long? BytesTotal { get; set; }
+    public long? BytesLeft { get; set; }
+    public string? EstimatedCompletionAt { get; set; }
+    public int Downloads { get; set; }
+    public string? UpdatedAt { get; set; }
+}
+
+public class WatchlistTitle : RequestMediaResult
+{
+    public string AddedAt { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string? ContentRating { get; set; }
+}
+
+public class WatchlistTitleEntry
+{
+    public string MediaType { get; set; } = "";
+    public int TmdbId { get; set; }
+    public string? ItemId { get; set; }
+    public string AddedAt { get; set; } = "";
+    public RequestState Request { get; set; } = new();
 }
 
 public class CreateMediaRequestInput
@@ -178,6 +238,7 @@ public class CreateMediaRequestInput
     public string? Overview { get; set; }
     public string? PosterPath { get; set; }
     public string? BackdropPath { get; set; }
+    public List<int>? Seasons { get; set; }
 }
 
 public class MediaRequest
@@ -195,6 +256,12 @@ public class MediaRequest
     public string BackdropPath { get; set; } = "";
     public string Status { get; set; } = "";
     public string Outcome { get; set; } = "";
+    public string? State { get; set; }
+    public string? OutcomeReason { get; set; }
+    public List<int>? Seasons { get; set; }
+    public List<RequestSeasonProgress>? SeasonProgress { get; set; }
+    public RequestDownload? Download { get; set; }
+    public string? Source { get; set; }
     public int? RequestedByUserId { get; set; }
     public string RequestedByProfileId { get; set; } = "";
     public bool? IsAnime { get; set; }
@@ -222,6 +289,8 @@ public class RequestTarget
     public string? IntegrationId { get; set; }
     public string? IntegrationKind { get; set; }
     public string? InstanceName { get; set; }
+    public string? RouteName { get; set; }
+    public RequestDownload? Download { get; set; }
     public string Quality { get; set; } = "";
     public bool IsAnime { get; set; }
     public string? ExternalId { get; set; }

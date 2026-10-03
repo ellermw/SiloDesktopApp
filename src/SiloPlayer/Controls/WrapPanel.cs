@@ -70,6 +70,8 @@ public sealed class WrapPanel : Panel
         foreach (var child in Children)
         {
             child.Measure(childConstraint);
+            if (child.Visibility == Visibility.Collapsed)
+                continue;
             var desired = child.DesiredSize;
 
             double withGap = firstOnRow ? desired.Width : desired.Width + hSpacing;
@@ -103,33 +105,49 @@ public sealed class WrapPanel : Panel
         double vSpacing = VerticalSpacing;
         double maxRowWidth = finalSize.Width;
 
-        double x = 0;
         double y = 0;
-        double currentRowHeight = 0;
-        bool firstOnRow = true;
-
-        foreach (var child in Children)
+        for (var rowStart = 0; rowStart < Children.Count;)
         {
-            var desired = child.DesiredSize;
-            double withGap = firstOnRow ? desired.Width : desired.Width + hSpacing;
-
-            if (!firstOnRow && x + withGap > maxRowWidth)
+            // Measure the complete row before arranging it. The available row
+            // height lets each child's native VerticalAlignment take effect.
+            var rowEnd = rowStart;
+            double rowWidth = 0;
+            double rowHeight = 0;
+            var visibleCount = 0;
+            while (rowEnd < Children.Count)
             {
-                // Wrap to next row.
-                y += currentRowHeight + vSpacing;
-                x = 0;
-                currentRowHeight = 0;
-                firstOnRow = true;
-                withGap = desired.Width;
+                var child = Children[rowEnd];
+                if (child.Visibility == Visibility.Collapsed)
+                {
+                    rowEnd++;
+                    continue;
+                }
+                var desired = child.DesiredSize;
+                var withGap = desired.Width + (visibleCount == 0 ? 0 : hSpacing);
+                if (visibleCount > 0 && rowWidth + withGap > maxRowWidth)
+                    break;
+                rowWidth += withGap;
+                rowHeight = Math.Max(rowHeight, desired.Height);
+                visibleCount++;
+                rowEnd++;
             }
-
-            if (!firstOnRow) x += hSpacing;
-
-            child.Arrange(new Rect(x, y, desired.Width, desired.Height));
-
-            x += desired.Width;
-            currentRowHeight = Math.Max(currentRowHeight, desired.Height);
-            firstOnRow = false;
+            double x = 0;
+            var firstOnRow = true;
+            for (var index = rowStart; index < rowEnd; index++)
+            {
+                var child = Children[index];
+                if (child.Visibility == Visibility.Collapsed)
+                {
+                    child.Arrange(new Rect(0, 0, 0, 0));
+                    continue;
+                }
+                if (!firstOnRow) x += hSpacing;
+                child.Arrange(new Rect(x, y, child.DesiredSize.Width, rowHeight));
+                x += child.DesiredSize.Width;
+                firstOnRow = false;
+            }
+            y += rowHeight + vSpacing;
+            rowStart = rowEnd;
         }
 
         return finalSize;

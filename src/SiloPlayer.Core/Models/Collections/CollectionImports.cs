@@ -31,6 +31,7 @@ public sealed class CollectionTemplate
     public CollectionTemplateTmdbSpec? Tmdb { get; set; }
     public CollectionTemplateTraktSpec? Trakt { get; set; }
     public CollectionTemplateMdblistSpec? Mdblist { get; set; }
+    public CollectionTemplateTmdbListSpec? TmdbList { get; set; }
     public CollectionTemplateTmdbCollectionSpec? TmdbCollection { get; set; }
     public CollectionTemplateTmdbDiscoverSpec? TmdbDiscover { get; set; }
 }
@@ -52,6 +53,8 @@ public sealed class CollectionTemplateMdblistSpec
 {
     public string Url { get; set; } = "";
 }
+
+public sealed class CollectionTemplateTmdbListSpec { public string Url { get; set; } = ""; }
 
 public sealed class CollectionTemplateTmdbCollectionSpec
 {
@@ -188,6 +191,8 @@ public sealed class ImportUserMDBListCollectionRequest : ImportUserCollectionReq
 {
     public string Url { get; set; } = "";
 }
+
+public sealed class ImportUserTMDBListCollectionRequest : ImportUserCollectionRequest { public string Url { get; set; } = ""; }
 
 public sealed class ImportUserTMDBCollectionRequest : ImportUserCollectionRequest
 {

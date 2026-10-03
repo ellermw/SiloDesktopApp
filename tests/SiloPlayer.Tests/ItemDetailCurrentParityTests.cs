@@ -27,7 +27,8 @@ public sealed class ItemDetailCurrentParityTests
         var code = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
 
         Assert.Contains("x:Name=\"DetailErrorContent\"", xaml);
-        Assert.Contains("Text=\"Item not found.\"", xaml);
+        Assert.Contains("Text=\"{x:Bind ViewModel.ErrorMessage, Mode=OneWay}\"", xaml);
+        Assert.Contains("Click=\"RetryDetail_Click\"", xaml);
         Assert.DoesNotContain("Text=\"Unable to load this item\"", xaml);
         Assert.Contains("ViewModel.ErrorMessage ?? \"Failed to load item\"", code);
         Assert.Contains("SeasonsSection.Visibility = Visibility.Collapsed;", code);
@@ -201,7 +202,8 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("ItemMaintenanceActionPolicy.Resolve", page);
         Assert.DoesNotContain("View Play History", page);
         Assert.DoesNotContain("Re-detect Intro Markers", page);
-        Assert.DoesNotContain("Edit Metadata", page);
+        Assert.Contains("Edit Metadata", page);
+        Assert.Contains("AuthorizationPolicy.CanCurateMetadata", page);
         Assert.DoesNotContain("Edit Markers", page);
         Assert.DoesNotContain("Split Versions", page);
         Assert.Contains("ShowRefreshMetadataDialogAsync", page);
@@ -536,7 +538,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Equal(2, xaml.Split("<Grid.RowDefinitions>").Length - 1);
         Assert.Contains("KeyDown=\"HorizontalCarousel_KeyDown\"", xaml);
         Assert.Contains("x:Name=\"DetailErrorContent\"", xaml);
-        Assert.Contains("Item not found.", xaml);
+        Assert.Contains("ViewModel.ErrorMessage", xaml);
         Assert.Contains("AutomationProperties.SetName(button", page);
         Assert.Contains("Margin=\"8,24,0,0\"", xaml);
         Assert.Contains("Width=\"32\" Height=\"32\" CornerRadius=\"16\"", xaml);
@@ -591,9 +593,9 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("x:Name=\"ScoresPanel\" Orientation=\"Horizontal\" Spacing=\"20\"", xaml);
         Assert.Contains("x:Name=\"ImdbScoreText\" FontSize=\"15\" FontWeight=\"Bold\"", xaml);
         Assert.DoesNotContain("x:Name=\"TmdbScorePanel\"", xaml);
-        Assert.Contains("item.Type.Equals(\"episode\"", page);
-        Assert.Contains("? item.RatingImdb ?? item.RatingTmdb", page);
-        Assert.Contains(": item.RatingImdb", page);
+        Assert.Contains("foreach (var rating in item.Ratings ?? [])", page);
+        Assert.Contains("DisplayRatingEntry.Create(rating)", page);
+        Assert.Contains("ScoresPanel.Visibility = entries.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed", page);
         Assert.Contains("RuntimeText.Text = \"\"", page);
         Assert.Contains("MetaDot2.Visibility = Visibility.Collapsed", page);
     }
@@ -604,7 +606,8 @@ public sealed class ItemDetailCurrentParityTests
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
 
         Assert.Contains("TitleText.Visibility = Visibility.Visible", page);
-        Assert.Contains("LoadHeroLogoAsync(item.ContentId, item.LogoUrl, imageToken)", page);
+        Assert.Contains("LoadTitleArtPreferenceAsync(item, imageToken)", page);
+        Assert.Contains("LoadHeroLogoAsync(item.ContentId, item.LogoUrl, ct, revision)", page);
         Assert.Contains("\"logo\",", page);
         Assert.Contains("ViewModel.Item?.ContentId != contentId", page);
         Assert.Contains("StudioKickerText.Text = kicker.ToUpperInvariant()", page);
@@ -673,16 +676,17 @@ public sealed class ItemDetailCurrentParityTests
     }
 
     [Fact]
-    public void SeriesPaintsSeasonResultsBeforeContinueWatchingFinishes()
+    public void SeriesUsesTheDetailTargetWithoutWaitingForContinueWatchingEnrichment()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
         var loadStart = page.IndexOf("await ViewModel.LoadSeasonsCommand.ExecuteAsync(null);", StringComparison.Ordinal);
         var cardPaint = page.IndexOf("BuildSeasonCards();", loadStart, StringComparison.Ordinal);
-        var resumeAwait = page.IndexOf("var resumeEpisode = await resumeEpisodeTask;", loadStart, StringComparison.Ordinal);
+        var targetAction = page.IndexOf("ApplyAuthoritativeSeriesAction();", loadStart, StringComparison.Ordinal);
 
         Assert.True(loadStart >= 0);
         Assert.True(cardPaint > loadStart);
-        Assert.True(resumeAwait > cardPaint);
+        Assert.True(targetAction > cardPaint);
+        Assert.DoesNotContain("FindSeriesContinueWatchingEpisodeAsync", page);
         Assert.Contains("SeasonsLoadingSkeleton.Visibility = Visibility.Visible", page);
         Assert.Contains("SeasonsLoadError.Visibility", page);
     }

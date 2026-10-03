@@ -48,7 +48,7 @@ public sealed class UserOnlyClientArchitectureTests
     }
 
     [Fact]
-    public void ApprovedMaintenanceApiContainsOnlyTheThreeItemOperations()
+    public void ApprovedMaintenanceApiContainsOnlyItemScopedMaintenanceOperations()
     {
         var root = FindRepositoryRoot();
         var source = File.ReadAllText(Path.Combine(
@@ -57,7 +57,12 @@ public sealed class UserOnlyClientArchitectureTests
         Assert.Contains("/match/search", source);
         Assert.Contains("/match/apply", source);
         Assert.Contains("/refresh-metadata", source);
-        Assert.Equal(3, source.Split("/api/v2/admin/", StringSplitOptions.None).Length - 1);
+        Assert.Contains("/metadata\"", source);
+        Assert.Contains("/metadata-translation\"", source);
+        Assert.Contains("/images/apply\"", source);
+        Assert.DoesNotContain("/api/v2/admin/users", source);
+        Assert.DoesNotContain("/api/v2/admin/settings", source);
+        Assert.DoesNotContain("/api/v2/admin/libraries", source);
     }
 
     [Fact]

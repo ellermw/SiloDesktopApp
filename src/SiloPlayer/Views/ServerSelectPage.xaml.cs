@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Models;
 using SiloPlayer.Helpers;
+using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 
 namespace SiloPlayer.Views;
@@ -25,6 +26,12 @@ public sealed partial class ServerSelectPage : Page
                 UpdateEmptyState();
         };
         UpdateEmptyState();
+    }
+
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        base.OnNavigatedTo(e);
+        App.Services.GetRequiredService<ThemeService>().ResetSharedAppearance();
     }
 
     private void UpdateEmptyState()

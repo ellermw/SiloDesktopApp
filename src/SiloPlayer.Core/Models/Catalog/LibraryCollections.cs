@@ -6,6 +6,7 @@ public sealed class LibraryCollection
     public int LibraryId { get; set; }
     public string Title { get; set; } = "";
     public string CollectionType { get; set; } = "manual";
+    public Dictionary<string, object>? SourceConfig { get; set; }
     public string Visibility { get; set; } = "visible";
     public int SortOrder { get; set; }
     public string? GroupId { get; set; }

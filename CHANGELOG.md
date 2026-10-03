@@ -2,6 +2,43 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.92 (2026-10-03 — current checkpoint and playback reconnect repair)
+
+- Publish the current installer checkpoint with version 1.2.92. The patch number reflects 92 verified distinct corrections in the October 1 parity ledger, including the notification-reconnect repair; it does not indicate completed visual parity.
+- Keep playback ownership stable through notification-channel reconnect/access-read invalidation. Stop rejecting healthy session progress and unnecessarily restarting playback; retain real authentication, server, profile and PIN-grant change guards.
+- Include the episode-transition OSD repair, first detail-navigation blank-page repair and stable known-single-season first layout. Preserve the accepted player script, artwork and runtime dependencies.
+- Include accumulated Requests/external Watchlist, search/filter/collections, auth/profile/settings, shared appearance, reader/audio/manga and Watch Party work from the 1.2.0 development checkpoint.
+- Fresh verification: 1,399 Release tests; 15 real published-assembly playback checks; native first detail navigation/Back at 1280/460 for four media types; delayed season-authority/loading checks. Installer compilation and frozen-payload hash checks pass.
+- Final 14-package visual/end-to-end acceptance, the reader's remaining control-sizing mismatch and sustained playback confirmation remain open. Server administration remains in the WebUI.
+- Official public Silo reference: `478afa5257332df52f10650cd00b88596562d4c9`. See the [release record](docs/releases/1.2.92.md) and [reconnect diagnosis](docs/audit-gaps/2026-10-03-notification-reconnect-playback.md).
+
+## 1.2.0 (development checkpoint — feature batch and request interaction repairs; superseded by 1.2.92)
+
+- Use a minor version increment for the feature batch previously prepared as 1.1.107. All September 30 queue implementations and earlier Watch Party/reader/appearance work are included.
+- Keep Requests search/discovery and Yours poster art visible during hover and press. Their transparent hit targets now draw an outline instead of covering artwork with the stock button background.
+- Replace the intermediate external-title route when resolving an accessible library copy. Back returns to the original Requests search rather than revisiting a redirect that sends the viewer to the same title again. Shell-staged navigation is covered too.
+- Verify the real library-detail Request seasons picker can submit only Season 2 through an isolated fixture. No live request was submitted.
+- See the [request interaction diagnosis](docs/audit-gaps/2026-09-30-request-poster-and-back.md) for reproduction and final verification. Local installer only; not installed or published by this work.
+
+## 1.1.107 (local candidate — September 30 parity queue)
+
+- Add current viewer requests, season choices, external watchlist, search people/paging/typed filters and safe collection editing/imports.
+- Add required-password/recovery transitions, scoped history imports, provider controls, drop-show Undo and preserved profile rating/advisory settings.
+- Add Home layout preview/import/export with guarded library mapping, saved-section preservation and serialized writes; optional theme audio with ownership and interruption guards.
+- Share video/audiobook seek settings, implement Intro Never/Ask/Always with confirmed-skip Undo, preserve subtitle text opacity/Gray and advertise verified original SRT decoding.
+- Propagate live marker withdrawal, report once-per-attempt native output-ready startup telemetry, use authoritative series playback targets and correct Calendar/subtitle/quality labels.
+- Verified 1,267 automated tests, final native WinUI regressions, a clean x64 Release publish and six published playback-service checks. See the [per-item evidence](docs/parity/2026-09-30-queue-progress.md) for remaining live/visual acceptance and telemetry boundaries.
+- Local candidate only. Official server reference: `8e2e840474a085c6df6571a5a2850f7eb996810c`. Recurring buffering remains a separate open investigation.
+
+## 1.1.106 (local candidate — Watch Party, readers and shared appearance)
+
+- Route native Watch Party controls through room permissions, prevent command echo, reattach after reconnect, and coordinate readiness, buffering, catch-up and room completion.
+- Use locally bundled EPUB/PDF renderers with WebUI-compatible CFI locations, size-weighted progress, PDF page resume, bookmarks and annotations; preserve legacy locations and reject stale book/profile writes.
+- Apply supported server-wide color tokens to native controls while retaining accessibility and date/time preferences. Remove obsolete per-profile theme editing.
+- Built against official Silo Server reference `ad899be9d4fd9f33d4b9e9ac6873166026661c6d`. See the [verification record](docs/parity/2026-09-28-top-three-implementation.md); live multi-client/hardware acceptance and the separate recurring-buffering investigation remain open.
+- Local candidate only; not installed or published by this work.
+- Verified 1,172 Release tests, native reader/appearance/Watch Party and existing UI regressions, and six published playback-service checks. Installer SHA-256: `A44DE70031BC0A6C338C5118F1B9CEE8B76F8620E814D349EE283732C3E2323F`.
+
 ## 1.1.105 (stable Home refreshes)
 
 - Prevent unchanged Continue Watching and Next Up cards from being replaced when refreshed responses omit the display surface field.
@@ -656,3 +693,4 @@ Historical release notes for Silo Desktop Player. The current installer and proj
 - Updated Admin Libraries for the current plugin provider-chain contract.
 - Replaced the incorrect local Windows folder picker with the remote Silo server filesystem browser.
 - Added current metadata fields, manga type, provider defaults, poster actions, stateful scan/refresh controls, immediate Scan All feedback, server-wide unmatched search, and collapsed diagnostics.
+

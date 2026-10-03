@@ -8,6 +8,7 @@ public class AuthProvider
     public string DisplayName { get; set; } = "";
     public string Mode { get; set; } = "";
     public string? IconUrl { get; set; }
+    public string? NativeStartPath { get; set; }
     [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
     public int InstallationId { get; set; }
     [JsonPropertyName("default")]
@@ -18,6 +19,7 @@ public class AuthProvidersResponse
 {
     [JsonPropertyName("items")]
     public List<AuthProvider> Providers { get; set; } = [];
+    public bool PasswordLogin { get; set; } = true;
 }
 
 public class OAuthCompleteResponse
@@ -26,4 +28,9 @@ public class OAuthCompleteResponse
     public string RefreshToken { get; set; } = "";
     public int ExpiresIn { get; set; }
     public string Next { get; set; } = "";
+}
+
+public sealed class ServerIdentity
+{
+    public string ServerId { get; set; } = "";
 }

@@ -118,13 +118,12 @@ public sealed partial class SubtitleAiDialog : ContentDialog
         }
         else
         {
+            var labels = SubtitleSourceLabels.Build(_subtitleTracks, PlayerService.LanguageCodeToName);
             foreach (var track in _subtitleTracks)
             {
-                var language = PlayerService.LanguageCodeToName(track.Language);
-                var origin = string.IsNullOrWhiteSpace(track.Source) ? "" : $" · {track.Source}";
                 SourceComboBox.Items.Add(new ComboBoxItem
                 {
-                    Content = $"{language}{origin}",
+                    Content = labels[track],
                     Tag = track,
                 });
             }

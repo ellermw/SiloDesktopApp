@@ -164,7 +164,12 @@ public sealed class CurrentItemCardParityTests
         Assert.True(restart >= 0 && watched > restart);
         Assert.True(dismiss > watched);
         Assert.DoesNotContain("View Play History", code);
-        Assert.DoesNotContain("Edit Metadata", code);
+        Assert.Contains("if (canCurateMetadata && item.Type != \"manga\")", code);
+        Assert.Contains("new EditMetadataDialog(detail)", code);
+        // BrowseMenuCouplingNativeFixture invokes the actual owner menu and
+        // proves Cancel/failure/retry/HasSaved plus one saved broadcast.
+        Assert.Contains("AuthorizationPolicy.IsActingAdmin(authService)", code);
+        Assert.Contains("PlayHistoryDialog(item.ContentId)", code);
     }
 
     [Fact]

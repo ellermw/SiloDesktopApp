@@ -175,6 +175,7 @@ local state = {
 
     -- Current WebUI Watch Party panel and room-sync state.
     watch_party = nil,
+    room_quality_offer = nil,
     watch_party_actions = {},
     watch_party_end_confirm = false,
 
@@ -212,6 +213,9 @@ local state = {
     skip_overlay    = nil,
     skip_rect       = nil,
     skip_hovered    = false,
+    video_skip_back = 10,
+    video_skip_forward = 30,
+    intro_mode = 'ask',
     auto_skip_intro = false,
     auto_skip_recap = false,
     auto_skip_credits = false,
@@ -326,7 +330,7 @@ local function visible_quality_tiers()
     local resolution = state.media_info and state.media_info.resolution or ""
     local native_height = quality_resolution_height[resolution] or 0
     local server_qualities = state.quality_info and state.quality_info.qualities
-    if type(server_qualities) == "table" and #server_qualities > 0 then
+    if type(server_qualities) == "table" then
         for _, quality in ipairs(server_qualities) do
             local id = quality.id or quality.label or ""
             if id ~= "" then
@@ -396,6 +400,11 @@ local function active_quality_label()
     return "Quality"
 end
 
+local function quality_choices_available()
+    if not state.quality_info then return false end
+    local versions = state.watch_party and {} or (state.quality_info.versions or {})
+    return #versions > 1 or #visible_quality_tiers() > 1
+end
 local function consume_video_click()
     state.ignore_video_click_until = mp.get_time() + 0.5
 end
@@ -1203,11 +1212,11 @@ local function compute_layout()
     _layout_chapter_count = #state.chapters
     local L = state.layout
     local sc = ui_scale()
-    local compact = W < math.floor(640 * sc)
+    local compact = W < math.floor(1024 * sc)
     local pad = math.floor((compact and 12 or config.bar_padding_x) * sc)
-    local main_size = math.floor((compact and 48 or config.button_size) * sc)
-    local small_size = math.floor((compact and 40 or config.small_button_size) * sc)
-    local gap = math.floor((compact and 8 or 12) * sc)
+    local main_size = math.floor((compact and 40 or config.button_size) * sc)
+    local small_size = math.floor((compact and 32 or config.small_button_size) * sc)
+    local gap = math.floor((compact and 6 or 12) * sc)
     local bottom_padding = math.floor((compact and 12 or config.bar_padding_bottom) * sc)
     local controls_y = H - bottom_padding - main_size / 2
     -- SeekBar's 44px pointer target sits 8px above the transport row.
@@ -1263,7 +1272,7 @@ local function compute_layout()
 
     -- Right utility rail, in the same order as the WebUI controls that the
     -- native client currently exposes.
-    local utility_size = math.floor(40 * sc)
+    local utility_size = math.floor((compact and 32 or 40) * sc)
     local utility_gap = math.floor(2 * sc)
     local rx_cursor = W - pad
     local function place_utility(width)
@@ -1275,14 +1284,16 @@ local function compute_layout()
         return rect
     end
     L.btn_fullscreen = place_utility()
-    L.btn_pip = place_utility()
-    L.btn_stats = place_utility()
-    local show_quality_label = W >= math.floor(640 * sc)
-    L.btn_quality = place_utility(show_quality_label and math.floor(140 * sc) or utility_size)
-    L.btn_quality.show_label = show_quality_label
+    L.btn_more = compact and place_utility() or nil
+    L.btn_fill = not compact and place_utility() or nil
+    L.btn_pip = not compact and place_utility() or nil
+    L.btn_stats = not compact and place_utility() or nil
+    local show_quality_label = not compact
+    L.btn_quality = quality_choices_available() and place_utility(show_quality_label and math.floor(140 * sc) or utility_size) or nil
+    if L.btn_quality then L.btn_quality.show_label = show_quality_label end
     L.btn_cc = place_utility()
-    L.btn_chapters = #state.chapters > 0 and place_utility() or nil
-    L.btn_audio = #state.audio_tracks > 0 and place_utility() or nil
+    L.btn_chapters = not compact and #state.chapters > 0 and place_utility() or nil
+    L.btn_audio = not compact and #state.audio_tracks > 0 and place_utility() or nil
 
     -- Tailwind's `hidden sm:block` removes the entire volume group below
     -- 640 CSS pixels. Doing the same prevents windowed playback from
@@ -1759,12 +1770,12 @@ local function render_osc()
     local bsb = L.btn_skip_back
     local skip_back_hovered = draw_secondary_disc(bsb)
     draw_skip_back_icon(ass, bsb.cx, bsb.cy,
-        bsb.w * 0.7 * (skip_back_hovered and 1.06 or 1.0), config.text_color, "10", ma)
+        bsb.w * 0.7 * (skip_back_hovered and 1.06 or 1.0), config.text_color, tostring(state.video_skip_back), ma)
 
     if L.btn_prev_ep then
         local prev_hovered = draw_secondary_disc(L.btn_prev_ep)
         draw_prev_episode_icon(ass, L.btn_prev_ep.cx, L.btn_prev_ep.cy,
-            L.btn_prev_ep.w * 0.58 * (prev_hovered and 1.06 or 1.0), config.text_color, "10", ma)
+            L.btn_prev_ep.w * 0.58 * (prev_hovered and 1.06 or 1.0), config.text_color, tostring(state.video_skip_back), ma)
     end
 
     local bp = L.btn_play
@@ -1792,12 +1803,12 @@ local function render_osc()
     local bsf = L.btn_skip_fwd
     local skip_forward_hovered = draw_secondary_disc(bsf)
     draw_skip_fwd_icon(ass, bsf.cx, bsf.cy,
-        bsf.w * 0.7 * (skip_forward_hovered and 1.06 or 1.0), config.text_color, "10", ma)
+        bsf.w * 0.7 * (skip_forward_hovered and 1.06 or 1.0), config.text_color, tostring(state.video_skip_forward), ma)
 
     if L.btn_next_ep then
         local next_hovered = draw_secondary_disc(L.btn_next_ep)
         draw_next_episode_icon(ass, L.btn_next_ep.cx, L.btn_next_ep.cy,
-            L.btn_next_ep.w * 0.58 * (next_hovered and 1.06 or 1.0), config.text_color, "10", ma)
+            L.btn_next_ep.w * 0.58 * (next_hovered and 1.06 or 1.0), config.text_color, tostring(state.video_skip_back), ma)
     end
 
     -- 6. Utility rail. Hover produces the same faint circular wash as the
@@ -1879,6 +1890,7 @@ local function render_osc()
     end
 
     local bq = L.btn_quality
+    if bq then
     if utility_hover(bq) then
         draw_rounded_rect(ass, bq.x, bq.y, bq.x + bq.w, bq.y + bq.h,
             bq.h / 2, config.text_color, "EB", ma)
@@ -1897,16 +1909,31 @@ local function render_osc()
             config.text_color, state.quality_menu_visible and "00" or "38", ma)
     end
 
+    end
     local bst = L.btn_stats
+    if bst then
     draw_utility_state(bst, state.stats_visible)
     draw_info_icon(ass, bst.cx, bst.cy, math.floor(20 * sc),
         config.text_color, state.stats_visible and "00" or "38", ma)
 
+    end
     local bpip = L.btn_pip
+    if bpip then
     draw_utility_state(bpip, state.picture_in_picture)
     draw_pip_icon(ass, bpip.cx, bpip.cy, bpip.w * 0.66,
         config.text_color, "20", ma)
 
+    end
+    local fill = L.btn_fill
+    if fill then
+        draw_utility_state(fill, mp.get_property_number("panscan", 0) > 0)
+        draw_text(ass, fill.cx, fill.cy, "Fit", math.floor(11 * sc), config.text_color, "20", ma, 5)
+    end
+    local more = L.btn_more
+    if more then
+        draw_utility_state(more, state.compact_menu_visible)
+        draw_text(ass, more.cx, more.cy, "...", math.floor(20 * sc), config.text_color, "20", ma, 5)
+    end
     local bf = L.btn_fullscreen
     draw_utility_state(bf, state.fullscreen)
     draw_fullscreen_icon(ass, bf.cx, bf.cy, bf.w * 0.68,
@@ -1941,7 +1968,7 @@ local function render_osc()
     local party = state.watch_party
     if party and party.visible then
         local panel_w = math.floor(224 * sc)
-        local panel_h = math.floor((party.is_host and 132 or 88) * sc)
+        local panel_h = math.floor(((party.is_host and 132 or 88) + (state.room_quality_offer and 38 or 0)) * sc)
         local panel_x = W - math.floor(16 * sc) - panel_w
         local panel_y = math.floor(16 * sc)
         draw_rounded_rect(ass, panel_x - 1, panel_y - 1,
@@ -2010,7 +2037,16 @@ local function render_osc()
                 math.floor(40 * sc), true)
         end
 
-        if party.playback_state == "waiting" then
+        if state.room_quality_offer then
+            local y = panel_y + panel_h - math.floor(34 * sc)
+            local x = panel_x + math.floor(12 * sc)
+            local width = panel_w - math.floor(24 * sc)
+            draw_rounded_rect(ass, x, y, x + width, y + math.floor(26 * sc), math.floor(6 * sc), config.text_color, "DE", ma)
+            draw_text(ass, x + width / 2, y + math.floor(13 * sc), "Lower quality", math.floor(11 * sc), config.text_color, "00", ma, 5, nil, true)
+            table.insert(state.watch_party_actions, { x = x, y = y, w = width, h = math.floor(26 * sc), action = "lower-quality" })
+        end
+
+        if party.playback_state == "waiting" or party.catching_up then
             local sync_w = math.floor(180 * sc)
             local sync_h = math.floor(68 * sc)
             local sync_x = W / 2 - sync_w / 2
@@ -2023,7 +2059,7 @@ local function render_osc()
                 math.floor(8 * sc), "000000", "4C", ma)
             draw_text(ass, W / 2, H / 2 - math.floor(9 * sc), "SYNCING",
                 math.floor(10 * sc), config.text_color, "68", ma, 5, nil, true)
-            draw_text(ass, W / 2, H / 2 + math.floor(13 * sc), "Syncing playback",
+            draw_text(ass, W / 2, H / 2 + math.floor(13 * sc), (party.catching_up and "Catching up to the party" or "Syncing playback"),
                 math.floor(14 * sc), config.text_color, "00", ma, 5, nil, true)
         end
 
@@ -2059,6 +2095,29 @@ local function render_osc()
                 { x = cancel_x, y = button_y, w = math.floor(72 * sc), h = button_h, action = "cancel-end" })
             table.insert(state.watch_party_actions,
                 { x = end_x, y = button_y, w = math.floor(74 * sc), h = button_h, action = "confirm-end" })
+        end
+    end
+
+    state.compact_menu_items = {}
+    if state.compact_menu_visible and L.btn_more then
+        local entries = {{name="btn_audio", label="Audio tracks"}, {name="btn_chapters", label="Chapters"},
+            {name="btn_stats", label="Playback info"}, {name="btn_pip", label="Picture in picture"},
+            {name="btn_fill", label=mp.get_property_number("panscan", 0) > 0 and "Contain video" or "Fill screen"},
+            {name="btn_volume_down", label="Volume -"}, {name="btn_volume_up", label="Volume +"}, {name="btn_volume", label="Mute / unmute"}}
+        local row_h = math.floor(40 * sc)
+        local width = math.min(W - 24 * sc, math.floor(280 * sc))
+        -- Compact touch surfaces use a generous sheet above the transport row.
+        local x = W - width - 12 * sc
+        local y = math.max(12 * sc, L.bar.y - row_h * #entries - 8 * sc)
+        draw_rounded_rect(ass, x, y, x + width, y + row_h * #entries, 12 * sc, "171717", "10", ma)
+        for index, entry in ipairs(entries) do
+            local rect = {x=x, y=y+(index-1)*row_h, w=width, h=row_h, name=entry.name}
+            L["overflow_" .. entry.name] = rect
+            table.insert(state.compact_menu_items, rect)
+            if state.controller_focus_name == "overflow_" .. entry.name or point_in_rect(state.mouse_x, state.mouse_y, rect) then
+                draw_rect(ass, x, rect.y, x+width, rect.y+row_h, config.text_color, "DC", ma)
+            end
+            draw_text(ass, x+16*sc, rect.y+row_h/2, entry.label, math.floor(13*sc), config.text_color, "00", ma, 4)
         end
     end
 
@@ -2452,7 +2511,7 @@ show_osc = function()
     -- can be stuck visible forever when stale state (e.g. mouse_in_bar) is
     -- left over after the cursor has actually left the window.
     local function check_hide()
-        if state.pause or state.dragging_seek or state.dragging_volume then
+        if state.pause or state.dragging_seek or state.dragging_volume or state.compact_menu_visible then
             state.hide_timer = mp.add_timeout(config.hide_timeout, check_hide)
             return
         end
@@ -2466,6 +2525,7 @@ show_osc = function()
 end
 
 local function dismiss_transport_menus_for_fade()
+    state.compact_menu_visible = false
     state.subtitle_menu_visible = false
     state.quality_menu_visible = false
     state.audio_menu_visible = false
@@ -2998,7 +3058,7 @@ local function render_quality_menu()
     local menu_w = math.min(math.floor(280 * sc), math.max(120, W - 20))
 
     local qi = state.quality_info
-    local versions = (qi and qi.versions) or {}
+    local versions = state.watch_party and {} or ((qi and qi.versions) or {})
     local active_file_id = (qi and qi.active_file_id) or 0
     local requested_file_id = (qi and qi.requested_file_id) or active_file_id
     local has_versions = #versions > 1
@@ -3709,19 +3769,60 @@ check_skip_markers = function()
         end
     end
 
+    local now = mp.get_time()
+    local key = tostring(state.marker_content_id or "") .. ":" .. tostring(state.intro_start) .. ":" .. tostring(state.intro_end)
+    if state.intro_prompt_key ~= key and not state.intro_pending and not state.intro_undo_origin then
+        state.intro_prompt_key = key
+        state.intro_prompt_remaining = 5
+        state.intro_resolved_keys = state.intro_resolved_keys or {}
+        state.intro_prompt_resolved = state.intro_resolved_keys[key] == true
+        state.intro_pending = nil
+        state.intro_undo_origin = nil
+    end
+    if state.intro_pending then
+        local pending = state.intro_pending
+        if math.abs(pos - pending.target) < 3 and math.abs(pos - pending.origin) > 3 then
+            state.intro_prompt_resolved = true
+            state.intro_resolved_keys[state.intro_prompt_key] = true
+            state.intro_auto_skipped = true
+            if state.auto_skipped_segments and state.intro_segment_key then state.auto_skipped_segments[state.intro_segment_key] = true end
+            state.intro_undo_origin = pending.automatic and pending.intro_start or nil
+            state.intro_prompt_remaining = 5
+            state.intro_pending = nil
+        elseif now - pending.requested > 5 then
+            -- A refused room command or failed seek never claims a successful skip.
+            state.intro_pending = nil
+        end
+    end
+    local in_intro = pos >= state.intro_start and pos < state.intro_end and state.intro_end > state.intro_start
+    if state.intro_mode == "ask" and in_intro and not state.intro_was_inside and not state.intro_resolved_keys[key] then
+        state.intro_prompt_remaining = 5
+        state.intro_prompt_resolved = false
+    end
+    state.intro_was_inside = state.intro_mode ~= "never" and in_intro
+    if not mp.get_property_native("pause") and not mp.get_property_native("paused-for-cache")
+        and state.intro_mode ~= "never" and (in_intro or state.intro_undo_origin) then
+        state.intro_prompt_remaining = math.max(0, (state.intro_prompt_remaining or 5) - math.min(0.5, now - (state.intro_prompt_tick or now)))
+    end
+    state.intro_prompt_tick = now
+    if state.intro_prompt_remaining == 0 then
+        state.intro_prompt_resolved = true
+        if state.intro_undo_origin then state.intro_resolved_keys[state.intro_prompt_key] = true end
+        state.intro_undo_origin = nil
+    end
     -- Auto-skip uses the same transport-aware host seek as a manual marker
     -- click. That keeps direct, remux, and HLS semantics identical and also
     -- preserves the current paused state. Watch-together guests never issue
     -- an independent seek; the room host remains authoritative.
     local can_manage_timeline = state.watch_party == nil or state.watch_party.is_host == true
     if can_manage_timeline then
-        if state.auto_skip_intro and not state.intro_auto_skipped
+        if state.intro_mode == "always" and not state.intro_prompt_resolved and not state.intro_auto_skipped
             and state.intro_end > state.intro_start
             and pos >= state.intro_start and pos < state.intro_end then
-            state.intro_auto_skipped = true
-            if state.auto_skipped_segments and state.intro_segment_key then state.auto_skipped_segments[state.intro_segment_key] = true end
-            seek_and_resume(state.intro_end, "absolute+keyframes")
-            return
+            if not state.intro_pending then
+                state.intro_pending = { target = state.intro_end, origin = pos, intro_start = state.intro_start, requested = mp.get_time(), automatic = true }
+                seek_and_resume(state.intro_end, "absolute+keyframes")
+            end
         end
         if state.auto_skip_recap and not state.recap_auto_skipped
             and state.recap_end > state.recap_start
@@ -3750,12 +3851,18 @@ check_skip_markers = function()
     -- end > start to mean "marker present with duration"; earlier code
     -- also required start > 0, which wrongly hid Skip Intro whenever
     -- the intro began at position 0 (common on streaming-first shows).
-    if state.intro_end > state.intro_start then
+    if state.intro_mode ~= "never" and not state.intro_prompt_resolved and state.intro_end > state.intro_start then
         if pos >= state.intro_start and pos < state.intro_end then
             state.skip_visible = true
             state.skip_label = "Skip Intro"
             state.skip_target = state.intro_end
         end
+    end
+
+    if state.intro_undo_origin and state.intro_mode == "always" then
+        state.skip_visible = true
+        state.skip_label = "Watch Intro"
+        state.skip_target = state.intro_undo_origin
     end
 
     -- The current WebUI exposes recap markers independently from intros.
@@ -4331,6 +4438,7 @@ local function close_keyboard_surface()
         request_tick()
         return true
     end
+    if state.compact_menu_visible then state.compact_menu_visible = false; state.controller_focus_name = "btn_more"; request_tick(); return true end
     local kind = current_keyboard_menu()
     if kind then
         close_transport_menus(nil)
@@ -4402,6 +4510,10 @@ local function focusable_transport_controls()
         if L[name] then table.insert(result, name) end
     end
 
+    if state.compact_menu_visible then
+        for _, item in ipairs(state.compact_menu_items or {}) do table.insert(result, "overflow_" .. item.name) end
+        return result
+    end
     -- Match the visual left-to-right order of the WebUI player HUD.
     add("btn_prev_ep")
     add("btn_skip_back")
@@ -4415,6 +4527,8 @@ local function focusable_transport_controls()
     add("btn_quality")
     add("btn_stats")
     add("btn_pip")
+    add("btn_fill")
+    add("btn_more")
     add("btn_fullscreen")
     return result
 end
@@ -4489,15 +4603,24 @@ local function activate_controller_focus()
         return true
     end
 
-    if name == "btn_prev_ep" then
+    if name:sub(1, 9) == "overflow_" then name = name:sub(10); state.compact_menu_visible = false end
+    if name == "btn_more" then
+        state.compact_menu_visible = not state.compact_menu_visible
+    elseif name == "btn_fill" then
+        mp.set_property_number("panscan", mp.get_property_number("panscan", 0) > 0 and 0 or 1)
+    elseif name == "btn_volume_down" or name == "btn_volume_up" then
+        local volume = clamp(mp.get_property_number("volume", 100) + (name == "btn_volume_up" and 10 or -10), 0, 100)
+        mp.set_property_number("volume", volume)
+        mp.commandv("script-message", "silo-volume-changed", tostring(volume))
+    elseif name == "btn_prev_ep" then
         state.prev_ep_available = false
         mp.commandv("script-message", "silo-prev-episode")
     elseif name == "btn_skip_back" then
-        seek_relative_and_resume(-10)
+        seek_relative_and_resume(-state.video_skip_back)
     elseif name == "btn_play" then
-        mp.commandv("cycle", "pause")
+        mp.commandv("script-message", "silo-pause-toggle")
     elseif name == "btn_skip_fwd" then
-        seek_relative_and_resume(30)
+        seek_relative_and_resume(state.video_skip_forward)
     elseif name == "btn_next_ep" then
         state.next_ep_visible = false
         state.next_ep_available = false
@@ -4563,6 +4686,11 @@ local function handle_mouse_down()
     -- Skip intro/credits button
     if point_on_skip_button(mx, my) then
         consume_video_click()
+        if state.skip_label == "Skip Intro" then
+            state.intro_pending = { target = state.skip_target, origin = mp.get_property_number("time-pos", 0), requested = mp.get_time(), automatic = false }
+        elseif state.skip_label == "Watch Intro" then
+            state.intro_undo_origin = nil
+        end
         seek_and_resume(state.skip_target, "absolute+keyframes")
         state.skip_visible = false
         render_skip_button()
@@ -4619,6 +4747,22 @@ local function handle_mouse_down()
         point_in_rect(mx, my, state.stats_panel_rect) then
         consume_video_click()
         return
+    end
+
+    if state.compact_menu_visible then
+        for _, item in ipairs(state.compact_menu_items or {}) do
+            if point_in_rect(mx, my, item) then
+                consume_video_click(); state.controller_focus_name = "overflow_" .. item.name; activate_controller_focus(); return
+            end
+        end
+        state.compact_menu_visible = false
+        consume_video_click(); request_tick(); return
+    end
+    if state.layout.btn_more and point_in_rect(mx, my, state.layout.btn_more) then
+        consume_video_click(); state.controller_focus_name = "btn_more"; activate_controller_focus(); return
+    end
+    if state.layout.btn_fill and point_in_rect(mx, my, state.layout.btn_fill) then
+        consume_video_click(); state.controller_focus_name = "btn_fill"; activate_controller_focus(); return
     end
 
     -- Audio menu click handling
@@ -4750,13 +4894,13 @@ local function handle_mouse_down()
 
     -- Check play/pause
     if L.btn_play and point_in_rect(mx, my, L.btn_play) then
-        mp.commandv("cycle", "pause")
+        mp.commandv("script-message", "silo-pause-toggle")
         return
     end
 
     -- Check skip back
     if L.btn_skip_back and point_in_rect(mx, my, L.btn_skip_back) then
-        seek_relative_and_resume(-10)
+        seek_relative_and_resume(-state.video_skip_back)
         return
     end
 
@@ -4768,7 +4912,7 @@ local function handle_mouse_down()
 
     -- Check skip forward
     if L.btn_skip_fwd and point_in_rect(mx, my, L.btn_skip_fwd) then
-        seek_relative_and_resume(30)
+        seek_relative_and_resume(state.video_skip_forward)
         return
     end
 
@@ -5087,6 +5231,12 @@ local function observe_properties()
     mp.register_script_message("osc-set-markers", function(json_str)
         local ok, data = pcall(require("mp.utils").parse_json, json_str)
         if ok and data then
+            if state.marker_payload_json ~= json_str then
+                state.intro_pending = nil
+                state.intro_undo_origin = nil
+                state.intro_prompt_key = nil
+            end
+            state.marker_payload_json = json_str
             local incoming_content_id = tostring(data.content_id or "")
             local reset_auto_skip = data.reset_auto_skip == true
                 or state.marker_content_id ~= incoming_content_id
@@ -5102,6 +5252,7 @@ local function observe_properties()
             state.preview_end = tonumber(data.preview_end) or 0
             if reset_auto_skip then
                 state.auto_skipped_segments = {}
+                state.intro_resolved_keys = {}
                 state.intro_auto_skipped = false
                 state.recap_auto_skipped = false
                 state.credits_auto_skipped = false
@@ -5109,6 +5260,26 @@ local function observe_properties()
         end
     end)
 
+    mp.register_script_message("osc-set-seek-intervals", function(back, forward)
+        state.video_skip_back = tonumber(back) or 10
+        state.video_skip_forward = tonumber(forward) or 30
+        request_tick()
+    end)
+    mp.register_script_message("osc-set-intro-mode", function(mode)
+        if mode ~= "always" and mode ~= "ask" and mode ~= "never" then mode = "ask" end
+        -- Settings arrive asynchronously after successor-episode markers.
+        -- An unchanged preference must preserve the current seek/undo key;
+        -- clearing only that key leaves a live action which kills this Lua VM
+        -- on completion/expiry (table index is nil), taking all OSC input too.
+        if state.intro_mode == mode then return end
+        state.intro_mode = mode
+        state.intro_pending = nil
+        state.intro_undo_origin = nil
+        state.intro_prompt_key = nil
+        state.intro_prompt_remaining = 5
+        state.intro_prompt_resolved = false
+        state.intro_was_inside = false
+    end)
     mp.register_script_message("osc-set-auto-skip", function(intro, recap, credits)
         state.auto_skip_intro = (intro == "true" or intro == "1")
         state.auto_skip_recap = (recap == "true" or recap == "1")
@@ -5236,9 +5407,15 @@ local function observe_properties()
         render_pause_indicator()
     end)
 
+    mp.register_script_message("osc-room-quality-offer", function(label)
+        state.room_quality_offer = label and label ~= "" and label or nil
+        request_tick()
+    end)
+
     mp.register_script_message("osc-set-watch-party", function(json_str)
         if not json_str or json_str == "" or json_str == "null" then
             state.watch_party = nil
+            state.room_quality_offer = nil
             state.watch_party_actions = {}
             state.watch_party_end_confirm = false
         else
@@ -5519,12 +5696,12 @@ local function setup_key_bindings()
     mp.add_forced_key_binding("LEFT", "silo-seek-back", function()
         if move_playback_failure_focus() then return end
         if current_keyboard_menu() then return end
-        seek_relative_and_resume(-10)
+        seek_relative_and_resume(-state.video_skip_back)
     end)
     mp.add_forced_key_binding("RIGHT", "silo-seek-fwd", function()
         if move_playback_failure_focus() then return end
         if current_keyboard_menu() then return end
-        seek_relative_and_resume(10)
+        seek_relative_and_resume(state.video_skip_forward)
     end)
     mp.add_forced_key_binding("UP", "silo-vol-up", function()
         if move_playback_failure_focus() then return end
@@ -5594,7 +5771,7 @@ local function setup_key_bindings()
 
     local function toggle_play_pause()
         if state.playback_failure_visible then return end
-        mp.commandv("cycle", "pause")
+        mp.commandv("script-message", "silo-pause-toggle")
     end
     mp.add_forced_key_binding("SPACE", "silo-play-pause-space", toggle_play_pause)
     mp.add_forced_key_binding("k", "silo-play-pause-k", toggle_play_pause)
@@ -5778,7 +5955,7 @@ local function setup_script_messages()
         end
 
         -- Any menu overlay open? Let that handle its own clicks.
-        if state.subtitle_menu_visible or state.quality_menu_visible
+        if state.compact_menu_visible or state.subtitle_menu_visible or state.quality_menu_visible
             or state.audio_menu_visible or state.chapter_menu_visible then
             return
         end
@@ -5791,7 +5968,7 @@ local function setup_script_messages()
         end
 
         -- Click on the video body — toggle pause.
-        mp.commandv("cycle", "pause")
+        mp.commandv("script-message", "silo-pause-toggle")
     end)
 
     mp.register_script_message("osc-controller-nav", function(direction)

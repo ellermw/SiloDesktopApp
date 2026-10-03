@@ -238,6 +238,10 @@ public class WatchTogetherRoomMember
     public bool IsHost { get; set; }
     public bool IsSelf { get; set; }
     public bool Connected { get; set; }
+    public bool LobbyReady { get; set; }
+    public bool IsReady { get; set; }
+    public bool IsBuffering { get; set; }
+    public bool IsSyncing { get; set; }
     public string DisplayLabel => DisplayName + (IsSelf ? " (you)" : "");
     public string HostLabel => IsHost ? "HOST" : "";
 }
@@ -252,6 +256,7 @@ public class WatchTogetherSuggestion : INotifyPropertyChanged
 {
     private bool _canDelete;
     private bool _canPromote;
+    private bool _canVote;
     private int _voteCount;
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -280,6 +285,9 @@ public class WatchTogetherSuggestion : INotifyPropertyChanged
         get => _canDelete;
         set => SetField(ref _canDelete, value);
     }
+
+    [JsonIgnore]
+    public bool CanVote { get => _canVote; set => SetField(ref _canVote, value); }
 
     [JsonIgnore]
     public bool CanPromote
@@ -318,4 +326,52 @@ public class WatchTogetherTransportCommand
     public string? ExecuteAt { get; set; }
     public string? IssuedAt { get; set; }
     public string PlaybackState { get; set; } = "";
+}
+
+public class WatchTogetherCapabilities
+{
+    public string State { get; set; } = "unsupported";
+    public bool Allowed { get; set; }
+    public bool StagedSelection { get; set; }
+    public bool LobbyReady { get; set; }
+    public bool SelectionModeSwitch { get; set; }
+    public bool Picker { get; set; }
+    public bool MemberState { get; set; }
+}
+public class WatchTogetherPickerResponse
+{
+    public List<WatchTogetherRoomMember> Members { get; set; } = [];
+    public List<WatchTogetherPickerEntry> ContinueTogether { get; set; } = [];
+    public List<WatchTogetherPickerEntry> WatchlistUnion { get; set; } = [];
+}
+public class WatchTogetherPickerEntry
+{
+    public SiloPlayer.Core.Models.Home.MediaItem Item { get; set; } = new();
+    public List<WatchTogetherRoomMember> Members { get; set; } = [];
+    public WatchTogetherPickerNextUp? NextUp { get; set; }
+}
+public class WatchTogetherPickerNextUp
+{
+    public string ContentId { get; set; } = "";
+    public int SeasonNumber { get; set; }
+    public int EpisodeNumber { get; set; }
+    public string Title { get; set; } = "";
+    public int MemberCount { get; set; }
+}
+public class WatchTogetherMemberStateResponse
+{
+    public List<WatchTogetherRoomMember> Members { get; set; } = [];
+    public List<WatchTogetherItemMemberState> Items { get; set; } = [];
+}
+public class WatchTogetherItemMemberState
+{
+    public string ContentId { get; set; } = "";
+    public List<WatchTogetherMemberWatchState> Members { get; set; } = [];
+}
+public class WatchTogetherMemberWatchState
+{
+    public int UserId { get; set; }
+    public string ProfileId { get; set; } = "";
+    public string State { get; set; } = "unseen";
+    public bool OnWatchlist { get; set; }
 }

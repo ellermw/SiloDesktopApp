@@ -11,6 +11,8 @@ public partial class RequestsViewModel : ObservableObject
     private readonly RequestsApi _requestsApi;
     private DateTime _lastLoadedAt = DateTime.MinValue;
     private bool _loadInProgress;
+    private bool _downloadRefreshInProgress;
+    private int _mineReadRevision;
     private CancellationTokenSource? _searchCts;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
@@ -25,8 +27,15 @@ public partial class RequestsViewModel : ObservableObject
     public ObservableCollection<DiscoverBrandCard> Studios { get; } = [];
     public ObservableCollection<DiscoverBrandCard> Networks { get; } = [];
     public ObservableCollection<DiscoverBrandCard> Genres { get; } = [];
+    public RequestFeatureStatus Features { get; private set; } = new();
+    public System.Collections.Concurrent.ConcurrentDictionary<string, string> BrandErrors { get; } = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _brandPending = new();
+    public async Task RetryBrandAsync(string kind) { await LoadBrandAsync(kind); DataVersion++; }
 
     [ObservableProperty] private bool _isLoading;
+    [ObservableProperty] private bool _isLoadingMine;
+    [ObservableProperty] private bool _isLoadingDiscovery;
+    public bool IsBrandLoading(string kind) => _brandPending.ContainsKey(kind);
     [ObservableProperty] private bool _isSearching;
     [ObservableProperty] private bool _isSubmitting;
     [ObservableProperty] private bool _requestsEnabled = true;
@@ -55,6 +64,7 @@ public partial class RequestsViewModel : ObservableObject
         try
         {
             var status = await _requestsApi.GetStatusAsync();
+            Features = status;
             RequestsEnabled = status.RequestsEnabled;
             if (!RequestsEnabled)
             {
@@ -66,9 +76,13 @@ public partial class RequestsViewModel : ObservableObject
                 return;
             }
 
+            IsLoadingMine = IsLoadingDiscovery = true;
             var mineTask = LoadMineAsync();
             var discoveryTask = LoadDiscoveryAsync();
             var brandsTask = LoadBrandsAsync();
+            // Each WebUI query owns its loading state. A slow discovery rail
+            // must not hide completed account requests or brand results.
+            IsLoading = false;
             await Task.WhenAll(mineTask, discoveryTask, brandsTask);
 
             StatusMessage = MyRequests.Count > 0 ? $"{MyRequests.Count:N0} request(s) loaded." : "";
@@ -89,21 +103,53 @@ public partial class RequestsViewModel : ObservableObject
 
     private async Task LoadMineAsync()
     {
+        IsLoadingMine = true;
+        var revision = ++_mineReadRevision;
         MineError = null;
         try
         {
             var response = await _requestsApi.GetMineAsync(limit: 100);
+            if (revision != _mineReadRevision) return;
             Replace(MyRequests, response.Requests);
         }
         catch
         {
+            if (revision != _mineReadRevision) return;
             MineError = "Couldn't load your requests";
             MyRequests.Clear();
         }
+        finally { IsLoadingMine = false; DataVersion++; }
+    }
+
+    public bool HasDownloadingRequests => MyRequests.Any(request =>
+        request.Download != null || request.Targets?.Any(target => target.Download != null) == true);
+
+    // The mounted Requests surface follows the WebUI's 30-second download
+    // refresh. It never enters the initial loading state or replaces retained
+    // rows when a background read fails, overlaps, or loses navigation ownership.
+    public async Task RefreshDownloadsAsync(CancellationToken ct)
+    {
+        if (IsLoadingMine || _downloadRefreshInProgress || !RequestsEnabled || !HasDownloadingRequests) return;
+        _downloadRefreshInProgress = true;
+        var revision = ++_mineReadRevision;
+        try
+        {
+            var response = await _requestsApi.GetMineAsync(limit: 100, ct: ct);
+            ct.ThrowIfCancellationRequested();
+            if (revision != _mineReadRevision) return;
+            if (System.Text.Json.JsonSerializer.Serialize(MyRequests) ==
+                System.Text.Json.JsonSerializer.Serialize(response.Requests)) return;
+            Replace(MyRequests, response.Requests);
+            DataVersion++;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch { /* Keep the last successful list; the next mounted interval retries. */ }
+        finally { _downloadRefreshInProgress = false; }
     }
 
     private async Task LoadDiscoveryAsync()
     {
+        IsLoadingDiscovery = true;
         DiscoveryError = null;
         try
         {
@@ -115,23 +161,32 @@ public partial class RequestsViewModel : ObservableObject
             DiscoveryError = "Discovery is offline";
             DiscoverySections.Clear();
         }
+        finally { IsLoadingDiscovery = false; DataVersion++; }
     }
 
     private async Task LoadBrandsAsync()
     {
-        async Task<IReadOnlyList<T>> TryLoad<T>(Func<Task<IReadOnlyList<T>>> load)
-        {
-            try { return await load(); }
-            catch { return []; }
-        }
+        await Task.WhenAll(LoadBrandAsync("studio"), LoadBrandAsync("network"), LoadBrandAsync("genre"));
+    }
 
-        var studiosTask = TryLoad(async () => (IReadOnlyList<DiscoverBrandCard>)(await _requestsApi.GetDiscoverStudiosAsync()).Studios);
-        var networksTask = TryLoad(async () => (IReadOnlyList<DiscoverBrandCard>)(await _requestsApi.GetDiscoverNetworksAsync()).Networks);
-        var genresTask = TryLoad(async () => (IReadOnlyList<DiscoverBrandCard>)(await _requestsApi.GetDiscoverGenresAsync()).Genres);
-        await Task.WhenAll(studiosTask, networksTask, genresTask);
-        Replace(Studios, studiosTask.Result);
-        Replace(Networks, networksTask.Result);
-        Replace(Genres, genresTask.Result);
+    private async Task LoadBrandAsync(string kind)
+    {
+        var target = kind switch { "studio" => Studios, "network" => Networks, "genre" => Genres, _ => throw new ArgumentOutOfRangeException(nameof(kind)) };
+        if (!_brandPending.TryAdd(kind, 0)) return;
+        BrandErrors.TryRemove(kind, out _);
+        try
+        {
+            var cards = kind switch
+            {
+                "studio" => (await _requestsApi.GetDiscoverStudiosAsync()).Studios,
+                "network" => (await _requestsApi.GetDiscoverNetworksAsync()).Networks,
+                _ => (await _requestsApi.GetDiscoverGenresAsync()).Genres,
+            };
+            Replace(target, cards);
+        }
+        catch (OperationCanceledException) { }
+        catch { BrandErrors[kind] = $"Couldn't load {(kind == "studio" ? "studios" : kind == "network" ? "networks" : "genres")}."; }
+        finally { _brandPending.TryRemove(kind, out _); DataVersion++; }
     }
 
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> values)
@@ -219,6 +274,7 @@ public partial class RequestsViewModel : ObservableObject
     [RelayCommand]
     private async Task SubmitRequestAsync(RequestMediaResult result)
     {
+        ErrorMessage = null;
         try
         {
             IsSubmitting = true;
@@ -252,6 +308,7 @@ public partial class RequestsViewModel : ObservableObject
     [RelayCommand]
     private async Task CancelRequestAsync(MediaRequest request)
     {
+        if (!SiloPlayer.Core.Services.RequestViewerPolicy.CanCancel(request)) return;
         try
         {
             await _requestsApi.CancelAsync(request.Id);
@@ -266,4 +323,6 @@ public partial class RequestsViewModel : ObservableObject
     }
 
     public void InvalidateCache() => _lastLoadedAt = DateTime.MinValue;
+    public async Task RetryMineAsync() { await LoadMineAsync(); DataVersion++; }
+    public async Task RetryDiscoveryAsync() { await LoadDiscoveryAsync(); DataVersion++; }
 }

@@ -15,6 +15,7 @@ public sealed class WatchProvidersResponse
 
 public sealed class WatchProviderSummary
 {
+    public List<SiloPlayer.Core.Models.Plugins.PluginConfigSchema> ConnectionConfigSchema { get; set; } = [];
     public string Key { get; set; } = "";
     public string DisplayName { get; set; } = "";
     public WatchProviderCapabilities Capabilities { get; set; } = new();
@@ -29,11 +30,19 @@ public sealed class WatchProviderCapabilities
     public bool ImportFavorites { get; set; }
     public bool ExportFavorites { get; set; }
     public bool RemoveFavorites { get; set; }
+    public bool ImportWatchlist { get; set; }
+    public bool ExportWatchlist { get; set; }
+    public bool RemoveWatchlist { get; set; }
+    public bool ProvidesWatchlistOrder { get; set; }
+    public bool ImportRatings { get; set; }
+    public bool ExportRatings { get; set; }
+    public bool SyncDropped { get; set; }
     public bool ScrobblePlayback { get; set; }
 }
 
 public sealed class WatchProviderConnection
 {
+    public List<SiloPlayer.Core.Models.Plugins.PluginConfigSchema> ConnectionConfigSchema { get; set; } = [];
     public string Provider { get; set; } = "";
     public string DisplayName { get; set; } = "";
     public WatchProviderCapabilities Capabilities { get; set; } = new();
@@ -52,6 +61,9 @@ public sealed class WatchProviderConnection
     public bool SyncWatchlistRemovalsEnabled { get; set; }
     public bool SyncWatchlistOrderEnabled { get; set; }
     public bool ScrobbleEnabled { get; set; }
+    public bool ImportRatingsEnabled { get; set; }
+    public bool ExportRatingsEnabled { get; set; }
+    public bool SyncDroppedEnabled { get; set; }
     public bool CredentialsConfigured { get; set; }
     public string? LastInboundSyncAt { get; set; }
     public string? LastProgressSyncAt { get; set; }
@@ -123,6 +135,8 @@ public sealed class WatchProviderSyncRun
     public int OutboundFavoritesFound { get; set; }
     public int OutboundFavoritesSent { get; set; }
     public int FavoriteRemovalsSent { get; set; }
+    public int InboundRatingsImported { get; set; }
+    public int OutboundRatingsSent { get; set; }
     public string? Warning { get; set; }
     public string? Error { get; set; }
     public string StartedAt { get; set; } = "";

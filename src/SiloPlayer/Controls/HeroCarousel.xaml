@@ -118,22 +118,24 @@
             <Grid Margin="0,0,0,16">
                 <TextBlock
                     x:Name="HeroTitleShadow"
+                    HorizontalAlignment="Left"
                     Style="{StaticResource DisplayTextStyle}"
                     FontSize="48"
                     FontWeight="ExtraBold"
                     TextWrapping="Wrap"
-                    MaxLines="2"
+                    MaxLines="0" CharacterSpacing="-40"
                     Foreground="#99000000"
                     Margin="1,1,0,0"
                     IsHitTestVisible="False" />
                 <TextBlock
                     x:Name="HeroTitle"
+                    HorizontalAlignment="Left"
                     AutomationProperties.LiveSetting="Polite"
                     Style="{StaticResource DisplayTextStyle}"
                     FontSize="48"
                     FontWeight="ExtraBold"
                     TextWrapping="Wrap"
-                    MaxLines="2" />
+                    MaxLines="0" CharacterSpacing="-40" />
             </Grid>
 
             <!-- Metadata pills row: year · IMDb badge · first 3 genres.
@@ -146,27 +148,28 @@
                 TextWrapping="Wrap" MaxLines="3"
                 TextTrimming="CharacterEllipsis"
                 LineHeight="28"
+                LineStackingStrategy="BlockLineHeight"
                 Margin="0,0,0,28" />
 
             <StackPanel Orientation="Horizontal" Spacing="12">
                 <!-- Primary CTA: Play (pill-primary) -->
-                <Button x:Name="PlayButton" Style="{StaticResource AccentButtonStyle}" Padding="20,10"
-                        CornerRadius="20"
+                <Button x:Name="PlayButton" Style="{StaticResource AccentButtonStyle}" Padding="22.4,12.48" BorderThickness="0" UseLayoutRounding="False"
+                        CornerRadius="22.56" FontSize="13.44" FontWeight="Bold"
                         Click="PlayButton_Click">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <FontIcon x:Name="PlayButtonIcon" Glyph="&#xE768;" FontSize="16" FontFamily="{ThemeResource SymbolThemeFontFamily}" />
-                        <TextBlock x:Name="PlayButtonText" Text="Play" VerticalAlignment="Center" />
+                    <StackPanel Orientation="Horizontal" Spacing="8" UseLayoutRounding="False">
+                        <Grid x:Name="PlayButtonIcon" Width="16" Height="16" VerticalAlignment="Center" />
+                        <TextBlock x:Name="PlayButtonText" Text="Play" FontSize="13.44" FontWeight="Bold" CharacterSpacing="10" LineHeight="20.16" LineStackingStrategy="BlockLineHeight" VerticalAlignment="Center" UseLayoutRounding="False" />
                     </StackPanel>
                 </Button>
                 <!-- Secondary CTA: More Info (pill-glass) -->
-                <Button x:Name="MoreInfoButton" Padding="20,10"
-                        CornerRadius="20"
-                        Background="#44FFFFFF" BorderThickness="1"
-                        BorderBrush="#33FFFFFF"
+                <Button x:Name="MoreInfoButton" Padding="22.4,12.48" UseLayoutRounding="False"
+                        CornerRadius="23.56" FontSize="13.44" FontWeight="Bold"
+                        Background="#1FFFFFFF" BorderThickness="1"
                         Click="MoreInfoButton_Click">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <FontIcon Glyph="&#xE946;" FontSize="14" Foreground="White" />
-                        <TextBlock Text="More Info" Foreground="White" VerticalAlignment="Center" />
+                    <Button.BorderBrush><SolidColorBrush Color="{StaticResource BorderColor}" Opacity="0.5" /></Button.BorderBrush>
+                    <StackPanel Orientation="Horizontal" Spacing="8" UseLayoutRounding="False">
+                        <Grid x:Name="MoreInfoIcon" Width="16" Height="16" VerticalAlignment="Center" />
+                        <TextBlock Text="More Info" FontSize="13.44" FontWeight="Bold" CharacterSpacing="10" LineHeight="20.16" LineStackingStrategy="BlockLineHeight" Foreground="White" VerticalAlignment="Center" UseLayoutRounding="False" />
                     </StackPanel>
                 </Button>
             </StackPanel>

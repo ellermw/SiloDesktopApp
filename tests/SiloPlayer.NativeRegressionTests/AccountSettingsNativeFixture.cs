@@ -18,14 +18,17 @@ internal static class AccountSettingsNativeFixture
     {
         var client = new SiloApiClient(new HttpClient(Handler));
         client.SetBaseUrl("https://account-fixture.invalid");
-        client.SetProfile("primary-fixture");
+        var auth = new AuthService(client, new AuthApi(client));
+        auth.SetTokens("account-fixture-token", "account-fixture-refresh", 86400);
+        auth.SetCurrentUser(new() { Id = "fixture", Role = "user" });
+        auth.SelectProfile("primary-fixture", profile: new() { Id = "primary-fixture", Name = "Primary", IsPrimary = true });
         var settings = new SettingsService(Path.Combine(Program.ResultDirectory, "account-settings"));
         var api = new SettingsApi(client);
         var theme = new ThemeService(settings, api);
         return services.AddSingleton(client)
             .AddTransient(_ => new SettingsViewModel(api, new CatalogApi(client), new AuthApi(client),
                 new HistoryImportApi(client), new WatchProvidersApi(client),
-                new AuthService(client, new AuthApi(client)), theme, settings,
+                auth, theme, settings,
                 new AccessibilityService(settings, theme)));
     }
 

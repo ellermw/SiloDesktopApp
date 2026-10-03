@@ -280,8 +280,9 @@
                                 TextWrapping="Wrap"
                                 MaxWidth="360" />
                             <StackPanel x:Name="EmptyActionsPanel" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Visibility="Collapsed">
-                                <Button Content="Trending" Style="{StaticResource GhostButtonStyle}" Foreground="{StaticResource AccentBrush}" Click="ShowTrending_Click" />
-                                <Button Content="Show everything" Style="{StaticResource GhostButtonStyle}" Foreground="{StaticResource AccentBrush}" Click="ShowEverything_Click" />
+                                <Button x:Name="EmptyFollowingButton" Content="Following" Style="{StaticResource GhostButtonStyle}" Foreground="{StaticResource AccentBrush}" Click="FilterFollowingBtn_Click" />
+                                <Button x:Name="EmptyTrendingButton" Content="Trending" Style="{StaticResource GhostButtonStyle}" Foreground="{StaticResource AccentBrush}" Click="ShowTrending_Click" />
+                                <Button x:Name="EmptyEverythingButton" Content="Show everything" Style="{StaticResource GhostButtonStyle}" Foreground="{StaticResource AccentBrush}" Click="ShowEverything_Click" />
                             </StackPanel>
                         </StackPanel>
                     </Border>

@@ -77,7 +77,10 @@ public sealed class PlaybackDiagnosticsTests
         Assert.True(report.RootElement.GetProperty("complete").GetBoolean());
         Assert.Contains("native_sample", report.RootElement.ToString());
         Assert.Contains("NaN", report.RootElement.ToString());
-        Assert.Contains("IOException", report.RootElement.ToString());
+        // Windows may classify an existing-file directory collision as access
+        // denied rather than IOException. Both identify the actual disk failure.
+        Assert.Contains(report.RootElement.GetProperty("writeError").GetString(),
+            new[] { nameof(IOException), nameof(UnauthorizedAccessException) });
     }
 
     [Fact]

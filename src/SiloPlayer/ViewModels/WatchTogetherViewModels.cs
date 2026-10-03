@@ -66,7 +66,7 @@ public partial class WatchTogetherJoinViewModel : ObservableObject
     private async Task JoinByCodeAsync()
     {
         if (IsBusy) return;
-        var code = RoomCode?.Trim().ToUpperInvariant();
+        var code = RoomCode?.Trim().Replace(" ", "").Replace("-", "").ToUpperInvariant();
         if (string.IsNullOrEmpty(code))
         {
             ErrorMessage = "Enter a room code.";
@@ -140,6 +140,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     private CancellationTokenSource? _wsCts;
     private Task? _wsRunTask;
     private readonly SemaphoreSlim _wsLifecycleGate = new(1, 1);
+    private readonly SemaphoreSlim _wsSendGate = new(1, 1);
     private bool _disposed;
 
     public WatchTogetherRoomViewModel(PlaybackApi playbackApi, SiloApiClient apiClient)
@@ -154,6 +155,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     [ObservableProperty] private WatchTogetherRoomSnapshot? _room;
     [ObservableProperty] private string _connectionState = "disconnected"; // disconnected | connecting | connected
     [ObservableProperty] private string? _closedReason;
+    [ObservableProperty] private string? _noticeMessage;
     [ObservableProperty] private string? _errorMessage;
     [ObservableProperty] private bool _isBusy;
 
@@ -335,10 +337,40 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         foreach (var suggestion in suggestions)
         {
             suggestion.CanPromote = IsHost;
+            suggestion.CanVote = IsVoteMode;
             suggestion.CanDelete = IsHost
                 || (!string.IsNullOrWhiteSpace(profileId)
                     && string.Equals(suggestion.SuggesterProfileId, profileId, StringComparison.Ordinal));
         }
+    }
+
+    public WatchTogetherCapabilities Capabilities { get; private set; } = new();
+    public async Task LoadCapabilitiesAsync()
+    {
+        try { Capabilities = await _playbackApi.GetWatchTogetherCapabilitiesAsync(); }
+        catch { Capabilities = new(); }
+    }
+    public Task SetLobbyReadyAsync(bool ready)
+    {
+        if (!Capabilities.LobbyReady || Room?.Phase != "lobby" || string.IsNullOrWhiteSpace(Room.SelectedContentId) || ConnectionState != "connected")
+        { ErrorMessage = "Reconnect to the room before changing readiness."; return Task.CompletedTask; }
+        return SendWsMessageAsync(new Dictionary<string, object?> { ["type"] = "lobby_ready", ["ready"] = ready });
+    }
+    public async Task StartStagedAsync()
+    {
+        if (IsBusy || !IsHost || Room?.Phase != "lobby" || string.IsNullOrWhiteSpace(Room.SelectedContentId) || !Capabilities.StagedSelection) return;
+        IsBusy = true; ErrorMessage = null;
+        try { Room = (await _playbackApi.StartWatchTogetherRoomPlaybackAsync(RoomId!)).Room; }
+        catch (Exception ex) { ErrorMessage = $"Could not start playback: {ex.Message}"; }
+        finally { IsBusy = false; }
+    }
+    public async Task ChangeSelectionModeAsync(string mode)
+    {
+        if (IsBusy || !IsHost || Room?.Phase != "lobby" || !Capabilities.SelectionModeSwitch) return;
+        IsBusy = true; ErrorMessage = null;
+        try { Room = (await _playbackApi.UpdateWatchTogetherSelectionModeAsync(RoomId!, mode)).Room; UpdateSuggestionPermissions(Suggestions); }
+        catch (Exception ex) { ErrorMessage = $"Could not change selection mode: {ex.Message}"; }
+        finally { IsBusy = false; }
     }
 
     // ===== Playback sync (outbound messages) =====
@@ -377,6 +409,8 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     {
         if (string.IsNullOrEmpty(AttachedSessionId)) return;
         if (ConnectionState != "connected") return;
+        if (Room?.Phase != "playing" ||
+            (action == "seek" ? !Room.SelfCanManageRoom : !Room.SelfCanControlTransport)) return;
         _ = SendWsMessageAsync(new Dictionary<string, object?>
         {
             ["type"] = "transport_request",
@@ -405,13 +439,14 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
 
     /// <summary>Signal that the local client has loaded the content and is ready
     /// to play. Sent once when room phase is "waiting" and playback buffered up.</summary>
-    public void ReportReady(double positionSeconds, bool isPaused)
+    public void ReportReady(double positionSeconds, bool isPaused, string? commandId = null)
     {
         if (string.IsNullOrEmpty(AttachedSessionId)) return;
         if (ConnectionState != "connected") return;
         _ = SendWsMessageAsync(new Dictionary<string, object?>
         {
             ["type"] = "ready",
+            ["command_id"] = commandId,
             ["session_id"] = AttachedSessionId,
             ["position_seconds"] = Math.Max(0, positionSeconds),
             ["is_paused"] = isPaused,
@@ -455,14 +490,20 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     private async Task SendWsMessageAsync(IDictionary<string, object?> body)
     {
         var ws = _ws;
+        var ct = _wsCts?.Token ?? CancellationToken.None;
         if (ws == null || ws.State != WebSocketState.Open) return;
+        var entered = false;
         try
         {
+            await _wsSendGate.WaitAsync(ct);
+            entered = true;
+            if (!ReferenceEquals(ws, _ws) || ws.State != WebSocketState.Open) return;
             var json = JsonSerializer.Serialize(body);
             var bytes = Encoding.UTF8.GetBytes(json);
-            await ws.SendAsync(bytes, WebSocketMessageType.Text, true, CancellationToken.None);
+            await ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
         }
         catch { /* best effort — next attempt will retry */ }
+        finally { if (entered) _wsSendGate.Release(); }
     }
 
     // ===== WebSocket =====
@@ -604,7 +645,10 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         finally
         {
             if (ReferenceEquals(_ws, ws))
+            {
                 _ws = null;
+                SetConnectionState(ct.IsCancellationRequested ? "disconnected" : "reconnecting");
+            }
             try { ws.Abort(); } catch { }
             ws.Dispose();
         }
@@ -701,6 +745,10 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
                         }
                     }
                     catch { /* malformed — ignore */ }
+                    break;
+                case "error":
+                    ErrorMessage = root.TryGetProperty("message", out var error)
+                        ? error.GetString() : "The room rejected the request.";
                     break;
                 // pong is received but not consumed (the client doesn't track RTT yet).
             }

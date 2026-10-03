@@ -12,6 +12,18 @@ public static class SeriesPrimaryActionResolver
 {
     public sealed record Action(string Label, string? TargetSeasonId, int? TargetEpisodeNumber);
 
+    public sealed record DetailAction(string Label, string? ContentId);
+
+    public static DetailAction ResolveDetail(MediaItemDetail item)
+    {
+        if (string.IsNullOrWhiteSpace(item.PlayContentId)) return new("Browse Series", null);
+        var rollup = item.UserData;
+        var label = rollup?.InProgressCount > 0 ? "Resume"
+            : rollup?.WatchedCount > 0 && !rollup.Played ? "Play Next"
+            : "Start From Episode 1";
+        return new(label, item.PlayContentId);
+    }
+
     public static Action Resolve(IReadOnlyCollection<Season> seasons)
     {
         var sorted = seasons.OrderBy(season => season.SeasonNumber).ToList();

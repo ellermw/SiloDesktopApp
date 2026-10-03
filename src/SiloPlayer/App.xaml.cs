@@ -338,6 +338,7 @@ public partial class App : Application
         services.AddTransient<ProfileSelectViewModel>();
         services.AddTransient<MainViewModel>();
         services.AddTransient<HomeViewModel>();
+        services.AddSingleton<ThemeMusicService>();
         services.AddTransient<LibraryViewModel>();
         services.AddTransient<ItemDetailViewModel>();
         services.AddTransient<SearchViewModel>();

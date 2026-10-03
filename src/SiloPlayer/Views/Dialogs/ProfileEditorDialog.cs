@@ -8,6 +8,7 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Converters;
+using SiloPlayer.Helpers;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.Storage;
 using Windows.Storage.Pickers;
@@ -26,8 +27,12 @@ public sealed class ProfileEditorDialog
     [
         ("", "Any content"),
         ("G", "G / TV-G"),
+        ("6", "6 / FSK 6"),
         ("PG", "PG / TV-PG / TV-Y7"),
+        ("12", "12 / 12A / FSK 12"),
         ("PG-13", "PG-13 / TV-14"),
+        ("15", "15 / MA 15+"),
+        ("16", "16 / FSK 16"),
         ("R", "R / TV-MA / NC-17"),
     ];
 
@@ -68,30 +73,38 @@ public sealed class ProfileEditorDialog
     private readonly bool _avatarUploadEnabled;
     private readonly AuthApi _authApi;
     private readonly ContentDialog _dialog;
-    private readonly TextBox _nameBox = new() { PlaceholderText = "Alex" };
-    private readonly PasswordBox _pinBox = new() { PlaceholderText = "4 digits", MaxLength = 4 };
-    private readonly TextBlock _pinLabel = new() { FontSize = 13, FontWeight = FontWeights.SemiBold };
-    private readonly Button _clearPinButton = new() { Content = "Remove PIN", Padding = new Thickness(8, 3, 8, 3) };
+    private readonly TextBox _nameBox = new() { PlaceholderText = "Alex", Height = 36 };
+    private readonly PasswordBox _pinBox = new() { PlaceholderText = "4 digits", MaxLength = 4, Height = 36 };
+    private readonly TextBlock _pinLabel = new() { FontSize = 14, Height = 14, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.Medium };
+    private readonly Button _clearPinButton = new() { Content = "Remove PIN", Height = 28, MinHeight = 0, FontSize = 12, Padding = new Thickness(8, 3, 8, 3) };
     private readonly ToggleSwitch _kidsToggle = new();
-    private readonly ComboBox _ratingBox = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
-    private readonly ComboBox _qualityBox = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly ComboBox _ratingBox = new() { Height = 36, HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly ComboBox _advisoryBox = new() { Height = 36, HorizontalAlignment = HorizontalAlignment.Stretch };
+    private readonly ToggleSwitch _requireAdvisory = new();
+    private readonly bool _ageSupported;
+    private readonly bool _requireAgeSupported;
+    private readonly List<string> _ratingValues = RatingOptions.Select(option => option.Value).ToList();
+    private readonly ComboBox _qualityBox = new() { Height = 36, HorizontalAlignment = HorizontalAlignment.Stretch };
     private readonly ToggleSwitch _restrictLibrariesToggle = new();
     private readonly StackPanel _libraryRows = new() { Spacing = 8 };
     private readonly Grid _avatarStyleGrid = new() { ColumnSpacing = 8, RowSpacing = 8 };
     private readonly TextBlock _avatarStyleStatus = new() { FontSize = 12, TextWrapping = TextWrapping.Wrap };
-    private readonly Grid _avatarPresetGrid = new() { ColumnSpacing = 8, RowSpacing = 8 };
+    private readonly Grid _avatarPresetGrid = new() { ColumnSpacing = 12, RowSpacing = 12 };
     private readonly Image _avatarPreview = new() { Width = 96, Height = 96, Stretch = Stretch.UniformToFill };
     private readonly TextBlock _avatarFallback = new()
     {
-        FontSize = 32,
+        FontSize = 30,
+        LineHeight = 36,
+        LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
         FontWeight = FontWeights.Bold,
         HorizontalAlignment = HorizontalAlignment.Center,
         VerticalAlignment = VerticalAlignment.Center,
     };
-    private readonly TextBlock _avatarStatus = new() { FontSize = 12 };
-    private readonly TextBlock _avatarNamePreview = new() { FontSize = 13, FontWeight = FontWeights.SemiBold };
+    private readonly TextBlock _avatarStatus = new() { FontSize = 12, LineHeight = 16 };
+    private readonly TextBlock _avatarNamePreview = new() { FontSize = 14, LineHeight = 20, FontWeight = FontWeights.Medium };
     private readonly TextBlock _validationText = new() { FontSize = 12, Visibility = Visibility.Collapsed, TextWrapping = TextWrapping.Wrap };
     private readonly Dictionary<int, ToggleSwitch> _libraryChecks = [];
+    private readonly List<Action> _viewportReflows = [];
 
     private string _activeAvatarStyle = "identicon";
     private string _selectedAvatarPreset = "";
@@ -111,12 +124,13 @@ public sealed class ProfileEditorDialog
         Profile? profile,
         IReadOnlyList<Library> libraries,
         bool avatarUploadEnabled,
-        AuthApi authApi)
+        AuthApi authApi, bool ageSupported, bool requireAgeSupported)
     {
         _profile = profile;
         _libraries = libraries.OrderBy(library => library.SortOrder).ToList();
         _avatarUploadEnabled = avatarUploadEnabled;
         _authApi = authApi;
+        _ageSupported = ageSupported; _requireAgeSupported = requireAgeSupported;
 
         _dialog = new ContentDialog
         {
@@ -125,9 +139,40 @@ public sealed class ProfileEditorDialog
             CloseButtonText = "Cancel",
             DefaultButton = ContentDialogButton.Primary,
             XamlRoot = xamlRoot,
-            MaxWidth = 780,
         };
+        EditorDialogPresentation.Configure(_dialog, 768, new Thickness(24, 24, 24, 0));
+        _dialog.CornerRadius = new CornerRadius(12); _dialog.Resources["OverlayCornerRadius"] = new CornerRadius(12);
+        var heading = new StackPanel { Spacing = 8 };
+        heading.Children.Add(new TextBlock { Text = profile == null ? "New profile" : "Edit profile", FontSize = 18, Height = 18, LineHeight = 18, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold });
+        heading.Children.Add(new TextBlock { Text = "Set the avatar, name, PIN, and access rules for this profile.", FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.Normal, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+        _dialog.Title = heading;
+        void Reflow()
+        {
+            foreach (var text in heading.Children.OfType<TextBlock>()) text.TextAlignment = xamlRoot.Size.Width < 640 ? TextAlignment.Center : TextAlignment.Left;
+            _nameBox.FontSize = _pinBox.FontSize = xamlRoot.Size.Width < 768 ? 16 : 14;
+            ReflowAvatarGrids(); foreach (var apply in _viewportReflows) apply();
+            EditorDialogPresentation.ReflowCommands(_dialog, xamlRoot.Size.Width < 640, new Thickness(24), buttonHeight: 36, stackNarrow: true);
+            foreach (var button in EditorDialogPresentation.Descendants<Button>(_dialog).Where(button => button.Name is "PrimaryButton" or "CloseButton")) button.CornerRadius = new CornerRadius(10);
+            var background = EditorDialogPresentation.Descendants<Border>(_dialog).FirstOrDefault(border => border.Name == "BackgroundElement");
+            if (background != null)
+            {
+                background.Width = Math.Min(768, Math.Max(0, xamlRoot.Size.Width - 32));
+                background.MaxHeight = Math.Max(160, xamlRoot.Size.Height - 64);
+            }
+        }
+        void ViewportChanged(XamlRoot sender, XamlRootChangedEventArgs args) => Reflow();
+        _dialog.Opened += (_, _) => { xamlRoot.Changed += ViewportChanged; Reflow(); };
+        _dialog.SizeChanged += (_, _) => Reflow();
+        _dialog.Closed += (_, _) => xamlRoot.Changed -= ViewportChanged;
 
+        _avatarPresetGrid.SizeChanged += (_, _) => ReflowAvatarGrids();
+        _avatarStyleGrid.SizeChanged += (_, _) => ReflowAvatarGrids();
+        foreach (var control in new Control[] { _nameBox, _pinBox })
+        {
+            control.Background = Brush("AppBackgroundBrush"); control.BorderBrush = Brush("BorderBrush");
+            control.CornerRadius = new CornerRadius(10); control.Padding = new Thickness(12, 4, 12, 4);
+        }
+        _clearPinButton.Style = (Style)Application.Current.Resources["GhostButtonStyle"]; _clearPinButton.Foreground = Brush("SecondaryTextBrush");
         InitializeValues();
         _dialog.Content = BuildContent();
         _dialog.PrimaryButtonClick += SaveButton_Click;
@@ -154,7 +199,7 @@ public sealed class ProfileEditorDialog
             profile,
             await libraryTask,
             profileResponse.AvatarUploadEnabled,
-            authApi);
+            authApi, profileResponse.MaxAdvisoryAgeSupported, profileResponse.RequireAdvisoryAgeSupported);
         await editor._dialog.ShowAsync();
         return new ProfileEditorResult(editor.SavedProfile, editor.SubmittedPin);
     }
@@ -172,6 +217,17 @@ public sealed class ProfileEditorDialog
         foreach (var option in RatingOptions) _ratingBox.Items.Add(option.Label);
         _ratingBox.SelectedIndex = Math.Max(0, Array.FindIndex(RatingOptions,
             option => string.Equals(option.Value, _profile?.MaxContentRating ?? "", StringComparison.OrdinalIgnoreCase)));
+        if (_profile != null && !_ratingValues.Contains(_profile.MaxContentRating, StringComparer.OrdinalIgnoreCase))
+        {
+            _ratingValues.Add(_profile.MaxContentRating); _ratingBox.Items.Add($"{_profile.MaxContentRating} (saved limit)");
+            _ratingBox.SelectedIndex = _ratingValues.Count - 1;
+        }
+        _advisoryBox.Items.Add("No limit");
+        for (var age = 1; age <= 21; age++) _advisoryBox.Items.Add($"Ages {age} and under");
+        _advisoryBox.SelectedIndex = _profile?.MaxAdvisoryAge is >= 1 and <= 21 ? _profile.MaxAdvisoryAge.Value : 0;
+        _requireAdvisory.IsOn = _profile?.RequireAdvisoryAge == true;
+        _requireAdvisory.IsEnabled = _advisoryBox.SelectedIndex > 0;
+        _advisoryBox.SelectionChanged += (_, _) => _requireAdvisory.IsEnabled = _advisoryBox.SelectedIndex > 0;
         foreach (var option in QualityOptions) _qualityBox.Items.Add(option.Label);
         _qualityBox.SelectedIndex = CanonicalQualityIndex(_profile?.MaxPlaybackQuality);
         _selectedAvatarPreset = ParseAvatarPreset(_profile?.Avatar);
@@ -205,14 +261,7 @@ public sealed class ProfileEditorDialog
 
     private FrameworkElement BuildContent()
     {
-        var root = new StackPanel { MaxWidth = 720, Spacing = 18, HorizontalAlignment = HorizontalAlignment.Stretch };
-        root.Children.Add(new TextBlock
-        {
-            Text = "Set the avatar, name, PIN, and access rules for this profile.",
-            FontSize = 13,
-            Foreground = Brush("SecondaryTextBrush"),
-            TextWrapping = TextWrapping.Wrap,
-        });
+        var root = new StackPanel { MaxWidth = 720, Spacing = 20, HorizontalAlignment = HorizontalAlignment.Stretch };
         root.Children.Add(BuildProfileSection());
         root.Children.Add(BuildAccessSection());
         _validationText.Foreground = Brush("SystemFillColorCriticalBrush", "SecondaryTextBrush");
@@ -226,6 +275,7 @@ public sealed class ProfileEditorDialog
         return new ScrollViewer
         {
             MaxHeight = 690,
+            Margin = new Thickness(0, 0, 8, 0),
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             Content = root,
         };
@@ -236,62 +286,86 @@ public sealed class ProfileEditorDialog
         var section = Section("Profile", "Choose an avatar and basic details.");
         var body = (StackPanel)section.Child;
 
-        var basic = new Grid { ColumnSpacing = 18 };
-        basic.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(180) });
+        var basic = new Grid { ColumnSpacing = 16 };
+        basic.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(208) });
         basic.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         var previewBorder = new Border
         {
-            Width = 112,
-            Height = 112,
-            CornerRadius = new CornerRadius(56),
+            Name = "ProfileAvatarPreviewRing",
+            Width = 100,
+            Height = 100,
+            Margin = new Thickness(-2),
+            CornerRadius = new CornerRadius(50),
             Background = Brush("SurfaceBrush"),
+            BorderBrush = Brush("BorderBrush"),
+            BorderThickness = new Thickness(2),
             HorizontalAlignment = HorizontalAlignment.Center,
             Child = new Grid { Children = { _avatarFallback, _avatarPreview } },
         };
-        var previewStack = new StackPanel { Spacing = 8, HorizontalAlignment = HorizontalAlignment.Center };
-        previewStack.Children.Add(previewBorder);
+        _avatarFallback.Foreground = Brush("AccentBrush");
+        var previewStack = new StackPanel { Spacing = 12, HorizontalAlignment = HorizontalAlignment.Center };
+        previewStack.Children.Add(new Grid { Width = 96, Height = 96, Children = { previewBorder } });
         _avatarNamePreview.TextAlignment = TextAlignment.Center;
-        previewStack.Children.Add(_avatarNamePreview);
         _avatarStatus.Foreground = Brush("SecondaryTextBrush");
         _avatarStatus.TextAlignment = TextAlignment.Center;
-        previewStack.Children.Add(_avatarStatus);
-        Grid.SetColumn(previewStack, 0);
-        basic.Children.Add(previewStack);
+        previewStack.Children.Add(new StackPanel { Children = { _avatarNamePreview, _avatarStatus } });
+        var previewCard = new Border { Name = "ProfileAvatarPreviewCard", CornerRadius = new CornerRadius(16), BorderThickness = new Thickness(1), BorderBrush = Brush("BorderBrush"), Padding = new Thickness(20, 16, 20, 16), Child = previewStack };
+        Grid.SetColumn(previewCard, 0);
+        basic.Children.Add(previewCard);
 
-        var fields = new StackPanel { Spacing = 12 };
+        var fields = new StackPanel { Spacing = 16 };
         fields.Children.Add(Field("Name", _nameBox));
-        var pinField = new StackPanel { Spacing = 6 };
+        var pinField = new StackPanel { Spacing = 8 };
         pinField.Children.Add(_pinLabel);
         pinField.Children.Add(_pinBox);
         pinField.Children.Add(_clearPinButton);
         fields.Children.Add(pinField);
         Grid.SetColumn(fields, 1);
         basic.Children.Add(fields);
+        basic.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        basic.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        void ReflowBasic()
+        {
+            var narrow = (_dialog.XamlRoot?.Size.Width ?? basic.ActualWidth) < 1024;
+            basic.ColumnSpacing = narrow ? 0 : 16;
+            basic.ColumnDefinitions[0].Width = narrow ? new GridLength(1, GridUnitType.Star) : new GridLength(208);
+            basic.ColumnDefinitions[1].Width = narrow ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+            Grid.SetColumn(fields, narrow ? 0 : 1); Grid.SetRow(fields, narrow ? 1 : 0);
+            basic.RowSpacing = narrow ? 16 : 0;
+        }
+        basic.SizeChanged += (_, _) => ReflowBasic(); _viewportReflows.Add(ReflowBasic);
         body.Children.Add(basic);
 
-        body.Children.Add(Label("Preset avatars"));
-        body.Children.Add(new TextBlock
+        var presetsSection = new StackPanel { Spacing = 12 };
+        var presetsHeading = new StackPanel { Spacing = 4 };
+        presetsHeading.Children.Add(Label("Preset avatars"));
+        presetsHeading.Children.Add(new TextBlock
         {
-            Text = "Pick a DiceBear style, shuffle more options, or leave it blank to use initials.",
+            Text = "Pick a DiceBear style, shuffle fun options, or leave it blank to keep initials. A custom upload overrides presets.",
             FontSize = 12,
+            LineHeight = 16,
             Foreground = Brush("SecondaryTextBrush"),
             TextWrapping = TextWrapping.Wrap,
         });
 
-        body.Children.Add(_avatarStyleGrid);
+        presetsSection.Children.Add(presetsHeading);
+        presetsSection.Children.Add(_avatarStyleGrid);
         var presetHeader = new Grid { ColumnSpacing = 10 };
         presetHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         presetHeader.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         _avatarStyleStatus.Foreground = Brush("SecondaryTextBrush");
         _avatarStyleStatus.VerticalAlignment = VerticalAlignment.Center;
         presetHeader.Children.Add(_avatarStyleStatus);
-        var moreButton = new Button { Content = "More options", Padding = new Thickness(12, 6, 12, 6) };
+        var moreContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { new FontIcon { Glyph = "\uE72C", FontSize = 16 }, new TextBlock { Text = "More options", FontSize = 14, FontWeight = FontWeights.Medium } } };
+        var moreButton = new Button { Content = moreContent, Height = 32, MinHeight = 0, CornerRadius = new CornerRadius(10), Padding = new Thickness(10, 4, 10, 4), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1) };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(moreButton, "More options");
         moreButton.Click += (_, _) => { _avatarBatch++; BuildAvatarPresets(); };
         Grid.SetColumn(moreButton, 1);
         presetHeader.Children.Add(moreButton);
-        body.Children.Add(presetHeader);
-        body.Children.Add(_avatarPresetGrid);
+        presetsSection.Children.Add(presetHeader);
+        presetsSection.Children.Add(_avatarPresetGrid);
+        body.Children.Add(presetsSection);
         body.Children.Add(BuildUploadRow());
         return section;
     }
@@ -302,27 +376,59 @@ public sealed class ProfileEditorDialog
         var body = (StackPanel)section.Child;
         body.Children.Add(ToggleRow("Kids profile", "Seeds a safer default rating and library setup.", _kidsToggle));
 
-        var limits = new Grid { ColumnSpacing = 14 };
+        var limits = new Grid { Name = "ProfileAccessLimits", ColumnSpacing = 16, RowSpacing = 16 };
         limits.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         limits.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         limits.Children.Add(Field("Maximum content rating", _ratingBox));
-        var quality = Field("Maximum playback quality", _qualityBox);
-        Grid.SetColumn(quality, 1);
-        limits.Children.Add(quality);
+        if (_ageSupported)
+        {
+            var advisory = Field("Maximum advisory age", _advisoryBox);
+            var help = new TextBlock { FontSize = 12, LineHeight = 16, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap };
+            advisory.Children.Add(help);
+            var requireRow = ToggleRow("Hide titles without an advisory age",
+                "Shows only titles rated at or under this age. Ages are looked up over time, so this profile may see few titles at first.", _requireAdvisory);
+            requireRow.BorderThickness = new Thickness(0); requireRow.Padding = new Thickness(0, 4, 0, 0);
+            if (_requireAgeSupported) advisory.Children.Add(requireRow);
+            void ReflowAdvisory()
+            {
+                requireRow.Visibility = _advisoryBox.SelectedIndex > 0 ? Visibility.Visible : Visibility.Collapsed;
+                help.Text = "Hides titles an advisory service such as Common Sense Media recommends for older viewers." +
+                    (_requireAgeSupported && _advisoryBox.SelectedIndex > 0 && _requireAdvisory.IsOn ? "" : " Titles without an advisory age are limited by the content rating alone.");
+            }
+            _advisoryBox.SelectionChanged += (_, _) => ReflowAdvisory(); _requireAdvisory.Toggled += (_, _) => ReflowAdvisory(); ReflowAdvisory();
+            limits.Children.Add(advisory);
+        }
+        limits.Children.Add(Field("Maximum playback quality", _qualityBox));
+        limits.RowDefinitions.Add(new() { Height = GridLength.Auto }); limits.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        void ReflowLimits()
+        {
+            var narrow = (_dialog.XamlRoot?.Size.Width ?? limits.ActualWidth) < 640;
+            limits.ColumnSpacing = narrow ? 0 : 16;
+            limits.ColumnDefinitions[1].Width = narrow ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+            while (limits.RowDefinitions.Count < limits.Children.Count) limits.RowDefinitions.Add(new() { Height = GridLength.Auto });
+            for (var index = 0; index < limits.Children.Count; index++)
+            {
+                Grid.SetColumn((FrameworkElement)limits.Children[index], narrow ? 0 : index % 2);
+                Grid.SetRow((FrameworkElement)limits.Children[index], narrow ? index : index / 2);
+            }
+        }
+        limits.SizeChanged += (_, _) => ReflowLimits(); _viewportReflows.Add(ReflowLimits);
         body.Children.Add(limits);
-        body.Children.Add(ToggleRow("Restrict libraries", "Limit this profile to a specific set of libraries.", _restrictLibrariesToggle));
-        body.Children.Add(_libraryRows);
+        var libraryGroup = new StackPanel { Spacing = 12 };
+        var libraryToggle = ToggleRow("Restrict libraries", "Limit this profile to a specific set of libraries.", _restrictLibrariesToggle);
+        libraryToggle.BorderThickness = new Thickness(0); libraryToggle.Padding = new Thickness(0);
+        libraryGroup.Children.Add(libraryToggle); libraryGroup.Children.Add(_libraryRows);
+        body.Children.Add(new Border { BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10), Padding = new Thickness(12), Child = libraryGroup });
         return section;
     }
 
     private FrameworkElement BuildUploadRow()
     {
         var panel = new StackPanel { Spacing = 8 };
-        panel.Children.Add(Label("Custom upload"));
         if (!_avatarUploadEnabled)
         {
-            var unavailable = new StackPanel { Spacing = 3 };
-            unavailable.Children.Add(new TextBlock { Text = "Custom uploads are unavailable", FontSize = 13, FontWeight = FontWeights.SemiBold });
+            var unavailable = new StackPanel { Spacing = 4 };
+            unavailable.Children.Add(new TextBlock { Text = "Custom uploads are unavailable", FontSize = 14, LineHeight = 20, FontWeight = FontWeights.Medium });
             unavailable.Children.Add(new TextBlock
             {
                 Text = "Configure private S3 avatar storage to enable uploaded profile avatars.",
@@ -334,13 +440,14 @@ public sealed class ProfileEditorDialog
             {
                 BorderBrush = Brush("BorderBrush"),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(7),
-                Padding = new Thickness(12, 9, 12, 9),
+                CornerRadius = new CornerRadius(10),
+                Padding = new Thickness(16, 12, 16, 12),
                 Child = unavailable,
             });
             return panel;
         }
 
+        panel.Children.Add(Label("Custom upload"));
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
         var choose = new Button { Content = "Choose image", Padding = new Thickness(12, 6, 12, 6) };
         var remove = new Button { Content = "Remove", Padding = new Thickness(12, 6, 12, 6) };
@@ -386,11 +493,12 @@ public sealed class ProfileEditorDialog
             _libraryChecks[library.Id] = toggle;
 
             var labels = new StackPanel { Spacing = 1 };
-            labels.Children.Add(new TextBlock { Text = library.Name, FontSize = 13, FontWeight = FontWeights.SemiBold });
+            labels.Children.Add(new TextBlock { Text = library.Name, FontSize = 14, LineHeight = 20, FontWeight = FontWeights.Medium });
             labels.Children.Add(new TextBlock
             {
                 Text = library.Type,
-                FontSize = 11,
+                FontSize = 12,
+                LineHeight = 16,
                 Foreground = Brush("SecondaryTextBrush"),
             });
             var row = new Grid { ColumnSpacing = 12 };
@@ -403,7 +511,7 @@ public sealed class ProfileEditorDialog
             {
                 BorderBrush = Brush("BorderBrush"),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(7),
+                CornerRadius = new CornerRadius(10),
                 Padding = new Thickness(12, 8, 12, 8),
                 Child = row,
             });
@@ -423,15 +531,15 @@ public sealed class ProfileEditorDialog
         for (var index = 0; index < AvatarStyles.Length; index++)
         {
             var style = AvatarStyles[index];
-            var content = new StackPanel { Spacing = 3 };
-            content.Children.Add(new TextBlock { Text = style.Label, FontSize = 13, FontWeight = FontWeights.SemiBold });
+            var content = new StackPanel { Spacing = 4 };
+            content.Children.Add(new TextBlock { Text = style.Label, FontSize = 14, LineHeight = 20, FontWeight = FontWeights.Medium });
             content.Children.Add(new TextBlock
             {
                 Text = AvatarStyleSummary(style.Id),
-                FontSize = 11,
+                FontSize = 12,
+                LineHeight = 16,
                 Foreground = Brush("SecondaryTextBrush"),
                 TextWrapping = TextWrapping.Wrap,
-                MaxLines = 2,
             });
             var selected = style.Id == _activeAvatarStyle;
             var button = new Button
@@ -441,10 +549,11 @@ public sealed class ProfileEditorDialog
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = HorizontalAlignment.Left,
                 VerticalContentAlignment = VerticalAlignment.Top,
-                MinHeight = 70,
-                Padding = new Thickness(12, 9, 12, 9),
-                BorderThickness = new Thickness(selected ? 2 : 1),
+                Padding = new Thickness(16, 12, 16, 12),
+                CornerRadius = new CornerRadius(20),
+                BorderThickness = new Thickness(1),
                 BorderBrush = selected ? Brush("AccentBrush") : Brush("BorderBrush"),
+                Background = AvatarSelectionBackground(selected, 0.08),
             };
             button.Click += (_, _) =>
             {
@@ -458,6 +567,7 @@ public sealed class ProfileEditorDialog
             _avatarStyleGrid.Children.Add(button);
         }
 
+        ReflowAvatarGrids();
         _avatarStyleStatus.Text = $"{AvatarStyleSummary(_activeAvatarStyle)}. Showing 18 options right now.";
     }
 
@@ -477,8 +587,8 @@ public sealed class ProfileEditorDialog
             var preset = $"dicebear:{_activeAvatarStyle}:{seed}";
             var image = new Image
             {
-                Width = 62,
-                Height = 62,
+                Width = 64,
+                Height = 64,
                 Stretch = Stretch.UniformToFill,
                 Source = (ImageSource)RemoteImageConverter.Convert(
                     BuildDiceBearUrl(_activeAvatarStyle, seed),
@@ -486,14 +596,24 @@ public sealed class ProfileEditorDialog
                     null!,
                     string.Empty),
             };
+            image.Loaded += (_, _) =>
+            {
+                var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(image);
+                var shape = visual.Compositor.CreateRoundedRectangleGeometry();
+                shape.Size = new System.Numerics.Vector2(64); shape.CornerRadius = new System.Numerics.Vector2(16);
+                visual.Clip = visual.Compositor.CreateGeometricClip(shape);
+            };
             var button = new Button
             {
                 Content = image,
-                Padding = new Thickness(4),
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                BorderThickness = new Thickness(preset == _selectedAvatarPreset ? 2 : 1),
+                Padding = new Thickness(8), Width = 80, Height = 80,
+                CornerRadius = new CornerRadius(20),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                BorderThickness = new Thickness(1),
                 BorderBrush = preset == _selectedAvatarPreset ? Brush("AccentBrush") : Brush("BorderBrush"),
+                Background = AvatarSelectionBackground(preset == _selectedAvatarPreset, 0.05),
             };
+            ToolTipService.SetToolTip(button, AvatarPresetLabel(_activeAvatarStyle, seed));
             button.Click += (_, _) =>
             {
                 _selectedAvatarPreset = _selectedAvatarPreset == preset ? "" : preset;
@@ -508,6 +628,23 @@ public sealed class ProfileEditorDialog
             Grid.SetRow(button, index / 6);
             _avatarPresetGrid.Children.Add(button);
         }
+        ReflowAvatarGrids();
+    }
+
+    private void ReflowAvatarGrids()
+    {
+        var width = _dialog.XamlRoot?.Size.Width ?? 900;
+        ReflowAvatarGrid(_avatarStyleGrid, width >= 1280 ? 4 : width >= 640 ? 2 : 1);
+        ReflowAvatarGrid(_avatarPresetGrid, width >= 1280 ? 6 : width >= 1024 ? 5 : width >= 640 ? 4 : 3);
+    }
+    private static void ReflowAvatarGrid(Grid grid, int columns)
+    {
+        var rows = (int)Math.Ceiling(grid.Children.Count / (double)columns);
+        if (grid.ColumnDefinitions.Count == columns && grid.RowDefinitions.Count == rows) return;
+        grid.ColumnDefinitions.Clear(); grid.RowDefinitions.Clear();
+        for (var column = 0; column < columns; column++) grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        for (var row = 0; row < rows; row++) grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        for (var index = 0; index < grid.Children.Count; index++) if (grid.Children[index] is FrameworkElement child) { Grid.SetColumn(child, index % columns); Grid.SetRow(child, index / columns); }
     }
 
     private async Task PickAvatarAsync()
@@ -554,7 +691,10 @@ public sealed class ProfileEditorDialog
                 Avatar = preservingUpload ? null : (_selectedAvatarPreset.Length == 0 ? "" : $"preset:{_selectedAvatarPreset}"),
                 Pin = _clearPin ? "" : string.IsNullOrWhiteSpace(_pinBox.Password) ? null : _pinBox.Password,
                 IsChild = _kidsToggle.IsOn,
-                MaxContentRating = RatingOptions[Math.Max(0, _ratingBox.SelectedIndex)].Value,
+                MaxContentRating = _ratingValues[Math.Max(0, _ratingBox.SelectedIndex)],
+                MaxAdvisoryAgeSupported = _ageSupported, RequireAdvisoryAgeSupported = _requireAgeSupported,
+                MaxAdvisoryAge = _advisoryBox.SelectedIndex > 0 ? _advisoryBox.SelectedIndex : null,
+                RequireAdvisoryAge = _requireAdvisory.IsOn,
                 MaxPlaybackQuality = QualityOptions[Math.Max(0, _qualityBox.SelectedIndex)].Value,
                 LibraryRestrictionsEnabled = _restrictLibrariesToggle.IsOn,
                 AllowedLibraryIds = _restrictLibrariesToggle.IsOn
@@ -679,7 +819,7 @@ public sealed class ProfileEditorDialog
                 string.Empty);
             _avatarPreview.Visibility = Visibility.Visible;
             _avatarFallback.Visibility = Visibility.Collapsed;
-            _avatarStatus.Text = "Preset avatar";
+            _avatarStatus.Text = AvatarPresetLabel(selectedParts[1], selectedParts[2]);
             return;
         }
         if (!_removeUploadedAvatar && !string.IsNullOrWhiteSpace(_profile?.AvatarUrl))
@@ -721,16 +861,22 @@ public sealed class ProfileEditorDialog
         _ => "Geometric, technical, high-contrast patterns",
     };
 
+    private static string AvatarPresetLabel(string style, string seed)
+        => string.Join(" ", seed.Split('-').Select(word => word.Length == 0 ? word : char.ToUpperInvariant(word[0]) + word[1..]));
+
     private static Border Section(string title, string description)
     {
-        var stack = new StackPanel { Spacing = 12 };
-        stack.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold });
-        stack.Children.Add(new TextBlock { Text = description, FontSize = 12, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+        var stack = new StackPanel { Spacing = 16 };
+        var heading = new StackPanel { Spacing = 4 };
+        heading.Children.Add(new TextBlock { Text = title, FontSize = 14, LineHeight = 20, FontWeight = FontWeights.SemiBold });
+        heading.Children.Add(new TextBlock { Text = description, FontSize = 14, LineHeight = 20, Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+        stack.Children.Add(heading);
         return new Border
         {
+            Name = $"ProfileEditor{title}Section",
             BorderBrush = Brush("BorderBrush"),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(10),
             Padding = new Thickness(16),
             Child = stack,
         };
@@ -738,7 +884,7 @@ public sealed class ProfileEditorDialog
 
     private static StackPanel Field(string label, Control control)
     {
-        var stack = new StackPanel { Spacing = 6 };
+        var stack = new StackPanel { Spacing = 8 };
         stack.Children.Add(Label(label));
         stack.Children.Add(control);
         return stack;
@@ -747,8 +893,11 @@ public sealed class ProfileEditorDialog
     private static TextBlock Label(string text) => new()
     {
         Text = text,
-        FontSize = 13,
-        FontWeight = FontWeights.SemiBold,
+        FontSize = 14,
+        Height = 14,
+        LineHeight = 14,
+        LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+        FontWeight = FontWeights.Medium,
     };
 
     private static Border ToggleRow(string title, string description, ToggleSwitch toggle)
@@ -766,8 +915,8 @@ public sealed class ProfileEditorDialog
         {
             BorderBrush = Brush("BorderBrush"),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(7),
-            Padding = new Thickness(12, 9, 12, 9),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(12, 8, 12, 8),
             Child = grid,
         };
     }
@@ -780,6 +929,11 @@ public sealed class ProfileEditorDialog
             return fallbackBrush;
         return new SolidColorBrush(Microsoft.UI.Colors.Gray);
     }
+
+    private static Brush AvatarSelectionBackground(bool selected, double opacity)
+        => selected && Brush("AccentBrush") is SolidColorBrush accent
+            ? new SolidColorBrush(accent.Color) { Opacity = opacity }
+            : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
 
     private static int CanonicalQualityIndex(string? value) => (value ?? "").Trim().ToLowerInvariant() switch
     {

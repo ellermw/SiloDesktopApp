@@ -36,6 +36,9 @@ public sealed class WatchProvidersApi(SiloApiClient client)
         connection.SyncWatchlistRemovalsEnabled = values.SyncWatchlistRemovalsEnabled;
         connection.SyncWatchlistOrderEnabled = values.SyncWatchlistOrderEnabled;
         connection.ScrobbleEnabled = values.ScrobbleEnabled;
+        if (settings.TryGetProperty("import_ratings_enabled", out _)) connection.ImportRatingsEnabled = values.ImportRatingsEnabled;
+        if (settings.TryGetProperty("export_ratings_enabled", out _)) connection.ExportRatingsEnabled = values.ExportRatingsEnabled;
+        if (settings.TryGetProperty("sync_dropped_enabled", out _)) connection.SyncDroppedEnabled = values.SyncDroppedEnabled;
     }
 
     public async Task<WatchProviderDeviceAuthSession> StartDeviceAuthAsync(string provider, CancellationToken ct = default)
@@ -59,11 +62,15 @@ public sealed class WatchProvidersApi(SiloApiClient client)
     }
 
     public async Task<WatchProviderConnection> ConnectApiKeyAsync(string provider, string apiKey, CancellationToken ct = default)
+        => await ConnectApiKeyAsync(provider, apiKey, new Dictionary<string, Dictionary<string, object?>>(), ct);
+
+    public async Task<WatchProviderConnection> ConnectApiKeyAsync(string provider, string apiKey,
+        IDictionary<string, Dictionary<string, object?>> connectionConfig, CancellationToken ct = default)
     {
         var context = client.CaptureContext();
         await client.PostAsync<WatchProviderConnection>(
             $"/api/v2/watch-providers/{Uri.EscapeDataString(provider)}/auth/api-key",
-            new Dictionary<string, object?> { ["api_key"] = apiKey },
+            new Dictionary<string, object?> { ["api_key"] = apiKey.Trim(), ["connection_config"] = connectionConfig },
             ct);
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Provider context changed.", ct);
         return await GetConnectionAsync(provider, ct);

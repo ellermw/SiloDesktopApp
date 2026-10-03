@@ -32,6 +32,14 @@
     <Compile Include="..\..\src\SiloPlayer\Messaging\MediaSurfaceMessages.cs" Link="Production\MediaSurfaceMessages.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\VirtualCatalogItems.cs" Link="Production\VirtualCatalogItems.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\BulkObservableCollection.cs" Link="Production\BulkObservableCollection.cs" />
+    <Compile Include="..\..\src\SiloPlayer\Services\CardOverlayService.cs" Link="Production\CardOverlayService.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\SearchViewModel.cs" Link="Production\SearchViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\SmartCollectionWizardViewModel.cs" Link="Production\SmartCollectionWizardViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\CollectionEditorViewModel.cs" Link="Production\CollectionEditorViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\CollectionsViewModel.cs" Link="Production\CollectionsViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\WatchlistViewModel.cs" Link="Production\WatchlistViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\RequestsViewModel.cs" Link="Production\RequestsViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\NotificationsViewModel.cs" Link="Production\NotificationsViewModel.cs" />
   </ItemGroup>
 
 </Project>

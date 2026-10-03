@@ -3,7 +3,7 @@
 
 #define MyAppName "Silo Desktop Player"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.1.105"
+  #define MyAppVersion "1.2.92"
 #endif
 #define MyAppPublisher "Silo"
 #define MyAppExeName "SiloPlayer.exe"
@@ -67,6 +67,11 @@ Root: HKA; Subkey: "Software\Classes\silo"; ValueType: string; ValueData: "URL:S
 Root: HKA; Subkey: "Software\Classes\silo"; ValueName: "URL Protocol"; ValueType: string; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\silo\DefaultIcon"; ValueType: string; ValueData: "{app}\Assets\app.ico,0"
 Root: HKA; Subkey: "Software\Classes\silo\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
+; Public Silo native OAuth PKCE callbacks return to the existing single-instance activation pipe.
+Root: HKA; Subkey: "Software\Classes\org.siloserver.silo"; ValueType: string; ValueData: "URL:Silo sign-in"; Flags: uninsdeletekey
+Root: HKA; Subkey: "Software\Classes\org.siloserver.silo"; ValueName: "URL Protocol"; ValueType: string; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\org.siloserver.silo\DefaultIcon"; ValueType: string; ValueData: "{app}\Assets\app.ico,0"
+Root: HKA; Subkey: "Software\Classes\org.siloserver.silo\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 [Run]
 ; Launch app after install

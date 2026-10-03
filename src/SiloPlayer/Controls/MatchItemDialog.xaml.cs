@@ -21,6 +21,7 @@ public sealed partial class MatchItemDialog : ContentDialog
     private readonly List<ProviderIdInput> _providerIdInputs = [];
     private MatchCandidate? _selectedCandidate;
     private bool _searching;
+    private bool _applying;
 
     public MatchCandidate? SelectedCandidate => _selectedCandidate;
     public bool HasAppliedMatch { get; private set; }
@@ -44,6 +45,9 @@ public sealed partial class MatchItemDialog : ContentDialog
         _itemType = string.IsNullOrWhiteSpace(itemType) ? "item" : itemType.Trim().ToLowerInvariant();
         _libraryId = libraryId;
         this.InitializeComponent();
+        Resources["ContentDialogMaxWidth"] = 896d;
+        Opened += (_, _) => UpdateViewport();
+        SizeChanged += (_, _) => UpdateViewport();
 
         CurrentTitleText.Text = string.IsNullOrWhiteSpace(title) ? "Untitled" : title;
         CurrentYearText.Text = year is > 0 ? $"({year})" : "";
@@ -71,10 +75,12 @@ public sealed partial class MatchItemDialog : ContentDialog
 
     private async void ApplyMatch_Click(object sender, RoutedEventArgs args)
     {
-        if (_selectedCandidate == null)
+        if (_selectedCandidate == null || _applying)
             return;
-
+        var selected = _selectedCandidate;
+        _applying = true;
         ApplyMatchButton.IsEnabled = false;
+        SearchButton.IsEnabled = false;
         ApplyMatchButton.Content = "Applying...";
         ApplyStatusText.Text = "Applying match…";
         ApplyStatusText.Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"];
@@ -83,7 +89,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         {
             await _maintenanceApi.ApplyMatchAsync(_itemId, new ItemMatchApplyRequest
             {
-                ProviderIds = _selectedCandidate.ProviderIds,
+                ProviderIds = selected.ProviderIds,
             });
             HasAppliedMatch = true;
             App.Services.GetService<SiloPlayer.Services.ToastService>()?.Success("Match applied");
@@ -94,8 +100,19 @@ public sealed partial class MatchItemDialog : ContentDialog
             ApplyStatusText.Text = $"Match could not be applied: {ex.Message}";
             ApplyStatusText.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
             ApplyMatchButton.Content = "Apply Match";
-            ApplyMatchButton.IsEnabled = true;
+            ApplyMatchButton.IsEnabled = _selectedCandidate != null;
         }
+        finally
+        {
+            _applying = false;
+            SearchButton.IsEnabled = !_searching;
+        }
+    }
+
+    private void UpdateViewport()
+    {
+        MatchBody.Width = Math.Max(240, Math.Min(800, (XamlRoot?.Size.Width ?? 960) - 80));
+        MatchBody.MaxHeight = Math.Max(160, (XamlRoot?.Size.Height ?? 900) * .8 - 140);
     }
 
     /// <summary>
@@ -129,10 +146,22 @@ public sealed partial class MatchItemDialog : ContentDialog
                 return;
             }
             var rootPath = ComputeRootPath(folderPaths);
+            var folders = new StackPanel();
             if (!string.IsNullOrWhiteSpace(rootPath))
-                LocalMediaPanel.Children.Add(BuildRootPathRow(rootPath));
+                folders.Children.Add(BuildRootPathRow(rootPath));
             foreach (var path in folderPaths)
-                LocalMediaPanel.Children.Add(BuildFolderRow(path));
+                folders.Children.Add(new Border
+                {
+                    BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                    BorderThickness = new Thickness(0, folders.Children.Count > 0 ? 1 : 0, 0, 0),
+                    Child = BuildFolderRow(path),
+                });
+            LocalMediaPanel.Children.Add(new Border
+            {
+                BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+                Background = (Brush)Application.Current.Resources["AppBackgroundBrush"],
+                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Child = folders,
+            });
             LocalMediaSection.Visibility = Visibility.Visible;
             return;
         }
@@ -210,8 +239,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         {
             Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
             BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
             Padding = new Thickness(10, 8, 8, 8),
         };
 
@@ -280,43 +308,51 @@ public sealed partial class MatchItemDialog : ContentDialog
     {
         var border = new Border
         {
-            Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
-            BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(10, 8, 8, 8),
+            Padding = new Thickness(12, 8, 12, 8),
         };
 
         var root = new Grid { ColumnSpacing = 8 };
+        if (!isRootPath) root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        if (!isRootPath) root.Children.Add(WebUiIcon.Create("folder", 14, (Brush)Application.Current.Resources["SecondaryTextBrush"]));
 
         var text = new TextBlock
         {
-            Text = path,
+            Text = isRootPath ? path : path.TrimEnd('/', '\\').Split(['/', '\\'], StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? path,
             FontSize = 12,
             FontFamily = new FontFamily("Consolas"),
             TextWrapping = TextWrapping.NoWrap,
             TextTrimming = TextTrimming.CharacterEllipsis,
-            Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
+            FontWeight = isRootPath ? FontWeights.Normal : FontWeights.Medium,
+            Foreground = (Brush)Application.Current.Resources[isRootPath ? "SecondaryTextBrush" : "PrimaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
         };
         ToolTipService.SetToolTip(text, path);
-        Grid.SetColumn(text, 0);
+        Grid.SetColumn(text, isRootPath ? 0 : 1);
         root.Children.Add(text);
 
         var copyBtn = new Button
         {
             Background = new SolidColorBrush(Colors.Transparent),
             BorderThickness = new Thickness(0),
-            Padding = new Thickness(6),
-            Content = new FontIcon { Glyph = "\uE8C8", FontSize = 13 },
+            Width = 24, Height = 24, MinWidth = 0, MinHeight = 0,
+            Padding = new Thickness(0), Opacity = isRootPath ? 1 : 0,
+            Content = WebUiIcon.Create("copy", 12, (Brush)Application.Current.Resources["SecondaryTextBrush"]),
         };
+        AutomationProperties.SetName(copyBtn, (isRootPath ? "Copy root path " : "Copy folder path ") + path);
+        if (!isRootPath)
+        {
+            border.PointerEntered += (_, _) => copyBtn.Opacity = 1;
+            border.PointerExited += (_, _) => { if (copyBtn.FocusState == FocusState.Unfocused) copyBtn.Opacity = 0; };
+            copyBtn.GotFocus += (_, _) => copyBtn.Opacity = 1;
+            copyBtn.LostFocus += (_, _) => copyBtn.Opacity = 0;
+        }
         ToolTipService.SetToolTip(copyBtn, isRootPath ? "Copy root path" : "Copy full path");
         copyBtn.Click += (_, _) => CopyToClipboard(
             path,
             isRootPath ? "Copied root path" : "Copied folder path");
-        Grid.SetColumn(copyBtn, 1);
+        Grid.SetColumn(copyBtn, isRootPath ? 1 : 2);
         root.Children.Add(copyBtn);
 
         border.Child = root;
@@ -325,15 +361,17 @@ public sealed partial class MatchItemDialog : ContentDialog
 
     private FrameworkElement BuildRootPathRow(string path)
     {
-        var root = new StackPanel { Spacing = 3 };
+        var root = new StackPanel { Spacing = 4, Margin = new Thickness(12, 8, 12, 8) };
         root.Children.Add(new TextBlock
         {
             Text = "ROOT PATH",
-            FontSize = 10,
-            FontWeight = FontWeights.SemiBold,
+            FontSize = 11,
+            FontWeight = FontWeights.Medium, CharacterSpacing = 80,
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
         });
-        root.Children.Add(BuildFolderRow(path, isRootPath: true));
+        var row = BuildFolderRow(path, isRootPath: true);
+        if (row is Border body) body.Padding = new Thickness(0);
+        root.Children.Add(row);
         return root;
     }
 
@@ -350,7 +388,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         var shared = 0;
         var limit = parents.Min(parts => parts.Length);
         while (shared < limit && parents.All(parts =>
-                   string.Equals(parts[shared], parents[0][shared], StringComparison.OrdinalIgnoreCase)))
+                   string.Equals(parts[shared], parents[0][shared], StringComparison.Ordinal)))
             shared++;
         if (shared == 0) return "";
         var separator = paths[0].Contains('\\') ? "\\" : "/";
@@ -471,7 +509,7 @@ public sealed partial class MatchItemDialog : ContentDialog
 
     private async Task DoSearchAsync()
     {
-        if (_searching) return;
+        if (_searching || _applying) return;
         var isVideo = IsVideoMatchType(_itemType);
         var title = (isVideo ? TitleBox.Text : GenericTitleBox.Text).Trim();
         var yearText = (isVideo ? YearBox.Text : GenericYearBox.Text).Trim();
@@ -507,6 +545,7 @@ public sealed partial class MatchItemDialog : ContentDialog
             };
 
             var response = await _maintenanceApi.SearchMatchesAsync(_itemId, request);
+            TruncatedText.Visibility = response.Truncated ? Visibility.Visible : Visibility.Collapsed;
 
             if (response.Candidates.Count == 0)
             {
@@ -620,7 +659,8 @@ public sealed partial class MatchItemDialog : ContentDialog
             {
                 Text = $"Native title: {candidate.Title}",
                 FontSize = 11,
-                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]
+                Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
+                TextTrimming = TextTrimming.CharacterEllipsis,
             });
         }
         else if (!string.IsNullOrWhiteSpace(candidate.OriginalTitle) &&
@@ -656,10 +696,10 @@ public sealed partial class MatchItemDialog : ContentDialog
             Foreground = (SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
         });
 
-        var badges = new StackPanel
+        var badges = new WrapPanel
         {
-            Orientation = Orientation.Horizontal,
-            Spacing = 5,
+            HorizontalSpacing = 5,
+            VerticalSpacing = 4,
         };
         if (candidate.MatchScore.HasValue)
             badges.Children.Add(BuildCandidateBadge($"Score {candidate.MatchScore.Value:F1}", filled: true));
@@ -702,6 +742,7 @@ public sealed partial class MatchItemDialog : ContentDialog
             rowBtn.Background = (SolidColorBrush)Application.Current.Resources["AccentBackgroundBrush"];
             rowBtn.BorderBrush = (SolidColorBrush)Application.Current.Resources["AccentBrush"];
             _selectedCandidate = capturedCandidate;
+            if (_applying) return;
             ApplyStatusText.Visibility = Visibility.Collapsed;
             ApplyMatchButton.Visibility = Visibility.Visible;
             ApplyMatchButton.IsEnabled = true;

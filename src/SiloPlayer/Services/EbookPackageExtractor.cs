@@ -119,7 +119,7 @@ internal static class EbookPackageExtractor
             chapters.Add(new EbookReaderChapter(title, relative));
         }
         if (chapters.Count == 0) throw new InvalidDataException("The FB2 document contains no readable sections.");
-        return new ExtractedEbook(root, chapters, "epub");
+        return new ExtractedEbook(root, chapters, "fb2");
     }
 
     private static void RenderFb2Element(XElement element, StringBuilder html, IReadOnlyDictionary<string, string> images)

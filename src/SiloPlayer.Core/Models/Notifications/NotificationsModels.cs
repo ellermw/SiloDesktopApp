@@ -11,6 +11,7 @@ public sealed class NotificationReasonFlags
     public bool ContinueWatching { get; set; }
     public bool NextUp { get; set; }
     public string? MediaType { get; set; }
+    public int? TmdbId { get; set; }
 }
 
 public sealed class AppNotification
@@ -384,6 +385,18 @@ public sealed class WebPushSubscriptionView
     public string CreatedAt { get; set; } = "";
     public string? LastSuccessAt { get; set; }
     public string? LastFailureAt { get; set; }
+    public string DeliveryHealthText
+    {
+        get
+        {
+            if (!Enabled) return "Disabled";
+            var successful = DateTimeOffset.TryParse(LastSuccessAt, out var success);
+            var failed = DateTimeOffset.TryParse(LastFailureAt, out var failure);
+            if (failed && (!successful || failure > success)) return "Last delivery failed · " + failure.ToLocalTime().ToString("g");
+            if (successful) return "Last delivered · " + success.ToLocalTime().ToString("g");
+            return "Waiting for the first delivery";
+        }
+    }
 }
 
 public sealed class WebPushSubscriptionsResponse

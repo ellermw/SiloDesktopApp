@@ -38,10 +38,11 @@ public sealed partial class SettingsPage : Page
     private CardOverlayPrefs? _cardOverlayDraft;
     private string _cardOverlayPreviewVariant = "movie";
     private CancellationTokenSource? _overlaySaveCts;
-    private CancellationTokenSource? _themeCssSaveCts;
-    private bool _themeCssLoaded;
     private bool _rememberLibraryPagesLoaded;
     private bool _pageInitialized;
+    private bool _suppressRequestSetting;
+    private int _requestSettingGeneration;
+    private ApiRequestContext _requestSettingContext;
     private int _profilesLoadGeneration;
     private int _householdSessionsLoadGeneration;
     private DispatcherTimer? _householdSessionsTimer;
@@ -50,6 +51,7 @@ public sealed partial class SettingsPage : Page
     private DateTime _loadedAtUtc;
     private bool _showingSettingsOverview;
     private bool _canManageProfiles;
+    private bool _requestsAvailable;
     private readonly List<SettingsOverviewCard> _settingsOverviewCards = [];
     // Start suppressed — handlers that fire during XAML parse (before all sibling
     // x:Name fields are assigned) would otherwise null-ref on their forward references
@@ -92,6 +94,7 @@ public sealed partial class SettingsPage : Page
         ("#d946ef", "Magenta"),
         ("#ef4444", "Red"),
         ("#3b82f6", "Blue"),
+        ("#9ca3af", "Gray"),
         ("#000000", "Black"),
     ];
 
@@ -110,7 +113,16 @@ public sealed partial class SettingsPage : Page
         _cardOverlayService = App.Services.GetRequiredService<CardOverlayService>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
+        PersonalizeTasteIcon.Child = WebUiIcon.Create("sparkles", 24, (Brush)Application.Current.Resources["AccentBrush"]);
+        PersonalizeTourIcon.Child = WebUiIcon.Create("map", 24, (Brush)Application.Current.Resources["AccentBrush"]);
+        PersonalizeFavoritesRow.Children.RemoveAt(0);
+        PersonalizeFavoritesRow.Children.Insert(0, WebUiIcon.Create("heart", 16, (Brush)Application.Current.Resources["SecondaryTextBrush"]));
+        PersonalizePickerButton.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4,
+            Children = { new TextBlock { Text = "Open the picker", FontSize = 14, FontWeight = FontWeights.Medium, Foreground = (Brush)Application.Current.Resources["AccentForegroundBrush"] }, WebUiIcon.Create("arrow-right", 16, (Brush)Application.Current.Resources["AccentForegroundBrush"]) } };
         InitializeAccountPassword();
+        InitializeAccountSignIn();
+        SettingsAllSettingsButton.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children =
+            { WebUiIcon.Create("back", 16, (Brush)Application.Current.Resources["SecondaryTextBrush"]), new TextBlock { Text = "All settings", FontSize = 14, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] } } };
         NavigationCacheMode = NavigationCacheMode.Required;
         PopulateProfileLanguageChoices();
 
@@ -127,6 +139,9 @@ public sealed partial class SettingsPage : Page
 
         BuildSubtitleColorSwatches();
         SizeChanged += SettingsPage_SizeChanged;
+        var searchShortcut = new Microsoft.UI.Xaml.Input.KeyboardAccelerator { Key = Windows.System.VirtualKey.K, Modifiers = Windows.System.VirtualKeyModifiers.Control };
+        searchShortcut.Invoked += (_, args) => { ShowSettingsOverview(); SettingsSearchBox.Focus(FocusState.Keyboard); SettingsSearchBox.SelectAll(); args.Handled = true; };
+        KeyboardAccelerators.Add(searchShortcut);
     }
 
     private void SettingsPage_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -136,12 +151,14 @@ public sealed partial class SettingsPage : Page
         // responsive geometry instead of squeezing the desktop rail into narrow windows.
         var isCompact = e.NewSize.Width < 1024;
         var isPhoneWidth = e.NewSize.Width < 640;
+        foreach (var choices in new[] { DateFormatButtons, TimeFormatButtons, TextSizeButtons, TextWeightButtons, ContrastButtons })
+            choices.Orientation = e.NewSize.Width < 760 ? Orientation.Vertical : Orientation.Horizontal;
 
         SettingsPageShell.Margin = isPhoneWidth
             ? new Thickness(16, 16, 16, 32)
             : isCompact
                 ? new Thickness(24, 24, 24, 40)
-                : new Thickness(48, 24, 48, 48);
+                : new Thickness(e.NewSize.Width < 1280 ? 40 : 48, 24, e.NewSize.Width < 1280 ? 40 : 48, 48);
 
         SettingsHeaderGrid.ColumnDefinitions[0].Width = isPhoneWidth
             ? new GridLength(1, GridUnitType.Star)
@@ -158,7 +175,7 @@ public sealed partial class SettingsPage : Page
 
         SettingsLayoutGrid.ColumnDefinitions[0].Width = isCompact
             ? new GridLength(0)
-            : new GridLength(220);
+            : new GridLength(240);
         SettingsLayoutGrid.ColumnDefinitions[1].Width = new GridLength(1, GridUnitType.Star);
 
         Grid.SetRow(SettingsNavigationScroller, 0);
@@ -195,9 +212,70 @@ public sealed partial class SettingsPage : Page
         SetSettingsNavigationGroupLayout(AccountNavGroup, false);
 
         SettingsContentPanel.Padding = isCompact
-            ? new Thickness(0)
-            : new Thickness(40, 0, 0, 0);
-        SettingsContentPanel.MaxWidth = double.PositiveInfinity;
+            ? new Thickness(16)
+            : new Thickness(24);
+        SettingsContentPanel.MaxWidth = DevicesPanel.Visibility == Visibility.Visible ? double.PositiveInfinity : 816;
+        SettingsContentPanel.HorizontalAlignment = HorizontalAlignment.Left;
+        SettingsHeaderGrid.Visibility = isCompact && !_showingSettingsOverview ? Visibility.Collapsed : Visibility.Visible;
+        ReflowSettingsRows(SettingsContentPanel, isCompact);
+        ReflowInterfacePresets();
+        ReflowSettingsShell();
+    }
+
+    private void ReflowSettingsShell()
+    {
+        var compactDetail = ActualWidth < 1024 && !_showingSettingsOverview;
+        SettingsBackButton.Visibility = compactDetail ? Visibility.Collapsed : Visibility.Visible;
+        SettingsLayoutGrid.Margin = new Thickness(0, compactDetail ? 12 : 40, 0, 0);
+        SettingsLayoutGrid.Background = compactDetail ? new SolidColorBrush(Colors.Transparent) : (Brush)Resources["SettingsPanelBrush"];
+        SettingsLayoutGrid.BorderThickness = compactDetail ? new Thickness(0) : new Thickness(1);
+        SettingsLayoutGrid.CornerRadius = compactDetail ? new CornerRadius(0) : new CornerRadius(27.2);
+        foreach (var title in new[] { InterfaceTitleText, PlaybackTitleText, SubtitlesTitleText, CardOverlaysTitleText, ConnectAppsTitleText, AccessibilityTitleText })
+        {
+            title.FontSize = ActualWidth < 640 ? 24 : 30;
+            title.LineHeight = ActualWidth < 640 ? 32 : 36;
+            title.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+            title.CharacterSpacing = -25;
+        }
+        PersonalizeTitleText.FontSize = 20;
+        PersonalizeTitleText.LineHeight = 28;
+        PersonalizeTitleText.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        ReflowSettingsGroupPadding(SettingsContentPanel, ActualWidth < 640);
+    }
+
+    private void ReflowSettingsGroupPadding(DependencyObject parent, bool narrow)
+    {
+        if (parent is Border border && ReferenceEquals(border.Style, Resources["SettingsGroupStyle"]))
+        {
+            border.Padding = new Thickness(narrow ? 16 : 24, 20, narrow ? 16 : 24, 20);
+            if (border.Child is StackPanel group && group.Children.FirstOrDefault() is StackPanel heading
+                && heading.Children.FirstOrDefault() is TextBlock { FontSize: 14 } title)
+            {
+                group.Spacing = 20;
+                title.LineHeight = 20; title.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+                title.CharacterSpacing = -25;
+                foreach (var description in heading.Children.OfType<TextBlock>().Skip(1))
+                {
+                    description.LineHeight = 21.125; description.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+                }
+            }
+        }
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+            ReflowSettingsGroupPadding(VisualTreeHelper.GetChild(parent, index), narrow);
+    }
+
+    private void ReflowInterfacePresets()
+    {
+        var singleColumn = ActualWidth < 640;
+        while (InterfacePresetGrid.RowDefinitions.Count < 4)
+            InterfacePresetGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        InterfacePresetGrid.ColumnDefinitions[1].Width = singleColumn ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        var presets = new[] { BalancedCardPreset, CompactCardPreset, CinemaCardPreset, ArtworkCardPreset };
+        for (var index = 0; index < presets.Length; index++)
+        {
+            Grid.SetColumn(presets[index], singleColumn ? 0 : index % 2);
+            Grid.SetRow(presets[index], singleColumn ? index : index / 2);
+        }
     }
 
     private static void SetSettingsNavigationGroupLayout(StackPanel group, bool isCompact)
@@ -206,6 +284,61 @@ public sealed partial class SettingsPage : Page
         group.Spacing = isCompact ? 4 : 2;
         if (group.Children.Count > 0)
             group.Children[0].Visibility = isCompact ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void ClearSettingsSearch_Click(object sender, RoutedEventArgs e) => SettingsSearchBox.Text = "";
+
+    private static void SetSettingsEnabled(DependencyObject parent, bool enabled)
+    {
+        if (parent is Control control) control.IsEnabled = enabled;
+        if (parent is Panel panel)
+            foreach (var child in panel.Children) SetSettingsEnabled(child, enabled);
+        else if (parent is Border border && border.Child != null) SetSettingsEnabled(border.Child, enabled);
+    }
+
+    private readonly Dictionary<Grid, (GridLength First, GridLength Second, List<(FrameworkElement Child, int Row, int Column)> Children)> _responsiveRows = [];
+    private void ReflowSettingsRows(DependencyObject parent, bool compact)
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            if (child is Grid grid && grid.ColumnDefinitions.Count == 2 && grid.Children.Count >= 2
+                && grid.Children[0] is TextBlock or StackPanel && grid != SettingsLayoutGrid && grid.Tag as string != "preset-icon-row" && grid.Tag as string != "title-art-row")
+            {
+                if (!_responsiveRows.TryGetValue(grid, out var original))
+                {
+                    original = (grid.ColumnDefinitions[0].Width, grid.ColumnDefinitions[1].Width,
+                        grid.Children.OfType<FrameworkElement>().Select(element => (element, Grid.GetRow(element), Grid.GetColumn(element))).ToList());
+                    _responsiveRows[grid] = original;
+                }
+                if (compact)
+                {
+                    while (grid.RowDefinitions.Count < 2) grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                    grid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+                    grid.ColumnDefinitions[1].Width = new GridLength(0);
+                    grid.RowSpacing = 10;
+                    foreach (var (element, row, column) in original.Children) { Grid.SetColumn(element, 0); Grid.SetRow(element, column == 1 ? 1 : row); }
+                }
+                else
+                {
+                    grid.ColumnDefinitions[0].Width = original.First; grid.ColumnDefinitions[1].Width = original.Second;
+                    foreach (var (element, row, column) in original.Children) { Grid.SetColumn(element, column); Grid.SetRow(element, row); }
+                }
+            }
+            ReflowSettingsRows(child, compact);
+        }
+    }
+
+    private static void BuildInterfaceRadioChoices(WrapPanel host, ComboBox value)
+    {
+        host.Children.Clear();
+        foreach (var item in value.Items.OfType<ComboBoxItem>())
+        {
+            var radio = new RadioButton { Content = item.Content, GroupName = host.Name, IsChecked = ReferenceEquals(value.SelectedItem, item),
+                Padding = new Thickness(10, 7, 10, 7) };
+            radio.Click += (_, _) => value.SelectedItem = item;
+            host.Children.Add(radio);
+        }
     }
 
     private void PopulateProfileLanguageChoices()
@@ -223,6 +356,7 @@ public sealed partial class SettingsPage : Page
         foreach (var language in MediaLanguageCatalog.All)
             MetadataLanguageComboBox.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
         MetadataLanguageComboBox.SelectedIndex = 0;
+        ConfigureLanguageCombo(MetadataLanguageComboBox);
     }
 
     private static void PopulateLanguageCombo(ComboBox combo, string emptyLabel)
@@ -232,10 +366,32 @@ public sealed partial class SettingsPage : Page
         foreach (var language in MediaLanguageCatalog.All)
             combo.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
         combo.SelectedIndex = 0;
+        ConfigureLanguageCombo(combo);
+    }
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ComboBox, object> ConfiguredLanguageCombos = new();
+    private static void ConfigureLanguageCombo(ComboBox combo)
+    {
+        if (!ConfiguredLanguageCombos.TryAdd(combo, new object())) return;
+        combo.IsEditable = true;
+        combo.PlaceholderText = "Other language tag…";
+        combo.TextSubmitted += (_, args) =>
+        {
+            args.Handled = true;
+            var tag = args.Text.Trim();
+            if (!System.Text.RegularExpressions.Regex.IsMatch(tag, "^(?:[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*|[xXiI](?:-[A-Za-z0-9]{1,8})+)$"))
+            {
+                App.Services.GetRequiredService<ToastService>().Error("Enter a valid language tag, such as pt-BR or zh-Hant.");
+                if (combo.SelectedItem is ComboBoxItem selected) combo.Text = selected.Content?.ToString() ?? "";
+                return;
+            }
+            SelectComboBoxByTag(combo, tag);
+        };
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
+        _layoutTransferActive = true;
         base.OnNavigatedTo(e);
 
         var stale = !_pageInitialized || DateTime.UtcNow - _loadedAtUtc > TimeSpan.FromMinutes(2);
@@ -248,20 +404,16 @@ public sealed partial class SettingsPage : Page
             RebuildLibraryCards();
             SyncComboBoxes();
             SyncSubtitleAppearanceControls();
-            BuildThemeCards();
-            UpdateCurrentThemeDisplay();
-            BuildDateTimeFormatControls();
+BuildDateTimeFormatControls();
             BuildAccessibilityControls();
-            BuildThemeTokenEditor();
-            ThemeCatalogRefreshButton.Visibility = string.Equals(
-                App.Services.GetRequiredService<SiloPlayer.Core.Services.SettingsService>().Load().LastUserRole,
-                "admin", StringComparison.OrdinalIgnoreCase) ? Visibility.Visible : Visibility.Collapsed;
-            AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Services.SettingsService>().Load().AudioBitstreamPassthrough;
+AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Services.SettingsService>().Load().AudioBitstreamPassthrough;
             await InitializeRtxUpscalingSettingAsync();
             _pageInitialized = true;
             _loadedAtUtc = DateTime.UtcNow;
         }
 
+        try { _requestsAvailable = (await App.Services.GetRequiredService<RequestsApi>().GetStatusAsync()).RequestsEnabled; }
+        catch { _requestsAvailable = false; }
         BuildSettingsOverview();
         if (e.Parameter is string requestedTab)
         {
@@ -279,13 +431,13 @@ public sealed partial class SettingsPage : Page
     {
         "Playback" => PlaybackTab,
         "Subtitles" or "SubtitleAppearance" => SubtitlesTab,
-        "Appearance" => AppearanceTab,
+        "Appearance" or "ThemeEditor" => AccessibilityTab,
         "Interface" or "NavigationCards" => InterfaceTab,
-        "ThemeEditor" => ThemeEditorTab,
         "Accessibility" => AccessibilityTab,
         "HomeScreen" => HomeScreenTab,
         "CardOverlays" => CardOverlaysTab,
         "Personalize" => PersonalizeTab,
+        "Requests" => RequestsTab,
         "Libraries" => LibrariesTab,
         "Import" or "HistoryImport" => ImportTab,
         "WebhookSync" => WebhookSyncTab,
@@ -300,13 +452,15 @@ public sealed partial class SettingsPage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        DeactivateLayoutTransfer();
+        ViewModel.DeactivateTitleArt();
+        DeactivateAccountSignIn();
+        ++_overlayLoadGeneration;
+        _requestSettingGeneration++;
         _accountPassword.Deactivate();
         // Stop the history_import event channel subscription when leaving Settings.
         StopImportEventSubscription();
-        _themeCssSaveCts?.Cancel();
-        _themeCssSaveCts?.Dispose();
-        _themeCssSaveCts = null;
-        _webhookPlexAuthCts?.Cancel();
+_webhookPlexAuthCts?.Cancel();
         _webhookPlexAuthCts?.Dispose();
         _webhookPlexAuthCts = null;
         _webhookRefreshTimer?.Stop();
@@ -353,7 +507,7 @@ public sealed partial class SettingsPage : Page
             var remove = new Button
             {
                 Content = new FontIcon { Glyph = "\uE74D", FontSize = 14 },
-                Style = (Style)Application.Current.Resources["TransparentButtonStyle"],
+                Style = (Style)Application.Current.Resources["GhostButtonStyle"],
                 Width = 36,
                 Height = 36,
                 Tag = pair.Key,
@@ -373,6 +527,7 @@ public sealed partial class SettingsPage : Page
                      !ViewModel.MetadataLanguageOverrides.ContainsKey(language.Code)))
             MetadataExceptionSourceComboBox.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
 
+        ConfigureLanguageCombo(MetadataExceptionSourceComboBox);
         MetadataExceptionSourceComboBox.SelectedItem = null;
         AddMetadataLanguageExceptionButton.IsEnabled = false;
     }
@@ -390,6 +545,7 @@ public sealed partial class SettingsPage : Page
         foreach (var language in MediaLanguageCatalog.All)
             combo.Items.Add(new ComboBoxItem { Content = language.Label, Tag = language.Code });
         SelectComboBoxByTag(combo, selectedValue);
+        ConfigureLanguageCombo(combo);
         combo.SelectionChanged += MetadataLanguageTarget_SelectionChanged;
         return combo;
     }
@@ -558,306 +714,6 @@ public sealed partial class SettingsPage : Page
         }
     }
 
-    private static readonly (string Token, string Label)[] NativeThemeTokens =
-    [
-        ("background", "Background"), ("foreground", "Foreground"), ("card", "Card"),
-        ("surface", "Surface"), ("surface-hover", "Surface Hover"), ("primary", "Primary"),
-        ("primary-foreground", "Primary Text"), ("secondary", "Secondary"),
-        ("secondary-foreground", "Secondary Text"), ("muted-foreground", "Muted Text"),
-        ("border", "Border"), ("input", "Input Border"), ("sidebar", "Sidebar"),
-        ("sidebar-accent", "Sidebar Accent"), ("sidebar-border", "Sidebar Border"),
-        ("destructive", "Destructive"),
-    ];
-
-    private void BuildThemeTokenEditor()
-    {
-        if (ThemeTokenOverridesHost == null) return;
-        ThemeTokenOverridesHost.Children.Clear();
-        var theme = ViewModel.ThemeService;
-        var overrides = theme.GetThemeOverrides();
-
-        foreach (var (token, label) in NativeThemeTokens)
-        {
-            var row = new Grid { ColumnSpacing = 10 };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            row.Children.Add(new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center, FontSize = 13 });
-            var valueBox = new TextBox
-            {
-                Text = overrides.TryGetValue(token, out var value) ? value : "",
-                PlaceholderText = "Theme default",
-                FontFamily = new FontFamily("Consolas"), FontSize = 12,
-            };
-            Grid.SetColumn(valueBox, 1);
-            row.Children.Add(valueBox);
-            var apply = new Button { Content = "Apply", Padding = new Thickness(10, 6, 10, 6) };
-            apply.Click += (_, _) =>
-            {
-                var candidate = valueBox.Text.Trim();
-                if (candidate.Length > 0 && (candidate.Length != 7 || candidate[0] != '#' || !candidate[1..].All(Uri.IsHexDigit)))
-                {
-                    ViewModel.ErrorMessage = $"{label} must use #RRGGBB format.";
-                    return;
-                }
-                theme.SetThemeOverride(token, candidate);
-                BuildThemeTokenEditor();
-            };
-            Grid.SetColumn(apply, 2);
-            row.Children.Add(apply);
-            ThemeTokenOverridesHost.Children.Add(row);
-        }
-
-        var fontRow = new Grid { ColumnSpacing = 10 };
-        fontRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        fontRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(200) });
-        fontRow.Children.Add(new TextBlock { Text = "Font Family", VerticalAlignment = VerticalAlignment.Center, FontSize = 13 });
-        var fontCombo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-        fontCombo.Items.Add(new ComboBoxItem { Content = "Theme default", Tag = "" });
-        foreach (var font in new[] { "Outfit", "Sora", "Urbanist", "Manrope" })
-            fontCombo.Items.Add(new ComboBoxItem { Content = font, Tag = font });
-        SelectComboBoxByTag(fontCombo, overrides.TryGetValue("font-body", out var fontValue) ? fontValue : "");
-        var fontReady = false;
-        fontCombo.Loaded += (_, _) => fontReady = true;
-        fontCombo.SelectionChanged += (_, _) =>
-        {
-            if (fontReady && fontCombo.SelectedItem is ComboBoxItem item && item.Tag is string selected)
-                theme.SetThemeOverride("font-body", selected);
-        };
-        Grid.SetColumn(fontCombo, 1);
-        fontRow.Children.Add(fontCombo);
-        ThemeTokenOverridesHost.Children.Add(fontRow);
-        UpdateThemeResetVisibility();
-    }
-
-    private void UpdateThemeResetVisibility()
-        => ThemeResetOverridesButton.Visibility = ViewModel.ThemeService.GetThemeOverrides().Count > 0 ||
-                                                  !string.IsNullOrWhiteSpace(ThemeCustomCssBox.Text)
-            ? Visibility.Visible : Visibility.Collapsed;
-
-    private void ThemeResetOverrides_Click(object sender, RoutedEventArgs e)
-    {
-        ViewModel.ThemeService.ResetThemeOverrides();
-        _suppressEvents = true;
-        ThemeCustomCssBox.Text = "";
-        _suppressEvents = false;
-        _ = App.Services.GetRequiredService<SettingsApi>().PutSettingAsync("ui_custom_css", "");
-        BuildThemeTokenEditor();
-    }
-
-    private async void ThemeExport_Click(object sender, RoutedEventArgs e)
-    {
-        var picker = new FileSavePicker { SuggestedFileName = "Silo-Custom-Theme" };
-        picker.FileTypeChoices.Add("Silo theme", [".json"]);
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance));
-        var file = await picker.PickSaveFileAsync();
-        if (file == null) return;
-        var document = new Dictionary<string, object?>
-        {
-            ["version"] = 1, ["name"] = "Silo Custom Theme", ["baseTheme"] = ViewModel.ThemeService.CurrentTheme,
-            ["vars"] = ViewModel.ThemeService.GetThemeOverrides(), ["customCss"] = ThemeCustomCssBox.Text, ["createdAt"] = DateTime.UtcNow.ToString("O"),
-        };
-        await Windows.Storage.FileIO.WriteTextAsync(file, JsonSerializer.Serialize(document, new JsonSerializerOptions { WriteIndented = true }));
-        ViewModel.StatusMessage = "Theme exported";
-    }
-
-    private async void ThemeImport_Click(object sender, RoutedEventArgs e)
-    {
-        var picker = new FileOpenPicker();
-        picker.FileTypeFilter.Add(".json");
-        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance));
-        var file = await picker.PickSingleFileAsync();
-        if (file == null) return;
-        try
-        {
-            using var doc = JsonDocument.Parse(await Windows.Storage.FileIO.ReadTextAsync(file));
-            if (!doc.RootElement.TryGetProperty("version", out var version) || version.GetInt32() != 1)
-                throw new InvalidOperationException("Unsupported theme file version.");
-            if (doc.RootElement.TryGetProperty("baseTheme", out var baseTheme) && baseTheme.ValueKind == JsonValueKind.String)
-                ViewModel.ThemeService.ApplyTheme(baseTheme.GetString() ?? ViewModel.ThemeService.CurrentTheme);
-            var vars = new Dictionary<string, string>(StringComparer.Ordinal);
-            if (doc.RootElement.TryGetProperty("vars", out var values) && values.ValueKind == JsonValueKind.Object)
-                foreach (var property in values.EnumerateObject())
-                    if (property.Value.ValueKind == JsonValueKind.String) vars[property.Name] = property.Value.GetString() ?? "";
-            ViewModel.ThemeService.ImportThemeOverrides(vars);
-            if (doc.RootElement.TryGetProperty("customCss", out var css) && css.ValueKind == JsonValueKind.String)
-            {
-                _suppressEvents = true;
-                ThemeCustomCssBox.Text = SanitizeThemeCss(css.GetString() ?? "");
-                _suppressEvents = false;
-                await App.Services.GetRequiredService<SettingsApi>().PutSettingAsync("ui_custom_css", ThemeCustomCssBox.Text);
-            }
-            BuildThemeTokenEditor();
-            ViewModel.StatusMessage = "Theme imported";
-        }
-        catch (Exception ex) { ViewModel.ErrorMessage = $"Could not import theme: {ex.Message}"; }
-    }
-
-    private bool _themeCatalogLoading;
-
-    private void ThemeEditorSectionTab_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button { Tag: string tab }) return;
-        ThemeTokensPanel.Visibility = tab == "tokens" ? Visibility.Visible : Visibility.Collapsed;
-        ThemeCssPanel.Visibility = tab == "css" ? Visibility.Visible : Visibility.Collapsed;
-        ThemeCatalogPanel.Visibility = tab == "catalog" ? Visibility.Visible : Visibility.Collapsed;
-        ThemeTokensTab.Style = (Style)Resources[tab == "tokens" ? "ActiveTabStyle" : "InactiveTabStyle"];
-        ThemeCssTab.Style = (Style)Resources[tab == "css" ? "ActiveTabStyle" : "InactiveTabStyle"];
-        ThemeCatalogTab.Style = (Style)Resources[tab == "catalog" ? "ActiveTabStyle" : "InactiveTabStyle"];
-        if (tab == "css") _ = LoadThemeCustomCssAsync();
-        if (tab == "catalog") _ = LoadThemeCatalogAsync();
-    }
-
-    private async Task LoadThemeCustomCssAsync()
-    {
-        if (_themeCssLoaded) return;
-        try
-        {
-            var setting = await App.Services.GetRequiredService<SettingsApi>().GetSettingAsync("ui_custom_css");
-            _suppressEvents = true;
-            ThemeCustomCssBox.Text = setting.Value ?? "";
-            _suppressEvents = false;
-            _themeCssLoaded = true;
-            UpdateThemeResetVisibility();
-        }
-        catch (Exception ex)
-        {
-            ThemeCustomCssStatus.Text = $"Could not load custom CSS: {ex.Message}";
-        }
-    }
-
-    private void ThemeCustomCssBox_TextChanged(object sender, TextChangedEventArgs e)
-    {
-        if (_suppressEvents || !_themeCssLoaded) return;
-        var cts = new CancellationTokenSource();
-        var previous = Interlocked.Exchange(ref _themeCssSaveCts, cts);
-        previous?.Cancel();
-        previous?.Dispose();
-        ThemeCustomCssStatus.Text = "Saving…";
-        UpdateThemeResetVisibility();
-        _ = SaveThemeCssAfterDelayAsync(ThemeCustomCssBox.Text, cts);
-    }
-
-    private async Task SaveThemeCssAfterDelayAsync(string css, CancellationTokenSource owner)
-    {
-        try
-        {
-            await Task.Delay(1000, owner.Token);
-            var sanitized = SanitizeThemeCss(css);
-            await App.Services.GetRequiredService<SettingsApi>().PutSettingAsync("ui_custom_css", sanitized, owner.Token);
-            if (ReferenceEquals(_themeCssSaveCts, owner))
-            {
-                ThemeCustomCssStatus.Text = sanitized == css ? "Saved" : "Saved; external CSS resources were blocked.";
-                if (sanitized != css)
-                {
-                    _suppressEvents = true;
-                    ThemeCustomCssBox.Text = sanitized;
-                    _suppressEvents = false;
-                }
-            }
-        }
-        catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
-        catch (Exception ex)
-        {
-            if (ReferenceEquals(_themeCssSaveCts, owner)) ThemeCustomCssStatus.Text = $"Save failed: {ex.Message}";
-        }
-        finally
-        {
-            Interlocked.CompareExchange(ref _themeCssSaveCts, null, owner);
-            owner.Dispose();
-        }
-    }
-
-    private static string SanitizeThemeCss(string css)
-    {
-        var result = Regex.Replace(css, "@import\\s+(?:url\\(.*?\\)|['\"].*?['\"])[^;]*;?", "/* [blocked @import] */", RegexOptions.IgnoreCase);
-        return Regex.Replace(result, "url\\(\\s*(['\"]?)([\\s\\S]*?)\\1\\s*\\)", match =>
-        {
-            var value = match.Groups[2].Value.Trim().Trim('\'', '\"');
-            var safe = value.Length == 0 || value.StartsWith("data:", StringComparison.OrdinalIgnoreCase) ||
-                       (value.StartsWith('/') && !value.StartsWith("//")) || value.StartsWith('#') ||
-                       (!Regex.IsMatch(value, "^[a-z][a-z0-9+.-]*:", RegexOptions.IgnoreCase) && !value.StartsWith("//"));
-            return safe ? match.Value : "/* [blocked external url] */";
-        }, RegexOptions.IgnoreCase);
-    }
-
-    private async Task LoadThemeCatalogAsync(bool refresh = false)
-    {
-        if (_themeCatalogLoading) return;
-        _themeCatalogLoading = true;
-        CommunityThemesHost.Children.Clear();
-        CommunityThemesHost.Children.Add(new TextBlock
-        {
-            Text = "Loading community themes...", FontSize = 13,
-            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-        });
-        try
-        {
-            var api = App.Services.GetRequiredService<SettingsApi>();
-            var response = refresh ? await api.RefreshThemeCatalogAsync() : await api.GetThemeCatalogAsync();
-            CommunityThemesHost.Children.Clear();
-            if (response.Themes.Count == 0)
-            {
-                CommunityThemesHost.Children.Add(new TextBlock { Text = "No community themes available yet.", FontSize = 13 });
-                return;
-            }
-            foreach (var entry in response.Themes)
-                CommunityThemesHost.Children.Add(BuildCommunityThemeCard(entry, api));
-        }
-        catch (Exception ex)
-        {
-            CommunityThemesHost.Children.Clear();
-            CommunityThemesHost.Children.Add(new TextBlock
-            {
-                Text = $"Could not load the theme catalog. {ex.Message}", TextWrapping = TextWrapping.Wrap,
-                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], FontSize = 13,
-            });
-        }
-        finally { _themeCatalogLoading = false; }
-    }
-
-    private Border BuildCommunityThemeCard(ThemeCatalogEntry entry, SettingsApi api)
-    {
-        var card = new Border
-        {
-            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(14), Padding = new Thickness(14),
-        };
-        var grid = new Grid { ColumnSpacing = 12 };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        var info = new StackPanel { Spacing = 3 };
-        info.Children.Add(new TextBlock { Text = entry.Name, FontWeight = FontWeights.SemiBold, FontSize = 14 });
-        info.Children.Add(new TextBlock { Text = $"by {entry.Author}", FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
-        if (!string.IsNullOrWhiteSpace(entry.Description))
-            info.Children.Add(new TextBlock { Text = entry.Description, FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
-        grid.Children.Add(info);
-        var install = new Button { Content = "Install", Style = (Style)Application.Current.Resources["AccentButtonStyle"], Padding = new Thickness(14, 7, 14, 7) };
-        install.Click += async (_, _) =>
-        {
-            install.IsEnabled = false;
-            install.Content = "Installing...";
-            try
-            {
-                var theme = await api.DownloadThemeAsync(entry.DownloadUrl);
-                if (theme.Version != 1) throw new InvalidOperationException("Unsupported theme file version.");
-                ViewModel.ThemeService.ApplyTheme(theme.BaseTheme);
-                ViewModel.ThemeService.ImportThemeOverrides(theme.Vars);
-                BuildThemeTokenEditor();
-                ViewModel.StatusMessage = $"Installed {entry.Name}";
-            }
-            catch (Exception ex) { ViewModel.ErrorMessage = $"Failed to install {entry.Name}: {ex.Message}"; }
-            finally { install.IsEnabled = true; install.Content = "Install"; }
-        };
-        Grid.SetColumn(install, 1);
-        grid.Children.Add(install);
-        card.Child = grid;
-        return card;
-    }
-
-    private async void ThemeCatalogRefresh_Click(object sender, RoutedEventArgs e)
-        => await LoadThemeCatalogAsync(refresh: true);
-
     private void SyncSubtitleAppearanceControls()
     {
         _suppressEvents = true;
@@ -887,9 +743,10 @@ public sealed partial class SettingsPage : Page
                 return;
             }
         }
-        // If no match, try selecting first item
-        if (combo.Items.Count > 0)
-            combo.SelectedIndex = 0;
+        // Retain a saved off-list value; opening a picker must never mislabel it as unset.
+        var current = new ComboBoxItem { Content = tagValue, Tag = tagValue };
+        combo.Items.Add(current);
+        combo.SelectedItem = current;
     }
 
     // ===== Tab switching =====
@@ -962,27 +819,27 @@ public sealed partial class SettingsPage : Page
         AutomationProperties.SetName(SettingsCurrentProfileButton, $"Current profile: {profileName}");
 
         _canManageProfiles = AuthorizationPolicy.IsActingAdmin(auth) || profile?.IsPrimary == true;
-        ProfilesTab.Visibility = _canManageProfiles ? Visibility.Visible : Visibility.Collapsed;
+        ProfilesTab.Visibility = AccountPasswordTab.Visibility = _canManageProfiles ? Visibility.Visible : Visibility.Collapsed;
+        RequestsTab.Visibility = _requestsAvailable ? Visibility.Visible : Visibility.Collapsed;
         var groups = new (string Label, (string Tag, string Label, string Description, string Glyph, string Search)[] Items)[]
         {
             ("Playback",
             [
-                ("Playback", "Playback", "Quality, languages, skipping, and what plays next.", "\uE768", "video quality bitrate bandwidth spoken metadata language auto skip intros credits recaps preview auto play next up"),
+                ("Playback", "Playback", "Quality, languages, skipping, and what plays next.", "\uE768", "video quality bitrate bandwidth spoken metadata language auto skip intros credits recaps preview auto play next up seek rewind fast forward fast-forward skip interval audiobook controls"),
                 ("Subtitles", "Subtitles", "Subtitle language, when they appear, and how they look.", "\uED1E", "subtitle forced captions font size color background position"),
                 ("Devices", "Your Devices", "Per-device quality, HDR, and audio or subtitle sync.", "\uE7F4", "devices tv phone tablet browser hdr dolby vision sound delay lip sync"),
             ]),
             ("Appearance",
             [
-                ("Appearance", "Appearance", "Theme, interface tone, and date and time formats.", "\uE790", "theme dark light custom date time clock"),
                 ("Interface", "Navigation & Cards", "Your primary menu, poster size, and card captions.", "\uE7F8", "navigation menu poster size card captions title year artwork preset"),
-                ("CardOverlays", "Card Overlays", "Badges drawn on poster cards, and where they sit.", "\uE81E", "poster badges overlay accent color preset icon position"),
-                ("Accessibility", "Accessibility", "Text size, weight, and contrast for easier reading.", "\uE7F3", "contrast readability motion transparency text size weight"),
-                ("ThemeEditor", "Theme Editor", "Fine-tune theme colors and add your own CSS.", "\uE771", "design tokens token overrides custom css community themes"),
+                ("CardOverlays", "Card Overlays", "Badges drawn on poster cards, and where they sit.", "\uE81E", "poster badges overlay accent color preset icon position quick actions enabled default inheritance"),
+                ("Accessibility", "Accessibility", "Text size, weight, contrast, and date and time formats.", "\uE7F3", "contrast readability motion transparency text size weight date time clock"),
             ]),
             ("Home & Discovery",
             [
                 ("HomeScreen", "Home Screen", "Which rows appear on Home, and in what order.", "\uECA5", "sections rows continue watching next up recently added library order"),
                 ("Personalize", "Personalize", "Re-tune the taste profile behind your recommendations.", "\uE735", "taste profile recommendations ratings likes dislikes"),
+                ("Requests", "Requests", "Choose whether watchlist additions also request titles.", "\uE710", "watchlist automatic request preference"),
                 ("Libraries", "Libraries", "Which libraries you see, their order, and per-library audio.", "\uE8F1", "library visibility access disabled order playback spoken subtitle"),
             ]),
             ("Connections",
@@ -1013,7 +870,7 @@ public sealed partial class SettingsPage : Page
             section.Children.Add(cards);
             foreach (var entry in group.Items)
             {
-                if (entry.Tag == "Profiles" && !_canManageProfiles) continue;
+                if ((entry.Tag is "Profiles" or "Account") && !_canManageProfiles || entry.Tag == "Requests" && !_requestsAvailable) continue;
                 var card = BuildSettingsOverviewCard(entry.Tag, entry.Label, entry.Description, entry.Glyph);
                 cards.Children.Add(card);
                 _settingsOverviewCards.Add(new SettingsOverviewCard(
@@ -1079,17 +936,23 @@ public sealed partial class SettingsPage : Page
 
     private void ShowSettingsOverview()
     {
+        ViewModel.DeactivateTitleArt();
+        DeactivateAccountSignIn();
+        ++_overlayLoadGeneration;
         _accountPassword.Deactivate();
         _showingSettingsOverview = true;
         SettingsHeaderSubtitle.Text = "Make Silo work the way you like.";
         SettingsOverviewPanel.Visibility = Visibility.Visible;
         SettingsLayoutGrid.Visibility = Visibility.Collapsed;
+        SettingsHeaderGrid.Visibility = Visibility.Visible;
         SettingsAllSettingsButton.Visibility = Visibility.Collapsed;
         SettingsSearchBox_TextChanged(SettingsSearchBox, null!);
+        ReflowSettingsShell();
     }
 
     private void ShowSettingsDetail(Button button)
     {
+        if ((button.Tag is "Account" or "Profiles") && !_canManageProfiles || button.Tag is "Requests" && !_requestsAvailable) { ShowSettingsOverview(); return; }
         _showingSettingsOverview = false;
         SettingsHeaderSubtitle.Text = "Manage your playback preferences, libraries, and display options.";
         SettingsOverviewPanel.Visibility = Visibility.Collapsed;
@@ -1098,6 +961,10 @@ public sealed partial class SettingsPage : Page
             ? Visibility.Visible
             : Visibility.Collapsed;
         Tab_Click(button, new RoutedEventArgs());
+        SettingsHeaderGrid.Visibility = ActualWidth < 1024 ? Visibility.Collapsed : Visibility.Visible;
+        SettingsContentPanel.MaxWidth = button.Tag is "Devices" ? double.PositiveInfinity : 816;
+        ReflowSettingsRows(SettingsContentPanel, ActualWidth < 1024);
+        ReflowSettingsShell();
     }
 
     private void SettingsOverviewCard_Click(object sender, RoutedEventArgs e)
@@ -1132,21 +999,20 @@ public sealed partial class SettingsPage : Page
                     : Visibility.Collapsed;
             var overviewMatches = _settingsOverviewCards.Count(entry => entry.Button.Visibility == Visibility.Visible);
             SettingsSearchStatus.Text = tokens.Length == 0
-                ? $"{_settingsOverviewCards.Count} settings sections"
+                ? "Press Ctrl+K to search"
                 : overviewMatches == 0 ? "No matching settings" : $"{overviewMatches} {(overviewMatches == 1 ? "match" : "matches")}";
             return;
         }
         var entries = new (Button Button, string SearchText)[]
         {
-            (PlaybackTab, "playback quality language skipping video spoken metadata auto skip intros credits recaps preview auto play next up episodes"),
+            (PlaybackTab, "playback quality language skipping video spoken metadata auto skip intros credits recaps preview auto play next up episodes seek rewind fast-forward audiobook intervals"),
             (SubtitlesTab, "subtitles subtitle language behavior forced captions font size family color outline background opacity position preview"),
-            (AppearanceTab, "appearance theme profile dark light custom date time format clock reset cinema"),
             (InterfaceTab, "navigation cards menu poster size card captions title year artwork preset primary menu"),
-            (ThemeEditorTab, "theme editor customize colors css design tokens token overrides custom css community themes preview"),
-            (AccessibilityTab, "accessibility readability contrast motion transparency text size weight high contrast preview"),
+            (AccessibilityTab, "accessibility readability contrast motion transparency text size weight high contrast preview date time format clock"),
             (HomeScreenTab, "home screen sections layout rows continue watching next up recently added library order scope reset"),
-            (CardOverlaysTab, "card overlays poster badges overlay accent color preset preview icon position styling"),
+            (CardOverlaysTab, "card overlays poster badges overlay accent color preset preview icon position styling quick actions mode enabled default inheritance"),
             (PersonalizeTab, "personalize taste profile recommendations ratings likes dislikes refine"),
+            (RequestsTab, "requests watchlist automatic titles request preference"),
             (LibrariesTab, "libraries library visibility access disabled order playback preferences spoken subtitle forced remember"),
             (ImportTab, "history import emby jellyfin plex watched mapping sync fetched matched unmatched progress skipped"),
             (WebhookSyncTab, "webhook sync plex emby jellyfin intake progress watched connections deliveries server url token"),
@@ -1161,7 +1027,7 @@ public sealed partial class SettingsPage : Page
         var matches = 0;
         foreach (var entry in entries)
         {
-            if (ReferenceEquals(entry.Button, ProfilesTab) && !_canManageProfiles)
+            if ((ReferenceEquals(entry.Button, ProfilesTab) || ReferenceEquals(entry.Button, AccountPasswordTab)) && !_canManageProfiles || ReferenceEquals(entry.Button, RequestsTab) && !_requestsAvailable)
             {
                 entry.Button.Visibility = Visibility.Collapsed;
                 continue;
@@ -1175,9 +1041,9 @@ public sealed partial class SettingsPage : Page
         PlaybackNavGroup.Visibility = new[] { PlaybackTab, SubtitlesTab, DevicesTab }
             .Any(button => button.Visibility == Visibility.Visible)
             ? Visibility.Visible : Visibility.Collapsed;
-        AppearanceNavGroup.Visibility = new[] { AppearanceTab, InterfaceTab, CardOverlaysTab, AccessibilityTab, ThemeEditorTab }
+        AppearanceNavGroup.Visibility = new[] { InterfaceTab, CardOverlaysTab, AccessibilityTab }
             .Any(button => button.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
-        HomeDiscoveryNavGroup.Visibility = new[] { HomeScreenTab, PersonalizeTab, LibrariesTab }
+        HomeDiscoveryNavGroup.Visibility = new[] { HomeScreenTab, PersonalizeTab, LibrariesTab, RequestsTab }
             .Any(button => button.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
         ConnectionsNavGroup.Visibility = new[] { ConnectAppsTab, WatchProvidersTab, WebhookSyncTab, ImportTab }
             .Any(button => button.Visibility == Visibility.Visible)
@@ -1188,7 +1054,7 @@ public sealed partial class SettingsPage : Page
 
         var availableSettingsCount = _canManageProfiles ? entries.Length : entries.Length - 1;
         SettingsSearchStatus.Text = tokens.Length == 0
-            ? $"{availableSettingsCount} settings sections"
+            ? "Press Ctrl+K to search"
             : matches == 0 ? "No matching settings" : $"{matches} {(matches == 1 ? "match" : "matches")}";
     }
 
@@ -1199,7 +1065,7 @@ public sealed partial class SettingsPage : Page
         if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
             return;
 
-        var tabs = new[] { AppearanceTab, InterfaceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, CardOverlaysTab, PersonalizeTab, ImportTab, WebhookSyncTab, WatchProvidersTab, DevicesTab, NotificationsSettingsTab, ConnectAppsTab, ProfilesTab, AccountPasswordTab, ThemeEditorTab, AccessibilityTab, PluginsTab, SessionsTab };
+        var tabs = new[] { InterfaceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, CardOverlaysTab, PersonalizeTab, RequestsTab, ImportTab, WebhookSyncTab, WatchProvidersTab, DevicesTab, NotificationsSettingsTab, ConnectAppsTab, ProfilesTab, AccountPasswordTab, AccessibilityTab, PluginsTab, SessionsTab };
         foreach (var tab in tabs)
         {
             tab.Style = (Style)Resources["InactiveTabStyle"];
@@ -1207,10 +1073,10 @@ public sealed partial class SettingsPage : Page
 
         clickedButton.Style = (Style)Resources["ActiveTabStyle"];
 
-        AppearancePanel.Visibility = tag == "Appearance" ? Visibility.Visible : Visibility.Collapsed;
         AccountPasswordPanel.Visibility = tag == "Account" ? Visibility.Visible : Visibility.Collapsed;
-        if (tag == "Account") _ = _accountPassword.LoadAsync();
-        else _accountPassword.Deactivate();
+        if (tag == "Account") { _ = _accountPassword.LoadAsync(); _ = LoadAccountSignInAsync(); }
+        else { _accountPassword.Deactivate(); DeactivateAccountSignIn(); }
+        if (tag != "CardOverlays") ++_overlayLoadGeneration;
         InterfacePanel.Visibility = tag == "Interface" ? Visibility.Visible : Visibility.Collapsed;
         PlaybackPanel.Visibility = tag == "Playback" ? Visibility.Visible : Visibility.Collapsed;
         LibrariesPanel.Visibility = tag == "Libraries" ? Visibility.Visible : Visibility.Collapsed;
@@ -1218,6 +1084,7 @@ public sealed partial class SettingsPage : Page
         HomeScreenPanel.Visibility = tag == "HomeScreen" ? Visibility.Visible : Visibility.Collapsed;
         CardOverlaysPanel.Visibility = tag == "CardOverlays" ? Visibility.Visible : Visibility.Collapsed;
         PersonalizePanel.Visibility = tag == "Personalize" ? Visibility.Visible : Visibility.Collapsed;
+        RequestsPanel.Visibility = tag == "Requests" ? Visibility.Visible : Visibility.Collapsed;
         ImportPanel.Visibility = tag == "Import" ? Visibility.Visible : Visibility.Collapsed;
         PluginsPanel.Visibility = tag == "Plugins" ? Visibility.Visible : Visibility.Collapsed;
         ProfilesPanel.Visibility = tag == "Profiles" ? Visibility.Visible : Visibility.Collapsed;
@@ -1226,7 +1093,6 @@ public sealed partial class SettingsPage : Page
         NotificationsSettingsPanel.Visibility = tag == "NotificationsSettings" ? Visibility.Visible : Visibility.Collapsed;
         DevicesPanel.Visibility = tag == "Devices" ? Visibility.Visible : Visibility.Collapsed;
         ConnectAppsPanel.Visibility = tag == "ConnectApps" ? Visibility.Visible : Visibility.Collapsed;
-        ThemeEditorPanel.Visibility = tag == "ThemeEditor" ? Visibility.Visible : Visibility.Collapsed;
         AccessibilityPanel.Visibility = tag == "Accessibility" ? Visibility.Visible : Visibility.Collapsed;
         SessionsPanel.Visibility = tag == "Sessions" ? Visibility.Visible : Visibility.Collapsed;
         if (tag != "WebhookSync") _webhookRefreshTimer?.Stop();
@@ -1235,8 +1101,10 @@ public sealed partial class SettingsPage : Page
         if (tag == "Interface")
         {
             _ = LoadInterfaceCustomizationAsync();
+            _ = ViewModel.LoadTitleArtAsync();
         }
-        else if (tag == "Profiles")
+        else ViewModel.DeactivateTitleArt();
+        if (tag == "Profiles")
         {
             _ = LoadProfilesAsync();
             StartHouseholdSessionsPolling();
@@ -1245,11 +1113,6 @@ public sealed partial class SettingsPage : Page
         if (tag == "Sessions")
         {
             _ = LoadSessionsAsync();
-        }
-        else if (tag == "ThemeEditor")
-        {
-            BuildThemeTokenEditor();
-            _ = LoadThemeCatalogAsync();
         }
         else if (tag == "WebhookSync")
         {
@@ -1279,6 +1142,7 @@ public sealed partial class SettingsPage : Page
         {
             _ = LoadPersonalizeSummaryAsync();
         }
+        else if (tag == "Requests") { _ = LoadRequestPreferenceAsync(); }
         else if (tag == "Devices")
         {
             _ = LoadDevicesAsync();
@@ -1355,6 +1219,8 @@ public sealed partial class SettingsPage : Page
         SelectComboBoxByTag(InterfacePosterSizeCombo, presentation.PosterSize);
         SelectComboBoxByTag(InterfaceCaptionCombo, presentation.Caption);
         _suppressInterfaceEvents = false;
+        BuildInterfaceRadioChoices(InterfacePosterSizeChoices, InterfacePosterSizeCombo);
+        BuildInterfaceRadioChoices(InterfaceCaptionChoices, InterfaceCaptionCombo);
 
         var cardDeviceOverride = string.Equals(
             _uiCustomizationService.CardPresentationSource,
@@ -1368,6 +1234,8 @@ public sealed partial class SettingsPage : Page
         InterfaceMenuDeviceOverrideNotice.Visibility = menuDeviceOverride ? Visibility.Visible : Visibility.Collapsed;
         InterfacePosterSizeCombo.IsEnabled = !cardDeviceOverride;
         InterfaceCaptionCombo.IsEnabled = !cardDeviceOverride;
+        SetSettingsEnabled(InterfacePosterSizeChoices, !cardDeviceOverride);
+        SetSettingsEnabled(InterfaceCaptionChoices, !cardDeviceOverride);
         BalancedCardPreset.IsEnabled = !cardDeviceOverride;
         CompactCardPreset.IsEnabled = !cardDeviceOverride;
         CinemaCardPreset.IsEnabled = !cardDeviceOverride;
@@ -1482,9 +1350,15 @@ public sealed partial class SettingsPage : Page
         foreach (var button in new[] { BalancedCardPreset, CompactCardPreset, CinemaCardPreset, ArtworkCardPreset })
         {
             var active = string.Equals(button.Tag as string, current, StringComparison.Ordinal);
-            button.Opacity = active ? 1 : 0.72;
-            button.BorderThickness = active ? new Thickness(2) : new Thickness(1);
-            button.BorderBrush = (Brush)Application.Current.Resources[active ? "SidebarAccentBrush" : "BorderBrush"];
+            button.Opacity = button.IsEnabled ? 1 : .6;
+            button.BorderThickness = new Thickness(1);
+            var accent = ((SolidColorBrush)Application.Current.Resources["AccentBrush"]).Color;
+            button.BorderBrush = active ? new SolidColorBrush(accent) { Opacity = .5 } : (Brush)Resources["SettingsBorderBrush"];
+            button.Background = active ? new SolidColorBrush(accent) { Opacity = .08 } : (Brush)Resources["SettingsPresetBrush"];
+            var content = (Grid)button.Content;
+            var check = content.Children.OfType<Viewbox>().Single();
+            check.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(button, active ? "Selected" : "Not selected");
         }
     }
 
@@ -1721,6 +1595,64 @@ public sealed partial class SettingsPage : Page
         }
     }
 
+    private async Task LoadRequestPreferenceAsync()
+    {
+        const string key = "requests.watchlist_auto_request";
+        var generation = ++_requestSettingGeneration;
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        var context = client.CaptureContext();
+        WatchlistAutoRequestToggle.Visibility = Visibility.Collapsed;
+        WatchlistRequestSettingStatus.Text = "Loading request preference…";
+        try
+        {
+            var api = App.Services.GetRequiredService<SettingsApi>();
+            var capabilities = await api.GetContractCapabilitiesAsync();
+            if (generation != _requestSettingGeneration || !client.IsCurrentContext(context)) return;
+            if (capabilities.Revision < 15) { WatchlistRequestSettingStatus.Text = "This server doesn't support the watchlist request preference yet."; return; }
+            var status = await App.Services.GetRequiredService<RequestsApi>().GetStatusAsync();
+            var effective = await api.GetContractEffectiveSettingsAsync([key]);
+            if (generation != _requestSettingGeneration || !client.IsCurrentContext(context)) return;
+            var entry = effective.Settings.FirstOrDefault(setting => setting.Key == key);
+            var value = entry?.Value.ValueKind != JsonValueKind.False;
+            _requestSettingContext = context;
+            _suppressRequestSetting = true;
+            WatchlistAutoRequestToggle.IsOn = value;
+            _suppressRequestSetting = false;
+            WatchlistAutoRequestToggle.IsEnabled = true;
+            var show = RequestViewerPolicy.ShowAutoRequestControl(status, value);
+            WatchlistAutoRequestToggle.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            WatchlistRequestSettingStatus.Text = show ? "" : status.RequestsEnabled ? "Automatic watchlist requests are unavailable for this profile or server." : "Requests are turned off on this server.";
+        }
+        catch (Exception ex) { if (generation == _requestSettingGeneration && client.IsCurrentContext(context)) WatchlistRequestSettingStatus.Text = $"Couldn't load request preference: {ex.Message}"; }
+    }
+
+    private async void WatchlistAutoRequestToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_suppressRequestSetting || !WatchlistAutoRequestToggle.IsEnabled) return;
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        var context = _requestSettingContext;
+        if (!client.IsCurrentContext(context)) return;
+        var enabled = WatchlistAutoRequestToggle.IsOn;
+        WatchlistAutoRequestToggle.IsEnabled = false;
+        try
+        {
+            var api = App.Services.GetRequiredService<SettingsApi>();
+            if (enabled)
+            {
+                try { await api.DeleteContractSettingValueAsync("requests.watchlist_auto_request", "profile", profileId: context.ProfileId); }
+                catch (ApiException ex) when (ex.StatusCode == 404) { }
+            }
+            else await api.SetContractSettingValueAsync("requests.watchlist_auto_request", "profile", false, profileId: context.ProfileId);
+            if (client.IsCurrentContext(context)) await LoadRequestPreferenceAsync();
+        }
+        catch (Exception ex)
+        {
+            if (!client.IsCurrentContext(context)) return;
+            _suppressRequestSetting = true; WatchlistAutoRequestToggle.IsOn = !enabled; _suppressRequestSetting = false;
+            WatchlistAutoRequestToggle.IsEnabled = true; WatchlistRequestSettingStatus.Text = $"Couldn't save request preference: {ex.Message}";
+        }
+    }
+
     private void OpenTasteSeed_Click(object sender, RoutedEventArgs e)
         => Frame.Navigate(typeof(TasteSeedPage), true);
 
@@ -1745,25 +1677,92 @@ public sealed partial class SettingsPage : Page
         }
     }
 
+    private int _overlayLoadGeneration;
+    private IReadOnlySet<string> _overlayShownRatings = new HashSet<string>();
+    private bool OverlayOffered(string id) => id switch
+    {
+        "rating_imdb" or "imdb_top_250" => _overlayShownRatings.Contains("imdb"),
+        "rating_tmdb" => _overlayShownRatings.Contains("tmdb"),
+        "rating_rt" or "rt_certified_fresh" => _overlayShownRatings.Contains("rt_critic"),
+        "rating_rt_audience" => _overlayShownRatings.Contains("rt_audience"),
+        _ => true
+    };
     private async Task LoadCardOverlaySettingsAsync()
     {
+        var generation = ++_overlayLoadGeneration;
+        var client = App.Services.GetRequiredService<SiloApiClient>(); var context = client.CaptureContext();
         try
         {
             await _cardOverlayService.EnsureLoadedAsync();
+            var catalog = App.Services.GetRequiredService<CatalogApi>();
+            IReadOnlySet<string> shown;
+            try { shown = await catalog.GetShownRatingSourcesAsync(); }
+            catch { shown = catalog.CachedShownRatingSources; }
+            if (generation != _overlayLoadGeneration || !client.IsCurrentContext(context)) return;
+            _overlayShownRatings = shown;
             _cardOverlayDraft = _cardOverlayService.GetDocument();
             CardOverlaysDisabledBanner.Visibility = _cardOverlayService.Enabled
                 ? Visibility.Collapsed
                 : Visibility.Visible;
-            CardOverlaysContentHost.Opacity = _cardOverlayService.Enabled ? 1 : 0.5;
-            CardOverlaysContentHost.IsHitTestVisible = _cardOverlayService.Enabled;
+            var editable = _cardOverlayService.Enabled && _cardOverlayService.ProfileBadgesEnabled;
+            CardOverlaysContentHost.Opacity = editable ? 1 : 0.5;
+            CardOverlaysContentHost.IsHitTestVisible = editable;
+            BuildCardOverlayGeneralControls();
+            OverlayRequestedPreviewButton.Visibility = _requestsAvailable ? Visibility.Visible : Visibility.Collapsed;
             BuildCardOverlayControls();
             BuildCardOverlayPresetCards();
             UpdateCardOverlayPreview();
+            SetSettingsEnabled(CardOverlaysContentHost, editable);
         }
         catch (Exception ex)
         {
-            ViewModel.ErrorMessage = $"Failed to load card overlays: {ex.Message}";
+            if (generation == _overlayLoadGeneration && client.IsCurrentContext(context)) ViewModel.ErrorMessage = $"Failed to load card overlays: {ex.Message}";
         }
+    }
+
+    private void BuildCardOverlayGeneralControls()
+    {
+        CardOverlaysGeneralHost.Children.Clear();
+        var general = CreateSettingsGroup("General", "Override the server defaults for this profile.");
+        var body = (StackPanel)general.Child;
+        var api = App.Services.GetRequiredService<SettingsApi>();
+        var actionRow = SettingsRow("Card quick actions", "Choose the favorite and watched shortcuts shown for this profile.", out var actions);
+        var mode = new ComboBox { Width = 190, IsEnabled = _cardOverlayService.QuickActionsEnabled };
+        foreach (var (value, label) in new[] { ("both", "Favorite and watched"), ("favorites", "Favorite only"), ("watched", "Watched only") }) mode.Items.Add(new ComboBoxItem { Content = label, Tag = value });
+        SelectComboBoxByTag(mode, _cardOverlayService.QuickActionMode);
+        var enabled = new ToggleSwitch { IsOn = _cardOverlayService.QuickActionsEnabled, OnContent = "", OffContent = "" };
+        var badges = new ToggleSwitch { IsOn = _cardOverlayService.ProfileBadgesEnabled, OnContent = "", OffContent = "" };
+        async Task SaveAsync(string key, object value)
+        {
+            SetSettingsEnabled(general, false);
+            try { await api.SetContractSettingValueAsync(key, "profile", value); await _cardOverlayService.RefreshPreferencesAsync(); }
+            catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; }
+            await LoadCardOverlaySettingsAsync();
+        }
+        mode.SelectionChanged += async (_, _) => { if (mode.SelectedItem is ComboBoxItem { Tag: string value }) await SaveAsync("ui.card_quick_actions", value); };
+        enabled.Toggled += async (_, _) => await SaveAsync("ui.card_quick_actions_enabled", enabled.IsOn);
+        badges.Toggled += async (_, _) => await SaveAsync("ui.card_overlays_enabled", badges.IsOn);
+        actions.Children.Add(mode); actions.Children.Add(enabled); body.Children.Add(actionRow);
+        var badgeRow = SettingsRow("Card overlay badges", "Show overlay badges on media cards for this profile.", out var badgeControl);
+        badgeControl.Children.Add(badges); body.Children.Add(badgeRow);
+        if (_cardOverlayService.HasProfileOverride)
+        {
+            var restore = new Button { Content = "Restore default server settings", HorizontalAlignment = HorizontalAlignment.Left };
+            restore.Click += async (_, _) =>
+            {
+                if (!await ConfirmAsync("Restore default server settings", "Discard your badge customizations and follow the server defaults again, including later administrator changes?")) return;
+                restore.IsEnabled = false;
+                try { await _cardOverlayService.RestoreServerDefaultsAsync(); await LoadCardOverlaySettingsAsync(); }
+                catch (Exception ex) { ViewModel.ErrorMessage = ex.Message; restore.IsEnabled = true; }
+            };
+            body.Children.Add(restore);
+        }
+        if (!_cardOverlayService.GeneralPreferencesAvailable)
+        {
+            body.Children.Add(SecondaryText("These controls need a compatible server and successfully loaded profile settings. Reopen this page to retry."));
+            SetSettingsEnabled(general, false);
+        }
+        CardOverlaysGeneralHost.Children.Add(general);
     }
 
     private static readonly (string Title, string Description, string[] Ids)[] OverlayGroups =
@@ -1771,11 +1770,11 @@ public sealed partial class SettingsPage : Page
         ("Technical", "Video, audio, format, and release details.",
             ["resolution", "hdr", "resolution_hdr", "audio", "audio_channels", "video_codec", "container", "aspect_ratio", "release_type", "edition", "multi_audio", "multi_sub"]),
         ("Ratings", "IMDb, TMDB, Rotten Tomatoes, and age-rating badges.",
-            ["rating_imdb", "rating_tmdb", "rating_rt", "rating_rt_audience", "content_rating"]),
+            ["rating_imdb", "rating_tmdb", "rating_rt", "rating_rt_audience", "content_rating", "advisory_age"]),
         ("Metadata", "Year, runtime, language, studio, and network context.",
             ["year", "runtime", "original_language", "studio", "network"]),
         ("Ribbons", "Show status, awards, and chart recognition.",
-            ["show_status"]),
+            ["show_status", "request_status"]),
     ];
 
     private static readonly (string Label, string? Value)[] OverlayAccentOptions =
@@ -1807,6 +1806,9 @@ public sealed partial class SettingsPage : Page
 
             foreach (var id in group.Ids)
             {
+                if (!OverlayOffered(id)) continue;
+                if (id == "request_status" && _cardOverlayService.ManifestRevision < 15) continue;
+                if (id == "advisory_age" && _cardOverlayService.ManifestRevision < 13) continue;
                 if (!definitions.TryGetValue(id, out var def) || !_cardOverlayDraft.Items.TryGetValue(id, out var config))
                     continue;
                 if (stack.Children.Count > 2)
@@ -1833,6 +1835,7 @@ public sealed partial class SettingsPage : Page
         _cardOverlayPreviewVariant = variant;
         OverlayMoviePreviewButton.Style = (Style)Resources[variant == "movie" ? "ActiveTabStyle" : "InactiveTabStyle"];
         OverlayShowPreviewButton.Style = (Style)Resources[variant == "show" ? "ActiveTabStyle" : "InactiveTabStyle"];
+        OverlayRequestedPreviewButton.Style = (Style)Resources[variant == "requested" ? "ActiveTabStyle" : "InactiveTabStyle"];
         UpdateCardOverlayPreview();
     }
 
@@ -2078,7 +2081,7 @@ public sealed partial class SettingsPage : Page
             var preview = new Border
             {
                 Height = 48,
-                CornerRadius = new CornerRadius(6),
+                CornerRadius = new CornerRadius(10),
                 Background = new LinearGradientBrush
                 {
                     StartPoint = new Windows.Foundation.Point(0, 0),
@@ -2112,7 +2115,7 @@ public sealed partial class SettingsPage : Page
                     : new SolidColorBrush(Colors.Transparent),
                 BorderBrush = (Brush)Application.Current.Resources[active ? "AccentBrush" : "BorderBrush"],
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8),
+                CornerRadius = new CornerRadius(12),
                 Content = content,
                 Tag = preset.Id,
             };
@@ -2187,11 +2190,17 @@ public sealed partial class SettingsPage : Page
             sampleValues["year"] = "2024";
             sampleValues["show_status"] = "Returning";
         }
-        foreach (var definition in OverlayRegistry.All)
+        if (_cardOverlayPreviewVariant == "movie") { sampleValues.Remove("show_status"); sampleValues.Remove("network"); sampleValues["content_rating"] = "PG-13"; }
+        if (_cardOverlayPreviewVariant == "requested") { sampleValues.Clear(); sampleValues["request_status"] = "Requested"; sampleValues["year"] = "2026"; }
+        var counts = new Dictionary<OverlayPosition, int>();
+        var definitions = _cardOverlayDraft.Order.Concat(OverlayRegistry.All.Select(definition => definition.Id)).Distinct().Select(id => OverlayRegistry.All.FirstOrDefault(definition => definition.Id == id)).OfType<OverlayDef>();
+        foreach (var definition in definitions)
         {
-            if (!_cardOverlayDraft.Items.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
+            if (!OverlayOffered(definition.Id) || !_cardOverlayDraft.Items.TryGetValue(definition.Id, out var config) || !config.Enabled) continue;
             if (OverlayRegistry.SuppressesStandaloneOverlays(definition.Id, _cardOverlayDraft.Items)) continue;
-            if (!sampleValues.TryGetValue(definition.Id, out var value)) continue;
+            if (!sampleValues.TryGetValue(definition.Id, out var value) || string.IsNullOrEmpty(value)) continue;
+            if (counts.GetValueOrDefault(config.Position) >= 3) continue;
+            counts[config.Position] = counts.GetValueOrDefault(config.Position) + 1;
             var badge = global::SiloPlayer.Controls.PosterCard.BuildBadge(value, definition.Id, config, _cardOverlayDraft.Preset);
             var host = config.Position switch
             {
@@ -2201,6 +2210,7 @@ public sealed partial class SettingsPage : Page
                 OverlayPosition.BottomRight => OverlayPreviewBottomRight,
                 _ => OverlayPreviewTopLeft,
             };
+            badge.MaxWidth = 76;
             host.Children.Add(badge);
         }
     }
@@ -2236,217 +2246,6 @@ public sealed partial class SettingsPage : Page
     private static string? OverlayAvailabilityNote(string id) => id == "show_status"
         ? "Populated by metadata plugins (TMDB/TVDB updates pending)"
         : null;
-
-    // ===== Theme cards =====
-    private void BuildThemeCards()
-    {
-        ThemeCardsContainer.Items.Clear();
-
-        var themeService = App.Services.GetRequiredService<ThemeService>();
-        var currentTheme = themeService.CurrentTheme;
-        var allThemes = ThemeService.GetAllThemeInfos().Where(theme => theme.IsCurated);
-
-        bool addedCuratedHeader = false;
-
-        foreach (var themeInfo in allThemes)
-        {
-            // Add group headers
-            if (themeInfo.IsCurated && !addedCuratedHeader)
-            {
-                ThemeCardsContainer.Items.Add(BuildSectionHeader("Featured"));
-                addedCuratedHeader = true;
-            }
-            var isActive = themeInfo.Id == currentTheme;
-            var card = BuildThemeCard(themeInfo.Id, themeInfo.Label, themeInfo.Description,
-                themeInfo.PreviewAccent, themeInfo.PreviewBackground, isActive);
-            ThemeCardsContainer.Items.Add(card);
-        }
-    }
-
-    private static TextBlock BuildSectionHeader(string text)
-    {
-        return new TextBlock
-        {
-            Text = text,
-            FontSize = 13,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-            Margin = new Thickness(0, 12, 0, 4),
-        };
-    }
-
-    private Button BuildThemeCard(string themeId, string displayName, string description,
-        string accentHex, string bgHex, bool isActive)
-    {
-        var accentColor = ColorFromHex(accentHex);
-        var bgColor = ColorFromHex(bgHex);
-
-        // Outer card border
-        var card = new Border
-        {
-            CornerRadius = new CornerRadius(22),
-            Padding = new Thickness(16),
-            Margin = new Thickness(0, 0, 0, 12),
-            Background = isActive
-                ? new SolidColorBrush(ColorFromHex("#1D2A3B"))
-                : (Brush)Application.Current.Resources["SurfaceBrush"],
-            BorderBrush = isActive
-                ? new SolidColorBrush(Windows.UI.Color.FromArgb(0x4D, accentColor.R, accentColor.G, accentColor.B))
-                : (Brush)Application.Current.Resources["BorderBrush"],
-            BorderThickness = new Thickness(1),
-        };
-
-        var outerStack = new StackPanel { Spacing = 12 };
-
-        // Header row: name + check + swatch
-        var headerRow = new Grid();
-        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        var nameStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        nameStack.Children.Add(new TextBlock
-        {
-            Text = displayName,
-            FontSize = 14,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-
-        if (isActive)
-        {
-            nameStack.Children.Add(new FontIcon
-            {
-                Glyph = "\uE73E",
-                FontSize = 14,
-                Foreground = (Brush)Application.Current.Resources["AccentBrush"],
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-        }
-
-        Grid.SetColumn(nameStack, 0);
-        headerRow.Children.Add(nameStack);
-
-        // Color swatch
-        var swatchStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        var swatch = new Border
-        {
-            Width = 14,
-            Height = 14,
-            CornerRadius = new CornerRadius(7),
-            Background = new SolidColorBrush(accentColor),
-            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x26, 255, 255, 255)),
-            BorderThickness = new Thickness(1),
-        };
-        swatchStack.Children.Add(swatch);
-        Grid.SetColumn(swatchStack, 1);
-        headerRow.Children.Add(swatchStack);
-
-        outerStack.Children.Add(headerRow);
-
-        // Description
-        if (!string.IsNullOrEmpty(description))
-        {
-            outerStack.Children.Add(new TextBlock
-            {
-                Text = description,
-                FontSize = 12,
-                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-                TextWrapping = TextWrapping.Wrap,
-            });
-        }
-
-        // Mini preview panel (simulating the web UI)
-        var previewBorder = new Border
-        {
-            Background = new SolidColorBrush(bgColor),
-            CornerRadius = new CornerRadius(16),
-            BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(0x26, 255, 255, 255)),
-            BorderThickness = new Thickness(1),
-            Padding = new Thickness(12),
-            Height = 70,
-        };
-
-        var previewStack = new StackPanel { Spacing = 8 };
-
-        // First row: accent dot + line
-        var previewRow1 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        previewRow1.Children.Add(new Border
-        {
-            Width = 10, Height = 10, CornerRadius = new CornerRadius(5),
-            Background = new SolidColorBrush(accentColor),
-        });
-        previewRow1.Children.Add(new Border
-        {
-            Width = 64, Height = 8, CornerRadius = new CornerRadius(4),
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0xB3, 255, 255, 255)),
-        });
-        previewStack.Children.Add(previewRow1);
-
-        // Second row: simulated content blocks
-        var previewRow2 = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        previewRow2.Children.Add(new Border
-        {
-            Width = 80, Height = 28, CornerRadius = new CornerRadius(10),
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x18, 255, 255, 255)),
-        });
-        previewRow2.Children.Add(new Border
-        {
-            Width = 50, Height = 28, CornerRadius = new CornerRadius(10),
-            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x12, 255, 255, 255)),
-        });
-        previewStack.Children.Add(previewRow2);
-
-        previewBorder.Child = previewStack;
-        outerStack.Children.Add(previewBorder);
-
-        card.Child = outerStack;
-
-        var themeService = App.Services.GetRequiredService<ThemeService>();
-        var button = new Button
-        {
-            Padding = new Thickness(0),
-            Background = new SolidColorBrush(Colors.Transparent),
-            BorderThickness = new Thickness(0),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            Content = card,
-        };
-        AutomationProperties.SetName(button,
-            isActive ? $"{displayName} theme, selected" : $"Select {displayName} theme");
-        button.PointerEntered += (_, _) => themeService.PreviewTheme(themeId);
-        button.PointerExited += (_, _) => themeService.CancelThemePreview();
-        button.GotFocus += (_, _) => themeService.PreviewTheme(themeId);
-        button.LostFocus += (_, _) => themeService.CancelThemePreview();
-
-        // Click handler
-        button.Click += (_, _) =>
-        {
-            themeService.CommitThemePreview(themeId);
-            ViewModel.UiTheme = themeId;
-            _ = ViewModel.SaveUiThemeCommand.ExecuteAsync(null);
-            BuildThemeCards();
-            UpdateCurrentThemeDisplay();
-        };
-
-        return button;
-    }
-
-    private void UpdateCurrentThemeDisplay()
-    {
-        var themeService = App.Services.GetRequiredService<ThemeService>();
-        var info = ThemeService.GetThemeInfo(themeService.CurrentTheme);
-        CurrentThemeName.Text = info?.Label ?? ThemeService.GetDisplayName(themeService.CurrentTheme);
-        CurrentThemeDescription.Text = info?.Description ?? "";
-    }
-
-    private void ResetTheme_Click(object sender, RoutedEventArgs e)
-    {
-        ViewModel.UiTheme = "midnight-cinema";
-        _ = ViewModel.SaveUiThemeCommand.ExecuteAsync(null);
-        BuildThemeCards();
-        UpdateCurrentThemeDisplay();
-    }
 
     private void BuildDateTimeFormatControls()
     {
@@ -2831,7 +2630,8 @@ public sealed partial class SettingsPage : Page
             FontSize = 12,
         });
 
-        var combo = new ComboBox { Width = 300 };
+        var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch, MaxWidth = 300 };
+        if (label is "Spoken language" or "Subtitle language") ConfigureLanguageCombo(combo);
         foreach (var (tag, lbl) in options)
         {
             combo.Items.Add(new ComboBoxItem { Content = lbl, Tag = tag });
@@ -3068,6 +2868,13 @@ public sealed partial class SettingsPage : Page
         UpdateSubtitlePreview();
     }
 
+    private void SubtitleTextOpacity_Changed(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
+    {
+        if (_suppressEvents) return;
+        ViewModel.SubTextOpacity = Math.Clamp((int)Math.Round(e.NewValue), 1, 100);
+        UpdateSubtitlePreview();
+    }
+
     private void SubtitlePosition_Changed(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressEvents) return;
@@ -3094,6 +2901,7 @@ public sealed partial class SettingsPage : Page
 
         // Font color
         var fontColor = ColorFromHex(ViewModel.SubFontColor);
+        fontColor.A = (byte)Math.Round(ViewModel.SubTextOpacity * 2.55);
         var fontBrush = new SolidColorBrush(fontColor);
         SubtitlePreviewLine1.Foreground = fontBrush;
         SubtitlePreviewLine2.Foreground = fontBrush;
@@ -3254,7 +3062,7 @@ public sealed partial class SettingsPage : Page
         visBtn.Click += async (_, _) =>
         {
             ViewModel.ToggleSectionVisibility(section);
-            await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
+            await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id);
         };
         Grid.SetColumn(visBtn, 1);
         grid.Children.Add(visBtn);
@@ -3392,7 +3200,7 @@ public sealed partial class SettingsPage : Page
         RecipeCatalogResponse catalog;
         try
         {
-            catalog = await App.Services.GetRequiredService<SettingsApi>().GetRecipeCatalogAsync();
+            catalog = await LoadAllowedRecipeCatalogAsync();
         }
         catch (Exception ex)
         {
@@ -3425,7 +3233,7 @@ public sealed partial class SettingsPage : Page
         RecipeCatalogResponse catalog;
         try
         {
-            catalog = await App.Services.GetRequiredService<SettingsApi>().GetRecipeCatalogAsync();
+            catalog = await LoadAllowedRecipeCatalogAsync();
         }
         catch (Exception ex)
         {
@@ -3455,7 +3263,7 @@ public sealed partial class SettingsPage : Page
         RecipeCatalogResponse catalog;
         try
         {
-            catalog = await App.Services.GetRequiredService<SettingsApi>().GetRecipeCatalogAsync();
+            catalog = await LoadAllowedRecipeCatalogAsync();
         }
         catch (Exception ex)
         {
@@ -3471,7 +3279,7 @@ public sealed partial class SettingsPage : Page
         section.Config = configured.Config;
         section.Customized = true;
         RebuildHomeSectionItems();
-        await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
+        await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id);
     }
 
     // B57: Confirm before destructive reset of all section customizations.
@@ -3713,6 +3521,7 @@ public sealed partial class SettingsPage : Page
 
     private void RebuildImportProfilesCombo()
     {
+        ImportProfileCombo.IsEnabled = ViewModel.CanImportForOthers;
         ImportProfileCombo.Items.Clear();
         foreach (var p in ViewModel.ImportProfiles)
             ImportProfileCombo.Items.Add(new ComboBoxItem { Content = p.Name, Tag = p.Id });
@@ -3820,7 +3629,7 @@ public sealed partial class SettingsPage : Page
             FontWeight = FontWeights.Medium,
             Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
         });
-        var metaBits = new List<string> { FormatRelativeTime(run.CreatedAt) };
+        var metaBits = new List<string> { ViewModel.ImportTargetName(run), FormatRelativeTime(run.CreatedAt) };
         if (run.Matched > 0) metaBits.Add($"{run.Matched} matched");
         textStack.Children.Add(new TextBlock
         {
@@ -3919,7 +3728,7 @@ public sealed partial class SettingsPage : Page
         var header = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12, VerticalAlignment = VerticalAlignment.Center };
         header.Children.Add(new TextBlock
         {
-            Text = $"{CapitalizeSource(run.SourceType)} import",
+            Text = $"{CapitalizeSource(run.SourceType)} import for {ViewModel.ImportTargetName(run)}",
             FontSize = 16,
             FontWeight = FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
@@ -4257,7 +4066,7 @@ public sealed partial class SettingsPage : Page
         var card = new Border
         {
             Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
-            CornerRadius = new CornerRadius(22),
+            CornerRadius = new CornerRadius(27.2),
             Padding = new Thickness(24, 20, 24, 20),
             BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
             BorderThickness = new Thickness(1),
@@ -4292,11 +4101,18 @@ public sealed partial class SettingsPage : Page
         // Get current values for this plugin
         ViewModel.PluginSettingsValues.TryGetValue(plugin.Id, out var currentValues);
         currentValues ??= new Dictionary<string, string>();
+        ViewModel.PluginSettingsValues[plugin.Id] = currentValues;
 
         // Dynamic form fields based on UserConfigSchema
         foreach (var schema in plugin.UserConfigSchema)
         {
-            if (schema.AdminForm?.Fields == null) continue;
+            if (schema.AdminForm?.Fields == null)
+            {
+                var input = new TextBox { Header = schema.Title, Text = currentValues.GetValueOrDefault(schema.Key) ?? "", PlaceholderText = schema.Description ?? "", HorizontalAlignment = HorizontalAlignment.Stretch };
+                input.TextChanged += (_, _) => currentValues[schema.Key] = input.Text;
+                stack.Children.Add(input);
+                continue;
+            }
 
             foreach (var field in schema.AdminForm.Fields)
             {
@@ -4416,6 +4232,15 @@ public sealed partial class SettingsPage : Page
         };
         stack.Children.Add(saveBtn);
 
+        var routes = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 8 };
+        foreach (var route in plugin.Routes.Where(route => route.Navigable && route.Access != "admin"))
+        {
+            var label = string.IsNullOrWhiteSpace(route.NavigationLabel) ? route.Path : route.NavigationLabel;
+            var open = new Button { Content = label, Style = (Style)Application.Current.Resources["SecondaryButtonStyle"] };
+            open.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<PluginRoutePage>(new PluginRoutePage.NavigationArgs(plugin.Id, route.Path, label));
+            routes.Children.Add(open);
+        }
+        if (routes.Children.Count > 0) stack.Children.Add(routes);
         card.Child = stack;
         return card;
     }
@@ -4767,6 +4592,22 @@ public sealed partial class SettingsPage : Page
             if (connection.Capabilities.ScrobblePlayback)
                 toggles.Children.Add(BuildWatchProviderToggle(vm, "scrobble_enabled", "Scrobble playback", "Report starts, pauses, resumes, and stops live during playback.", connection.ScrobbleEnabled));
 
+            if (connection.Capabilities.ImportWatchlist)
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "import_watchlist_enabled", "Import watchlist", $"Bring your {displayName} watchlist into this profile.", connection.ImportWatchlistEnabled));
+            if (connection.Capabilities.ExportWatchlist)
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "export_watchlist_enabled", "Send watchlist", "Send local watchlist additions to this provider.", connection.ExportWatchlistEnabled));
+            if (connection.Capabilities.RemoveWatchlist)
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_watchlist_removals_enabled", "Sync watchlist removals", "Remove items on the other side when removed locally.", connection.SyncWatchlistRemovalsEnabled,
+                    isEnabled: connection.ImportWatchlistEnabled || connection.ExportWatchlistEnabled));
+            if (connection.Capabilities.ProvidesWatchlistOrder)
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_watchlist_order_enabled", "Mirror watchlist order", $"Match the {displayName} watchlist order.", connection.SyncWatchlistOrderEnabled, isEnabled: connection.ImportWatchlistEnabled));
+            if (connection.Capabilities.ImportRatings)
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "import_ratings_enabled", "Import ratings", "Import ratings as stars; 7/10 becomes 4 stars.", connection.ImportRatingsEnabled));
+            if (connection.Capabilities.ExportRatings)
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "export_ratings_enabled", "Send ratings", "Send star ratings and clear ratings removed locally; 4 stars becomes 8/10.", connection.ExportRatingsEnabled));
+            if (connection.Capabilities.SyncDropped)
+                toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_dropped_enabled", "Sync dropped shows", "Dropped shows leave Continue Watching and Next Up. Watching again restores them.", connection.SyncDroppedEnabled));
+
             outer.Children.Add(toggles);
         }
 
@@ -4780,7 +4621,7 @@ public sealed partial class SettingsPage : Page
         var panel = new Border
         {
             Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(12),
+            CornerRadius = new CornerRadius(16),
             Padding = new Thickness(16),
             BorderBrush = (Brush)Application.Current.Resources["AccentBrush"],
             BorderThickness = new Thickness(1),
@@ -4831,7 +4672,7 @@ public sealed partial class SettingsPage : Page
         var codeBox = new Border
         {
             Background = (Brush)Application.Current.Resources["AppBackgroundBrush"],
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(10),
             Padding = new Thickness(14, 8, 14, 8),
             BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
             BorderThickness = new Thickness(1),
@@ -4850,11 +4691,12 @@ public sealed partial class SettingsPage : Page
 
         var copy = new Button
         {
-            Content = "Copy code",
+            Content = new FontIcon { Glyph = "\uE8C8", FontSize = 16 },
             Style = (Style)Application.Current.Resources["OutlineButtonStyle"],
-            Padding = new Thickness(12, 8, 12, 8),
-            FontSize = 13,
+            Padding = new Thickness(10),
         };
+        AutomationProperties.SetName(copy, "Copy code");
+        ToolTipService.SetToolTip(copy, "Copy code");
         copy.Click += (_, _) =>
         {
             var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
@@ -4922,7 +4764,7 @@ public sealed partial class SettingsPage : Page
         var panel = new Border
         {
             Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(12),
+            CornerRadius = new CornerRadius(16),
             Padding = new Thickness(16),
             BorderBrush = (Brush)Application.Current.Resources["AccentBrush"],
             BorderThickness = new Thickness(1),
@@ -4977,8 +4819,8 @@ public sealed partial class SettingsPage : Page
             Password = vm.ApiKey,
             FontFamily = new FontFamily("Consolas"),
             FontSize = 13,
-            CornerRadius = new CornerRadius(8),
-            MinWidth = 260,
+            CornerRadius = new CornerRadius(10),
+            MinWidth = 0,
         };
         row.Children.Add(keyBox);
 
@@ -4993,16 +4835,48 @@ public sealed partial class SettingsPage : Page
         keyBox.PasswordChanged += (_, _) =>
         {
             vm.ApiKey = keyBox.Password;
-            connect.IsEnabled = !vm.IsBusy && !string.IsNullOrWhiteSpace(keyBox.Password);
+            RefreshConnectionValidity();
         };
+        void RefreshConnectionValidity()
+        {
+            try { ProviderConnectionConfig.Build(vm.ConnectionSchemas, vm.ConnectionConfigDraft); connect.IsEnabled = !vm.IsBusy && !string.IsNullOrWhiteSpace(keyBox.Password); }
+            catch (InvalidOperationException) { connect.IsEnabled = false; }
+        }
+        foreach (var schema in vm.ConnectionSchemas)
+        {
+            var form = ProviderConnectionConfig.Form(schema); if (form == null) { if (schema.Required) stack.Children.Add(new TextBlock { Text = $"{schema.Title} requires a configuration form this client cannot display.", TextWrapping = TextWrapping.Wrap }); continue; }
+            stack.Children.Add(new TextBlock { Text = schema.Title, FontWeight = FontWeights.SemiBold });
+            if (!vm.ConnectionConfigDraft.TryGetValue(schema.Key, out var draft)) vm.ConnectionConfigDraft[schema.Key] = draft = [];
+            var schemaForm = new ProviderSchemaForm(form, draft);
+            schemaForm.Changed += RefreshConnectionValidity;
+            stack.Children.Add(schemaForm);
+        }
+        RefreshConnectionValidity();
         connect.Click += async (_, _) =>
         {
             vm.ApiKey = keyBox.Password;
-            await ViewModel.ConnectWatchProviderApiKeyAsync(vm);
-            RebuildWatchProviderCards();
+            // APIKeyConnectPanel keeps the draft and Cancel editable while the
+            // submitted snapshot is pending; only the submit action is disabled.
+            connect.IsEnabled = false;
+            connect.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8,
+                Children = { new ProgressRing { IsActive = true, Width = 16, Height = 16 }, new TextBlock { Text = "Connect" } } };
+            try { await ViewModel.ConnectWatchProviderApiKeyAsync(vm); }
+            finally { RebuildWatchProviderCards(); }
         };
         Grid.SetColumn(connect, 1);
         row.Children.Add(connect);
+        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        void ReflowApiKeyRow()
+        {
+            var narrow = ActualWidth < 640;
+            row.ColumnDefinitions[1].Width = narrow ? new GridLength(0) : GridLength.Auto;
+            Grid.SetRow(connect, narrow ? 1 : 0); Grid.SetColumn(connect, narrow ? 0 : 1);
+            row.RowSpacing = narrow ? 8 : 0;
+            connect.HorizontalAlignment = narrow ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+        }
+        row.SizeChanged += (_, _) => ReflowApiKeyRow();
+        ReflowApiKeyRow();
 
         stack.Children.Add(row);
         panel.Child = stack;
@@ -5014,7 +4888,7 @@ public sealed partial class SettingsPage : Page
         var shell = new Border
         {
             Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(10),
+            CornerRadius = new CornerRadius(16),
             Padding = new Thickness(12),
         };
         var grid = new Grid { ColumnSpacing = 16 };
@@ -5024,9 +4898,9 @@ public sealed partial class SettingsPage : Page
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         AddWatchProviderStat(grid, 0, "Last sync", FormatWatchProviderLastSync(connection, latestRun));
-        AddWatchProviderStat(grid, 1, "Watched", $"{latestRun?.InboundWatchedImported ?? 0:N0} imported");
+        AddWatchProviderStat(grid, 1, "Watched / ratings", $"{latestRun?.InboundWatchedImported ?? 0:N0} watched · {latestRun?.InboundRatingsImported ?? 0:N0} ratings");
         AddWatchProviderStat(grid, 2, "Progress", $"{latestRun?.InboundProgressImported ?? 0:N0} resumed");
-        AddWatchProviderStat(grid, 3, "Exported", $"{((latestRun?.OutboundSent ?? 0) + (latestRun?.OutboundFavoritesSent ?? 0)):N0} sent");
+        AddWatchProviderStat(grid, 3, "Exported", $"{((latestRun?.OutboundSent ?? 0) + (latestRun?.OutboundFavoritesSent ?? 0) + (latestRun?.OutboundRatingsSent ?? 0)):N0} sent");
         shell.Child = grid;
         return shell;
     }
@@ -6094,7 +5968,7 @@ public sealed partial class SettingsPage : Page
                     Background = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"],
                     BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
                     BorderThickness = new Thickness(1),
-                    CornerRadius = new CornerRadius(6),
+                    CornerRadius = new CornerRadius(10),
                     Padding = new Thickness(16, 12, 16, 12),
                 };
                 var row = new Grid { ColumnSpacing = 8 };
@@ -6139,7 +6013,7 @@ public sealed partial class SettingsPage : Page
                     nameRow.Children.Add(new Border
                     {
                         Background = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["AccentBackgroundBrush"],
-                        CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 2, 8, 2),
+                        CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 2, 8, 2),
                         VerticalAlignment = VerticalAlignment.Center,
                         Child = new TextBlock
                         {
@@ -6155,7 +6029,7 @@ public sealed partial class SettingsPage : Page
                     {
                         BorderBrush = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"],
                         BorderThickness = new Thickness(1),
-                        CornerRadius = new CornerRadius(6), Padding = new Thickness(8, 2, 8, 2),
+                        CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 2, 8, 2),
                         VerticalAlignment = VerticalAlignment.Center,
                         Child = new TextBlock
                         {
@@ -6202,7 +6076,7 @@ public sealed partial class SettingsPage : Page
                 var editBtn = new Button
                 {
                     Padding = new Thickness(11, 5, 11, 5),
-                    CornerRadius = new CornerRadius(6),
+                    CornerRadius = new CornerRadius(10),
                     Content = new StackPanel
                     {
                         Orientation = Orientation.Horizontal,
@@ -6229,7 +6103,7 @@ public sealed partial class SettingsPage : Page
                 var deleteBtn = new Button
                 {
                     Padding = new Thickness(11, 5, 11, 5),
-                    CornerRadius = new CornerRadius(6),
+                    CornerRadius = new CornerRadius(10),
                     Content = new StackPanel
                     {
                         Orientation = Orientation.Horizontal,
@@ -6352,7 +6226,7 @@ public sealed partial class SettingsPage : Page
     {
         BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
         BorderThickness = new Thickness(1),
-        CornerRadius = new CornerRadius(6),
+        CornerRadius = new CornerRadius(10),
         Padding = new Thickness(7, 2, 7, 2),
         Child = new TextBlock { Text = label, FontSize = 10, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] }
     };
@@ -6372,7 +6246,8 @@ public sealed partial class SettingsPage : Page
             "1080p" or "720p" or "480p" or "standard" => "Standard quality",
             _ => "Any quality",
         };
-        return string.Join(" · ", rating, libraries, quality);
+        var age = profile.MaxAdvisoryAge.HasValue ? $"Advisory age {profile.MaxAdvisoryAge} and under{(profile.RequireAdvisoryAge ? "; rated titles only" : "")}" : null;
+        return string.Join(" · ", new[] { rating, age, libraries, quality }.Where(value => value != null));
     }
 
     private async Task UseProfileAsync(SiloPlayer.Core.Models.Auth.Profile profile)
@@ -6545,7 +6420,7 @@ public sealed partial class SettingsPage : Page
                 Background = (Brush)Application.Current.Resources["SurfaceBrush"],
                 BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(6),
+                CornerRadius = new CornerRadius(10),
                 Opacity = 0.62,
             });
         }
@@ -6583,7 +6458,7 @@ public sealed partial class SettingsPage : Page
         Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
         BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
         BorderThickness = new Thickness(1),
-        CornerRadius = new CornerRadius(6),
+        CornerRadius = new CornerRadius(10),
         Padding = new Thickness(16),
     };
 
@@ -6611,7 +6486,7 @@ public sealed partial class SettingsPage : Page
             titleRow.Children.Add(new Border
             {
                 Background = (Brush)Application.Current.Resources["AccentBackgroundBrush"],
-                CornerRadius = new CornerRadius(7),
+                CornerRadius = new CornerRadius(10),
                 Padding = new Thickness(7, 2, 7, 2),
                 Child = live,
             });
@@ -6641,7 +6516,7 @@ public sealed partial class SettingsPage : Page
         {
             BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = new CornerRadius(10),
             Padding = new Thickness(12),
         };
         var layout = new Grid { ColumnSpacing = 12 };

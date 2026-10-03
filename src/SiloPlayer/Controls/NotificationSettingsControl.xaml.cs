@@ -32,6 +32,13 @@ public sealed partial class NotificationSettingsControl : UserControl
         _isReady = true;
     }
 
+    private async void OpenBrowserSettings_Click(object sender, RoutedEventArgs e)
+    {
+        var server = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>().BaseUrl;
+        if (Uri.TryCreate(server.TrimEnd('/') + "/settings/notifications", UriKind.Absolute, out var uri))
+            await Windows.System.Launcher.LaunchUriAsync(uri);
+    }
+
     private void SyncModeCombos()
     {
         SelectMode(EmailModeCombo, ViewModel.EmailMode);

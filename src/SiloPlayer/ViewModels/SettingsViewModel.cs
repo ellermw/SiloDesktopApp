@@ -213,6 +213,8 @@ public partial class WatchProviderCardViewModel : ObservableObject
     }
 
     public string ProviderKey { get; }
+    public IReadOnlyList<SiloPlayer.Core.Models.Plugins.PluginConfigSchema> ConnectionSchemas => Connection?.ConnectionConfigSchema ?? _summary.ConnectionConfigSchema;
+    public Dictionary<string, Dictionary<string, object?>> ConnectionConfigDraft { get; } = [];
 
     public string DisplayName =>
         Connection?.DisplayName
@@ -259,6 +261,8 @@ public partial class WatchProviderCardViewModel : ObservableObject
 
 public partial class SettingsViewModel : ObservableObject
 {
+    // Published only after an authoritative ui.title_art write or override reset.
+    public static event EventHandler? TitleArtPreferenceChanged;
     private const string PlaybackAudioLanguageSettingKey = "playback.audio_language";
     private static readonly string[] ContractPlaybackSettingKeys =
     [
@@ -267,7 +271,14 @@ public partial class SettingsViewModel : ObservableObject
         PlaybackAudioLanguageSettingKey,
         "catalog.metadata_language",
         "catalog.metadata_language_overrides",
+        "catalog.show_advisory_age",
+        "home.hide_watched_items",
+        "ui.theme_music_enabled",
+        "ui.theme_music_loop",
         "playback.auto_skip_intro",
+        "playback.intro_skip_mode",
+        "player.video_skip_back_seconds", "player.video_skip_forward_seconds",
+        "player.audiobook_skip_back_seconds", "player.audiobook_skip_forward_seconds",
         "playback.auto_skip_credits",
         "playback.auto_skip_recap",
         "playback.auto_play_next_preview",
@@ -317,10 +328,7 @@ public partial class SettingsViewModel : ObservableObject
     private string? _statusMessage;
 
     // ===== Appearance =====
-    [ObservableProperty]
-    private string _uiTheme = "";
-
-    [ObservableProperty]
+[ObservableProperty]
     private string _dateFormat = "auto";
 
     [ObservableProperty]
@@ -341,6 +349,70 @@ public partial class SettingsViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _autoSkipIntro;
+    [ObservableProperty] private string _introSkipMode = "ask";
+    [ObservableProperty] private int _videoSkipBackSeconds = 10;
+    [ObservableProperty] private int _videoSkipForwardSeconds = 30;
+    [ObservableProperty] private int _audiobookSkipBackSeconds = 10;
+    [ObservableProperty] private int _audiobookSkipForwardSeconds = 30;
+    [ObservableProperty] private bool _seekSettingsAvailable;
+    [ObservableProperty] private string _seekSettingsStatus = "Checking seek settings compatibility…";
+    private bool _suppressSeekSave;
+    public int[] SeekIntervalChoices => SeekPreferences.Choices;
+    public string[] IntroModeChoices => ["never", "ask", "always"];
+    partial void OnIntroSkipModeChanged(string value)
+    { if (!_suppressSave) _ = SaveContractProfileSettingAsync("playback.intro_skip_mode", value); }
+    partial void OnVideoSkipBackSecondsChanged(int value) => SaveSeek(0, value);
+    partial void OnVideoSkipForwardSecondsChanged(int value) => SaveSeek(1, value);
+    partial void OnAudiobookSkipBackSecondsChanged(int value) => SaveSeek(2, value);
+    partial void OnAudiobookSkipForwardSecondsChanged(int value) => SaveSeek(3, value);
+    private async void SaveSeek(int index, int value)
+    {
+        if (_suppressSave || _suppressSeekSave || !SeekSettingsAvailable || !SeekPreferences.Choices.Contains(value)) return;
+        var context = _settingsApi.CaptureContext();
+        await SaveContractProfileSettingAsync(SeekPreferences.Keys[index], value);
+        try
+        {
+            var response = await _settingsApi.GetContractEffectiveSettingsAsync(SeekPreferences.Keys);
+            if (!_settingsApi.IsCurrentContext(context)) return;
+            var seeks = SeekPreferences.Read(response);
+            _suppressSeekSave = true;
+            VideoSkipBackSeconds = seeks.VideoBack; VideoSkipForwardSeconds = seeks.VideoForward;
+            AudiobookSkipBackSeconds = seeks.AudiobookBack; AudiobookSkipForwardSeconds = seeks.AudiobookForward;
+        }
+        catch (Exception ex) { if (_settingsApi.IsCurrentContext(context)) ShowError($"Could not reload seek settings: {ex.Message}"); }
+        finally { _suppressSeekSave = false; }
+    }
+    [RelayCommand]
+    private async Task ImportLegacySeekIntervalsAsync()
+    {
+        var context = _settingsApi.CaptureContext();
+        var local = _settingsService.Load();
+        try
+        {
+            foreach (var (index, value) in new[] { (2, local.AudiobookSkipBackSeconds), (3, local.AudiobookSkipForwardSeconds) })
+            {
+                if (!_settingsApi.IsCurrentContext(context)) return;
+                if (SeekPreferences.Choices.Contains(value)) await _settingsApi.SetContractSettingValueAsync(SeekPreferences.Keys[index], "profile", value);
+            }
+            if (!_settingsApi.IsCurrentContext(context)) return;
+            await LoadCommand.ExecuteAsync(null);
+            await App.Services.GetRequiredService<PlayerService>().RefreshSeekPreferencesAsync();
+            ShowStatus("Imported this PC's audiobook intervals into the selected profile");
+        }
+        catch (Exception ex) { if (_settingsApi.IsCurrentContext(context)) ShowError($"Import stopped; an interval may already have been saved: {ex.Message}"); }
+    }
+    [ObservableProperty] private bool _showAdvisoryAge;
+    [ObservableProperty] private bool _hideWatchedItems;
+    [ObservableProperty] private bool _themeMusicEnabled;
+    [ObservableProperty] private bool _themeMusicLoop;
+    partial void OnThemeMusicEnabledChanged(bool value)
+    { if (!_suppressSave) { if (!value) App.Services.GetService<ThemeMusicService>()?.Stop(); _ = SaveContractProfileSettingAsync("ui.theme_music_enabled", value); } }
+    partial void OnThemeMusicLoopChanged(bool value)
+    { if (!_suppressSave) _ = SaveContractProfileSettingAsync("ui.theme_music_loop", value); }
+    partial void OnHideWatchedItemsChanged(bool value)
+    { if (!_suppressSave) _ = SaveContractProfileSettingAsync("home.hide_watched_items", value); }
+    partial void OnShowAdvisoryAgeChanged(bool value)
+    { if (!_suppressSave) _ = SaveContractProfileSettingAsync("catalog.show_advisory_age", value); }
 
     [ObservableProperty]
     private bool _autoSkipCredits;
@@ -366,6 +438,7 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty]
     private string _preferredMetadataLanguage = "";
 
+    private readonly SemaphoreSlim _metadataLanguageOverrideGuard = new(1, 1);
     private Dictionary<string, string> _metadataLanguageOverrides = new(StringComparer.OrdinalIgnoreCase);
     public IReadOnlyDictionary<string, string> MetadataLanguageOverrides => _metadataLanguageOverrides;
 
@@ -447,17 +520,6 @@ public partial class SettingsViewModel : ObservableObject
             // made opening Settings cost the sum of every network round trip and left
             // the page visibly filling in for several seconds. Load them concurrently,
             // while retaining the same per-setting fallback behavior.
-            async Task LoadThemeAsync()
-            {
-                try
-                {
-                    var theme = await _settingsApi.GetSettingAsync("ui_theme");
-                    UiTheme = theme.Value;
-                    if (!string.IsNullOrEmpty(UiTheme)) _themeService.ApplyTheme(UiTheme);
-                }
-                catch { UiTheme = ""; }
-            }
-
             async Task LoadDateAsync()
             {
                 try { DateFormat = NormalizeDateFormat((await _settingsApi.GetSettingAsync("ui.date_format")).Value); }
@@ -491,17 +553,6 @@ public partial class SettingsViewModel : ObservableObject
                 _accessibilityService.Apply(TextScale, TextWeight, HighContrast);
             }
 
-            async Task LoadCustomThemeAsync()
-            {
-                try
-                {
-                    var customTheme = await _settingsApi.GetSettingAsync("ui_custom_theme_vars");
-                    var overrides = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(customTheme.Value) ?? [];
-                    _themeService.SetThemeOverridesFromServer(overrides);
-                }
-                catch { }
-            }
-
             async Task LoadNextUpAsync()
             {
                 try
@@ -526,7 +577,14 @@ public partial class SettingsViewModel : ObservableObject
             {
                 try
                 {
-                    var response = await _settingsApi.GetContractEffectiveSettingsAsync(ContractPlaybackSettingKeys);
+                    SeekSettingsAvailable = false;
+                    SeekSettingsStatus = "Checking seek settings compatibility…";
+                    var capability = await _settingsApi.GetContractCapabilitiesAsync();
+                    var supported = capability.ApiVersion == 1 && capability.Revision >= 9 && capability.SupportsBatchedEffective && capability.SupportsIdempotentWrites;
+                    var keys = supported ? ContractPlaybackSettingKeys : ContractPlaybackSettingKeys.Except(SeekPreferences.Keys).ToArray();
+                    var response = await _settingsApi.GetContractEffectiveSettingsAsync(keys);
+                    SeekSettingsAvailable = supported && SeekPreferences.Keys.All(key => response.Settings.Any(entry => entry.Key == key));
+                    SeekSettingsStatus = SeekSettingsAvailable ? "" : "This server does not support profile seek intervals.";
                     var values = response.Settings.ToDictionary(setting => setting.Key, StringComparer.Ordinal);
 
                     QualityPreference = ReadString(values, "playback.preferred_quality", "auto");
@@ -536,6 +594,14 @@ public partial class SettingsViewModel : ObservableObject
                     _metadataLanguageOverrides = ReadStringMap(values, "catalog.metadata_language_overrides");
                     OnPropertyChanged(nameof(MetadataLanguageOverrides));
                     AutoSkipIntro = ReadBool(values, "playback.auto_skip_intro", AutoSkipIntro);
+                    IntroSkipMode = ReadString(values, "playback.intro_skip_mode", AutoSkipIntro ? "always" : "ask");
+                    var seeks = SeekPreferences.Read(response);
+                    VideoSkipBackSeconds = seeks.VideoBack; VideoSkipForwardSeconds = seeks.VideoForward;
+                    AudiobookSkipBackSeconds = seeks.AudiobookBack; AudiobookSkipForwardSeconds = seeks.AudiobookForward;
+                    ShowAdvisoryAge = ReadBool(values, "catalog.show_advisory_age", false);
+                    HideWatchedItems = ReadBool(values, "home.hide_watched_items", false);
+                    ThemeMusicEnabled = ReadBool(values, "ui.theme_music_enabled", false);
+                    ThemeMusicLoop = ReadBool(values, "ui.theme_music_loop", false);
                     AutoSkipCredits = ReadBool(values, "playback.auto_skip_credits", AutoSkipCredits);
                     AutoSkipRecap = ReadBool(values, "playback.auto_skip_recap", AutoSkipRecap);
                     AutoPlayNextPreview = ReadBool(values, "playback.auto_play_next_preview", AutoPlayNextPreview);
@@ -545,6 +611,8 @@ public partial class SettingsViewModel : ObservableObject
                 }
                 catch
                 {
+                    SeekSettingsAvailable = false;
+                    SeekSettingsStatus = "Could not check seek settings compatibility. Reload settings to retry.";
                     // Servers predating the typed settings contract still use
                     // the profile/legacy values loaded above.
                 }
@@ -558,11 +626,10 @@ public partial class SettingsViewModel : ObservableObject
 
             await Task.WhenAll(
                 LoadLibraryCardsAsync(),
-                LoadThemeAsync(),
+                _themeService.SyncFromServerAsync(),
                 LoadDateAsync(),
                 LoadTimeAsync(),
                 LoadAccessibilityAsync(),
-                LoadCustomThemeAsync(),
                 LoadNextUpAsync(),
                 LoadAutoPlayAsync(),
                 LoadContractPlaybackAsync(),
@@ -850,46 +917,70 @@ public partial class SettingsViewModel : ObservableObject
     {
         sourceLanguage = sourceLanguage.Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(sourceLanguage) || sourceLanguage == "original") return;
-
-        if (string.IsNullOrWhiteSpace(targetLanguage))
-            _metadataLanguageOverrides.Remove(sourceLanguage);
-        else
-            _metadataLanguageOverrides[sourceLanguage] = targetLanguage.Trim().ToLowerInvariant();
-
-        _metadataLanguageOverrides = _metadataLanguageOverrides
-            .OrderBy(pair => MediaLanguageCatalog.Label(pair.Key), StringComparer.CurrentCultureIgnoreCase)
-            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
-        OnPropertyChanged(nameof(MetadataLanguageOverrides));
-        await SaveContractProfileSettingAsync("catalog.metadata_language_overrides", _metadataLanguageOverrides);
+        var context = _settingsApi.CaptureContext();
+        await _metadataLanguageOverrideGuard.WaitAsync();
+        try
+        {
+            if (!_settingsApi.IsCurrentContext(context)) return;
+            // Serialize drafts so a later rejection cannot restore a draft
+            // that an earlier failed request never persisted.
+            var previous = new Dictionary<string, string>(_metadataLanguageOverrides, StringComparer.OrdinalIgnoreCase);
+            var draft = new Dictionary<string, string>(previous, StringComparer.OrdinalIgnoreCase);
+            if (string.IsNullOrWhiteSpace(targetLanguage)) draft.Remove(sourceLanguage);
+            else draft[sourceLanguage] = targetLanguage.Trim().ToLowerInvariant();
+            draft = draft.OrderBy(pair => MediaLanguageCatalog.Label(pair.Key), StringComparer.CurrentCultureIgnoreCase)
+                .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+            _metadataLanguageOverrides = draft;
+            OnPropertyChanged(nameof(MetadataLanguageOverrides));
+            var saved = await SaveContractProfileSettingAsync("catalog.metadata_language_overrides", draft);
+            if (!saved && _settingsApi.IsCurrentContext(context) && ReferenceEquals(_metadataLanguageOverrides, draft))
+            {
+                _metadataLanguageOverrides = previous;
+                OnPropertyChanged(nameof(MetadataLanguageOverrides));
+            }
+        }
+        finally { _metadataLanguageOverrideGuard.Release(); }
     }
 
-    private async Task SaveContractProfileSettingAsync(string key, object? value)
+    private async Task<bool> SaveContractProfileSettingAsync(string key, object? value)
     {
+        var context = _settingsApi.CaptureContext();
+        var saved = false;
         try
         {
             await _settingsApi.SetContractSettingValueAsync(key, "profile", value);
-            try { await _settingsApi.DeleteContractSettingValueAsync(key, "profile_device"); }
-            catch { }
+            saved = true;
+            if (!_settingsApi.IsCurrentContext(context)) return true;
+            await ClearSupportedDeviceOverrideAsync(key);
+            if (!_settingsApi.IsCurrentContext(context)) return true;
+            if (SeekPreferences.Keys.Contains(key))
+                await App.Services.GetRequiredService<PlayerService>().RefreshSeekPreferencesAsync();
             ShowStatus("Setting saved");
         }
         catch (Exception ex)
         {
-            ShowError($"Failed to save setting: {ex.Message}");
+            if (_settingsApi.IsCurrentContext(context)) ShowError(saved
+                ? $"Profile setting saved, but the device override could not be cleared: {ex.Message}"
+                : $"Failed to save setting: {ex.Message}");
         }
+        // A secondary cleanup failure cannot undo a committed profile value.
+        return saved;
     }
 
     private async Task ClearContractProfileSettingAsync(string key)
     {
+        var context = _settingsApi.CaptureContext();
         try
         {
             await _settingsApi.DeleteContractSettingValueAsync(key, "profile");
-            try { await _settingsApi.DeleteContractSettingValueAsync(key, "profile_device"); }
-            catch { }
+            if (!_settingsApi.IsCurrentContext(context)) return;
+            await ClearSupportedDeviceOverrideAsync(key);
+            if (!_settingsApi.IsCurrentContext(context)) return;
             ShowStatus("Setting reset");
         }
         catch (Exception ex)
         {
-            ShowError($"Failed to reset setting: {ex.Message}");
+            if (_settingsApi.IsCurrentContext(context)) ShowError($"Failed to reset setting: {ex.Message}");
         }
     }
 
@@ -899,6 +990,13 @@ public partial class SettingsViewModel : ObservableObject
         if (!values.TryGetValue(key, out var entry) || entry.Value.ValueKind != JsonValueKind.String)
             return fallback;
         return entry.Value.GetString() ?? fallback;
+    }
+
+    private async Task ClearSupportedDeviceOverrideAsync(string key)
+    {
+        if (!SeekPreferences.SupportsDeviceOverride(key)) return;
+        try { await _settingsApi.DeleteContractSettingValueAsync(key, "profile_device"); }
+        catch (ApiException ex) when (ex.StatusCode == 404) { }
     }
 
     private static string ReadNullableString(
@@ -948,22 +1046,6 @@ public partial class SettingsViewModel : ObservableObject
     {
         if (_suppressSave) return;
         await SaveProfileFieldAsync("subtitle_mode", SubtitleMode);
-    }
-
-    [RelayCommand]
-    private async Task SaveUiThemeAsync()
-    {
-        if (_suppressSave) return;
-        try
-        {
-            // Apply theme colors immediately
-            _themeService.ApplyTheme(UiTheme);
-
-            // Persist to server
-            await _settingsApi.PutSettingAsync("ui_theme", UiTheme);
-            ShowStatus("Theme saved");
-        }
-        catch (Exception ex) { ErrorMessage = $"Failed to save theme: {ex.Message}"; }
     }
 
     [RelayCommand]
@@ -1202,8 +1284,10 @@ public partial class SettingsViewModel : ObservableObject
 
         try
         {
-            card.Connection = await _watchProvidersApi.ConnectApiKeyAsync(card.ProviderKey, apiKey);
+            var connectionConfig = ProviderConnectionConfig.Build(card.ConnectionSchemas, card.ConnectionConfigDraft);
+            card.Connection = await _watchProvidersApi.ConnectApiKeyAsync(card.ProviderKey, apiKey, connectionConfig);
             card.ApiKey = "";
+            card.ConnectionConfigDraft.Clear();
             card.ApiKeyPromptVisible = false;
             await LoadWatchProviderRunsAsync(card);
             ShowStatus($"{card.DisplayName} connected");
@@ -1340,6 +1424,7 @@ public partial class SettingsViewModel : ObservableObject
 
     [ObservableProperty]
     private string _subFontColor = "#ffffff";
+    [ObservableProperty] private int _subTextOpacity = 100;
 
     [ObservableProperty]
     private bool _subOutlineEnabled = false;
@@ -1386,6 +1471,7 @@ public partial class SettingsViewModel : ObservableObject
         FontFamily = SubFontFamily,
         FontSize = SubFontSize,
         FontColor = SubFontColor,
+        TextOpacity = SubTextOpacity,
         TextOutline = SubOutlineEnabled,
         TextOutlineColor = SubOutlineColor,
         BackgroundStyle = SubBackgroundStyle,
@@ -1399,6 +1485,7 @@ public partial class SettingsViewModel : ObservableObject
         SubFontFamily = appearance.FontFamily;
         SubFontSize = appearance.FontSize;
         SubFontColor = appearance.FontColor;
+        SubTextOpacity = appearance.TextOpacity;
         SubOutlineEnabled = appearance.TextOutline;
         SubOutlineColor = appearance.TextOutlineColor;
         SubBackgroundStyle = appearance.BackgroundStyle;
@@ -1470,6 +1557,10 @@ public partial class SettingsViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _canEditHomeSections;
+    private readonly Dictionary<string, string> _homeOverrideIds = [];
+    private ApiRequestContext? _homeSectionsContext;
+    private long _homeLoadGeneration;
+    private (string Scope, string? LibraryId) _loadedHomeScope;
 
     [ObservableProperty]
     private string? _homeSectionsEditStateMessage = "Loading saved section state before section changes are enabled.";
@@ -1477,7 +1568,10 @@ public partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadHomeSectionsAsync()
     {
-        if (IsLoadingHomeSections) return;
+        var generation = ++_homeLoadGeneration;
+        var context = _settingsApi.CaptureContext();
+        var requestedScope = GetSectionScope();
+        if (_homeSectionsContext != context) _homeOverrideIds.Clear();
         IsLoadingHomeSections = true;
         CanEditHomeSections = false;
         HomeSectionsEditStateMessage = "Loading saved section state before section changes are enabled.";
@@ -1488,6 +1582,8 @@ public partial class SettingsViewModel : ObservableObject
             var settingsTask = _settingsApi.GetProfileSectionSettingsAsync(scope, libraryId);
             var overridesTask = _settingsApi.GetProfileSectionsAsync(scope, libraryId);
             await Task.WhenAll(settingsTask, overridesTask);
+            if (generation != _homeLoadGeneration || !_settingsApi.IsCurrentContext(context) || GetSectionScope() != requestedScope) return;
+            _homeSectionsContext = context; _loadedHomeScope = requestedScope;
             var response = settingsTask.Result;
             CanEditHomeSections = true;
             HomeSectionsEditStateMessage = null;
@@ -1503,69 +1599,29 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            if (generation != _homeLoadGeneration || !_settingsApi.IsCurrentContext(context)) return;
             ErrorMessage = $"Failed to load home sections: {ex.Message}";
             CanEditHomeSections = false;
             HomeSectionsEditStateMessage = "Saved section state failed to load. Editing is disabled.";
         }
         finally
         {
-            IsLoadingHomeSections = false;
+            if (generation == _homeLoadGeneration) IsLoadingHomeSections = false;
         }
     }
 
     [RelayCommand]
-    private async Task SaveHomeSectionsAsync()
+    private async Task SaveHomeSectionsAsync(string? changedSectionId)
     {
+        if (!CanEditHomeSections || _homeSectionsContext == null || !_settingsApi.IsCurrentContext(_homeSectionsContext.Value) || GetSectionScope() != _loadedHomeScope)
+        { ErrorMessage = "Reload this layout before saving."; return; }
         ErrorMessage = null;
         try
         {
             // Match the WebUI's buildSectionOverrides contract: the payload is
             // rebuilt from the currently visible rows. Starting with every raw
             // override resurrected deleted custom sections on the next save.
-            var overrides = new List<SectionOverride>();
-            foreach (var (section, position) in HomeSections.Select((value, index) => (value, index)))
-            {
-                var raw = _rawHomeOverrides.FirstOrDefault(value =>
-                    string.Equals(value.SectionId, section.Id, StringComparison.Ordinal) ||
-                    (string.IsNullOrWhiteSpace(value.SectionId) && string.Equals(value.Id, section.Id, StringComparison.Ordinal)));
-                var existing = raw == null ? null : ToWireOverride(raw);
-                if (existing is null)
-                {
-                    existing = new SectionOverride
-                    {
-                        Id = section.IsCustom ? section.Id : null,
-                        SectionId = section.IsCustom ? null : section.Id,
-                        IsUserAdded = section.IsCustom,
-                        UserSectionType = section.IsCustom ? section.SectionType : null,
-                        UserTitle = section.IsCustom ? section.Title : null,
-                        UserConfig = section.IsCustom ? section.Config : null,
-                    };
-                }
-                overrides.Add(existing);
-                existing.Position = position;
-                existing.Hidden = section.Hidden;
-                existing.Title = section.Title;
-                existing.Featured = section.Featured;
-                existing.ItemLimit = section.ItemLimit;
-                existing.Config = section.Config;
-                existing.SectionType = section.IsCustom ? section.SectionType : null;
-                if (section.IsCustom)
-                {
-                    existing.Id = section.Id;
-                    existing.SectionId = null;
-                    existing.IsUserAdded = true;
-                    existing.UserSectionType = section.SectionType;
-                    existing.UserTitle = section.Title;
-                    existing.UserConfig = section.Config;
-                }
-                existing.Removed = false;
-            }
-            foreach (var id in _removedSystemSectionIds)
-            {
-                var existing = overrides.FirstOrDefault(o => string.Equals(o.SectionId, id, StringComparison.Ordinal));
-                if (existing == null) overrides.Add(new SectionOverride { SectionId = id, Removed = true });
-                else existing.Removed = true;
-            }
+            var overrides = HomeSectionWritePolicy.Build(HomeSections, _rawHomeOverrides, _removedSystemSectionIds, _homeOverrideIds, changedSectionId);
 
             var (scope, libraryId) = GetSectionScope();
 
@@ -1702,6 +1758,11 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private string _importProfileId = "";
 
     public ObservableCollection<Core.Models.Auth.Profile> ImportProfiles { get; } = [];
+    private ApiRequestContext? _importContext;
+    private Dictionary<string, string> _importProfileNames = [];
+    public bool CanImportForOthers => HistoryImportScope.CanTargetOthers(_authService.CurrentUser, _authService.SelectedProfile);
+    public string ImportTargetName(HistoryImportRun run) => _importProfileNames.GetValueOrDefault(run.ProfileId)
+        ?? HistoryImportScope.Label(run.ProfileId, ImportProfiles);
 
     // ----- Emby Connect state -----
     [ObservableProperty] private string _embyConnectUsername = "";
@@ -1911,13 +1972,17 @@ public partial class SettingsViewModel : ObservableObject
     private async Task StartImportAsync()
     {
         if (IsImporting || !CanStartImport) return;
+        var context = _historyImportApi.CaptureContext();
+        var actor = _authService.SelectedProfile ?? new Profile { Id = _authService.SelectedProfileId ?? "" };
+        var target = HistoryImportScope.Target(_authService.CurrentUser, actor, ImportProfileId);
+        if (string.IsNullOrEmpty(target)) { ErrorMessage = "Select an acting profile before importing."; return; }
         IsImporting = true;
         ErrorMessage = null;
         try
         {
             var request = new CreateHistoryImportRunRequest
             {
-                ProfileId = ImportProfileId,
+                ProfileId = target,
                 Source = ImportSourceType,
             };
 
@@ -1962,6 +2027,7 @@ public partial class SettingsViewModel : ObservableObject
                 EmbyConnectPassword = "";
             });
 
+            if (!_historyImportApi.IsCurrentContext(context)) return;
             // Display the new run immediately and put it at the top of the history list.
             SelectedRunId = run.Id;
             DisplayRun = run;
@@ -1971,7 +2037,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to start import: {ex.Message}";
+            if (_historyImportApi.IsCurrentContext(context)) ErrorMessage = $"Failed to start import: {ex.Message}";
         }
         finally
         {
@@ -1985,6 +2051,16 @@ public partial class SettingsViewModel : ObservableObject
     public async Task LoadImportTabAsync()
     {
         if (IsLoadingImportSources) return;
+        var context = _historyImportApi.CaptureContext();
+        if (_importContext != context)
+        {
+            _importContext = context;
+            ImportProfiles.Clear(); ImportRuns.Clear(); DisplayRun = null; SelectedRunId = null;
+            ImportProfileId = _authService.SelectedProfileId ?? "";
+            SelectedEmbySavedSource = null; SelectedPlexSavedSource = null;
+            EmbyConnectSessionId = null; EmbyConnectServers.Clear();
+            PlexSessionId = null; PlexOAuthServers.Clear();
+        }
         IsLoadingImportSources = true;
         try
         {
@@ -1996,6 +2072,7 @@ public partial class SettingsViewModel : ObservableObject
             try
             {
                 var sources = await _historyImportApi.GetImportSourcesAsync();
+                if (!_historyImportApi.IsCurrentContext(context)) return;
                 AllImportSources.Clear();
                 EmbySavedSources.Clear();
                 PlexSavedSources.Clear();
@@ -2010,16 +2087,19 @@ public partial class SettingsViewModel : ObservableObject
             }
             catch (Exception ex)
             {
-                ErrorMessage = $"Failed to load saved import sources: {ex.Message}";
+                if (_historyImportApi.IsCurrentContext(context)) ErrorMessage = $"Failed to load saved import sources: {ex.Message}";
             }
 
             // Fetch the user's profiles for the import-target dropdown.
             try
             {
                 var profilesResp = await _authApi.GetProfilesAsync();
+                if (!_historyImportApi.IsCurrentContext(context)) return;
+                _importProfileNames = profilesResp.Profiles.ToDictionary(p => p.Id, p => p.Name);
                 ImportProfiles.Clear();
-                foreach (var p in profilesResp.Profiles)
+                foreach (var p in profilesResp.Profiles.Where(p => CanImportForOthers || p.Id == _authService.SelectedProfileId))
                     ImportProfiles.Add(p);
+                if (!ImportProfiles.Any(p => p.Id == ImportProfileId)) ImportProfileId = _authService.SelectedProfileId ?? "";
             }
             catch { /* Non-fatal; dropdown will be empty */ }
 
@@ -2036,10 +2116,12 @@ public partial class SettingsViewModel : ObservableObject
     private async Task LoadImportRunsAsync()
     {
         if (IsLoadingImportRuns) return;
+        var context = _historyImportApi.CaptureContext();
         IsLoadingImportRuns = true;
         try
         {
             var runs = await _historyImportApi.GetImportRunsAsync();
+            if (!_historyImportApi.IsCurrentContext(context)) return;
             ImportRuns.Clear();
             foreach (var run in runs.OrderByDescending(r => r.CreatedAt))
                 ImportRuns.Add(run);
@@ -2048,7 +2130,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to load import runs: {ex.Message}";
+            if (_historyImportApi.IsCurrentContext(context)) ErrorMessage = $"Failed to load import runs: {ex.Message}";
         }
         finally
         {
@@ -2061,6 +2143,8 @@ public partial class SettingsViewModel : ObservableObject
     /// it matches. Called from the EventChannelClient event handler in the page.</summary>
     public void ApplyImportRunUpdate(HistoryImportRun run)
     {
+        if (_importContext == null || !_historyImportApi.IsCurrentContext(_importContext.Value) ||
+            (!CanImportForOthers && run.ProfileId != _authService.SelectedProfileId)) return;
         // Update or insert in recent runs list.
         var existingIdx = -1;
         for (int i = 0; i < ImportRuns.Count; i++)

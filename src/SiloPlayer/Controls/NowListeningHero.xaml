@@ -3,60 +3,80 @@
     x:Class="SiloPlayer.Controls.NowListeningHero"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Height="560">
-    <Grid Background="{StaticResource AppBackgroundBrush}">
-        <Image x:Name="BackgroundImage" Stretch="UniformToFill" Opacity="0.28" />
-        <Border Background="#99101722" />
+    UseLayoutRounding="False" SizeChanged="Hero_SizeChanged">
+    <Grid x:Name="RootGrid" Background="{StaticResource AppBackgroundBrush}" UseLayoutRounding="False">
+        <!-- Absolute artwork does not determine the natural section height. -->
+        <Canvas IsHitTestVisible="False">
+            <Image x:Name="BackgroundImage" Stretch="Fill" />
+        </Canvas>
+        <Border Height="180" VerticalAlignment="Top" IsHitTestVisible="False">
+            <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                <GradientStop x:Name="TopStrong" Offset="0" />
+                <GradientStop x:Name="TopSoft" Offset="0.55" />
+                <GradientStop Color="Transparent" Offset="1" />
+            </LinearGradientBrush></Border.Background>
+        </Border>
         <Border>
             <Border.Background>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                    <GradientStop Color="#22101722" Offset="0" />
-                    <GradientStop Color="#F5101722" Offset="1" />
+                    <GradientStop Color="Transparent" Offset="0.12" />
+                    <GradientStop x:Name="BottomLight" Offset="0.30" />
+                    <GradientStop x:Name="BottomMid" Offset="0.52" />
+                    <GradientStop x:Name="BottomStrong" Offset="0.74" />
+                    <GradientStop x:Name="BottomSolidStart" Offset="0.90" />
+                    <GradientStop x:Name="BottomSolid" Offset="1" />
                 </LinearGradientBrush>
             </Border.Background>
         </Border>
+        <Border Opacity="0.08" IsHitTestVisible="False"><Border.Background>
+            <RadialGradientBrush Center="0.5,0.8" GradientOrigin="0.5,0.8" RadiusX="0.7" RadiusY="0.7">
+                <GradientStop Color="{StaticResource AmbientColor}" Offset="0" />
+                <GradientStop Color="Transparent" Offset="1" />
+            </RadialGradientBrush>
+        </Border.Background></Border>
 
-        <Grid Margin="48,104,48,48" MaxWidth="1380" HorizontalAlignment="Left"
-              ColumnDefinitions="220,*" ColumnSpacing="40" VerticalAlignment="Center">
-            <Border Width="220" Height="220" CornerRadius="16"
+        <Grid x:Name="DeckGrid" Margin="48,128,48,48" MaxWidth="1380" HorizontalAlignment="Stretch"
+              ColumnDefinitions="224,*" RowDefinitions="Auto,Auto" RowSpacing="24" ColumnSpacing="40" VerticalAlignment="Center">
+            <Border x:Name="CoverBorder" Width="224" Height="224" CornerRadius="16"
                     Background="{StaticResource CardBackgroundBrush}">
                 <Image x:Name="CoverImage" Stretch="UniformToFill" />
             </Border>
 
-            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="10" MaxWidth="820">
-                <TextBlock Text="NOW LISTENING" FontSize="11" FontWeight="Bold"
-                           CharacterSpacing="180" Foreground="{StaticResource AccentBrush}" />
+            <StackPanel x:Name="DeckInfo" Grid.Column="1" VerticalAlignment="Center" Spacing="0">
+                <TextBlock Text="NOW LISTENING" FontSize="11.52" FontWeight="SemiBold" LineHeight="11.52" LineStackingStrategy="BlockLineHeight" Margin="0,0,0,12"
+                           CharacterSpacing="220" Foreground="{StaticResource PrimaryTextBrush}" Opacity="0.92" />
                 <TextBlock x:Name="TitleText" FontSize="48" FontWeight="ExtraBold"
-                           TextWrapping="Wrap" MaxLines="2" Foreground="White" />
-                <TextBlock x:Name="CreditsText" FontSize="15" Foreground="#BFFFFFFF"
-                           TextTrimming="CharacterEllipsis" MaxLines="1" />
+                           MaxWidth="768" HorizontalAlignment="Left" LineHeight="48" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" CharacterSpacing="-30" Foreground="{StaticResource PrimaryTextBrush}" />
+                <TextBlock x:Name="CreditsText" FontSize="16" Foreground="{StaticResource PrimaryTextBrush}" Opacity="0.7" Margin="0,8,0,0" MaxWidth="672" LineHeight="24" LineStackingStrategy="BlockLineHeight"
+                           TextTrimming="CharacterEllipsis" MaxLines="1" Visibility="Collapsed" />
 
-                <StackPanel Margin="0,14,0,0" Spacing="8" MaxWidth="620">
+                <StackPanel x:Name="ProgressPanel" Margin="0,24,0,0" Spacing="8" MaxWidth="576" HorizontalAlignment="Left">
                     <Border x:Name="ProgressTrack" Height="6" CornerRadius="3"
-                            Background="#33FFFFFF" SizeChanged="ProgressTrack_SizeChanged">
+                            Background="#26FFFFFF" SizeChanged="ProgressTrack_SizeChanged">
                         <Border x:Name="ProgressFill" Height="6" CornerRadius="3"
                                 HorizontalAlignment="Left" Background="{StaticResource AccentBrush}" />
                     </Border>
                     <Grid ColumnDefinitions="*,Auto">
-                        <TextBlock x:Name="PositionText" FontSize="13" Foreground="#99FFFFFF" />
-                        <TextBlock x:Name="TimeLeftText" Grid.Column="1" FontSize="13"
-                                   Foreground="#D9FFFFFF" />
+                        <TextBlock x:Name="PositionText" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource PrimaryTextBrush}" Opacity="0.6" />
+                        <TextBlock x:Name="TimeLeftText" Grid.Column="1" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight"
+                                   Foreground="{StaticResource PrimaryTextBrush}" Opacity="0.85" />
                     </Grid>
                 </StackPanel>
 
-                <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,14,0,0">
-                    <Button Style="{StaticResource AccentButtonStyle}" CornerRadius="20"
-                            Padding="20,10" Click="Resume_Click">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon Glyph="&#xE768;" FontSize="16" />
-                            <TextBlock x:Name="ResumeText" Text="Resume" />
+                <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,24,0,0" UseLayoutRounding="False">
+                    <Button Style="{StaticResource AccentButtonStyle}" CornerRadius="22.56" UseLayoutRounding="False" BorderThickness="0"
+                            Padding="22.4,12.48" Click="Resume_Click">
+                        <StackPanel Orientation="Horizontal" Spacing="8" UseLayoutRounding="False">
+                            <Grid x:Name="ResumeIcon" Width="16" Height="16" VerticalAlignment="Center" />
+                            <TextBlock x:Name="ResumeText" Text="Resume" FontSize="13.44" FontWeight="Bold" CharacterSpacing="10" LineHeight="20.16" LineStackingStrategy="BlockLineHeight" VerticalAlignment="Center" UseLayoutRounding="False" />
                         </StackPanel>
                     </Button>
-                    <Button CornerRadius="20" Padding="20,10" Background="#44FFFFFF"
-                            BorderBrush="#33FFFFFF" BorderThickness="1" Click="MoreInfo_Click">
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon Glyph="&#xE946;" FontSize="14" Foreground="White" />
-                            <TextBlock Text="More Info" Foreground="White" />
+                    <Button CornerRadius="23.56" Padding="22.4,12.48" Background="#1FFFFFFF" UseLayoutRounding="False"
+                            BorderThickness="1" Click="MoreInfo_Click">
+                        <Button.BorderBrush><SolidColorBrush Color="{StaticResource BorderColor}" Opacity="0.5" /></Button.BorderBrush>
+                        <StackPanel Orientation="Horizontal" Spacing="8" UseLayoutRounding="False">
+                            <Grid x:Name="InfoIcon" Width="16" Height="16" VerticalAlignment="Center" />
+                            <TextBlock Text="More Info" Foreground="{StaticResource PrimaryTextBrush}" FontSize="13.44" FontWeight="Bold" CharacterSpacing="10" LineHeight="20.16" LineStackingStrategy="BlockLineHeight" VerticalAlignment="Center" UseLayoutRounding="False" />
                         </StackPanel>
                     </Button>
                 </StackPanel>

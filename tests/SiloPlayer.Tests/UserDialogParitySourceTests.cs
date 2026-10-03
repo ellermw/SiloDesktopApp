@@ -90,12 +90,16 @@ public sealed class UserDialogParitySourceTests
         var source = ReadRepoFile("src", "SiloPlayer", "Controls", "MatchItemDialog.xaml.cs");
 
         Assert.Contains("<ScrollViewer Grid.Row=\"0\"", markup);
+        Assert.Contains("x:Name=\"MatchBody\" MaxWidth=\"800\"", markup);
+        Assert.DoesNotContain("MaxHeight=\"360\"", markup);
+        Assert.Contains("MatchBody.MaxHeight", source);
+        Assert.Contains("_selectedCandidate == null || _applying", source);
         Assert.Contains("x:Name=\"ApplyMatchButton\"", markup);
         Assert.Contains("Grid.Row=\"1\"", markup);
         Assert.Contains("No folder paths are available for this item.", source);
         Assert.Contains("Copied root path", source);
         Assert.Contains("Failed to copy path", source);
-        Assert.Contains("if (_searching) return", source);
+        Assert.Contains("if (_searching || _applying) return", source);
     }
 
     [Fact]

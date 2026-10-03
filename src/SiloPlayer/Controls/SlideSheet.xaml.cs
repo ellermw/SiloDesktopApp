@@ -14,7 +14,6 @@ namespace SiloPlayer.Controls;
 /// </summary>
 public sealed partial class SlideSheet : UserControl
 {
-    private const double SheetWidth = 420;
     private static readonly TimeSpan AnimDuration = TimeSpan.FromMilliseconds(220);
     private int _animationGeneration;
     private Storyboard? _activeStoryboard;
@@ -39,6 +38,37 @@ public sealed partial class SlideSheet : UserControl
             typeof(object),
             typeof(SlideSheet),
             new PropertyMetadata(null));
+
+    /// <summary>Optional content-specific width; existing sheets retain their420px default.</summary>
+    public double PreferredWidth
+    {
+        get => Sheet.Width;
+        set
+        {
+            if (!double.IsFinite(value) || value <= 0) return;
+            Sheet.Width = value;
+            if (!IsOpen) SheetTransform.X = value;
+        }
+    }
+
+    /// <summary>Optional filter-sheet composition; other sheets keep their defaults.</summary>
+    public void ConfigureFilterHeader(FrameworkElement modes, string description)
+    {
+        HeaderActionsHost.Content = modes;
+        CloseButton.Visibility = Visibility.Collapsed;
+        DescriptionText.Text = description;
+        DescriptionText.Visibility = Visibility.Visible;
+        TitleText.LineHeight = 24;
+        TitleText.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        TitleText.VerticalAlignment = VerticalAlignment.Top;
+        HeaderBorder.BorderThickness = new(0, 0, 0, 1);
+        HeaderBorder.BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BorderBrush"];
+        HeaderBorder.Padding = new(0, 0, 0, 12);
+        SheetRows.RowSpacing = 16;
+        Sheet.Padding = new(16);
+        Sheet.Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AppBackgroundBrush"];
+        Scrim.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = .5 };
+    }
 
     public bool IsOpen
     {
@@ -133,7 +163,7 @@ public sealed partial class SlideSheet : UserControl
 
         var slideAnim = new DoubleAnimation
         {
-            From = SheetTransform.X, To = SheetWidth, Duration = new Duration(AnimDuration),
+            From = SheetTransform.X, To = PreferredWidth, Duration = new Duration(AnimDuration),
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn },
         };
         Storyboard.SetTarget(slideAnim, SheetTransform);

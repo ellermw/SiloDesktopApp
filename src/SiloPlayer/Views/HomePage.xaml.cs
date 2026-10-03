@@ -127,8 +127,8 @@ public sealed partial class HomePage : Page
     {
         UpdateSectionRowWidths(e.NewSize.Width);
 
-        var ratio = e.NewSize.Width >= 1024 ? 0.60 : 0.50;
-        var heroHeight = Math.Clamp(e.NewSize.Height * ratio, 350, 700);
+        var ratio = e.NewSize.Width >= 1024 ? 0.66 : 0.54;
+        var heroHeight = Math.Clamp(e.NewSize.Height * ratio, 380, 760);
         InitialHeroSkeleton.Height = heroHeight;
         HeroLoadingSkeleton.Height = heroHeight;
         HeroErrorPanel.Height = heroHeight;
@@ -263,7 +263,7 @@ public sealed partial class HomePage : Page
     }
 
     private void CustomizeHome_Click(object sender, RoutedEventArgs e)
-        => Frame.Navigate(typeof(SettingsPage), "HomeScreen");
+        => App.Services.GetRequiredService<NavigationService>().Navigate<CustomizeHomePage>();
 
     private void OnSectionsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {

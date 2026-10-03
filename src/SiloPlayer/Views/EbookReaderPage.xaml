@@ -2,9 +2,9 @@
     x:Class="SiloPlayer.Views.EbookReaderPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Background="{StaticResource ApplicationPageBackgroundThemeBrush}"
+    Background="{StaticResource AppBackgroundBrush}"
     KeyDown="Page_KeyDown"
-    IsTabStop="True">
+    IsTabStop="True" SizeChanged="Reader_SizeChanged">
 
     <Grid>
         <Grid.RowDefinitions>
@@ -14,7 +14,7 @@
         </Grid.RowDefinitions>
 
         <!-- Matches the WebUI's compact sticky reader toolbar. -->
-        <Grid Grid.Row="0" Padding="12,6" Background="{StaticResource SurfaceRaisedBrush}" ColumnSpacing="8">
+        <Grid Grid.Row="0" Padding="16,6" Background="{StaticResource AppBackgroundBrush}" ColumnSpacing="8">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -38,40 +38,41 @@
                         <FontIcon Glyph="&#xE76C;" FontSize="13" />
                     </StackPanel>
                 </Button>
-                <TextBlock x:Name="HeaderProgressText" Text="0%" Width="42" FontSize="11" Opacity="0.65"
+                <TextBlock x:Name="HeaderProgressText" Text="0%" Width="48" FontSize="12" Opacity="0.65"
                            TextAlignment="Center" VerticalAlignment="Center" />
                 <ComboBox x:Name="FileSelector" Visibility="Collapsed" Width="190" Height="34"
                           ToolTipService.ToolTip="Reader file" AutomationProperties.Name="Reader file" SelectionChanged="FileSelector_SelectionChanged" />
             </StackPanel>
 
-            <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="2" VerticalAlignment="Center">
+            <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
                 <Button x:Name="HighlightButton" Visibility="Collapsed" ToolTipService.ToolTip="Highlight selection"
                         AutomationProperties.Name="Highlight selection" Click="Highlight_Click" Height="34" Padding="9,0">
                     <StackPanel Orientation="Horizontal" Spacing="5"><FontIcon Glyph="&#xE7E6;" FontSize="14" /><TextBlock Text="Highlight" FontSize="12" /></StackPanel>
                 </Button>
-                <Button ToolTipService.ToolTip="Add bookmark" AutomationProperties.Name="Add bookmark" Click="Bookmark_Click" Width="34" Height="34" Padding="0"><FontIcon Glyph="&#xE735;" FontSize="14" /></Button>
-                <Button x:Name="ReadingRulerToolbarButton" ToolTipService.ToolTip="Reading ruler" AutomationProperties.Name="Toggle reading ruler" Click="ReadingRulerToolbar_Click" Width="34" Height="34" Padding="0"><FontIcon Glyph="&#xE8D2;" FontSize="14" /></Button>
-                <Button x:Name="PanelToggleButton" ToolTipService.ToolTip="Close reader panel" AutomationProperties.Name="Close reader panel" Click="PanelToggle_Click" Width="34" Height="34" Padding="0"><FontIcon x:Name="PanelToggleIcon" Glyph="&#xE89F;" FontSize="14" /></Button>
-                <Button x:Name="PreviousButton" Click="Previous_Click" ToolTipService.ToolTip="Previous page" AutomationProperties.Name="Previous page" Width="34" Height="34" Padding="0"><FontIcon Glyph="&#xE76B;" FontSize="16" /></Button>
-                <Button x:Name="NextButton" Click="Next_Click" ToolTipService.ToolTip="Next page" AutomationProperties.Name="Next page" Width="34" Height="34" Padding="0"><FontIcon Glyph="&#xE76C;" FontSize="16" /></Button>
+                <Button x:Name="BookmarkButton" ToolTipService.ToolTip="Add bookmark" AutomationProperties.Name="Add bookmark" Click="Bookmark_Click" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0" />
+                <Button x:Name="ReadingRulerToolbarButton" ToolTipService.ToolTip="Reading ruler" AutomationProperties.Name="Toggle reading ruler" Click="ReadingRulerToolbar_Click" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0"><FontIcon Glyph="&#xE8D2;" FontSize="16" /></Button>
+                <Button x:Name="PanelToggleButton" ToolTipService.ToolTip="Close reader panel" AutomationProperties.Name="Close reader panel" Click="PanelToggle_Click" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0"><FontIcon x:Name="PanelToggleIcon" Glyph="&#xE89F;" FontSize="16" /></Button>
+                <Button x:Name="PreviousButton" Click="Previous_Click" ToolTipService.ToolTip="Previous page" AutomationProperties.Name="Previous page" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0"><FontIcon Glyph="&#xE76B;" FontSize="20" /></Button>
+                <Button x:Name="NextButton" Click="Next_Click" ToolTipService.ToolTip="Next page" AutomationProperties.Name="Next page" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0"><FontIcon Glyph="&#xE76C;" FontSize="20" /></Button>
             </StackPanel>
 
-            <Button x:Name="DownloadButton" Grid.Column="4" Click="Download_Click" Height="34" Padding="10,0"
+            <Button x:Name="DownloadButton" Grid.Column="4" Click="Download_Click" Height="32" Padding="12,0" Background="Transparent" BorderThickness="1"
                     AutomationProperties.Name="Download reader file">
                 <StackPanel Orientation="Horizontal" Spacing="6"><FontIcon Glyph="&#xE896;" FontSize="14" /><TextBlock Text="File" FontSize="12" /></StackPanel>
             </Button>
         </Grid>
 
-        <Grid Grid.Row="1" Padding="14,4" Background="{StaticResource SurfaceRaisedBrush}" ColumnSpacing="10">
+        <Grid Grid.Row="1" Padding="16,4" Background="{StaticResource AppBackgroundBrush}" ColumnSpacing="12">
             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
             <FontIcon Glyph="&#xE736;" FontSize="14" Opacity="0.65" VerticalAlignment="Center" />
             <Slider x:Name="ProgressSlider" Grid.Column="1" Minimum="0" Maximum="1" StepFrequency="0.01"
                     ValueChanged="ProgressSlider_ValueChanged" AutomationProperties.Name="Reading progress" />
-            <TextBlock x:Name="ProgressText" Grid.Column="2" Text="0%" Width="42" FontSize="11" Opacity="0.65"
+            <TextBlock x:Name="ProgressText" Grid.Column="2" Text="0%" Width="44" FontSize="12" Opacity="0.65"
                        TextAlignment="Right" VerticalAlignment="Center" />
         </Grid>
 
-        <Grid Grid.Row="2">
+        <Grid x:Name="ReaderLayout" Grid.Row="2">
+            <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition x:Name="PanelRow" Height="0"/></Grid.RowDefinitions>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition x:Name="SideColumn" Width="320" />
@@ -91,7 +92,7 @@
                         PointerReleased="RulerDragButton_PointerReleased">
                     <FontIcon Glyph="&#xE76F;" FontSize="13" />
                 </Button>
-                <Grid x:Name="LoadingLayer" Background="{StaticResource ApplicationPageBackgroundThemeBrush}">
+                <Grid x:Name="LoadingLayer" Background="{StaticResource AppBackgroundBrush}">
                     <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
                         <ProgressRing IsActive="True" Width="42" Height="42" />
                         <TextBlock x:Name="LoadingText" Text="Opening book…" HorizontalAlignment="Center" />
@@ -104,29 +105,32 @@
                 </Button>
             </Grid>
 
-            <Border x:Name="SidePanel" Grid.Column="1" Background="{StaticResource SurfaceRaisedBrush}"
-                    BorderBrush="{StaticResource DividerBrush}" BorderThickness="1,0,0,0">
+            <Border x:Name="SidePanel" Grid.Column="1" Background="{StaticResource AppBackgroundBrush}"
+                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1,0,0,0">
                 <Grid>
-                    <Grid.RowDefinitions><RowDefinition Height="52" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="52" /><RowDefinition Height="Auto"/><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <TextBlock x:Name="ReaderSyncStatus" Grid.Row="1" Visibility="Collapsed" TextWrapping="Wrap" Margin="12,4" Foreground="{StaticResource ErrorBrush}" FontSize="12"/>
                     <Grid Padding="8,6" ColumnSpacing="4">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                        <Button x:Name="ContentsTab" Grid.Column="0" Click="Contents_Click" Padding="2" ToolTipService.ToolTip="Table of contents" AutomationProperties.Name="Table of contents">
-                            <StackPanel Spacing="1"><FontIcon Glyph="&#xE8A9;" FontSize="13" /><TextBlock Text="Contents" FontSize="10" HorizontalAlignment="Center" /></StackPanel>
+                        <Button x:Name="ContentsTab" Grid.Column="0" Click="Contents_Click" HorizontalAlignment="Stretch" Height="40" Padding="4,0" BorderThickness="0" ToolTipService.ToolTip="Table of contents" AutomationProperties.Name="Table of contents">
+                            <StackPanel Spacing="2"><FontIcon Glyph="&#xE8A9;" FontSize="14" /><TextBlock Text="Contents" FontSize="11" HorizontalAlignment="Center" /></StackPanel>
                         </Button>
-                        <Button x:Name="SearchTab" Grid.Column="1" Click="Search_Click" Padding="2" ToolTipService.ToolTip="Search book" AutomationProperties.Name="Search book">
-                            <StackPanel Spacing="1"><FontIcon Glyph="&#xE721;" FontSize="13" /><TextBlock Text="Search" FontSize="10" HorizontalAlignment="Center" /></StackPanel>
+                        <Button x:Name="SearchTab" Grid.Column="1" Click="Search_Click" HorizontalAlignment="Stretch" Height="40" Padding="4,0" BorderThickness="0" ToolTipService.ToolTip="Search book" AutomationProperties.Name="Search book">
+                            <StackPanel Spacing="2"><FontIcon Glyph="&#xE721;" FontSize="14" /><TextBlock Text="Search" FontSize="11" HorizontalAlignment="Center" /></StackPanel>
                         </Button>
-                        <Button x:Name="AnnotationsTab" Grid.Column="2" Click="Annotations_Click" Padding="2" ToolTipService.ToolTip="Annotations and bookmarks" AutomationProperties.Name="Annotations and bookmarks">
-                            <StackPanel Spacing="1"><FontIcon Glyph="&#xE70B;" FontSize="13" /><TextBlock Text="Notes" FontSize="10" HorizontalAlignment="Center" /></StackPanel>
+                        <Button x:Name="AnnotationsTab" Grid.Column="2" Click="Annotations_Click" HorizontalAlignment="Stretch" Height="40" Padding="4,0" BorderThickness="0" ToolTipService.ToolTip="Annotations and bookmarks" AutomationProperties.Name="Annotations and bookmarks">
+                            <StackPanel Spacing="2"><FontIcon Glyph="&#xE70B;" FontSize="14" /><TextBlock Text="Notes" FontSize="11" HorizontalAlignment="Center" /></StackPanel>
                         </Button>
-                        <Button x:Name="SettingsTab" Grid.Column="3" Click="Settings_Click" Padding="2" ToolTipService.ToolTip="Reader settings" AutomationProperties.Name="Reader settings">
-                            <StackPanel Spacing="1"><FontIcon Glyph="&#xE713;" FontSize="13" /><TextBlock Text="Settings" FontSize="10" HorizontalAlignment="Center" /></StackPanel>
+                        <Button x:Name="SettingsTab" Grid.Column="3" Click="Settings_Click" HorizontalAlignment="Stretch" Height="40" Padding="4,0" BorderThickness="0" ToolTipService.ToolTip="Reader settings" AutomationProperties.Name="Reader settings">
+                            <StackPanel Spacing="2"><FontIcon Glyph="&#xE713;" FontSize="14" /><TextBlock Text="Settings" FontSize="11" HorizontalAlignment="Center" /></StackPanel>
                         </Button>
                     </Grid>
 
-                    <ScrollViewer Grid.Row="1" Padding="12">
+                    <ScrollViewer Grid.Row="2" Padding="12">
                         <Grid>
                             <ListView x:Name="ContentsList" SelectionChanged="ContentsList_SelectionChanged" SelectionMode="Single" />
+                            <TextBlock x:Name="ContentsEmptyText" Text="No contents found." Visibility="Collapsed"
+                                       FontSize="14" Opacity="0.65" TextAlignment="Center" Margin="8,32" />
 
                             <StackPanel x:Name="SearchPanel" Visibility="Collapsed" Spacing="10">
                                 <Grid ColumnSpacing="6"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -150,9 +154,9 @@
 
                                 <StackPanel x:Name="ReadingProfilesSection" Spacing="8">
                                     <TextBlock Text="Reading profile" Opacity="0.7" FontSize="12" />
-                                    <Button Tag="comfortable" Click="Profile_Click" HorizontalContentAlignment="Stretch"><StackPanel><TextBlock Text="Comfortable" FontWeight="SemiBold" /><TextBlock Text="Serif, roomier lines" FontSize="11" Opacity="0.65" /></StackPanel></Button>
-                                    <Button Tag="accessible" Click="Profile_Click" HorizontalContentAlignment="Stretch"><StackPanel><TextBlock Text="Accessible" FontWeight="SemiBold" /><TextBlock Text="Larger sans text" FontSize="11" Opacity="0.65" /></StackPanel></Button>
-                                    <Button Tag="compact" Click="Profile_Click" HorizontalContentAlignment="Stretch"><StackPanel><TextBlock Text="Compact" FontWeight="SemiBold" /><TextBlock Text="More words per page" FontSize="11" Opacity="0.65" /></StackPanel></Button>
+                                    <Button Tag="comfortable" Click="Profile_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" MinHeight="44" Padding="12,8"><StackPanel><TextBlock Text="Comfortable" FontWeight="Medium" /><TextBlock Text="Serif, roomier lines" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel></Button>
+                                    <Button Tag="accessible" Click="Profile_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" MinHeight="44" Padding="12,8"><StackPanel><TextBlock Text="Accessible" FontWeight="Medium" /><TextBlock Text="Larger sans text" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel></Button>
+                                    <Button Tag="compact" Click="Profile_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" MinHeight="44" Padding="12,8"><StackPanel><TextBlock Text="Compact" FontWeight="Medium" /><TextBlock Text="More words per page" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel></Button>
                                 </StackPanel>
 
                                 <StackPanel x:Name="ReadAloudSection" Spacing="8">

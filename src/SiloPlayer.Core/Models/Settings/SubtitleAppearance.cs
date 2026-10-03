@@ -23,12 +23,13 @@ public class SubtitleAppearance
 
     /// <summary>Hex color like "#ffffff".</summary>
     public string FontColor { get; set; } = "#ffffff";
+    public int TextOpacity { get; set; } = 100;
 
     /// <summary>Hex color like "#000000".</summary>
     public string BackgroundColor { get; set; } = "#000000";
 
     /// <summary>"box" | "shadow" | "outline" | "none"</summary>
-    public string BackgroundStyle { get; set; } = "shadow";
+    public string BackgroundStyle { get; set; } = "box";
 
     /// <summary>Integer 0-100 (NOT a 0-1 float).</summary>
     public int BackgroundOpacity { get; set; } = 75;
@@ -50,6 +51,7 @@ public class SubtitleAppearance
         FontSize = FontSize,
         FontFamily = FontFamily,
         FontColor = FontColor,
+        TextOpacity = TextOpacity,
         BackgroundColor = BackgroundColor,
         BackgroundStyle = BackgroundStyle,
         BackgroundOpacity = BackgroundOpacity,
@@ -63,6 +65,7 @@ public class SubtitleAppearance
         ["fontSize"] = FontSize,
         ["fontFamily"] = FontFamily,
         ["fontColor"] = FontColor,
+        ["textOpacity"] = TextOpacity,
         ["backgroundColor"] = BackgroundColor,
         ["backgroundStyle"] = BackgroundStyle,
         ["backgroundOpacity"] = BackgroundOpacity,
@@ -84,9 +87,11 @@ public class SubtitleAppearance
             result.FontSize = ValidString(root, "fontSize", ["small", "medium", "large", "xlarge", "xxlarge"], result.FontSize);
             result.FontFamily = ValidString(root, "fontFamily", ["sans-serif", "serif", "monospace"], result.FontFamily);
             result.FontColor = ValidColor(root, "fontColor", result.FontColor);
+            if (root.TryGetProperty("textOpacity", out var textOpacity) && textOpacity.ValueKind == JsonValueKind.Number
+                && textOpacity.TryGetInt32(out var percent) && percent is >= 1 and <= 100) result.TextOpacity = percent;
             result.BackgroundColor = ValidColor(root, "backgroundColor", result.BackgroundColor);
             result.BackgroundStyle = ValidString(root, "backgroundStyle", ["box", "shadow", "outline", "none"], result.BackgroundStyle);
-            if (root.TryGetProperty("backgroundOpacity", out var opacity) && opacity.TryGetInt32(out var value) && value is >= 0 and <= 100)
+            if (root.TryGetProperty("backgroundOpacity", out var opacity) && opacity.ValueKind == JsonValueKind.Number && opacity.TryGetInt32(out var value) && value is >= 0 and <= 100)
                 result.BackgroundOpacity = value;
             if (root.TryGetProperty("textOutline", out var outline) && outline.ValueKind is JsonValueKind.True or JsonValueKind.False)
                 result.TextOutline = outline.GetBoolean();

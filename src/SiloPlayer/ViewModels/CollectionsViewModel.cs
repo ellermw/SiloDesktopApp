@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Collections;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.ViewModels;
 
@@ -346,12 +347,16 @@ public partial class CollectionsViewModel : ObservableObject
         {
             var catalogTask = _collectionsApi.GetCollectionTemplatesAsync();
             var librariesTask = _catalogApi.GetLibrariesAsync();
+            var capabilitiesTask = _collectionsApi.GetCollectionCapabilitiesAsync();
 
-            await Task.WhenAll(catalogTask, librariesTask);
+            await Task.WhenAll(catalogTask, librariesTask, capabilitiesTask);
 
             TemplateGroups.Clear();
             foreach (var group in catalogTask.Result.Categories)
-                TemplateGroups.Add(group);
+            {
+                var supported = group.Templates.Where(template => CollectionImportPolicy.CanCreate(capabilitiesTask.Result, template.Source)).ToList();
+                if (supported.Count > 0) TemplateGroups.Add(new() { Category = group.Category, Label = group.Label, Templates = supported });
+            }
 
             Libraries.Clear();
             foreach (var library in librariesTask.Result)
@@ -367,17 +372,21 @@ public partial class CollectionsViewModel : ObservableObject
         }
     }
 
+    private int _mdblistSearchGeneration;
+
     public async Task SearchMDBListAsync(string query)
     {
         if (string.IsNullOrWhiteSpace(query))
             return;
 
+        var generation = ++_mdblistSearchGeneration;
         IsSearchingMdblist = true;
         TemplateErrorMessage = null;
 
         try
         {
             var response = await _collectionsApi.SearchMDBListAsync(query.Trim());
+            if (generation != _mdblistSearchGeneration) return;
             IsMDBListConfigured = response.Configured;
             MdblistResults.Clear();
             foreach (var list in response.Lists)
@@ -385,22 +394,24 @@ public partial class CollectionsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            TemplateErrorMessage = $"MDBList search failed: {ex.Message}";
+            if (generation == _mdblistSearchGeneration) TemplateErrorMessage = $"MDBList search failed: {ex.Message}";
         }
         finally
         {
-            IsSearchingMdblist = false;
+            if (generation == _mdblistSearchGeneration) IsSearchingMdblist = false;
         }
     }
 
     public async Task LoadTopMDBListAsync()
     {
+        var generation = ++_mdblistSearchGeneration;
         IsSearchingMdblist = true;
         TemplateErrorMessage = null;
 
         try
         {
             var response = await _collectionsApi.GetTopMDBListAsync();
+            if (generation != _mdblistSearchGeneration) return;
             IsMDBListConfigured = response.Configured;
             MdblistResults.Clear();
             foreach (var list in response.Lists)
@@ -408,11 +419,11 @@ public partial class CollectionsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            TemplateErrorMessage = $"MDBList top lists failed: {ex.Message}";
+            if (generation == _mdblistSearchGeneration) TemplateErrorMessage = $"MDBList top lists failed: {ex.Message}";
         }
         finally
         {
-            IsSearchingMdblist = false;
+            if (generation == _mdblistSearchGeneration) IsSearchingMdblist = false;
         }
     }
 
@@ -437,11 +448,27 @@ public partial class CollectionsViewModel : ObservableObject
         try
         {
             var template = draft.Template;
+            var capabilities = await _collectionsApi.GetCollectionCapabilitiesAsync();
+            if (!CollectionImportPolicy.CanCreate(capabilities, template.Source))
+            {
+                TemplateErrorMessage = "This source is no longer available for new collections. Return to templates to choose a supported source. Existing collections can still sync.";
+                return null;
+            }
             var request = CreateBaseImportRequest<ImportUserCollectionRequest>(draft);
             ImportUserCollectionResponse response;
 
             switch (template.Source)
             {
+                case "tmdb_list":
+                    var listUrl = draft.TMDBListUrl?.Trim() ?? template.TmdbList?.Url;
+                    if (!CollectionImportPolicy.IsTMDBListUrl(listUrl)) { TemplateErrorMessage = "Enter a public TMDB list URL or numeric list ID."; return null; }
+                    response = await _collectionsApi.ImportUserTMDBListCollectionAsync(new()
+                    {
+                        Title = request.Title, Description = request.Description, Limit = request.Limit, SyncSchedule = request.SyncSchedule,
+                        IsShared = request.IsShared, LibraryIds = request.LibraryIds, PosterUrl = request.PosterUrl,
+                        DisplayQueryDefinition = request.DisplayQueryDefinition, SortConfig = request.SortConfig, Url = listUrl!
+                    });
+                    break;
                 case "mdblist":
                     var mdblistUrl = !string.IsNullOrWhiteSpace(draft.MDBListUrl)
                         ? draft.MDBListUrl.Trim()
@@ -584,6 +611,7 @@ public sealed class TemplateImportDraft
     public bool IsShared { get; set; }
     public List<int> LibraryIds { get; set; } = [];
     public string? MDBListUrl { get; set; }
+    public string? TMDBListUrl { get; set; }
     public string? PosterUrl { get; set; }
     public DisplayQueryDefinition? DisplayQueryDefinition { get; set; }
     public Dictionary<string, object>? SortConfig { get; set; }

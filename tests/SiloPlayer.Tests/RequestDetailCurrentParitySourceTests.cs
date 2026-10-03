@@ -7,8 +7,10 @@ public sealed class RequestDetailCurrentParitySourceTests
     {
         var source = ReadRepoFile("src", "SiloPlayer", "Views", "RequestDetailPage.xaml.cs");
 
-        Assert.Contains("button.Content = $\"＋  Request", source);
-        Assert.Contains("button.Content = \"Request\"", source);
+        // Actual rejection/pending/retry is covered by RequestDetailParityNativeFixture.
+        Assert.Contains("var original = button.Content", source);
+        Assert.Contains("button.Content = original", source);
+        Assert.Contains("RequestSeasonsDialog.PickAsync", source);
         Assert.Contains("ToastService>().Error", source);
         Assert.DoesNotContain("button.Content = ex.Message", source);
     }
@@ -21,9 +23,10 @@ public sealed class RequestDetailCurrentParitySourceTests
 
         Assert.Contains("x:Name=\"LoadingBackButton\"", markup);
         Assert.Contains("AutomationProperties.Name=\"Go back\"", markup);
-        Assert.Contains("openDetail.Click += Recommendation_Click", source);
-        Assert.Contains("Open {item.Title} request details", source);
-        Assert.Contains("StatusTone(item.Request.Status)", source);
+        // Recommendations now share the same actionable card as discovery grids.
+        Assert.Contains("ExternalTitleCard.Build(item, width, request, watchlist)", source);
+        Assert.Contains("RequestViewerPolicy.Label", source);
+        Assert.Contains("RequestDownloadProgress.Build", source);
         Assert.Contains("FormatVoteCount(item.VoteCount.Value)", source);
         Assert.Contains("(item.Genres ?? []).Take(4)", source);
     }

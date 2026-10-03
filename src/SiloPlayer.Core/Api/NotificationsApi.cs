@@ -9,6 +9,7 @@ public sealed class NotificationsApi(SiloApiClient client)
     private readonly ConcurrentDictionary<string, (ApiRequestContext Context, string ETag)> _webhookRevisions = new();
     private readonly ConcurrentDictionary<(ApiRequestContext Context, string Email), string> _emailIntents = new();
     private (ApiRequestContext Context, string Cutoff)? _readCutoff;
+    public bool CanMarkAllRead => _readCutoff is { } snapshot && client.IsCurrentContext(snapshot.Context);
 
     public async Task<NotificationListResponse> GetNotificationsAsync(
         string status = "all",

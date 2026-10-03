@@ -135,7 +135,9 @@ public sealed class ServerContractSourceTests
         Assert.Contains("/init", authApi);
         Assert.Contains("/api/v2/auth/oauth/complete", authApi);
         Assert.Contains("CompleteOAuthAsync", loginViewModel);
-        Assert.Contains("WebView2", loginPage);
+        Assert.Contains("BeginOAuthAsync", loginPage);
+        Assert.Contains("Windows.System.Launcher.LaunchUriAsync", loginPage);
+        Assert.Contains("NativeOAuthHandshake", loginViewModel);
         Assert.DoesNotContain("/api/v2/auth/providers/{Uri.EscapeDataString(providerId)}/authorize", loginPage);
     }
 
@@ -477,7 +479,10 @@ public sealed class ServerContractSourceTests
         Assert.Contains("catalog.metadata_language", settingsViewModel);
         Assert.Contains("catalog.metadata_language_overrides", settingsViewModel);
         Assert.Contains("Metadata language", settingsXaml);
-        Assert.Contains("Preferred audio language", File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "SettingsPage.Account.cs")));
+        var deviceSettings = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "SettingsPage.Account.cs"));
+        Assert.Contains("definition.Type == \"language_tag\"", deviceSettings);
+        Assert.Contains("DeviceLanguageOptions", deviceSettings);
+        Assert.Contains("option.Value", deviceSettings);
     }
 
     [Fact]

@@ -8,6 +8,7 @@
     xmlns:converters="using:SiloPlayer.Converters"
     xmlns:controls="using:SiloPlayer.Controls"
     mc:Ignorable="d"
+    FontFamily="{StaticResource ThemeFontFamily}"
     Background="{StaticResource AppBackgroundBrush}">
 
     <Page.Resources>
@@ -37,15 +38,45 @@
             <Setter Property="BorderThickness" Value="0" />
         </Style>
 
-        <!-- Settings group card
-             B24: 22 was arbitrary; shadcn `rounded-lg`=8. Padding 24 vertical /
-             24 horizontal matches `py-6 px-6`. -->
+        <SolidColorBrush x:Key="SettingsRaisedBrush" Color="{Binding Color, Source={StaticResource SurfaceRaisedBrush}}" Opacity="0.65" />
+        <SolidColorBrush x:Key="SettingsPanelBrush" Color="{Binding Color, Source={StaticResource SurfaceBrush}}" Opacity="0.9" />
+        <SolidColorBrush x:Key="SettingsBorderBrush" Color="{Binding Color, Source={StaticResource BorderBrush}}" Opacity="0.72" />
+
+        <SolidColorBrush x:Key="SettingsPresetBrush" Color="{Binding Color, Source={StaticResource SurfaceBrush}}" Opacity="0.82" />
+        <Style x:Key="SettingsPresetStyle" TargetType="Button">
+            <Setter Property="FontFamily" Value="{StaticResource ThemeFontFamily}" />
+            <Setter Property="UseSystemFocusVisuals" Value="True" />
+            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="Padding" Value="16" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="{TemplateBinding CornerRadius}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter Content="{TemplateBinding Content}" HorizontalAlignment="Stretch" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Current raised settings surfaces. -->
         <Style x:Key="SettingsGroupStyle" TargetType="Border">
-            <Setter Property="Background" Value="{StaticResource CardBackgroundBrush}" />
-            <Setter Property="CornerRadius" Value="{StaticResource RadiusLG}" />
-            <Setter Property="Padding" Value="24,24" />
-            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+            <Setter Property="Background" Value="{StaticResource SettingsRaisedBrush}" />
+            <Setter Property="CornerRadius" Value="27.2" />
+            <Setter Property="Padding" Value="24,20" />
+            <Setter Property="BorderBrush" Value="{StaticResource SettingsBorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
+        </Style>
+
+        <Style x:Key="PersonalizeGroupStyle" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource SettingsPanelBrush}" />
+            <Setter Property="CornerRadius" Value="20" />
+            <Setter Property="Padding" Value="24" />
+            <Setter Property="BorderThickness" Value="0" />
         </Style>
 
         <!-- Settings row separator -->
@@ -58,10 +89,10 @@
     </Page.Resources>
 
     <ScrollViewer IsScrollInertiaEnabled="True">
-        <StackPanel x:Name="SettingsPageShell" MaxWidth="1424" Margin="48,24,48,48">
+        <StackPanel x:Name="SettingsPageShell" MaxWidth="1520" Margin="48,24,48,48">
 
             <!-- The WebUI keeps the back action floating above a wide page header. -->
-            <Button Style="{StaticResource GhostButtonStyle}"
+            <Button x:Name="SettingsBackButton" Style="{StaticResource GhostButtonStyle}"
                     Width="40" Height="40" Padding="0" CornerRadius="20"
                     HorizontalAlignment="Left" Click="SettingsBackButton_Click"
                     AutomationProperties.Name="Go back">
@@ -85,14 +116,18 @@
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 </StackPanel>
                 <StackPanel x:Name="SettingsSearchPanel" Grid.Column="1" Width="384" VerticalAlignment="Bottom" Spacing="8">
+                    <Grid>
                     <TextBox x:Name="SettingsSearchBox" PlaceholderText="Search settings"
-                             Height="40" CornerRadius="12" TextChanged="SettingsSearchBox_TextChanged"
+                             Height="44" Padding="36,8,40,8" CornerRadius="12" TextChanged="SettingsSearchBox_TextChanged"
                              AutomationProperties.Name="Search settings">
                         <TextBox.HeaderTemplate>
                             <DataTemplate />
                         </TextBox.HeaderTemplate>
                     </TextBox>
-                    <TextBlock x:Name="SettingsSearchStatus" Text="18 settings sections"
+                        <FontIcon Glyph="&#xE721;" FontSize="16" HorizontalAlignment="Left" Margin="12,0,0,0" IsHitTestVisible="False" />
+                        <Button Content="&#xE711;" FontFamily="Segoe Fluent Icons" Width="32" Height="32" HorizontalAlignment="Right" Margin="0,0,6,0" Style="{StaticResource GhostButtonStyle}" Click="ClearSettingsSearch_Click" AutomationProperties.Name="Clear search" />
+                    </Grid>
+                    <TextBlock x:Name="SettingsSearchStatus" Text="Press Ctrl+K to search"
                                FontSize="12" Foreground="{StaticResource TertiaryTextBrush}"
                                AutomationProperties.LiveSetting="Polite" />
                 </StackPanel>
@@ -128,11 +163,17 @@
                 <StackPanel x:Name="SettingsOverviewGroups" Spacing="28" />
             </StackPanel>
 
+            <Button x:Name="SettingsAllSettingsButton" Content="‹  All settings"
+                    HorizontalAlignment="Left" Margin="0,4,0,0" Padding="0,0,8,0"
+                    Height="20" MinHeight="0" MinWidth="0" FontSize="14"
+                    Style="{StaticResource GhostButtonStyle}" Visibility="Collapsed"
+                    Click="SettingsAllSettings_Click" />
+
             <!-- ===== Settings Navigation: Two-column layout (sidebar + content) ===== -->
             <!-- Webui: SettingsLayout.tsx — grouped sidebar (220px) on desktop -->
-            <Grid x:Name="SettingsLayoutGrid" Margin="0,40,0,0">
+            <Grid x:Name="SettingsLayoutGrid" Margin="0,40,0,0" Background="{StaticResource SettingsPanelBrush}" CornerRadius="27.2" BorderBrush="{StaticResource SettingsBorderBrush}" BorderThickness="1" MinHeight="500">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="220" />
+                    <ColumnDefinition Width="240" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
@@ -177,14 +218,7 @@
                             <TextBlock Text="APPEARANCE" FontSize="10" FontWeight="SemiBold"
                                        CharacterSpacing="180" Foreground="{StaticResource TertiaryTextBrush}"
                                        Margin="12,0,0,6" />
-                            <Button x:Name="AppearanceTab" Click="Tab_Click" Tag="Appearance"
-                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
-                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <FontIcon Glyph="&#xE790;" FontSize="16" />
-                                    <TextBlock Text="Appearance" VerticalAlignment="Center" />
-                                </StackPanel>
-                            </Button>
-                            <Button x:Name="InterfaceTab" Click="Tab_Click" Tag="Interface"
+<Button x:Name="InterfaceTab" Click="Tab_Click" Tag="Interface"
                                     Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
                                     <FontIcon Glyph="&#xE7F8;" FontSize="16" />
@@ -205,14 +239,7 @@
                                     <TextBlock Text="Accessibility" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
-                            <Button x:Name="ThemeEditorTab" Click="Tab_Click" Tag="ThemeEditor"
-                                    Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
-                                <StackPanel Orientation="Horizontal" Spacing="10">
-                                    <FontIcon Glyph="&#xE771;" FontSize="16" />
-                                    <TextBlock Text="Theme Editor" VerticalAlignment="Center" />
-                                </StackPanel>
-                            </Button>
-                        </StackPanel>
+</StackPanel>
                         <!-- Home & Discovery group -->
                         <StackPanel x:Name="HomeDiscoveryNavGroup" Spacing="2">
                             <TextBlock Text="HOME &amp; DISCOVERY" FontSize="10" FontWeight="SemiBold"
@@ -238,6 +265,9 @@
                                     <FontIcon Glyph="&#xE8F1;" FontSize="16" />
                                     <TextBlock Text="Libraries" VerticalAlignment="Center" />
                                 </StackPanel>
+                            </Button>
+                            <Button x:Name="RequestsTab" Click="Tab_Click" Tag="Requests" Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                <StackPanel Orientation="Horizontal" Spacing="10"><FontIcon Glyph="&#xE710;" FontSize="16" /><TextBlock Text="Requests" VerticalAlignment="Center" /></StackPanel>
                             </Button>
                         </StackPanel>
                         <!-- Connections group -->
@@ -323,11 +353,6 @@
                 <StackPanel x:Name="SettingsContentPanel" Grid.Column="1" Padding="40,0,0,0"
                             HorizontalAlignment="Stretch">
 
-            <Button x:Name="SettingsAllSettingsButton" Content="‹  All settings"
-                    HorizontalAlignment="Left" Margin="0,0,0,20"
-                    Style="{StaticResource GhostButtonStyle}" Visibility="Collapsed"
-                    Click="SettingsAllSettings_Click" />
-
             <!-- ===================================================================== -->
             <!-- ===== Navigation & Cards Panel (settings contract revision 5) ===== -->
             <!-- ===================================================================== -->
@@ -339,7 +364,7 @@
                 </StackPanel>
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="16">
-                        <TextBlock Text="Password" FontSize="18" FontWeight="SemiBold" />
+                        <TextBlock Text="Password" FontSize="14" FontWeight="SemiBold" />
                         <TextBlock Text="Only the primary profile can change the shared account password. Your current password is required."
                                    Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                         <ProgressRing x:Name="AccountPasswordLoading" IsActive="False" Width="24" Height="24"
@@ -365,14 +390,23 @@
                         <Button x:Name="AccountPasswordRetry" Content="Try again" Visibility="Collapsed" Click="AccountPasswordRetry_Click" />
                     </StackPanel>
                 </Border>
+                <Border x:Name="AccountSignInGroup" Style="{StaticResource SettingsGroupStyle}" Visibility="Collapsed">
+                    <StackPanel Spacing="16">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="Sign-in" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="Sign in to this account with your organization's sign-in provider." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <StackPanel x:Name="AccountSignInBody" MaxWidth="672" HorizontalAlignment="Stretch" Spacing="16" />
+                    </StackPanel>
+                </Border>
             </StackPanel>
 
             <StackPanel x:Name="InterfacePanel" Spacing="24" Visibility="Collapsed">
                 <StackPanel Spacing="8">
-                    <TextBlock Text="Navigation &amp; cards" FontSize="24" FontWeight="SemiBold"
+                    <TextBlock x:Name="InterfaceTitleText" Text="Navigation &amp; cards" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock Text="These choices sync between native desktop apps signed into this profile. Web, TV, mobile, and tablet clients keep their own matching-device layouts."
-                               FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
+                               LineHeight="20" LineStackingStrategy="BlockLineHeight" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
                                TextWrapping="Wrap" />
                 </StackPanel>
 
@@ -385,10 +419,11 @@
                 </Border>
 
                 <StackPanel x:Name="InterfaceControls" Spacing="24">
+
                     <Border Style="{StaticResource SettingsGroupStyle}">
                         <StackPanel Spacing="14">
                             <StackPanel Spacing="4">
-                                <TextBlock Text="Card preset" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="Card preset" FontSize="14" FontWeight="SemiBold" />
                                 <TextBlock Text="Start with a complete layout, then adjust poster size or captions below."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                             </StackPanel>
@@ -402,7 +437,7 @@
                                     <Button Grid.Column="1" Content="Use desktop-family layout" Click="ClearInterfaceCardDeviceOverride_Click" />
                                 </Grid>
                             </Border>
-                            <Grid ColumnSpacing="12" RowSpacing="12">
+                            <Grid x:Name="InterfacePresetGrid" ColumnSpacing="12" RowSpacing="12">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="*" />
@@ -412,36 +447,64 @@
                                     <RowDefinition Height="Auto" />
                                 </Grid.RowDefinitions>
                                 <Button x:Name="BalancedCardPreset" Tag="standard:title_metadata" Click="CardPreset_Click"
-                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="16,14">
-                                    <StackPanel Spacing="4">
+                                        Style="{StaticResource SettingsPresetStyle}">
+                                    <Grid Tag="preset-icon-row" ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="4">
                                         <TextBlock Text="Balanced" FontWeight="SemiBold" />
-                                        <TextBlock Text="Standard posters with titles and metadata." FontSize="12"
+                                        <TextBlock Text="Standard posters with titles and metadata." FontSize="12" LineHeight="19.5" LineStackingStrategy="BlockLineHeight"
                                                    Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                                     </StackPanel>
+                                        <Viewbox Grid.Column="1" Width="16" Height="16" VerticalAlignment="Top" Visibility="Collapsed">
+                                            <Canvas Width="24" Height="24"><Path Data="M20 6L9 17l-5-5" Stroke="{StaticResource AccentBrush}" StrokeThickness="2"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas>
+                                        </Viewbox>
+                                    </Grid>
                                 </Button>
                                 <Button x:Name="CompactCardPreset" Grid.Column="1" Tag="compact:title" Click="CardPreset_Click"
-                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="16,14">
-                                    <StackPanel Spacing="4">
+                                        Style="{StaticResource SettingsPresetStyle}">
+                                    <Grid Tag="preset-icon-row" ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="4">
                                         <TextBlock Text="Compact" FontWeight="SemiBold" />
-                                        <TextBlock Text="More posters on screen with titles only." FontSize="12"
+                                        <TextBlock Text="More posters on screen with titles only." FontSize="12" LineHeight="19.5" LineStackingStrategy="BlockLineHeight"
                                                    Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                                     </StackPanel>
+                                        <Viewbox Grid.Column="1" Width="16" Height="16" VerticalAlignment="Top" Visibility="Collapsed">
+                                            <Canvas Width="24" Height="24"><Path Data="M20 6L9 17l-5-5" Stroke="{StaticResource AccentBrush}" StrokeThickness="2"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas>
+                                        </Viewbox>
+                                    </Grid>
                                 </Button>
                                 <Button x:Name="CinemaCardPreset" Grid.Row="1" Tag="large:title" Click="CardPreset_Click"
-                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="16,14">
-                                    <StackPanel Spacing="4">
+                                        Style="{StaticResource SettingsPresetStyle}">
+                                    <Grid Tag="preset-icon-row" ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="4">
                                         <TextBlock Text="Cinema" FontWeight="SemiBold" />
-                                        <TextBlock Text="Large posters with titles only." FontSize="12"
+                                        <TextBlock Text="Large posters with titles only." FontSize="12" LineHeight="19.5" LineStackingStrategy="BlockLineHeight"
                                                    Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                                     </StackPanel>
+                                        <Viewbox Grid.Column="1" Width="16" Height="16" VerticalAlignment="Top" Visibility="Collapsed">
+                                            <Canvas Width="24" Height="24"><Path Data="M20 6L9 17l-5-5" Stroke="{StaticResource AccentBrush}" StrokeThickness="2"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas>
+                                        </Viewbox>
+                                    </Grid>
                                 </Button>
                                 <Button x:Name="ArtworkCardPreset" Grid.Row="1" Grid.Column="1" Tag="large:artwork" Click="CardPreset_Click"
-                                        HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="16,14">
-                                    <StackPanel Spacing="4">
+                                        Style="{StaticResource SettingsPresetStyle}">
+                                    <Grid Tag="preset-icon-row" ColumnSpacing="12">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <StackPanel Spacing="4">
                                         <TextBlock Text="Artwork only" FontWeight="SemiBold" />
-                                        <TextBlock Text="Large artwork without caption rows." FontSize="12"
+                                        <TextBlock Text="Large artwork without caption rows." FontSize="12" LineHeight="19.5" LineStackingStrategy="BlockLineHeight"
                                                    Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                                     </StackPanel>
+                                        <Viewbox Grid.Column="1" Width="16" Height="16" VerticalAlignment="Top" Visibility="Collapsed">
+                                            <Canvas Width="24" Height="24"><Path Data="M20 6L9 17l-5-5" Stroke="{StaticResource AccentBrush}" StrokeThickness="2"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas>
+                                        </Viewbox>
+                                    </Grid>
                                 </Button>
                             </Grid>
                         </StackPanel>
@@ -450,7 +513,7 @@
                     <Border Style="{StaticResource SettingsGroupStyle}">
                         <StackPanel Spacing="16">
                             <StackPanel Spacing="4">
-                                <TextBlock Text="Poster cards" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="Poster cards" FontSize="14" FontWeight="SemiBold" />
                                 <TextBlock Text="Fine-tune density and the rows shown below artwork. Changes apply immediately."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                             </StackPanel>
@@ -462,7 +525,8 @@
                                 <StackPanel Spacing="14">
                                     <StackPanel Spacing="6">
                                         <TextBlock Text="Poster size" FontSize="13" FontWeight="SemiBold" />
-                                        <ComboBox x:Name="InterfacePosterSizeCombo" HorizontalAlignment="Stretch"
+                                        <controls:WrapPanel x:Name="InterfacePosterSizeChoices" HorizontalSpacing="8" VerticalSpacing="8" />
+                                        <ComboBox x:Name="InterfacePosterSizeCombo" Visibility="Collapsed" HorizontalAlignment="Stretch"
                                                   SelectionChanged="InterfaceCardOption_SelectionChanged">
                                             <ComboBoxItem Content="Compact" Tag="compact" />
                                             <ComboBoxItem Content="Standard" Tag="standard" />
@@ -471,7 +535,8 @@
                                     </StackPanel>
                                     <StackPanel Spacing="6">
                                         <TextBlock Text="Caption" FontSize="13" FontWeight="SemiBold" />
-                                        <ComboBox x:Name="InterfaceCaptionCombo" HorizontalAlignment="Stretch"
+                                        <controls:WrapPanel x:Name="InterfaceCaptionChoices" HorizontalSpacing="8" VerticalSpacing="8" />
+                                        <ComboBox x:Name="InterfaceCaptionCombo" Visibility="Collapsed" HorizontalAlignment="Stretch"
                                                   SelectionChanged="InterfaceCardOption_SelectionChanged">
                                             <ComboBoxItem Content="Title &amp; metadata" Tag="title_metadata" />
                                             <ComboBoxItem Content="Title only" Tag="title" />
@@ -494,7 +559,7 @@
                     <Border Style="{StaticResource SettingsGroupStyle}">
                         <StackPanel Spacing="14">
                             <StackPanel Spacing="4">
-                                <TextBlock Text="Primary menu" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="Primary menu" FontSize="14" FontWeight="SemiBold" />
                                 <TextBlock Text="Choose the ordered shortcuts at the top of the desktop menu. Home stays available; search and profile controls are fixed."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                             </StackPanel>
@@ -526,77 +591,29 @@
                             </StackPanel>
                         </StackPanel>
                     </Border>
-                </StackPanel>
-            </StackPanel>
-
-            <!-- ===================================================================== -->
-            <!-- ===== Appearance Panel ===== -->
-            <!-- ===================================================================== -->
-            <StackPanel x:Name="AppearancePanel" Spacing="24" Margin="0" Visibility="Collapsed">
-
-                <TextBlock Text="Appearance" FontSize="24" FontWeight="SemiBold"
-                           Foreground="{StaticResource PrimaryTextBrush}" />
-
-                <!-- Theme group -->
-                <Border Style="{StaticResource SettingsGroupStyle}">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Theme" FontSize="16" FontWeight="SemiBold"
-                                   Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Hover to preview. Click to apply and persist the selection to this profile."
-                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
-                                   TextWrapping="Wrap" Margin="0,0,0,8" />
-
-                        <!-- Theme cards grid (built in code-behind) -->
-                        <ItemsControl x:Name="ThemeCardsContainer">
-                            <ItemsControl.ItemsPanel>
-                                <ItemsPanelTemplate>
-                                    <StackPanel Spacing="12" />
-                                </ItemsPanelTemplate>
-                            </ItemsControl.ItemsPanel>
-                        </ItemsControl>
-                    </StackPanel>
-                </Border>
-
-                <Border Style="{StaticResource SettingsGroupStyle}">
-                    <StackPanel Spacing="14">
-                        <TextBlock Text="Date &amp; time" FontSize="16" FontWeight="SemiBold" />
-                        <TextBlock Text="Choose how dates and clock times are displayed across the app. Saved for the active profile." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                        <TextBlock Text="Date format" FontSize="14" FontWeight="Medium" />
-                        <StackPanel x:Name="DateFormatButtons" Orientation="Horizontal" Spacing="8" />
-                        <TextBlock Text="Time format" FontSize="14" FontWeight="Medium" Margin="0,6,0,0" />
-                        <StackPanel x:Name="TimeFormatButtons" Orientation="Horizontal" Spacing="8" />
-                        <TextBlock x:Name="DateTimePreviewText" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,6,0,0" />
-                    </StackPanel>
-                </Border>
-
-                <!-- Current selection -->
-                <Border Style="{StaticResource SettingsGroupStyle}">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Current selection" FontSize="16" FontWeight="SemiBold"
-                                   Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Changes apply immediately and are saved for the active profile."
-                                   FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
-                                   TextWrapping="Wrap" />
-                        <Grid Margin="0,8,0,0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Spacing="4">
-                                <TextBlock x:Name="CurrentThemeName" FontSize="14" FontWeight="Medium"
-                                           Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock x:Name="CurrentThemeDescription" FontSize="13"
-                                           Foreground="{StaticResource SecondaryTextBrush}"
-                                           TextWrapping="Wrap" />
+                    <Border x:Name="TitleArtSettingsGroup" Style="{StaticResource SettingsGroupStyle}"
+                            Visibility="{x:Bind ViewModel.TitleArtSupported, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                        <StackPanel Spacing="16">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Title pages" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="How a movie or show is named at the top of its page." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                             </StackPanel>
-                            <Button Grid.Column="1" Content="Reset to Cinema Dark"
-                                    Style="{StaticResource SecondaryButtonStyle}"
-                                    Padding="12,8" FontSize="14"
-                                    VerticalAlignment="Center"
-                                    Click="ResetTheme_Click" />
-                        </Grid>
-                    </StackPanel>
-                </Border>
+                            <Grid ColumnSpacing="16" Tag="title-art-row">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="4"><TextBlock Text="Show title art" FontSize="14" FontWeight="Medium" /><TextBlock Text="Use logo artwork as the title when available." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" /></StackPanel>
+                                <ToggleSwitch x:Name="TitleArtToggle" Grid.Column="1" IsOn="{x:Bind ViewModel.ShowTitleArt, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanEditTitleArt, Mode=OneWay}" OnContent="" OffContent="" Toggled="TitleArt_Toggled" />
+                            </Grid>
+                            <Grid ColumnSpacing="16" Tag="title-art-row">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel Spacing="4"><TextBlock Text="Apply to all devices" FontSize="14" FontWeight="Medium" /><TextBlock Text="Use this choice on every device signed into this profile." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" /></StackPanel>
+                                <ToggleSwitch x:Name="TitleArtAllDevicesToggle" Grid.Column="1" IsOn="{x:Bind ViewModel.TitleArtAllDevices, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanEditTitleArt, Mode=OneWay}" OnContent="" OffContent="" Toggled="TitleArtAllDevices_Toggled" />
+                            </Grid>
+                            <TextBlock Text="{x:Bind ViewModel.TitleArtErrorMessage, Mode=OneWay}" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" />
+                            <Button Content="Try again" Click="TitleArtRetry_Click" Visibility="{x:Bind ViewModel.TitleArtReadFailed, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
+                            <TextBlock Text="{x:Bind ViewModel.TitleArtExplanation, Mode=OneWay}" FontSize="13" LineHeight="21" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
             </StackPanel>
 
             <!-- ===================================================================== -->
@@ -605,7 +622,7 @@
             <StackPanel x:Name="PlaybackPanel" Spacing="24" Margin="0">
 
                 <StackPanel Spacing="12">
-                    <TextBlock Text="Playback" FontSize="24" FontWeight="SemiBold"
+                    <TextBlock x:Name="PlaybackTitleText" Text="Playback" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock Text="Choose the defaults Silo should use when playback starts."
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
@@ -615,7 +632,7 @@
                 <!-- Defaults group mirrors the current WebUI settings surface. -->
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="0">
-                        <TextBlock Text="Defaults" FontSize="16" FontWeight="SemiBold"
+                        <TextBlock Text="Defaults" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock Text="These preferences apply unless a library or item has a more specific playback choice."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
@@ -731,18 +748,18 @@
                                 <ColumnDefinition Width="Auto" />
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Auto-skip intros" FontSize="14" FontWeight="Medium"
+                                <TextBlock Text="Skip intros" FontSize="14" FontWeight="Medium"
                                             Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Jump past intros automatically when Silo can detect them."
+                                <TextBlock Text="Never offer a skip, ask to skip, or skip automatically with Undo."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
-                            <ToggleSwitch
-                                x:Name="AutoSkipIntroToggle"
+                            <ComboBox
+                                x:Name="IntroSkipModeCombo"
                                 Grid.Column="1"
-                                IsOn="{x:Bind ViewModel.AutoSkipIntro, Mode=TwoWay}"
-                                VerticalAlignment="Center"
-                                OnContent="" OffContent="" />
+                                ItemsSource="{x:Bind ViewModel.IntroModeChoices}"
+                                SelectedItem="{x:Bind ViewModel.IntroSkipMode, Mode=TwoWay}"
+                                VerticalAlignment="Center" />
                         </Grid>
 
                         <Border Style="{StaticResource SettingsSeparator}" />
@@ -827,6 +844,23 @@
 
                         <Border Style="{StaticResource SettingsSeparator}" />
 
+                        <Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2"><TextBlock Text="Show advisory age" FontSize="14" FontWeight="Medium" />
+                                <TextBlock Text="Show recommended minimum viewer ages on item details. This does not change profile access limits."
+                                           TextWrapping="Wrap" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+                            <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ViewModel.ShowAdvisoryAge, Mode=TwoWay}" OnContent="" OffContent="" />
+                        </Grid>
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
+                        <StackPanel Spacing="8">
+                            <ToggleSwitch Header="Play theme music on detail pages" IsOn="{x:Bind ViewModel.ThemeMusicEnabled, Mode=TwoWay}" />
+                            <ToggleSwitch Header="Loop theme music" IsOn="{x:Bind ViewModel.ThemeMusicLoop, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.ThemeMusicEnabled, Mode=OneWay}" />
+                            <TextBlock Text="Optional background audio stops when you start playback, open a trailer or leave the details."
+                                       FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
                         <!-- Next up episodes -->
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -852,10 +886,26 @@
                     </StackPanel>
                 </Border>
 
+                <Border Style="{StaticResource SettingsGroupStyle}"><StackPanel Spacing="16">
+                    <TextBlock Text="Seek controls" FontSize="14" FontWeight="SemiBold" />
+                    <TextBlock Text="Choose how far playback moves when you rewind or fast-forward." FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
+                    <TextBlock Text="{x:Bind ViewModel.SeekSettingsStatus, Mode=OneWay}" FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
+                    <StackPanel Spacing="8"><TextBlock Text="Video" FontSize="14" FontWeight="Medium" />
+                        <ComboBox IsEnabled="{x:Bind ViewModel.SeekSettingsAvailable, Mode=OneWay}" Header="Video rewind (seconds)" ItemsSource="{x:Bind ViewModel.SeekIntervalChoices}" SelectedItem="{x:Bind ViewModel.VideoSkipBackSeconds, Mode=TwoWay}" />
+                        <ComboBox IsEnabled="{x:Bind ViewModel.SeekSettingsAvailable, Mode=OneWay}" Header="Video fast-forward (seconds)" ItemsSource="{x:Bind ViewModel.SeekIntervalChoices}" SelectedItem="{x:Bind ViewModel.VideoSkipForwardSeconds, Mode=TwoWay}" />
+                    </StackPanel>
+                    <StackPanel Spacing="8"><TextBlock Text="Audiobooks" FontSize="14" FontWeight="Medium" />
+                        <ComboBox IsEnabled="{x:Bind ViewModel.SeekSettingsAvailable, Mode=OneWay}" Header="Audiobook rewind (seconds)" ItemsSource="{x:Bind ViewModel.SeekIntervalChoices}" SelectedItem="{x:Bind ViewModel.AudiobookSkipBackSeconds, Mode=TwoWay}" />
+                        <ComboBox IsEnabled="{x:Bind ViewModel.SeekSettingsAvailable, Mode=OneWay}" Header="Audiobook fast-forward (seconds)" ItemsSource="{x:Bind ViewModel.SeekIntervalChoices}" SelectedItem="{x:Bind ViewModel.AudiobookSkipForwardSeconds, Mode=TwoWay}" />
+                        <Button IsEnabled="{x:Bind ViewModel.SeekSettingsAvailable, Mode=OneWay}" Content="Import this PC's old audiobook intervals" Command="{x:Bind ViewModel.ImportLegacySeekIntervalsCommand}" />
+
+                    </StackPanel>
+                </StackPanel></Border>
+
                 <!-- Native-only capability, kept separate so the WebUI defaults card remains identical. -->
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="16">
-                        <TextBlock Text="Desktop playback" FontSize="16" FontWeight="SemiBold"
+                        <TextBlock Text="Desktop playback" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -901,7 +951,7 @@
 
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="0">
-                        <TextBlock Text="Browsing" FontSize="16" FontWeight="SemiBold"
+                        <TextBlock Text="Browsing" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock Text="These preferences apply to this profile on the current device."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
@@ -960,7 +1010,7 @@
             <StackPanel x:Name="SubtitlesPanel" Spacing="24" Margin="0" Visibility="Collapsed">
 
                 <StackPanel Spacing="12">
-                    <TextBlock Text="Subtitles" FontSize="24" FontWeight="SemiBold"
+                    <TextBlock x:Name="SubtitlesTitleText" Text="Subtitles" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock Text="Choose when subtitles appear and how they look during playback."
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
@@ -969,7 +1019,7 @@
 
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="0">
-                        <TextBlock Text="Behavior" FontSize="16" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Behavior" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock Text="These preferences decide which subtitles Silo chooses by default."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" Margin="0,4,0,16" />
                         <Grid>
@@ -1006,7 +1056,7 @@
                 <!-- Preview -->
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="8">
-                        <TextBlock Text="Preview" FontSize="16" FontWeight="SemiBold"
+                        <TextBlock Text="Preview" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock Text="This sample reflects the current subtitle appearance."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
@@ -1053,7 +1103,7 @@
                 <!-- Text group -->
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="0">
-                        <TextBlock Text="Text" FontSize="16" FontWeight="SemiBold"
+                        <TextBlock Text="Text" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock Text="Adjust the look and readability of subtitle text."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
@@ -1110,6 +1160,12 @@
 
                         <Border Style="{StaticResource SettingsSeparator}" />
 
+                        <Slider Header="Text opacity (%)" Minimum="1" Maximum="100" StepFrequency="1" Width="260"
+                                HorizontalAlignment="Left" Value="{x:Bind ViewModel.SubTextOpacity, Mode=TwoWay}"
+                                ValueChanged="SubtitleTextOpacity_Changed" />
+
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
                         <!-- Text outline -->
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -1148,7 +1204,7 @@
                 <!-- Background group -->
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="0">
-                        <TextBlock Text="Background &amp; Position" FontSize="16" FontWeight="SemiBold"
+                        <TextBlock Text="Background &amp; Position" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock Text="Tune subtitle placement and contrast."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
@@ -1240,8 +1296,8 @@
             <!-- ===================================================================== -->
             <!-- ===== Home Screen Panel ===== -->
             <!-- ===================================================================== -->
-            <StackPanel x:Name="HomeScreenPanel" Spacing="24" Margin="0" Visibility="Collapsed">
-
+            <ContentControl x:Name="HomeScreenPanel" HorizontalContentAlignment="Stretch" Margin="0" Visibility="Collapsed">
+              <StackPanel Spacing="24">
                 <StackPanel Spacing="12">
                     <TextBlock Text="Home screen" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
@@ -1250,10 +1306,16 @@
                                TextWrapping="Wrap" />
                 </StackPanel>
 
+                <Border Style="{StaticResource SettingsGroupStyle}"><StackPanel Spacing="12">
+                    <TextBlock Text="Home preferences" FontSize="14" FontWeight="SemiBold" />
+                    <ToggleSwitch Header="Hide watched items" IsOn="{x:Bind ViewModel.HideWatchedItems, Mode=TwoWay}" />
+                    <TextBlock Text="Hide watched items from most Home sections. Featured and watch-history sections keep them." TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" />
+                </StackPanel></Border>
+
                 <!-- Scope group -->
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="0">
-                        <TextBlock Text="Scope" FontSize="16" FontWeight="SemiBold"
+                        <TextBlock Text="Scope" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock Text="Pick the home screen or library-specific view you want to customize."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
@@ -1282,7 +1344,7 @@
                 <!-- Sections group -->
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="8">
-                        <TextBlock Text="Sections" FontSize="16" FontWeight="SemiBold"
+                        <TextBlock Text="Sections" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock Text="Add, reorder, or hide sections. Drag to change order."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
@@ -1321,23 +1383,33 @@
                     </StackPanel>
                 </Border>
 
+                <Border Style="{StaticResource SettingsGroupStyle}"><StackPanel Spacing="12">
+                    <TextBlock Text="Export and import" FontSize="14" FontWeight="SemiBold" />
+                    <TextBlock Text="Move saved layout overrides between profiles or servers. Private history and credentials are excluded." TextWrapping="Wrap" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                    <controls:WrapPanel HorizontalSpacing="8" VerticalSpacing="8">
+                        <Button x:Name="HomeExportButton" Content="Export layout" Click="HomeExport_Click" Style="{StaticResource SecondaryButtonStyle}" />
+                        <Button x:Name="HomeImportButton" Content="Import layout" Click="HomeImport_Click" Style="{StaticResource SecondaryButtonStyle}" />
+                    </controls:WrapPanel>
+                </StackPanel></Border>
             </StackPanel>
+            </ContentControl>
 
             <!-- ===================================================================== -->
             <!-- ===== Card Overlays Panel ===== -->
             <!-- ===================================================================== -->
             <StackPanel x:Name="CardOverlaysPanel" Spacing="24" Margin="0" Visibility="Collapsed">
                 <StackPanel Spacing="8">
-                    <TextBlock Text="Card Overlays" FontSize="24" FontWeight="SemiBold" />
+                    <TextBlock x:Name="CardOverlaysTitleText" Text="Card Overlays" FontSize="24" FontWeight="SemiBold" />
                     <TextBlock Text="Choose which badges appear on poster cards, where they sit, and how they look. Inspired by Kometa." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 </StackPanel>
                 <Border x:Name="CardOverlaysDisabledBanner" Style="{StaticResource SettingsGroupStyle}" Visibility="Collapsed">
                     <TextBlock Text="Card overlays have been disabled by your server administrator." TextWrapping="Wrap" />
                 </Border>
+                <StackPanel x:Name="CardOverlaysGeneralHost" Spacing="12" />
                 <StackPanel x:Name="CardOverlaysContentHost" Spacing="24">
                     <Border Style="{StaticResource SettingsGroupStyle}">
                         <StackPanel Spacing="14">
-                            <TextBlock Text="Preview" FontSize="18" FontWeight="SemiBold" />
+                            <TextBlock Text="Preview" FontSize="14" FontWeight="SemiBold" />
                             <TextBlock Text="Live preview of your current overlay configuration." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                             <Border Width="178" Height="267" HorizontalAlignment="Center" CornerRadius="12" Background="#30394A" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
                                 <Grid Margin="8">
@@ -1354,6 +1426,8 @@
                                 <Button x:Name="OverlayShowPreviewButton" Content="Show" Tag="show"
                                         Style="{StaticResource InactiveTabStyle}" Padding="12,5"
                                         Click="OverlayPreviewVariant_Click" />
+                                <Button x:Name="OverlayRequestedPreviewButton" Content="Requested title" Tag="requested" Visibility="Collapsed"
+                                        Style="{StaticResource InactiveTabStyle}" Padding="12,5" Click="OverlayPreviewVariant_Click" />
                             </StackPanel>
                         </StackPanel>
                     </Border>
@@ -1368,14 +1442,14 @@
                     <StackPanel x:Name="CardOverlayStylePanel" Spacing="18" Visibility="Collapsed">
                         <Border Style="{StaticResource SettingsGroupStyle}">
                             <StackPanel Spacing="12">
-                                <TextBlock Text="Preset" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="Preset" FontSize="14" FontWeight="SemiBold" />
                                 <TextBlock Text="A preset controls the base appearance of every badge. You can override the accent color of individual badges in the Overlays tab." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                                 <controls:WrapPanel x:Name="CardOverlayPresetHost" HorizontalSpacing="8" VerticalSpacing="8" />
                             </StackPanel>
                         </Border>
                         <Border Style="{StaticResource SettingsGroupStyle}">
                             <StackPanel Spacing="8">
-                                <TextBlock Text="How styling works" FontSize="18" FontWeight="SemiBold" />
+                                <TextBlock Text="How styling works" FontSize="14" FontWeight="SemiBold" />
                                 <TextBlock Text="Where to find what." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                                 <TextBlock Text="• Preset sets the badge shape, background, font, and whether icons show by default.&#x0a;• Accent color (per overlay) tints that badge — gold for IMDb, red for RT, etc.&#x0a;• Icon toggle (per overlay) overrides the preset's icon default for a single overlay.&#x0a;• Position picks which corner the badge sits in. Multiple badges in the same corner stack vertically."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" LineHeight="22" />
@@ -1388,43 +1462,57 @@
             <!-- ===================================================================== -->
             <!-- ===== Personalize Panel ===== -->
             <!-- ===================================================================== -->
+            <StackPanel x:Name="RequestsPanel" Spacing="24" Margin="0" Visibility="Collapsed">
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Watchlist requests" FontSize="14" FontWeight="SemiBold" />
+                        <TextBlock Text="Automatically request titles outside your library when you add them to your watchlist. Turning this off keeps existing requests." FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <ToggleSwitch x:Name="WatchlistAutoRequestToggle" Header="Request titles added to watchlist" Toggled="WatchlistAutoRequestToggle_Toggled" Visibility="Collapsed" />
+                        <TextBlock x:Name="WatchlistRequestSettingStatus" FontSize="13" TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
             <StackPanel x:Name="PersonalizePanel" Spacing="24" Margin="0" Visibility="Collapsed">
                 <StackPanel Spacing="8">
-                    <TextBlock Text="Personalize" FontSize="24" FontWeight="SemiBold" />
-                    <TextBlock Text="Pick titles you love so your home, recommendations, and For You rows reflect your taste." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                    <TextBlock x:Name="PersonalizeTitleText" Text="Personalize" FontSize="20" FontWeight="SemiBold" />
+                    <TextBlock Text="Pick titles you love so your home, recommendations, and &quot;For You&quot; rows reflect your taste." FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 </StackPanel>
-                <Border Style="{StaticResource SettingsGroupStyle}">
+                <Border Style="{StaticResource PersonalizeGroupStyle}">
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                        <Border Width="48" Height="48" CornerRadius="24" Background="{StaticResource AccentBackgroundBrush}">
+                        <Border x:Name="PersonalizeTasteIcon" Width="48" Height="48" CornerRadius="24" Background="{StaticResource AccentBackgroundBrush}">
                             <FontIcon Glyph="&#xE735;" FontSize="24" Foreground="{StaticResource AccentBrush}" />
                         </Border>
-                        <StackPanel Grid.Column="1" Spacing="10">
-                            <TextBlock Text="Refine your taste profile" FontSize="17" FontWeight="SemiBold" />
-                            <TextBlock Text="Browse popular titles and pick the ones you love. Already-favorited titles are marked, so you can add to or review your picks any time." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                            <Button Content="Open the picker  →" Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Left" Click="OpenTasteSeed_Click" />
+                        <StackPanel Grid.Column="1" Spacing="12">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Refine your taste profile" FontSize="16" LineHeight="24" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" />
+                                <TextBlock Text="Browse popular titles and pick the ones you love. Already-favorited titles will be marked, so you can add to (or trim) your picks any time." FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Button x:Name="PersonalizePickerButton" Content="Open the picker  →" Style="{StaticResource AccentButtonStyle}" Height="36" FontSize="14" FontWeight="Medium" Padding="16,8" HorizontalAlignment="Left" Click="OpenTasteSeed_Click" />
                         </StackPanel>
                     </Grid>
                 </Border>
-                <Border Style="{StaticResource SettingsGroupStyle}">
+                <Border Style="{StaticResource PersonalizeGroupStyle}">
                     <Grid ColumnSpacing="16">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                        <Border Width="48" Height="48" CornerRadius="24" Background="{StaticResource AccentBackgroundBrush}">
+                        <Border x:Name="PersonalizeTourIcon" Width="48" Height="48" CornerRadius="24" Background="{StaticResource AccentBackgroundBrush}">
                             <FontIcon Glyph="&#xE787;" FontSize="24" Foreground="{StaticResource AccentBrush}" />
                         </Border>
-                        <StackPanel Grid.Column="1" Spacing="10">
-                            <TextBlock Text="Replay the feature tour" FontSize="17" FontWeight="SemiBold" />
-                            <TextBlock Text="A two-minute walkthrough of what this server can do — watch together, requests, watchlists, and the playback settings worth knowing about."
-                                       FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        <StackPanel Grid.Column="1" Spacing="12">
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Replay the feature tour" FontSize="16" LineHeight="24" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" />
+                                <TextBlock Text="A two-minute walkthrough of what this server can do — watch together, requests, watchlists, and the playback settings worth knowing about."
+                                           FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
                             <Button x:Name="StartFeatureTourButton" Content="Start the tour"
-                                    Style="{StaticResource OutlineButtonStyle}" HorizontalAlignment="Left"
+                                    Style="{StaticResource OutlineButtonStyle}" Height="36" FontSize="14" FontWeight="Medium" Padding="16,8" HorizontalAlignment="Left"
                                     Click="StartFeatureTour_Click" />
                         </StackPanel>
                     </Grid>
                 </Border>
-                <StackPanel Orientation="Horizontal" Spacing="8" Margin="8,0">
+                <StackPanel x:Name="PersonalizeFavoritesRow" Orientation="Horizontal" Spacing="8" Margin="8,0">
                     <FontIcon Glyph="&#xEB51;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
-                    <TextBlock x:Name="PersonalizeFavoritesText" Text="Loading favorites…" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                    <TextBlock x:Name="PersonalizeFavoritesText" Text="Loading favorites…" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" />
                 </StackPanel>
             </StackPanel>
 
@@ -1446,7 +1534,7 @@
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="20">
                         <StackPanel Spacing="4">
-                            <TextBlock Text="New import" FontSize="18" FontWeight="SemiBold"
+                            <TextBlock Text="New import" FontSize="14" FontWeight="SemiBold"
                                        Foreground="{StaticResource PrimaryTextBrush}" />
                             <TextBlock Text="Choose a source, sign in, and pick a profile to receive the watch history."
                                        FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
@@ -1795,7 +1883,7 @@
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="16">
                         <StackPanel Spacing="4">
-                            <TextBlock x:Name="RunSummaryTitle" Text="Latest import" FontSize="18" FontWeight="SemiBold"
+                            <TextBlock x:Name="RunSummaryTitle" Text="Latest import" FontSize="14" FontWeight="SemiBold"
                                        Foreground="{StaticResource PrimaryTextBrush}" />
                             <TextBlock x:Name="RunSummarySubtitle" Text="Results from the most recent import run."
                                        FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
@@ -1810,7 +1898,7 @@
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="12">
                         <StackPanel Spacing="4">
-                            <TextBlock Text="Import history" FontSize="18" FontWeight="SemiBold"
+                            <TextBlock Text="Import history" FontSize="14" FontWeight="SemiBold"
                                        Foreground="{StaticResource PrimaryTextBrush}" />
                             <TextBlock Text="Select a past run to view its details above."
                                        FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
@@ -1972,7 +2060,7 @@
                         </Grid>
                         <Button Content="Save connection" HorizontalAlignment="Right" Style="{StaticResource AccentButtonStyle}"
                                 Click="WebhookSaveConnection_Click" />
-                        <TextBlock Text="Profile mapping" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="Profile mapping" FontSize="14" FontWeight="SemiBold" />
                         <TextBlock Text="Map each external user to a Silo profile. Unmapped users are ignored." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                         <StackPanel x:Name="WebhookActorsHost" Spacing="8" />
                         <Button x:Name="WebhookSaveActorsButton" Content="Save mappings" HorizontalAlignment="Right"
@@ -1982,7 +2070,7 @@
                     </Border>
                     <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="16">
-                        <TextBlock Text="Recent deliveries" FontSize="16" FontWeight="SemiBold" />
+                        <TextBlock Text="Recent deliveries" FontSize="14" FontWeight="SemiBold" />
                         <TextBlock Text="Latest webhook requests for this connection." FontSize="12"
                                    Foreground="{StaticResource SecondaryTextBrush}" />
                         <Grid ColumnSpacing="8">
@@ -2040,102 +2128,6 @@
                            Visibility="Collapsed" />
             </StackPanel>
 
-            <!-- ===== Theme Editor Panel ===== -->
-            <StackPanel x:Name="ThemeEditorPanel" Spacing="24" Margin="0" Visibility="Collapsed">
-                <StackPanel Spacing="4">
-                    <Grid>
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                        <StackPanel>
-                            <TextBlock Text="Theme Editor" FontSize="24" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
-                            <TextBlock Text="Customize colors, fonts, and styles. Changes are layered on top of your active theme."
-                                       FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                            <Button Content="Import" Style="{StaticResource SecondaryButtonStyle}" Click="ThemeImport_Click" />
-                            <Button Content="Export" Style="{StaticResource SecondaryButtonStyle}" Click="ThemeExport_Click" />
-                        </StackPanel>
-                    </Grid>
-                </StackPanel>
-
-                <!-- Preview -->
-                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Preview" FontSize="14" FontWeight="Medium"
-                                   Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Live preview of your customizations." FontSize="12"
-                                   Foreground="{StaticResource SecondaryTextBrush}" />
-                        <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                CornerRadius="12" Padding="20">
-                            <StackPanel Spacing="12">
-                                <TextBlock Text="Movie Night" FontSize="24" FontWeight="Bold"
-                                           Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="A preview of how text, colors, and surfaces look with your current theme."
-                                           FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <StackPanel Orientation="Horizontal" Spacing="8">
-                                    <Button Content="Primary" Style="{StaticResource AccentButtonStyle}" Padding="16,8" CornerRadius="20" />
-                                    <Button Content="Secondary" Style="{StaticResource OutlineButtonStyle}" Padding="16,8" CornerRadius="20" />
-                                </StackPanel>
-                                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="12">
-                                    <TextBlock Text="Surface panel with muted text"
-                                               FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
-                                </Border>
-                            </StackPanel>
-                        </Border>
-                        <Button x:Name="ThemeResetOverridesButton" Content="Reset all customizations"
-                                HorizontalAlignment="Right" Style="{StaticResource GhostButtonStyle}"
-                                Click="ThemeResetOverrides_Click" />
-                    </StackPanel>
-                </Border>
-
-                <StackPanel Orientation="Horizontal" Spacing="4">
-                    <Button x:Name="ThemeTokensTab" Content="Tokens" Tag="tokens"
-                            Style="{StaticResource ActiveTabStyle}" Click="ThemeEditorSectionTab_Click" />
-                    <Button x:Name="ThemeCssTab" Content="Custom CSS" Tag="css"
-                            Style="{StaticResource InactiveTabStyle}" Click="ThemeEditorSectionTab_Click" />
-                    <Button x:Name="ThemeCatalogTab" Content="Catalog" Tag="catalog"
-                            Style="{StaticResource InactiveTabStyle}" Click="ThemeEditorSectionTab_Click" />
-                </StackPanel>
-
-                <Border x:Name="ThemeTokensPanel" Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
-                    <StackPanel Spacing="12">
-                        <TextBlock Text="Token Overrides" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Override individual design tokens. Changes layer on top of your active theme and apply instantly."
-                                   FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
-                        <StackPanel x:Name="ThemeTokenOverridesHost" Spacing="10" />
-                    </StackPanel>
-                </Border>
-
-                <Border x:Name="ThemeCssPanel" Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16" Visibility="Collapsed">
-                    <StackPanel Spacing="12">
-                        <TextBlock Text="Custom CSS" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Write arbitrary CSS for advanced customization. CSS is saved to your Silo profile for the WebUI."
-                                   FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
-                        <TextBox x:Name="ThemeCustomCssBox" AcceptsReturn="True" TextWrapping="NoWrap"
-                                 MinHeight="300" FontFamily="Cascadia Mono" FontSize="13"
-                                 PlaceholderText="/* Custom CSS */" TextChanged="ThemeCustomCssBox_TextChanged"
-                                 AutomationProperties.Name="Custom CSS" />
-                        <TextBlock x:Name="ThemeCustomCssStatus" Text="Changes save automatically."
-                                   FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
-                    </StackPanel>
-                </Border>
-
-                <Border x:Name="ThemeCatalogPanel" Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16" Visibility="Collapsed">
-                    <StackPanel Spacing="12">
-                        <Grid>
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <StackPanel>
-                                <TextBlock Text="Community Themes" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Browse and install themes created by the community."
-                                           FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" />
-                            </StackPanel>
-                            <Button x:Name="ThemeCatalogRefreshButton" Grid.Column="1" Content="Refresh"
-                                    Style="{StaticResource SecondaryButtonStyle}" Click="ThemeCatalogRefresh_Click" />
-                        </Grid>
-                        <StackPanel x:Name="CommunityThemesHost" Spacing="10" />
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-
             <!-- ===== Your Devices Panel ===== -->
             <StackPanel x:Name="DevicesPanel" Spacing="20" Margin="0" Visibility="Collapsed">
                 <StackPanel Spacing="8">
@@ -2151,7 +2143,7 @@
             <!-- ===== Connect Apps Panel ===== -->
             <StackPanel x:Name="ConnectAppsPanel" Spacing="20" Margin="0" Visibility="Collapsed">
                 <StackPanel Spacing="8">
-                    <TextBlock Text="Connect Apps" FontSize="24" FontWeight="SemiBold"
+                    <TextBlock x:Name="ConnectAppsTitleText" Text="Connect Apps" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock Text="Exactly what to type on a sign-in screen. Pick the kind of app you're using — the credentials are different for each."
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
@@ -2197,15 +2189,16 @@
 
             <!-- ===== Accessibility Panel ===== -->
             <StackPanel x:Name="AccessibilityPanel" Spacing="24" Margin="0" Visibility="Collapsed">
+
                 <StackPanel Spacing="12">
-                    <TextBlock Text="Accessibility" FontSize="24" FontWeight="SemiBold"
+                    <TextBlock x:Name="AccessibilityTitleText" Text="Accessibility" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
                 </StackPanel>
 
                 <!-- Readability -->
                 <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
                     <StackPanel Spacing="12">
-                        <TextBlock Text="Readability" FontSize="16" FontWeight="SemiBold"
+                        <TextBlock Text="Readability" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock Text="Increase text size, strengthen type weight, and raise contrast for clearer reading."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
@@ -2244,6 +2237,18 @@
                         </Border>
                     </StackPanel>
                 </Border>
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="14">
+                        <TextBlock Text="Date &amp; time" FontSize="14" FontWeight="SemiBold" />
+                        <TextBlock Text="Choose how dates and clock times are displayed across the app. Saved for the active profile." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        <TextBlock Text="Date format" FontSize="14" FontWeight="Medium" />
+                        <StackPanel x:Name="DateFormatButtons" Orientation="Horizontal" Spacing="8" />
+                        <TextBlock Text="Time format" FontSize="14" FontWeight="Medium" Margin="0,6,0,0" />
+                        <StackPanel x:Name="TimeFormatButtons" Orientation="Horizontal" Spacing="8" />
+                        <TextBlock x:Name="DateTimePreviewText" TextWrapping="Wrap" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" Margin="0,6,0,0" />
+                    </StackPanel>
+                </Border>
+
             </StackPanel>
 
             <StackPanel x:Name="SessionsPanel" Spacing="24" Margin="0" Visibility="Collapsed">

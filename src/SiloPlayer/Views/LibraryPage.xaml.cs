@@ -74,6 +74,9 @@ public sealed partial class LibraryPage : Page,
     private sealed class LibraryViewState
     {
         public string Tab { get; set; } = "Recommended";
+        public string Axis { get; set; } = "books";
+        public string Match { get; set; } = "all";
+        public List<QueryGroup> QueryGroups { get; set; } = [];
         public string Sort { get; set; } = "title";
         public string Order { get; set; } = "asc";
         public string? MediaType { get; set; }
@@ -116,7 +119,7 @@ public sealed partial class LibraryPage : Page,
 
     private sealed record SortOption(string Label, string Value, string DefaultOrder);
 
-    private static readonly Dictionary<int, LibraryViewState> _viewStateByLibrary = new();
+
 
     public LibraryViewModel ViewModel { get; }
     // XAML can raise SelectionChanged while InitializeComponent is still
@@ -346,7 +349,7 @@ public sealed partial class LibraryPage : Page,
 
         if (library != null)
         {
-            var sameLibrary = _activeLibraryId == library.Id && ViewModel.Library?.Id == library.Id;
+            var sameLibrary = _activeLibraryId == library.Id && ViewModel.Library?.Id == library.Id && _pageStateContext == _stateSettings.CaptureContext();
             if (!sameLibrary)
             {
                 ResetRecommendedContent();
@@ -378,8 +381,10 @@ public sealed partial class LibraryPage : Page,
 
             // B42: Restore previously-viewed tab + filters for this library if any.
             // Falls back to fresh defaults on first visit.
-            _viewStateByLibrary.TryGetValue(library.Id, out var state);
-            state ??= new LibraryViewState();
+            var state = await RestoreLibraryStateAsync(library.Id);
+            await CatalogSortChoices.LoadShownSourcesAsync(App.Services.GetRequiredService<CatalogApi>());
+            if (!_isNavigated || _activeLibraryId != library.Id || _pageStateContext != _stateSettings.CaptureContext()) return;
+            _currentAudiobookAxis = library.Type is "audiobook" or "audiobooks" ? state.Axis : "books";
             if (requestedTab is "Recommended" or "Library" or "Collections")
                 state.Tab = requestedTab;
             if (!string.IsNullOrWhiteSpace(requestedGenre))
@@ -461,8 +466,20 @@ public sealed partial class LibraryPage : Page,
             ViewModel.SelectedFourK = state.FourK;
             ViewModel.SelectedHdr = state.Hdr;
             ViewModel.SelectedDolbyVision = state.DolbyVision;
+            ViewModel.AdvancedGroups.Clear();
+            foreach (var saved in state.QueryGroups)
+            {
+                var restoredGroup = new EditableQueryGroup { Match = saved.Match };
+                foreach (var rule in saved.Rules) restoredGroup.Rules.Add(rule);
+                ViewModel.AdvancedGroups.Add(restoredGroup);
+            }
+            if (ViewModel.AdvancedGroups.Count == 0) ViewModel.AdvancedGroups.Add(new());
+            ViewModel.UseAdvancedRules = state.QueryGroups.Any(group => group.Rules.Count > 0);
+            ViewModel.AdvancedRulesMatch = state.Match;
+            if (ViewModel.UseAdvancedRules) { BuildAdvancedRulesPanel(); GuidedFiltersScroll.Visibility = Visibility.Collapsed; AdvancedFiltersScroll.Visibility = Visibility.Visible; }
             _suppressFilterEvents = false;
-            ActiveFiltersBar.Visibility = Visibility.Collapsed;
+            UpdateAudiobookAxisButtons();
+            UpdateActiveFilterBadges();
 
             ShowTab(state.Tab);
 
@@ -476,6 +493,7 @@ public sealed partial class LibraryPage : Page,
 
             if (state.Tab == "Library")
             {
+                if (_currentAudiobookAxis != "books") { await LoadAudiobookGroupsAsync(true); return; }
                 await EnsureLibraryCatalogLoadedAsync();
                 await FillViewportAsync();
                 QueueRenderVirtualGrid(force: true);
@@ -492,6 +510,8 @@ public sealed partial class LibraryPage : Page,
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+        FlushLibraryStateSave();
+        foreach (var owner in _facetOwners.Values) owner.Cancel(); _facetOwners.Clear();
         _isNavigated = false;
         _uiCustomizationService.Changed -= UICustomization_Changed;
         UnregisterMediaMessages();
@@ -767,6 +787,9 @@ public sealed partial class LibraryPage : Page,
             "rating" => "rating_imdb",
             _ => selectedSort,
         };
+        var shownRatings = App.Services.GetRequiredService<CatalogApi>().CachedShownRatingSources;
+        options.RemoveAll(option => !CatalogRatingSortPolicy.IsAvailable(option.Value, shownRatings)
+            || !CatalogRatingSortPolicy.AppliesToScope(option.Value, scope));
         var selected = options.FirstOrDefault(option => option.Value == normalized) ?? options[0];
         SortComboBox.DisplayMemberPath = nameof(SortOption.Label);
         SortComboBox.SelectedValuePath = nameof(SortOption.Value);
@@ -882,9 +905,12 @@ public sealed partial class LibraryPage : Page,
     private void SaveViewState(string tab)
     {
         if (ViewModel.Library == null) return;
-        _viewStateByLibrary[ViewModel.Library.Id] = new LibraryViewState
+        var state = new LibraryViewState
         {
             Tab = tab,
+            Axis = _currentAudiobookAxis,
+            Match = ViewModel.UseAdvancedRules ? ViewModel.AdvancedRulesMatch : "all",
+            QueryGroups = ViewModel.UseAdvancedRules ? ViewModel.AdvancedGroups.Select(group => new QueryGroup { Match = group.Match, Rules = group.Rules.ToList() }).ToList() : [],
             Sort = ViewModel.SelectedSort ?? "title",
             Order = ViewModel.SelectedOrder ?? "asc",
             MediaType = ViewModel.SelectedType,
@@ -916,6 +942,7 @@ public sealed partial class LibraryPage : Page,
             Hdr = ViewModel.SelectedHdr,
             DolbyVision = ViewModel.SelectedDolbyVision,
         };
+        ScheduleLibraryStateSave(ViewModel.Library.Id, state);
     }
 
     private void ShowTab(string tag)
@@ -1967,6 +1994,7 @@ public sealed partial class LibraryPage : Page,
             return;
 
         _currentAudiobookAxis = axis;
+        SaveViewState(_currentTab);
         UpdateAudiobookAxisButtons();
         var showBooks = axis == "books";
         LibraryContentArea.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
@@ -2033,7 +2061,7 @@ public sealed partial class LibraryPage : Page,
 
     private async Task LoadAudiobookGroupsAsync(bool reset)
     {
-        if (ViewModel.Library == null || _currentAudiobookAxis == "books" || _isLoadingAudiobookGroups)
+        if (ViewModel.Library == null || _currentAudiobookAxis == "books" || (_isLoadingAudiobookGroups && !reset))
             return;
 
         if (reset)
@@ -2049,7 +2077,11 @@ public sealed partial class LibraryPage : Page,
         }
 
         _audiobookGroupLoadCts ??= new CancellationTokenSource();
-        var ct = _audiobookGroupLoadCts.Token;
+        var owner = _audiobookGroupLoadCts;
+        var ct = owner.Token;
+        var axis = _currentAudiobookAxis;
+        var libraryId = ViewModel.Library.Id;
+        var search = AudiobookGroupSearchBox.Text;
         _isLoadingAudiobookGroups = true;
         AudiobookGroupsLoading.IsActive = true;
         AudiobookGroupsLoading.Visibility = reset ? Visibility.Collapsed : Visibility.Visible;
@@ -2058,14 +2090,14 @@ public sealed partial class LibraryPage : Page,
         {
             var sort = (AudiobookGroupSortComboBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "name";
             var response = await App.Services.GetRequiredService<CatalogApi>().GetAudiobookGroupsAsync(
-                ViewModel.Library.Id,
-                _currentAudiobookAxis,
+                libraryId,
+                axis,
                 sort,
-                AudiobookGroupSearchBox.Text,
+                search,
                 offset: _audiobookGroupsOffset,
                 includeTotal: reset,
                 ct: ct);
-            if (ct.IsCancellationRequested) return;
+            if (ct.IsCancellationRequested || !ReferenceEquals(_audiobookGroupLoadCts, owner) || ViewModel.Library?.Id != libraryId || axis != _currentAudiobookAxis) return;
 
             if (reset)
             {
@@ -2074,11 +2106,11 @@ public sealed partial class LibraryPage : Page,
                 AudiobookGroupsHost.Children.Clear();
             }
             foreach (var group in response.Groups)
-                AudiobookGroupsHost.Children.Add(CreateAudiobookGroupCard(group, _currentAudiobookAxis == "series"));
+                AudiobookGroupsHost.Children.Add(CreateAudiobookGroupCard(group, axis == "series"));
 
             _audiobookGroupsOffset += response.Groups.Count;
             _audiobookGroupsHasMore = response.HasMore;
-            var noun = AudiobookGroupNoun(_currentAudiobookAxis);
+            var noun = AudiobookGroupNoun(axis);
             AudiobookGroupCountText.Text = _audiobookGroupsTotalExact
                 ? $"{(_audiobookGroupsOffset == _audiobookGroupsTotal ? $"{_audiobookGroupsTotal:N0}" : $"{_audiobookGroupsOffset:N0} of {_audiobookGroupsTotal:N0}")} {noun}"
                 : $"{_audiobookGroupsOffset:N0}{(_audiobookGroupsHasMore ? "+" : "")} {noun}";
@@ -2092,15 +2124,19 @@ public sealed partial class LibraryPage : Page,
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
+            if (!ReferenceEquals(_audiobookGroupLoadCts, owner) || ct.IsCancellationRequested) return;
             if (reset) AudiobookGroupsHost.Children.Clear();
             AudiobookGroupsEmpty.Text = $"Could not load {AudiobookGroupNoun(_currentAudiobookAxis)}: {ex.Message}";
             AudiobookGroupsEmpty.Visibility = Visibility.Visible;
         }
         finally
         {
-            _isLoadingAudiobookGroups = false;
-            AudiobookGroupsLoading.IsActive = false;
-            AudiobookGroupsLoading.Visibility = Visibility.Collapsed;
+            if (ReferenceEquals(_audiobookGroupLoadCts, owner))
+            {
+                _isLoadingAudiobookGroups = false;
+                AudiobookGroupsLoading.IsActive = false;
+                AudiobookGroupsLoading.Visibility = Visibility.Collapsed;
+            }
         }
     }
 
@@ -2592,8 +2628,8 @@ public sealed partial class LibraryPage : Page,
 
     private GridLayoutInfo GetGridLayout()
     {
-        const double columnGap = 12;
-        const double rowGap = 16;
+        var columnGap = _uiCustomizationService.CardPresentation.PosterSize == "large" ? 16d : 12d;
+        var rowGap = columnGap;
         var availableWidth = Math.Max(
             120,
             GetLibraryViewportWidth());
@@ -3520,7 +3556,7 @@ public sealed partial class LibraryPage : Page,
             });
         }
 
-        var wrapPanel = new WrapPanel { HorizontalSpacing = 12, VerticalSpacing = 16 };
+        var wrapPanel = new WrapPanel { HorizontalSpacing = _uiCustomizationService.CardPresentation.PosterSize == "large" ? 16 : 12, VerticalSpacing = _uiCustomizationService.CardPresentation.PosterSize == "large" ? 16 : 12 };
         foreach (var collection in section.Collections)
             wrapPanel.Children.Add(CreateCollectionCard(collection, cardWidth));
 
@@ -3540,14 +3576,9 @@ public sealed partial class LibraryPage : Page,
             Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardBackgroundBrush"]
         };
 
-        var posterPlaceholder = new FontIcon
-        {
-            Glyph = "\uE8F1",
-            FontSize = 32,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center
-        };
+        var posterPlaceholder = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Spacing = 12, Margin = new Thickness(12) };
+        if (collection.IsUserCollection) posterPlaceholder.Children.Add(new FontIcon { Glyph = "\uE77B", FontSize = 32 });
+        posterPlaceholder.Children.Add(new TextBlock { Text = collection.Title, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center, FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         posterBorder.Child = posterPlaceholder;
 
         if (!string.IsNullOrEmpty(collection.PosterUrl))
@@ -3603,7 +3634,7 @@ public sealed partial class LibraryPage : Page,
             content.Children.Add(new TextBlock
             {
                 Text = "User collection",
-                FontSize = 11,
+                FontSize = 12,
                 Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
                 Margin = new Thickness(2, 0, 2, 0)
             });
@@ -3713,7 +3744,7 @@ public sealed partial class LibraryPage : Page,
                 >= 1280 => 8, >= 1024 => 7, >= 768 => 5, >= 640 => 4, _ => 3,
             },
         };
-        return Math.Max(96, (contentWidth - (columns - 1) * 12) / columns);
+        return Math.Max(96, (contentWidth - (columns - 1) * (_uiCustomizationService.CardPresentation.PosterSize == "large" ? 16 : 12)) / columns);
     }
 
     private void CollectionsPanel_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -3734,6 +3765,7 @@ public sealed partial class LibraryPage : Page,
     {
         CollectionsSkeletonHost.Children.Clear();
         var width = GetCollectionCardWidth();
+        CollectionsSkeletonHost.HorizontalSpacing = CollectionsSkeletonHost.VerticalSpacing = _uiCustomizationService.CardPresentation.PosterSize == "large" ? 16 : 12;
         for (var index = 0; index < 24; index++)
         {
             var skeleton = new StackPanel { Width = width, Spacing = 8 };
@@ -3819,6 +3851,30 @@ public sealed partial class LibraryPage : Page,
     private void UpdateNetworkCombo()
     {
         UpdateFilterCombo(NetworkComboBox, ViewModel.Networks, "All Networks", ViewModel.SelectedNetwork, "networks");
+    }
+
+    private readonly Dictionary<AutoSuggestBox, CancellationTokenSource> _facetOwners = new();
+    private async void PersonFacet_TextChanged(AutoSuggestBox sender, AutoSuggestBoxTextChangedEventArgs args)
+    {
+        if (_suppressFilterEvents || args.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
+        if (_facetOwners.Remove(sender, out var previous)) previous.Cancel();
+        var owner = new CancellationTokenSource(); _facetOwners[sender] = owner;
+        var field = sender.Name.Replace("Box", "").ToLowerInvariant();
+        try
+        {
+            await Task.Delay(300, owner.Token);
+            IReadOnlyList<string> values = field is "author" or "narrator" or "series"
+                ? await App.Services.GetRequiredService<CatalogApi>().SearchFacetAsync(field, sender.Text, ViewModel.Library?.Id, "audiobook", owner.Token)
+                : (await App.Services.GetRequiredService<PeopleApi>().SearchScopedAsync(sender.Text, ViewModel.Library?.Type, 20, owner.Token)).Select(person => person.Name).Distinct().ToList();
+            if (_facetOwners.TryGetValue(sender, out var current) && current == owner && !owner.IsCancellationRequested) sender.ItemsSource = values;
+        }
+        catch (OperationCanceledException) { }
+        catch { if (!owner.IsCancellationRequested) sender.ItemsSource = null; }
+    }
+    private void PersonFacet_SuggestionChosen(AutoSuggestBox sender, AutoSuggestBoxSuggestionChosenEventArgs args)
+    {
+        sender.Text = args.SelectedItem?.ToString() ?? "";
+        if (!_suppressFilterEvents) AdvancedTextFilter_TextChanged(sender, null!);
     }
 
     private void AdvancedTextFilter_TextChanged(object sender, TextChangedEventArgs e)

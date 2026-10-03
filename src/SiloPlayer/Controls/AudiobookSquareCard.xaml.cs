@@ -174,13 +174,13 @@ public sealed partial class AudiobookSquareCard : UserControl
     private void MoreButton_Click(object sender, RoutedEventArgs e)
     {
         if (MediaItem == null) return;
-        MediaItemMenu.Build(MediaItem, MediaItemMenu.Surface.Default).ShowAt(MoreButton);
+        MediaItemMenu.Build(MediaItem, MediaItemMenu.Surface.Default, owner: this).ShowAt(MoreButton);
     }
 
     private void Card_ContextRequested(UIElement sender, ContextRequestedEventArgs args)
     {
         if (MediaItem == null) return;
-        MediaItemMenu.Build(MediaItem, MediaItemMenu.Surface.Default).ShowAt(this);
+        MediaItemMenu.Build(MediaItem, MediaItemMenu.Surface.Default, owner: this).ShowAt(this);
         args.Handled = true;
     }
 

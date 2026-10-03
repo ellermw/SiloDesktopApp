@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.DependencyInjection;
+using SiloPlayer.Views.Dialogs;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Services;
@@ -18,6 +19,7 @@ public sealed partial class PersonDetailPage : Page
     private double _filmographyCardWidth = 178;
     private bool _isActive;
     private CancellationTokenSource? _photoCts;
+    private string? _requestedPersonId;
     private string? _photoUrl;
     private string? _photoPersonId;
 
@@ -51,7 +53,7 @@ public sealed partial class PersonDetailPage : Page
                         ? Visibility.Visible : Visibility.Collapsed;
                 });
             }
-            else if (args.PropertyName == nameof(PersonDetailViewModel.Person))
+            else if (args.PropertyName is nameof(PersonDetailViewModel.Person) or nameof(PersonDetailViewModel.ErrorMessage) or nameof(PersonDetailViewModel.IsLoading) or nameof(PersonDetailViewModel.IsRefreshing))
             {
                 DispatcherQueue.TryEnqueue(UpdateUI);
             }
@@ -75,6 +77,7 @@ public sealed partial class PersonDetailPage : Page
     {
         base.OnNavigatedTo(e);
         _isActive = true;
+        ViewModel.ActingAdmin = AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>());
         _photoUrl = null;
         _photoPersonId = null;
         PersonPhotoBorder.Child = InitialsText;
@@ -84,12 +87,14 @@ public sealed partial class PersonDetailPage : Page
         // person IDs from third-party providers (matches WebUI cast/crew shape).
         if (e.Parameter is string personId && !string.IsNullOrEmpty(personId))
         {
+            _requestedPersonId = personId;
             await ViewModel.LoadCommand.ExecuteAsync(personId);
             UpdateUI();
         }
         else if (e.Parameter is int legacyId && legacyId > 0)
         {
             // Back-compat for any caller still passing int
+            _requestedPersonId = legacyId.ToString(CultureInfo.InvariantCulture);
             await ViewModel.LoadCommand.ExecuteAsync(legacyId.ToString());
             UpdateUI();
         }
@@ -108,8 +113,20 @@ public sealed partial class PersonDetailPage : Page
     {
         if (!_isActive) return;
         var person = ViewModel.Person;
+        ContentScroll.Visibility = !ViewModel.IsLoading && person != null ? Visibility.Visible : Visibility.Collapsed;
+        PersonUnavailableState.Visibility = !ViewModel.IsLoading && person == null && ViewModel.ErrorMessage != null ? Visibility.Visible : Visibility.Collapsed;
+        var missing = ViewModel.ErrorMessage == "Person not found.";
+        PersonUnavailableTitle.Text = missing ? "This person isn't available" : "Couldn't load this person";
+        PersonUnavailableDescription.Text = missing ? "They may have been removed from the catalog, or the link may be wrong." : "Something went wrong while loading them. Try again in a moment.";
+        PersonRetryButton.Visibility = missing ? Visibility.Collapsed : Visibility.Visible;
+        PersonRetryButton.IsEnabled = !ViewModel.IsLoading;
         if (person == null) return;
 
+        var isAdmin = AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>());
+        PersonActions.Visibility = Visibility.Visible;
+        EditPersonButton.Visibility = isAdmin ? Visibility.Visible : Visibility.Collapsed;
+        RefreshPersonButton.IsEnabled = !ViewModel.IsRefreshing;
+        RefreshPersonLabel.Text = ViewModel.IsRefreshing ? isAdmin ? "Refreshing..." : "Queueing..." : isAdmin ? "Refresh now" : "Refresh metadata";
         PersonName.Text = person.Name;
         if (App.MainWindowInstance is MainWindow mw)
             mw.SetDynamicTitle(person.Name);
@@ -140,8 +157,7 @@ public sealed partial class PersonDetailPage : Page
         {
             BioText.Text = person.Bio;
             // Show "Show more" if bio is long enough to be truncated
-            ShowMoreBioButton.Visibility = person.Bio.Length > 300
-                ? Visibility.Visible : Visibility.Collapsed;
+            ShowMoreBioButton.Visibility = Visibility.Collapsed;
         }
         else
         {
@@ -172,6 +188,38 @@ public sealed partial class PersonDetailPage : Page
         UpdateFilterTabStyles();
     }
 
+    private async void RetryPerson_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(_requestedPersonId)) await ViewModel.LoadCommand.ExecuteAsync(_requestedPersonId);
+    }
+
+    private async void RefreshPerson_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Person == null) return;
+        var personId = ViewModel.Person.Id;
+        var isAdmin = AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>());
+        RefreshPersonButton.IsEnabled = false;
+        RefreshPersonLabel.Text = isAdmin ? "Refreshing..." : "Queueing...";
+        try
+        {
+            await ViewModel.RefreshAsync(isAdmin);
+            if (_isActive && ViewModel.Person?.Id == personId)
+                App.Services.GetRequiredService<ToastService>().Success(isAdmin ? "Person metadata refreshed" : "Person refresh queued");
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+        finally { RefreshPersonButton.IsEnabled = true; UpdateUI(); }
+    }
+
+    private async void EditPerson_Click(object sender, RoutedEventArgs e)
+    {
+        if (ViewModel.Person == null || !AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>())) return;
+        var personId = ViewModel.Person.Id;
+        var dialog = new EditPersonDialog(ViewModel.Person) { XamlRoot = XamlRoot };
+        await dialog.ShowAsync();
+        if (dialog.HasSaved && _isActive && ViewModel.Person?.Id == personId) await ViewModel.LoadCommand.ExecuteAsync(personId);
+    }
+
     private void PersonDetailPage_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         ApplyResponsiveLayout(e.NewSize.Width);
@@ -186,16 +234,31 @@ public sealed partial class PersonDetailPage : Page
         var gutter = width >= 1024 ? 40d
             : width >= 640 ? 24d
             : 16d;
-        PersonContentShell.Padding = new Thickness(gutter, width >= 640 ? 40 : 32, gutter, 48);
+        PersonContentShell.Padding = new Thickness(gutter, width >= 640 ? 88 : 72, gutter, width >= 640 ? 32 : 24);
+        BackButton.Margin = new Thickness(8, width >= 640 ? 24 : 16, 0, 0);
         PersonSkeletonShell.Padding = new Thickness(gutter, width >= 640 ? 40 : 32, gutter, 48);
+        PersonHeader.ColumnSpacing = width >= 1024 ? 32 : 24;
+        PersonDivider.Margin = new Thickness(-gutter, width >= 640 ? 32 : 24, -gutter, width >= 640 ? 32 : 24);
         var photoWidth = width >= 640 ? 180d : 140d;
         PersonPhotoBorder.Width = photoWidth;
         PersonPhotoBorder.Height = photoWidth * 1.5;
         PersonName.FontSize = width >= 640 ? 30 : 24;
+        PersonName.LineHeight = width >= 640 ? 36 : 32;
+        var stacked = width < 1024;
+        PersonHeader.RowSpacing = stacked ? 24 : 0;
+        PersonDivider.Opacity = .1;
+        PersonHeader.ColumnDefinitions[0].Width = stacked ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
+        PersonHeader.ColumnDefinitions[1].Width = stacked ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        Grid.SetColumn(PersonInfo, stacked ? 0 : 1);
+        Grid.SetRow(PersonInfo, stacked ? 1 : 0);
+        PersonPhotoBorder.HorizontalAlignment = HorizontalAlignment.Left;
 
         var innerWidth = Math.Max(320, Math.Min(1400, width) - (gutter * 2));
         var columns = _uiCustomizationService.GetPosterColumnCount(innerWidth);
-        _filmographyCardWidth = Math.Max(96, (innerWidth - ((columns - 1) * 12)) / columns);
+        var gap = _uiCustomizationService.CardPresentation.PosterSize == "large" ? 16d : 12d;
+        FilmographyGridLayout.MinColumnSpacing = gap;
+        FilmographyGridLayout.MinRowSpacing = gap;
+        _filmographyCardWidth = Math.Max(96, (innerWidth - ((columns - 1) * gap)) / columns);
         FilmographyGridLayout.MaximumRowsOrColumns = columns;
         FilmographyGridLayout.MinItemWidth = _filmographyCardWidth;
         FilmographyGridLayout.MinItemHeight = (_filmographyCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight;

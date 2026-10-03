@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
@@ -39,10 +40,22 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
     public ObservableCollection<Library> Libraries { get; } = [];
     public ObservableCollection<int> SelectedLibraryIds { get; } = [];
     public ObservableCollection<QueryRule> Rules { get; } = [];
+    public QueryDefinition RuleDefinition { get; private set; } = new();
     public ObservableCollection<CollectionPreviewItem> PreviewItems { get; } = [];
     public ObservableCollection<MediaItem> PreviewMediaItems { get; } = [];
     public ObservableCollection<Profile> Profiles { get; } = [];
     public ObservableCollection<string> AllowedProfileIds { get; } = [];
+    private QueryDefinition? _previewQuery;
+    private string? _previewSnapshot;
+    private int _previewGeneration;
+    private bool _failedPreviewContinuation;
+    [ObservableProperty] private bool _previewHasMore;
+
+    public async Task LoadMorePreviewAsync(CancellationToken ct = default)
+    {
+        if (IsPreviewing || !PreviewHasMore || _previewQuery == null) return;
+        await LoadPreviewWindowAsync(_previewQuery, reset: false, _previewGeneration, ct);
+    }
 
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private bool _isPreviewing;
@@ -111,6 +124,7 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
                 IncludeInServerCollections = true;
                 PosterSourceUrl = null;
                 Rules.Clear();
+                RuleDefinition = new();
             }
 
             if (!string.IsNullOrWhiteSpace(_collectionId))
@@ -121,11 +135,12 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
 
                 Title = collection.Name;
                 Description = collection.Description;
-                MediaScope = collection.QueryDefinition?.MediaScope ?? "movie";
+                RuleDefinition = QueryEditing.Clone(collection.QueryDefinition);
+                MediaScope = collection.QueryDefinition?.MediaScope ?? "";
                 MatchMode = collection.QueryDefinition?.Match ?? "all";
                 SortField = collection.QueryDefinition?.Sort?.Field ?? "added_at";
                 SortOrder = collection.QueryDefinition?.Sort?.Order ?? "desc";
-                LimitText = collection.QueryDefinition?.Limit?.ToString() ?? "100";
+                LimitText = collection.QueryDefinition?.Limit?.ToString();
                 IsShared = collection.IsShared;
                 IsReadOnly = !string.IsNullOrWhiteSpace(_authService.SelectedProfileId)
                     && !string.Equals(collection.CreatorProfileId, _authService.SelectedProfileId, StringComparison.Ordinal);
@@ -137,12 +152,12 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
                 foreach (var id in collection.QueryDefinition?.LibraryIds ?? [])
                     SelectedLibraryIds.Add(id);
                 Rules.Clear();
-                foreach (var rule in collection.QueryDefinition?.Groups.SelectMany(group => group.Rules) ?? [])
-                    Rules.Add(new QueryRule { Field = rule.Field, Op = rule.Op, Value = rule.Value });
+                foreach (var rule in RuleDefinition.Groups.FirstOrDefault()?.Rules ?? [])
+                    Rules.Add(rule);
             }
 
             if (Rules.Count == 0)
-                Rules.Add(new QueryRule { Field = "genre", Op = "contains", Value = "" });
+                AddRule();
         }
         catch (Exception ex)
         {
@@ -162,8 +177,33 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         PosterSourceUrl = "";
     }
 
+    public void ClearPosterFile()
+    {
+        PosterFileName = null;
+        PosterFileBytes = null;
+    }
+
+    public async Task DeletePosterAsync(CancellationToken ct = default)
+    {
+        if (IsReadOnly || IsSaving || string.IsNullOrWhiteSpace(_collectionId)) return;
+        IsSaving = true; ErrorMessage = null;
+        try
+        {
+            await _collectionsApi.DeleteCollectionImageAsync(_collectionId, ct);
+            CurrentPosterUrl = null;
+            ClearPosterFile();
+            CurrentPosterUrl = (await _collectionsApi.GetCollectionAsync(_collectionId, ct)).PosterUrl;
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to refresh collection artwork: {ex.Message}"; }
+        finally { IsSaving = false; }
+    }
+
     public void AddRule(string field = "genre", string op = "contains", object? value = null)
-        => Rules.Add(new QueryRule { Field = field, Op = op, Value = value ?? "" });
+    {
+        if (RuleDefinition.Groups.Count == 0) RuleDefinition.Groups.Add(new());
+        var rule = new QueryRule { Field = field, Op = op, Value = value ?? "" };
+        RuleDefinition.Groups[0].Rules.Add(rule); Rules.Add(rule);
+    }
 
     public void RemoveRule(QueryRule rule)
     {
@@ -176,51 +216,63 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
         }
 
         Rules.Remove(rule);
+        foreach (var group in RuleDefinition.Groups) group.Rules.Remove(rule);
     }
 
     public async Task PreviewAsync(CancellationToken ct = default)
     {
-        IsPreviewing = true;
-        ErrorMessage = null;
-        PreviewItems.Clear();
-        PreviewMediaItems.Clear();
+        var generation = ++_previewGeneration;
+        _previewQuery = BuildQueryDefinition();
+        _previewSnapshot = null;
+        PreviewHasMore = false;
+        PreviewItems.Clear(); PreviewMediaItems.Clear();
+        await LoadPreviewWindowAsync(_previewQuery, reset: true, generation, ct);
+    }
 
+    public Task RetryPreviewAsync(CancellationToken ct = default)
+    {
+        // Only an unchanged failed continuation owns the retained window.
+        // First-load failures and edited filters start a fresh preview.
+        if (_failedPreviewContinuation && _previewQuery != null
+            && PreviewMediaItems.Count > 0 && PreviewHasMore
+            && JsonSerializer.Serialize(_previewQuery) == JsonSerializer.Serialize(BuildQueryDefinition()))
+            return LoadMorePreviewAsync(ct);
+        return PreviewAsync(ct);
+    }
+
+    private async Task LoadPreviewWindowAsync(QueryDefinition query, bool reset, int generation, CancellationToken ct)
+    {
+        IsPreviewing = true; ErrorMessage = null; _failedPreviewContinuation = false;
+        var offset = PreviewMediaItems.Count;
+        var remaining = (query.Limit ?? int.MaxValue) - offset;
+        if (remaining <= 0) { PreviewHasMore = false; IsPreviewing = false; return; }
         try
         {
-            var query = BuildQueryDefinition();
-            var pageSize = Math.Clamp(query.Limit ?? 100, 1, 100);
             var response = await _catalogApi.GetCatalogAsync(
                 libraryId: query.LibraryIds.FirstOrDefault() is > 0 ? query.LibraryIds[0] : null,
-                sort: query.Sort?.Field,
-                order: query.Sort?.Order,
-                type: string.IsNullOrWhiteSpace(query.MediaScope) || query.MediaScope == "video"
-                    ? null
-                    : query.MediaScope,
-                limit: pageSize,
-                offset: 0,
-                includeTotal: true,
-                source: "query",
-                queryGroups: query.Groups,
-                queryGroupsMatch: query.Match,
-                ct: ct);
-
-            PreviewTotal = query.Limit is > 0
-                ? Math.Min(response.Total, query.Limit.Value)
-                : response.Total;
-            foreach (var item in response.Items)
-                PreviewMediaItems.Add(item);
+                sort: query.Sort?.Field, order: query.Sort?.Order,
+                type: string.IsNullOrWhiteSpace(query.MediaScope) ? null : query.MediaScope,
+                limit: Math.Min(100, remaining), offset: offset, includeTotal: reset,
+                snapshot: _previewSnapshot, source: "query", queryGroups: query.Groups,
+                queryGroupsMatch: query.Match, queryLimit: query.Limit, ct: ct);
+            if (ct.IsCancellationRequested || generation != _previewGeneration) return;
+            if (reset) PreviewTotal = query.Limit is > 0 ? Math.Min(response.Total, query.Limit.Value) : response.Total;
+            _previewSnapshot ??= response.Snapshot;
+            var knownIds = PreviewMediaItems.Select(item => item.ContentId).ToHashSet(StringComparer.Ordinal);
+            foreach (var item in response.Items.Take(remaining)) if (knownIds.Add(item.ContentId)) PreviewMediaItems.Add(item);
+            PreviewHasMore = response.Items.Count > 0 && PreviewMediaItems.Count < (query.Limit ?? int.MaxValue)
+                && (response.HasMore || PreviewMediaItems.Count < PreviewTotal);
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            ErrorMessage = $"Preview failed: {ex.Message}";
+            if (generation == _previewGeneration)
+            {
+                _failedPreviewContinuation = !reset && PreviewMediaItems.Count > 0 && PreviewHasMore;
+                ErrorMessage = $"Preview failed: {ex.Message}";
+            }
         }
-        finally
-        {
-            IsPreviewing = false;
-        }
+        finally { if (generation == _previewGeneration) IsPreviewing = false; }
     }
 
     public async Task SaveAsync(CancellationToken ct = default)
@@ -297,69 +349,15 @@ public partial class SmartCollectionWizardViewModel : ObservableObject
 
     public QueryDefinition BuildQueryDefinition()
     {
-        var cleanRules = Rules
-            .Where(rule => !string.IsNullOrWhiteSpace(rule.Field)
-                && !string.IsNullOrWhiteSpace(rule.Op)
-                && !string.IsNullOrWhiteSpace(rule.Value?.ToString()))
-            .Select(rule => new QueryRule
-            {
-                Field = rule.Field,
-                Op = rule.Op,
-                Value = CoerceRuleValue(rule)
-            })
-            .ToList();
-
-        if (cleanRules.Count == 0 && !string.IsNullOrWhiteSpace(MediaScope))
-            cleanRules.Add(new QueryRule { Field = "type", Op = "is", Value = MediaScope });
-
-        return new QueryDefinition
-        {
-            LibraryIds = [.. SelectedLibraryIds],
-            MediaScope = string.IsNullOrWhiteSpace(MediaScope) ? null : MediaScope,
-            Match = MatchMode,
-            Groups =
-            [
-                new QueryGroup
-                {
-                    Match = MatchMode,
-                    Rules = cleanRules
-                }
-            ],
-            Sort = new QuerySort { Field = SortField, Order = SortOrder },
-            Limit = int.TryParse(LimitText, out var limit) ? Math.Clamp(limit, 1, 500) : 100
-        };
+        var query = QueryEditing.Clone(RuleDefinition);
+        query.LibraryIds = [.. SelectedLibraryIds];
+        query.MediaScope = string.IsNullOrWhiteSpace(MediaScope) ? null : MediaScope;
+        query.Match = MatchMode;
+        query.Groups = QueryEditing.PopulatedGroups(query);
+        query.Sort = new QuerySort { Field = SortField, Order = SortOrder };
+        query.Limit = int.TryParse(LimitText, out var limit) ? Math.Clamp(limit, 1, 500) : null;
+        return query;
     }
 
-    private static object? CoerceRuleValue(QueryRule rule)
-    {
-        if (rule.Value is bool boolean)
-            return boolean;
-
-        var value = rule.Value?.ToString();
-        if (string.IsNullOrWhiteSpace(value))
-            return value;
-
-        if (rule.Op == "between")
-        {
-            var values = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (values.Length == 2)
-            {
-                if (rule.Field is "year" or "rating_imdb" or "bitrate"
-                    && double.TryParse(values[0], out var start)
-                    && double.TryParse(values[1], out var end))
-                    return new[] { start, end };
-                return values;
-            }
-        }
-
-        if (rule.Field is "watched" or "favorited" or "in_watchlist" or "in_progress" or "hdr" or "dolby_vision"
-            && bool.TryParse(value, out var parsedBoolean))
-            return parsedBoolean;
-
-        if (rule.Field is "year" or "rating_imdb" or "bitrate" && double.TryParse(value, out var number))
-            return number;
-
-        return value.Trim();
-    }
 
 }

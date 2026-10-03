@@ -16,31 +16,32 @@
     </Page.Resources>
     <Grid>
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
-        <Border Padding="28,18" Background="{StaticResource SidebarBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
-            <Grid ColumnSpacing="18" MaxWidth="1152" HorizontalAlignment="Stretch">
+        <Border x:Name="TasteHeaderBorder" Padding="24,16" Background="{StaticResource AppBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+            <Grid x:Name="TasteHeaderGrid" ColumnSpacing="12" MaxWidth="1104" HorizontalAlignment="Stretch">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <StackPanel Spacing="4">
-                    <StackPanel Orientation="Horizontal" Spacing="9">
-                        <FontIcon Glyph="&#xE735;" FontSize="22" Foreground="{StaticResource AccentBrush}" />
-                        <TextBlock Text="Pick what you love" FontSize="24" FontWeight="Bold" />
+                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                <StackPanel Spacing="2">
+                    <StackPanel x:Name="TasteTitleRow" Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE735;" FontSize="20" Foreground="{StaticResource AccentBrush}" />
+                        <TextBlock x:Name="TasteTitleText" Text="Pick what you love" FontSize="24" FontWeight="Bold" LineHeight="32" LineStackingStrategy="BlockLineHeight" CharacterSpacing="-25" />
                     </StackPanel>
-                    <TextBlock Text="{x:Bind ViewModel.SelectionSummary, Mode=OneWay}" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                    <TextBlock Text="{x:Bind ViewModel.SelectionSummary, Mode=OneWay}" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
                 </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
-                    <Button x:Name="SkipButton" Content="Skip" Style="{StaticResource SecondaryButtonStyle}" Click="Cancel_Click"
+                <StackPanel x:Name="TasteHeaderActions" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <Button x:Name="SkipButton" Content="Skip" Style="{StaticResource GhostButtonStyle}" Padding="16,8" Height="36" FontSize="14" FontWeight="Medium" Click="Cancel_Click"
                             IsEnabled="{x:Bind ViewModel.IsSaving, Mode=OneWay, Converter={StaticResource InverseBool}}" />
-                    <Button x:Name="DoneButton" Content="Done" Style="{StaticResource AccentButtonStyle}" IsEnabled="{x:Bind ViewModel.CanSubmit, Mode=OneWay}" Click="Done_Click" />
+                    <Button x:Name="DoneButton" Content="Done" Style="{StaticResource AccentButtonStyle}" Padding="16,8" Height="36" FontSize="14" FontWeight="Medium" IsEnabled="{x:Bind ViewModel.CanSubmit, Mode=OneWay}" Click="Done_Click" />
                 </StackPanel>
             </Grid>
         </Border>
         <ScrollViewer x:Name="ItemsScrollViewer" Grid.Row="1" ViewChanged="ItemsScrollViewer_ViewChanged">
-            <StackPanel Padding="24" Spacing="20" MaxWidth="1152" HorizontalAlignment="Center">
-                <ItemsRepeater ItemsSource="{x:Bind SkeletonItems}"
+            <StackPanel x:Name="TasteBodyPanel" Padding="24,32" Spacing="20" MaxWidth="1152" HorizontalAlignment="Stretch">
+                <ItemsRepeater x:Name="TasteSkeletonGrid" ElementPrepared="TasteCard_Prepared" ItemsSource="{x:Bind SkeletonItems}"
                                Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                     <ItemsRepeater.Layout>
                         <UniformGridLayout MinItemWidth="147" MaximumRowsOrColumns="7"
                                            MinColumnSpacing="12" MinRowSpacing="12"
-                                           ItemsJustification="Start" />
+                                           ItemsJustification="SpaceBetween" MinItemHeight="221" />
                     </ItemsRepeater.Layout>
                     <ItemsRepeater.ItemTemplate>
                         <DataTemplate>
@@ -56,21 +57,22 @@
                         <Button Content="Continue" Style="{StaticResource GhostButtonStyle}" HorizontalAlignment="Center" Click="Cancel_Click" Margin="0,10,0,0" />
                     </StackPanel>
                 </Border>
-                <ItemsRepeater ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}" Visibility="{x:Bind ViewModel.HasItems, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                <ItemsRepeater x:Name="TasteItemsGrid" ElementPrepared="TasteCard_Prepared" ItemsSource="{x:Bind ViewModel.Items, Mode=OneWay}" Visibility="{x:Bind ViewModel.HasItems, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                     <ItemsRepeater.Layout>
-                        <UniformGridLayout MinItemWidth="147" MaximumRowsOrColumns="7" MinColumnSpacing="12" MinRowSpacing="12" ItemsJustification="Start" />
+                        <UniformGridLayout MinItemWidth="147" MaximumRowsOrColumns="7" MinColumnSpacing="12" MinRowSpacing="12" ItemsJustification="SpaceBetween" MinItemHeight="221" />
                     </ItemsRepeater.Layout>
                     <ItemsRepeater.ItemTemplate>
                         <DataTemplate x:DataType="vm:TasteSeedItemViewModel">
                             <Button Tag="{x:Bind}" Click="Item_Click" Background="Transparent" BorderThickness="0" Padding="0" CornerRadius="12" HorizontalAlignment="Left"
                                     AutomationProperties.Name="{x:Bind AccessibleName, Mode=OneWay}">
-                                <Grid Width="147" Height="221" CornerRadius="12" Background="{StaticResource SurfaceBrush}">
-                                    <TextBlock Text="{x:Bind Title}" TextWrapping="Wrap" TextAlignment="Center"
+                                <Grid Width="147" Height="221" CornerRadius="12" Background="Transparent">
+                                    <TextBlock Text="{x:Bind Title}" TextWrapping="Wrap" TextAlignment="Center" FontSize="12" FontWeight="Medium" MaxLines="3"
                                                VerticalAlignment="Center" Margin="12" Foreground="{StaticResource SecondaryTextBrush}"/>
                                         <Image Source="{x:Bind Item.PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill"/>
-                                    <Border Background="#300078D4" Visibility="{x:Bind IsSelected, Mode=OneWay, Converter={StaticResource BoolToVis}}" CornerRadius="12" />
-                                    <Border Width="28" Height="28" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0" CornerRadius="14" BorderThickness="1" BorderBrush="White" Background="#70000000">
-                                        <FontIcon Glyph="&#xE73E;" FontSize="14" Foreground="White" Visibility="{x:Bind IsSelected, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
+                                    <Border Background="{StaticResource AccentBrush}" Opacity="0.2" Visibility="{x:Bind IsSelected, Mode=OneWay, Converter={StaticResource BoolToVis}}" CornerRadius="12" />
+                                    <Border Width="28" Height="28" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0" CornerRadius="14" BorderThickness="1" BorderBrush="#99FFFFFF" Background="#66000000" Visibility="{x:Bind IsSelected, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}" />
+                                    <Border Width="28" Height="28" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0" CornerRadius="14" BorderThickness="1" BorderBrush="{StaticResource AccentBrush}" Background="{StaticResource AccentBrush}" Visibility="{x:Bind IsSelected, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                                        <FontIcon Glyph="&#xE73E;" FontSize="16" Foreground="{StaticResource AccentForegroundBrush}" />
                                     </Border>
                                 </Grid>
                             </Button>

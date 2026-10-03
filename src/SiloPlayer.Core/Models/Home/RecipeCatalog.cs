@@ -2,6 +2,7 @@ namespace SiloPlayer.Core.Models.Home;
 
 public class RecipeCatalogResponse
 {
+    [System.Text.Json.Serialization.JsonIgnore] public bool AllowAdminOnlyRecipes { get; set; }
     public Dictionary<string, List<RecipeDefinition>> Categories { get; set; } = [];
 }
 

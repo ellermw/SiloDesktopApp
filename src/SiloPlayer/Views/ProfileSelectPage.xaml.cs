@@ -17,6 +17,17 @@ public sealed partial class ProfileSelectPage : Page
     {
         ViewModel = App.Services.GetRequiredService<ProfileSelectViewModel>();
         this.InitializeComponent();
+        SizeChanged += (_, args) =>
+        {
+            ProfilePickerTitle.FontSize = Math.Clamp(args.NewSize.Width * .07, 35.2, 72);
+            EmptyProfilesTitle.FontSize = Math.Clamp(args.NewSize.Width * .06, 33.6, 64);
+            foreach (var title in new[] { ProfilePickerTitle, EmptyProfilesTitle })
+            {
+                title.LineHeight = title.FontSize * .95;
+                title.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+                title.CharacterSpacing = -50;
+            }
+        };
 
         ViewModel.ProfileSelected += OnProfileSelected;
         ViewModel.TasteSeedRequired += OnTasteSeedRequired;
@@ -31,6 +42,8 @@ public sealed partial class ProfileSelectPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        if (App.Services.GetRequiredService<AuthService>().PasswordChangeRequired)
+        { App.Services.GetRequiredService<NavigationService>().Navigate<ChoosePasswordPage>(); return; }
         await ViewModel.LoadProfilesCommand.ExecuteAsync(null);
         UpdatePageState();
     }

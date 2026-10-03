@@ -32,14 +32,15 @@
                 <TranslateTransform x:Name="SheetTransform" X="420" />
             </Border.RenderTransform>
 
-            <Grid RowSpacing="12">
+            <Grid x:Name="SheetRows" RowSpacing="12">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
                 <!-- Header row: title + close button. -->
-                <Grid Grid.Row="0">
+                <Border x:Name="HeaderBorder" Grid.Row="0">
+                <Grid RowDefinitions="Auto,Auto">
                     <TextBlock
                         x:Name="TitleText"
                         FontSize="16"
@@ -47,6 +48,7 @@
                         Foreground="{StaticResource PrimaryTextBrush}"
                         VerticalAlignment="Center" />
                     <Button
+                        x:Name="CloseButton"
                         Background="Transparent"
                         BorderThickness="0"
                         Padding="6"
@@ -55,7 +57,10 @@
                         ToolTipService.ToolTip="Close">
                         <FontIcon Glyph="&#xE711;" FontSize="14" />
                     </Button>
+                    <ContentPresenter x:Name="HeaderActionsHost" HorizontalAlignment="Right" VerticalAlignment="Top" />
+                    <TextBlock x:Name="DescriptionText" Grid.Row="1" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" />
                 </Grid>
+                </Border>
 
                 <!-- Host for the caller's content. -->
                 <ContentPresenter

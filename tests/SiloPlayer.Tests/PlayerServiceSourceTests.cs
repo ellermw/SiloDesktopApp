@@ -677,7 +677,7 @@ public sealed class PlayerServiceSourceTests
             "Views",
             "SettingsPage.xaml"));
 
-        var introStart = source.IndexOf("x:Name=\"AutoSkipIntroToggle\"", StringComparison.Ordinal);
+        var introStart = source.IndexOf("x:Name=\"IntroSkipModeCombo\"", StringComparison.Ordinal);
         var creditsStart = source.IndexOf("x:Name=\"AutoSkipCreditsToggle\"", StringComparison.Ordinal);
         Assert.True(introStart >= 0);
         Assert.True(creditsStart >= 0);

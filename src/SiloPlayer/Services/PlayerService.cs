@@ -26,7 +26,7 @@ public sealed record AudiobookChapterInfo(
     double EndSeconds,
     int FileId);
 
-public class PlayerService : IDisposable
+public partial class PlayerService : IDisposable
 {
     private const string AutoSkipIntroSettingKey = "playback.auto_skip_intro";
     private const string AutoSkipCreditsSettingKey = "playback.auto_skip_credits";
@@ -234,7 +234,7 @@ public class PlayerService : IDisposable
 
         var task = _watchDetailPrefetches.GetOrAdd(
             contentId,
-            profileId,
+            WatchPrefetchAuthorityKey(profileId),
             () => _playbackApi.GetWatchDetailAsync(contentId, CancellationToken.None),
             DateTimeOffset.UtcNow,
             out var added);
@@ -260,6 +260,7 @@ public class PlayerService : IDisposable
         CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(contentId);
+        var authority = _apiClient.CaptureContext();
 
         // Starting through the cache also coalesces callers that arrive before
         // a hover prefetch has fired (for example, Item Detail and Play racing
@@ -267,13 +268,15 @@ public class PlayerService : IDisposable
         PrefetchWatchDetail(contentId);
         var prefetched = await TryGetPrefetchedWatchDetailAsync(contentId, consumePrefetch, ct)
             .ConfigureAwait(false);
+        EnsurePreparationAuthority();
         if (prefetched != null)
             return prefetched;
 
         try
         {
-            return await _playbackApi.GetWatchDetailAsync(contentId, ct)
-                .ConfigureAwait(false);
+            var detail = await _playbackApi.GetWatchDetailAsync(contentId, ct).ConfigureAwait(false);
+            EnsurePreparationAuthority();
+            return detail;
         }
         catch (ApiException ex) when (ex.StatusCode == 400)
         {
@@ -281,8 +284,17 @@ public class PlayerService : IDisposable
             // watch preparation. Match the playback startup retry without
             // imposing this delay on successful requests.
             await Task.Delay(300, ct).ConfigureAwait(false);
-            return await _playbackApi.GetWatchDetailAsync(contentId, ct)
-                .ConfigureAwait(false);
+            EnsurePreparationAuthority();
+            var detail = await _playbackApi.GetWatchDetailAsync(contentId, ct).ConfigureAwait(false);
+            EnsurePreparationAuthority();
+            return detail;
+        }
+
+        void EnsurePreparationAuthority()
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!_apiClient.IsCurrentContext(authority))
+                throw new OperationCanceledException("Watch preparation authority changed.", ct);
         }
     }
 
@@ -311,12 +323,14 @@ public class PlayerService : IDisposable
 
         try
         {
+            var context = _apiClient.CaptureContext();
+            var authorityKey = WatchPrefetchAuthorityKey(profileId);
             var watchDetail = consume
                 ? await _watchDetailPrefetches.TryTakeAsync(
-                    contentId, profileId, DateTimeOffset.UtcNow, ct).ConfigureAwait(false)
+                    contentId, authorityKey, DateTimeOffset.UtcNow, ct).ConfigureAwait(false)
                 : await _watchDetailPrefetches.TryGetAsync(
-                    contentId, profileId, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
-            return watchDetail != null &&
+                    contentId, authorityKey, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+            return _apiClient.IsCurrentContext(context) && watchDetail != null &&
                 string.Equals(watchDetail.ContentId, contentId, StringComparison.Ordinal)
                 ? watchDetail
                 : null;
@@ -329,6 +343,13 @@ public class PlayerService : IDisposable
         {
             return null;
         }
+    }
+
+    private string WatchPrefetchAuthorityKey(string profileId)
+    {
+        var context = _apiClient.CaptureContext();
+        return string.Join('\n', context.BaseUrl, context.AuthenticationGeneration,
+            context.RequestContextGeneration, profileId);
     }
 
     /// <summary>
@@ -350,6 +371,113 @@ public class PlayerService : IDisposable
     }
 
     // ── Transport (used by WatchTogetherCoordinator for synced playback) ──
+
+    public bool IsWatchTogetherPlayback { get; private set; }
+    public event Action<string, double, bool>? RoomTransportRequested;
+    private string? _offeredRoomQuality;
+    private string? _offeredFromQuality;
+    private MpvPlayer? _roomInputPlayer;
+    private bool _roomPreviousDefaultBindings;
+
+    public void SetWatchTogetherPlayback(bool active)
+    {
+        IsWatchTogetherPlayback = active;
+        if (!active) _offeredRoomQuality = _offeredFromQuality = null;
+        UpdateRoomInputBindings();
+    }
+
+    private void UpdateRoomInputBindings()
+    {
+        if (_mpv == null) return;
+        if (IsWatchTogetherPlayback)
+        {
+            if (!ReferenceEquals(_roomInputPlayer, _mpv))
+            {
+                _roomInputPlayer = _mpv;
+                _roomPreviousDefaultBindings = _mpv.GetPropertyFlag("input-default-bindings");
+            }
+            // Built-in mpv seek/pause shortcuts bypass our permission-aware
+            // script callbacks. Explicit OSC forced bindings remain enabled.
+            _mpv.SetProperty("input-default-bindings", "no");
+        }
+        else if (ReferenceEquals(_roomInputPlayer, _mpv))
+        {
+            _mpv.SetProperty("input-default-bindings", _roomPreviousDefaultBindings ? "yes" : "no");
+            _roomInputPlayer = null;
+        }
+    }
+
+    /// <summary>Only viewer input enters this boundary. Server commands use SetPaused/SeekRoomTarget.</summary>
+    public void RequestUserPauseToggle()
+    {
+        var paused = !IsPaused;
+        if (IsWatchTogetherPlayback)
+            RoomTransportRequested?.Invoke(paused ? "pause" : "play", CurrentMediaPosition, paused);
+        else SetPaused(paused);
+    }
+
+    public void RequestUserSeek(double seconds, bool forceResume = false)
+    {
+        if (!double.IsFinite(seconds)) return;
+        if (IsWatchTogetherPlayback)
+            RoomTransportRequested?.Invoke("seek", seconds, IsPaused);
+        else SeekFastTo(seconds, forceResume);
+    }
+
+    public bool IsNativeSeeking => _mpv?.GetPropertyFlag("seeking") == true;
+    public double NativePlaybackRate
+    {
+        get => _mpv?.GetPropertyDouble("speed") ?? 1;
+        set => _mpv?.SetProperty("speed", value.ToString("R", System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    public bool CanSeekRoomTargetLocally(double target)
+    {
+        var native = PlaybackTimeline.ToPlayerTime(ToSessionPosition(target), _timelineOffsetSeconds);
+        return native >= 0 && (_activeTransportPlan?.TransportKind == PlaybackTransportKind.DirectProgressive ||
+            (_activeTransportPlan?.IsHls == true && _canSeekAnywhere) ||
+            _mpv?.IsPositionCached(native) == true);
+    }
+
+    public bool IsRoomTargetBuffered(double target) => _mpv?.IsPositionCached(
+        PlaybackTimeline.ToPlayerTime(ToSessionPosition(target), _timelineOffsetSeconds)) == true;
+
+    public void SeekRoomTarget(double target)
+    {
+        // libmpv can accurately decode/discard up to a buffered keyframe-relative
+        // target while paused. Never play muted at an artificial 4x browser rate.
+        if (CanSeekRoomTargetLocally(target))
+            _mpv?.Seek(PlaybackTimeline.ToPlayerTime(ToSessionPosition(target), _timelineOffsetSeconds));
+        else SeekTo(target);
+    }
+
+    public void ShowWatchPartyNotice(string message) => ShowNotice("Watch Party", message, "info");
+
+    public void OfferWatchPartyLowerQuality()
+    {
+        var qualities = AvailableQualities.Where(q => !q.PreservesSource && q.BitrateKbps > 0)
+            .OrderByDescending(q => q.BitrateKbps).ToList();
+        var current = AvailableQualities.FirstOrDefault(q => q.Label == ActiveQualityTier);
+        var currentBitrate = current?.BitrateKbps
+            ?? _playbackManager?.CurrentSession?.PlaybackInfo?.TargetVideoBitrateKbps
+            ?? ActiveVersion?.Bitrate;
+        var next = qualities.FirstOrDefault(q => q.Label != ActiveQualityTier &&
+            (currentBitrate is null or <= 0 || q.BitrateKbps < currentBitrate));
+        if (next == null) return;
+        _offeredRoomQuality = next.Label;
+        _offeredFromQuality = ActiveQualityTier;
+        _mpv?.SendScriptMessage("osc-room-quality-offer", next.Label);
+        ShowWatchPartyNotice("Playback has stalled repeatedly. Lower quality is available in the Watch Party panel.");
+    }
+
+    public async Task AcceptWatchPartyLowerQualityAsync()
+    {
+        var target = _offeredRoomQuality;
+        _offeredRoomQuality = null;
+        _mpv?.SendScriptMessage("osc-room-quality-offer", "");
+        if (!IsWatchTogetherPlayback || target == null || _offeredFromQuality != ActiveQualityTier) return;
+        await SelectQualityAsync(target);
+    }
 
     /// <summary>Pause / resume the local mpv player.</summary>
     public void SetPaused(bool paused)
@@ -669,7 +797,8 @@ public class PlayerService : IDisposable
             _mpv.SetProperty("sub-font", fontName);
 
             // Font color — mpv accepts "#RRGGBB" (alpha defaults to FF).
-            _mpv.SetProperty("sub-color", NormalizeHex(a.FontColor));
+            var textAlpha = (int)Math.Round(Math.Clamp(a.TextOpacity, 1, 100) * 2.55);
+            _mpv.SetProperty("sub-color", $"#{textAlpha:X2}{NormalizeHex(a.FontColor).TrimStart('#')}");
 
             // Background color + opacity. mpv uses "#AARRGGBB" where AA is
             // hex alpha (0x00 = transparent, 0xFF = opaque).
@@ -978,6 +1107,7 @@ public class PlayerService : IDisposable
     {
         if (_mpv == null)
             return;
+        UpdateRoomInputBindings();
 
         if (room == null || string.Equals(room.Phase, "ended", StringComparison.OrdinalIgnoreCase))
         {
@@ -995,6 +1125,7 @@ public class PlayerService : IDisposable
             guest_control_policy = room.GuestControlPolicy,
             is_host = room.SelfCanManageRoom,
             can_control_transport = room.SelfCanControlTransport,
+            catching_up = room.SelfIgnoreWait || room.Members.Any(m => m.IsSelf && m.IsBuffering),
         };
         _mpv.SendScriptMessage("osc-set-watch-party", JsonSerializer.Serialize(payload));
     }
@@ -1497,6 +1628,7 @@ public class PlayerService : IDisposable
         if (_closing)
             return;
 
+        App.Services.GetService<ThemeMusicService>()?.Interrupt();
         var ownerCts = new CancellationTokenSource();
         var previous = Interlocked.Exchange(ref _playRequestCts, ownerCts);
         try { previous?.Cancel(); }
@@ -1509,6 +1641,7 @@ public class PlayerService : IDisposable
         {
             await _playRequestGate.WaitAsync(ownerCts.Token);
             gateEntered = true;
+            ResetStartupTelemetry();
             ownerCts.Token.ThrowIfCancellationRequested();
             if (generation != Volatile.Read(ref _playRequestGeneration))
                 return;
@@ -1674,6 +1807,7 @@ public class PlayerService : IDisposable
             IsAudiobook = watchDetail.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase);
             if (IsAudiobook)
             {
+                await RefreshSeekPreferencesAsync(requestToken);
                 Versions = watchDetail.Versions?.ToList() ?? [];
                 _audiobookTotalDurationSeconds = Versions.Sum(version => Math.Max(0, version.Duration));
                 _ = LoadAudiobookPresentationAsync(contentId, requestToken);
@@ -2582,6 +2716,7 @@ public class PlayerService : IDisposable
     /// </summary>
     public async Task ContinuePlayingNextAsync()
     {
+        if (IsWatchTogetherPlayback) return;
         var nextId = HasNextEpisodeForCurrentPlayback
             ? NextEpisodeContentId
             : null;
@@ -2609,6 +2744,7 @@ public class PlayerService : IDisposable
 
     public Task PlayPreviousEpisodeAsync()
     {
+        if (IsWatchTogetherPlayback) return Task.CompletedTask;
         var previousId = HasEpisodeNavigationForCurrentPlayback
             ? PreviousEpisodeContentId
             : null;
@@ -3693,6 +3829,13 @@ public class PlayerService : IDisposable
 
         StopPlaybackStallWatchdog();
 
+        if (IsWatchTogetherPlayback)
+        {
+            // Room lifecycle owns completion. Keep reporting the final position
+            // until the room snapshot returns to the lobby; no local episode autoplay.
+            SetPaused(true);
+            return;
+        }
         var isSeriesEpisode = !string.IsNullOrWhiteSpace(WatchDetail?.SeriesId);
         if (isSeriesEpisode)
         {
@@ -3765,6 +3908,7 @@ public class PlayerService : IDisposable
                 _ = ReportAudiobookProgressAsync(mediaPosition);
 
             if (!_playingNextShown &&
+                !IsWatchTogetherPlayback &&
                 !_closing &&
                 !_switchingContent &&
                 !IsAudiobook &&
@@ -3930,6 +4074,7 @@ public class PlayerService : IDisposable
             _mpv?.SendScriptMessage("osc-set-loading", "false");
             App.MainWindowInstance?.HideLoadingOverlay();
             LogToFile("state_trace.txt", "PlaybackRestarted fired (video output ready)");
+            ReportFirstOutput();
         };
         _mpv.PlaybackRestarted += _mpvPlaybackRestartedHandler;
 
@@ -4050,6 +4195,11 @@ public class PlayerService : IDisposable
 
     public async Task SwitchVersionAsync(FileVersion version)
     {
+        if (IsWatchTogetherPlayback)
+        {
+            ShowWatchPartyNotice("The room's shared version is locked. Choose a playback quality instead.");
+            return;
+        }
         if (_mpv == null || _playbackManager == null) return;
         await CancelAndDrainTransportRestartsAsync();
 
@@ -5143,6 +5293,7 @@ public class PlayerService : IDisposable
 
     private async Task SendAutoSkipSettingsToOscAsync(CancellationToken ct)
     {
+        await RefreshSeekPreferencesAsync(ct);
         var profileId = _authService.SelectedProfileId;
         var intro = false;
         var credits = false;
@@ -5188,6 +5339,15 @@ public class PlayerService : IDisposable
         }
 
         ct.ThrowIfCancellationRequested();
+        try
+        {
+            var settings = await _settingsApi.GetContractEffectiveSettingsAsync(["playback.intro_skip_mode"], ct: ct);
+            var value = settings.Settings.FirstOrDefault()?.Value;
+            var mode = value?.ValueKind == JsonValueKind.String ? value.Value.GetString() : null;
+            _mpv?.SendScriptMessage("osc-set-intro-mode", mode is "never" or "ask" or "always" ? mode : intro ? "always" : "ask");
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch { _mpv?.SendScriptMessage("osc-set-intro-mode", intro ? "always" : "ask"); }
         _mpv?.SendScriptMessage(
             "osc-set-auto-skip",
             intro ? "true" : "false",
@@ -5374,6 +5534,7 @@ public class PlayerService : IDisposable
                     dispatch.TryEnqueue(() => _ = SwitchAudioTrackAsync(audioIdx));
                 break;
             case "silo-version-select":
+                if (IsWatchTogetherPlayback) break;
                 if (args.Length > 1 && int.TryParse(args[1], out var vFileId))
                 {
                     var version = Versions.FirstOrDefault(v => v.FileId == vFileId);
@@ -5403,7 +5564,7 @@ public class PlayerService : IDisposable
                     var forceResume = args.Length > 2 &&
                         bool.TryParse(args[2], out var parsedResume) &&
                         parsedResume;
-                    dispatch.TryEnqueue(() => SeekFastTo(seekPosition, forceResume));
+                    dispatch.TryEnqueue(() => RequestUserSeek(seekPosition, forceResume));
                 }
                 break;
             case "silo-seek-relative":
@@ -5416,8 +5577,11 @@ public class PlayerService : IDisposable
                     var relativeForceResume = args.Length > 2 &&
                         bool.TryParse(args[2], out var relativeParsedResume) &&
                         relativeParsedResume;
-                    dispatch.TryEnqueue(() => SeekFastTo(CurrentMediaPosition + seekDelta, relativeForceResume));
+                    dispatch.TryEnqueue(() => RequestUserSeek(CurrentMediaPosition + seekDelta, relativeForceResume));
                 }
+                break;
+            case "silo-pause-toggle":
+                dispatch.TryEnqueue(RequestUserPauseToggle);
                 break;
             case "silo-volume-changed":
                 if (args.Length > 1 && double.TryParse(args[1], System.Globalization.NumberStyles.Any,
@@ -5477,6 +5641,8 @@ public class PlayerService : IDisposable
 
     private async Task SwitchQualityTierAsync(string tierId)
     {
+        _offeredRoomQuality = _offeredFromQuality = null;
+        _mpv?.SendScriptMessage("osc-room-quality-offer", "");
         if (_mpv == null || _playbackManager == null) return;
         await CancelAndDrainTransportRestartsAsync();
 
@@ -6778,14 +6944,7 @@ public class PlayerService : IDisposable
             var version = Versions.FirstOrDefault(v => v.FileId == fileId);
             if (version == null) return;
 
-            if (payload.TryGetProperty("intro", out var introEl))
-                version.Intro = ReadMarkerRange(introEl);
-            if (payload.TryGetProperty("credits", out var creditsEl))
-                version.Credits = ReadMarkerRange(creditsEl);
-            if (payload.TryGetProperty("recap", out var recapEl))
-                version.Recap = ReadMarkerRange(recapEl);
-            if (payload.TryGetProperty("preview", out var previewEl))
-                version.Preview = ReadMarkerRange(previewEl);
+            PlaybackMarkerUpdate.Apply(version, payload);
 
             var activeFileId = _playbackManager?.CurrentSession?.MediaFileId ?? 0;
             if (activeFileId == fileId && _playbackManager?.WatchDetail != null)
@@ -6794,6 +6953,7 @@ public class PlayerService : IDisposable
                 _playbackManager.WatchDetail.Credits = version.Credits;
                 _playbackManager.WatchDetail.Recap = version.Recap;
                 _playbackManager.WatchDetail.Preview = version.Preview;
+                SendMarkersToOsc();
                 InvokeSubscribersSafely(MarkersChanged, nameof(MarkersChanged));
             }
 

@@ -103,7 +103,7 @@ public sealed partial class CatalogPage : Page,
             _fixedLibraryId = navigation.LibraryId;
             _initialGenre = navigation.Genre;
             PageTitleText.Text = navigation.Title ?? (_source == "history" ? "History" : "Catalog");
-            PageSubtitleText.Text = navigation.Subtitle ?? (_source == "history"
+            PageSubtitleText.Text = navigation.Subtitle ?? (_source == "watchlist" ? "Things you've saved to watch later." : _source == "history"
                 ? "Everything you've recently watched."
                 : "Refine the archive by library, type, era, rating, or genre.");
             if (App.MainWindowInstance is MainWindow window)
@@ -134,6 +134,7 @@ public sealed partial class CatalogPage : Page,
                 ? Visibility.Visible
                 : Visibility.Collapsed;
         }
+        InitializeWatchlistTitles();
         if (_source == "history") HistoryActions.Visibility = Visibility.Visible;
         if (_source == "section")
         {
@@ -187,6 +188,8 @@ public sealed partial class CatalogPage : Page,
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        Interlocked.Exchange(ref _queryOptionsOwner, null)?.Cancel();
+        StopWatchlistTitles();
         Interlocked.Increment(ref _loadGeneration);
         _navigationCts?.Cancel();
         _loadCts?.Cancel();
@@ -202,6 +205,7 @@ public sealed partial class CatalogPage : Page,
             var width = Math.Min(Math.Max(ActualWidth, 320), 1400);
             var gutter = width < 640 ? 16d : width < 1024 ? 24d : 40d;
             ApplyCatalogCardLayout(width, gutter);
+            if (_source == "watchlist") ApplyExternalTitleLayout(ExternalWatchlistScroller.ActualWidth);
         });
 
     private void RegisterMediaMessages()
@@ -299,6 +303,11 @@ public sealed partial class CatalogPage : Page,
             : 0;
         LibraryCombo.SelectedIndex = Math.Max(0, fixedLibraryIndex);
         LibraryCombo.IsEnabled = _fixedLibraryId is not > 0;
+        if (_source != "section")
+        {
+            InitializeQueryFilters(filtersTask.Result);
+            return;
+        }
         Fill(GenreCombo, "All genres", filtersTask.Result.Genres);
         if (!string.IsNullOrWhiteSpace(_initialGenre))
         {
@@ -335,6 +344,7 @@ public sealed partial class CatalogPage : Page,
 
     private async Task LoadAsync(bool reset)
     {
+        if (_queryFilters?.IsValid == false) return;
         if (_loading && !reset) return;
         if (reset)
         {
@@ -353,6 +363,7 @@ public sealed partial class CatalogPage : Page,
         LoadingRing.IsActive = !initialLoad;
         LoadingRing.Visibility = !initialLoad ? Visibility.Visible : Visibility.Collapsed;
         ErrorText.Visibility = Visibility.Collapsed;
+        CatalogErrorPanel.Visibility = Visibility.Collapsed;
         try
         {
             var sort = SelectedTag(SortCombo);
@@ -360,8 +371,8 @@ public sealed partial class CatalogPage : Page,
             if (requestSort == null && _personalDefaultOrderTouched && _source is "favorites" or "watchlist" or "history")
                 requestSort = "added_at";
             var isSection = _source == "section";
-            var useGuidedFilters = !isSection && !_advancedMode;
-            var queryRules = isSection
+            var useGuidedFilters = !isSection && !_advancedMode && _queryFilters == null;
+            var queryRules = isSection || _queryFilters != null
                 ? null
                 : _advancedMode
                     ? BuildAdvancedRules()
@@ -388,6 +399,8 @@ public sealed partial class CatalogPage : Page,
                 sectionId: _sectionId,
                 extraRules: queryRules,
                 extraRulesMatch: _advancedMode ? SelectedTag(AdvancedMatchCombo) ?? "all" : "all",
+                queryGroups: !isSection && _queryFilters != null ? _catalogQuery.Groups : null,
+                queryGroupsMatch: _catalogQuery.Match,
                 ct: _loadCts.Token);
             if (generation != Volatile.Read(ref _loadGeneration)) return;
             foreach (var item in response.Items)
@@ -415,8 +428,15 @@ public sealed partial class CatalogPage : Page,
         {
             if (generation == Volatile.Read(ref _loadGeneration))
             {
-                ErrorText.Text = ex.Message;
+                var collectionUnavailable = ex is ApiException { StatusCode: 404 } && _source is "user_collection" or "library_collection";
+                CatalogErrorTitle.Text = collectionUnavailable ? "This collection isn't available" : "Couldn't load the catalog";
+                ErrorText.Text = collectionUnavailable ? "It may have been deleted, or you may not have access to it." : "The catalog request failed. Please retry.";
                 ErrorText.Visibility = Visibility.Visible;
+                CatalogErrorPanel.Visibility = Visibility.Visible;
+                CatalogRetryButton.Visibility = collectionUnavailable ? Visibility.Collapsed : Visibility.Visible;
+                CatalogCollectionsButton.Visibility = collectionUnavailable ? Visibility.Visible : Visibility.Collapsed;
+                EmptyText.Visibility = Visibility.Collapsed;
+                _hasMore = false;
             }
         }
         finally
@@ -436,6 +456,7 @@ public sealed partial class CatalogPage : Page,
     {
         EmptyText.Visibility = Visibility.Collapsed;
         ErrorText.Visibility = Visibility.Collapsed;
+        CatalogErrorPanel.Visibility = Visibility.Collapsed;
         LoadMoreButton.Visibility = Visibility.Collapsed;
         CatalogLoadingRepeater.Visibility = Visibility.Visible;
         ItemsRepeater.Visibility = Visibility.Collapsed;
@@ -443,9 +464,19 @@ public sealed partial class CatalogPage : Page,
         LoadingRing.Visibility = Visibility.Collapsed;
     }
 
+    private async void CatalogRetry_Click(object sender, RoutedEventArgs e)
+    {
+        CatalogRetryButton.IsEnabled = false;
+        try { _hasMore = true; await LoadAsync(_items.Count == 0); }
+        finally { CatalogRetryButton.IsEnabled = true; }
+    }
+    private void CatalogCollections_Click(object sender, RoutedEventArgs e)
+        => App.Services.GetRequiredService<SiloPlayer.Helpers.NavigationService>().Navigate<CollectionsPage>();
+
     private void Filter_Changed(object sender, object e)
     {
         if (_initializing) return;
+        if (ReferenceEquals(sender, LibraryCombo)) _ = RefreshQueryScopeAsync();
         if (ReferenceEquals(sender, OrderCombo) && _source is "favorites" or "watchlist" or "history")
             _personalDefaultOrderTouched = true;
         if ((ReferenceEquals(sender, SortCombo) || ReferenceEquals(sender, OrderCombo))
@@ -828,6 +859,7 @@ public sealed partial class CatalogPage : Page,
 
     private async void ClearFilters_Click(object sender, RoutedEventArgs e)
     {
+        if (_queryFilters != null) { ClearQueryFilters(); await LoadAsync(true); return; }
         _initializing = true;
         if (_advancedMode)
         {
@@ -872,6 +904,7 @@ public sealed partial class CatalogPage : Page,
 
     private void UpdateFilterCount()
     {
+        if (_queryFilters != null) { UpdateQueryFilterChips(); return; }
         if (_advancedMode)
         {
             var advancedCount = BuildAdvancedRules().Count;
@@ -968,9 +1001,15 @@ public sealed partial class CatalogPage : Page,
         LockedFiltersPanel.Margin = new Thickness(gutter, 0, gutter, 18);
         HistoryActions.Margin = new Thickness(gutter, 0, gutter, 18);
         CatalogScrollViewer.Padding = new Thickness(gutter, 0, gutter, 28);
+        WatchlistTabs.Margin = new Thickness(gutter, 0, gutter, 24);
+        ExternalWatchlistScroller.Padding = new Thickness(gutter, 0, gutter, 28);
 
         PageTitleText.FontSize = width < 640 ? 32 : width < 1024 ? 44 : 56;
+        PageTitleText.LineHeight = PageTitleText.FontSize * .95;
+        PageSubtitleText.FontSize = width < 640 ? 14 : 16;
+        PageSubtitleText.LineHeight = width < 640 ? 20 : 24;
         var compactHeader = width < 640;
+        HeaderGrid.RowSpacing = compactHeader && CountPanel.Visibility == Visibility.Visible ? 12 : 0;
         Grid.SetRow(CountPanel, compactHeader ? 1 : 0);
         Grid.SetColumn(CountPanel, compactHeader ? 0 : 1);
         CountPanel.HorizontalAlignment = compactHeader ? HorizontalAlignment.Left : HorizontalAlignment.Right;
@@ -982,13 +1021,17 @@ public sealed partial class CatalogPage : Page,
         Grid.SetColumnSpan(HistoryButtonsPanel, compactHistory ? 2 : 1);
 
         ApplyCatalogCardLayout(width, gutter);
+        if (_source == "watchlist") ApplyExternalTitleLayout(width);
     }
 
     private void ApplyCatalogCardLayout(double width, double gutter)
     {
         var contentWidth = Math.Max(280, width - gutter * 2);
-        var columns = _uiCustomizationService.GetPosterColumnCount(contentWidth);
-        _catalogCardWidth = Math.Max(96, Math.Floor((width - gutter * 2 - (columns - 1) * 12) / columns));
+        var columns = _uiCustomizationService.GetPosterColumnCount(width);
+        var gap = _uiCustomizationService.CardPresentation.PosterSize == "large" ? 16 : 12;
+        CatalogGridLayout.MinColumnSpacing = CatalogGridLayout.MinRowSpacing = gap;
+        CatalogLoadingGridLayout.MinColumnSpacing = CatalogLoadingGridLayout.MinRowSpacing = gap;
+        _catalogCardWidth = Math.Max(96, Math.Floor((contentWidth - (columns - 1) * gap) / columns));
         CatalogGridLayout.MinItemWidth = _catalogCardWidth;
         CatalogGridLayout.MinItemHeight = _catalogCardWidth * 1.5 + _uiCustomizationService.CardCaptionHeight;
         CatalogLoadingGridLayout.MinItemWidth = _catalogCardWidth;

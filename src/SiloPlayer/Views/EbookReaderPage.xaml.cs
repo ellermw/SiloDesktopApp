@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Navigation;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.Web.WebView2.Core;
 using Windows.Foundation;
 using Windows.System.Display;
@@ -17,6 +18,7 @@ using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
+using SiloPlayer.Controls;
 
 namespace SiloPlayer.Views;
 
@@ -36,6 +38,15 @@ public sealed partial class EbookReaderPage : Page
     private int _chapterIndex;
     private double _chapterFraction;
     private bool _initialized;
+    private bool _leaving;
+    private bool _opening;
+    private bool _rendererReady;
+    private string? _sharedLocation;
+    private double _sharedProgress;
+    private EbookReaderProgress? _restoreProgress;
+    private int _rendererPageCount;
+    private ApiRequestContext _readerContext;
+    private int _openGeneration;
     private bool _suppressControls;
     private bool _savePending;
     private string _activePanel = "contents";
@@ -45,7 +56,13 @@ public sealed partial class EbookReaderPage : Page
     private bool _displayRequested;
     private string? _pendingHighlightText;
     private List<EbookReaderAnnotation> _annotations = [];
+    private LatestSettingsWriter<Dictionary<string, object?>>? _settingsWriter;
+    private readonly SemaphoreSlim _localSettingsGate = new(1, 1);
+    private long _localSettingsRevision;
+    private Dictionary<string, object?>? _latestReaderConfig;
+    private string _readerSettingsDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "reader-settings");
     private readonly DispatcherTimer _progressTimer = new() { Interval = TimeSpan.FromSeconds(8) };
+    private readonly Dictionary<Button, FrameworkElement> _profileChecks = [];
 
     public EbookReaderPage()
     {
@@ -62,14 +79,61 @@ public sealed partial class EbookReaderPage : Page
         WritingModeCombo.SelectedIndex = 0;
         SpreadCombo.SelectedIndex = 0;
         FlowCombo.SelectedIndex = 0;
+        InitializeReaderControls();
         OpenPanel("contents");
         ReadingSurface.SizeChanged += (_, _) => UpdateRulerOverlay();
+        UpdateReaderResponsiveLayout();
         _progressTimer.Tick += ProgressTimer_Tick;
+    }
+
+    private void InitializeReaderControls()
+    {
+        BookmarkButton.Content = WebUiIcon.Create("bookmark", 16);
+        foreach (var button in ReadingProfilesSection.Children.OfType<Button>())
+        {
+            var content = (FrameworkElement)button.Content;
+            button.Content = null;
+            var row = new Grid { ColumnSpacing = 12 };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var check = WebUiIcon.Create("check", 16);
+            check.VerticalAlignment = VerticalAlignment.Center;
+            AutomationProperties.SetName(check, "Selected profile");
+            Grid.SetColumn(check, 1);
+            row.Children.Add(content); row.Children.Add(check);
+            button.Content = row;
+            _profileChecks.Add(button, check);
+        }
+        UpdateReadingProfilePresentation();
+    }
+
+    private void UpdateReadingProfilePresentation()
+    {
+        // Match the source preset by its four settings rather than the last
+        // clicked label; restored/custom settings can change the active choice.
+        foreach (var (button, check) in _profileChecks)
+        {
+            var preset = (button.Tag as string) switch
+            {
+                "accessible" => (Font: "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", Size: 126d, Line: 1.9d, Margin: 32d),
+                "compact" => (Font: "inherit", Size: 96d, Line: 1.5d, Margin: 16d),
+                _ => (Font: "ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif", Size: 112d, Line: 1.75d, Margin: 28d),
+            };
+            var active = SelectedTag(FontCombo, "inherit") == preset.Font
+                && Math.Abs(FontSizeSlider.Value - preset.Size) < 0.00001
+                && Math.Abs(LineHeightSlider.Value - preset.Line) < 0.00001
+                && Math.Abs(MarginSlider.Value - preset.Margin) < 0.00001;
+            button.Background = (Brush)Application.Current.Resources[active ? "SurfaceRaisedBrush" : "AppBackgroundBrush"];
+            button.BorderBrush = (Brush)Application.Current.Resources["BorderBrush"];
+            AutomationProperties.SetItemStatus(button, active ? "Selected" : "Not selected");
+            check.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+        }
     }
 
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e);
+        _readerContext = _ebooksApi.CaptureContext();
         _contentId = e.Parameter switch
         {
             EbookReaderNavigation n => n.ContentId,
@@ -119,6 +183,7 @@ public sealed partial class EbookReaderPage : Page
 
     protected override async void OnNavigatedFrom(NavigationEventArgs e)
     {
+        _leaving = true;
         _progressTimer.Stop();
         if (_initialized)
         {
@@ -218,6 +283,10 @@ public sealed partial class EbookReaderPage : Page
 
     private async Task OpenVersionAsync(FileVersion version, bool restoreProgress)
     {
+        if (_opening || _leaving) return;
+        _opening = true;
+        try
+        {
         if (_initialized)
         {
             await ReadScrollFractionAsync();
@@ -225,6 +294,9 @@ public sealed partial class EbookReaderPage : Page
         }
 
         _initialized = false;
+        _openGeneration++;
+        _rendererReady = false;
+        _sharedLocation = null;
         _selectedVersion = version;
         _fileId = version.FileId;
         FormatText.Text = FormatOf(version).ToUpperInvariant();
@@ -236,21 +308,35 @@ public sealed partial class EbookReaderPage : Page
         LoadingText.Text = "Preparing reader…";
         var cacheRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "reader-cache", SafeName(_contentId), _fileId.ToString(CultureInfo.InvariantCulture));
         _book = await Task.Run(() => EbookPackageExtractor.Extract(_sourceBytes, cacheRoot, FormatOf(version)), _lifetime.Token);
+        _lifetime.Token.ThrowIfCancellationRequested();
+        if (_leaving) return;
+        if (UsesSharedRenderer)
+        {
+            await File.WriteAllBytesAsync(Path.Combine(cacheRoot, "reader-source." + _book.Format), _sourceBytes, _lifetime.Token);
+            ReaderWebView.CoreWebView2.SetVirtualHostNameToFolderMapping(
+                EbookReaderWebPolicy.BookHost, cacheRoot, CoreWebView2HostResourceAccessKind.Allow);
+        }
         ReaderWebView.CoreWebView2.SetVirtualHostNameToFolderMapping(
             EbookReaderWebPolicy.ReaderHost,
-            _book.RootDirectory,
+            UsesSharedRenderer ? Path.Combine(AppContext.BaseDirectory, "Assets", "Reader") : _book.RootDirectory,
             CoreWebView2HostResourceAccessKind.DenyCors);
         BuildContents();
         UpdateFormatSpecificChrome();
 
         var saved = restoreProgress ? await TryGetProgressAsync() : null;
+        if (_leaving) return;
+        _restoreProgress = saved?.FileId == _fileId ? saved : null;
         _chapterIndex = saved == null || saved.FileId != _fileId ? 0 : ChapterFromProgress(saved.Progress);
         _chapterFraction = saved == null || saved.FileId != _fileId ? 0 : FractionWithinChapter(saved.Progress);
         _suppressControls = true;
         FileSelector.SelectedItem = FileSelector.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, _fileId));
         _suppressControls = false;
         _initialized = true;
-        NavigateToChapter(_chapterIndex, _chapterFraction);
+        if (UsesSharedRenderer)
+            ReaderWebView.Source = new Uri($"https://{EbookReaderWebPolicy.ReaderHost}/index.html?generation={_openGeneration}");
+        else NavigateToChapter(_chapterIndex, _chapterFraction);
+        }
+        finally { _opening = false; }
     }
 
     private async Task LoadMangaNavigationAsync()
@@ -283,8 +369,8 @@ public sealed partial class EbookReaderPage : Page
     private void UpdateFormatSpecificChrome()
     {
         var comic = IsComicBook;
-        SearchTab.IsEnabled = IsHtmlBook;
-        SearchBookVisibility(IsHtmlBook);
+        SearchTab.IsEnabled = IsHtmlBook || UsesSharedRenderer;
+        SearchBookVisibility(IsHtmlBook || UsesSharedRenderer);
         ReadingProfilesSection.Visibility = comic ? Visibility.Collapsed : Visibility.Visible;
         ReadAloudSection.Visibility = comic ? Visibility.Collapsed : Visibility.Visible;
         FontSection.Visibility = comic ? Visibility.Collapsed : Visibility.Visible;
@@ -298,6 +384,7 @@ public sealed partial class EbookReaderPage : Page
         SpreadSection.Visibility = SelectedTag(FlowCombo, "paginated") == "scrolled" ? Visibility.Collapsed : Visibility.Visible;
         if (comic && _panelOpen) SetPanelOpen(false);
         UpdateRulerOverlay();
+        UpdateReadingProfilePresentation();
     }
 
     private void SearchBookVisibility(bool enabled)
@@ -327,14 +414,48 @@ public sealed partial class EbookReaderPage : Page
     private void BuildContents()
     {
         ContentsList.Items.Clear();
+        ContentsEmptyText.Visibility = Visibility.Collapsed;
         if (_book == null) return;
+        // Shared formats publish their actual TOC through the trusted renderer
+        // bridge. Keep the extracted spine for legacy saved-location migration.
+        if (UsesSharedRenderer) return;
         for (var i = 0; i < _book.Chapters.Count; i++)
             ContentsList.Items.Add(new ListViewItem { Content = _book.Chapters[i].Title, Tag = i });
+    }
+
+    private void AdoptSharedContents(JsonElement message)
+    {
+        _suppressControls = true;
+        ContentsList.Items.Clear();
+        if (message.TryGetProperty("toc", out var toc) && toc.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var entry in toc.EnumerateArray().Take(2048))
+            {
+                if (!entry.TryGetProperty("label", out var label) || label.ValueKind != JsonValueKind.String ||
+                    !entry.TryGetProperty("href", out var href) || href.ValueKind != JsonValueKind.String) continue;
+                var depth = entry.TryGetProperty("depth", out var level) && level.TryGetInt32(out var number)
+                    ? Math.Clamp(number, 0, 32) : 0;
+                ContentsList.Items.Add(new ListViewItem
+                {
+                    Tag = href.GetString(),
+                    Content = new TextBlock { Text = label.GetString(), FontSize = 14, TextWrapping = TextWrapping.Wrap,
+                        Margin = new Thickness(depth * 16, 0, 0, 0) }
+                });
+            }
+        }
+        _suppressControls = false;
+        ContentsEmptyText.Visibility = _activePanel == "contents" && ContentsList.Items.Count == 0
+            ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void NavigateToChapter(int index, double fraction = 0)
     {
         if (_book == null || _book.Chapters.Count == 0) return;
+        if (UsesSharedRenderer)
+        {
+            _ = NavigateSharedChapterAsync(index, fraction);
+            return;
+        }
         _chapterIndex = Math.Clamp(index, 0, _book.Chapters.Count - 1);
         _chapterFraction = Math.Clamp(fraction, 0, 1);
         var chapter = _book.Chapters[_chapterIndex];
@@ -348,6 +469,7 @@ public sealed partial class EbookReaderPage : Page
 
     private async void ReaderWebView_NavigationCompleted(WebView2 sender, CoreWebView2NavigationCompletedEventArgs args)
     {
+        if (_leaving || UsesSharedRenderer) return;
         LoadingLayer.Visibility = Visibility.Collapsed;
         if (!args.IsSuccess || _book == null) return;
         if (IsHtmlBook)
@@ -375,14 +497,47 @@ public sealed partial class EbookReaderPage : Page
 
     private async void ReaderWebView_WebMessageReceived(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
     {
-        if (!EbookReaderWebPolicy.IsTrustedReaderUri(args.Source))
+        if (_leaving || !EbookReaderWebPolicy.IsTrustedReaderUri(args.Source))
             return;
 
         try
         {
             using var message = JsonDocument.Parse(args.TryGetWebMessageAsString());
+            if (UsesSharedRenderer && (!message.RootElement.TryGetProperty("hostGeneration", out var generation) || generation.GetInt32() != _openGeneration)) return;
             var type = message.RootElement.TryGetProperty("type", out var typeElement) ? typeElement.GetString() : null;
-            if (type == "selection")
+            if (type == "shell-ready" && UsesSharedRenderer)
+            {
+                await OpenSharedRendererAsync();
+            }
+            else if (type == "reader-ready" && UsesSharedRenderer)
+            {
+                _rendererReady = true;
+                LoadingLayer.Visibility = Visibility.Collapsed;
+                _rendererPageCount = message.RootElement.GetProperty("count").GetInt32();
+                AdoptSharedContents(message.RootElement);
+                await PopulateVoicesAsync();
+                UpdateProgressControls();
+            }
+            else if (type == "relocate" && UsesSharedRenderer)
+            {
+                AdoptSharedSnapshot(message.RootElement);
+            }
+            else if (type == "reader-error")
+            {
+                LoadingLayer.Visibility = Visibility.Collapsed;
+                App.Services.GetRequiredService<ToastService>().Error(message.RootElement.GetProperty("message").GetString() ?? "Reading location unavailable.");
+            }
+            else if (type == "search-results")
+            {
+                SearchResultsList.Items.Clear();
+                foreach (var item in message.RootElement.GetProperty("items").EnumerateArray())
+                {
+                    var result = new BookSearchResult(0, item.GetProperty("chapterTitle").GetString() ?? "", item.GetProperty("snippet").GetString() ?? "", SearchBox.Text, item.GetProperty("cfi").GetString());
+                    SearchResultsList.Items.Add(new ListViewItem { Content = $"{result.ChapterTitle}\n{result.Snippet}", Tag = result });
+                }
+                SearchStatusText.Text = $"{SearchResultsList.Items.Count} matches";
+            }
+            else if (type == "selection")
             {
                 var text = message.RootElement.TryGetProperty("text", out var textElement) ? textElement.GetString() : null;
                 HighlightButton.Visibility = string.IsNullOrWhiteSpace(text) ? Visibility.Collapsed : Visibility.Visible;
@@ -393,6 +548,8 @@ public sealed partial class EbookReaderPage : Page
             }
         }
         catch (JsonException) { }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { if (!_leaving) ShowFailure(ex.Message); }
     }
 
     private async Task PopulateVoicesAsync()
@@ -419,6 +576,12 @@ public sealed partial class EbookReaderPage : Page
 
     private async Task ApplyAppearanceAsync()
     {
+        if (UsesSharedRenderer)
+        {
+            await ReaderWebView.ExecuteScriptAsync($"window.siloReader?.appearance({JsonSerializer.Serialize(SharedSettings())})");
+            UpdateRulerOverlay();
+            return;
+        }
         if (ReaderWebView.CoreWebView2 == null || !IsHtmlBook) return;
         var theme = SelectedTag(ThemeCombo, "light");
         var font = SelectedTag(FontCombo, "inherit");
@@ -447,6 +610,21 @@ public sealed partial class EbookReaderPage : Page
 
     private async Task ReadScrollFractionAsync()
     {
+        if (UsesSharedRenderer)
+        {
+            if (!_rendererReady || ReaderWebView.CoreWebView2 == null) return;
+            try
+            {
+                var generation = _openGeneration;
+                var file = _fileId;
+                var snapshot = await ReaderWebView.ExecuteScriptAsync("window.siloReader?.snapshot()");
+                if (generation != _openGeneration || file != _fileId) return;
+                using var value = JsonDocument.Parse(snapshot);
+                if (value.RootElement.ValueKind == JsonValueKind.Object) AdoptSharedSnapshot(value.RootElement);
+            }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Reader snapshot unavailable: {ex.Message}"); }
+            return;
+        }
         if (ReaderWebView.CoreWebView2 == null || !IsHtmlBook) return;
         try
         {
@@ -459,7 +637,7 @@ public sealed partial class EbookReaderPage : Page
         catch { }
     }
 
-    private double OverallProgress => _book == null || _book.Chapters.Count == 0 ? 0 : Math.Clamp((_chapterIndex + _chapterFraction) / _book.Chapters.Count, 0, 1);
+    private double OverallProgress => UsesSharedRenderer ? _sharedProgress : _book == null || _book.Chapters.Count == 0 ? 0 : Math.Clamp((_chapterIndex + _chapterFraction) / _book.Chapters.Count, 0, 1);
 
     private void UpdateProgressControls()
     {
@@ -467,6 +645,10 @@ public sealed partial class EbookReaderPage : Page
         ProgressSlider.Value = OverallProgress;
         ProgressText.Text = $"{OverallProgress:P0}";
         HeaderProgressText.Text = ProgressText.Text;
+        var pageDetail = _book?.Format == "pdf" && _rendererPageCount > 0
+            ? $"Page {_chapterIndex + 1} of {_rendererPageCount} · {ProgressText.Text}" : ProgressText.Text;
+        ToolTipService.SetToolTip(ProgressText, pageDetail);
+        ToolTipService.SetToolTip(HeaderProgressText, pageDetail);
         EndOfBookNextButton.Visibility = _nextMangaChapter != null && OverallProgress >= 0.995
             ? Visibility.Visible : Visibility.Collapsed;
         _suppressControls = false;
@@ -502,14 +684,15 @@ public sealed partial class EbookReaderPage : Page
 
     private async Task SaveProgressAsync()
     {
+        if (!_initialized || (UsesSharedRenderer && (!_rendererReady || string.IsNullOrEmpty(_sharedLocation)))) return;
         try
         {
             await _ebooksApi.SaveProgressAsync(_contentId, new EbookReaderProgressInput
             {
                 FileId = _fileId,
-                Location = $"chapter:{_chapterIndex};fraction:{_chapterFraction.ToString("F6", CultureInfo.InvariantCulture)}",
+                Location = CurrentLocation,
                 Progress = OverallProgress
-            }, _lifetime.Token);
+            }, _readerContext, _lifetime.Token);
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
         {
@@ -531,8 +714,14 @@ public sealed partial class EbookReaderPage : Page
     {
         try
         {
-            var envelope = await _ebooksApi.GetReaderConfigAsync(_contentId, _lifetime.Token);
-            var settings = ReaderSettingsObject(envelope.Config);
+            JsonElement config;
+            JsonElement? local = null;
+            var localPending = false;
+            try { if (File.Exists(LocalReaderConfigPath)) { using var stored = JsonDocument.Parse(await File.ReadAllTextAsync(LocalReaderConfigPath)); local = stored.RootElement.GetProperty("config").Clone(); localPending = stored.RootElement.TryGetProperty("pending", out var pending) && pending.GetBoolean(); } } catch { }
+            try { config = JsonSerializer.SerializeToElement((await _ebooksApi.GetReaderConfigAsync(_contentId, _lifetime.Token)).Config); }
+            catch (Exception ex) when (ex is not OperationCanceledException && local.HasValue) { config = local.Value; ReaderSyncStatus.Text = "Using settings saved on this device. Server sync is unavailable."; ReaderSyncStatus.Visibility = Visibility.Visible; }
+            if (localPending && local.HasValue) config = local.Value;
+            var settings = ReaderSettingsObject(JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(config.GetRawText()) ?? []);
             _suppressControls = true;
             SetComboByTag(ThemeCombo, GetString(settings, ["theme"], "light"));
             SetComboByTag(FontCombo, NormalizeFontFamily(GetString(settings, ["fontFamily", "font_family"], "inherit")));
@@ -559,8 +748,8 @@ public sealed partial class EbookReaderPage : Page
 
     private async Task SavePreferencesAsync()
     {
-        if (!_initialized) return;
-        await _ebooksApi.SaveReaderConfigAsync(_contentId, new Dictionary<string, object?>
+        if (!_initialized || _leaving || !_ebooksApi.IsCurrentContext(_readerContext)) return;
+        var config = new Dictionary<string, object?>
         {
             ["settings"] = new Dictionary<string, object?>
             {
@@ -580,17 +769,60 @@ public sealed partial class EbookReaderPage : Page
                 ["readingRuler"] = ReadingRulerCheck.IsChecked == true,
                 ["readingRulerTop"] = RulerPositionSlider.Value,
             }
-        }, _lifetime.Token);
+        };
+        _latestReaderConfig = config;
+        var revision = Interlocked.Increment(ref _localSettingsRevision);
+        await SaveLocalReaderConfigAsync(config, pending: true, revision);
+        if (revision != Volatile.Read(ref _localSettingsRevision)) return;
+        _settingsWriter ??= new LatestSettingsWriter<Dictionary<string, object?>>(WriteReaderConfigAsync,
+            error => { ReaderSyncStatus.Text = error == null ? "" : "Settings saved on this device. Could not sync; change a setting to retry."; ReaderSyncStatus.Visibility = error == null ? Visibility.Collapsed : Visibility.Visible; }, TimeSpan.FromMilliseconds(400));
+        await _settingsWriter.SaveAsync(config, _lifetime.Token);
+    }
+
+    private string LocalReaderConfigPath => Path.Combine(_readerSettingsDirectory,
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(_readerContext.BaseUrl + "|" + _readerContext.ProfileId + "|" + _contentId))) + ".json");
+    private async Task SaveLocalReaderConfigAsync(Dictionary<string, object?> config, bool pending, long revision)
+    {
+        await _localSettingsGate.WaitAsync();
+        try
+        {
+            if (revision != Volatile.Read(ref _localSettingsRevision)) return;
+            Directory.CreateDirectory(Path.GetDirectoryName(LocalReaderConfigPath)!);
+            var temp = LocalReaderConfigPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(new { pending, config }));
+            File.Move(temp, LocalReaderConfigPath, true);
+        }
+        catch (Exception) { ReaderSyncStatus.Text = "Could not save settings on this device."; ReaderSyncStatus.Visibility = Visibility.Visible; }
+        finally { _localSettingsGate.Release(); }
+    }
+    private async Task WriteReaderConfigAsync(Dictionary<string, object?> config, CancellationToken ct)
+    {
+        if (!_ebooksApi.IsCurrentContext(_readerContext)) throw new OperationCanceledException(ct);
+        if (!_ebooksApi.HasReaderConfigRevision(_contentId))
+            await _ebooksApi.GetReaderConfigAsync(_contentId, ct);
+        try { await _ebooksApi.SaveReaderConfigAsync(_contentId, config, ct); }
+        catch (ApiException ex) when (ex.StatusCode is 409 or 412)
+        {
+            await _ebooksApi.GetReaderConfigAsync(_contentId, ct);
+            if (!_ebooksApi.IsCurrentContext(_readerContext)) throw new OperationCanceledException(ct);
+            await _ebooksApi.SaveReaderConfigAsync(_contentId, config, ct);
+        }
+        if (ReferenceEquals(config, _latestReaderConfig))
+            await SaveLocalReaderConfigAsync(config, pending: false, Volatile.Read(ref _localSettingsRevision));
     }
 
     private async Task LoadAnnotationsAsync()
     {
+        if (_leaving || !_ebooksApi.IsCurrentContext(_readerContext)) return;
         AnnotationsList.Children.Clear();
         try
         {
             _annotations = await _ebooksApi.GetAnnotationsAsync(_contentId, _lifetime.Token);
+            if (_leaving || !_ebooksApi.IsCurrentContext(_readerContext)) return;
             foreach (var annotation in _annotations)
                 AnnotationsList.Children.Add(CreateAnnotationRow(annotation));
+            if (UsesSharedRenderer && _rendererReady)
+                await ReaderWebView.ExecuteScriptAsync($"window.siloReader?.annotations({JsonSerializer.Serialize(_annotations, ReaderJsonOptions)})");
             EmptyAnnotationsText.Visibility = _annotations.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         catch (ApiException ex) when (ex.StatusCode == 404)
@@ -602,21 +834,37 @@ public sealed partial class EbookReaderPage : Page
 
     private async void Bookmark_Click(object sender, RoutedEventArgs e)
     {
-        if (_book == null) return;
+        if (_leaving || _book == null || UsesSharedRenderer && !_rendererReady) return;
+        var generation = _openGeneration;
+        try
+        {
         await ReadScrollFractionAsync();
+        if (_leaving || generation != _openGeneration) return;
         await _ebooksApi.CreateAnnotationAsync(_contentId, new EbookReaderAnnotationInput
         {
-            Kind = "bookmark", Location = $"chapter:{_chapterIndex};fraction:{_chapterFraction.ToString("F6", CultureInfo.InvariantCulture)}", Note = _book.Chapters[_chapterIndex].Title
-        }, _lifetime.Token);
+            Kind = "bookmark", Location = CurrentLocation, Note = _book.Format == "pdf" ? $"Page {_chapterIndex + 1}" : _book.Chapters[Math.Min(_chapterIndex, _book.Chapters.Count - 1)].Title
+        }, _readerContext, _lifetime.Token);
         await LoadAnnotationsAsync();
         OpenPanel("annotations");
+        }
+        catch (OperationCanceledException) { }
+        catch (ApiException ex) { if (!_leaving) App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
     }
 
     private void NavigateToAnnotation(EbookReaderAnnotation annotation)
     {
+        if (UsesSharedRenderer)
+        {
+            _ = ReaderWebView.ExecuteScriptAsync($"window.siloReader?.go({JsonSerializer.Serialize(annotation.CfiRange ?? annotation.Location)})");
+            return;
+        }
         if (string.IsNullOrWhiteSpace(annotation.Location)) return;
         var parts = annotation.Location.Split(';');
-        var chapter = int.TryParse(parts.FirstOrDefault(p => p.StartsWith("chapter:"))?[8..], out var c) ? c : 0;
+        if (!int.TryParse(parts.FirstOrDefault(p => p.StartsWith("chapter:"))?[8..], out var chapter) || _book == null || chapter < 0 || chapter >= _book.Chapters.Count)
+        {
+            App.Services.GetRequiredService<ToastService>().Error("This reading location is unavailable in this file.");
+            return;
+        }
         var fractionText = parts.FirstOrDefault(p => p.StartsWith("fraction:"))?[9..];
         var fraction = double.TryParse(fractionText, NumberStyles.Float, CultureInfo.InvariantCulture, out var f) ? f : 0;
         NavigateToChapter(chapter, fraction);
@@ -624,12 +872,20 @@ public sealed partial class EbookReaderPage : Page
 
     private void ContentsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!_initialized || ContentsList.SelectedItem is not ListViewItem { Tag: int index } || index == _chapterIndex) return;
+        if (!_suppressControls && _initialized && UsesSharedRenderer && _rendererReady &&
+            ContentsList.SelectedItem is ListViewItem { Tag: string href })
+        {
+            // The renderer validates CFI and publication-local hrefs before navigation.
+            _ = ReaderWebView.ExecuteScriptAsync($"window.siloReader?.go({JsonSerializer.Serialize(href)})");
+            return;
+        }
+        if (_suppressControls || !_initialized || ContentsList.SelectedItem is not ListViewItem { Tag: int index } || index == _chapterIndex && (!UsesSharedRenderer || _rendererReady)) return;
         NavigateToChapter(index);
     }
 
     private async void Appearance_Changed(object sender, SelectionChangedEventArgs e)
     {
+        if (!_suppressControls) UpdateReadingProfilePresentation();
         if (_suppressControls || !_initialized) return;
         UpdateFormatSpecificChrome();
         await ApplyAppearanceAsync();
@@ -638,6 +894,7 @@ public sealed partial class EbookReaderPage : Page
 
     private async void AppearanceSlider_Changed(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
+        if (!_suppressControls) UpdateReadingProfilePresentation();
         if (_suppressControls || !_initialized) return;
         UpdateFormatSpecificChrome();
         await ApplyAppearanceAsync();
@@ -655,11 +912,17 @@ public sealed partial class EbookReaderPage : Page
     private void ProgressSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
         if (_suppressControls || !_initialized || _book == null) return;
+        if (UsesSharedRenderer)
+        {
+            _ = ReaderWebView.ExecuteScriptAsync($"window.siloReader?.go('fraction:{e.NewValue.ToString("F6", CultureInfo.InvariantCulture)}')");
+            return;
+        }
         NavigateToChapter(ChapterFromProgress(e.NewValue), FractionWithinChapter(e.NewValue));
     }
 
     private async void Previous_Click(object sender, RoutedEventArgs e)
     {
+        if (UsesSharedRenderer) { await ReaderWebView.ExecuteScriptAsync("window.siloReader?.prev()"); return; }
         if (SelectedTag(FlowCombo, "paginated") == "paginated" && ReaderWebView.CoreWebView2 != null)
         {
             var moved = await ReaderWebView.ExecuteScriptAsync("(()=>{if(window.scrollX>4){window.scrollBy({left:-window.innerWidth,behavior:'smooth'});return true;}return false;})()");
@@ -671,6 +934,7 @@ public sealed partial class EbookReaderPage : Page
 
     private async void Next_Click(object sender, RoutedEventArgs e)
     {
+        if (UsesSharedRenderer) { await ReaderWebView.ExecuteScriptAsync("window.siloReader?.next()"); return; }
         if (SelectedTag(FlowCombo, "paginated") == "paginated" && ReaderWebView.CoreWebView2 != null)
         {
             var moved = await ReaderWebView.ExecuteScriptAsync("(()=>{const max=document.documentElement.scrollWidth-window.innerWidth;if(window.scrollX<max-4){window.scrollBy({left:window.innerWidth,behavior:'smooth'});return true;}return false;})()");
@@ -699,19 +963,43 @@ public sealed partial class EbookReaderPage : Page
         SetPanelOpen(true);
         SettingsPanel.Visibility = panel == "settings" ? Visibility.Visible : Visibility.Collapsed;
         ContentsList.Visibility = panel == "contents" ? Visibility.Visible : Visibility.Collapsed;
+        ContentsEmptyText.Visibility = panel == "contents" && UsesSharedRenderer && _rendererReady && ContentsList.Items.Count == 0
+            ? Visibility.Visible : Visibility.Collapsed;
         SearchPanel.Visibility = panel == "search" ? Visibility.Visible : Visibility.Collapsed;
         AnnotationsPanel.Visibility = panel == "annotations" ? Visibility.Visible : Visibility.Collapsed;
-        ContentsTab.Opacity = panel == "contents" ? 1 : 0.62;
-        SearchTab.Opacity = panel == "search" ? 1 : 0.62;
-        AnnotationsTab.Opacity = panel == "annotations" ? 1 : 0.62;
-        SettingsTab.Opacity = panel == "settings" ? 1 : 0.62;
+        foreach (var (tab, key) in new[] { (ContentsTab, "contents"), (SearchTab, "search"), (AnnotationsTab, "annotations"), (SettingsTab, "settings") })
+        {
+            tab.Background = panel == key ? (Brush)Application.Current.Resources["SurfaceRaisedBrush"] : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            tab.Opacity = 1;
+            AutomationProperties.SetItemStatus(tab, panel == key ? "Selected" : "Not selected");
+        }
         if (panel == "search") SearchBox.Focus(FocusState.Programmatic);
+    }
+
+    private void Reader_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateReaderResponsiveLayout();
+    private void UpdateReaderResponsiveLayout()
+    {
+        if (SideColumn == null || PanelRow == null) return;
+        var narrow = ActualWidth < 1024;
+        SideColumn.Width = new GridLength(_panelOpen && !narrow ? 320 : 0);
+        // The official narrow grid uses intrinsic panel rows: short contents
+        // leave a reading viewport; Settings can consume the whole body.
+        PanelRow.Height = _panelOpen && narrow
+            ? _book?.Format == "pdf" && _activePanel == "settings"
+                ? new GridLength(1, GridUnitType.Star) : GridLength.Auto
+            : new GridLength(0);
+        SidePanel.MaxHeight = narrow ? Math.Max(0, ActualHeight - 96) : double.PositiveInfinity;
+        Grid.SetColumn(SidePanel, narrow ? 0 : 1);
+        Grid.SetRow(SidePanel, narrow ? 1 : 0);
+        HeaderProgressText.Visibility = NextChapterLabel.Visibility = ActualWidth >= 640 ? Visibility.Visible : Visibility.Collapsed;
+        FileSelector.Visibility = ActualWidth >= 640 && _readerFiles.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
+        SidePanel.BorderThickness = narrow ? new Thickness(0, 1, 0, 0) : new Thickness(1, 0, 0, 0);
     }
 
     private void SetPanelOpen(bool open)
     {
         _panelOpen = open;
-        SideColumn.Width = new GridLength(open ? 320 : 0);
+        UpdateReaderResponsiveLayout();
         SidePanel.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
         PanelToggleIcon.Glyph = open ? "\uE89F" : "\uE8A0";
         var label = open ? "Close reader panel" : "Open reader panel";
@@ -721,20 +1009,28 @@ public sealed partial class EbookReaderPage : Page
 
     private async void Highlight_Click(object sender, RoutedEventArgs e)
     {
-        if (ReaderWebView.CoreWebView2 == null || !IsHtmlBook) return;
-        var json = await ReaderWebView.ExecuteScriptAsync("(()=>{const s=getSelection();const text=(s?.toString()||'').trim();if(!text)return null;try{document.execCommand('hiliteColor',false,'#facc15');}catch{}return {text};})()");
+        if (_leaving || ReaderWebView.CoreWebView2 == null || (!IsHtmlBook && !UsesSharedRenderer) || UsesSharedRenderer && !_rendererReady) return;
+        var generation = _openGeneration;
+        try
+        {
+        var json = await ReaderWebView.ExecuteScriptAsync(UsesSharedRenderer ? "window.siloReader?.selection()" : "(()=>{const s=getSelection();const text=(s?.toString()||'').trim();if(!text)return null;try{document.execCommand('hiliteColor',false,'#facc15');}catch{}return {text};})()");
         var selection = JsonSerializer.Deserialize<ReaderSelection>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
         if (string.IsNullOrWhiteSpace(selection?.Text)) return;
         await ReadScrollFractionAsync();
+        if (_leaving || generation != _openGeneration) return;
         await _ebooksApi.CreateAnnotationAsync(_contentId, new EbookReaderAnnotationInput
         {
             Kind = "highlight",
-            Location = $"chapter:{_chapterIndex};fraction:{_chapterFraction.ToString("F6", CultureInfo.InvariantCulture)}",
+            Location = selection.Cfi ?? CurrentLocation,
+            CfiRange = selection.Cfi,
             SelectedText = selection.Text,
             Style = "highlight",
             Color = "#facc15"
-        }, _lifetime.Token);
+        }, _readerContext, _lifetime.Token);
         await LoadAnnotationsAsync();
+        }
+        catch (OperationCanceledException) { }
+        catch (ApiException ex) { if (!_leaving) App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
     }
 
     private Border CreateAnnotationRow(EbookReaderAnnotation annotation)
@@ -783,6 +1079,13 @@ public sealed partial class EbookReaderPage : Page
         SearchResultsList.Items.Clear();
         if (_book == null || query.Length < 2) { SearchStatusText.Text = "Enter at least two characters."; return; }
         SearchStatusText.Text = "Searching...";
+        if (UsesSharedRenderer)
+        {
+            // WebView2 does not await JavaScript promises. Search completion is
+            // returned through the trusted shell message bridge.
+            await ReaderWebView.ExecuteScriptAsync($"window.siloReader.find({JsonSerializer.Serialize(query)}).then(items=>chrome.webview.postMessage(JSON.stringify({{type:'search-results',hostGeneration:{_openGeneration},items}})))");
+            return;
+        }
         var results = await Task.Run(() => SearchBook(query), _lifetime.Token);
         foreach (var result in results)
             SearchResultsList.Items.Add(new ListViewItem { Content = $"{result.ChapterTitle}\n{result.Snippet}", Tag = result });
@@ -816,6 +1119,11 @@ public sealed partial class EbookReaderPage : Page
     private void SearchResultsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (SearchResultsList.SelectedItem is not ListViewItem { Tag: BookSearchResult result }) return;
+        if (UsesSharedRenderer && result.Cfi != null)
+        {
+            _ = ReaderWebView.ExecuteScriptAsync($"window.siloReader.go({JsonSerializer.Serialize(result.Cfi)})");
+            return;
+        }
         _pendingHighlightText = result.Query;
         NavigateToChapter(result.ChapterIndex);
     }
@@ -831,7 +1139,8 @@ public sealed partial class EbookReaderPage : Page
         if (ReaderWebView.CoreWebView2 == null) return;
         var rate = SpeechRateSlider.Value.ToString(CultureInfo.InvariantCulture);
         var voice = JsonSerializer.Serialize(SelectedTag(VoiceCombo, ""));
-        await ReaderWebView.ExecuteScriptAsync($"(()=>{{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance((getSelection()?.toString()||document.body.innerText).trim());u.rate={rate};const uri={voice};if(uri)u.voice=speechSynthesis.getVoices().find(v=>v.voiceURI===uri)||null;speechSynthesis.speak(u);}})()");
+        var textSource = UsesSharedRenderer ? "window.siloReader.text()" : "(getSelection()?.toString()||document.body.innerText)";
+        await ReaderWebView.ExecuteScriptAsync($"(()=>{{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(({textSource}).trim());u.rate={rate};const uri={voice};if(uri)u.voice=speechSynthesis.getVoices().find(v=>v.voiceURI===uri)||null;speechSynthesis.speak(u);}})()");
     }
 
     private async void PauseSpeech_Click(object sender, RoutedEventArgs e)
@@ -867,6 +1176,7 @@ public sealed partial class EbookReaderPage : Page
             default: SetComboByTag(FontCombo, "ui-serif, Georgia, Cambria, 'Times New Roman', Times, serif"); FontSizeSlider.Value = 112; LineHeightSlider.Value = 1.75; MarginSlider.Value = 28; break;
         }
         _suppressControls = false;
+        UpdateReadingProfilePresentation();
         await ApplyAppearanceAsync();
         await SavePreferencesAsync();
     }
@@ -891,6 +1201,8 @@ public sealed partial class EbookReaderPage : Page
         AutomationProperties.SetName(
             ReadingRulerToolbarButton,
             visible ? "Disable reading ruler" : "Enable reading ruler");
+        ReadingRulerToolbarButton.Background = visible
+            ? (Brush)Application.Current.Resources["SurfaceRaisedBrush"] : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         RulerOverlay.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         RulerDragButton.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         RulerPositionSection.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
@@ -1022,6 +1334,55 @@ public sealed partial class EbookReaderPage : Page
         "Segoe UI" or "Atkinson Hyperlegible" or "Inter, ui-sans-serif, system-ui, sans-serif" => "ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
         _ => value,
     };
+    private static readonly JsonSerializerOptions ReaderJsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+    private bool UsesSharedRenderer => _book?.Format is "epub" or "pdf";
+    private string CurrentLocation => UsesSharedRenderer ? _sharedLocation ?? "" : $"chapter:{_chapterIndex};fraction:{_chapterFraction.ToString("F6", CultureInfo.InvariantCulture)}";
+
+    private object SharedSettings() => new
+    {
+        theme = SelectedTag(ThemeCombo, "light"), fontFamily = SelectedTag(FontCombo, "inherit"),
+        fontSize = FontSizeSlider.Value, fontWeight = FontWeightSlider.Value, lineHeight = LineHeightSlider.Value,
+        margin = MarginSlider.Value, maxWidth = MaxWidthSlider.Value, fontBrightness = BrightnessSlider.Value,
+        flow = SelectedTag(FlowCombo, "paginated"), spread = SelectedTag(SpreadCombo, "auto"),
+        writingMode = SelectedTag(WritingModeCombo, "auto"), rtl = RtlCheck.IsChecked == true, hyphenation = HyphenationCheck.IsChecked == true
+    };
+
+    private async Task OpenSharedRendererAsync()
+    {
+        if (_book == null || _leaving) return;
+        var options = new
+        {
+            url = $"https://{EbookReaderWebPolicy.BookHost}/reader-source.{_book.Format}",
+            format = _book.Format, location = _restoreProgress?.Location, progress = _restoreProgress?.Progress,
+            chapters = _book.Chapters.Select(chapter => chapter.RelativePath), settings = SharedSettings(), annotations = _annotations
+        };
+        await ReaderWebView.ExecuteScriptAsync($"window.siloReader.open({JsonSerializer.Serialize(options, ReaderJsonOptions)}).catch(e=>chrome.webview.postMessage(JSON.stringify({{type:'reader-error',hostGeneration:{_openGeneration},message:e.message}})))");
+    }
+
+    private async Task NavigateSharedChapterAsync(int index, double fraction)
+    {
+        if (_book == null || _leaving) return;
+        var command = _book.Format == "pdf" ? $"window.siloReader?.chapter({index})"
+            : $"window.siloReader?.go('chapter:{index};fraction:{fraction.ToString("F6", CultureInfo.InvariantCulture)}')";
+        await ReaderWebView.ExecuteScriptAsync(command);
+    }
+
+    private void AdoptSharedSnapshot(JsonElement value)
+    {
+        var location = value.GetProperty("location").GetString();
+        var progress = value.GetProperty("progress").GetDouble();
+        if (string.IsNullOrWhiteSpace(location) || !double.IsFinite(progress)) return;
+        _sharedLocation = location;
+        _sharedProgress = Math.Clamp(progress, 0, 1);
+        _chapterIndex = value.GetProperty("index").GetInt32();
+        if (_book?.Format == "epub" && value.TryGetProperty("chapterIndex", out var chapter) && chapter.GetInt32() >= 0)
+            _chapterIndex = chapter.GetInt32();
+        _suppressControls = true;
+        if (!UsesSharedRenderer) ContentsList.SelectedIndex = _chapterIndex;
+        _suppressControls = false;
+        UpdateProgressControls();
+    }
+
     private bool IsHtmlBook => _book?.Format is "epub" or "fb2";
     private bool IsComicBook => _book?.Format is "cbz" or "cbr";
     private static int AnnotationChapter(EbookReaderAnnotation annotation)
@@ -1032,6 +1393,6 @@ public sealed partial class EbookReaderPage : Page
 }
 
 public sealed record EbookReaderNavigation(string ContentId, int? FileId = null);
-internal sealed record ReaderSelection(string Text);
-internal sealed record BookSearchResult(int ChapterIndex, string ChapterTitle, string Snippet, string Query);
+internal sealed record ReaderSelection(string Text, string? Cfi = null);
+internal sealed record BookSearchResult(int ChapterIndex, string ChapterTitle, string Snippet, string Query, string? Cfi = null);
 internal sealed record ReaderVoice(string Name, string Uri);

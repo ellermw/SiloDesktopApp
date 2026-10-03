@@ -7,7 +7,7 @@ using SiloPlayer.Core.Models.Sessions;
 
 namespace SiloPlayer.Core.Api;
 
-public class AuthApi(SiloApiClient client)
+public partial class AuthApi(SiloApiClient client)
 {
     public Task<LoginResponse> LoginAsync(string username, string password, CancellationToken ct = default)
         => LoginAsync(username, password, provider: null, ct);
@@ -95,10 +95,17 @@ public class AuthApi(SiloApiClient client)
         {
             ["name"] = request.Name,
             ["is_child"] = request.IsChild,
-            ["max_content_rating"] = request.MaxContentRating,
             ["library_restrictions_enabled"] = request.LibraryRestrictionsEnabled,
             ["allowed_library_ids"] = request.AllowedLibraryIds.Select(id => id.ToString(CultureInfo.InvariantCulture)).ToArray(),
         };
+        if (!string.IsNullOrEmpty(request.MaxContentRating)) body["max_content_rating"] = request.MaxContentRating;
+        else if (updating) body["max_content_rating"] = null;
+        if (request.MaxAdvisoryAgeSupported)
+        {
+            if (request.MaxAdvisoryAge.HasValue || updating) body["max_advisory_age"] = request.MaxAdvisoryAge;
+            if (request.RequireAdvisoryAgeSupported)
+                body["require_advisory_age"] = request.MaxAdvisoryAge.HasValue && request.RequireAdvisoryAge;
+        }
         if (request.Avatar != null)
             body["avatar"] = updating && request.Avatar.Length == 0 ? null : request.Avatar;
         if (!string.IsNullOrEmpty(request.Pin)) body["pin"] = request.Pin;
@@ -164,6 +171,12 @@ public class AuthApi(SiloApiClient client)
     public async Task<List<AuthProvider>> GetAuthProvidersAsync(CancellationToken ct = default)
         => (await client.GetUnauthenticatedAsync<AuthProvidersResponse>("/api/v2/auth/providers", ct)).Providers;
 
+    public Task<ServerIdentity> GetServerIdentityAsync(string serverBase, CancellationToken ct = default)
+    {
+        if (client.BaseUrl != serverBase) throw new OperationCanceledException("The selected server changed.");
+        return client.GetUnauthenticatedAsync<ServerIdentity>("/api/v2/system/identity", ct);
+    }
+
     public async Task<Uri> StartOAuthAsync(int installationId, CancellationToken ct = default)
     {
         if (installationId <= 0)
@@ -197,6 +210,13 @@ public class AuthApi(SiloApiClient client)
         => client.PostUnauthenticatedAsync<OAuthCompleteResponse>(baseUrl, "/api/v2/auth/oauth/complete",
             new Dictionary<string, object?> { ["code"] = code }, ct);
 
+    public Task<OAuthCompleteResponse> CompleteNativeOAuthAsync(string baseUrl, string code, string codeVerifier, CancellationToken ct = default)
+        => client.PostUnauthenticatedAsync<OAuthCompleteResponse>(baseUrl, "/api/v2/auth/oauth/complete",
+            new Dictionary<string, object?> { ["code"] = code, ["code_verifier"] = codeVerifier }, ct);
+
+    public Task DeviceCancelAsync(string baseUrl, string deviceCode, CancellationToken ct = default)
+        => client.PostUnauthenticatedNoContentAsync(baseUrl, "/api/v2/auth/device/cancel", new { device_code = deviceCode }, ct);
+
     // ===== Device Login (approver-side flow) =====
     //
     // Used by the Activate Device page. Device A calls /device/start, displays a
@@ -208,7 +228,10 @@ public class AuthApi(SiloApiClient client)
     // included for completeness so the same AuthApi covers the whole flow.
 
     public Task<DeviceLoginStartResponse> DeviceStartAsync(string? deviceName = null, string? devicePlatform = null, CancellationToken ct = default)
-        => client.PostUnauthenticatedAsync<DeviceLoginStartResponse>("/api/v2/auth/device/start",
+        => DeviceStartAsync(client.BaseUrl, deviceName, devicePlatform, ct);
+
+    public Task<DeviceLoginStartResponse> DeviceStartAsync(string baseUrl, string? deviceName, string? devicePlatform, CancellationToken ct = default)
+        => client.PostUnauthenticatedAsync<DeviceLoginStartResponse>(baseUrl, "/api/v2/auth/device/start",
             new Dictionary<string, object?>
             {
                 ["device_name"] = deviceName ?? "",
@@ -230,7 +253,10 @@ public class AuthApi(SiloApiClient client)
     }
 
     public Task<DeviceLoginPollResponse> DevicePollAsync(string deviceCode, CancellationToken ct = default)
-        => client.PostUnauthenticatedAsync<DeviceLoginPollResponse>("/api/v2/auth/device/poll",
+        => DevicePollAsync(client.BaseUrl, deviceCode, ct);
+
+    public Task<DeviceLoginPollResponse> DevicePollAsync(string baseUrl, string deviceCode, CancellationToken ct = default)
+        => client.PostUnauthenticatedAsync<DeviceLoginPollResponse>(baseUrl, "/api/v2/auth/device/poll",
             new Dictionary<string, object?> { ["device_code"] = deviceCode }, ct);
 
     public Task<DeviceLoginCapabilityResponse> GetDeviceCapabilityAsync(CancellationToken ct = default)

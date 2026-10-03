@@ -181,6 +181,8 @@
                                     Spacing="6" VerticalAlignment="Center" />
                     </Grid>
 
+                    <Slider x:Name="TextOpacitySlider" Header="Text opacity" Minimum="1" Maximum="100" StepFrequency="1"
+                            AutomationProperties.Name="Text opacity" ValueChanged="TextOpacitySlider_ValueChanged" />
                     <!-- Box-only rows: Opacity + Color -->
                     <Grid x:Name="BgOpacityRow" ColumnSpacing="16">
                         <Grid.ColumnDefinitions>

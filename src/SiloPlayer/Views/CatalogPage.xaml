@@ -6,6 +6,7 @@
     xmlns:models="using:SiloPlayer.Core.Models.Home"
     Background="{StaticResource AppBackgroundBrush}"
     SizeChanged="Page_SizeChanged">
+
     <Grid x:Name="PageShell" MaxWidth="1400" HorizontalAlignment="Stretch">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -17,11 +18,11 @@
 
         <Grid x:Name="HeaderGrid" Grid.Row="0" Margin="40,24,40,24" ColumnDefinitions="*,Auto" RowSpacing="12">
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-            <StackPanel Spacing="8">
-                <TextBlock x:Name="PageTitleText" Text="Catalog" FontSize="56" FontWeight="Bold"
+            <StackPanel Spacing="12">
+                <TextBlock x:Name="PageTitleText" Text="Catalog" FontSize="56" FontWeight="ExtraBold" CharacterSpacing="-50" LineHeight="53.2" LineStackingStrategy="BlockLineHeight"
                            Foreground="{StaticResource PrimaryTextBrush}" />
                 <TextBlock x:Name="PageSubtitleText" Text="Refine the archive by type, era, rating, or genre."
-                           FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+                           FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" />
             </StackPanel>
             <StackPanel x:Name="CountPanel" Grid.Column="1" VerticalAlignment="Bottom" Orientation="Horizontal" Spacing="6">
                 <Border Width="1" Height="32" Background="{StaticResource BorderBrush}" Margin="0,0,12,0" />
@@ -31,7 +32,22 @@
             </StackPanel>
         </Grid>
 
-        <controls:WrapPanel x:Name="FilterPanel" Grid.Row="1" Margin="40,0,40,18" HorizontalSpacing="10" VerticalSpacing="10">
+        <Border x:Name="WatchlistTabs" Grid.Row="1" Visibility="Collapsed" Margin="40,0,40,24" Height="36"
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+            <StackPanel Orientation="Horizontal" Spacing="4" Margin="3,0" VerticalAlignment="Center">
+                <Button x:Name="LibraryWatchlistTab" Style="{StaticResource WebUiLineTabStyle}" Content="In your library" Click="LibraryWatchlistTab_Click" KeyDown="WatchlistTab_KeyDown" />
+                <Button x:Name="ExternalWatchlistTab" Style="{StaticResource WebUiLineTabStyle}" Click="ExternalWatchlistTab_Click" KeyDown="WatchlistTab_KeyDown">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <TextBlock x:Name="ExternalWatchlistTabLabel" Text="Not in your library yet" />
+                        <Border x:Name="ExternalTitleCountBadge" Background="{StaticResource SurfaceBrush}" CornerRadius="999" MinWidth="20" Height="20" Padding="6,0" Visibility="Collapsed">
+                            <TextBlock x:Name="ExternalTitleCountText" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center" HorizontalAlignment="Center" />
+                        </Border>
+                        <Ellipse x:Name="ExternalTitleAttention" Width="8" Height="8" Fill="{StaticResource WarningBrush}" Visibility="Collapsed" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Border>
+        <controls:WrapPanel x:Name="FilterPanel" Grid.Row="2" Margin="40,0,40,18" HorizontalSpacing="10" VerticalSpacing="10">
             <TextBox x:Name="QueryBox" Visibility="Collapsed" TextChanged="Filter_Changed" />
             <ComboBox x:Name="TypeCombo" Width="190" SelectionChanged="Filter_Changed">
                 <ComboBoxItem Content="All Media" Tag="" IsSelected="True" />
@@ -81,7 +97,7 @@
             </Button>
         </controls:WrapPanel>
 
-        <Border x:Name="LockedFiltersPanel" Grid.Row="1" Margin="40,0,40,18" Padding="16"
+        <Border x:Name="LockedFiltersPanel" Grid.Row="2" Margin="40,0,40,18" Padding="16"
                 CornerRadius="8" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Visibility="Collapsed">
             <StackPanel Spacing="4">
                 <TextBlock Text="Filters" FontSize="14" FontWeight="SemiBold" />
@@ -108,10 +124,35 @@
             </Grid>
         </Border>
 
+        <ScrollViewer x:Name="ExternalWatchlistScroller" Grid.Row="4" Padding="40,0,40,28" Visibility="Collapsed">
+            <StackPanel Spacing="24">
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="16">
+                    <Grid x:Name="ExternalWatchlistHintGrid" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                        <TextBlock x:Name="ExternalWatchlistHint" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        <HyperlinkButton x:Name="ExternalWatchlistDiscoverLink" Content="Find more in Discover" FontSize="14" FontWeight="Medium" Padding="0" Height="20" MinHeight="20" HorizontalAlignment="Left" Click="WatchlistDiscover_Click" />
+                    </Grid>
+                </Border>
+                <ItemsRepeater x:Name="ExternalTitlesRepeater" ElementPrepared="ExternalTitlesRepeater_ElementPrepared">
+                    <ItemsRepeater.Layout><UniformGridLayout x:Name="ExternalTitlesLayout" MinItemWidth="180" MinItemHeight="330" MinColumnSpacing="16" MinRowSpacing="16" ItemsStretch="Fill" /></ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate><DataTemplate><ContentControl HorizontalContentAlignment="Stretch" /></DataTemplate></ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
+                <ProgressRing x:Name="ExternalTitlesLoading" Width="30" Height="30" HorizontalAlignment="Center" IsActive="False" Visibility="Collapsed" />
+                <StackPanel x:Name="ExternalTitlesState" HorizontalAlignment="Center" Spacing="12" Padding="16,64" MaxWidth="448">
+                    <TextBlock x:Name="ExternalTitlesStateText" TextAlignment="Center" TextWrapping="Wrap" FontSize="14" />
+                    <Button x:Name="ExternalTitlesRetry" Content="Retry" Click="ExternalTitlesRetry_Click" HorizontalAlignment="Center" Visibility="Collapsed" />
+                    <Button x:Name="ExternalTitlesDiscover" Content="Browse Discover" Click="WatchlistDiscover_Click" HorizontalAlignment="Center" Visibility="Collapsed" />
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
         <ScrollViewer x:Name="CatalogScrollViewer" Grid.Row="4" Padding="40,0,40,28" ViewChanged="CatalogScroll_ViewChanged">
             <StackPanel Spacing="16">
-                <TextBlock x:Name="ErrorText" Visibility="Collapsed" Foreground="{StaticResource ErrorBrush}"
-                           TextWrapping="Wrap" HorizontalAlignment="Center" />
+                <StackPanel x:Name="CatalogErrorPanel" Visibility="Collapsed" Spacing="12" Margin="0,48" HorizontalAlignment="Center" MaxWidth="448">
+                    <TextBlock x:Name="CatalogErrorTitle" Text="Couldn't load the catalog" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" TextAlignment="Center"/>
+                    <TextBlock x:Name="ErrorText" Visibility="Collapsed" Foreground="{StaticResource SecondaryTextBrush}" FontSize="14"
+                               TextWrapping="Wrap" TextAlignment="Center" />
+                    <Button x:Name="CatalogRetryButton" Content="Retry" Click="CatalogRetry_Click" HorizontalAlignment="Center"/>
+                    <Button x:Name="CatalogCollectionsButton" Content="All collections" Click="CatalogCollections_Click" Visibility="Collapsed" HorizontalAlignment="Center"/>
+                </StackPanel>
                 <ItemsRepeater x:Name="CatalogLoadingRepeater"
                                ElementPrepared="CatalogLoadingRepeater_ElementPrepared"
                                Visibility="Collapsed">

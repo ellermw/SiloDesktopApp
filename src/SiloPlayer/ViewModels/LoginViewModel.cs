@@ -7,6 +7,8 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Services;
 using Windows.Storage.Streams;
+using SiloPlayer.Services;
+using SiloPlayer.Views;
 
 namespace SiloPlayer.ViewModels;
 
@@ -16,6 +18,32 @@ public partial class LoginViewModel : ObservableObject
     private readonly AuthApi _authApi;
     private readonly SettingsApi _settingsApi;
     private readonly SiloApiClient _apiClient;
+    private CancellationTokenSource? _authInfoCts;
+    private int _authInfoGeneration;
+    private NativeOAuthHandshake? _oauthAttempt;
+    private IDisposable? _oauthRegistration;
+    private ApiRequestContext? _oauthContext;
+    private long _oauthGeneration;
+    private int _oauthRevision;
+    public LoginNavigationRequest? NavigationRequest { get; set; }
+    [ObservableProperty] private bool _sessionRestoreUnavailable;
+    public string SessionRestoreMessage => NavigationRequest?.SessionRestoreErrorCode == "provider_unavailable"
+        ? "Can't reach the sign-in provider right now." : "Can't restore your session right now.";
+    public void SetNavigationRequest(LoginNavigationRequest? request)
+    { NavigationRequest = request; SessionRestoreUnavailable = request?.SessionRestoreUnavailable == true; OnPropertyChanged(nameof(SessionRestoreMessage)); }
+    [ObservableProperty] private bool _providersReady;
+    [ObservableProperty] private bool _showPasswordForm;
+    [ObservableProperty] private bool _isOAuthPending;
+    public bool CanStartAuthentication => ProvidersReady && !IsLoading && !IsStartingDeviceLogin;
+    public bool ShouldAutoRedirect => CanStartAuthentication && !ShowPasswordForm && OAuthProviders.Count == 1 &&
+        string.IsNullOrEmpty(ErrorMessage) && NavigationRequest is not { SignedOut: true } and not { SwitchAccount: true } and not { SessionRestoreUnavailable: true };
+    public string FormattedDeviceCode => DeviceCodeText.Format(DeviceSession?.UserCode);
+    public string SpokenDeviceCode => DeviceCodeText.Spoken(DeviceSession?.UserCode);
+    partial void OnProvidersReadyChanged(bool value) => OnPropertyChanged(nameof(CanStartAuthentication));
+    partial void OnIsLoadingChanged(bool value) => OnPropertyChanged(nameof(CanStartAuthentication));
+    partial void OnIsStartingDeviceLoginChanged(bool value) => OnPropertyChanged(nameof(CanStartAuthentication));
+    partial void OnDeviceSessionChanged(DeviceLoginStartResponse? value)
+    { OnPropertyChanged(nameof(FormattedDeviceCode)); OnPropertyChanged(nameof(SpokenDeviceCode)); }
 
     public LoginViewModel(
         AuthService authService,
@@ -52,6 +80,12 @@ public partial class LoginViewModel : ObservableObject
 
     [ObservableProperty]
     private string? _loginBackgroundUrl;
+
+    [ObservableProperty]
+    private bool _recoveryAvailable;
+    public bool CanRecoverPassword => RecoveryAvailable && (SelectedCredentialProvider == null || SelectedCredentialProvider.Id == "local");
+    partial void OnRecoveryAvailableChanged(bool value) => OnPropertyChanged(nameof(CanRecoverPassword));
+    partial void OnSelectedCredentialProviderChanged(AuthProvider? value) => OnPropertyChanged(nameof(CanRecoverPassword));
 
     // ===== Auth Providers =====
 
@@ -97,6 +131,9 @@ public partial class LoginViewModel : ObservableObject
     private string _deviceStatusMessage = "";
 
     private CancellationTokenSource? _deviceLoginCts;
+    private int _deviceAttempt;
+    private string? _deviceServer;
+    private bool _deviceCompleted;
 
     /// <summary>
     /// Event raised when login succeeds. The caller should navigate to the profile select page.
@@ -106,18 +143,28 @@ public partial class LoginViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadAuthInfoAsync()
     {
-        // Load auth providers and signup status in parallel
-        var providerTask = LoadAuthProvidersAsync();
-        var signupTask = LoadSignupStatusAsync();
-        var brandingTask = LoadBrandingAsync();
-        await Task.WhenAll(providerTask, signupTask, brandingTask);
+        _authInfoCts?.Cancel(); _authInfoCts?.Dispose(); _authInfoCts = new();
+        var generation = ++_authInfoGeneration; var context = _apiClient.CaptureContext(); var ct = _authInfoCts.Token;
+        ProvidersReady = false; ShowPasswordForm = false;
+        await Task.WhenAll(LoadAuthProvidersAsync(generation, context, ct), LoadSignupStatusAsync(generation, context, ct),
+            LoadBrandingAsync(generation, context, ct), LoadRecoveryAvailabilityAsync(generation, context, ct));
     }
 
-    private async Task LoadBrandingAsync()
+    private bool CurrentAuthInfo(int generation, ApiRequestContext context, CancellationToken ct)
+        => generation == _authInfoGeneration && !ct.IsCancellationRequested && _apiClient.IsCurrentContext(context);
+
+    private async Task LoadRecoveryAvailabilityAsync(int generation, ApiRequestContext context, CancellationToken ct)
+    {
+        try { var value = await _apiClient.GetUnauthenticatedAsync<PasswordResetCapability>("/api/v2/capabilities/password-reset", ct); if (CurrentAuthInfo(generation, context, ct)) RecoveryAvailable = value.State == "available"; }
+        catch { if (CurrentAuthInfo(generation, context, ct)) RecoveryAvailable = false; }
+    }
+
+    private async Task LoadBrandingAsync(int generation, ApiRequestContext context, CancellationToken ct)
     {
         try
         {
-            var branding = await _settingsApi.GetServerBrandingAsync();
+            var branding = await _settingsApi.GetServerBrandingAsync(ct);
+            if (!CurrentAuthInfo(generation, context, ct)) return;
             if (!string.IsNullOrWhiteSpace(branding.ServerName))
                 ServerName = branding.ServerName;
             LoginSubtitle = string.IsNullOrWhiteSpace(branding.LoginSubtitle)
@@ -127,17 +174,19 @@ public partial class LoginViewModel : ObservableObject
         }
         catch
         {
+            if (!CurrentAuthInfo(generation, context, ct)) return;
             if (string.IsNullOrWhiteSpace(ServerName)) ServerName = "Silo";
             LoginSubtitle = "Sign in with an existing account.";
             LoginBackgroundUrl = null;
         }
     }
 
-    private async Task LoadAuthProvidersAsync()
+    private async Task LoadAuthProvidersAsync(int generation, ApiRequestContext context, CancellationToken ct)
     {
         try
         {
-            var providers = await _authApi.GetAuthProvidersAsync();
+            var providers = await _authApi.GetAuthProvidersAsync(ct);
+            if (!CurrentAuthInfo(generation, context, ct)) return;
             OAuthProviders.Clear();
             CredentialProviders.Clear();
 
@@ -155,7 +204,9 @@ public partial class LoginViewModel : ObservableObject
                 }
             }
 
-            SelectedCredentialProvider =
+            var hasDirectory = CredentialProviders.Any(p => p.Id != "local");
+            if (hasDirectory) CredentialProviders.Insert(0, new AuthProvider { Id = "auto", DisplayName = "Automatic", Mode = "credentials" });
+            SelectedCredentialProvider = hasDirectory ? CredentialProviders[0] :
                 CredentialProviders.FirstOrDefault(p => p.IsDefault) ??
                 CredentialProviders.FirstOrDefault();
             HasOAuthProviders = OAuthProviders.Count > 0;
@@ -164,6 +215,7 @@ public partial class LoginViewModel : ObservableObject
         }
         catch
         {
+            if (!CurrentAuthInfo(generation, context, ct)) return;
             OAuthProviders.Clear();
             CredentialProviders.Clear();
             SelectedCredentialProvider = null;
@@ -171,14 +223,60 @@ public partial class LoginViewModel : ObservableObject
             HasAuthProviders = false;
             HasCredentialProviderPicker = false;
         }
+        finally
+        {
+            if (CurrentAuthInfo(generation, context, ct))
+            { ProvidersReady = true; ShowPasswordForm = NavigationRequest is { LocalLogin: true } || CredentialProviders.Count > 0 || OAuthProviders.Count == 0; }
+        }
     }
 
-    public Task<Uri> BeginOAuthAsync(AuthProvider provider, CancellationToken ct = default)
-        => _authApi.StartOAuthAsync(provider.InstallationId, ct);
+    public async Task<Uri> BeginOAuthAsync(AuthProvider provider, CancellationToken ct = default)
+    {
+        CancelOAuth(); ErrorMessage = null;
+        var revision = _oauthRevision; IsLoading = true;
+        var context = _apiClient.CaptureContext(); var server = _authService.ConfiguredServerUrl; var generation = _authService.SessionGeneration;
+        var identity = await _authApi.GetServerIdentityAsync(server, ct);
+        ct.ThrowIfCancellationRequested();
+        if (revision != _oauthRevision || !_apiClient.IsCurrentContext(context) || generation != _authService.SessionGeneration) throw new OperationCanceledException("The authentication context changed.");
+        _oauthAttempt = new NativeOAuthHandshake(server, identity.ServerId, provider.InstallationId, provider.NativeStartPath ?? "", NavigationRequest is { SwitchAccount: true });
+        _oauthContext = context; _oauthGeneration = generation;
+        _oauthRegistration = NativeOAuthCallbacks.Register(AcceptNativeOAuthCallbackAsync);
+        IsOAuthPending = true; IsLoading = true;
+        return _oauthAttempt.StartUri;
+    }
+
+    public async Task<bool> AcceptNativeOAuthCallbackAsync(string uri)
+    {
+        var attempt = _oauthAttempt; var context = _oauthContext;
+        if (attempt == null || context == null || !_apiClient.IsCurrentContext(context.Value) ||
+            _authService.SessionGeneration != _oauthGeneration || !attempt.TryConsumeCallback(uri, out var callback)) return false;
+        try
+        {
+            if (callback.Error.Length != 0) { ErrorMessage = ExternalSignInErrors.Describe(callback.Error); return true; }
+            var tokens = await _authApi.CompleteNativeOAuthAsync(attempt.ServerBase, callback.Code, attempt.CodeVerifier);
+            var user = await _authApi.GetMeAsync(attempt.ServerBase, tokens.AccessToken);
+            if (!ReferenceEquals(_oauthAttempt, attempt) || !_apiClient.IsCurrentContext(context.Value)) return true;
+            var response = new LoginResponse { AccessToken = tokens.AccessToken, RefreshToken = tokens.RefreshToken, ExpiresIn = tokens.ExpiresIn, User = user };
+            if (_authService.CompleteRecoveryLogin(response, _oauthGeneration, context.Value.BaseUrl)) LoginSucceeded?.Invoke();
+        }
+        catch (Exception ex) { if (ReferenceEquals(_oauthAttempt, attempt) && _apiClient.IsCurrentContext(context.Value)) ErrorMessage = ex is ApiException api ? ExternalSignInErrors.Describe(api.ErrorCode) : "Sign-in with the provider failed. Try again."; }
+        finally { if (ReferenceEquals(_oauthAttempt, attempt)) CancelOAuth(); }
+        return true;
+    }
+
+    public void CancelOAuth()
+    { ++_oauthRevision; _oauthAttempt?.Cancel(); _oauthAttempt = null; _oauthRegistration?.Dispose(); _oauthRegistration = null; _oauthContext = null; IsOAuthPending = false; IsLoading = false; }
+
+    public void CancelAuthFlows()
+    { ++_authInfoGeneration; _authInfoCts?.Cancel(); CancelOAuth(); CancelDeviceLogin(clearSession: true); }
 
     public async Task StartDeviceLoginAsync()
     {
+        if (!CanStartAuthentication) return;
         CancelDeviceLogin(clearSession: true);
+        var attempt = ++_deviceAttempt; var context = _apiClient.CaptureContext(); var server = _authService.ConfiguredServerUrl;
+        var authGeneration = _authService.SessionGeneration;
+        _deviceServer = server;
         IsStartingDeviceLogin = true;
         ErrorMessage = null;
         try
@@ -186,35 +284,46 @@ public partial class LoginViewModel : ObservableObject
             _deviceLoginCts = new CancellationTokenSource();
             var ct = _deviceLoginCts.Token;
             var session = await _authApi.DeviceStartAsync(
+                server,
                 $"{Environment.MachineName} Silo Desktop",
                 "Windows",
                 ct);
+            if (ct.IsCancellationRequested || attempt != _deviceAttempt || !_apiClient.IsCurrentContext(context))
+            { _ = CancelAbandonedDeviceAsync(server, session.DeviceCode); return; }
             DeviceSession = session;
             ShowDeviceFallback = false;
             DeviceStatusMessage = "Waiting for approval on your phone...";
-            DeviceQrImage = await CreateQrImageAsync(session.VerificationUriComplete);
-            _ = PollDeviceLoginAsync(session, ct);
+            var image = await CreateQrImageAsync(session.VerificationUriComplete);
+            if (ct.IsCancellationRequested || attempt != _deviceAttempt || !_apiClient.IsCurrentContext(context)) return;
+            DeviceQrImage = image;
+            _ = PollDeviceLoginAsync(session, server, context, authGeneration, attempt, ct);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
+            if (attempt != _deviceAttempt || !_apiClient.IsCurrentContext(context)) return;
             DeviceStatusMessage = "";
             ErrorMessage = $"Couldn't start phone sign-in: {ex.Message}";
             CancelDeviceLogin(clearSession: true);
         }
         finally
         {
-            IsStartingDeviceLogin = false;
+            if (attempt == _deviceAttempt) IsStartingDeviceLogin = false;
         }
     }
 
     public void CancelDeviceLogin(bool clearSession = false)
     {
+        ++_deviceAttempt;
+        if (!_deviceCompleted && _deviceServer is { } server && DeviceSession is { } session)
+            _ = CancelAbandonedDeviceAsync(server, session.DeviceCode);
+        _deviceServer = null; _deviceCompleted = false;
         var cts = _deviceLoginCts;
         _deviceLoginCts = null;
         try { cts?.Cancel(); } catch { }
         cts?.Dispose();
         IsDevicePolling = false;
+        IsStartingDeviceLogin = false;
         if (!clearSession) return;
         DeviceSession = null;
         DeviceQrImage = null;
@@ -222,7 +331,15 @@ public partial class LoginViewModel : ObservableObject
         DeviceStatusMessage = "";
     }
 
-    private async Task PollDeviceLoginAsync(DeviceLoginStartResponse session, CancellationToken ct)
+    private async Task CancelAbandonedDeviceAsync(string server, string deviceCode)
+    {
+        if (string.IsNullOrWhiteSpace(deviceCode)) return;
+        try { using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)); await _authApi.DeviceCancelAsync(server, deviceCode, timeout.Token); }
+        catch { /* Abandonment is best effort and never masks a new sign-in attempt. */ }
+    }
+
+    private async Task PollDeviceLoginAsync(DeviceLoginStartResponse session, string server,
+        ApiRequestContext context, long authGeneration, int attempt, CancellationToken ct)
     {
         var interval = TimeSpan.FromSeconds(Math.Max(1, session.Interval > 0 ? session.Interval : 3));
         try
@@ -230,7 +347,11 @@ public partial class LoginViewModel : ObservableObject
             while (!ct.IsCancellationRequested && ReferenceEquals(DeviceSession, session))
             {
                 IsDevicePolling = true;
-                var result = await _authApi.DevicePollAsync(session.DeviceCode, ct);
+                DeviceLoginPollResponse result;
+                try { result = await _authApi.DevicePollAsync(server, session.DeviceCode, ct); }
+                catch (Exception) when (!ct.IsCancellationRequested)
+                { await Task.Delay(interval, ct); continue; }
+                if (ct.IsCancellationRequested || attempt != _deviceAttempt || !_apiClient.IsCurrentContext(context) || !ReferenceEquals(DeviceSession, session)) return;
                 IsDevicePolling = false;
 
                 if (string.Equals(result.Status, "approved", StringComparison.OrdinalIgnoreCase)
@@ -238,41 +359,38 @@ public partial class LoginViewModel : ObservableObject
                     && !string.IsNullOrWhiteSpace(result.RefreshToken)
                     && result.User != null)
                 {
-                    var serverUrl = _authService.ConfiguredServerUrl;
-                    var generation = _authService.SetTokens(
-                        result.AccessToken,
-                        result.RefreshToken,
-                        result.ExpiresIn.GetValueOrDefault(),
-                        expectedServerUrl: serverUrl);
-                    if (!_authService.SetCurrentUser(result.User, generation))
-                        throw new InvalidOperationException("The authentication session changed before phone sign-in completed.");
+                    var response = new LoginResponse { AccessToken = result.AccessToken, RefreshToken = result.RefreshToken,
+                        ExpiresIn = result.ExpiresIn.GetValueOrDefault(), User = result.User };
+                    if (!_authService.CompleteRecoveryLogin(response, authGeneration, server)) return;
+                    _deviceCompleted = true;
 
                     DeviceStatusMessage = "Signed in. Loading profiles...";
                     LoginSucceeded?.Invoke();
                     return;
                 }
 
-                if (result.Status is "denied" or "expired" or "consumed")
+                if (result.Status is "denied" or "expired" or "consumed" or "canceled")
                 {
-                    DeviceStatusMessage = result.Status == "denied"
+                    var message = result.Status == "denied"
                         ? "Approval was denied. Start over to try again."
                         : "This code is no longer valid. Start over to generate a new one.";
+                    _deviceCompleted = true; DeviceSession = null; DeviceQrImage = null; ErrorMessage = message;
                     return;
                 }
 
-                DeviceStatusMessage = "Waiting for approval on your phone...";
+                DeviceStatusMessage = result.Status == "opened" ? "Continue on your phone." : "Waiting for approval on your phone...";
                 await Task.Delay(interval, ct);
             }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            if (!ct.IsCancellationRequested)
+            if (!ct.IsCancellationRequested && attempt == _deviceAttempt && _apiClient.IsCurrentContext(context))
                 DeviceStatusMessage = $"Phone sign-in failed: {ex.Message}";
         }
         finally
         {
-            IsDevicePolling = false;
+            if (attempt == _deviceAttempt) IsDevicePolling = false;
         }
     }
 
@@ -332,22 +450,23 @@ public partial class LoginViewModel : ObservableObject
         }
     }
 
-    private async Task LoadSignupStatusAsync()
+    private async Task LoadSignupStatusAsync(int generation, ApiRequestContext context, CancellationToken ct)
     {
         try
         {
-            var status = await _authApi.GetSignupStatusAsync();
-            IsSignupEnabled = status.Enabled;
+            var status = await _authApi.GetSignupStatusAsync(ct);
+            if (CurrentAuthInfo(generation, context, ct)) IsSignupEnabled = status.Enabled;
         }
         catch
         {
-            IsSignupEnabled = false;
+            if (CurrentAuthInfo(generation, context, ct)) IsSignupEnabled = false;
         }
     }
 
     [RelayCommand]
     private async Task LoginAsync()
     {
+        if (!CanStartAuthentication || !ShowPasswordForm) return;
         if (string.IsNullOrWhiteSpace(Username))
         {
             ErrorMessage = "Username is required.";
@@ -364,7 +483,7 @@ public partial class LoginViewModel : ObservableObject
 
         try
         {
-            var providerId = SelectedCredentialProvider?.Id;
+            var providerId = SelectedCredentialProvider?.Id is "auto" ? null : SelectedCredentialProvider?.Id;
             var response = await _authService.LoginAsync(Username.Trim(), Password, providerId);
 
             LoginSucceeded?.Invoke();
@@ -375,6 +494,10 @@ public partial class LoginViewModel : ObservableObject
             {
                 "invalid_credentials" => "Invalid username or password.",
                 "user_disabled" => "This account has been disabled.",
+                "local_login_disabled" => "Password sign-in is turned off for this account. Use " + string.Join(", ", OAuthProviders.Select(p => p.DisplayName)) + " to sign in.",
+                "password_expired" => "Your password at the sign-in provider has expired. Change it there before signing in.",
+                "permission_denied" => "This account is disabled.",
+                "not_permitted" or "account_disabled" or "provider_unavailable" => ExternalSignInErrors.Describe(ex.ErrorCode),
                 _ => ex.Message
             };
         }

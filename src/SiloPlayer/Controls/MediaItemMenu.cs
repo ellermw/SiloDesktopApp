@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
+using SiloPlayer.Views.Dialogs;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using SiloPlayer.Core.Api;
@@ -31,13 +32,16 @@ public static class MediaItemMenu
         MediaItem item,
         Surface surface = Surface.Default,
         bool showCollectionActions = true,
-        Action? stateChanged = null)
+        Action? stateChanged = null,
+        FrameworkElement? owner = null)
     {
         var flyout = new MenuFlyout { Placement = FlyoutPlacementMode.Bottom };
         var catalog = App.Services.GetRequiredService<CatalogApi>();
         var maintenanceApi = App.Services.GetRequiredService<MediaMaintenanceApi>();
         var authService = App.Services.GetRequiredService<AuthService>();
         var toast = App.Services.GetRequiredService<ToastService>();
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        XamlRoot? DialogRoot() => owner?.XamlRoot ?? App.MainWindowInstance?.Content.XamlRoot;
 
         bool canCurateMetadata = AuthorizationPolicy.CanCurateMetadata(authService);
         var maintenance = ItemMaintenanceActionPolicy.Resolve(canCurateMetadata, item.Type);
@@ -151,7 +155,7 @@ public static class MediaItemMenu
         {
             flyout.Items.Add(BuildItem("View Details", "\uE946", async () =>
             {
-                var root = App.MainWindowInstance?.Content.XamlRoot;
+                var root = DialogRoot();
                 if (root == null) return;
                 await new MangaFilesDialog(item.ContentId, item.Title) { XamlRoot = root }.ShowAsync();
             }));
@@ -165,15 +169,40 @@ public static class MediaItemMenu
             if (maintenance.CanRefreshMetadata)
             {
                 flyout.Items.Add(BuildItem("Refresh Metadata", "\uE72C", async () =>
-                    await ShowRefreshMetadataDialogAsync(item, maintenanceApi, toast)));
+                    await ShowRefreshMetadataDialogAsync(item, maintenanceApi, toast, DialogRoot())));
             }
 
             if (maintenance.CanMatch)
             {
                 flyout.Items.Add(BuildItem("Match Item", "\uE721", async () =>
-                    await ShowMatchItemDialogAsync(item, catalog, toast, stateChanged)));
+                    await ShowMatchItemDialogAsync(item, catalog, toast, stateChanged, DialogRoot())));
             }
         }
+
+        if (canCurateMetadata && item.Type != "manga")
+            flyout.Items.Add(BuildItem("Edit Metadata", "\uE70F", async () =>
+            {
+                var root = DialogRoot();
+                if (root == null || !AuthorizationPolicy.CanCurateMetadata(authService)) return;
+                var context = client.CaptureContext();
+                try
+                {
+                    var detail = await catalog.GetItemDetailAsync(item.ContentId);
+                    if (!client.IsCurrentContext(context) || (owner != null && !owner.IsLoaded)) return;
+                    var dialog = new EditMetadataDialog(detail) { XamlRoot = root };
+                    await dialog.ShowAsync();
+                    if (!dialog.HasSaved || !client.IsCurrentContext(context)) return;
+                    stateChanged?.Invoke();
+                    // The editor publishes each successful mutation itself.
+                }
+                catch (Exception ex) { toast.Error(ex.Message); }
+            }));
+        if (AuthorizationPolicy.IsActingAdmin(authService))
+            flyout.Items.Add(BuildItem("Play History", "\uE81C", async () =>
+            {
+                var root = DialogRoot();
+                if (root != null && AuthorizationPolicy.IsActingAdmin(authService)) await new SiloPlayer.Views.Dialogs.PlayHistoryDialog(item.ContentId) { XamlRoot = root }.ShowAsync();
+            }));
 
         var canDismiss = surface == Surface.ContinueWatching
             ? !string.IsNullOrWhiteSpace(item.ProgressUpdatedAt)
@@ -184,7 +213,8 @@ public static class MediaItemMenu
                 flyout.Items.Add(new MenuFlyoutSeparator());
 
             string surfaceKey = surface == Surface.ContinueWatching ? "continue_watching" : "next_up";
-            string label = surface == Surface.ContinueWatching
+            var dropsShow = item.Type is "episode" or "series" || !string.IsNullOrWhiteSpace(item.SeriesId);
+            string label = dropsShow ? "Drop show" : surface == Surface.ContinueWatching
                 ? item.Type == "audiobook"
                     ? "Remove from Continue Listening"
                     : item.Type == "ebook"
@@ -196,13 +226,16 @@ public static class MediaItemMenu
                 try
                 {
                     var homeApi = App.Services.GetRequiredService<HomeApi>();
+                    var context = homeApi.CaptureContext();
                     object body = surfaceKey == "continue_watching"
                         ? new { progress_updated_at = item.ProgressUpdatedAt }
                         : (object)new { series_id = item.SeriesId! };
                     await homeApi.DismissItemAsync(surfaceKey, item.ContentId, body);
+                    if (!homeApi.IsCurrentContext(context)) return;
+                    WeakReferenceMessenger.Default.Send(new HomeDismissalApplied(surfaceKey, item, context));
                     WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                         MediaSurfaceChangeKind.HomeDismissed, item.ContentId, item.SeriesId));
-                    toast.Info("Dismissed");
+                    toast.Info(dropsShow ? "Show dropped" : "Dismissed");
                 }
                 catch (Exception ex) { toast.Error(ex.Message); }
             }));
@@ -214,9 +247,9 @@ public static class MediaItemMenu
     private static async Task ShowRefreshMetadataDialogAsync(
         MediaItem item,
         MediaMaintenanceApi maintenanceApi,
-        ToastService toast)
+        ToastService toast,
+        XamlRoot? root)
     {
-        var root = App.MainWindowInstance?.Content.XamlRoot;
         if (root == null) return;
 
         var dialog = new RefreshMetadataDialog(async mode =>
@@ -236,9 +269,9 @@ public static class MediaItemMenu
         MediaItem item,
         CatalogApi catalog,
         ToastService toast,
-        Action? stateChanged)
+        Action? stateChanged,
+        XamlRoot? root)
     {
-        var root = App.MainWindowInstance?.Content.XamlRoot;
         if (root == null) return;
 
         try

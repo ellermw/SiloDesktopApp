@@ -33,6 +33,29 @@ public partial class PlaybackApi
         return RoomRequestAsync(HttpMethod.Put, RoomPath(roomId) + "/selection", body, null, ct);
     }
 
+    public Task<WatchTogetherCapabilities> GetWatchTogetherCapabilitiesAsync(CancellationToken ct = default)
+        => client.GetAsync<WatchTogetherCapabilities>("/api/v2/watch-together/capabilities", ct);
+
+    public Task<WatchTogetherRoomResponse> StageWatchTogetherRoomItemAsync(string roomId, string contentId, int? fileId = null, int? libraryId = null, CancellationToken ct = default)
+    {
+        var body = new Dictionary<string, object?> { ["content_id"] = contentId };
+        if (fileId.HasValue) body["file_id"] = fileId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        if (libraryId.HasValue) body["library_id"] = libraryId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return RoomRequestAsync(HttpMethod.Put, RoomPath(roomId) + "/staged-selection", body, null, ct);
+    }
+    public Task<WatchTogetherRoomResponse> StartWatchTogetherRoomPlaybackAsync(string roomId, CancellationToken ct = default)
+        => RoomRequestAsync(HttpMethod.Post, RoomPath(roomId) + "/playback/start", null, null, ct);
+    public Task<WatchTogetherRoomResponse> UpdateWatchTogetherSelectionModeAsync(string roomId, string selectionMode, CancellationToken ct = default)
+        => RoomRequestAsync(HttpMethod.Patch, RoomPath(roomId) + "/selection-mode", new { selection_mode = selectionMode }, null, ct);
+    public Task<WatchTogetherPickerResponse> GetWatchTogetherPickerAsync(string roomId, string roomToken, CancellationToken ct = default)
+        => client.SendRequestAsync<WatchTogetherPickerResponse>(HttpMethod.Get, RoomPath(roomId) + "/picker", null, RoomProof(roomToken), ct);
+    public Task<WatchTogetherMemberStateResponse> GetWatchTogetherMemberStateAsync(string roomId, string roomToken, IEnumerable<string> contentIds, CancellationToken ct = default)
+    {
+        var ids = contentIds.Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id.Trim()).Distinct().ToArray();
+        if (ids.Length > 200) throw new ArgumentOutOfRangeException(nameof(contentIds));
+        return client.SendRequestAsync<WatchTogetherMemberStateResponse>(HttpMethod.Post, RoomPath(roomId) + "/member-state", new { content_ids = ids }, RoomProof(roomToken), ct);
+    }
+
     public Task CloseWatchTogetherRoomAsync(string roomId, CancellationToken ct = default)
         => client.DeleteAsync(RoomPath(roomId), ct);
 

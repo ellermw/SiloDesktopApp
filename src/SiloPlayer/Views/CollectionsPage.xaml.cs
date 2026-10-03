@@ -130,41 +130,53 @@ public sealed partial class CollectionsPage : Page
 
     private ContentDialog BuildTemplateGalleryDialog()
     {
-        var compact = ActualWidth > 0 && ActualWidth < 760;
-        var dialogWidth = compact ? Math.Max(320, ActualWidth - 48) : 900;
-        _templateGalleryColumnCount = compact ? 1 : ActualWidth < 1180 ? 2 : 3;
+        var viewport = XamlRoot?.Size.Width ?? ActualWidth;
+        var compact = viewport < 640;
+        var dialogWidth = Math.Min(viewport - 32, viewport >= 1024 ? 896 : 768);
+        _templateGalleryColumnCount = compact ? 1 : viewport < 1024 ? 2 : 3;
         var dialog = new ContentDialog
         {
             Title = "Browse Collection Templates",
             CloseButtonText = "Close",
             XamlRoot = this.XamlRoot,
             DefaultButton = ContentDialogButton.Close,
-            MaxWidth = dialogWidth,
-            MinWidth = dialogWidth,
-            HorizontalAlignment = HorizontalAlignment.Left,
+            MaxWidth = double.PositiveInfinity,
+            MinWidth = 0,
+            HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(Math.Max(0, (ActualWidth - dialogWidth) / 2), 0, 0, 0)
+            Margin = new Thickness(0)
         };
         // WinUI's ContentDialog template otherwise clamps custom content to its
         // historical 548px maximum, regardless of the values above.
         dialog.Resources["ContentDialogMaxWidth"] = dialogWidth;
         dialog.Resources["ContentDialogMinWidth"] = dialogWidth;
+        EditorDialogPresentation.Configure(dialog, dialogWidth, new Thickness(24));
+        // The native sizing pass clears an explicit Width on narrow windows.
+        // Keep the visible shell constrained through the template's own minimum.
+        dialog.Resources["ContentDialogMinWidth"] = dialogWidth;
+        // The template's outer border takes two pixels in addition to the
+        // scoped BackgroundElement; the visible shell retains its exact width.
+        dialog.Resources["ContentDialogMaxWidth"] = dialogWidth + 2;
+        dialog.Opened += (_, _) =>
+        {
+            var shell = EditorDialogPresentation.Descendants<Border>(dialog).FirstOrDefault(b => b.Name == "BackgroundElement");
+            if (shell is not null) { shell.Width = dialogWidth; shell.MaxWidth = dialogWidth; shell.MaxHeight = Math.Max(160, (XamlRoot?.Size.Height ?? 900) - 64); }
+        };
         _templateDialog = dialog;
 
         var root = new Grid
         {
-            RowSpacing = 14,
-            MinHeight = compact ? 560 : 760
+            RowSpacing = 16
         };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var description = new TextBlock
         {
-            Text = "Pick a curated source — TMDB, Trakt, or MDBList — and we'll seed a synced collection.",
-            FontSize = 13,
+            Text = "Pick a curated source — TMDB or MDBList — and we'll seed a synced collection.",
+            FontSize = 14,
             TextWrapping = TextWrapping.Wrap,
             Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
         };
@@ -176,7 +188,7 @@ public sealed partial class CollectionsPage : Page
         {
             PlaceholderText = "Search templates",
             Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
-            MinHeight = 42
+            MinHeight = 36
         };
         _templateGallerySearchBox = searchBox;
         searchBox.TextChanged += (_, _) =>
@@ -219,6 +231,7 @@ public sealed partial class CollectionsPage : Page
         var scroll = new ScrollViewer
         {
             Content = _templateCardsPanel,
+            MaxHeight = Math.Max(160, (XamlRoot?.Size.Height ?? 900) - 260),
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto
         };
         Grid.SetRow(scroll, 3);
@@ -340,19 +353,26 @@ public sealed partial class CollectionsPage : Page
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
             });
 
-            var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+            var row = TemplateRow();
             for (var i = 0; i < group.Templates.Count; i++)
             {
-                row.Children.Add(BuildTemplateCard(group.Templates[i]));
+                var card = BuildTemplateCard(group.Templates[i]); Grid.SetColumn(card, i % _templateGalleryColumnCount); row.Children.Add(card);
                 if ((i + 1) % _templateGalleryColumnCount == 0)
                 {
                     _templateCardsPanel.Children.Add(row);
-                    row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+                    row = TemplateRow();
                 }
             }
 
             if (row.Children.Count > 0)
                 _templateCardsPanel.Children.Add(row);
+        }
+
+        Grid TemplateRow()
+        {
+            var row = new Grid { ColumnSpacing = 12 };
+            for (var column = 0; column < _templateGalleryColumnCount; column++) row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+            return row;
         }
 
         bool TemplateMatchesSearch(CollectionTemplate template)
@@ -370,104 +390,51 @@ public sealed partial class CollectionsPage : Page
 
     private Button BuildTemplateCard(CollectionTemplate template)
     {
-        var sourceBadge = new Border
+        Brush Brush(string key) => (Brush)Application.Current.Resources[key];
+        Border Badge(string text, bool secondary) => new()
         {
-            Background = (Brush)Application.Current.Resources["AccentBackgroundBrush"],
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(7, 3, 7, 3),
-            Child = new TextBlock
-            {
-                Text = FormatCollectionType(template.Source).ToUpperInvariant(),
-                FontSize = 10,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)Application.Current.Resources["AccentBrush"]
-            }
+            Background = Brush(secondary ? "SecondaryBackgroundBrush" : "AppBackgroundBrush"),
+            BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(secondary ? 0 : 1),
+            CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 2, 8, 2),
+            Child = new TextBlock { Text = text, FontSize = 10, FontWeight = FontWeights.Medium, Foreground = Brush("PrimaryTextBrush") }
         };
-
-        var header = new Grid { ColumnSpacing = 8 };
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        header.Children.Add(new TextBlock
+        var badges = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
+        badges.Children.Add(Badge(FormatCollectionType(template.Source).ToUpperInvariant(), false));
+        if (template.RequiresProfile) badges.Children.Add(Badge("Profile", true));
+        var header = new Grid { ColumnSpacing = 12 };
+        header.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); header.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        header.Children.Add(new Border { Width = 40, Height = 40, CornerRadius = new(10), Background = Brush("AccentBackgroundBrush"),
+            Child = new TextBlock { Text = template.Icon, FontSize = 20, Foreground = Brush("AccentBrush"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } });
+        Grid.SetColumn(badges, 1); header.Children.Add(badges);
+        var copy = new StackPanel { Spacing = 4 };
+        copy.Children.Add(new TextBlock { Text = template.Title, FontSize = 14, FontWeight = FontWeights.Medium, LineHeight = 17.5,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = Brush("PrimaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+        copy.Children.Add(new TextBlock { Text = template.Description, FontSize = 12, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+            Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap, MaxLines = 3 });
+        var media = template.MediaKind switch { "movie" => "Movies", "series" => "TV", _ => "Mixed" };
+        var cron = template.DefaultSyncSchedule?.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var schedule = "on schedule";
+        if (cron?.Length == 5)
         {
-            Text = string.IsNullOrWhiteSpace(template.Icon) ? "\uE8B7" : template.Icon,
-            FontSize = 24,
-            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"]
-        });
-        Grid.SetColumn(sourceBadge, 1);
-        header.Children.Add(sourceBadge);
-
-        var tagsText = string.Join("  ", template.Tags.Take(3));
-        var stack = new StackPanel
-        {
-            Width = _templateGalleryColumnCount == 3 ? 264 : _templateGalleryColumnCount == 2 ? 390 : 780,
-            Spacing = 8,
-            Children =
-            {
-                header,
-                new TextBlock
-                {
-                    Text = template.Title,
-                    FontSize = 15,
-                    FontWeight = FontWeights.SemiBold,
-                    Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
-                    TextWrapping = TextWrapping.Wrap,
-                    MaxLines = 2
-                },
-                new TextBlock
-                {
-                    Text = template.Description,
-                    FontSize = 12,
-                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-                    TextWrapping = TextWrapping.Wrap,
-                    MaxLines = 3
-                },
-                new TextBlock
-                {
-                    Text = string.IsNullOrWhiteSpace(tagsText) ? template.MediaKind : tagsText,
-                    FontSize = 11,
-                    Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
-                    TextTrimming = TextTrimming.CharacterEllipsis
-                }
-            }
-        };
-
-        var cardSurface = new Border
-        {
-            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
-            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(16),
-            Padding = new Thickness(14),
-            Child = stack,
-            Tag = template
-        };
-        var card = new Button
-        {
-            Content = cardSurface,
-            Padding = new Thickness(0),
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            BorderThickness = new Thickness(0),
-            HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            VerticalContentAlignment = VerticalAlignment.Stretch,
-        };
+            if (cron[1].StartsWith("*/")) schedule = $"every {cron[1][2..]} hours";
+            else if (cron[1] == "*") schedule = "hourly";
+            else if (cron[2] == "1" && cron[3] == "*") schedule = "monthly";
+            else if (cron[2] == "*" && cron[3] == "*" && cron[4] == "*") schedule = "daily";
+            else if (cron[2] == "*" && cron[3] == "*") schedule = "weekly";
+        }
+        var stack = new StackPanel { Spacing = 12, Children = { header, copy,
+            new TextBlock { Text = media + (string.IsNullOrWhiteSpace(template.DefaultSyncSchedule) ? "" : $"  •  syncs {schedule}"), FontSize = 11,
+                Foreground = Brush("SecondaryTextBrush"), TextTrimming = TextTrimming.CharacterEllipsis } } };
+        var surface = new Border { Background = Brush("CardBackgroundBrush"), BorderBrush = Brush("BorderBrush"), BorderThickness = new(1),
+            CornerRadius = new(10), Padding = new(16), Child = stack, Tag = template };
+        var card = new Button { Content = surface, Padding = new(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new(0),
+            HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch };
         AutomationProperties.SetName(card, $"Use {template.Title} collection template");
-
-        card.PointerEntered += (_, _) =>
-        {
-            cardSurface.Background = (Brush)Application.Current.Resources["SurfaceHoverBrush"];
-        };
-        card.PointerExited += (_, _) =>
-        {
-            cardSurface.Background = (Brush)Application.Current.Resources["CardBackgroundBrush"];
-        };
-        card.Click += (_, _) =>
-        {
-            ShowTemplateConfigInGallery(template);
-        };
-
+        card.PointerEntered += (_, _) => { surface.Background = Brush("SurfaceHoverBrush"); surface.BorderBrush = Brush("AccentBrush"); };
+        card.PointerExited += (_, _) => { surface.Background = Brush("CardBackgroundBrush"); surface.BorderBrush = Brush("BorderBrush"); };
+        card.Click += (_, _) => ShowTemplateConfigInGallery(template);
         return card;
     }
-
     private void ShowTemplateConfigInGallery(CollectionTemplate template)
     {
         if (_templateCardsPanel == null || _templateDialog == null)
@@ -509,6 +476,14 @@ public sealed partial class CollectionsPage : Page
         _templateCardsPanel.Children.Add(BuildTemplateConfigPanel(template, _templateDialog));
     }
 
+    private static void ClipTemplatePoster(Border frame)
+    {
+        var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(frame);
+        var geometry = visual.Compositor.CreateRoundedRectangleGeometry();
+        geometry.Size = new((float)frame.ActualWidth, (float)frame.ActualHeight); geometry.CornerRadius = new(10, 10);
+        visual.Clip = visual.Compositor.CreateGeometricClip(geometry);
+    }
+
     private UIElement BuildTemplateConfigPanel(CollectionTemplate template, ContentDialog dialog)
     {
         ViewModel.MdblistResults.Clear();
@@ -523,7 +498,7 @@ public sealed partial class CollectionsPage : Page
         var descriptionBox = new TextBox
         {
             Text = template.Description,
-            PlaceholderText = "Description",
+            PlaceholderText = "Optional summary",
             Style = (Style)Application.Current.Resources["DarkTextBoxStyle"]
         };
         var maxItemsBox = new TextBox
@@ -536,7 +511,7 @@ public sealed partial class CollectionsPage : Page
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(8)
+            CornerRadius = new CornerRadius(10)
         };
         foreach (var item in new[]
         {
@@ -591,6 +566,24 @@ public sealed partial class CollectionsPage : Page
             ("custom", "Custom URL")
         });
         posterModeBox.SelectedIndex = string.IsNullOrWhiteSpace(template.PosterPath) ? 1 : 0;
+        var posterChoices = new Grid { ColumnSpacing = 8 };
+        posterChoices.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        posterChoices.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        posterChoices.RowDefinitions.Add(new() { Height = GridLength.Auto }); posterChoices.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        var defaultChoice = new RadioButton { Content = "Server default", IsChecked = posterModeBox.SelectedIndex == 0, HorizontalAlignment = HorizontalAlignment.Stretch, MinHeight = 36 };
+        var customChoice = new RadioButton { Content = "Custom URL", IsChecked = posterModeBox.SelectedIndex == 1, HorizontalAlignment = HorizontalAlignment.Stretch, MinHeight = 36 };
+        var posterChoiceGroup = "template-poster-" + Guid.NewGuid().ToString("N");
+        defaultChoice.GroupName = posterChoiceGroup; customChoice.GroupName = posterChoiceGroup;
+        defaultChoice.Checked += (_, _) => posterModeBox.SelectedIndex = 0;
+        customChoice.Checked += (_, _) => posterModeBox.SelectedIndex = 1;
+        Grid.SetColumn(customChoice, 1); posterChoices.Children.Add(defaultChoice); posterChoices.Children.Add(customChoice);
+        posterChoices.SizeChanged += (_, args) =>
+        {
+            var narrow = args.NewSize.Width < 440;
+            Grid.SetRow(customChoice, narrow ? 1 : 0); Grid.SetColumn(customChoice, narrow ? 0 : 1);
+            Grid.SetColumnSpan(defaultChoice, narrow ? 2 : 1); Grid.SetColumnSpan(customChoice, narrow ? 2 : 1);
+        };
+        AutomationProperties.SetName(posterChoices, "Poster source");
         var customPosterBox = new TextBox
         {
             PlaceholderText = "https://example.com/poster.jpg",
@@ -622,6 +615,14 @@ public sealed partial class CollectionsPage : Page
                 }
             }
         };
+        var defaultPosterUrl = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>().ResolveServerUrl(template.PosterPath);
+        if (Uri.TryCreate(defaultPosterUrl, UriKind.Absolute, out var defaultPosterUri))
+        {
+            var posterFrame = new Border { Width = 56, Height = 80, CornerRadius = new CornerRadius(10), Child = new Image { Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(defaultPosterUri), Stretch = Stretch.UniformToFill } };
+            posterFrame.Loaded += (_, _) => ClipTemplatePoster(posterFrame);
+            posterFrame.SizeChanged += (_, _) => ClipTemplatePoster(posterFrame);
+            defaultPosterPanel.Children[0] = posterFrame;
+        }
         posterModeBox.SelectionChanged += (_, _) =>
         {
             var custom = SelectedComboTag(posterModeBox) == "custom";
@@ -630,41 +631,20 @@ public sealed partial class CollectionsPage : Page
         };
 
         TextBox? mdblistUrlBox = null;
-        var stack = new StackPanel { Spacing = 16, Width = 810 };
-        stack.Children.Add(new Border
-        {
-            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(14),
-            Child = new StackPanel
-            {
-                Spacing = 6,
-                Children =
-                {
-                    new StackPanel
-                    {
-                        Orientation = Orientation.Horizontal,
-                        Spacing = 8,
-                        Children =
-                        {
-                            new TextBlock { Text = template.Icon, FontSize = 20 },
-                            new TextBlock { Text = template.Title, FontSize = 14, FontWeight = FontWeights.SemiBold },
-                            BuildBadge(FormatCollectionType(template.Source).ToUpperInvariant()),
-                            BuildBadge(FormatMediaKind(template.MediaKind))
-                        }
-                    },
-                    new TextBlock
-                    {
-                        Text = template.Description,
-                        FontSize = 12,
-                        TextWrapping = TextWrapping.Wrap,
-                        Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
-                    }
-                }
-            }
-        });
+        var stack = new StackPanel { Spacing = 16, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var summaryHeader = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        summaryHeader.Children.Add(new TextBlock { Text = template.Title, FontSize = 14, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+        summaryHeader.Children.Add(BuildBadge(FormatCollectionType(template.Source).ToUpperInvariant()));
+        summaryHeader.Children.Add(BuildBadge(FormatMediaKind(template.MediaKind)));
+        var summaryCopy = new StackPanel { Spacing = 4, Children = { summaryHeader,
+            new TextBlock { Text = template.Description, FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] } } };
+        var summaryGrid = new Grid { ColumnSpacing = 12 };
+        summaryGrid.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); summaryGrid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        summaryGrid.Children.Add(new Border { Width = 40, Height = 40, CornerRadius = new(12), Background = (Brush)Application.Current.Resources["AppBackgroundBrush"],
+            Child = new TextBlock { Text = template.Icon, FontSize = 20, Foreground = (Brush)Application.Current.Resources["AccentBrush"], HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } });
+        Grid.SetColumn(summaryCopy, 1); summaryGrid.Children.Add(summaryCopy);
+        stack.Children.Add(new Border { Background = (Brush)Application.Current.Resources["SurfaceBrush"], BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], BorderThickness = new(1),
+            CornerRadius = new(12), Padding = new(12), Child = summaryGrid });
         stack.Children.Add(MakeLabeledControl("Collection Title", titleBox));
         stack.Children.Add(MakeLabeledControl("Description", descriptionBox));
 
@@ -678,6 +658,11 @@ public sealed partial class CollectionsPage : Page
             };
             stack.Children.Add(BuildMDBListBrowser(titleBox, mdblistUrlBox));
             stack.Children.Add(MakeLabeledControl("MDBList URL", mdblistUrlBox));
+        }
+        else if (template.Source == "tmdb_list")
+        {
+            mdblistUrlBox = new TextBox { Text = template.TmdbList?.Url ?? "", PlaceholderText = "https://www.themoviedb.org/list/... or list ID", Style = (Style)Application.Current.Resources["DarkTextBoxStyle"] };
+            stack.Children.Add(MakeLabeledControl("Public TMDB list", mdblistUrlBox));
         }
 
         stack.Children.Add(MakeLabeledControl("Libraries", new ScrollViewer
@@ -703,6 +688,8 @@ public sealed partial class CollectionsPage : Page
             Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
             TextWrapping = TextWrapping.Wrap
         });
+        if (template.RequiresProfile) stack.Children.Add(new TextBlock { Text = "This template uses your active profile’s connected Trakt account.", FontSize = 12,
+            TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
         stack.Children.Add(MakeLabeledControl(
             "Default Sort",
             defaultSortBox,
@@ -710,14 +697,14 @@ public sealed partial class CollectionsPage : Page
 
         var posterContent = new StackPanel { Spacing = 10 };
         if (!string.IsNullOrWhiteSpace(template.PosterPath))
-            posterContent.Children.Add(posterModeBox);
+            posterContent.Children.Add(posterChoices);
         posterContent.Children.Add(defaultPosterPanel);
         posterContent.Children.Add(customPosterBox);
         stack.Children.Add(MakeLabeledControl("Poster", new Border
         {
             BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(10),
             Padding = new Thickness(12),
             Child = posterContent
         }));
@@ -731,12 +718,24 @@ public sealed partial class CollectionsPage : Page
         twoColumn.Children.Add(maxPanel);
         twoColumn.Children.Add(schedulePanel);
         stack.Children.Add(twoColumn);
+        var refreshSummary = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] };
+        void UpdateRefreshSummary() => refreshSummary.Text = $"Up to {(string.IsNullOrWhiteSpace(maxItemsBox.Text) ? "the provider's default number of" : maxItemsBox.Text)} items • {(SelectedComboTag(scheduleBox) is "manual" or null or "" ? "Refresh manually" : "Refresh " + SelectedComboTag(scheduleBox))}";
+        maxItemsBox.TextChanged += (_, _) => UpdateRefreshSummary(); scheduleBox.SelectionChanged += (_, _) => UpdateRefreshSummary(); UpdateRefreshSummary(); stack.Children.Add(refreshSummary);
+        stack.SizeChanged += (_, args) =>
+        {
+            var compact = args.NewSize.Width < 640;
+            foreach (var pair in new[] { (displayFilters, mediaPanel), (twoColumn, schedulePanel) })
+            {
+                if (pair.Item1.RowDefinitions.Count == 0) { pair.Item1.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); pair.Item1.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); pair.Item1.RowSpacing = 12; }
+                Grid.SetColumn(pair.Item2, compact ? 0 : 1); Grid.SetRow(pair.Item2, compact ? 1 : 0); Grid.SetColumnSpan(pair.Item2, compact ? 2 : 1);
+            }
+        };
 
         stack.Children.Add(new Border
         {
             BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(10),
             Padding = new Thickness(12, 8, 12, 8),
             Child = new Grid
             {
@@ -779,7 +778,7 @@ public sealed partial class CollectionsPage : Page
         {
             Style = (Style)Application.Current.Resources["AccentButtonStyle"],
             HorizontalAlignment = HorizontalAlignment.Right,
-            Padding = new Thickness(18, 9, 18, 9),
+            Height = 36, FontSize = 14, Padding = new Thickness(16, 4, 16, 4),
             Content = "Create Collection"
         };
         importButton.Click += async (_, _) =>
@@ -894,6 +893,10 @@ public sealed partial class CollectionsPage : Page
             }
         }
 
+        var searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        searchTimer.Tick += async (_, _) => { searchTimer.Stop(); if (searchBox.Text.Trim().Length >= 2) await RefreshResultsAsync(() => ViewModel.SearchMDBListAsync(searchBox.Text)); };
+        searchBox.TextChanged += (_, _) => { searchTimer.Stop(); if (searchBox.Text.Trim().Length >= 2) searchTimer.Start(); };
+        searchBox.Unloaded += (_, _) => searchTimer.Stop();
         searchButton.Click += async (_, _) =>
         {
             if (!string.IsNullOrWhiteSpace(searchBox.Text))
@@ -901,6 +904,7 @@ public sealed partial class CollectionsPage : Page
         };
         topButton.Click += async (_, _) =>
         {
+            searchTimer.Stop(); searchBox.Text = "";
             await RefreshResultsAsync(ViewModel.LoadTopMDBListAsync);
         };
 
@@ -1032,6 +1036,7 @@ public sealed partial class CollectionsPage : Page
             SyncSchedule = schedule,
             IsShared = sharedToggle.IsOn,
             MDBListUrl = mdblistUrlBox?.Text,
+            TMDBListUrl = template.Source == "tmdb_list" ? mdblistUrlBox?.Text : null,
             PosterUrl = SelectedComboTag(posterModeBox) == "custom"
                 ? customPosterBox.Text
                 : template.PosterPath,
@@ -1052,13 +1057,13 @@ public sealed partial class CollectionsPage : Page
 
     private static StackPanel MakeLabeledControl(string label, UIElement control, string? helpText = null)
     {
-        var stack = new StackPanel { Spacing = 6 };
+        var stack = new StackPanel { Spacing = 8 };
         stack.Children.Add(new TextBlock
         {
             Text = label,
-            FontSize = 13,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
+            FontSize = 14, Height = 14, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+            FontWeight = FontWeights.Medium,
+            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"]
         });
         stack.Children.Add(control);
 
@@ -1082,7 +1087,7 @@ public sealed partial class CollectionsPage : Page
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(8)
+            CornerRadius = new CornerRadius(10)
         };
         foreach (var option in options)
             combo.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Value });
@@ -1137,7 +1142,7 @@ public sealed partial class CollectionsPage : Page
         => new()
         {
             Background = (Brush)Application.Current.Resources["AccentBackgroundBrush"],
-            CornerRadius = new CornerRadius(8),
+            CornerRadius = new CornerRadius(10),
             Padding = new Thickness(7, 2, 7, 2),
             Child = new TextBlock
             {
@@ -2088,6 +2093,7 @@ public sealed partial class CollectionsPage : Page
 
     private static string FormatCollectionType(string type) => type switch
     {
+        "tmdb_list" => "TMDB List",
         "smart" => "Smart",
         "mdblist" => "MDBList",
         "tmdb" => "TMDB",

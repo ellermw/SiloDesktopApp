@@ -16,6 +16,7 @@ public class AuthService : IDisposable
     private CancellationTokenSource? _refreshScheduleCancellation;
     private Task? _refreshScheduleTask;
     private readonly SemaphoreSlim _refreshGuard = new(1, 1);
+    private readonly SemaphoreSlim _accountReadGuard = new(1, 1);
     private long _sessionGeneration;
     private string? _sessionServerUrl;
     private static readonly TimeSpan TransientRefreshRetryDelay = TimeSpan.FromSeconds(30);
@@ -38,6 +39,8 @@ public class AuthService : IDisposable
     }
 
     public bool IsLoggedIn => CurrentUser != null;
+    public bool PasswordChangeRequired => CurrentUser?.PasswordChangeRequired == true;
+    public long SessionGeneration { get { lock (_stateGate) return _sessionGeneration; } }
     public string ConfiguredServerUrl => _apiClient.BaseUrl;
     public UserInfo? CurrentUser { get; private set; }
     public string? RefreshToken { get; private set; }
@@ -112,6 +115,19 @@ public class AuthService : IDisposable
         return generation;
     }
 
+    public bool CompleteRecoveryLogin(LoginResponse response, long expectedGeneration, string expectedServer)
+    {
+        lock (_stateGate)
+        {
+            if (_sessionGeneration != expectedGeneration || _apiClient.BaseUrl != expectedServer || CurrentUser != null)
+                return false;
+            StartSession(response.AccessToken, response.RefreshToken, response.ExpiresIn, response.User,
+                expectedServerUrl: expectedServer);
+        }
+        RaiseSafely(UserChanged);
+        return true;
+    }
+
     public bool SetCurrentUser(UserInfo user, long? expectedGeneration = null)
     {
         lock (_stateGate)
@@ -122,6 +138,38 @@ public class AuthService : IDisposable
         }
         RaiseSafely(UserChanged);
         return true;
+    }
+
+    /// <summary>Read current account access, retaining credentials/profile and rejecting a replaced login's response.</summary>
+    public async Task<bool> RefreshAccountAsync(CancellationToken ct = default)
+    {
+        var context = _apiClient.CaptureContext();
+        long generation; string? userId;
+        lock (_stateGate) { generation = _sessionGeneration; userId = CurrentUser?.Id; }
+        if (userId == null) return false;
+        await _accountReadGuard.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            if (!_apiClient.IsCurrentContext(context)) return false;
+            var user = await _authApi.GetMeAsync(ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            lock (_stateGate)
+            {
+                if (_sessionGeneration != generation || CurrentUser?.Id != userId ||
+                    !_apiClient.IsCurrentContext(context) || user.Id != userId) return false;
+                CurrentUser = user;
+            }
+            RaiseSafely(UserChanged);
+            return true;
+        }
+        finally { _accountReadGuard.Release(); }
+    }
+
+    /// <summary>Refresh profile metadata without changing the PIN grant or selected profile.</summary>
+    public void RefreshSelectedProfile(Profile profile)
+    {
+        lock (_stateGate)
+            if (SelectedProfileId == profile.Id) SelectedProfile = profile;
     }
 
     public void SelectProfile(string profileId, string? profileToken = null, Profile? profile = null)

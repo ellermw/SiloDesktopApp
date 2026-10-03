@@ -23,7 +23,10 @@ public sealed class UserVisibleStateParitySourceTests
         Assert.Contains("Loading collection editor...", xaml);
         Assert.Contains("Collection not found", xaml);
         Assert.Contains("The selected collection could not be loaded.", xaml);
-        Assert.Contains("CollectionEditorScroll.Visibility = Visibility.Collapsed", code);
+        Assert.Contains("ViewModel.IsLoading || ViewModel.IsNotFound || ViewModel.IsLoadUnavailable ? Visibility.Collapsed : Visibility.Visible", code);
+        Assert.Contains("UpdateRecoveryShell", code);
+        Assert.Contains("RetryCollection_Click", code);
+        Assert.Contains("AllCollections_Click", code);
     }
 
     [Fact]

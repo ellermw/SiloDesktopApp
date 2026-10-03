@@ -131,7 +131,7 @@ public sealed class UpgradeAuthenticationRegressionTests
         Assert.Contains("LoadShellNavigationAsync", showNavigation);
         Assert.DoesNotContain("_ = Task.Run", showNavigation);
         Assert.Contains("navigation_errors.txt", mainWindow);
-        Assert.Contains("Resources.TryGetValue(\"AccentBrush\"", mainWindow);
+        Assert.Contains("TryShellAction(\"shared_appearance_reset\", _themeService.ResetSharedAppearance)", showNavigation);
         Assert.Contains("TryEnterAuthenticatedPage(typeof(HomePage)", profilePage);
         Assert.Contains("taste_seed_navigation_failed", profilePage);
         Assert.Contains("navigation.Frame?.Content is not HomePage", profilePage);

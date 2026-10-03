@@ -8,7 +8,10 @@ public sealed class MediaVideoRangeTests
     [Fact]
     public void CanonicalLanguageCatalogMatchesCurrentWebUi()
     {
-        Assert.Equal(37, MediaLanguageCatalog.All.Count);
+        Assert.Equal(46, MediaLanguageCatalog.All.Count);
+        Assert.Contains(MediaLanguageCatalog.All, language => language.Code == "pt-BR" && language.Label == "Portuguese (Brazil)");
+        Assert.Contains(MediaLanguageCatalog.All, language => language.Code == "en-GB" && language.Label == "English (United Kingdom)");
+        Assert.Contains(MediaLanguageCatalog.All, language => language.Code == "zh-Hant" && language.Label == "Chinese (Traditional)");
         Assert.Equal("Dutch", MediaLanguageCatalog.Label("nld"));
         Assert.Equal("Portuguese", MediaLanguageCatalog.Label("pt-BR"));
         Assert.Equal("uk", MediaLanguageCatalog.Normalize("ukr"));

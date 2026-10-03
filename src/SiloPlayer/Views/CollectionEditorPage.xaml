@@ -3,6 +3,7 @@
     x:Class="SiloPlayer.Views.CollectionEditorPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:SiloPlayer.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:converters="using:SiloPlayer.Converters"
@@ -77,22 +78,30 @@
                                Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock Text="The selected collection could not be loaded." FontSize="14"
                                Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                    <Button Content="All collections" HorizontalAlignment="Left" Click="AllCollections_Click" />
                 </StackPanel>
             </Border>
         </StackPanel>
 
+        <StackPanel x:Name="CollectionUnavailableState" Margin="24" MaxWidth="520" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16" Visibility="Collapsed">
+            <TextBlock Text="Couldn't load this collection" FontSize="24" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
+            <TextBlock Text="The collection is temporarily unavailable. Try again." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextAlignment="Center" TextWrapping="Wrap" />
+            <Button Content="Retry" Click="RetryCollection_Click" HorizontalAlignment="Center" />
+            <Button Content="Go back" Click="BackButton_Click" Style="{StaticResource GhostButtonStyle}" HorizontalAlignment="Center" />
+        </StackPanel>
+
         <ScrollViewer
             x:Name="CollectionEditorScroll"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}"
             IsScrollInertiaEnabled="True">
 
             <StackPanel x:Name="CollectionEditorShell" MaxWidth="1400" Margin="48,24,48,48" Spacing="24">
 
                 <!-- ===== Header ===== -->
-                <StackPanel Spacing="14">
+                <StackPanel Spacing="10">
                     <Button
                         x:Name="BackButton"
                         Style="{StaticResource GhostButtonStyle}"
+                        Width="32" Height="32" Padding="0" CornerRadius="16"
                         HorizontalAlignment="Left"
                         AutomationProperties.Name="Go back"
                         Click="BackButton_Click">
@@ -149,7 +158,7 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <Border Width="72" Height="72" CornerRadius="18"
+                        <Border x:Name="SourceBrandMark" Width="72" Height="72" CornerRadius="16"
                                 Background="{StaticResource AccentBackgroundBrush}"
                                 BorderBrush="{StaticResource AccentBrush}" BorderThickness="1">
                             <TextBlock x:Name="SourceBrandInitials" Text="Mb" FontSize="22" FontWeight="Bold"
@@ -158,7 +167,7 @@
                         </Border>
                         <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Center">
                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Border Padding="10,4" CornerRadius="12" Background="{StaticResource AccentBackgroundBrush}">
+                                <Border x:Name="SourceBrandBadge" Padding="10,4" CornerRadius="12" Background="{StaticResource AccentBackgroundBrush}">
                                     <TextBlock x:Name="SourceBrandLabel" Text="MDBLIST" FontSize="10" FontWeight="SemiBold"
                                                CharacterSpacing="180" Foreground="{StaticResource AccentBrush}" />
                                 </Border>
@@ -174,7 +183,7 @@
                                     VerticalAlignment="Center">
                             <Button x:Name="OpenSourceButton" Content="Open source"
                                     Style="{StaticResource OutlineButtonStyle}" Click="OpenSource_Click" />
-                            <Button Content="Sync now" Style="{StaticResource AccentButtonStyle}" Click="SyncNow_Click" />
+                            <Button x:Name="SourceSyncButton" Content="Sync now" Style="{StaticResource AccentButtonStyle}" Click="SyncNow_Click" />
                         </StackPanel>
                     </Grid>
                 </Border>
@@ -188,7 +197,8 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
-                    <StackPanel x:Name="EditorPrimaryColumn" Grid.Column="0" Spacing="24">
+                    <Border x:Name="ImportedEditorSurface" Grid.Column="0">
+                    <StackPanel x:Name="EditorPrimaryColumn" Spacing="24">
 
                 <!-- ===== Basic Info Section ===== -->
                 <Border x:Name="BasicInfoSection" Style="{StaticResource EditorGroupStyle}" Padding="28,26">
@@ -245,8 +255,9 @@
                         <StackPanel x:Name="ImportedDisplayOptions" Spacing="18" Visibility="Collapsed">
                             <TextBlock Text="Imported with the collection on first sync. Edits stick — future syncs won't overwrite this."
                                        FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" TextWrapping="Wrap" />
-                            <Grid ColumnSpacing="16">
+                            <Grid x:Name="DisplayFilterGrid" ColumnSpacing="20" RowSpacing="20">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                                 <ComboBox x:Name="WatchFilterCombo" Header="WATCH STATE" SelectionChanged="WatchFilter_Changed" HorizontalAlignment="Stretch">
                                     <ComboBoxItem Content="All" Tag="all" IsSelected="True" />
                                     <ComboBoxItem Content="Unwatched" Tag="unwatched" />
@@ -309,6 +320,9 @@
                                 Text="{x:Bind ViewModel.PosterSourceUrl, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                 MaxWidth="560"
                                 HorizontalAlignment="Left" />
+                            <Border x:Name="PosterDraftPreviewFrame" Height="128" CornerRadius="12" Visibility="Collapsed">
+                                <Image x:Name="PosterDraftPreview" Stretch="UniformToFill" Visibility="Collapsed" />
+                            </Border>
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <Button Content="Choose image" Click="ChoosePoster_Click" Style="{StaticResource SecondaryButtonStyle}" />
                                 <Button x:Name="RemovePosterButton" Content="Remove poster" Click="RemovePoster_Click" Visibility="Collapsed" />
@@ -547,10 +561,16 @@
                         <StackPanel Grid.Column="1" Spacing="10">
                             <TextBlock Text="POSTER" FontSize="11" FontWeight="SemiBold" CharacterSpacing="140"
                                        Foreground="{StaticResource SecondaryTextBrush}" />
-                            <Button Content="Click or drop image" Click="ChoosePoster_Click" Style="{StaticResource SecondaryButtonStyle}"
-                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" MinHeight="76" />
-                            <Button x:Name="ImportedRemovePosterButton" Content="Remove poster" Click="RemovePoster_Click"
-                                    HorizontalAlignment="Left" Visibility="Collapsed" />
+                            <Border x:Name="ImportedPosterPreviewFrame" Height="128" CornerRadius="12" Visibility="Collapsed">
+                                <Grid>
+                                    <Image x:Name="ImportedPosterPreview" Stretch="UniformToFill" Visibility="Collapsed" AutomationProperties.Name="Poster" />
+                                    <Button x:Name="ImportedRemoveSelectedPoster" AutomationProperties.Name="Remove selected file" Click="RemoveSelectedPoster_Click" Visibility="Collapsed" HorizontalAlignment="Right" VerticalAlignment="Top" Width="24" Height="24" MinWidth="0" MinHeight="0" Padding="0" Margin="6" />
+                                    <Button x:Name="ImportedRemovePosterButton" AutomationProperties.Name="Remove poster" Click="RemovePoster_Click" HorizontalAlignment="Right" VerticalAlignment="Top" Width="24" Height="24" MinWidth="0" MinHeight="0" Padding="0" Margin="6" Visibility="Collapsed" />
+                                </Grid>
+                            </Border>
+                            <Button x:Name="ImportedPosterDropTarget" Content="Click or drop image" Click="ChoosePoster_Click" Style="{StaticResource SecondaryButtonStyle}"
+                                    AllowDrop="True" DragOver="PosterDrop_DragOver" Drop="PosterDrop_Drop"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Height="128" />
                             <TextBlock x:Name="ImportedPosterFileStatusText" Text="JPG, PNG, or WebP · maximum 20 MB"
                                        FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" />
                             <TextBox x:Name="ImportedPosterSourceUrlTextBox" Style="{StaticResource DarkTextBoxStyle}"
@@ -718,9 +738,10 @@
                 </Border>
 
                     </StackPanel>
+                    </Border>
 
                     <StackPanel x:Name="EditorSidebar" Grid.Column="1" Spacing="18">
-                        <Border Style="{StaticResource EditorGroupStyle}" CornerRadius="24">
+                        <Border x:Name="SourceSpecSheet" Style="{StaticResource EditorGroupStyle}" CornerRadius="24">
                             <StackPanel Spacing="16">
                                 <TextBlock x:Name="SidebarTitle" Text="Collection Summary" FontSize="18" FontWeight="SemiBold" />
                                 <TextBlock x:Name="SidebarSubtitle" Text="Preview and sharing stay visible while you edit." FontSize="12"
@@ -750,7 +771,7 @@
                 </Grid>
 
                 <!-- ===== Action Buttons ===== -->
-                <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right">
+                <StackPanel x:Name="EditorActions" Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right">
                     <TextBlock Text="Source-managed fields remain locked" FontSize="12"
                                Foreground="{StaticResource TertiaryTextBrush}" VerticalAlignment="Center" Margin="0,0,8,0" />
                     <Button
@@ -781,5 +802,13 @@
 
             </StackPanel>
         </ScrollViewer>
+        <Border x:Name="CollectionDirtyDock" Visibility="Collapsed" Canvas.ZIndex="30" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="16,0,24,24" Padding="16,12" CornerRadius="14" Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+            <controls:WrapPanel HorizontalSpacing="12" VerticalSpacing="8">
+                <TextBlock x:Name="CollectionDirtyCount" FontSize="13" VerticalAlignment="Center" />
+                <Button Content="Cancel" Click="Cancel_Click" Style="{StaticResource GhostButtonStyle}" />
+                <Button Content="Discard" Click="Discard_Click" />
+                <Button x:Name="DockSaveButton" Content="Save changes" Click="Save_Click" Style="{StaticResource AccentButtonStyle}" />
+            </controls:WrapPanel>
+        </Border>
     </Grid>
 </Page>

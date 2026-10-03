@@ -5,16 +5,6 @@ using SiloPlayer.Core.Api;
 
 namespace SiloPlayer.Services;
 
-/// <summary>Metadata for a single theme used in the settings picker.</summary>
-public record ThemeInfo(
-    string Id,
-    string Label,
-    string Description,
-    string PreviewAccent,
-    string PreviewBackground,
-    bool IsCurated,
-    string FontFamily);
-
 public class ThemeColors
 {
     // ===== Existing properties =====
@@ -64,8 +54,8 @@ public class ThemeColors
 public class ThemeService
 {
     private readonly SettingsService _settingsService;
-    private readonly SettingsApi _settingsApi;
-    private string? _previewBaseTheme;
+    private readonly SharedAppearanceState _sharedAppearance;
+
 
     /// <summary>Maps font family name to the ms-appx font URI for WinUI 3.</summary>
     private static readonly Dictionary<string, string> FontUris = new()
@@ -78,258 +68,6 @@ public class ThemeService
 
     private static readonly Dictionary<string, ThemeColors> Themes = new()
     {
-        ["catppuccin"] = new ThemeColors
-        {
-            Background = "#1E1E2E",
-            Foreground = "#CDD6F4",
-            Card = "#313244",
-            Primary = "#CBA6F7",
-            PrimaryForeground = "#1E1E2E",
-            Secondary = "#45475A",
-            SecondaryForeground = "#CDD6F4",
-            MutedForeground = "#A6ADC8",
-            Border = "#45475A",
-            Input = "#45475A",
-            Sidebar = "#181825",
-            Surface = "#313244",
-            SurfaceHover = "#45475A",
-            SurfaceRaised = "#3B3B50",
-            Destructive = "#F38BA8",
-            Accent = "#45475A",
-            // New tokens
-            Popover = "#1E1E2E",
-            PopoverForeground = "#CDD6F4",
-            CardForeground = "#CDD6F4",
-            AccentForeground = "#CDD6F4",
-            DestructiveForeground = "#1E1E2E",
-            Muted = "#313244",
-            Ring = "#CBA6F7",
-            Chart1 = "#CBA6F7",
-            Chart2 = "#89B4FA",
-            Chart3 = "#A6E3A1",
-            Chart4 = "#FAB387",
-            Chart5 = "#F5C2E7",
-            SidebarForeground = "#CDD6F4",
-            SidebarPrimary = "#CBA6F7",
-            SidebarPrimaryForeground = "#1E1E2E",
-            SidebarAccent = "#45475A",
-            SidebarAccentForeground = "#CDD6F4",
-            SidebarBorder = "#45475A",
-            SidebarRing = "#CBA6F7",
-            // Fonts
-            FontFamily = "Outfit",
-            DisplayFontFamily = "Outfit",
-        },
-        ["gruvbox"] = new ThemeColors
-        {
-            Background = "#282828",
-            Foreground = "#EBDBB2",
-            Card = "#3C3836",
-            Primary = "#FABD2F",
-            PrimaryForeground = "#282828",
-            Secondary = "#3C3836",
-            SecondaryForeground = "#EBDBB2",
-            MutedForeground = "#A89984",
-            Border = "#504945",
-            Input = "#3C3836",
-            Sidebar = "#1D2021",
-            Surface = "#3C3836",
-            SurfaceHover = "#504945",
-            SurfaceRaised = "#5A524C",
-            Destructive = "#FB4934",
-            Accent = "#504945",
-            // New tokens
-            Popover = "#282828",
-            PopoverForeground = "#EBDBB2",
-            CardForeground = "#EBDBB2",
-            AccentForeground = "#EBDBB2",
-            DestructiveForeground = "#EBDBB2",
-            Muted = "#3C3836",
-            Ring = "#FABD2F",
-            Chart1 = "#FABD2F",
-            Chart2 = "#B8BB26",
-            Chart3 = "#83A598",
-            Chart4 = "#FE8019",
-            Chart5 = "#D3869B",
-            SidebarForeground = "#EBDBB2",
-            SidebarPrimary = "#FABD2F",
-            SidebarPrimaryForeground = "#282828",
-            SidebarAccent = "#504945",
-            SidebarAccentForeground = "#EBDBB2",
-            SidebarBorder = "#504945",
-            SidebarRing = "#FABD2F",
-            // Fonts
-            FontFamily = "Manrope",
-            DisplayFontFamily = "Manrope",
-        },
-        ["void-space"] = new ThemeColors
-        {
-            Background = "#0D1117",
-            Foreground = "#C9D1D9",
-            Card = "#161B22",
-            Primary = "#58A6FF",
-            PrimaryForeground = "#0D1117",
-            Secondary = "#21262D",
-            SecondaryForeground = "#C9D1D9",
-            MutedForeground = "#8B949E",
-            Border = "#30363D",
-            Input = "#21262D",
-            Sidebar = "#010409",
-            Surface = "#161B22",
-            SurfaceHover = "#21262D",
-            SurfaceRaised = "#272D36",
-            Destructive = "#F85149",
-            Accent = "#21262D",
-            // New tokens
-            Popover = "#0D1117",
-            PopoverForeground = "#C9D1D9",
-            CardForeground = "#C9D1D9",
-            AccentForeground = "#C9D1D9",
-            DestructiveForeground = "#0D1117",
-            Muted = "#161B22",
-            Ring = "#58A6FF",
-            Chart1 = "#58A6FF",
-            Chart2 = "#79C0FF",
-            Chart3 = "#56D364",
-            Chart4 = "#F78166",
-            Chart5 = "#D2A8FF",
-            SidebarForeground = "#C9D1D9",
-            SidebarPrimary = "#58A6FF",
-            SidebarPrimaryForeground = "#0D1117",
-            SidebarAccent = "#21262D",
-            SidebarAccentForeground = "#C9D1D9",
-            SidebarBorder = "#30363D",
-            SidebarRing = "#58A6FF",
-            // Fonts
-            FontFamily = "Manrope",
-            DisplayFontFamily = "Manrope",
-        },
-        ["charcoal-studio"] = new ThemeColors
-        {
-            Background = "#1C1C1E",
-            Foreground = "#F2F2F7",
-            Card = "#2C2C2E",
-            Primary = "#0A84FF",
-            PrimaryForeground = "#FFFFFF",
-            Secondary = "#38383A",
-            SecondaryForeground = "#F2F2F7",
-            MutedForeground = "#98989D",
-            Border = "#38383A",
-            Input = "#2C2C2E",
-            Sidebar = "#141414",
-            Surface = "#2C2C2E",
-            SurfaceHover = "#38383A",
-            SurfaceRaised = "#424244",
-            Destructive = "#FF375F",
-            Accent = "#38383A",
-            // New tokens
-            Popover = "#1C1C1E",
-            PopoverForeground = "#F2F2F7",
-            CardForeground = "#F2F2F7",
-            AccentForeground = "#F2F2F7",
-            DestructiveForeground = "#FFFFFF",
-            Muted = "#2C2C2E",
-            Ring = "#0A84FF",
-            Chart1 = "#0A84FF",
-            Chart2 = "#5E5CE6",
-            Chart3 = "#30D158",
-            Chart4 = "#FF9F0A",
-            Chart5 = "#BF5AF2",
-            SidebarForeground = "#F2F2F7",
-            SidebarPrimary = "#0A84FF",
-            SidebarPrimaryForeground = "#FFFFFF",
-            SidebarAccent = "#38383A",
-            SidebarAccentForeground = "#F2F2F7",
-            SidebarBorder = "#38383A",
-            SidebarRing = "#0A84FF",
-            // Fonts
-            FontFamily = "Outfit",
-            DisplayFontFamily = "Outfit",
-        },
-        ["graphite-pro"] = new ThemeColors
-        {
-            Background = "#18181B",
-            Foreground = "#FAFAFA",
-            Card = "#27272A",
-            Primary = "#A855F7",
-            PrimaryForeground = "#18181B",
-            Secondary = "#3F3F46",
-            SecondaryForeground = "#FAFAFA",
-            MutedForeground = "#A1A1AA",
-            Border = "#3F3F46",
-            Input = "#27272A",
-            Sidebar = "#111113",
-            Surface = "#27272A",
-            SurfaceHover = "#3F3F46",
-            SurfaceRaised = "#48484E",
-            Destructive = "#EF4444",
-            Accent = "#3F3F46",
-            // New tokens
-            Popover = "#18181B",
-            PopoverForeground = "#FAFAFA",
-            CardForeground = "#FAFAFA",
-            AccentForeground = "#FAFAFA",
-            DestructiveForeground = "#FAFAFA",
-            Muted = "#27272A",
-            Ring = "#A855F7",
-            Chart1 = "#A855F7",
-            Chart2 = "#EC4899",
-            Chart3 = "#14B8A6",
-            Chart4 = "#F97316",
-            Chart5 = "#06B6D4",
-            SidebarForeground = "#FAFAFA",
-            SidebarPrimary = "#A855F7",
-            SidebarPrimaryForeground = "#18181B",
-            SidebarAccent = "#3F3F46",
-            SidebarAccentForeground = "#FAFAFA",
-            SidebarBorder = "#3F3F46",
-            SidebarRing = "#A855F7",
-            // Fonts
-            FontFamily = "Sora",
-            DisplayFontFamily = "Sora",
-        },
-        ["obsidian-depth"] = new ThemeColors
-        {
-            Background = "#0F0F0F",
-            Foreground = "#F5F5F5",
-            Card = "#1A1A1A",
-            Primary = "#00D4AA",
-            PrimaryForeground = "#0F0F0F",
-            Secondary = "#262626",
-            SecondaryForeground = "#F5F5F5",
-            MutedForeground = "#8A8A8A",
-            Border = "#2A2A2A",
-            Input = "#1A1A1A",
-            Sidebar = "#0A0A0A",
-            Surface = "#1A1A1A",
-            SurfaceHover = "#262626",
-            SurfaceRaised = "#303030",
-            Destructive = "#FF6B6B",
-            Accent = "#262626",
-            // New tokens
-            Popover = "#0F0F0F",
-            PopoverForeground = "#F5F5F5",
-            CardForeground = "#F5F5F5",
-            AccentForeground = "#F5F5F5",
-            DestructiveForeground = "#0F0F0F",
-            Muted = "#1A1A1A",
-            Ring = "#00D4AA",
-            Chart1 = "#00D4AA",
-            Chart2 = "#00A3CC",
-            Chart3 = "#4ADE80",
-            Chart4 = "#FB923C",
-            Chart5 = "#FF6B9D",
-            SidebarForeground = "#F5F5F5",
-            SidebarPrimary = "#00D4AA",
-            SidebarPrimaryForeground = "#0F0F0F",
-            SidebarAccent = "#262626",
-            SidebarAccentForeground = "#F5F5F5",
-            SidebarBorder = "#2A2A2A",
-            SidebarRing = "#00D4AA",
-            // Fonts
-            FontFamily = "Urbanist",
-            DisplayFontFamily = "Urbanist",
-        },
         ["midnight-cinema"] = new ThemeColors
         {
             Background = "#141417",
@@ -375,383 +113,26 @@ public class ThemeService
             FontFamily = "Outfit",
             DisplayFontFamily = "Outfit",
         },
-        ["cinema-light"] = new ThemeColors
-        {
-            Background = "#F4F4F6",
-            Foreground = "#1A1A1E",
-            Card = "#FFFFFF",
-            Primary = "#1A1A1E",
-            PrimaryForeground = "#F4F4F6",
-            Secondary = "#E8E8EC",
-            SecondaryForeground = "#3A3A42",
-            MutedForeground = "#78787F",
-            Border = "#D8D8DE",
-            Input = "#E8E8EC",
-            Sidebar = "#EAEAEE",
-            Surface = "#EBEBEF",
-            SurfaceHover = "#E0E0E6",
-            SurfaceRaised = "#FFFFFF",
-            Destructive = "#DC2626",
-            Accent = "#E8E8EC",
-            // New tokens
-            Popover = "#FFFFFF",
-            PopoverForeground = "#1A1A1E",
-            CardForeground = "#1A1A1E",
-            AccentForeground = "#1A1A1E",
-            DestructiveForeground = "#FFFFFF",
-            Muted = "#EBEBEF",
-            Ring = "#1A1A1E",
-            Chart1 = "#6366F1",
-            Chart2 = "#0EA5E9",
-            Chart3 = "#22C55E",
-            Chart4 = "#F59E0B",
-            Chart5 = "#A855F7",
-            SidebarForeground = "#1A1A1E",
-            SidebarPrimary = "#1A1A1E",
-            SidebarPrimaryForeground = "#F4F4F6",
-            SidebarAccent = "#DFDFE5",
-            SidebarAccentForeground = "#1A1A1E",
-            SidebarBorder = "#D0D0D8",
-            SidebarRing = "#1A1A1E",
-            // Fonts
-            FontFamily = "Outfit",
-            DisplayFontFamily = "Outfit",
-        },
-        ["cobalt-studio"] = new ThemeColors
-        {
-            Background = "#101722",
-            Foreground = "#F4F8FF",
-            Card = "#151E2B",
-            Primary = "#78AEFC",
-            PrimaryForeground = "#0F1722",
-            Secondary = "#1B2634",
-            SecondaryForeground = "#D7E2F1",
-            MutedForeground = "#90A0B5",
-            Border = "#28384D",
-            Input = "#182231",
-            Sidebar = "#0C131D",
-            Surface = "#151E2B",
-            SurfaceHover = "#1D2A3B",
-            SurfaceRaised = "#223245",
-            Destructive = "#EF6B73",
-            Accent = "#203043",
-            // New tokens
-            Popover = "#121A25",
-            PopoverForeground = "#F4F8FF",
-            CardForeground = "#F4F8FF",
-            AccentForeground = "#F4F8FF",
-            DestructiveForeground = "#FFFFFF",
-            Muted = "#151E2B",
-            Ring = "#78AEFC",
-            Chart1 = "#78AEFC",
-            Chart2 = "#87D2FF",
-            Chart3 = "#6EC7BA",
-            Chart4 = "#B9C7FF",
-            Chart5 = "#F18D8D",
-            SidebarForeground = "#F4F8FF",
-            SidebarPrimary = "#78AEFC",
-            SidebarPrimaryForeground = "#0F1722",
-            SidebarAccent = "#172231",
-            SidebarAccentForeground = "#F4F8FF",
-            SidebarBorder = "#1F2A39",
-            SidebarRing = "#78AEFC",
-            // Fonts
-            FontFamily = "Outfit",
-            DisplayFontFamily = "Outfit",
-        },
-        ["oxblood-noir"] = new ThemeColors
-        {
-            Background = "#171113",
-            Foreground = "#F8F2F3",
-            Card = "#20181B",
-            Primary = "#D16A78",
-            PrimaryForeground = "#180F12",
-            Secondary = "#281D21",
-            SecondaryForeground = "#DECFD2",
-            MutedForeground = "#A28E95",
-            Border = "#3B2830",
-            Input = "#251A1F",
-            Sidebar = "#120D0F",
-            Surface = "#20181B",
-            SurfaceHover = "#2A2025",
-            SurfaceRaised = "#34262C",
-            Destructive = "#F08080",
-            Accent = "#322228",
-            // New tokens
-            Popover = "#1B1417",
-            PopoverForeground = "#F8F2F3",
-            CardForeground = "#F8F2F3",
-            AccentForeground = "#F8F2F3",
-            DestructiveForeground = "#FFFFFF",
-            Muted = "#20181B",
-            Ring = "#D16A78",
-            Chart1 = "#D16A78",
-            Chart2 = "#F08E7A",
-            Chart3 = "#C8A0B8",
-            Chart4 = "#8AA0C6",
-            Chart5 = "#E1B86E",
-            SidebarForeground = "#F8F2F3",
-            SidebarPrimary = "#D16A78",
-            SidebarPrimaryForeground = "#180F12",
-            SidebarAccent = "#21161A",
-            SidebarAccentForeground = "#F8F2F3",
-            SidebarBorder = "#2C1D23",
-            SidebarRing = "#D16A78",
-            // Fonts
-            FontFamily = "Outfit",
-            DisplayFontFamily = "Outfit",
-        },
-        ["ember-slate"] = new ThemeColors
-        {
-            Background = "#151213",
-            Foreground = "#F7F3F2",
-            Card = "#1D191B",
-            Primary = "#F07B62",
-            PrimaryForeground = "#1A1110",
-            Secondary = "#262123",
-            SecondaryForeground = "#DDD4D1",
-            MutedForeground = "#A19692",
-            Border = "#392F33",
-            Input = "#231D20",
-            Sidebar = "#100D0E",
-            Surface = "#1D191B",
-            SurfaceHover = "#272124",
-            SurfaceRaised = "#31282C",
-            Destructive = "#FF8B7D",
-            Accent = "#30282B",
-            // New tokens
-            Popover = "#181516",
-            PopoverForeground = "#F7F3F2",
-            CardForeground = "#F7F3F2",
-            AccentForeground = "#F7F3F2",
-            DestructiveForeground = "#FFFFFF",
-            Muted = "#1D191B",
-            Ring = "#F07B62",
-            Chart1 = "#F07B62",
-            Chart2 = "#F0A162",
-            Chart3 = "#D4B078",
-            Chart4 = "#8DB6C9",
-            Chart5 = "#D497AC",
-            SidebarForeground = "#F7F3F2",
-            SidebarPrimary = "#F07B62",
-            SidebarPrimaryForeground = "#1A1110",
-            SidebarAccent = "#201A1C",
-            SidebarAccentForeground = "#F7F3F2",
-            SidebarBorder = "#2B2326",
-            SidebarRing = "#F07B62",
-            // Fonts
-            FontFamily = "Urbanist",
-            DisplayFontFamily = "Urbanist",
-        },
-        ["evergreen-studio"] = new ThemeColors
-        {
-            Background = "#101715",
-            Foreground = "#F2F8F5",
-            Card = "#16201D",
-            Primary = "#5BC39D",
-            PrimaryForeground = "#0D1513",
-            Secondary = "#1B2824",
-            SecondaryForeground = "#D1E0D9",
-            MutedForeground = "#91A39C",
-            Border = "#284038",
-            Input = "#182420",
-            Sidebar = "#0C1210",
-            Surface = "#16201D",
-            SurfaceHover = "#1E2B27",
-            SurfaceRaised = "#263732",
-            Destructive = "#F07A7A",
-            Accent = "#20322D",
-            // New tokens
-            Popover = "#131B19",
-            PopoverForeground = "#F2F8F5",
-            CardForeground = "#F2F8F5",
-            AccentForeground = "#F2F8F5",
-            DestructiveForeground = "#FFFFFF",
-            Muted = "#16201D",
-            Ring = "#5BC39D",
-            Chart1 = "#5BC39D",
-            Chart2 = "#7DD8BD",
-            Chart3 = "#7EB7A4",
-            Chart4 = "#88A9CF",
-            Chart5 = "#E0B66B",
-            SidebarForeground = "#F2F8F5",
-            SidebarPrimary = "#5BC39D",
-            SidebarPrimaryForeground = "#0D1513",
-            SidebarAccent = "#16221E",
-            SidebarAccentForeground = "#F2F8F5",
-            SidebarBorder = "#1D2F2A",
-            SidebarRing = "#5BC39D",
-            // Fonts
-            FontFamily = "Outfit",
-            DisplayFontFamily = "Outfit",
-        },
-        ["verdant-ink"] = new ThemeColors
-        {
-            Background = "#0D1513",
-            Foreground = "#F3F9F7",
-            Card = "#121D1A",
-            Primary = "#86D4B6",
-            PrimaryForeground = "#0D1513",
-            Secondary = "#172521",
-            SecondaryForeground = "#D5E5DF",
-            MutedForeground = "#96A9A1",
-            Border = "#264139",
-            Input = "#16231F",
-            Sidebar = "#09110F",
-            Surface = "#121D1A",
-            SurfaceHover = "#192823",
-            SurfaceRaised = "#22352F",
-            Destructive = "#F18989",
-            Accent = "#1D312B",
-            // New tokens
-            Popover = "#101916",
-            PopoverForeground = "#F3F9F7",
-            CardForeground = "#F3F9F7",
-            AccentForeground = "#F3F9F7",
-            DestructiveForeground = "#FFFFFF",
-            Muted = "#121D1A",
-            Ring = "#86D4B6",
-            Chart1 = "#86D4B6",
-            Chart2 = "#6FC7C4",
-            Chart3 = "#9FDC8D",
-            Chart4 = "#8EB0E8",
-            Chart5 = "#F0B36B",
-            SidebarForeground = "#F3F9F7",
-            SidebarPrimary = "#86D4B6",
-            SidebarPrimaryForeground = "#0D1513",
-            SidebarAccent = "#14211D",
-            SidebarAccentForeground = "#F3F9F7",
-            SidebarBorder = "#1C302A",
-            SidebarRing = "#86D4B6",
-            // Fonts
-            FontFamily = "Urbanist",
-            DisplayFontFamily = "Urbanist",
-        },
-    };
-
-    /// <summary>Metadata for each theme used in the picker UI.</summary>
-    private static readonly Dictionary<string, ThemeInfo> ThemeInfos = new()
-    {
-        ["midnight-cinema"] = new("midnight-cinema", "Cinema Dark", "Monochromatic cinema -- content is the color", "#E8E8EC", "#141417", true, "Outfit"),
-        ["cinema-light"] = new("cinema-light", "Cinema Light", "Light monochromatic cinema -- content is the color", "#1A1A1E", "#F4F4F6", true, "Outfit"),
-        ["cobalt-studio"] = new("cobalt-studio", "Cobalt", "Cool blue graphite with crisp contrast", "#78AEFC", "#101722", true, "Outfit"),
-        ["oxblood-noir"] = new("oxblood-noir", "Oxblood", "Deep red-black with restrained luxury warmth", "#D16A78", "#171113", true, "Outfit"),
-        ["evergreen-studio"] = new("evergreen-studio", "Evergreen", "Refined evergreen accents on dense graphite", "#5BC39D", "#101715", true, "Outfit"),
-        ["ember-slate"] = new("ember-slate", "Ember", "Smoked charcoal with ember-red accents", "#F07B62", "#151213", false, "Urbanist"),
-        ["verdant-ink"] = new("verdant-ink", "Verdant Ink", "Cool green-black with softer luminous contrast", "#86D4B6", "#0D1513", false, "Urbanist"),
-        ["catppuccin"] = new("catppuccin", "Catppuccin", "Pastel purple on warm dark blue", "#CBA6F7", "#1E1E2E", false, "Outfit"),
-        ["gruvbox"] = new("gruvbox", "Gruvbox", "Warm retro with golden accent", "#FABD2F", "#282828", false, "Manrope"),
-        ["void-space"] = new("void-space", "Void Space", "Cool blue on deep space black", "#58A6FF", "#0D1117", false, "Manrope"),
-        ["charcoal-studio"] = new("charcoal-studio", "Charcoal", "Apple-inspired blue on dark gray", "#0A84FF", "#1C1C1E", false, "Outfit"),
-        ["graphite-pro"] = new("graphite-pro", "Graphite", "Vibrant purple on zinc", "#A855F7", "#18181B", false, "Sora"),
-        ["obsidian-depth"] = new("obsidian-depth", "Obsidian", "Cyan accent on true dark", "#00D4AA", "#0F0F0F", false, "Urbanist"),
     };
 
     public ThemeService(SettingsService settingsService, SettingsApi settingsApi)
     {
         _settingsService = settingsService;
-        _settingsApi = settingsApi;
+        _sharedAppearance = new SharedAppearanceState(settingsApi);
+        _sharedAppearance.Changed += () => ApplyTheme(CurrentTheme);
     }
 
-    public IReadOnlyList<string> AvailableThemeIds => Themes.Keys.ToList();
-
-    public string CurrentTheme { get; private set; } = "midnight-cinema";
-
-    public static bool IsLightAppearance(string themeId)
-        => string.Equals(themeId, "cinema-light", StringComparison.Ordinal);
-
-    // Single source of truth for theme labels: ThemeInfos.Label. WebUI uses
-    // Cinema Dark / Cinema Light / Cobalt / Oxblood / Ember / etc. — not the
-    // "Midnight Cinema / Cobalt Studio / Ember Slate" labels from the old dict.
-    public static string GetDisplayName(string themeId)
-        => ThemeInfos.TryGetValue(themeId, out var info) ? info.Label : themeId;
-
-    /// <summary>Returns theme metadata for the picker UI. Curated themes are returned first.</summary>
-    public static IReadOnlyList<ThemeInfo> GetAllThemeInfos()
-    {
-        var curated = ThemeInfos.Values.Where(t => t.IsCurated).ToList();
-        var others = ThemeInfos.Values.Where(t => !t.IsCurated).ToList();
-        curated.AddRange(others);
-        return curated;
-    }
-
-    /// <summary>Returns theme metadata for a single theme.</summary>
-    public static ThemeInfo? GetThemeInfo(string themeId)
-        => ThemeInfos.TryGetValue(themeId, out var info) ? info : null;
-
-    /// <summary>
-    /// Apply the saved theme from local settings on startup (before network).
-    /// </summary>
-    public void ApplySavedTheme()
-    {
-        var settings = _settingsService.Load();
-        var saved = settings.LastTheme;
-        if (!string.IsNullOrEmpty(saved) && Themes.ContainsKey(saved))
-        {
-            ApplyTheme(saved);
-        }
-    }
-
-    /// <summary>
-    /// Synchronizes the profile-scoped WebUI theme after authentication. The
-    /// local theme is only an early-startup fallback; the profile setting (or
-    /// the server branding default when no profile choice exists) is the same
-    /// source of truth used by the WebUI.
-    /// </summary>
-    public async Task SyncFromServerAsync(CancellationToken cancellationToken = default)
-    {
-        string? themeName = null;
-        try
-        {
-            themeName = (await _settingsApi.GetSettingAsync("ui_theme", cancellationToken)).Value;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch { /* a profile without an explicit choice uses the branding default */ }
-
-        if (string.IsNullOrWhiteSpace(themeName) || !Themes.ContainsKey(themeName))
-        {
-            try
-            {
-                var branding = await _settingsApi.GetServerBrandingAsync(cancellationToken);
-                if (!string.IsNullOrWhiteSpace(branding.DefaultTheme) && Themes.ContainsKey(branding.DefaultTheme))
-                    themeName = branding.DefaultTheme;
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch { /* retain the local startup fallback while offline */ }
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();
-        if (!string.IsNullOrWhiteSpace(themeName) && Themes.ContainsKey(themeName))
-            ApplyTheme(themeName);
-
-        try
-        {
-            var customTheme = await _settingsApi.GetSettingAsync("ui_custom_theme_vars", cancellationToken);
-            var overrides = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(customTheme.Value) ?? [];
-            SetThemeOverridesFromServer(overrides);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch { /* custom overrides are optional */ }
-    }
-
+    public string CurrentTheme => "midnight-cinema";
+    public static bool IsLightAppearance(string themeId) => false;
+    public void ApplySavedTheme() => ResetSharedAppearance();
+    public void ResetSharedAppearance() => _sharedAppearance.Reset();
+    public Task RefreshSharedAppearanceIfStaleAsync(CancellationToken cancellationToken = default)
+        => _sharedAppearance.RefreshIfStaleAsync(cancellationToken);
+    public Task SyncFromServerAsync(CancellationToken cancellationToken = default)
+        => _sharedAppearance.RefreshAsync(cancellationToken);
     public void ApplyTheme(string themeName)
     {
-        if (!Themes.TryGetValue(themeName, out var colors)) return;
-        CurrentTheme = themeName;
-
-        // Persist locally for next startup
-        var settings = _settingsService.Load();
-        settings.LastTheme = themeName;
-        _settingsService.Save(settings);
+        var colors = Themes[CurrentTheme];
 
         var res = Application.Current.Resources;
 
@@ -788,6 +169,8 @@ public class ThemeService
 
         // Also update the raw Color resources so any new elements pick up the right values
         UpdateColor(res, "AppBackgroundColor", colors.Background);
+        UpdateColor(res, "AmbientColor", colors.Foreground);
+        UpdateBrush(res, "AmbientBrush", colors.Foreground);
         UpdateColor(res, "SidebarBackgroundColor", colors.Sidebar);
         UpdateColor(res, "CardBackgroundColor", colors.Card);
         UpdateColor(res, "SurfaceColor", colors.Surface);
@@ -861,63 +244,26 @@ public class ThemeService
 
         // ===== Font switching =====
         UpdateFontFamily(res, "ThemeFontFamily", colors.FontFamily);
+        UpdateFontFamily(res, "ContentControlThemeFontFamily", colors.FontFamily);
         UpdateFontFamily(res, "ThemeDisplayFontFamily", colors.DisplayFontFamily);
 
-        ApplyOverrideResources(_settingsService.Load().ThemeOverrides);
-        RefreshDerivedControlResources(res);
-    }
-
-    public IReadOnlyDictionary<string, string> GetThemeOverrides()
-        => new Dictionary<string, string>(_settingsService.Load().ThemeOverrides, StringComparer.Ordinal);
-
-    public void SetThemeOverride(string token, string value)
-    {
-        var settings = _settingsService.Load();
-        if (string.IsNullOrWhiteSpace(value)) settings.ThemeOverrides.Remove(token);
-        else settings.ThemeOverrides[token] = value.Trim();
-        _settingsService.Save(settings);
-        ApplyTheme(CurrentTheme);
-        _ = PersistThemeOverridesAsync(settings.ThemeOverrides);
-    }
-
-    public void ImportThemeOverrides(Dictionary<string, string> overrides)
-    {
-        var settings = _settingsService.Load();
-        settings.ThemeOverrides = overrides
-            .Where(pair => IsSupportedOverride(pair.Key, pair.Value))
-            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-        _settingsService.Save(settings);
-        ApplyTheme(CurrentTheme);
-        _ = PersistThemeOverridesAsync(settings.ThemeOverrides);
-    }
-
-    public void ResetThemeOverrides()
-    {
-        var settings = _settingsService.Load();
-        settings.ThemeOverrides.Clear();
-        _settingsService.Save(settings);
-        ApplyTheme(CurrentTheme);
-        _ = PersistThemeOverridesAsync(settings.ThemeOverrides);
-    }
-
-    public void SetThemeOverridesFromServer(Dictionary<string, string> overrides)
-    {
-        var settings = _settingsService.Load();
-        settings.ThemeOverrides = overrides
-            .Where(pair => IsSupportedOverride(pair.Key, pair.Value))
-            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
-        _settingsService.Save(settings);
-        ApplyTheme(CurrentTheme);
-    }
-
-    private async Task PersistThemeOverridesAsync(Dictionary<string, string> overrides)
-    {
-        try
+        ApplyOverrideResources(_sharedAppearance.Colors);
+        Helpers.PageBackdrop.RefreshAll();
+        // Readability wins over server decoration, including refresh/reset.
+        UpdateBrush(res, "TertiaryTextBrush", "#6E7681");
+        UpdateColor(res, "TertiaryTextColor", "#6E7681");
+        if (_settingsService.Load().UiHighContrast)
         {
-            await _settingsApi.PutSettingAsync("ui_custom_theme_vars",
-                System.Text.Json.JsonSerializer.Serialize(overrides));
+            UpdateBrush(res, "PrimaryTextBrush", "#FFFFFF");
+            UpdateBrush(res, "SecondaryTextBrush", "#D1D5DB");
+            UpdateBrush(res, "TertiaryTextBrush", "#B6C0CE");
+            UpdateBrush(res, "BorderBrush", "#8091A7");
+            UpdateColor(res, "PrimaryTextColor", "#FFFFFF");
+            UpdateColor(res, "SecondaryTextColor", "#D1D5DB");
+            UpdateColor(res, "TertiaryTextColor", "#B6C0CE");
+            UpdateColor(res, "BorderColor", "#8091A7");
         }
-        catch { /* local copy remains available and a later edit retries */ }
+        RefreshDerivedControlResources(res);
     }
 
     private void ApplyOverrideResources(IReadOnlyDictionary<string, string> overrides)
@@ -925,33 +271,16 @@ public class ThemeService
         var res = Application.Current.Resources;
         foreach (var (token, value) in overrides)
         {
-            if (!IsSupportedOverride(token, value)) continue;
-            if (token == "font-body")
-            {
-                UpdateFontFamily(res, "ThemeFontFamily", ParseFontName(value));
-                continue;
-            }
-
             if (!OverrideResourceMap.TryGetValue(token, out var resources)) continue;
             UpdateBrush(res, resources.Brush, value);
             UpdateColor(res, resources.Color, value);
         }
+        if (overrides.TryGetValue("primary", out var primary)) UpdateBrush(res, "BadgeTextBrush", primary);
     }
-
-    private static bool IsSupportedOverride(string token, string value)
-        => token == "font-body"
-            ? FontUris.ContainsKey(ParseFontName(value))
-            : OverrideResourceMap.ContainsKey(token) && IsHexColor(value);
-
-    private static bool IsHexColor(string value)
-        => value is { Length: 7 } && value[0] == '#' && value[1..].All(Uri.IsHexDigit);
-
-    private static string ParseFontName(string value)
-        => value.Split(',')[0].Trim().Trim('"', '\'');
-
     private static readonly Dictionary<string, (string Brush, string Color)> OverrideResourceMap = new(StringComparer.Ordinal)
     {
         ["background"] = ("AppBackgroundBrush", "AppBackgroundColor"),
+        ["ambient"] = ("AmbientBrush", "AmbientColor"),
         ["foreground"] = ("PrimaryTextBrush", "PrimaryTextColor"),
         ["card"] = ("CardBackgroundBrush", "CardBackgroundColor"),
         ["surface"] = ("SurfaceBrush", "SurfaceColor"),
@@ -967,27 +296,26 @@ public class ThemeService
         ["sidebar-accent"] = ("SidebarAccentBrush", "SidebarAccentColor"),
         ["sidebar-border"] = ("SidebarBorderBrush", "SidebarBorderColor"),
         ["destructive"] = ("ErrorBrush", "ErrorColor"),
+        ["accent"] = ("AccentBackgroundBrush", "AccentBackgroundColor"),
+        ["accent-foreground"] = ("ThemeAccentForegroundBrush", "ThemeAccentForegroundColor"),
+        ["card-foreground"] = ("CardForegroundBrush", "CardForegroundColor"),
+        ["chart-1"] = ("Chart1Brush", "Chart1Color"),
+        ["chart-2"] = ("Chart2Brush", "Chart2Color"),
+        ["chart-3"] = ("Chart3Brush", "Chart3Color"),
+        ["chart-4"] = ("Chart4Brush", "Chart4Color"),
+        ["chart-5"] = ("Chart5Brush", "Chart5Color"),
+        ["destructive-foreground"] = ("DestructiveForegroundBrush", "DestructiveForegroundColor"),
+        ["muted"] = ("MutedBrush", "MutedColor"),
+        ["popover"] = ("PopoverBrush", "PopoverColor"),
+        ["popover-foreground"] = ("PopoverForegroundBrush", "PopoverForegroundColor"),
+        ["ring"] = ("RingBrush", "RingColor"),
+        ["sidebar-accent-foreground"] = ("SidebarAccentForegroundBrush", "SidebarAccentForegroundColor"),
+        ["sidebar-foreground"] = ("SidebarForegroundBrush", "SidebarForegroundColor"),
+        ["sidebar-primary"] = ("SidebarPrimaryBrush", "SidebarPrimaryColor"),
+        ["sidebar-primary-foreground"] = ("SidebarPrimaryForegroundBrush", "SidebarPrimaryForegroundColor"),
+        ["sidebar-ring"] = ("SidebarRingBrush", "SidebarRingColor"),
+        ["surface-raised"] = ("SurfaceRaisedBrush", "SurfaceRaisedColor"),
     };
-
-    public void PreviewTheme(string themeName)
-    {
-        if (_previewBaseTheme == null) _previewBaseTheme = CurrentTheme;
-        ApplyTheme(themeName);
-    }
-
-    public void CancelThemePreview()
-    {
-        if (_previewBaseTheme == null) return;
-        var original = _previewBaseTheme;
-        _previewBaseTheme = null;
-        ApplyTheme(original);
-    }
-
-    public void CommitThemePreview(string themeName)
-    {
-        _previewBaseTheme = null;
-        ApplyTheme(themeName);
-    }
 
     private static void UpdateBrush(ResourceDictionary res, string key, string hex)
     {
@@ -1000,7 +328,7 @@ public class ThemeService
     private static void RefreshDerivedControlResources(ResourceDictionary resources)
     {
         CopyBrushColor(resources, "SurfaceBrush",
-            "ButtonBackground", "ButtonBackgroundDisabled", "ContentDialogBackground");
+            "ButtonBackground", "ButtonBackgroundDisabled");
         CopyBrushColor(resources, "SurfaceHoverBrush",
             "ButtonBackgroundPointerOver", "TextControlBackgroundPointerOver",
             "ComboBoxBackgroundPointerOver", "MenuFlyoutItemBackgroundPointerOver");
@@ -1016,9 +344,9 @@ public class ThemeService
             "ComboBoxForeground", "ComboBoxItemForeground", "ComboBoxItemForegroundSelected",
             "MenuFlyoutItemForeground", "MenuFlyoutItemForegroundPointerOver",
             "NavigationViewItemForeground", "NavigationViewItemForegroundPointerOver",
-            "ToggleSwitchKnobFillOffPointerOver", "SliderThumbBackground", "SliderThumbBackgroundPointerOver");
+            "ToggleSwitchKnobFillOff", "ToggleSwitchKnobFillOffPointerOver");
         CopyBrushColor(resources, "SecondaryTextBrush",
-            "ButtonForegroundPressed", "ToggleSwitchKnobFillOff");
+            "ButtonForegroundPressed");
         CopyBrushColor(resources, "TertiaryTextBrush",
             "TextControlPlaceholderForeground", "TextControlPlaceholderForegroundPointerOver",
             "TextControlPlaceholderForegroundFocused");
@@ -1029,21 +357,26 @@ public class ThemeService
             "ToggleSwitchStrokeOff", "ToggleSwitchStrokeOffPointerOver");
         CopyBrushColor(resources, "AccentBrush",
             "TextControlBorderBrushPointerOver", "TextControlBorderBrushFocused",
-            "ComboBoxBorderBrushPointerOver", "FocusVisualPrimaryBrush",
+            "ComboBoxBorderBrushPointerOver",
             "SystemControlHighlightAccentBrush", "NavigationViewItemForegroundSelected",
             "HyperlinkButtonForeground", "HyperlinkButtonForegroundPointerOver", "HyperlinkButtonForegroundPressed",
             "ToggleSwitchFillOn", "ToggleSwitchFillOnPointerOver", "ToggleSwitchFillOnPressed",
             "ToggleSwitchStrokeOn", "ToggleSwitchStrokeOnPointerOver",
             "SliderTrackValueFill", "SliderTrackValueFillPointerOver", "SliderTrackValueFillPressed",
-            "SliderThumbBackgroundPressed");
+            "SliderThumbBorderBrush", "SliderThumbBorderBrushPointerOver", "SliderThumbBorderBrushPressed");
+        CopyBrushColor(resources, "RingBrush", "FocusVisualPrimaryBrush");
         CopyBrushColor(resources, "AccentForegroundBrush", "ToggleSwitchKnobFillOn");
+        CopyBrushColor(resources, "AccentBrush", "WebUiPrimaryHoverBrush");
+        CopyBrushColor(resources, "SecondaryBackgroundBrush", "WebUiSecondaryHoverBrush");
+        CopyBrushColor(resources, "ErrorBrush", "WebUiDestructiveHoverBrush");
         CopyBrushColor(resources, "AccentBackgroundBrush",
             "ComboBoxItemBackgroundSelected", "SystemControlHighlightListAccentLowBrush",
             "SystemControlHighlightListAccentMediumBrush", "NavigationViewItemBackgroundSelected");
         CopyBrushColor(resources, "PopoverBrush", "ComboBoxDropDownBackground", "MenuFlyoutPresenterBackground");
-        CopyBrushColor(resources, "AppBackgroundBrush", "NavigationViewContentBackground");
-        CopyBrushColor(resources, "SurfaceHoverBrush", "NavigationViewItemBackgroundPointerOver", "ToggleSwitchFillOffPointerOver");
-        CopyBrushColor(resources, "SurfaceBrush", "ToggleSwitchFillOff");
+        CopyBrushColor(resources, "AppBackgroundBrush", "NavigationViewContentBackground", "ContentDialogBackground",
+            "SliderOuterThumbBackground", "SliderThumbBackground", "SliderThumbBackgroundPointerOver", "SliderThumbBackgroundPressed");
+        CopyBrushColor(resources, "SurfaceHoverBrush", "NavigationViewItemBackgroundPointerOver");
+        CopyBrushColor(resources, "BorderBrush", "ToggleSwitchFillOff", "ToggleSwitchFillOffPointerOver");
     }
 
     private static void CopyBrushColor(ResourceDictionary resources, string sourceKey, params string[] targetKeys)

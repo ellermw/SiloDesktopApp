@@ -29,7 +29,7 @@ public sealed class PlaybackManagerTests
             Assert.Contains("\"hdr10_plus\":true", handler.LastStartBody);
             Assert.Contains("\"dolby_vision_profiles\":[5,8]", handler.LastStartBody);
             Assert.Contains("\"protocol_version\":3", handler.LastStartBody);
-            Assert.Contains("\"client_features\":[\"playback_plan_v3\",\"plan_invalidated_v1\"]", handler.LastStartBody);
+            Assert.Contains("\"client_features\":[\"playback_plan_v3\",\"plan_invalidated_v1\",\"subrip_sidecar_v1\"]", handler.LastStartBody);
             Assert.Contains("\"video_evidence\":\"declared\"", handler.LastStartBody);
             Assert.Contains("\"audio_evidence\":\"declared\"", handler.LastStartBody);
             Assert.Contains("\"client_playback_context\"", handler.LastStartBody);

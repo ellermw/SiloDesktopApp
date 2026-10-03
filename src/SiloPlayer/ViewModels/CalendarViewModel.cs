@@ -25,7 +25,7 @@ public partial class CalendarViewModel : ObservableObject
         _settingsService = settingsService;
         WeekStart = GetWeekStart(DateTime.Today);
         var stored = settingsService.Load().CalendarPreset;
-        Filter = stored is "following" or "trending" or "everything" ? stored : "following";
+        Filter = stored == "all" ? "everything" : stored is "following" or "trending" or "everything" ? stored : "following";
     }
 
     /// <summary>Days with events grouped by date (chronological).</summary>

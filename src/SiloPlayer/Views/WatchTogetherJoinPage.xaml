@@ -11,13 +11,17 @@
     SizeChanged="Page_SizeChanged">
 
     <Page.Resources>
+        <SolidColorBrush x:Key="PartyPanelBrush" Color="{Binding Color, Source={StaticResource SurfaceBrush}}" Opacity="0.90" />
+        <SolidColorBrush x:Key="PartyPanelBorderBrush" Color="{Binding Color, Source={StaticResource BorderBrush}}" Opacity="0.72" />
+        <SolidColorBrush x:Key="PartySubtleBrush" Color="{Binding Color, Source={StaticResource SurfaceBrush}}" Opacity="0.72" />
+        <SolidColorBrush x:Key="PartySubtleBorderBrush" Color="{Binding Color, Source={StaticResource BorderBrush}}" Opacity="0.62" />
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
         <converters:InverseBoolConverter x:Key="InverseBool" />
     </Page.Resources>
 
     <ScrollViewer>
-        <Grid x:Name="PageShell" Padding="40,40,40,40">
+            <Grid x:Name="PageShell" Padding="40,40,40,40" Background="Transparent">
             <Grid x:Name="AutoJoinPanel" Visibility="Collapsed" MinHeight="420">
                 <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
                     <ProgressRing IsActive="True" Width="32" Height="32" />
@@ -26,72 +30,33 @@
                                Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Center" />
                 </StackPanel>
             </Grid>
-            <StackPanel x:Name="ContentStack" MaxWidth="1024" HorizontalAlignment="Center" Spacing="40">
+            <StackPanel x:Name="ContentStack" MaxWidth="896" HorizontalAlignment="Center" Spacing="48">
 
                 <!-- Header -->
                 <StackPanel Spacing="12" MaxWidth="672" HorizontalAlignment="Left">
                     <TextBlock
                         Text="WATCH PARTY"
                         FontSize="11"
+                        LineHeight="16.5" LineStackingStrategy="BlockLineHeight"
                         FontWeight="SemiBold"
                         CharacterSpacing="180"
                         Foreground="{StaticResource SecondaryTextBrush}" />
                     <TextBlock
                         x:Name="HeadlineText"
-                        Text="Create or Join a Watch Party"
+                        Text="Watch together, wherever everyone is."
                         FontSize="36"
+                        LineHeight="40" LineStackingStrategy="BlockLineHeight"
                         FontWeight="SemiBold"
+                        TextWrapping="Wrap"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock
-                        Text="Start an empty room, invite people in, then choose what everyone watches from the lobby. Got an invite link? Just open it — you'll join automatically."
-                        FontSize="14"
+                        Text="Open a room, share the code, and everyone plays in sync. The host picks what's on, or the whole room votes."
+                        FontSize="16" LineHeight="28" MaxWidth="576"
                         Foreground="{StaticResource SecondaryTextBrush}"
                         TextWrapping="Wrap" />
                 </StackPanel>
 
-                <!-- How it works: 3 info cards -->
-                <Grid x:Name="InfoGrid" ColumnSpacing="16" RowSpacing="16">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
-                    </Grid.RowDefinitions>
-                    <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}" CornerRadius="12" Padding="16">
-                        <StackPanel Spacing="6">
-                            <TextBlock Text="SYNCED PLAYBACK"
-                                       FontSize="10" FontWeight="SemiBold" CharacterSpacing="240"
-                                       Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBlock Text="Everyone watches in sync. When someone seeks or the host picks new content, playback pauses while all participants buffer, then resumes together."
-                                       FontSize="14" TextWrapping="Wrap"
-                                       Foreground="{StaticResource PrimaryTextBrush}" Opacity="0.75" />
-                        </StackPanel>
-                    </Border>
-                    <Border Grid.Column="1" Background="{StaticResource SurfaceBrush}" CornerRadius="12" Padding="16">
-                        <StackPanel Spacing="6">
-                            <TextBlock Text="PLAYBACK CONTROLS"
-                                       FontSize="10" FontWeight="SemiBold" CharacterSpacing="240"
-                                       Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBlock Text="By default only the host can play, pause, and seek. The host can enable &quot;Allow Pause&quot; to let guests pause and resume, but seeking stays host-only."
-                                       FontSize="14" TextWrapping="Wrap"
-                                       Foreground="{StaticResource PrimaryTextBrush}" Opacity="0.75" />
-                        </StackPanel>
-                    </Border>
-                    <Border Grid.Column="2" Background="{StaticResource SurfaceBrush}" CornerRadius="12" Padding="16">
-                        <StackPanel Spacing="6">
-                            <TextBlock Text="ROOM &amp; INVITES"
-                                       FontSize="10" FontWeight="SemiBold" CharacterSpacing="240"
-                                       Foreground="{StaticResource SecondaryTextBrush}" />
-                            <TextBlock Text="Share the room code or invite link to let others join. If the host disconnects the room stays open for 15 seconds — if they don't reconnect, the party ends automatically."
-                                       FontSize="14" TextWrapping="Wrap"
-                                       Foreground="{StaticResource PrimaryTextBrush}" Opacity="0.75" />
-                        </StackPanel>
-                    </Border>
-                </Grid>
+
 
                 <!-- Error -->
                 <Border
@@ -118,43 +83,44 @@
                     </Grid.RowDefinitions>
 
                     <!-- Create -->
-                    <Border Grid.Column="0" Background="{StaticResource SurfaceBrush}"
-                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                            CornerRadius="12" Padding="20">
-                        <StackPanel Spacing="16">
-                            <StackPanel Spacing="4">
-                                <TextBlock Text="Create a room" FontSize="18" FontWeight="SemiBold"
-                                           Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Open a lobby, copy the invite, and pick the movie or episode once everyone is in."
-                                           FontSize="13" TextWrapping="Wrap"
+                    <Border x:Name="CreatePartyPanel" Grid.Column="0" Background="{StaticResource PartyPanelBrush}"
+                            BorderBrush="{StaticResource PartyPanelBorderBrush}" BorderThickness="1"
+                            CornerRadius="20" Padding="0">
+                        <Grid><Image x:Name="CreatePartyGlow" IsHitTestVisible="False" Stretch="Fill"/><StackPanel Margin="24" Spacing="20">
+                            <StackPanel Spacing="8">
+                                <StackPanel x:Name="StartHeading" Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="Start a party" FontSize="18" LineHeight="28" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"
+                                               Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock Text="Open an empty room now and pick what to watch once people arrive."
+                                           FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
                             </StackPanel>
 
                             <StackPanel Spacing="8">
-                                <TextBlock Text="Selection mode" FontSize="13" FontWeight="Medium"
-                                           Foreground="{StaticResource PrimaryTextBrush}" />
-                                <Grid ColumnSpacing="8">
+                                <Grid x:Name="ModeOptionsGrid" ColumnSpacing="8" RowSpacing="8" AutomationProperties.Name="How the room picks">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                                     <Button x:Name="HostPickButton" Grid.Column="0"
                                             HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                            Padding="12,10" CornerRadius="8"
+                                            Padding="12" CornerRadius="16"
                                             Click="HostPickButton_Click" KeyDown="SelectionButton_KeyDown">
-                                        <StackPanel>
-                                            <TextBlock Text="Host Picks" FontSize="13" FontWeight="SemiBold" />
-                                            <TextBlock Text="Host decides what to watch." FontSize="11"
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Host picks" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="Medium" />
+                                            <TextBlock Text="You choose, everyone watches." FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
                                                        Foreground="{StaticResource SecondaryTextBrush}" />
                                         </StackPanel>
                                     </Button>
                                     <Button x:Name="VoteButton" Grid.Column="1"
                                             HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                            Padding="12,10" CornerRadius="8"
+                                            Padding="12" CornerRadius="16"
                                             Click="VoteButton_Click" KeyDown="SelectionButton_KeyDown">
-                                        <StackPanel>
-                                            <TextBlock Text="Vote Together" FontSize="13" FontWeight="SemiBold" />
-                                            <TextBlock Text="Everyone suggests and votes." FontSize="11"
+                                        <StackPanel Spacing="2">
+                                            <TextBlock Text="Everyone votes" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="Medium" />
+                                            <TextBlock Text="Anyone suggests, the room votes." FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
                                                        Foreground="{StaticResource SecondaryTextBrush}" />
                                         </StackPanel>
                                     </Button>
@@ -165,52 +131,89 @@
                                 Content="Create Watch Party"
                                 Style="{StaticResource AccentButtonStyle}"
                                 HorizontalAlignment="Stretch"
-                                MinHeight="44"
-                                Padding="16,12"
+                                MinHeight="48" FontSize="16" CornerRadius="12"
+                                Padding="16,0"
                                 Command="{x:Bind ViewModel.CreateRoomCommand}"
                                 IsEnabled="{x:Bind ViewModel.IsBusy, Mode=OneWay, Converter={StaticResource InverseBool}}" />
-                        </StackPanel>
+                            <TextBlock FontSize="12" LineHeight="20" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}">Already know what you want to watch? Open its page and choose <Run Text="Start a party with this" Foreground="{StaticResource PrimaryTextBrush}"/> from the menu.</TextBlock>
+                        </StackPanel></Grid>
                     </Border>
 
                     <!-- Join -->
-                    <Border Grid.Column="1" Background="{StaticResource SurfaceBrush}"
-                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                            CornerRadius="12" Padding="20">
-                        <StackPanel Spacing="16">
-                            <StackPanel Spacing="4">
-                                <TextBlock Text="Join a room" FontSize="18" FontWeight="SemiBold"
-                                           Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Have a room code from the host? Enter it here to join their party."
-                                           FontSize="13" TextWrapping="Wrap"
+                    <Border x:Name="JoinPartyPanel" Grid.Column="1" Background="{StaticResource PartySubtleBrush}"
+                            BorderBrush="{StaticResource PartySubtleBorderBrush}" BorderThickness="1"
+                            CornerRadius="20" Padding="24">
+                        <StackPanel Spacing="20">
+                            <StackPanel Spacing="8">
+                                <StackPanel x:Name="JoinHeading" Orientation="Horizontal" Spacing="8">
+                                    <TextBlock Text="Join a party" FontSize="18" LineHeight="28" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"
+                                               Foreground="{StaticResource PrimaryTextBrush}" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock Text="Got a code from the host? Enter it here. Invite links open straight into the room."
+                                           FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
                             </StackPanel>
 
-                            <StackPanel Spacing="6">
-                                <TextBlock Text="Room code" FontSize="13" FontWeight="Medium"
-                                           Foreground="{StaticResource PrimaryTextBrush}" />
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <TextBox
                                     x:Name="RoomCodeBox"
                                     Text="{x:Bind ViewModel.RoomCode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                     PlaceholderText="ABCD1234"
                                     MaxLength="12"
                                     CharacterCasing="Upper"
-                                    FontSize="14"
-                                    CharacterSpacing="240"
+                                    FontSize="18" FontFamily="Consolas" Height="48" AutomationProperties.Name="Room code"
+                                    CharacterSpacing="300"
                                     KeyDown="RoomCodeBox_KeyDown" />
-                            </StackPanel>
+                                <Button Grid.Column="1" Click="PasteRoomCode_Click" Style="{StaticResource OutlineButtonStyle}" Height="48" Padding="12,0" AutomationProperties.Name="Paste room code">
+                                    <StackPanel Orientation="Horizontal" Spacing="6"><FontIcon Glyph="&#xE77F;" FontSize="16"/><TextBlock x:Name="PasteLabel" Text="Paste" FontSize="14"/></StackPanel>
+                                </Button>
+                            </Grid>
 
                             <Button
                                 Content="Join Watch Party"
-                                Style="{StaticResource AccentButtonStyle}"
+                                Style="{StaticResource OutlineButtonStyle}"
                                 HorizontalAlignment="Stretch"
-                                MinHeight="44"
-                                Padding="16,12"
+                                MinHeight="48" CornerRadius="12"
+                                Padding="16,0"
                                 Command="{x:Bind ViewModel.JoinByCodeCommand}"
                                 IsEnabled="{x:Bind ViewModel.CanJoin, Mode=OneWay}" />
                         </StackPanel>
                     </Border>
                 </Grid>
 
+                <StackPanel x:Name="RecentRoomsPanel" Spacing="10" Visibility="Collapsed">
+                    <TextBlock Text="Recent parties" FontSize="18" FontWeight="SemiBold"/>
+                    <StackPanel x:Name="RecentRoomsList" Spacing="8"/>
+                </StackPanel>
+                <!-- How it works: 3 info cards -->
+                <Grid x:Name="InfoGrid" ColumnSpacing="16" RowSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Column="0" ColumnSpacing="12">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <Border Width="28" Height="28" CornerRadius="14" Background="{StaticResource SurfaceRaisedBrush}" VerticalAlignment="Top"><TextBlock Text="1" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}"/></Border>
+                        <StackPanel Grid.Column="1" Spacing="4"><TextBlock Text="Open a room" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"/><TextBlock Text="Create one here, or start from any movie or episode page." FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}"/></StackPanel>
+                    </Grid>
+                    <Grid Grid.Column="1" ColumnSpacing="12">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <Border Width="28" Height="28" CornerRadius="14" Background="{StaticResource SurfaceRaisedBrush}" VerticalAlignment="Top"><TextBlock Text="2" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}"/></Border>
+                        <StackPanel Grid.Column="1" Spacing="4"><TextBlock Text="Share the code" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"/><TextBlock Text="Send the invite link or the eight-letter code to whoever is watching." FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}"/></StackPanel>
+                    </Grid>
+                    <Grid Grid.Column="2" ColumnSpacing="12">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <Border Width="28" Height="28" CornerRadius="14" Background="{StaticResource SurfaceRaisedBrush}" VerticalAlignment="Top"><TextBlock Text="3" FontSize="12" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}"/></Border>
+                        <StackPanel Grid.Column="1" Spacing="4"><TextBlock Text="Watch in sync" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"/><TextBlock Text="Play, pause, and seek together. The room ends two minutes after the host drops off." FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}"/></StackPanel>
+                    </Grid>
+                </Grid>
                 <!-- Busy indicator -->
                 <ProgressRing
                     IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}"

@@ -23,6 +23,7 @@ public partial class LibraryViewModel : ObservableObject
     private readonly HashSet<int> _loadingPages = [];
     private readonly Dictionary<int, CatalogResponse> _pageResponses = [];
     private string? _snapshot;
+    private ApiRequestContext? _catalogContext;
     private int _estimatedTotalItems;
     private bool _hasExactTotal;
     private int _lastVisibleEndIndex = PageSize - 1;
@@ -32,6 +33,8 @@ public partial class LibraryViewModel : ObservableObject
     private CancellationTokenSource? _windowLoadCts;
     private IReadOnlyList<MediaItem> _windowItems = [];
     private readonly LinkedList<(int Start, CatalogResponse Response, bool IncludesTotal)> _recentWindows = new();
+    private sealed record CompletedBoundary(int Start, int QueryVersion, ApiRequestContext Context, string QueryKey, string Snapshot, string NextCursor);
+    private readonly Dictionary<int, CompletedBoundary> _completedBoundaries = [];
     private Task? _pendingWindowTask;
     private int _pendingWindowStart = -1;
     private int _pendingWindowEnd = -1;
@@ -39,7 +42,11 @@ public partial class LibraryViewModel : ObservableObject
     private Task? _filtersTask;
     private int _filtersQueryVersion = -1;
     private int? _filtersLibraryId;
+    private ApiRequestContext? _filtersContext;
+    private int _filtersGeneration = -1;
     private int? _loadedFiltersLibraryId;
+    private ApiRequestContext? _loadedFiltersContext;
+    private int _loadedFiltersGeneration = -1;
     private int _exactCountQueryVersion = -1;
 
     public LibraryViewModel(CatalogApi catalogApi)
@@ -490,7 +497,8 @@ public partial class LibraryViewModel : ObservableObject
     public async Task<IReadOnlyList<MediaItem>> PrefetchAroundAsync(
         int startIndex, int endIndex, bool forward, CancellationToken ct = default)
     {
-        if (Library == null || TotalCount <= 0 || startIndex < 0 || endIndex < startIndex)
+        if (Library == null || TotalCount <= 0 || startIndex < 0 || endIndex < startIndex
+            || _catalogContext != _catalogApi.CaptureContext())
             return [];
 
         var screen = Math.Clamp(endIndex - startIndex + 1, 1, 100);
@@ -577,6 +585,9 @@ public partial class LibraryViewModel : ObservableObject
     public Task LoadWindowAsync(int startIndex, int itemCount, bool force = false)
     {
         if (Library == null || itemCount <= 0) return Task.CompletedTask;
+        var context = _catalogApi.CaptureContext();
+        if (_catalogContext != null && _catalogContext != context) StartNewCatalogQuery();
+        _catalogContext = context;
         var viewportVersion = ++_viewportRequestVersion;
         EnsureExactCountRequested();
         startIndex = TotalCount > 0 ? Math.Clamp(startIndex, 0, TotalCount - 1) : 0;
@@ -600,7 +611,11 @@ public partial class LibraryViewModel : ObservableObject
             startIndex <= _pendingWindowEnd && endIndex >= _pendingWindowStart)
             return CompleteOverlappingRangeAsync(pending, startIndex, itemCount, viewportVersion, _queryVersion);
 
-        if (force) _recentWindows.Clear();
+        if (force)
+        {
+            _recentWindows.Clear();
+            _completedBoundaries.Clear();
+        }
         if (!force && HasCachedRange(startIndex, endIndex))
         {
             CancelWindowLoad();
@@ -722,10 +737,12 @@ public partial class LibraryViewModel : ObservableObject
 
     private int StartNewCatalogQuery()
     {
+        _catalogContext = _catalogApi.CaptureContext();
         CancelWindowLoad();
         CancelCurrentCatalogQuery();
         _catalogQueryCts = new CancellationTokenSource();
         _queryVersion++;
+        _completedBoundaries.Clear();
         _loadingPages.Clear();
         _pageResponses.Clear();
         _recentWindows.Clear();
@@ -752,6 +769,7 @@ public partial class LibraryViewModel : ObservableObject
         CancelCurrentCatalogQuery();
         _catalogQueryCts = new CancellationTokenSource();
         _queryVersion++;
+        _completedBoundaries.Clear();
         _loadingPages.Clear();
         _pageResponses.Clear();
         _recentWindows.Clear();
@@ -770,6 +788,7 @@ public partial class LibraryViewModel : ObservableObject
         CancelCurrentCatalogQuery();
         _catalogQueryCts = new CancellationTokenSource();
         _queryVersion++;
+        _completedBoundaries.Clear();
         _loadingPages.Clear();
         IsLoading = false;
     }
@@ -971,8 +990,25 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
-    private Task<CatalogResponse> FetchWindowPageAsync(int startIndex, int itemCount, bool includeTotal, string? snapshot, CancellationToken ct)
-        => _catalogApi.GetCatalogAsync(
+    private async Task<CatalogResponse> FetchWindowPageAsync(int startIndex, int itemCount, bool includeTotal, string? snapshot, CancellationToken ct)
+    {
+        var context = _catalogApi.CaptureContext();
+        var version = _queryVersion;
+        var queryKey = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            library = Library!.Id, SelectedSort, SelectedOrder, UseAdvancedRules, SelectedGenre,
+            SelectedStudio, SelectedContentRating, SelectedCountry, SelectedResolution, SelectedAudioLanguage,
+            SelectedYearMin, SelectedYearMax, SelectedType, rules = BuildExtraRules(),
+            groups = BuildAdvancedGroups(), AdvancedRulesMatch,
+        });
+        var nextCursor = _completedBoundaries.TryGetValue(startIndex, out var boundary)
+            && boundary.QueryVersion == version && boundary.Context == context && boundary.QueryKey == queryKey
+            && boundary.Snapshot == snapshot ? boundary.NextCursor : null;
+        // A refetch retires the boundary supplied by that page immediately;
+        // failed or canceled replacements cannot leave an older cursor usable.
+        foreach (var end in _completedBoundaries.Where(pair => pair.Value.Start == startIndex).Select(pair => pair.Key).ToArray())
+            _completedBoundaries.Remove(end);
+        var response = await _catalogApi.GetCatalogAsync(
             libraryId: Library!.Id,
             sort: SelectedSort,
             order: SelectedOrder,
@@ -993,7 +1029,19 @@ public partial class LibraryViewModel : ObservableObject
             offset: startIndex,
             includeTotal: includeTotal,
             snapshot: snapshot,
-            ct: ct);
+            ct: ct,
+            nextCursor: nextCursor);
+        ct.ThrowIfCancellationRequested();
+        if (version != _queryVersion || context != _catalogApi.CaptureContext())
+            throw new OperationCanceledException("Catalog continuation authority changed.", ct);
+        if (response.Items.Count == itemCount && response.HasMore
+            && !string.IsNullOrWhiteSpace(response.Snapshot) && !string.IsNullOrWhiteSpace(response.Page?.NextCursor))
+        {
+            _completedBoundaries[startIndex + itemCount] = new(startIndex, version, context, queryKey, response.Snapshot, response.Page.NextCursor);
+            while (_completedBoundaries.Count > 16) _completedBoundaries.Remove(_completedBoundaries.Keys.First());
+        }
+        return response;
+    }
 
     private IReadOnlyList<QueryRule> BuildExtraRules()
     {
@@ -1262,24 +1310,32 @@ public partial class LibraryViewModel : ObservableObject
 
     public Task EnsureFiltersLoadedAsync()
     {
-        if (Library == null || _loadedFiltersLibraryId == Library.Id)
+        if (Library == null || (_loadedFiltersLibraryId == Library.Id
+            && _loadedFiltersContext == _catalogApi.CaptureContext()
+            && _loadedFiltersGeneration == _catalogApi.FilterCacheGeneration))
             return Task.CompletedTask;
         if (_filtersTask is { IsCompleted: false } && _filtersQueryVersion == _queryVersion
-            && _filtersLibraryId == Library.Id)
+            && _filtersLibraryId == Library.Id && _filtersContext == _catalogApi.CaptureContext()
+            && _filtersGeneration == _catalogApi.FilterCacheGeneration)
             return _filtersTask;
 
         _filtersQueryVersion = _queryVersion;
         _filtersLibraryId = Library.Id;
+        _filtersContext = _catalogApi.CaptureContext();
+        _filtersGeneration = _catalogApi.FilterCacheGeneration;
         return _filtersTask = LoadFiltersAsync(Library.Id, _queryVersion, _catalogQueryCts.Token);
     }
 
     private async Task LoadFiltersAsync(int libraryId, int version, CancellationToken ct)
     {
         using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure("catalog-filters");
+        var context = _catalogApi.CaptureContext();
+        var generation = _catalogApi.FilterCacheGeneration;
         try
         {
             var filters = await _catalogApi.GetFiltersAsync(libraryId, ct);
-            if (ct.IsCancellationRequested || version != _queryVersion || Library?.Id != libraryId) return;
+            if (ct.IsCancellationRequested || version != _queryVersion || Library?.Id != libraryId
+                || context != _catalogApi.CaptureContext() || generation != _catalogApi.FilterCacheGeneration) return;
 
             // Single AddRange per filter → one CollectionChanged event → one ComboBox rebuild.
             // Previously each .Add() fired CollectionChanged, causing ~192 redundant ComboBox
@@ -1308,6 +1364,8 @@ public partial class LibraryViewModel : ObservableObject
               Networks.Clear();
               Networks.AddRange(filters.Networks.Prepend(""));
             _loadedFiltersLibraryId = libraryId;
+            _loadedFiltersContext = context;
+            _loadedFiltersGeneration = generation;
         }
         catch (OperationCanceledException) { }
         catch

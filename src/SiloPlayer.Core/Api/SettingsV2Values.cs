@@ -69,6 +69,7 @@ internal static class SettingsV2Values
         ["ui.card_quick_actions"] = "enum",
         ["ui.card_quick_actions_enabled"] = "boolean",
         ["ui.next_up_mode"] = "enum",
+        ["ui.title_art"] = "boolean",
         ["nav.primary_menu"] = "object",
         ["nav.shortcuts"] = "object",
         ["ui.card_presentation"] = "object",

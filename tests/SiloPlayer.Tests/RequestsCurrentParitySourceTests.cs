@@ -26,15 +26,15 @@ public sealed class RequestsCurrentParitySourceTests
     public void DiscoveryCardsExposeKeyboardNavigationAndStatusSemantics()
     {
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "RequestsPage.xaml.cs");
-
-        Assert.Contains("open.Click += RequestCard_Click", page);
-        Assert.Contains("Open {result.Title} request details", page);
-        Assert.Contains("request.GotFocus", page);
-        Assert.Contains("BuildRequestRibbon(result, ribbonLabel)", page);
-        Assert.Contains("RequestStatusColors(tone)", page);
-        Assert.Contains("Open {result.Title} in library", page);
-        Assert.Contains("Open {request.Title} request details", page);
-        Assert.Contains("Open {request.Title} in library", page);
+        var card = ReadRepoFile("src", "SiloPlayer", "Controls", "ExternalTitleCard.cs");
+        Assert.Contains("ExternalTitleCard.Build(result", page);
+        Assert.Contains("Open {item.Title} request details", card);
+        Assert.Contains("action.Button.GotFocus", card);
+        Assert.Contains("StatusBadge(label, overlay: true)", card);
+        Assert.Contains("RequestViewerPolicy.Label", card);
+        Assert.Contains("Open {item.Title} in library", card);
+        Assert.Contains("CanCancel(request)", page);
+        Assert.Contains("Navigate<RequestDetailPage>(new RequestDetailNavigation(request.MediaType,request.TmdbId))", page);
     }
 
     private static string ReadRepoFile(params string[] parts)

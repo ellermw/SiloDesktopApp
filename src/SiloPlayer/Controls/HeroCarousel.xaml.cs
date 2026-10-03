@@ -28,6 +28,7 @@ public sealed partial class HeroCarousel : UserControl
     private bool _isKeyboardFocusWithin;
     private bool _animationsEnabled = true;
     private double _restingArrowOpacity;
+    private double _titleAvailableWidth = 768;
     private string? _lastDisplayedContentId;
     private string? _lastDisplayedBackdropUrl;
     private string? _lastDisplayedBackdropThumbhash;
@@ -68,6 +69,8 @@ public sealed partial class HeroCarousel : UserControl
     public HeroCarousel()
     {
         this.InitializeComponent();
+        SetPrimaryIcon("play");
+        MoreInfoIcon.Children.Add(WebUiIcon.Create("info", 16, new SolidColorBrush(Microsoft.UI.Colors.White)));
     }
 
     private static void OnItemsSourceChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
@@ -120,16 +123,16 @@ public sealed partial class HeroCarousel : UserControl
     private void UpdateHeightFromWindow()
     {
         // Current WebUI contracts:
-        // Home:    h-[50vh] min-h-[350px] max-h-[700px] lg:h-[60vh]
+        // Home:    h-[54vh] min-h-[380px] max-h-[760px] lg:h-[66vh]
         // Library: h-[60vh] min-h-[420px] max-h-[760px] lg:h-[72vh]
         if (XamlRoot?.Content is FrameworkElement root && root.ActualHeight > 0)
         {
             var heightRatio = IsTall
                 ? root.ActualWidth >= 1024 ? 0.72 : 0.60
-                : root.ActualWidth >= 1024 ? 0.60 : 0.50;
+                : root.ActualWidth >= 1024 ? 0.66 : 0.54;
             Height = IsTall
                 ? Math.Clamp(root.ActualHeight * heightRatio, 420, 760)
-                : Math.Clamp(root.ActualHeight * heightRatio, 350, 700);
+                : Math.Clamp(root.ActualHeight * heightRatio, 380, 760);
             var width = root.ActualWidth;
             var titleSize = width >= 1280 ? 72d
                 : width >= 1024 ? 60d
@@ -137,6 +140,9 @@ public sealed partial class HeroCarousel : UserControl
                 : 36d;
             HeroTitle.FontSize = titleSize;
             HeroTitleShadow.FontSize = titleSize;
+            // text-4xl has40px leading; the larger display sizes use1em.
+            HeroTitle.LineHeight = HeroTitleShadow.LineHeight = width < 640 ? 40 : titleSize;
+            HeroTitle.LineStackingStrategy = HeroTitleShadow.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
 
             var gutter = width >= 1280 ? 48d
                 : width >= 1024 ? 40d
@@ -145,6 +151,8 @@ public sealed partial class HeroCarousel : UserControl
             var bottom = width >= 1024 ? 64d : width >= 640 ? 48d : 40d;
             HeroContent.Margin = new Thickness(gutter, 0, gutter, bottom);
             HeroContent.MaxWidth = Math.Min(768, Math.Max(280, width - (gutter * 2)));
+            _titleAvailableWidth = HeroContent.MaxWidth;
+            BalanceTitle();
             HeroEyebrow.Visibility = width >= 640 ? Visibility.Visible : Visibility.Collapsed;
             HeroOverview.FontSize = width >= 640 ? 16 : 14;
             HeroOverview.MaxLines = width >= 640 ? 0 : 2;
@@ -164,7 +172,7 @@ public sealed partial class HeroCarousel : UserControl
             if (width < 640)
             {
                 SlideControlsPanel.VerticalAlignment = VerticalAlignment.Top;
-                SlideControlsPanel.Margin = new Thickness(0, 16, 16, 0);
+                SlideControlsPanel.Margin = new Thickness(0, IsTall ? 96 : 16, 16, 0);
                 ProgressRailContainer.Visibility = Visibility.Collapsed;
             }
             else
@@ -337,6 +345,7 @@ public sealed partial class HeroCarousel : UserControl
 
         HeroTitle.Text = item.Title;
         HeroTitleShadow.Text = item.Title;
+        BalanceTitle();
         HeroOverview.Text = item.Overview ?? "";
         UpdatePrimaryAction(item);
 
@@ -353,18 +362,36 @@ public sealed partial class HeroCarousel : UserControl
         if (!isSameVisibleSlide)
             AnimateProgressRail();
 
-        // Metadata pills row: year · IMDb badge · first 3 genres as dark-glass
-        // pills matching the webui .metadata-badge hero pattern.
         HeroMetaPillsRow.Children.Clear();
-        if (item.Year > 0)
-            AddHeroMeta(item.Year.ToString());
-        if (item.RatingImdb.HasValue)
-            AddHeroMeta($"IMDb {item.RatingImdb.Value:0.0}");
-        foreach (var genre in item.Genres.Take(3))
-            AddHeroMeta(genre);
-        var runtime = FormatRuntime(item.DurationSeconds ?? (item.Runtime > 0 ? item.Runtime * 60d : null));
-        if (runtime != null)
-            AddHeroMeta(runtime);
+        var runtimeSeconds = item.Runtime > 0 && double.IsFinite(item.Runtime * 60d)
+            ? item.Runtime * 60d : item.DurationSeconds;
+        var runtime = FormatRuntime(runtimeSeconds);
+        var contentRating = item.ContentRating?.Trim().ToUpperInvariant();
+        if (item.Type == "episode")
+        {
+            if (item.SeasonNumber is >= 0 && item.EpisodeNumber is >= 0)
+                AddHeroMeta($"S{item.SeasonNumber} · E{item.EpisodeNumber}");
+            if (runtime != null) AddHeroMeta(runtime);
+            if (!string.IsNullOrEmpty(contentRating)) AddHeroMeta(contentRating);
+        }
+        else
+        {
+            if (item.Year > 0)
+                AddHeroMeta(item.Year.ToString());
+            if (runtime != null)
+                AddHeroMeta(runtime);
+            var primaryRating = RatingPresentation.PrimaryCardRating(item.RatingImdb, item.RatingTmdb);
+            if (primaryRating != null)
+            {
+                AddHeroMetaSeparator();
+                var entry = DisplayRatingEntry.Create(primaryRating, small: true, foreground: new SolidColorBrush(Microsoft.UI.Colors.White));
+                entry.Opacity = .85;
+                HeroMetaPillsRow.Children.Add(entry);
+            }
+            foreach (var genre in item.Genres.Select(genre => genre.Trim()).Where(genre => genre.Length > 0).Distinct().Take(2))
+                AddHeroMeta(genre);
+            if (!string.IsNullOrEmpty(contentRating)) AddHeroMeta(contentRating);
+        }
 
         SlideControlsPanel.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
         PrevButton.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
@@ -457,11 +484,11 @@ public sealed partial class HeroCarousel : UserControl
         if (item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase))
         {
             PlayButtonText.Text = "Read";
-            PlayButtonIcon.Glyph = "\uE736";
+            SetPrimaryIcon("read");
             return;
         }
 
-        PlayButtonIcon.Glyph = "\uE768";
+        SetPrimaryIcon("play");
         if (!item.Type.Equals("audiobook", StringComparison.OrdinalIgnoreCase))
         {
             PlayButtonText.Text = "Play";
@@ -472,7 +499,7 @@ public sealed partial class HeroCarousel : UserControl
         if (player.IsAudiobook && string.Equals(player.ContentId, item.ContentId, StringComparison.Ordinal))
         {
             PlayButtonText.Text = player.IsPaused ? "Resume" : "Pause";
-            PlayButtonIcon.Glyph = player.IsPaused ? "\uE768" : "\uE769";
+            SetPrimaryIcon(player.IsPaused ? "play" : "pause");
         }
         else if ((item.PositionSeconds ?? 0) > 0 &&
                  ((item.DurationSeconds ?? 0) <= 0 || item.PositionSeconds < item.DurationSeconds))
@@ -491,12 +518,19 @@ public sealed partial class HeroCarousel : UserControl
 
     private static string? FormatRuntime(double? seconds)
     {
-        if (seconds is null or <= 0) return null;
-        var minutes = (int)Math.Round(seconds.Value / 60d);
+        if (seconds is null or <= 0 || !double.IsFinite(seconds.Value)) return null;
+        var minutes = (int)Math.Round(seconds.Value / 60d, MidpointRounding.AwayFromZero);
+        if (minutes <= 0) return null;
         if (minutes < 60) return $"{minutes} min";
         var hours = minutes / 60;
         var remainder = minutes % 60;
         return remainder == 0 ? $"{hours}h" : $"{hours}h {remainder}m";
+    }
+
+    private void SetPrimaryIcon(string action)
+    {
+        PlayButtonIcon.Children.Clear();
+        PlayButtonIcon.Children.Add(HeroActionIcon.Create(action, (Brush)Application.Current.Resources["AccentForegroundBrush"]));
     }
 
     private async Task LoadBackdropAsync(MediaItem item, int version, CancellationToken ct)
@@ -643,6 +677,20 @@ public sealed partial class HeroCarousel : UserControl
 
     private void AddHeroMeta(string text)
     {
+        AddHeroMetaSeparator();
+        HeroMetaPillsRow.Children.Add(new TextBlock
+        {
+            Text = text,
+            FontSize = 13,
+            FontWeight = Microsoft.UI.Text.FontWeights.Medium,
+            Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
+            Opacity = 0.85,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+    }
+
+    private void AddHeroMetaSeparator()
+    {
         if (HeroMetaPillsRow.Children.Count > 0)
         {
             HeroMetaPillsRow.Children.Add(new TextBlock
@@ -656,15 +704,42 @@ public sealed partial class HeroCarousel : UserControl
             });
         }
 
-        HeroMetaPillsRow.Children.Add(new TextBlock
+    }
+
+    private void BalanceTitle()
+    {
+        if (HeroTitle.LineHeight <= 0)
         {
-            Text = text,
-            FontSize = 13,
-            FontWeight = Microsoft.UI.Text.FontWeights.Medium,
-            Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
-            Opacity = 0.85,
-            VerticalAlignment = VerticalAlignment.Center,
-        });
+            HeroTitle.MaxWidth = HeroTitleShadow.MaxWidth = _titleAvailableWidth;
+            return;
+        }
+        // CSS text-wrap:balance reduces the wrapping width while preserving
+        // the line count. Keep the string/accessibility text intact and bound
+        // measurement work to12 iterations when the title or viewport changes.
+        var probe = new TextBlock
+        {
+            Text = HeroTitle.Text, FontFamily = HeroTitle.FontFamily,
+            FontSize = HeroTitle.FontSize, FontWeight = HeroTitle.FontWeight,
+            CharacterSpacing = HeroTitle.CharacterSpacing, TextWrapping = TextWrapping.Wrap,
+            LineHeight = HeroTitle.LineHeight, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+        };
+        probe.Measure(new(_titleAvailableWidth, double.PositiveInfinity));
+        var fullHeight = probe.DesiredSize.Height;
+        var lines = (int)Math.Round(fullHeight / HeroTitle.LineHeight);
+        var balanced = _titleAvailableWidth;
+        if (lines is > 1 and <= 6)
+        {
+            var low = _titleAvailableWidth / lines; var high = _titleAvailableWidth;
+            for (var iteration = 0; iteration < 12; iteration++)
+            {
+                var width = (low + high) / 2;
+                probe.Measure(new(width, double.PositiveInfinity));
+                if (probe.DesiredSize.Height <= fullHeight + .5) high = width;
+                else low = width;
+            }
+            balanced = Math.Ceiling(high);
+        }
+        HeroTitle.MaxWidth = HeroTitleShadow.MaxWidth = balanced;
     }
 
     // ── Progress rail animation ────────────────────────────────────────

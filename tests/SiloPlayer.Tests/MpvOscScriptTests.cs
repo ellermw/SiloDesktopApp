@@ -122,7 +122,7 @@ public sealed class MpvOscScriptTests
         var script = File.ReadAllText(FindOscScriptPath());
 
         Assert.Contains("local function draw_pip_icon", script);
-        Assert.Contains("L.btn_pip = place_utility()", script);
+        Assert.Contains("L.btn_pip = not compact and place_utility() or nil", script);
         Assert.Contains("silo-pip-toggle", script);
         Assert.Contains("osc-pip-state", script);
         Assert.Contains("silo-pip-override", script);
@@ -307,10 +307,11 @@ public sealed class MpvOscScriptTests
         Assert.Contains("draw_circle_outline", script);
         Assert.DoesNotContain("\"\u2699\"", script);
         Assert.DoesNotContain("\"\u24D8\"", script);
-        Assert.Contains("local compact = W < math.floor(640 * sc)", script);
+        // Compact More/Fill actions are exercised through the bundled-mpv runtime.
+        Assert.Contains("local compact = W < math.floor(1024 * sc)", script);
         Assert.Contains("local show_volume_group = not compact", script);
-        Assert.Contains("compact and 48 or config.button_size", script);
-        Assert.Contains("compact and 40 or config.small_button_size", script);
+        Assert.Contains("compact and 40 or config.button_size", script);
+        Assert.Contains("compact and 32 or config.small_button_size", script);
         Assert.Contains("local divider_center_y = L.btn_play.cy", script);
         Assert.Contains("truncate_display_text", script);
         Assert.DoesNotContain("controls_y - divider_half_h", script);
@@ -364,7 +365,7 @@ public sealed class MpvOscScriptTests
         var script = File.ReadAllText(FindOscScriptPath());
 
         Assert.Contains("osc-set-auto-skip", script);
-        Assert.Contains("state.auto_skip_intro and not state.intro_auto_skipped", script);
+        Assert.Contains("state.intro_mode == \"always\" and not state.intro_prompt_resolved", script);
         Assert.Contains("state.auto_skip_recap and not state.recap_auto_skipped", script);
         Assert.Contains("state.auto_skip_credits and not state.credits_auto_skipped", script);
         Assert.Contains("state.watch_party == nil or state.watch_party.is_host == true", script);

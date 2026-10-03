@@ -269,6 +269,10 @@
 
                     <!-- People results section -->
                     <StackPanel x:Name="PeopleSection" Grid.Row="0" Visibility="Collapsed" Margin="0,0,0,24">
+                        <StackPanel Visibility="{x:Bind ViewModel.PeopleError, Mode=OneWay, Converter={StaticResource NullToVis}}" Spacing="8">
+                            <TextBlock Text="{x:Bind ViewModel.PeopleError, Mode=OneWay}" TextWrapping="Wrap" />
+                            <Button Content="Retry people" Click="RetryPeople_Click" HorizontalAlignment="Left" />
+                        </StackPanel>
                         <TextBlock
                             Text="People"
                             FontSize="{StaticResource FontSizeTitle}"
@@ -356,53 +360,17 @@
                                 <TextBlock x:Name="RequestResultsCount" FontSize="11" Foreground="#CCFDE7B0" />
                             </Border>
                         </Grid>
-                            <ItemsRepeater x:Name="RequestResultsRepeater">
+                            <ItemsRepeater x:Name="RequestResultsRepeater" ElementPrepared="ExternalRequestCard_Prepared">
                                 <ItemsRepeater.Layout><UniformGridLayout MinItemWidth="170" MinColumnSpacing="12" MinRowSpacing="16" ItemsStretch="Fill" /></ItemsRepeater.Layout>
-                                <ItemsRepeater.ItemTemplate>
-                                    <DataTemplate x:DataType="requests:RequestMediaResult">
-                                        <Grid PointerEntered="RequestCard_PointerEntered"
-                                              PointerExited="RequestCard_PointerExited"
-                                              GotFocus="RequestCard_GotFocus"
-                                              LostFocus="RequestCard_LostFocus">
-                                            <Button Tag="{x:Bind}" Click="RequestResult_Click" Padding="0" Background="Transparent" BorderThickness="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-                                                <StackPanel Spacing="6">
-                                                    <Border Height="240" CornerRadius="8" Background="{StaticResource CardBackgroundBrush}">
-                                                        <Image Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" />
-                                                    </Border>
-                                                    <TextBlock Text="{x:Bind Title}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                                    <TextBlock Text="{x:Bind DisplayMeta}" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" />
-                                                </StackPanel>
-                                            </Button>
-                                            <Border Tag="request-overlay"
-                                                    Height="240"
-                                                    VerticalAlignment="Top"
-                                                    Opacity="0"
-                                                    IsHitTestVisible="False"
-                                                    Visibility="{x:Bind Request.Requestable, Converter={StaticResource BoolToVis}}">
-                                                <Border.Background>
-                                                    <LinearGradientBrush StartPoint="0.5,0" EndPoint="0.5,1">
-                                                        <GradientStop Color="#00000000" Offset="0" />
-                                                        <GradientStop Color="#73000000" Offset="0.6" />
-                                                        <GradientStop Color="#E6000000" Offset="1" />
-                                                    </LinearGradientBrush>
-                                                </Border.Background>
-                                                <Button Tag="{x:Bind}" Click="RequestNow_Click"
-                                                        Content="Request"
-                                                        HorizontalAlignment="Center" VerticalAlignment="Bottom"
-                                                        Margin="0,0,0,14" Padding="14,6"
-                                                        CornerRadius="16" FontSize="12" FontWeight="SemiBold"
-                                                        Background="White" BorderThickness="0" Foreground="Black" />
-                                            </Border>
-                                            <Border HorizontalAlignment="Right" VerticalAlignment="Top"
-                                                    Margin="0,8,8,0" Padding="8,3" CornerRadius="10"
-                                                    Background="#CC2A2112" BorderBrush="#33FFFFFF" BorderThickness="1"
-                                                    Visibility="{x:Bind Request.Requestable, Converter={StaticResource InverseBoolToVis}}">
-                                                <TextBlock Text="{x:Bind RequestLabel}" FontSize="10" FontWeight="SemiBold" Foreground="#CCFFFFFF" />
-                                            </Border>
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsRepeater.ItemTemplate>
+                                <ItemsRepeater.ItemTemplate><DataTemplate><ContentControl HorizontalContentAlignment="Stretch" /></DataTemplate></ItemsRepeater.ItemTemplate>
                             </ItemsRepeater>
+                        <StackPanel x:Name="RequestPagingPanel" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="12" Visibility="Collapsed">
+                            <Button x:Name="RequestPreviousButton" Content="Previous" Click="RequestPrevious_Click" />
+                            <TextBlock x:Name="RequestPageText" VerticalAlignment="Center" />
+                            <Button x:Name="RequestNextButton" Content="Next" Click="RequestNext_Click" />
+                        </StackPanel>
+                        <TextBlock x:Name="RequestErrorText" TextWrapping="Wrap" />
+                        <Button Content="Retry request results" Click="RequestRetry_Click" Visibility="{x:Bind ViewModel.OutsideError, Mode=OneWay, Converter={StaticResource NullToVis}}" HorizontalAlignment="Center" />
                     </StackPanel>
 
                     <!-- Skeleton while search results load (inline rows) -->
@@ -426,14 +394,16 @@
                     </ItemsRepeater>
 
                     <!-- Error -->
+                    <StackPanel Grid.Row="5" Spacing="8" Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
                     <TextBlock
-                        Grid.Row="5"
                         Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
                         Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
                         Foreground="{StaticResource ErrorBrush}"
                         Style="{StaticResource BodyTextStyle}"
                         HorizontalAlignment="Center"
                         Margin="0,8,0,8" />
+                        <Button Content="Retry search" Click="RetrySearch_Click" HorizontalAlignment="Center" />
+                    </StackPanel>
 
                     <!-- No results -->
                     <TextBlock
@@ -510,15 +480,18 @@
             </Grid>
         </Border>
 
-        <controls:SlideSheet x:Name="ResultFiltersSheet" Title="Filters">
+        <controls:SlideSheet x:Name="ResultFiltersSheet" Title="Filters" Canvas.ZIndex="40">
             <controls:SlideSheet.SheetContent>
-                <Grid RowDefinitions="Auto,*,Auto" RowSpacing="12">
-                    <StackPanel Spacing="2">
-                        <TextBlock Text="Filters" FontSize="18" FontWeight="SemiBold" />
-                        <TextBlock Text="Refine your catalog results" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
-                    </StackPanel>
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                        <StackPanel Spacing="12" Padding="0,4,8,12">
+                <Grid RowDefinitions="*,Auto" RowSpacing="16">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <StackPanel Spacing="16" Padding="0,0,0,16">
+                            <controls:QueryFilterEditor x:Name="SearchQueryFilters" />
+                            <Button Visibility="Collapsed" x:Name="AdvancedSearchButton" Content="Advanced filters" HorizontalAlignment="Left" Click="AdvancedSearch_Click" />
+                            <StackPanel x:Name="AdvancedSearchHost" Visibility="Collapsed" Spacing="12">
+                                <controls:QueryRulesEditor x:Name="SearchRulesEditor" />
+                                <Button Content="Apply filters" Click="ApplyAdvancedSearch_Click" />
+                            </StackPanel>
+                            <StackPanel Visibility="Collapsed" x:Name="GuidedSearchFilters" Spacing="12">
                             <TextBlock Text="Genre" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                             <ComboBox x:Name="ResultGenreCombo" HorizontalAlignment="Stretch" SelectionChanged="ResultFilter_Changed" />
                             <TextBlock Text="Content Rating" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
@@ -527,12 +500,15 @@
                             <ComboBox x:Name="ResultResolutionCombo" HorizontalAlignment="Stretch" SelectionChanged="ResultFilter_Changed" />
                             <TextBlock Text="Country" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                             <ComboBox x:Name="ResultCountryCombo" HorizontalAlignment="Stretch" SelectionChanged="ResultFilter_Changed" />
+                            </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
-                    <Grid Grid.Row="2" ColumnDefinitions="*,Auto">
-                        <Button Content="Clear All" Style="{StaticResource OutlineButtonStyle}" HorizontalAlignment="Left" Click="ClearResultFilters_Click" />
-                        <Button Grid.Column="1" Content="Done" Style="{StaticResource AccentButtonStyle}" Click="CloseResultFilters_Click" />
-                    </Grid>
+                    <Border Grid.Row="1" BorderThickness="0,1,0,0" BorderBrush="{StaticResource BorderBrush}" Padding="0,16,0,0">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Button Content="Clear All" Height="32" MinHeight="32" FontSize="14" Style="{StaticResource OutlineButtonStyle}" HorizontalAlignment="Left" Click="ClearResultFilters_Click" />
+                            <Button Grid.Column="1" Content="Done" Height="32" MinHeight="32" FontSize="14" Style="{StaticResource AccentButtonStyle}" Click="CloseResultFilters_Click" />
+                        </Grid>
+                    </Border>
                 </Grid>
             </controls:SlideSheet.SheetContent>
         </controls:SlideSheet>

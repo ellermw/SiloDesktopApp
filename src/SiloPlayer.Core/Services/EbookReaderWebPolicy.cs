@@ -3,6 +3,7 @@ namespace SiloPlayer.Core.Services;
 public static class EbookReaderWebPolicy
 {
     public const string ReaderHost = "silo-reader.local";
+    public const string BookHost = "silo-book.local";
 
     public static bool IsTrustedReaderUri(string? value)
     {
@@ -19,6 +20,8 @@ public static class EbookReaderWebPolicy
             return true;
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
             return false;
+        if (uri.Scheme == Uri.UriSchemeHttps && uri.Host == BookHost && uri.IsDefaultPort && string.IsNullOrEmpty(uri.UserInfo))
+            return true;
         if (uri.Scheme == "data")
             return true;
         if (uri.Scheme != "blob")

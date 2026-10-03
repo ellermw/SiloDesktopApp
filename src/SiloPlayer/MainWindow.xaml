@@ -133,9 +133,9 @@
                                 <ColumnDefinition Width="Auto" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
-                            <FontIcon x:Name="LibrariesChevron" Glyph="&#xE972;" FontSize="10"
-                                      Foreground="{StaticResource TertiaryTextBrush}"
-                                      VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <ImageIcon x:Name="LibrariesChevron" Width="12" Height="12" Source="ms-appx:///Assets/Icons/chevron-down.svg"
+                                       Foreground="{StaticResource SecondaryTextBrush}"
+                                       VerticalAlignment="Center" Margin="0,0,4,0" />
                             <TextBlock Grid.Column="1" Text="LIBRARIES" FontSize="10" FontWeight="SemiBold"
                                        CharacterSpacing="220"
                                        Foreground="{StaticResource TertiaryTextBrush}"
@@ -188,7 +188,7 @@
                         </Grid>
                     </NavigationViewItem.Content>
                 </NavigationViewItem>
-                <NavigationViewItem x:Name="RecommendationsNavItem" Content="Recommendations" Tag="Recommendations">
+                <NavigationViewItem x:Name="RecommendationsNavItem" Content="For You" Tag="Recommendations">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE735;" />
                     </NavigationViewItem.Icon>
@@ -327,19 +327,21 @@
                                 <Flyout.FlyoutPresenterStyle>
                                     <Style TargetType="FlyoutPresenter">
                                         <Setter Property="Padding" Value="8" />
-                                        <Setter Property="MinWidth" Value="260" />
-                                        <Setter Property="MaxWidth" Value="300" />
+                                        <Setter Property="Width" Value="320" />
+                                        <Setter Property="MaxWidth" Value="320" />
                                         <Setter Property="CornerRadius" Value="16" />
                                         <Setter Property="Background" Value="{StaticResource PopoverBrush}" />
                                         <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
                                         <Setter Property="BorderThickness" Value="1" />
                                     </Style>
                                 </Flyout.FlyoutPresenterStyle>
-                                <StackPanel Spacing="4">
+                                <ScrollViewer x:Name="ProfileMenuScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                                <StackPanel Spacing="0">
                                     <!-- Avatar + name header -->
-                                    <StackPanel Orientation="Horizontal" Spacing="12" Margin="8,8,8,4">
-                                        <Grid Width="36" Height="36">
-                                            <Border CornerRadius="18"
+                                    <Grid ColumnSpacing="12" Margin="8,8">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                        <Grid Width="40" Height="40">
+                                            <Border CornerRadius="20"
                                                     Background="{StaticResource AccentBrush}">
                                                 <TextBlock x:Name="ProfileDropdownInitial" Text="?"
                                                            FontSize="14" FontWeight="Bold"
@@ -348,8 +350,8 @@
                                             </Border>
                                             <Ellipse
                                                 x:Name="ProfileDropdownAvatarImage"
-                                                Width="36"
-                                                Height="36"
+                                                Width="40"
+                                                Height="40"
                                                 Visibility="Collapsed">
                                                 <Ellipse.Fill>
                                                     <ImageBrush
@@ -358,18 +360,18 @@
                                                 </Ellipse.Fill>
                                             </Ellipse>
                                         </Grid>
-                                        <StackPanel VerticalAlignment="Center" Spacing="0">
-                                            <TextBlock x:Name="ProfileDropdownName" Text="Profile"
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="0">
+                                            <TextBlock x:Name="ProfileDropdownName" Text="Profile" TextTrimming="CharacterEllipsis"
                                                        FontSize="14" FontWeight="SemiBold"
                                                        Foreground="{StaticResource PrimaryTextBrush}" />
-                                            <TextBlock x:Name="ProfileDropdownUsername" Text=""
+                                            <TextBlock x:Name="ProfileDropdownUsername" Text="" TextTrimming="CharacterEllipsis"
                                                        FontSize="11"
-                                                       Foreground="{StaticResource TertiaryTextBrush}" />
+                                                       Foreground="{StaticResource SecondaryTextBrush}" />
                                         </StackPanel>
-                                    </StackPanel>
+                                    </Grid>
 
                                     <!-- Theme switcher: label + five keyboard-focusable dots. -->
-                                    <Grid Margin="10,4,10,6">
+                                    <Grid Margin="10,4,10,6" Visibility="Collapsed">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
@@ -389,46 +391,47 @@
                                             Visibility="Collapsed" />
                                     </Grid>
 
-                                    <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" Margin="0,4" />
+                                    <Border Height="1" Background="{StaticResource BorderBrush}" Margin="-4,4" />
 
                                     <!-- Settings -->
                                     <Button Background="Transparent" BorderThickness="0"
                                             HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                            Padding="12,10" CornerRadius="10"
+                                            Padding="10,8" CornerRadius="8" MinHeight="0" Height="36"
                                             Click="Settings_Click">
                                         <StackPanel Orientation="Horizontal" Spacing="10">
-                                            <FontIcon Glyph="&#xE713;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
+                                            <ImageIcon Width="18" Height="18" Source="ms-appx:///Assets/Icons/settings.svg" Foreground="{StaticResource PrimaryTextBrush}" />
                                             <TextBlock Text="Settings" FontSize="13" FontWeight="Medium"
                                                        Foreground="{StaticResource PrimaryTextBrush}" />
                                         </StackPanel>
                                     </Button>
 
-                                    <Border Height="1" Background="{StaticResource BorderBrush}" Opacity="0.5" Margin="0,2" />
+                                    <Border Height="1" Background="{StaticResource BorderBrush}" Margin="-4,4" />
 
                                     <!-- Switch Profile -->
-                                    <Button Background="Transparent" BorderThickness="0"
+                                    <Button x:Name="ProfileSwitchButton" Background="{StaticResource SidebarAccentBrush}" BorderThickness="1" BorderBrush="{StaticResource SidebarBorderBrush}"
                                             HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                            Padding="12,10" CornerRadius="10"
+                                            Padding="12" CornerRadius="12" MinHeight="0" Height="44" Margin="0,2,0,4"
                                             Click="SwitchProfile_Click">
-                                        <StackPanel Orientation="Horizontal" Spacing="10">
-                                            <FontIcon Glyph="&#xE748;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="12">
+                                            <ImageIcon Width="18" Height="18" Source="ms-appx:///Assets/Icons/circle-user.svg" Foreground="{StaticResource PrimaryTextBrush}" />
                                             <TextBlock Text="Switch Profile" FontSize="13" FontWeight="SemiBold"
                                                        Foreground="{StaticResource PrimaryTextBrush}" />
                                         </StackPanel>
                                     </Button>
 
                                     <!-- Logout -->
-                                    <Button Background="Transparent" BorderThickness="0"
+                                    <Button x:Name="ProfileLogoutButton" Background="{StaticResource SidebarAccentBrush}" BorderThickness="1" BorderBrush="{StaticResource SidebarBorderBrush}"
                                             HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                            Padding="12,10" CornerRadius="10"
+                                            Padding="12" CornerRadius="12" MinHeight="0" Height="44"
                                             Click="Logout_Click">
-                                        <StackPanel Orientation="Horizontal" Spacing="10">
-                                            <FontIcon Glyph="&#xE711;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="12">
+                                            <ImageIcon Width="18" Height="18" Source="ms-appx:///Assets/Icons/log-out.svg" Foreground="{StaticResource PrimaryTextBrush}" />
                                             <TextBlock Text="Logout" FontSize="13" FontWeight="SemiBold"
                                                        Foreground="{StaticResource PrimaryTextBrush}" />
                                         </StackPanel>
                                     </Button>
                                 </StackPanel>
+                                </ScrollViewer>
                             </Flyout>
                         </Button.Flyout>
                     </Button>

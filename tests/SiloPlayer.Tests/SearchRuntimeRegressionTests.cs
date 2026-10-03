@@ -88,10 +88,10 @@ public sealed class SearchRuntimeRegressionTests
         var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "SearchViewModel.cs");
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "SearchPage.xaml.cs");
         var initialize = Slice(page, "private async Task InitializeAsync()", "private void UpdateResultsState()");
-        var fetch = Slice(viewModel, "private Task<CatalogResponse> FetchCatalogPageAsync", "private async Task<List<RequestMediaResult>> SearchOutsideLibraryAsync");
+        var fetch = Slice(viewModel, "private Task<CatalogResponse> FetchCatalogPageAsync", "private string? RequestSearchType()");
         var debounce = Slice(page, "private void SearchBox_TextChanged", "private void ShowResultsShellForCurrentQuery");
         var enter = Slice(page, "private async void SearchBox_KeyDown", "private void PersonCard_Click");
-        var openFilters = Slice(page, "private async void OpenResultFilters_Click", "private void CloseResultFilters_Click");
+        var openFilters = Slice(page, "private async void OpenResultFilters_Click", "private async void CloseResultFilters_Click");
 
         Assert.DoesNotContain("LoadFiltersAsync", initialize);
         Assert.Contains("await ViewModel.LoadMediaScopeAsync();", initialize);
@@ -131,7 +131,7 @@ public sealed class SearchRuntimeRegressionTests
         var source = ReadRepoFile("src", "SiloPlayer", "ViewModels", "SearchViewModel.cs");
         var searchMethod = Slice(source, "private async Task SearchAsync()", "public void CancelPendingSearch()");
         var catalogPublish = source.IndexOf("var response = await catalogTask", StringComparison.Ordinal);
-        var discoveryPublish = source.IndexOf("_ = PublishOutsideLibraryResultsAsync", StringComparison.Ordinal);
+        var discoveryPublish = source.IndexOf("_ = SetOutsidePageAsync(1)", StringComparison.Ordinal);
 
         Assert.True(catalogPublish >= 0);
         Assert.True(discoveryPublish > catalogPublish);
@@ -151,11 +151,11 @@ public sealed class SearchRuntimeRegressionTests
         Assert.DoesNotContain("if (ct.IsCancellationRequested || !IsCurrentSearchQuery(querySnapshot)) return;", searchMethod);
         Assert.Contains("private bool IsCurrentSearchOwner(CancellationTokenSource owner, string querySnapshot)", source);
         Assert.Contains("ReferenceEquals(_searchCts, owner)", source);
-        Assert.Contains("StableRequestResultKey", source);
-        Assert.Contains("SequenceEqual(outside.Select(StableRequestResultKey))", source);
-        Assert.Contains("outside.Count == 0 && OutsideLibraryResults.Count == 0", source);
+        Assert.Contains("public async Task SetOutsidePageAsync(int page)", source);
+        Assert.Contains("generation != _queryGeneration", source);
+        Assert.Contains("key != BuildSearchKey(Query.Trim())", source);
         var replaceMedia = searchMethod.IndexOf("ReplaceMediaResults(response.Items)", StringComparison.Ordinal);
-        var searchOutside = searchMethod.IndexOf("SearchOutsideLibraryAsync(querySnapshot, ct)", StringComparison.Ordinal);
+        var searchOutside = searchMethod.IndexOf("SetOutsidePageAsync(1)", StringComparison.Ordinal);
         Assert.True(replaceMedia >= 0 && searchOutside > replaceMedia);
     }
 
@@ -201,7 +201,7 @@ public sealed class SearchRuntimeRegressionTests
         Assert.Contains("UpdateRequestResults();", state);
         Assert.DoesNotContain("var totalDisplay = mediaCount + peopleCount + ViewModel.OutsideLibraryResults.Count", state);
 
-        var requestState = Slice(source, "private void UpdateRequestResults()", "private void RequestResult_Click");
+        var requestState = Slice(source, "private void UpdateRequestResults()", "private void ExternalRequestCard_Prepared");
         Assert.Contains("RequestResultsSection.Visibility = ViewModel.OutsideLibraryResults.Count > 0", requestState);
         Assert.DoesNotContain("hasLocalResults", requestState);
     }
@@ -236,9 +236,15 @@ public sealed class SearchRuntimeRegressionTests
         Assert.Contains("x:Name=\"RequestResultsEyebrow\"", pageXaml);
         Assert.Contains("x:Name=\"RequestResultsTitle\"", pageXaml);
         Assert.Contains("x:Name=\"RequestResultsCount\"", pageXaml);
-        Assert.Contains("Click=\"RequestNow_Click\"", pageXaml);
-        Assert.Contains("CreateAsync(new CreateMediaRequestInput", pageCode);
-        Assert.Contains("button.Content = \"Requesting…\"", pageCode);
+        Assert.Contains("ElementPrepared=\"ExternalRequestCard_Prepared\"", pageXaml);
+        Assert.Contains("ExternalTitleCard.Build(item", pageCode);
+        var sharedCard = ReadRepoFile("src", "SiloPlayer", "Controls", "ExternalTitleCard.cs");
+        Assert.Contains("if (pending) return", sharedCard);
+        Assert.Contains("finally { pending = false", sharedCard);
+        Assert.Contains("await ViewModel.RequestOutsideTitleAsync(item)", pageCode);
+        Assert.Contains("_requestsApi.CreateAsync(new()", viewModel);
+        Assert.Contains("generation != _queryGeneration", viewModel);
+        Assert.Contains("Text = \"Sending\"", sharedCard);
 
         Assert.Contains(".Take(4)", dialog);
         Assert.Contains("Text = \"REQUEST TO ADD\"", dialog);

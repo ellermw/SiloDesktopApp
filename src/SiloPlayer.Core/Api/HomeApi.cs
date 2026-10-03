@@ -4,6 +4,8 @@ namespace SiloPlayer.Core.Api;
 
 public class HomeApi(SiloApiClient client)
 {
+    public ApiRequestContext CaptureContext() => client.CaptureContext();
+    public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
     public Task<HomeLayoutResponse> GetLayoutAsync(CancellationToken ct = default)
         => client.GetAsync<HomeLayoutResponse>("/api/v2/home/layout", ct);
 

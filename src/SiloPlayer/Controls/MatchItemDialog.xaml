@@ -10,7 +10,7 @@
     CloseButtonText="Cancel"
     DefaultButton="None">
 
-    <Grid MinWidth="320" MaxWidth="640" MaxHeight="720" RowSpacing="12">
+    <Grid x:Name="MatchBody" MaxWidth="800" RowSpacing="12">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
@@ -189,9 +189,8 @@
         <StackPanel x:Name="ResultsSection" Spacing="8" Visibility="Collapsed">
             <TextBlock Text="Results" FontSize="12" FontWeight="SemiBold"
                        Foreground="{StaticResource PrimaryTextBrush}" />
-            <ScrollViewer MaxHeight="360" VerticalScrollBarVisibility="Auto">
-                <StackPanel x:Name="ResultsPanel" Spacing="4" />
-            </ScrollViewer>
+            <TextBlock x:Name="TruncatedText" Text="Showing the first 500 matches. Narrow your search to find more." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" Visibility="Collapsed"/>
+            <StackPanel x:Name="ResultsPanel" Spacing="4" />
         </StackPanel>
 
         <!-- Empty / no results text -->

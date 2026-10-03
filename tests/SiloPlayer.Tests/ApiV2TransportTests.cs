@@ -8,6 +8,18 @@ namespace SiloPlayer.Tests;
 public sealed class ApiV2TransportTests
 {
     [Theory]
+    [InlineData("body.password")]
+    [InlineData("body.directory_password")]
+    public async Task ValidationProblemsPreserveTheFirstRejectedField(string location)
+    {
+        var client = Client(_ => new(HttpStatusCode.BadRequest) { Content = Json($$"""{"type":"https://siloserver.org/docs/api/v2/problems/validation_failed","detail":"Password rejected","errors":[{"location":"{{location}}","message":"Wrong password"},{"location":"body.username"}]}""") });
+        var error = await Assert.ThrowsAsync<ApiException>(() => client.PostAsync<JsonElement>("/api/v2/account/identities/link-credentials", new { password = "fixture" }));
+        Assert.Equal("validation_failed", error.ErrorCode);
+        Assert.Equal("Password rejected", error.Message);
+        Assert.Equal(location, error.ErrorLocation);
+    }
+
+    [Theory]
     [InlineData("installation_changed", 409)]
     [InlineData("profile_unverified", 403)]
     public async Task ProblemDetailsRetainsMachineCodeAndProfileVerification(string code, int status)

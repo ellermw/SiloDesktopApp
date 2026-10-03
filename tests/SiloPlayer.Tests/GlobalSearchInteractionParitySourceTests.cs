@@ -7,7 +7,10 @@ public sealed class GlobalSearchInteractionParitySourceTests
     {
         var source = Read("src", "SiloPlayer", "Controls", "GlobalSearchDialog.xaml.cs");
 
-        Assert.Contains("private Button BuildResultRow", source);
+        Assert.Contains("private FrameworkElement BuildResultRow", source);
+        Assert.Contains("item.Type is not (\"movie\" or \"episode\")", source);
+        Assert.Contains("AutomationProperties.SetName(play,", source);
+        Assert.Contains("PlayAsync(item.ContentId)", source);
         Assert.Contains("private Button BuildRequestRow", source);
         Assert.Contains("AutomationProperties.SetName(row,", source);
         Assert.Contains("row.Click += (_, _) => PickResult(index)", source);
@@ -15,12 +18,15 @@ public sealed class GlobalSearchInteractionParitySourceTests
     }
 
     [Fact]
-    public void KeyboardSelectionTracksOnlyCatalogResultButtons()
+    public void KeyboardSelectionTracksAllResultGroupsByIdentity()
     {
         var source = Read("src", "SiloPlayer", "Controls", "GlobalSearchDialog.xaml.cs");
 
         Assert.Contains("Button { Tag: int resultIndex, Content: Border surface }", source);
-        Assert.Contains("resultIndex == _selectedIndex", source);
+        Assert.Contains("resultIndex == _selection.Index", source);
+        Assert.Contains("_selection.Replace", source);
+        Assert.Contains("_peopleResults.Select", source);
+        Assert.Contains("_requestResults.Select", source);
         Assert.DoesNotContain("ResultsPanel.Children[_selectedIndex]", source);
     }
 

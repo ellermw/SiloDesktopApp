@@ -14,12 +14,10 @@ public sealed class UserFacingKeyboardParitySourceTests
     }
 
     [Fact]
-    public void SettingsThemesSubtitleColorsAndImportRunsAreFocusable()
+    public void SettingsSubtitleColorsAndImportRunsAreFocusable()
     {
         var source = Read("src", "SiloPlayer", "Views", "SettingsPage.xaml.cs");
 
-        Assert.Contains("private Button BuildThemeCard", source);
-        Assert.Contains("button.GotFocus += (_, _) => themeService.PreviewTheme(themeId)", source);
         Assert.Contains("private Button BuildHistoryRunCard", source);
         Assert.Contains("Content: Border border", source);
         Assert.DoesNotContain("swatch.Tapped +=", source);

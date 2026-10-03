@@ -649,26 +649,26 @@
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Actor" FontSize="12" FontWeight="SemiBold"
                                                Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <TextBox x:Name="ActorBox" PlaceholderText="Any actor"
-                                             TextChanged="AdvancedTextFilter_TextChanged" />
+                                    <AutoSuggestBox x:Name="ActorBox" PlaceholderText="Any actor"
+                                             TextChanged="PersonFacet_TextChanged" SuggestionChosen="PersonFacet_SuggestionChosen" />
                                 </StackPanel>
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Director" FontSize="12" FontWeight="SemiBold"
                                                Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <TextBox x:Name="DirectorBox" PlaceholderText="Any director"
-                                             TextChanged="AdvancedTextFilter_TextChanged" />
+                                    <AutoSuggestBox x:Name="DirectorBox" PlaceholderText="Any director"
+                                             TextChanged="PersonFacet_TextChanged" SuggestionChosen="PersonFacet_SuggestionChosen" />
                                 </StackPanel>
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Writer" FontSize="12" FontWeight="SemiBold"
                                                Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <TextBox x:Name="WriterBox" PlaceholderText="Any writer"
-                                             TextChanged="AdvancedTextFilter_TextChanged" />
+                                    <AutoSuggestBox x:Name="WriterBox" PlaceholderText="Any writer"
+                                             TextChanged="PersonFacet_TextChanged" SuggestionChosen="PersonFacet_SuggestionChosen" />
                                 </StackPanel>
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Producer" FontSize="12" FontWeight="SemiBold"
                                                Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <TextBox x:Name="ProducerBox" PlaceholderText="Any producer"
-                                             TextChanged="AdvancedTextFilter_TextChanged" />
+                                    <AutoSuggestBox x:Name="ProducerBox" PlaceholderText="Any producer"
+                                             TextChanged="PersonFacet_TextChanged" SuggestionChosen="PersonFacet_SuggestionChosen" />
                                 </StackPanel>
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Studio" FontSize="12" FontWeight="SemiBold"
@@ -690,20 +690,20 @@
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Author" FontSize="12" FontWeight="SemiBold"
                                                Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <TextBox x:Name="AuthorBox" PlaceholderText="Any author"
-                                             TextChanged="AdvancedTextFilter_TextChanged" />
+                                    <AutoSuggestBox x:Name="AuthorBox" PlaceholderText="Any author"
+                                             TextChanged="PersonFacet_TextChanged" SuggestionChosen="PersonFacet_SuggestionChosen" />
                                 </StackPanel>
                                 <StackPanel x:Name="NarratorFilterField" Spacing="6">
                                     <TextBlock Text="Narrator" FontSize="12" FontWeight="SemiBold"
                                                Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <TextBox x:Name="NarratorBox" PlaceholderText="Any narrator"
-                                             TextChanged="AdvancedTextFilter_TextChanged" />
+                                    <AutoSuggestBox x:Name="NarratorBox" PlaceholderText="Any narrator"
+                                             TextChanged="PersonFacet_TextChanged" SuggestionChosen="PersonFacet_SuggestionChosen" />
                                 </StackPanel>
                                 <StackPanel Spacing="6">
                                     <TextBlock Text="Series" FontSize="12" FontWeight="SemiBold"
                                                Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <TextBox x:Name="SeriesBox" PlaceholderText="Any series"
-                                             TextChanged="AdvancedTextFilter_TextChanged" />
+                                    <AutoSuggestBox x:Name="SeriesBox" PlaceholderText="Any series"
+                                             TextChanged="PersonFacet_TextChanged" SuggestionChosen="PersonFacet_SuggestionChosen" />
                                 </StackPanel>
                             </StackPanel>
 

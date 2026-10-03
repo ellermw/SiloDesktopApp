@@ -106,6 +106,38 @@ public sealed class PlaybackApiV2Tests
     }
 
     private const string Installation = "11111111-1111-4111-8111-111111111111";
+    [Theory]
+    [InlineData("profile")]
+    [InlineData("profile-return")]
+    [InlineData("server")]
+    [InlineData("server-return")]
+    [InlineData("login")]
+    [InlineData("logout")]
+    [InlineData("pin-revoked")]
+    public async Task RealIdentityChangesRejectOldPlaybackBeforeSendingProgress(string change)
+    {
+        var handler = new FixtureHandler();
+        var client = new SiloApiClient(new HttpClient(handler));
+        client.SetBaseUrl("https://example.test"); client.BeginAuthenticationSession("fixture-token"); client.SetProfile("profile", "fixture-pin");
+        var api = new PlaybackApi(client);
+        var started = await api.StartPlaybackV3Async(new() { FileId = 42 });
+        switch (change)
+        {
+            case "profile": client.SetProfile("other"); break;
+            case "profile-return": client.SetProfile("other"); client.SetProfile("profile", "fixture-pin"); break;
+            case "server": client.SetBaseUrl("https://other.test"); break;
+            case "server-return": client.SetBaseUrl("https://other.test"); client.SetBaseUrl("https://example.test"); break;
+            case "login": client.BeginAuthenticationSession("new-fixture-token"); break;
+            case "logout": client.ClearAuth(); break;
+            case "pin-revoked":
+                var read = client.CaptureContext();
+                Assert.True(client.TryClearProfile(new(read.AuthenticationGeneration, read.RequestContextGeneration, "profile"))); break;
+            default: throw new ArgumentOutOfRangeException(nameof(change), change, "Unknown identity change fixture.");
+        }
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => api.ReportProgressAsync(started.SessionId!, 60, false));
+        Assert.DoesNotContain(handler.Requests, request => request.Path.EndsWith("/progress"));
+    }
+
     private static PlaybackApi CreateApi(FixtureHandler handler)
     {
         var client = new SiloApiClient(new HttpClient(handler));

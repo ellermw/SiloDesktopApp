@@ -6,6 +6,7 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Requests;
+using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 
@@ -22,7 +23,67 @@ public partial class SearchViewModel : ObservableObject
     private string? _snapshot;
     private string? _lastAppliedSearchKey;
     private string? _loadedFiltersKey;
+    private ApiRequestContext? _loadedFiltersContext;
+    private int _loadedFiltersGeneration = -1;
     private bool _hasMore;
+    private CancellationTokenSource? _outsideCts;
+    private long _queryGeneration;
+    [ObservableProperty] private int _outsidePage = 1;
+    public int OutsideRequestedPage { get; private set; } = 1;
+    [ObservableProperty] private int _outsideTotalPages;
+    [ObservableProperty] private int _outsideTotalResults;
+    [ObservableProperty] private bool _isOutsideLoading;
+    [ObservableProperty] private string? _outsideError;
+    [ObservableProperty] private bool _outsideWatchlistTitlesSupported;
+    private CancellationTokenSource _externalActionsCts = new();
+    private readonly HashSet<(string Kind, string Type, int Id)> _externalPending = [];
+    public async Task RequestOutsideTitleAsync(RequestMediaResult item)
+    {
+        var key = ("request", item.MediaType, item.TmdbId);
+        if (!item.Request.Requestable || !_externalPending.Add(key)) return;
+        var token = _externalActionsCts.Token; var generation = _queryGeneration; var context = _settingsApi.CaptureContext();
+        try
+        {
+            var created = await _requestsApi.CreateAsync(new() { MediaType = item.MediaType, TmdbId = item.TmdbId, Title = item.Title,
+                Year = item.Year, Overview = item.Overview, PosterPath = item.PosterPath, BackdropPath = item.BackdropPath }, token);
+            if (token.IsCancellationRequested || generation != _queryGeneration || !_settingsApi.IsCurrentContext(context)) return;
+            item.Request = new() { Status = string.IsNullOrWhiteSpace(created.Status) ? "pending" : created.Status, Requestable = false, RequestId = created.Id };
+        }
+        finally { if (generation == _queryGeneration) _externalPending.Remove(key); }
+    }
+    public async Task ToggleOutsideWatchlistAsync(RequestMediaResult item)
+    {
+        var key = ("watchlist", item.MediaType, item.TmdbId);
+        if (!OutsideWatchlistTitlesSupported || !_externalPending.Add(key)) return;
+        var token = _externalActionsCts.Token; var generation = _queryGeneration; var context = _settingsApi.CaptureContext();
+        var wasSaved = item.InWatchlist == true;
+        try
+        {
+            if (wasSaved) await _requestsApi.RemoveWatchlistTitleAsync(item.MediaType, item.TmdbId, token);
+            else await _requestsApi.AddWatchlistTitleAsync(item.MediaType, item.TmdbId, token);
+            if (!token.IsCancellationRequested && generation == _queryGeneration && _settingsApi.IsCurrentContext(context)) item.InWatchlist = !wasSaved;
+        }
+        finally { if (generation == _queryGeneration) _externalPending.Remove(key); }
+    }
+    [ObservableProperty] private string? _peopleError;
+    [ObservableProperty] private bool _isPeopleLoading;
+    private CancellationTokenSource? _peopleRetryCts;
+    public async Task RetryPeopleAsync()
+    {
+        if (IsPeopleLoading || string.IsNullOrWhiteSpace(Query)) return;
+        var query = Query.Trim(); var generation = _queryGeneration;
+        var key = BuildSearchKey(query); var owner = new CancellationTokenSource();
+        Interlocked.Exchange(ref _peopleRetryCts, owner)?.Cancel();
+        IsPeopleLoading = true; PeopleError = null;
+        try
+        {
+            var people = await SearchPeopleAsync(query, owner.Token);
+            if (_peopleRetryCts == owner && !owner.IsCancellationRequested && generation == _queryGeneration && key == BuildSearchKey(Query.Trim())) ReplacePeopleResults(people);
+        }
+        catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
+        catch (Exception ex) { if (_peopleRetryCts == owner && generation == _queryGeneration && key == BuildSearchKey(Query.Trim())) PeopleError = $"Could not load people: {ex.Message}"; }
+        finally { if (_peopleRetryCts == owner) { _peopleRetryCts = null; IsPeopleLoading = false; } owner.Dispose(); }
+    }
 
     public SearchViewModel(CatalogApi catalogApi, PeopleApi peopleApi, RequestsApi requestsApi, SettingsApi settingsApi)
     {
@@ -65,13 +126,17 @@ public partial class SearchViewModel : ObservableObject
     [ObservableProperty] private string? _country;
 
     public CatalogFiltersResponse? AvailableFilters { get; private set; }
+    public QueryDefinition AdvancedQuery { get; } = new();
 
     public async Task LoadFiltersAsync(string? query = null, string? mediaType = null)
     {
         var normalizedQuery = query?.Trim() ?? "";
         var normalizedType = mediaType?.Trim() ?? "";
-        var filtersKey = $"{normalizedQuery}\u001F{normalizedType}";
-        if (AvailableFilters != null && string.Equals(_loadedFiltersKey, filtersKey, StringComparison.Ordinal))
+        var filtersKey = normalizedType;
+        var context = _catalogApi.CaptureContext();
+        var generation = _catalogApi.FilterCacheGeneration;
+        if (AvailableFilters != null && _loadedFiltersContext == context && _loadedFiltersGeneration == generation
+            && string.Equals(_loadedFiltersKey, filtersKey, StringComparison.Ordinal))
             return;
 
         var owner = new CancellationTokenSource();
@@ -90,11 +155,14 @@ public partial class SearchViewModel : ObservableObject
                 q: normalizedQuery,
                 type: normalizedType,
                 ct: owner.Token);
-            if (!ReferenceEquals(_filtersCts, owner) || owner.IsCancellationRequested)
+            if (!ReferenceEquals(_filtersCts, owner) || owner.IsCancellationRequested
+                || _catalogApi.CaptureContext() != context || _catalogApi.FilterCacheGeneration != generation)
                 return;
 
             AvailableFilters = filters;
             _loadedFiltersKey = filtersKey;
+            _loadedFiltersContext = context;
+            _loadedFiltersGeneration = generation;
             OnPropertyChanged(nameof(AvailableFilters));
             LocalLog.AppendLine(
                 "search_timing.txt",
@@ -108,7 +176,7 @@ public partial class SearchViewModel : ObservableObject
             if (ReferenceEquals(_filtersCts, owner))
             {
                 AvailableFilters = new CatalogFiltersResponse();
-                _loadedFiltersKey = filtersKey;
+                _loadedFiltersKey = null;
                 OnPropertyChanged(nameof(AvailableFilters));
             }
             LocalLog.AppendLine(
@@ -168,12 +236,17 @@ public partial class SearchViewModel : ObservableObject
     [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task SearchAsync()
     {
+        var querySnapshot = Query.Trim();
+        var searchKey = BuildSearchKey(querySnapshot);
+        // Preserve both the window cursor and the outstanding optional reads
+        // when the same visible search is submitted again.
+        if (string.Equals(_lastAppliedSearchKey, searchKey, StringComparison.Ordinal) &&
+            (Results.Count > 0 || PeopleResults.Count > 0 || OutsideLibraryResults.Count > 0) &&
+            ErrorMessage == null && !IsLoading && !IsLoadingMore) return;
         CancelPendingSearch();
         var searchCts = new CancellationTokenSource();
         _searchCts = searchCts;
         var ct = searchCts.Token;
-        var querySnapshot = Query.Trim();
-        var searchKey = BuildSearchKey(querySnapshot);
         _snapshot = null;
         _hasMore = false;
 
@@ -184,20 +257,7 @@ public partial class SearchViewModel : ObservableObject
             OutsideLibraryResults.Clear();
             TotalCount = 0;
             _lastAppliedSearchKey = null;
-            return;
-        }
-
-        // Exact duplicate searches can arrive after the empty/results search
-        // box handoff. If the visible grid already belongs to the same
-        // query/filter/sort key, ignore the duplicate instead of clearing and
-        // rebuilding the same cards seconds later.
-        if (string.Equals(_lastAppliedSearchKey, searchKey, StringComparison.Ordinal) &&
-            Results.Count > 0 &&
-            PeopleResults.Count == 0 &&
-            ErrorMessage == null &&
-            !IsLoading &&
-            !IsLoadingMore)
-        {
+            OutsidePage = 1; OutsideTotalPages = 0; OutsideTotalResults = 0;
             return;
         }
 
@@ -210,6 +270,7 @@ public partial class SearchViewModel : ObservableObject
             Results.Clear();
             PeopleResults.Clear();
             OutsideLibraryResults.Clear();
+            OutsidePage = 1; OutsideTotalPages = 0; OutsideTotalResults = 0; OutsideError = null;
             TotalCount = 0;
         }
 
@@ -219,9 +280,7 @@ public partial class SearchViewModel : ObservableObject
             // request-provider discovery must never hold those results behind
             // a slow plugin or network timeout.
             var catalogTask = FetchCatalogPageAsync(0, null, ct, querySnapshot);
-            // The dedicated Catalog page does not render people; global search
-            // owns that surface. Avoid an invisible extra network request.
-            var peopleTask = Task.FromResult(new List<Person>());
+            var peopleTask = SearchPeopleAsync(querySnapshot, ct);
 
             var primaryTimer = Stopwatch.StartNew();
             var response = await catalogTask;
@@ -230,10 +289,7 @@ public partial class SearchViewModel : ObservableObject
                 "search_timing.txt",
                 $"catalog_complete | elapsed_ms={primaryTimer.ElapsedMilliseconds} | query_length={querySnapshot.Length} | scope={MediaScope} | type={MediaType ?? "all"} | sort={SortField} | request_sort={GetRequestSortField() ?? "server_default"} | count={response.Items.Count} | has_more={response.HasMore}");
 
-            // Update people results
-            var people = await peopleTask;
-            if (!IsCurrentSearchOwner(searchCts, querySnapshot)) return;
-            ReplacePeopleResults(people);
+            _ = PublishPeopleAsync(peopleTask, querySnapshot, searchCts);
 
             // Use server results directly — server handles text search
             ReplaceMediaResults(response.Items);
@@ -245,13 +301,9 @@ public partial class SearchViewModel : ObservableObject
             // Match the WebUI's secondary discovery cadence without allowing
             // provider/plugin work to compete with the local catalog request.
             // Local results are already visible before this task begins.
-            if (MediaScope is "all" or "video")
+            if (RequestSearchType() != null)
             {
-                _ = PublishOutsideLibraryResultsAsync(
-                    SearchOutsideLibraryAsync(querySnapshot, ct),
-                    querySnapshot,
-                    searchCts,
-                    ct);
+                _ = SetOutsidePageAsync(1);
             }
         }
         catch (OperationCanceledException)
@@ -260,6 +312,7 @@ public partial class SearchViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            if (!IsCurrentSearchOwner(searchCts, querySnapshot)) return;
             ErrorMessage = $"Search failed: {ex.Message}";
             LocalLog.AppendLine(
                 "search_timing.txt",
@@ -274,6 +327,13 @@ public partial class SearchViewModel : ObservableObject
 
     public void CancelPendingSearch()
     {
+        var previousActions = _externalActionsCts; _externalActionsCts = new(); previousActions.Cancel(); previousActions.Dispose(); _externalPending.Clear();
+        OutsideWatchlistTitlesSupported = false;
+        Interlocked.Exchange(ref _peopleRetryCts, null)?.Cancel();
+        IsPeopleLoading = false; PeopleError = null;
+        _queryGeneration++;
+        Interlocked.Exchange(ref _outsideCts, null)?.Cancel();
+        IsOutsideLoading = false;
         var cts = _searchCts;
         _searchCts = null;
         if (cts != null)
@@ -303,10 +363,11 @@ public partial class SearchViewModel : ObservableObject
         IsLoadingMore = true;
         var ct = _searchCts?.Token ?? CancellationToken.None;
         var querySnapshot = Query.Trim();
+        var generation = _queryGeneration;
         try
         {
             var response = await FetchCatalogPageAsync(Results.Count, _snapshot, ct);
-            if (ct.IsCancellationRequested || !IsCurrentSearchQuery(querySnapshot)) return;
+            if (ct.IsCancellationRequested || generation != _queryGeneration || !IsCurrentSearchQuery(querySnapshot)) return;
             var existingIds = Results.Select(item => item.ContentId).ToHashSet(StringComparer.Ordinal);
             Results.AddRange(response.Items.Where(item => existingIds.Add(item.ContentId)));
             if (response.Total > 0) TotalCount = response.Total;
@@ -318,11 +379,12 @@ public partial class SearchViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            if (generation != _queryGeneration || ct.IsCancellationRequested) return;
             ErrorMessage = $"Could not load more search results: {ex.Message}";
         }
         finally
         {
-            IsLoadingMore = false;
+            if (generation == _queryGeneration) IsLoadingMore = false;
         }
     }
 
@@ -345,7 +407,8 @@ public partial class SearchViewModel : ObservableObject
             Genre ?? "",
             ContentRating ?? "",
             Resolution ?? "",
-            Country ?? "");
+            Country ?? "",
+            System.Text.Json.JsonSerializer.Serialize(AdvancedQuery));
 
     private void ReplaceMediaResults(IReadOnlyList<MediaItem> items)
     {
@@ -398,6 +461,8 @@ public partial class SearchViewModel : ObservableObject
             includeTotal: false,
             snapshot: snapshot,
             source: "query",
+            queryGroups: AdvancedQuery.Groups.Count > 0 ? QueryEditing.PopulatedGroups(AdvancedQuery) : null,
+            queryGroupsMatch: AdvancedQuery.Match,
             ct: ct);
     }
 
@@ -406,71 +471,51 @@ public partial class SearchViewModel : ObservableObject
             ? null
             : SortField;
 
-    private async Task<List<RequestMediaResult>> SearchOutsideLibraryAsync(string query, CancellationToken ct)
+    private string? RequestSearchType() => MediaType switch
+    { "movie" => "movie", "series" or "episode" => "series", null or "video" => MediaScope is "all" or "video" ? "all" : null, _ => null };
+
+    private async Task PublishPeopleAsync(Task<List<Person>> task, string query, CancellationTokenSource owner)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        try { var people = await task; if (IsCurrentSearchOwner(owner, query)) { ReplacePeopleResults(people); PeopleError = null; } }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { if (IsCurrentSearchOwner(owner, query)) PeopleError = $"Could not load people: {ex.Message}"; }
+    }
+
+    public async Task SetOutsidePageAsync(int page)
+    {
+        var type = RequestSearchType();
+        if (type == null || string.IsNullOrWhiteSpace(Query)) return;
+        var owner = new CancellationTokenSource();
+        Interlocked.Exchange(ref _outsideCts, owner)?.Cancel();
+        var query = Query.Trim(); var key = BuildSearchKey(query); var generation = _queryGeneration;
+        var selectedPage = Math.Clamp(page, 1, OutsideTotalPages > 0 ? OutsideTotalPages : 500);
+        OutsideRequestedPage = selectedPage;
+        IsOutsideLoading = true; OutsideError = null;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(owner.Token);
         timeout.CancelAfter(TimeSpan.FromSeconds(6));
         try
         {
             var status = await _requestsApi.GetStatusAsync(timeout.Token);
-            if (!status.RequestsEnabled) return [];
-            var response = await _requestsApi.SearchAsync("all", query, 1, timeout.Token);
-            return response.Results
+            var response = status.RequestsEnabled ? await _requestsApi.SearchAsync(type, query, selectedPage, timeout.Token) : new RequestMediaPage();
+            if (_outsideCts != owner || owner.IsCancellationRequested || generation != _queryGeneration || key != BuildSearchKey(Query.Trim())) return;
+            OutsideWatchlistTitlesSupported = status.WatchlistTitlesSupported;
+            var outside = response.Results
                 .Where(item => !string.Equals(item.Availability, "available", StringComparison.OrdinalIgnoreCase))
                 .Take(20)
                 .ToList();
-        }
-        catch { return []; }
-    }
-
-    private async Task PublishOutsideLibraryResultsAsync(
-        Task<List<RequestMediaResult>> outsideTask,
-        string querySnapshot,
-        CancellationTokenSource owner,
-        CancellationToken ct)
-    {
-        try
-        {
-            var outside = await outsideTask;
-            if (ct.IsCancellationRequested ||
-                !ReferenceEquals(_searchCts, owner) ||
-                !string.Equals(Query.Trim(), querySnapshot, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            if (OutsideLibraryResults.Select(StableRequestResultKey).SequenceEqual(outside.Select(StableRequestResultKey)))
-                return;
-
-            if (outside.Count == 0 && OutsideLibraryResults.Count == 0)
-                return;
-
+            OutsidePage = selectedPage; OutsideTotalPages = Math.Clamp(response.TotalPages, 0, 500); OutsideTotalResults = response.TotalResults;
             OutsideLibraryResults.Clear();
             foreach (var item in outside)
                 OutsideLibraryResults.Add(item);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
+        catch (Exception)
         {
+            if (_outsideCts == owner && generation == _queryGeneration) OutsideError = $"Couldn't load page {selectedPage} of titles outside your library. Try this page again.";
         }
-        catch
-        {
-            // Discovery is optional and must not fail primary catalog search.
-        }
+        finally { if (_outsideCts == owner) { _outsideCts = null; IsOutsideLoading = false; } owner.Dispose(); }
     }
 
-    private static string StableRequestResultKey(RequestMediaResult item)
-        => $"{item.MediaType}:{item.TmdbId}:{item.Title}:{item.YearText}";
-
-    private async Task<List<Person>> SearchPeopleAsync(string query, CancellationToken ct)
-    {
-        try
-        {
-            return await _peopleApi.GetPeopleAsync(query, 10, 0, ct);
-        }
-        catch
-        {
-            // People search failure is non-fatal
-            return [];
-        }
-    }
+    private Task<List<Person>> SearchPeopleAsync(string query, CancellationToken ct)
+        => _peopleApi.SearchScopedAsync(query, MediaScope == "all" ? null : MediaType ?? MediaScope, 20, ct);
 }

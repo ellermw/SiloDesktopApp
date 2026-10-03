@@ -26,7 +26,8 @@ public sealed class ItemDetailPrefetchCache
             contextKey: () => string.Join('\n',
                 authService.ConfiguredServerUrl,
                 authService.CurrentUser?.Id,
-                authService.SelectedProfileId))
+                authService.SelectedProfileId,
+                catalogApi.CaptureContext().RequestContextGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture)))
     {
     }
 

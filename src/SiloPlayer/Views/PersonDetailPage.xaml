@@ -89,37 +89,23 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- Error -->
-        <TextBlock
-            Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
-            Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
-            Foreground="{StaticResource ErrorBrush}"
-            Style="{StaticResource BodyTextStyle}"
-            HorizontalAlignment="Center"
-            VerticalAlignment="Center" />
+        <StackPanel x:Name="PersonUnavailableState" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16" MaxWidth="520" Margin="24" Visibility="Collapsed">
+            <TextBlock x:Name="PersonUnavailableTitle" FontSize="24" FontWeight="SemiBold" TextWrapping="Wrap" TextAlignment="Center" />
+            <TextBlock x:Name="PersonUnavailableDescription" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" TextAlignment="Center" />
+            <Button x:Name="PersonRetryButton" Content="Retry" HorizontalAlignment="Center" Click="RetryPerson_Click" />
+        </StackPanel>
 
         <!-- Content -->
         <ScrollViewer
-            x:Name="ContentScroll"
-            Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}">
+            x:Name="ContentScroll" Visibility="Collapsed">
 
+            <Grid>
             <StackPanel x:Name="PersonContentShell" Padding="40,32,40,48"
                         MaxWidth="1400" HorizontalAlignment="Stretch">
 
-                <!-- Back button -->
-                <Button
-                    x:Name="BackButton"
-                    Style="{StaticResource GhostButtonStyle}"
-                    HorizontalAlignment="Left"
-                    Click="BackButton_Click"
-                    AutomationProperties.Name="Go back"
-                    Padding="8,6"
-                    Margin="0,0,0,16">
-                    <FontIcon Glyph="&#xE72B;" FontSize="16" Foreground="{StaticResource PrimaryTextBrush}" />
-                </Button>
-
                 <!-- Header: photo + info -->
-                <Grid ColumnSpacing="24" Margin="0,0,0,24">
+                <Grid x:Name="PersonHeader" ColumnSpacing="24" RowSpacing="24">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto" />
                         <ColumnDefinition Width="*" />
@@ -131,12 +117,13 @@
                         Grid.Column="0"
                         Width="180"
                         Height="270"
+                        VerticalAlignment="Top"
                         CornerRadius="8"
                         Background="{StaticResource CardBackgroundBrush}">
                         <!-- Initials fallback -->
                         <TextBlock
                             x:Name="InitialsText"
-                            FontSize="48"
+                            FontSize="30"
                             FontWeight="SemiBold"
                             Foreground="{StaticResource SecondaryTextBrush}"
                             HorizontalAlignment="Center"
@@ -144,21 +131,31 @@
                     </Border>
 
                     <!-- Info column -->
-                    <StackPanel Grid.Column="1" Spacing="8" VerticalAlignment="Top" Margin="0,8,0,0">
+                    <StackPanel x:Name="PersonInfo" Grid.Column="1" Spacing="0" VerticalAlignment="Top" Margin="0,4,0,0">
 
-                        <!-- Person name -->
-                        <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-                            <TextBlock
-                                x:Name="PersonName"
-                                FontSize="30"
-                                FontWeight="SemiBold"
-                                Foreground="{StaticResource PrimaryTextBrush}" />
-
-                        </StackPanel>
+                        <controls:WrapPanel HorizontalSpacing="12" VerticalSpacing="12" Margin="0,0,0,12">
+                            <TextBlock x:Name="PersonName" FontSize="30" FontWeight="SemiBold" CharacterSpacing="-25"
+                                       LineHeight="36" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
+                                       VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                            <StackPanel x:Name="PersonActions" Orientation="Horizontal" Spacing="8" Visibility="Collapsed" VerticalAlignment="Center">
+                                <Button x:Name="RefreshPersonButton" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="0" FontSize="12" Padding="12,0" Click="RefreshPerson_Click">
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                        <Viewbox Width="14" Height="14"><Canvas Width="24" Height="24"><Path Data="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8 M21 3v5h-5 M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16 M8 16H3v5" Stroke="{StaticResource PrimaryTextBrush}" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas></Viewbox>
+                                        <TextBlock x:Name="RefreshPersonLabel" Text="Refresh metadata" FontSize="12" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                                <Button x:Name="EditPersonButton" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="0" FontSize="12" Padding="12,0" Click="EditPerson_Click">
+                                    <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                        <Viewbox Width="14" Height="14"><Canvas Width="24" Height="24"><Path Data="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z m15 5 4 4" Stroke="{StaticResource PrimaryTextBrush}" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas></Viewbox>
+                                        <TextBlock Text="Edit metadata" FontSize="12" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </controls:WrapPanel>
 
                         <!-- Current WebUI renders person facts as independent
                              metadata badges below the name/actions row. -->
-                        <controls:WrapPanel x:Name="PersonMetadataBadges" HorizontalSpacing="8" VerticalSpacing="8" Margin="0,4,0,0">
+                        <controls:WrapPanel x:Name="PersonMetadataBadges" HorizontalSpacing="8" VerticalSpacing="8" Margin="0,0,0,16">
                             <Border x:Name="BirthDateBadge" Background="{StaticResource SurfaceRaisedBrush}" CornerRadius="6" Padding="9,3">
                                 <TextBlock x:Name="BirthDateText" FontSize="12" Foreground="{StaticResource PrimaryTextBrush}" />
                             </Border>
@@ -179,12 +176,13 @@
                             Style="{StaticResource BodyTextStyle}"
                             Foreground="{StaticResource SecondaryTextBrush}"
                             TextWrapping="Wrap"
-                            MaxWidth="700"
+                            MaxWidth="672"
                             HorizontalAlignment="Left"
-                            LineHeight="22"
+                            LineHeight="22.75"
+                            LineStackingStrategy="BlockLineHeight"
                             FontSize="14"
-                            MaxLines="8"
-                            Margin="0,8,0,0" />
+                            MaxLines="0"
+                            Margin="0" />
 
                         <!-- Show more toggle -->
                         <Button
@@ -203,8 +201,10 @@
                     </StackPanel>
                 </Grid>
 
+                <Border x:Name="PersonDivider" BorderThickness="0,1,0,0" BorderBrush="{StaticResource BorderBrush}" Margin="-40,32,-40,32" />
+
                 <!-- Filmography section -->
-                <StackPanel Spacing="16">
+                <StackPanel Spacing="24">
 
                     <!-- Title + filter tabs + count -->
                     <Grid>
@@ -218,7 +218,7 @@
                         <TextBlock
                             Grid.Column="0"
                             Text="Filmography"
-                            FontSize="{StaticResource FontSizeTitle}"
+                            FontSize="20" CharacterSpacing="-25" LineHeight="28" LineStackingStrategy="BlockLineHeight"
                             FontWeight="SemiBold"
                             Foreground="{StaticResource PrimaryTextBrush}"
                             VerticalAlignment="Center" />
@@ -273,12 +273,17 @@
                     <!-- Empty state -->
                     <TextBlock
                         x:Name="FilmographyEmptyText"
-                        Text="No items found in filmography."
+                        Text="No items found."
                         FontSize="14"
                         Foreground="{StaticResource SecondaryTextBrush}"
                         HorizontalAlignment="Center"
                         Margin="0,24,0,0"
                         Visibility="Collapsed" />
+
+                    <StackPanel Spacing="8" Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                        <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" />
+                        <Button Content="Retry" HorizontalAlignment="Left" Click="RetryPerson_Click" />
+                    </StackPanel>
 
                     <!-- Loading-more spinner shown while the next filmography page is fetched -->
                     <StackPanel
@@ -296,6 +301,12 @@
                     </StackPanel>
                 </StackPanel>
             </StackPanel>
+                <Button x:Name="BackButton" Style="{StaticResource GhostButtonStyle}" Width="34" Height="34" MinWidth="0" MinHeight="0"
+                        HorizontalAlignment="Left" VerticalAlignment="Top" Click="BackButton_Click" AutomationProperties.Name="Go back"
+                        Padding="6" CornerRadius="17" Background="{StaticResource SurfaceHoverBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="8,24,0,0">
+                    <Viewbox Width="20" Height="20"><Canvas Width="24" Height="24"><Path Data="M15,18 L9,12 L15,6" Stroke="{StaticResource PrimaryTextBrush}" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas></Viewbox>
+                </Button>
+            </Grid>
         </ScrollViewer>
     </Grid>
 </Page>

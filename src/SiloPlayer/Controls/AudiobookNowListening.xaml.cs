@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Models;
 using SiloPlayer.Core.Services;
@@ -18,12 +19,44 @@ public sealed partial class AudiobookNowListening : UserControl
     private bool _suppressVolume;
     private double _rate = 1;
     private int _timeMode;
+    private readonly ImageBrush _coverBrush = new() { Stretch = Stretch.UniformToFill };
 
     public AudiobookNowListening()
     {
         _player = App.Services.GetRequiredService<PlayerService>();
         _settings = App.Services.GetRequiredService<SettingsService>();
         InitializeComponent();
+        AudiobookTransportAppearance.Apply(PlayPauseButton, PlayPauseIcon, 32);
+        SettingsButton.Content = WebUiIcon.Create("settings-2", 16);
+        // Image itself may arrange to its portrait aspect even with explicit
+        // square dimensions. A brush paints into the bounded square art layer.
+        CoverArtwork.Background = _coverBrush;
+        CoverImage.RegisterPropertyChangedCallback(Image.SourceProperty, (_, _) => _coverBrush.ImageSource = CoverImage.Source);
+        AudiobookSliderAppearance.Apply(SeekSlider);
+        AudiobookSliderAppearance.Apply(VolumeSlider, volume: true);
+        SizeChanged += (_, e) => UpdateResponsiveLayout(e.NewSize.Width);
+    }
+
+    private void UpdateResponsiveLayout(double width)
+    {
+        var narrow = width < 768;
+        var cover = narrow ? Math.Max(120, Math.Min(width * .70, 320)) : 360;
+        ListeningCover.Width = ListeningCover.Height = cover;
+        CoverImage.Width = CoverImage.Height = cover;
+        ListeningLayout.Margin = new Thickness(narrow ? 24 : 64, 8, narrow ? 24 : 64, 40);
+        ListeningLayout.ColumnSpacing = narrow ? 0 : 40;
+        ListeningLayout.RowSpacing = narrow ? width < 640 ? 32 : 40 : 0;
+        ListeningInfo.Spacing = narrow ? 24 : 32;
+        ListeningInfo.Width = Math.Max(0, Math.Min(576, width - (narrow ? 48 : 528)));
+        ListeningTransport.Spacing = width < 640 ? 12 : 16;
+        SkipBackButton.Width = SkipBackButton.Height = SkipForwardButton.Width = SkipForwardButton.Height = width < 640 ? 40 : 44;
+        PreviousChapterButton.Width = PreviousChapterButton.Height = NextChapterButton.Width = NextChapterButton.Height = width < 640 ? 40 : 44;
+        ListeningUtilities.HorizontalSpacing = width < 640 ? 16 : 24;
+        ListeningLayout.ColumnDefinitions[0].Width = narrow ? new GridLength(1, GridUnitType.Star) : new GridLength(360);
+        ListeningLayout.ColumnDefinitions[1].Width = narrow ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
+        ListeningCover.HorizontalAlignment = narrow ? HorizontalAlignment.Center : HorizontalAlignment.Left;
+        Grid.SetRow(ListeningInfo, narrow ? 1 : 0);
+        Grid.SetColumn(ListeningInfo, narrow ? 0 : 1);
     }
 
     public void Activate()
@@ -31,6 +64,7 @@ public sealed partial class AudiobookNowListening : UserControl
         if (_active) return;
         _active = true;
         _player.PauseChanged += OnPauseChanged;
+        _player.SeekPreferencesChanged += OnSeekPreferencesChanged;
         _player.AudiobookPresentationChanged += OnPresentationChanged;
         _player.AudiobookPlaybackRateChanged += OnPlaybackRateChanged;
         _suppressVolume = true;
@@ -53,6 +87,7 @@ public sealed partial class AudiobookNowListening : UserControl
         if (!_active) return;
         _active = false;
         _player.PauseChanged -= OnPauseChanged;
+        _player.SeekPreferencesChanged -= OnSeekPreferencesChanged;
         _player.AudiobookPresentationChanged -= OnPresentationChanged;
         _player.AudiobookPlaybackRateChanged -= OnPlaybackRateChanged;
         if (_timer != null) _timer.Tick -= Timer_Tick;
@@ -186,19 +221,7 @@ public sealed partial class AudiobookNowListening : UserControl
         sleep.Items.Add(end);
         SleepButton.Flyout = sleep;
 
-        var settings = new MenuFlyout();
-        var smart = new ToggleMenuFlyoutItem { Text = "Smart rewind", IsChecked = _settings.Load().AudiobookSmartRewind };
-        smart.Click += (_, _) =>
-        {
-            var config = _settings.Load();
-            config.AudiobookSmartRewind = smart.IsChecked;
-            _settings.Save(config);
-        };
-        settings.Items.Add(smart);
-        var config = _settings.Load();
-        settings.Items.Add(BuildSkipSubmenu("Skip back", true, config.AudiobookSkipBackSeconds));
-        settings.Items.Add(BuildSkipSubmenu("Skip forward", false, config.AudiobookSkipForwardSeconds));
-        SettingsButton.Flyout = settings;
+        SettingsButton.Flyout = AudiobookSettingsFlyout.Create(_player, _settings);
     }
 
     private void UpdateSleepLabel()
@@ -209,18 +232,18 @@ public sealed partial class AudiobookNowListening : UserControl
             : "Sleep";
     }
 
+    private void OnSeekPreferencesChanged() { UpdateSkipButtonLabels(_settings.Load()); BuildFlyouts(); }
+
     private MenuFlyoutSubItem BuildSkipSubmenu(string label, bool backward, int selected)
     {
         var submenu = new MenuFlyoutSubItem { Text = label };
         foreach (var seconds in new[] { 5, 10, 15, 30, 45, 60, 90 })
         {
             var item = new ToggleMenuFlyoutItem { Text = $"{seconds} seconds", IsChecked = seconds == selected };
-            item.Click += (_, _) =>
+            item.Click += async (_, _) =>
             {
                 var config = _settings.Load();
-                if (backward) config.AudiobookSkipBackSeconds = seconds;
-                else config.AudiobookSkipForwardSeconds = seconds;
-                _settings.Save(config);
+                await _player.SaveSeekIntervalAsync(true, backward, seconds);
                 UpdateSkipButtonLabels(config);
                 BuildFlyouts();
             };
@@ -234,9 +257,9 @@ public sealed partial class AudiobookNowListening : UserControl
     private void PreviousChapter_Click(object sender, RoutedEventArgs e) => _player.SeekToPreviousAudiobookChapter();
     private void NextChapter_Click(object sender, RoutedEventArgs e) => _player.SeekToNextAudiobookChapter();
     private void SkipBack_Click(object sender, RoutedEventArgs e) =>
-        _player.SeekTo(Math.Max(0, _player.Position - Math.Clamp(_settings.Load().AudiobookSkipBackSeconds, 5, 120)));
+        _player.SeekTo(Math.Max(0, _player.Position - Math.Clamp(_player.SeekIntervals.AudiobookBack, 5, 120)));
     private void SkipForward_Click(object sender, RoutedEventArgs e) =>
-        _player.SeekTo(Math.Min(_player.Duration, _player.Position + Math.Clamp(_settings.Load().AudiobookSkipForwardSeconds, 5, 120)));
+        _player.SeekTo(Math.Min(_player.Duration, _player.Position + Math.Clamp(_player.SeekIntervals.AudiobookForward, 5, 120)));
 
     private void SeekSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)
     {
@@ -284,8 +307,8 @@ public sealed partial class AudiobookNowListening : UserControl
 
     private void UpdateSkipButtonLabels(AppSettings settings)
     {
-        var back = Math.Clamp(settings.AudiobookSkipBackSeconds, 5, 120);
-        var forward = Math.Clamp(settings.AudiobookSkipForwardSeconds, 5, 120);
+        var back = Math.Clamp(_player.SeekIntervals.AudiobookBack, 5, 120);
+        var forward = Math.Clamp(_player.SeekIntervals.AudiobookForward, 5, 120);
         SkipBackText.Text = back.ToString();
         SkipForwardText.Text = forward.ToString();
         AutomationProperties.SetName(SkipBackButton, $"Back {back} seconds");

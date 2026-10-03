@@ -50,8 +50,12 @@ internal static class Program
         }
     }
 
-    internal static void Log(string message) =>
-        File.AppendAllText(Path.Combine(ResultDirectory, "results.txt"), message + Environment.NewLine);
+    private static readonly object LogGate = new();
+    internal static void Log(string message)
+    {
+        lock (LogGate)
+            File.AppendAllText(Path.Combine(ResultDirectory, "results.txt"), message + Environment.NewLine);
+    }
 }
 
 internal sealed class RegressionApp : Application, IXamlMetadataProvider
@@ -91,12 +95,14 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             typeof(CardOverlayService).GetField("_initialized", BindingFlags.NonPublic | BindingFlags.Instance)!
                 .SetValue(overlays, true);
             using var services = new ServiceCollection()
+                .AddSingleton(new SettingsService(Program.ResultDirectory))
                 .AddSingleton(imageService)
                 .AddSingleton(http)
                 .AddSingleton(new CatalogApi(api))
                 .AddSingleton(new MediaMaintenanceApi(api))
                 .AddSingleton(new AuthService(api, new AuthApi(api)))
                 .AddSingleton(new ToastService())
+                .AddSingleton<WatchTogetherCoordinator>()
                 .AddSingleton(new UICustomizationService(new SettingsApi(api)))
                 .AddSingleton(new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException("Unexpected detail fetch")))
                 .AddTransient<ItemDetailViewModel>()
@@ -105,6 +111,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                     new AuthService(api, new AuthApi(api)), api, new SettingsService(Program.ResultDirectory), new SettingsApi(api)))
                 .AddSingleton(overlays)
                 .AddAccountSettingsFixture()
+                .AddMediaParityFixture()
                 .BuildServiceProvider();
             typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!
                 .SetValue(null, services);
@@ -115,7 +122,107 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             // A hidden native window runs the real WinUI load/unload/decoding
             // lifecycle while leaving the user's running player untouched.
             _window = new Window { Content = parent };
+            _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
+            _window.AppWindow.Show(false);
             await Task.Delay(150); // Allow the hidden native tree to acquire its XamlRoot.
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ACCESS_NAVIGATION") == "1")
+            {
+                await AccessNavigationNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "personal-lists")
+            {
+                await PersonalListsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-interactions")
+            {
+                _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
+                _window.AppWindow.Show(false);
+                await RequestsLifecycleNativeFixture.RunAsync(parent);
+                await RequestInteractionNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "browse-parity")
+            {
+                await BrowseParityNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "browse-acceptance")
+            {
+                if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_WIZARD_PRESENTATION") == "1")
+                {
+                    await BrowseWizardPresentationNativeFixture.RunAsync(parent);
+                    Program.Log("PASS: native regression run completed.");
+                    return;
+                }
+                if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_LIBRARY_STATE") == "1")
+                {
+                    await BrowseLibraryStateNativeFixture.RunAsync(parent);
+                    Program.Log("PASS: native regression run completed.");
+                    return;
+                }
+                if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_CALLER_GRIDS") == "1")
+                {
+                    await BrowseCallerGridsNativeFixture.RunAsync(parent);
+                    Program.Log("PASS: native regression run completed.");
+                    return;
+                }
+                if (Environment.GetEnvironmentVariable("SILO_NATIVE_COLLECTIONS_ACCEPTANCE") == "1")
+                {
+                    await CollectionsAcceptanceNativeFixture.RunAsync(parent);
+                    Program.Log("PASS: native regression run completed.");
+                    return;
+                }
+                await BrowseAcceptanceNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "account-latest")
+            {
+                await AccountLatestNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-detail-parity")
+            {
+                await RequestDetailParityNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "shared-controls")
+            {
+                await SharedControlsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "conditional-dialogs")
+            {
+                await ConditionalDialogsNativeFixture.RunAsync(parent);
+                await ConditionalInspectionNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "media-parity")
+            {
+                await MediaParityNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "account-parity")
+            {
+                await AccountParityNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "account-coverage")
+            {
+                await AccountCoverageNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
             await HomeRefreshPreservesCards(parent);
             Program.Log("PASS: Continue Watching refreshes preserve unchanged native cards.");
             await RenewedArtworkRetriesOnlyMissingImages(parent);
@@ -124,12 +231,39 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             Program.Log("PASS: calendar week navigation remains visible while scrolling at narrow and desktop widths.");
             await AccountSettingsNativeFixture.RunAsync(parent);
             Program.Log("PASS: account password form and history import state/progress verified in actual SettingsPage controls.");
+            // WebView2 needs a loaded native window. Show the isolated fixture
+            // off-screen without activation so the user's app keeps focus.
+            _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
+            _window.AppWindow.Show(false);
+            await Task.Delay(100);
+            await ReaderInteropFixture.RunAsync(parent);
+            _window.AppWindow.Show(false);
+            Program.Log("PASS: local EPUB/PDF location interoperability verified in native WebView2.");
+            await WatchPartyNativeFixture.RunAsync();
+            Program.Log("PASS: published Watch Party coordinator and player transport integration.");
+            await SharedAppearanceNativeFixture.RunAsync(parent);
+            await SharedControlsNativeFixture.RunAsync(parent);
+            Program.Log("PASS: shared appearance and accessibility verified in native resources and settings controls.");
+            await RequestViewerNativeFixture.RunAsync(parent);
+            await RequestsLifecycleNativeFixture.RunAsync(parent);
+            await RequestInteractionNativeFixture.RunAsync(parent);
+            await PersonalListsNativeFixture.RunAsync(parent);
+            await DetailPresentationNativeFixture.RunAsync(parent);
+            await MediaParityNativeFixture.RunAsync(parent);
+            await ConditionalDialogsNativeFixture.RunAsync(parent);
+            await ConditionalInspectionNativeFixture.RunAsync(parent);
+            await BrowseParityNativeFixture.RunAsync(parent);
+            await RequestDetailParityNativeFixture.RunAsync(parent);
+            await AccountAccessNativeFixture.RunAsync(parent);
+            await AccountParityNativeFixture.RunAsync(parent);
+            await AccountCoverageNativeFixture.RunAsync(parent);
             await SubtitleDialogFixture.RunAsync(parent);
             Program.Log("PASS: native subtitle dialog preserves upload and gates online search for player/detail entry points.");
             await WatchedActionUpdatesAfterCompletionAndRevisit(parent);
             Program.Log("PASS: movie/episode completion updates the real watched button, including return navigation and manual state changes.");
             await EpisodeArtworkSurvivesSectionReattachment(parent, section);
             Program.Log("PASS: episode artwork survives reattachment and is released on real detach.");
+            Program.Log("PASS: native regression run completed.");
         }
         catch (Exception ex)
         {
@@ -151,6 +285,20 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             parent.Children.Add(page);
             var rows = (StackPanel)page.FindName("DaysPanel");
             await Task.Delay(150);
+            page.ViewModel.IsEmpty = true;
+            foreach (var preset in new[] { "following", "trending", "everything" })
+            {
+                page.ViewModel.Filter = preset;
+                await Task.Delay(50);
+                foreach (var (name, value) in new[] { ("EmptyFollowingButton", "following"),
+                    ("EmptyTrendingButton", "trending"), ("EmptyEverythingButton", "everything") })
+                {
+                    var button = (Button)page.FindName(name);
+                    if (button.Visibility != (value == preset ? Visibility.Collapsed : Visibility.Visible))
+                        throw new InvalidOperationException($"Calendar {preset} offers the wrong alternate preset {value}.");
+                }
+            }
+            page.ViewModel.IsEmpty = false;
             rows.Children.Add(new Border { Height = 2400 });
             page.Measure(new Windows.Foundation.Size(width, 650));
             page.Arrange(new Windows.Foundation.Rect(0, 0, width, 650));
@@ -171,6 +319,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 throw new InvalidOperationException("Calendar navigator did not return below its heading");
             parent.Children.Remove(page);
         }
+        Program.Log("PASS: native Calendar empty views offer only the other presets at narrow and wide sizes.");
     }
 
     private static async Task WatchedActionUpdatesAfterCompletionAndRevisit(StackPanel parent)

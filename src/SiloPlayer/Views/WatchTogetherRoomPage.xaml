@@ -14,6 +14,10 @@
     SizeChanged="Page_SizeChanged">
 
     <Page.Resources>
+        <SolidColorBrush x:Key="PartyPanelBrush" Color="{Binding Color, Source={StaticResource SurfaceBrush}}" Opacity="0.90" />
+        <SolidColorBrush x:Key="PartyPanelBorderBrush" Color="{Binding Color, Source={StaticResource BorderBrush}}" Opacity="0.72" />
+        <SolidColorBrush x:Key="PartySubtleBrush" Color="{Binding Color, Source={StaticResource SurfaceBrush}}" Opacity="0.72" />
+        <SolidColorBrush x:Key="PartySubtleBorderBrush" Color="{Binding Color, Source={StaticResource BorderBrush}}" Opacity="0.62" />
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
         <converters:UrlToImageSourceConverter x:Key="UrlToImage" />
@@ -21,13 +25,15 @@
 
     <ScrollViewer>
         <Grid x:Name="PageShell" Padding="40,28,40,42">
+            <Grid x:Name="RoomWorkspace" MaxWidth="1400" ColumnSpacing="20" HorizontalAlignment="Stretch">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition x:Name="RailColumn" Width="288"/></Grid.ColumnDefinitions>
             <StackPanel x:Name="RoomContent" MaxWidth="1040" HorizontalAlignment="Center" Spacing="20">
 
                 <!-- Current WebUI room header bar. -->
-                <Border Background="{StaticResource SurfaceBrush}"
-                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                        CornerRadius="12" Padding="20,14">
-                    <Grid x:Name="RoomHeaderGrid" ColumnSpacing="18" RowSpacing="12">
+                <Border x:Name="RoomStatusBar" Background="{StaticResource AppBackgroundBrush}"
+                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1"
+                        Padding="20,10">
+                        <Grid x:Name="RoomHeaderGrid" ColumnSpacing="8" RowSpacing="0">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
                             <ColumnDefinition Width="Auto" />
@@ -36,21 +42,17 @@
                             <RowDefinition Height="Auto" />
                             <RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
-                        <StackPanel x:Name="RoomHeaderSummary" Grid.Column="0" Orientation="Horizontal" Spacing="20">
-                            <StackPanel Spacing="2">
-                                <TextBlock Text="WATCH PARTY" FontSize="10" FontWeight="SemiBold"
-                                           CharacterSpacing="200" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock x:Name="CodeText" Text="—" FontSize="19" FontWeight="SemiBold" />
-                            </StackPanel>
-                            <Border Width="1" Margin="8,4" Background="{StaticResource BorderBrush}" />
+                        <StackPanel x:Name="RoomHeaderSummary" Grid.Column="0" Orientation="Horizontal" Spacing="8">
+                            <TextBlock x:Name="PhaseText" Text="Live · 0 here" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <Button x:Name="CopyCodeButton" Click="CopyCodeButton_Click" Height="28" MinHeight="0" Padding="12,0" CornerRadius="14" Background="{StaticResource SurfaceRaisedBrush}"><TextBlock x:Name="CodeText" Text="—" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" FontFamily="Consolas" FontWeight="SemiBold" CharacterSpacing="180" /></Button>
                             <StackPanel Orientation="Horizontal" Spacing="18" VerticalAlignment="Center">
                                 <StackPanel Orientation="Horizontal" Spacing="7">
                                     <FontIcon Glyph="&#xE716;" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
-                                    <TextBlock x:Name="MemberCountText" Text="0" FontSize="13" />
+                                    <TextBlock x:Name="MemberCountText" Text="0" FontSize="13" Visibility="Collapsed" />
                                 </StackPanel>
                                 <StackPanel Orientation="Horizontal" Spacing="7">
                                     <Ellipse x:Name="StatusDot" Width="7" Height="7" Fill="#6B7280" />
-                                    <TextBlock x:Name="StatusText" Text="Disconnected" FontSize="13"
+                                    <TextBlock x:Name="StatusText" Text="Disconnected" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight"
                                                Foreground="{StaticResource SecondaryTextBrush}" />
                                 </StackPanel>
                             </StackPanel>
@@ -72,7 +74,9 @@
                                     <TextBlock x:Name="PolicyButtonText" Text="Allow Pause" />
                                 </StackPanel>
                             </Button>
-                            <Button x:Name="EndButton" Content="End" Padding="12,8" FontSize="13"
+                            <Button x:Name="RailSheetButton" Content="People / Activity" Style="{StaticResource OutlineButtonStyle}" Click="RailSheetButton_Click" Visibility="Collapsed"/>
+                            <Button x:Name="ModeButton" Content="Host picks" Style="{StaticResource OutlineButtonStyle}" Click="ModeButton_Click"/>
+                            <Button x:Name="EndButton" Content="End room" Style="{StaticResource DestructiveButtonStyle}" Padding="12,8" FontSize="13"
                                     Click="EndButton_Click" Visibility="Collapsed" />
                             <Button x:Name="LeaveButton" Style="{StaticResource OutlineButtonStyle}"
                                     Padding="12,8" FontSize="13" Click="LeaveButton_Click" Visibility="Collapsed">
@@ -85,16 +89,50 @@
                     </Grid>
                 </Border>
 
-                <!-- Additive participants field from the current server. -->
-                <Border x:Name="MembersPanel" Visibility="Collapsed" Background="{StaticResource SurfaceBrush}"
-                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="16,12">
-                    <controls:WrapPanel x:Name="MembersWrapPanel" HorizontalSpacing="8" VerticalSpacing="6" />
-                </Border>
-
+                <StackPanel x:Name="StagedPanel" Visibility="Collapsed" Spacing="16">
+                    <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="16">
+                        <Grid>
+                            <Image x:Name="StagedBackdrop" Stretch="UniformToFill" Opacity="0.25" />
+                            <Grid x:Name="StagedHeroContent" Padding="24" ColumnSpacing="20">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="112"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <Border x:Name="StagedPosterBorder" Width="112" Height="168" Background="{StaticResource SurfaceBrush}" CornerRadius="16"><Image x:Name="StagedPoster" Stretch="UniformToFill" /></Border>
+                                <StackPanel x:Name="StagedHeroInfo" Grid.Column="1" Spacing="12" VerticalAlignment="Center">
+                                    <TextBlock x:Name="StagedEyebrow" Text="UP NEXT" FontSize="11" LineHeight="16.5" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" CharacterSpacing="180" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBlock x:Name="StagedTitle" Text="Staged for the room" FontSize="24" LineHeight="32" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                                    <TextBlock x:Name="ReadySummary" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap"/>
+                                    <controls:WrapPanel HorizontalSpacing="8" VerticalSpacing="8">
+                                        <Button x:Name="StartStagedButton" Content="Start for everyone" Click="StartStagedButton_Click" Style="{StaticResource AccentButtonStyle}" Height="36" Padding="12,0" HorizontalAlignment="Left"/>
+                                        <Button x:Name="ChangeStagedButton" Click="ChangeStagedButton_Click" Style="{StaticResource OutlineButtonStyle}" Height="36" MinHeight="0" Padding="16,0"><TextBlock Text="Change" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight"/></Button>
+                                        <Button x:Name="LobbyReadyButton" Content="I'm ready" Click="LobbyReadyButton_Click" HorizontalAlignment="Left"/>
+                                    </controls:WrapPanel>
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+                    </Border>
+                    <Border x:Name="ReadyCheckPanel" Background="{StaticResource PartySubtleBrush}" BorderBrush="{StaticResource PartySubtleBorderBrush}" BorderThickness="1" CornerRadius="16" Padding="16,12">
+                        <Grid ColumnSpacing="16"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2"><TextBlock x:Name="ReadyCheckHeading" Text="Guest ready check" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"/><TextBlock x:Name="ReadyCheckSummary" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+                            <controls:WrapPanel x:Name="ReadyCheckMembers" Grid.Column="1" VerticalAlignment="Center" HorizontalSpacing="16" VerticalSpacing="8" />
+                        </Grid>
+                    </Border>
+                    <Border x:Name="StageInvitePanel" Background="{StaticResource PartySubtleBrush}" BorderBrush="{StaticResource PartySubtleBorderBrush}" BorderThickness="1" CornerRadius="16" Padding="16,12">
+                        <Grid x:Name="StageInviteGrid" ColumnSpacing="12" RowSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                            <controls:WrapPanel x:Name="StageInviteInfo" HorizontalSpacing="12" VerticalSpacing="6"><TextBlock Text="INVITE" FontSize="11" LineHeight="16.5" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" CharacterSpacing="180" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center"/><TextBlock Text="Share the code to let people in." FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center"/><Button x:Name="StageCodeButton" Content="Code" Click="CopyCodeButton_Click" Height="32" MinHeight="0" Padding="10,0" HorizontalAlignment="Left" AutomationProperties.Name="Copy room code"/></controls:WrapPanel>
+                            <StackPanel x:Name="GuestPausePanel" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center"><Grid Width="32" Height="20"><ToggleSwitch x:Name="GuestPauseToggle" Width="44" MinWidth="44" Height="38" Margin="-6,-9,-6,-9" OnContent="" OffContent="" Toggled="GuestPauseToggle_Toggled" AutomationProperties.Name="Guests can pause"/></Grid><TextBlock x:Name="GuestPauseLabel" Text="Guests can pause" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" VerticalAlignment="Center"/></StackPanel>
+                        </Grid>
+                    </Border>
+                </StackPanel>
                 <Border Background="#2DEF6B73" CornerRadius="8" Padding="14,10"
                         Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
                     <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}"
                                Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" FontSize="13" />
+                </Border>
+                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="14,10"
+                        Visibility="{x:Bind ViewModel.NoticeMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                    <TextBlock Text="{x:Bind ViewModel.NoticeMessage, Mode=OneWay}"
+                               Foreground="{StaticResource PrimaryTextBrush}" TextWrapping="Wrap" FontSize="13" />
                 </Border>
                 <!-- Current WebUI Now Playing hero. -->
                 <Border x:Name="NowPlayingPanel" Visibility="Collapsed"
@@ -150,7 +188,9 @@
                                 <TextBlock x:Name="CandidateKindLabel" Text="READY TO PLAY" FontSize="10"
                                            CharacterSpacing="180" Foreground="{StaticResource SecondaryTextBrush}" />
                                 <TextBlock x:Name="CandidateTitle" FontSize="24" FontWeight="SemiBold" />
+                                <TextBlock x:Name="CandidateMemberState" TextWrapping="Wrap" FontSize="12"/>
                                 <TextBlock x:Name="CandidateMeta" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <controls:WrapPanel x:Name="CandidateRatings" HorizontalSpacing="6" VerticalSpacing="8" Visibility="Collapsed"/>
                                 <TextBlock x:Name="CandidateOverview" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" MaxLines="3" MaxWidth="620" />
                                 <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,6,0,0">
@@ -171,9 +211,14 @@
 
                 <!-- Host discovery and vote-mode suggestion search. -->
                 <StackPanel x:Name="HostPickSection" Visibility="Collapsed" Spacing="16">
-                    <Grid>
+                    <StackPanel x:Name="BrowseFilterContainer" Spacing="8">
+                        <TextBlock x:Name="BrowseHeading" Text="Browse to pick" FontSize="14" FontWeight="SemiBold" Visibility="Collapsed" />
+                        <ComboBox x:Name="ShelfPicker" Visibility="Collapsed" SelectedIndex="0" SelectionChanged="ShelfPicker_SelectionChanged" HorizontalAlignment="Left" Margin="0,0,0,8">
+                            <ComboBoxItem Content="All"/><ComboBoxItem Content="Movies"/><ComboBoxItem Content="Series"/><ComboBoxItem Content="Together"/><ComboBoxItem Content="Watchlists"/><ComboBoxItem Content="Recent"/>
+                        </ComboBox>
+                        <Grid x:Name="BrowseSearchContainer">
                         <TextBox x:Name="HostSearchBox" Style="{StaticResource DarkTextBoxStyle}"
-                                 Height="48" Padding="42,0,42,0" VerticalContentAlignment="Center"
+                                 Height="40" Padding="36,0,12,0" Background="{StaticResource SurfaceBrush}" FontSize="14" CornerRadius="12" VerticalContentAlignment="Center"
                                  PlaceholderText="Search movies and series..."
                                  TextChanged="HostSearchBox_TextChanged" KeyDown="HostSearchBox_KeyDown" />
                         <FontIcon Glyph="&#xE721;" FontSize="15" Margin="16,0,0,0"
@@ -184,15 +229,18 @@
                                 Background="Transparent" BorderThickness="0" Click="ClearSearchButton_Click"
                                 Visibility="Collapsed" />
                     </Grid>
+                        <controls:WrapPanel x:Name="ShelfChipsPanel" HorizontalSpacing="4" VerticalSpacing="6" />
+                    </StackPanel>
 
-                    <Grid x:Name="SearchEmptyState" HorizontalAlignment="Center" Padding="0,18" Visibility="Visible">
+                    <Grid x:Name="SearchEmptyState" HorizontalAlignment="Center" Padding="0,32" Visibility="Visible">
                         <StackPanel Spacing="8" HorizontalAlignment="Center">
-                            <FontIcon Glyph="&#xE721;" FontSize="30" Opacity="0.3" />
+                            <FontIcon x:Name="SearchEmptyIcon" Glyph="&#xE721;" FontSize="30" Opacity="0.3" />
                             <TextBlock x:Name="SearchEmptyText" Text="Find something for everyone to watch."
-                                       FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                                       FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
                     </Grid>
 
+                    <StackPanel x:Name="BrowseShelfRows" Spacing="24" Visibility="Collapsed" />
                     <ItemsRepeater x:Name="HostSearchResults">
                         <ItemsRepeater.Layout>
                             <UniformGridLayout MinItemWidth="140" MinItemHeight="250"
@@ -202,7 +250,10 @@
                             <DataTemplate x:DataType="models:MediaItem">
                                 <Button Tag="{x:Bind}" Click="HostSearchResult_Click" Padding="0"
                                         Background="Transparent" BorderThickness="0">
-                                    <controls:PosterCard MediaItem="{x:Bind}" />
+                                    <StackPanel Spacing="6">
+                                        <controls:PosterCard MediaItem="{x:Bind}" />
+                                        <StackPanel Orientation="Horizontal" Spacing="5" Tag="{x:Bind ContentId}" Loaded="MemberDots_Loaded" />
+                                    </StackPanel>
                                 </Button>
                             </DataTemplate>
                         </ItemsRepeater.ItemTemplate>
@@ -240,6 +291,7 @@
                                                            TextTrimming="CharacterEllipsis" />
                                                 <TextBlock Text="{x:Bind Overview}" FontSize="11" MaxLines="2"
                                                            Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
+                                                <StackPanel Orientation="Horizontal" Spacing="5" Tag="{x:Bind ContentId}" Loaded="MemberDots_Loaded" />
                                             </StackPanel>
                                             <FontIcon Grid.Column="1" Glyph="&#xE76C;" FontSize="12" VerticalAlignment="Center" />
                                         </Grid>
@@ -303,7 +355,7 @@
                                         <Border CornerRadius="10" Background="{StaticResource SurfaceRaisedBrush}">
                                             <Grid>
                                 <Image Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" />
-                                                <Button Tag="{x:Bind Id}" Click="SuggestionVoteButton_Click"
+                                                <Button Tag="{x:Bind Id}" Click="SuggestionVoteButton_Click" Visibility="{x:Bind CanVote, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                                                         HorizontalAlignment="Right" VerticalAlignment="Top"
                                                         Margin="0,8,8,0" Padding="8,4" CornerRadius="12"
                                                         Background="#B3000000">
@@ -336,6 +388,22 @@
                 </Border>
             </StackPanel>
 
+            <Border x:Name="RoomRail" Grid.Column="1" VerticalAlignment="Stretch" Background="{StaticResource AppBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1,0,0,0">
+                <StackPanel Spacing="0">
+                    <Grid Padding="8,0" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <Button x:Name="PeopleTabButton" Content="People" Height="36" CornerRadius="0" Background="Transparent" BorderBrush="{StaticResource PrimaryTextBrush}" BorderThickness="0,0,0,2" HorizontalAlignment="Stretch" Click="PeopleTab_Click"/>
+                        <Button x:Name="ActivityTabButton" Grid.Column="1" Content="Activity" Height="36" CornerRadius="0" Background="Transparent" BorderThickness="0" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Stretch" Click="ActivityTab_Click"/>
+                    </Grid>
+                <!-- Additive participants field from the current server. -->
+                <Border x:Name="MembersPanel" Visibility="Collapsed">
+                    <StackPanel x:Name="MembersWrapPanel" />
+                </Border>
+
+                    <ScrollViewer x:Name="ActivityScroller" Visibility="Collapsed" MaxHeight="500"><StackPanel x:Name="ActivityList" Spacing="12"/></ScrollViewer>
+                </StackPanel>
+            </Border>
+            </Grid>
             <!-- Current WebUI RoomTerminalState. Terminal failures replace the
                  room rather than leaving unusable room chrome on screen. -->
             <StackPanel x:Name="TerminalStatePanel" MaxWidth="560" HorizontalAlignment="Center"

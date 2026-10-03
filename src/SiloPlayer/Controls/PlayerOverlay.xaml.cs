@@ -634,7 +634,7 @@ public sealed partial class PlayerOverlay : UserControl
         switch (e.Key)
         {
             case Windows.System.VirtualKey.Space:
-                _playerService.Mpv.TogglePause();
+                _playerService.RequestUserPauseToggle();
                 e.Handled = true;
                 break;
 
@@ -683,7 +683,7 @@ public sealed partial class PlayerOverlay : UserControl
 
             // K = toggle play/pause (YouTube-style)
             case Windows.System.VirtualKey.K:
-                _playerService.Mpv.TogglePause();
+                _playerService.RequestUserPauseToggle();
                 e.Handled = true;
                 break;
 
@@ -763,7 +763,7 @@ public sealed partial class PlayerOverlay : UserControl
 
     private void PlayPause_Click(object sender, RoutedEventArgs e)
     {
-        _playerService.Mpv?.TogglePause();
+        _playerService.RequestUserPauseToggle();
     }
 
     private void Mute_Click(object sender, RoutedEventArgs e)
@@ -831,7 +831,8 @@ public sealed partial class PlayerOverlay : UserControl
         if (mpv == null) return;
 
         var wasPaused = mpv.IsPaused;
-        _playerService.SeekFastTo(seconds, forceResume);
+        _playerService.RequestUserSeek(seconds, forceResume);
+        if (_playerService.IsWatchTogetherPlayback) return;
         if (forceResume || !wasPaused)
         {
             mpv.Play();
@@ -844,6 +845,7 @@ public sealed partial class PlayerOverlay : UserControl
         foreach (var delayMs in new[] { 100, 350, 750 })
         {
             await Task.Delay(delayMs);
+            if (_playerService.IsWatchTogetherPlayback) return;
             try { _playerService.Mpv?.Play(); } catch { }
         }
     }

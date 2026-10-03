@@ -7,6 +7,14 @@ namespace SiloPlayer.Core.Models.Catalog;
 public class MediaItemDetail
 {
     public string ContentId { get; set; } = "";
+    private string? _playContentId;
+    public string? PlayContentId
+    {
+        get => _playContentId;
+        set { _playContentId = value; HasAuthoritativePlayTarget = true; }
+    }
+    [JsonIgnore]
+    public bool HasAuthoritativePlayTarget { get; private set; }
     public string Type { get; set; } = "";
     public string Status { get; set; } = "";
     public string Title { get; set; } = "";
@@ -18,7 +26,11 @@ public class MediaItemDetail
     public string? PendingTranslationLanguage { get; set; }
     public int Runtime { get; set; }
     public string? ContentRating { get; set; }
+    public int? AdvisoryAge { get; set; }
+    public SiloPlayer.Core.Services.ThemeSongSet? Themes { get; set; }
     public List<string> Genres { get; set; } = [];
+    [JsonPropertyName("ratings")]
+    public List<DisplayRating> Ratings { get; set; } = [];
     public double? RatingTmdb { get; set; }
     public double? RatingImdb { get; set; }
     public int? RatingRtCritic { get; set; }
