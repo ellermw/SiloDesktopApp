@@ -4,11 +4,11 @@ User direction: start at difficulty item14 and work backward. These difficulty n
 
 ## Execution order
 
-Updated after the user's status question: **neither14 nor13 is marked fully finalized**. Seven fixes in these areas are verified; that is distinct from completing their entire acceptance checklist. Earlier implementations and verified repairs in other areas remain retained.
+Updated after resumed live and physical verification: **14 is finalized**, with its own1.2.108 installer.13 is next and remains incomplete. Earlier implementations and verified repairs in other areas remain retained.
 
 | Difficulty item | Area | Current status / next work |
 |---|---|---|
-|14|Quick Search|Fixes implemented and verified; final physical mouse hover/selection check remains open.|
+|14|Quick Search|Finalized against public051253dd; paired states, physical hover/Enter, shortcut/backdrop dismissal and regression gates pass. Local installer1.2.108.|
 |13|Favorites / Watchlist / Notifications|In progress. Notifications row/preferences repairs verified; Watchlist badge sizing and remaining visual/interaction/state comparisons remain.|
 |12|Person / Calendar|Pending finalization.|
 |11|Filters|Pending finalization.|
@@ -23,7 +23,31 @@ Updated after the user's status question: **neither14 nor13 is marked fully fina
 |2|Watch Party|Pending finalization.|
 |1|Native playback / reader|Pending hardening/final acceptance; prior playback and reader repairs retained.|
 
-Continue13, resolve14's remaining physical-input check when available, then work12 down to1. Pending finalization does not mean these features are absent or all earlier work must be repeated.
+Continue14 through final acceptance, create its installer, then work13 down to1. Pending finalization does not mean these features are absent or all earlier work must be repeated.
+
+## Resumed physical and live-browser verification
+
+Ruling: the user's latest direction authorizes launching candidate builds and physical UI checks, and requires one installer after each whole difficulty item is finalized. This supersedes the checkpoint's earlier no-launch instruction. It does not authorize production administration or destructive data changes. Preserve all prior payloads and installers.
+
+Official public GitHub main was fetched again for the resumed pass: **051253dd63118940e54a0a26477da24d811c569d**. GlobalSearch.tsx, personSearch.ts, Notifications.tsx, watchlist components and overlay presets have no diff from74158b4. This statement is limited to those paths.
+
+The installed104 DLL matches the frozen verified104 payload. Actual physical pointer movement over the second Game of Thrones result highlights that row without taking focus from SearchBox; physical Enter opens Game of Thrones: The Iron Anniversary. Chrome live WebUI returns the same five library titles and four request suggestions for this query. Live frame width512, input48, results352 maximum and footer placement match the native dialog contract after accounting for viewport height and native titlebar.
+
+Additional14 acceptance found gaps rather than silently closing the item:
+
+- Repeated physical Ctrl+K leaves native104 open; Chrome's same chord closes its palette.
+- Actual click on the native backdrop leaves104 open; Chrome's backdrop click closes without following the obscured media link.
+- Exact person names retain non-exact people natively, unlike the current source. The new actual native test returned Portrait Person and Portrait Person Junior and failed with `Exact person match must exclude non-exact people from the visible option sequence.` Partial-name behavior and actual owned Enter destination are also covered by this fixture.
+
+These failures now pass. The dialog captures Ctrl+K on its focused input because the modal popup isolates the main-window accelerator. The separate full-root WinUI smoke popup owns backdrop clicks; its handler is removed when the dialog closes. Ctrl+K retains the query for reopening, while Escape/backdrop/result selection clears it, matching the current WebUI.
+
+## Item14 final acceptance —1.2.108
+
+Actual physical108 candidate checks: populated Ctrl+K closes, reopening retains Game of Thrones, backdrop closes without changing Home or activating obscured media, reopening after backdrop starts empty, physical mouse hover highlights The Iron Anniversary without moving focus from SearchBox, and physical Enter opens that exact series. The frozen installer payload differs from this physical candidate only by a nullable-root guard and final source version metadata; all native checks below run against the exact frozen payload.
+
+`parity-quick-accepted108-*` logs record actual native dismissal/query cleanup/full-search Enter/Escape, exact-person/partial-name filtering and owned destination, row/Play targets, stale requests/actions, request gating and circular portrait pixels.900/460 initial/results/selection/loading/empty/error/request and independent-source failure states pass with normal completion markers.1,406 Release unit tests and15 published playback checks pass. The pre-existing CollectionEditor nullable warning remains; no new warning was introduced. Public source and live Chrome were compared; no production administration or personal-list mutation was performed.
+
+The final installer is `D:\SiloPlayer\installer\output\SiloInstaller-1.2.108-Setup.exe`; [receipt](../releases/1.2.108.md). Four distinct product corrections C105–108 were added after104. Item13 and all remaining groups remain open; this is not a claim of whole-app100% parity. The installed104 payload was not replaced; idle test candidates were launched under the user's authorization.
 
 ## Current checkpoint
 

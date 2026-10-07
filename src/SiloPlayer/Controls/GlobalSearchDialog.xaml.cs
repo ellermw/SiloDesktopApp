@@ -24,8 +24,8 @@ namespace SiloPlayer.Controls;
 /// Command-palette style global search dialog — webui parity with
 /// <c>web/src/components/GlobalSearch.tsx</c>. Opens via Ctrl+K and shows a
 /// debounced live preview (up to 8 results) from /catalog?q=. Arrow Up/Down
-/// cycles results, Enter navigates to the selected item, Ctrl+Enter / empty
-/// Enter navigates to the full search page.
+/// cycles results, Enter navigates to the selected item or opens the full
+/// search page when no result is selected. Ctrl+K toggles the palette.
 /// </summary>
 public sealed partial class GlobalSearchDialog : ContentDialog
 {
@@ -58,6 +58,15 @@ public sealed partial class GlobalSearchDialog : ContentDialog
     private bool _peopleSearchFailed;
     private bool _catalogPending;
     private bool _selectedByPointer;
+    private UIElement? _dismissBackdrop;
+    public string InitialQuery { get; set; } = "";
+    public string ReopenQuery { get; private set; } = "";
+
+    public void CloseFromShortcut()
+    {
+        ReopenQuery = SearchBox.Text;
+        Hide();
+    }
 
     public GlobalSearchDialog()
     {
@@ -78,11 +87,34 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         Resources["ContentDialogPadding"] = new Thickness(0);
         Resources["ContentDialogMinHeight"] = 0d;
         Resources["ContentDialogMinWidth"] = 0d;
-        this.Opened += (_, _) => { UpdateDialogGeometry(); if (XamlRoot != null) XamlRoot.Changed += SearchRoot_Changed; SearchBox.Focus(FocusState.Programmatic); };
+        this.Opened += (_, _) =>
+        {
+            UpdateDialogGeometry();
+            if (XamlRoot != null) XamlRoot.Changed += SearchRoot_Changed;
+            // WinUI hosts this template part in a separate popup, so its
+            // pointer events cannot bubble through the ContentDialog.
+            _dismissBackdrop = GetTemplateChild("SmokeLayerBackground") as UIElement;
+            // The legacy WinUI template instead creates an unnamed, full-root
+            // Rectangle in the dialog's dedicated smoke popup.
+            if (_dismissBackdrop == null && XamlRoot is { } searchRoot)
+                _dismissBackdrop = VisualTreeHelper.GetOpenPopupsForXamlRoot(searchRoot)
+                    .Select(popup => popup.Child)
+                    .OfType<Microsoft.UI.Xaml.Shapes.Rectangle>()
+                    .SingleOrDefault(rectangle => Math.Abs(rectangle.Width - searchRoot.Size.Width) < 1
+                        && Math.Abs(rectangle.Height - searchRoot.Size.Height) < 1);
+            _dismissBackdrop?.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnBackdropPressed), true);
+            SearchBox.Text = InitialQuery;
+            SearchBox.Focus(FocusState.Programmatic);
+        };
         this.Closed += OnClosed;
     }
 
     private void SearchRoot_Changed(XamlRoot sender, XamlRootChangedEventArgs args) => UpdateDialogGeometry();
+    private void OnBackdropPressed(object sender, PointerRoutedEventArgs args)
+    {
+        args.Handled = true;
+        Hide();
+    }
     private void UpdateDialogGeometry()
     {
         if (XamlRoot == null) return;
@@ -281,7 +313,10 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         {
             var people = await task;
             if (!IsCurrentSearchOwner(owner, query)) return;
-            _peopleResults.Clear(); _peopleResults.AddRange(people); Render();
+            var exactPeople = people.Where(person => person.Name.Trim().Equals(query, StringComparison.OrdinalIgnoreCase)).ToList();
+            _peopleResults.Clear();
+            _peopleResults.AddRange(exactPeople.Count > 0 ? exactPeople : people);
+            Render();
         }
         catch (OperationCanceledException) { }
         catch { if (IsCurrentSearchOwner(owner, query)) _peopleSearchFailed = true; }
@@ -299,6 +334,8 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
     private void OnClosed(ContentDialog sender, ContentDialogClosedEventArgs args)
     {
+        _dismissBackdrop?.RemoveHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnBackdropPressed));
+        _dismissBackdrop = null;
         if (XamlRoot != null) XamlRoot.Changed -= SearchRoot_Changed;
         _debounceTimer?.Stop();
         var owner = Interlocked.Exchange(ref _searchCts, null);
@@ -711,6 +748,11 @@ public sealed partial class GlobalSearchDialog : ContentDialog
     {
         switch (e.Key)
         {
+            case VirtualKey.K when (Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control)
+                & Windows.UI.Core.CoreVirtualKeyStates.Down) != 0:
+                CloseFromShortcut();
+                e.Handled = true;
+                break;
             case VirtualKey.Down:
                 if (_renderedQuery == SearchBox.Text.Trim())
                 {

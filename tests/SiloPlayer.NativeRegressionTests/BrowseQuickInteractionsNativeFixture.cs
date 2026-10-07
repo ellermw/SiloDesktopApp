@@ -57,6 +57,61 @@ internal static class BrowseQuickInteractionsNativeFixture
                 if(query.Length>1)await Until(()=>Descendants<Button>(dialog).Any(button=>AutomationProperties.GetName(button).StartsWith("Open Alpha Feature")));
                 return(dialog,closed);
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_QUICK_EXACT_PERSON") == "1")
+            {
+                wire.IncludeNearbyPerson = true;
+                var (exactDialog, exactClosed) = await Open("Portrait Person");
+                var peopleRows = Descendants<Button>(exactDialog).Where(button => AutomationProperties.GetName(button).EndsWith(", Person")).ToArray();
+                Program.Log("Quick exact-person visible rows: " + string.Join(" | ", peopleRows.Select(AutomationProperties.GetName)));
+                if (peopleRows.Length != 1 || AutomationProperties.GetName(peopleRows[0]) != "Open Portrait Person, Person")
+                    throw new InvalidOperationException("Exact person match must exclude non-exact people from the visible option sequence.");
+                ((TextBox)exactDialog.FindName("SearchBox")).Focus(FocusState.Programmatic);
+                SendKey(0x28); await Task.Delay(60); SendKey(0x0D); await exactClosed;
+                if (routes.Count != 1 || routes[0].Type != typeof(PersonDetailPage) || routes[0].Parameter as string != "portrait-person")
+                    throw new InvalidOperationException("The first option for an exact name must navigate to that person.");
+                var (partialDialog, partialClosed) = await Open("Portrait");
+                if (Descendants<Button>(partialDialog).Count(button => AutomationProperties.GetName(button).EndsWith(", Person")) != 2)
+                    throw new InvalidOperationException("A partial name must retain all returned people instead of exact-name filtering them.");
+                partialDialog.Hide(); await partialClosed;
+                Program.Log("PASS: exact-name Quick Search shows only exact people and owned Enter opens that person; partial names retain both people.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_QUICK_DISMISS") == "1")
+            {
+                var (dismissDialog, dismissClosed) = await Open("Alpha");
+                var backdropField = typeof(GlobalSearchDialog).GetField("_dismissBackdrop", BindingFlags.NonPublic | BindingFlags.Instance)!;
+                if (backdropField.GetValue(dismissDialog) is not FrameworkElement backdrop
+                    || !VisualTreeHelper.GetOpenPopupsForXamlRoot(owner.XamlRoot).Any(popup => ReferenceEquals(popup.Child, backdrop)))
+                    throw new InvalidOperationException("Dismissal must be attached to the actual separate WinUI smoke popup.");
+                Program.Log($"Quick owned backdrop={backdrop.GetType().Name}, {backdrop.ActualWidth}x{backdrop.ActualHeight}.");
+                ((TextBox)dismissDialog.FindName("SearchBox")).Focus(FocusState.Programmatic);
+                var keys = new byte[256];
+                if (!GetKeyboardState(keys)) throw new InvalidOperationException("Could not read the owned fixture thread keyboard state.");
+                var controlKeys = (byte[])keys.Clone(); controlKeys[0x11] = 0x80;
+                try
+                {
+                    if (!SetKeyboardState(controlKeys)) throw new InvalidOperationException("Could not set the owned fixture thread modifier.");
+                    SendKey(0x4B); await Until(() => dismissClosed.IsCompleted); await dismissClosed;
+                }
+                finally { SetKeyboardState(keys); }
+                if (dismissDialog.ReopenQuery != "Alpha" || routes.Count != 0)
+                    throw new InvalidOperationException("Owned Ctrl+K must dismiss without navigating and retain the query for reopening.");
+                if (backdropField.GetValue(dismissDialog) != null)
+                    throw new InvalidOperationException("Dismissed Quick Search must release its backdrop handler owner.");
+                Program.Log("PASS: actual owned Ctrl+K dismisses and retains the query without a navigation.");
+                var (enterDialog, enterClosed) = await Open("Alpha");
+                ((TextBox)enterDialog.FindName("SearchBox")).Focus(FocusState.Programmatic);
+                SendKey(0x0D); await enterClosed;
+                if (routes.Count != 1 || routes[0].Type != typeof(SearchPage) || routes[0].Parameter as string != "Alpha")
+                    throw new InvalidOperationException("Unselected owned Enter must open the full search with the original query.");
+                var (escapeDialog, escapeClosed) = await Open("Alpha");
+                ((TextBox)escapeDialog.FindName("SearchBox")).Focus(FocusState.Programmatic);
+                SendKey(0x1B); await escapeClosed;
+                if (routes.Count != 1 || escapeDialog.ReopenQuery != "" || ((TextBox)escapeDialog.FindName("SearchBox")).Text != "")
+                    throw new InvalidOperationException("Owned Escape must clear the palette without navigation or retained query.");
+                Program.Log("PASS: actual owned unselected Enter opens full search; Escape clears and dismisses without navigation.");
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_QUICK_POINTER") == "1")
             {
                 var (pointerDialog, pointerClosed) = await Open("Alpha");
@@ -146,6 +201,8 @@ internal static class BrowseQuickInteractionsNativeFixture
     }
     private static async Task Until(Func<bool> ready){for(var n=0;n<160&&!ready();n++)await Task.Delay(25);if(!ready())throw new InvalidOperationException("Actual Quick Search interaction did not settle.");}
     private static IEnumerable<T> Descendants<T>(DependencyObject parent)where T:DependencyObject{for(var n=0;n<VisualTreeHelper.GetChildrenCount(parent);n++){var child=VisualTreeHelper.GetChild(parent,n);if(child is T match)yield return match;foreach(var match2 in Descendants<T>(child))yield return match2;}}
+    [DllImport("user32.dll")] private static extern bool GetKeyboardState(byte[] keys);
+    [DllImport("user32.dll")] private static extern bool SetKeyboardState(byte[] keys);
     private static void SendKey(nuint key){var target=GetFocus();GetWindowThreadProcessId(target,out var process);if(target==0||process!=(uint)Environment.ProcessId)throw new InvalidOperationException("Quick Search key target is not an owned focused HWND.");if(!PostMessage(target,0x0100,key,1)||!PostMessage(target,0x0101,key,unchecked((nint)0xC0000001u)))throw new InvalidOperationException("Could not deliver Quick Search key to own HWND.");}
     [DllImport("user32.dll")]private static extern nint GetFocus();
     [DllImport("user32.dll")]private static extern uint GetWindowThreadProcessId(nint target,out uint process);
@@ -155,6 +212,7 @@ internal static class BrowseQuickInteractionsNativeFixture
     private sealed class Wire(byte[] portrait):HttpMessageHandler
     {
         internal int RequestSearches,RequestStatuses,WatchReads,CatalogReads;internal string? LastWatchId;
+        internal bool IncludeNearbyPerson;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
             if(request.RequestUri?.Host!="quick-interaction.invalid")throw new InvalidOperationException("Quick Search fixture attempted external networking.");
@@ -167,7 +225,9 @@ internal static class BrowseQuickInteractionsNativeFixture
             if(path=="/portrait.png")return Task.FromResult(new HttpResponseMessage(status){Content=new ByteArrayContent(portrait)});
             if(path=="/api/v2/catalog/search/capabilities")body=new{people_media_scope=true};
             else if(path=="/api/v2/catalog"){CatalogReads++;body=new{items=new[]{new{content_id="alpha-movie",play_content_id=request.RequestUri.Query.Contains("q=Unavailable")?null:"alpha-playable",title="Alpha Feature",type="movie",year=2025}},page=new{has_more=false}};}
-            else if(path=="/api/v2/catalog/people")body=new{items=new[]{new{id="portrait-person",name="Portrait Person",photo_url="https://quick-interaction.invalid/portrait.png"}}};
+            else if(path=="/api/v2/catalog/people")body=new{items=IncludeNearbyPerson
+                ? new object[]{new{id="portrait-person",name="Portrait Person",photo_url="https://quick-interaction.invalid/portrait.png"},new{id="nearby-person",name="Portrait Person Junior",photo_url=""}}
+                : new object[]{new{id="portrait-person",name="Portrait Person",photo_url="https://quick-interaction.invalid/portrait.png"}}};
             else if(path=="/api/v2/requests/status"){RequestStatuses++;body=new{requests_enabled=true};}
             else if(path.Contains("/requests/search")){RequestSearches++;body=new{results=Array.Empty<object>()};}
             else if(path.StartsWith("/api/v2/watch/")){WatchReads++;LastWatchId=path.Split('/').Last();status=HttpStatusCode.ServiceUnavailable;body=new{message="bounded playback preparation failure"};}

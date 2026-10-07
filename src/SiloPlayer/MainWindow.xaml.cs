@@ -59,6 +59,8 @@ public sealed partial class MainWindow : Window
     private string? _pendingActivationArgument;
     private bool _navigationHostLoaded;
     private Style? _profileFlyoutBaseStyle;
+    private Controls.GlobalSearchDialog? _activeGlobalSearch;
+    private string _globalSearchQuery = "";
 
     public MainWindow()
     {
@@ -935,14 +937,25 @@ public sealed partial class MainWindow : Window
     private async void GlobalSearchAccelerator_Invoked(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender, Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
     {
         args.Handled = true;
+        if (_activeGlobalSearch != null)
+        {
+            _activeGlobalSearch.CloseFromShortcut();
+            return;
+        }
         try
         {
-            var dlg = new Controls.GlobalSearchDialog { XamlRoot = this.Content.XamlRoot };
+            var dlg = new Controls.GlobalSearchDialog { XamlRoot = this.Content.XamlRoot, InitialQuery = _globalSearchQuery };
+            _activeGlobalSearch = dlg;
             await dlg.ShowAsync();
         }
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"GlobalSearchDialog failed: {ex.Message}");
+        }
+        finally
+        {
+            _globalSearchQuery = _activeGlobalSearch?.ReopenQuery ?? "";
+            _activeGlobalSearch = null;
         }
     }
 

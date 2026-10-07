@@ -1,6 +1,6 @@
 # Remaining parity execution — October 7
 
-Latest user steering supersedes the earlier reader/account order: execute the difficulty list **14 down to1**, easiest first. Quick Search C098–102 and Notifications C103–104 are verified in local1.2.104. See the [easiest-first execution record](2026-10-07-easiest-first.md) for current acceptance and remaining work; the previous1.2.97 receipt below remains historical. The installed app and GitHub download remain unchanged.
+Latest user steering supersedes the earlier reader/account order: execute the difficulty list **14 down to1**, easiest first, with one installer after each finalized item. **14 Quick Search is finalized** against public051253dd after live Chrome and physical native checks; local1.2.108 includes C105–108 and passes1,406 unit/15 published playback gates. **13 Favorites/Watchlist/Notifications is next and remains incomplete.** See the [easiest-first execution record](2026-10-07-easiest-first.md) and [installer receipt](../releases/1.2.108.md). The installed104 payload was not replaced; idle candidates were launched with authorization. GitHub download remains1.2.94.
 
 The user authorized continuing the14-group checklist, starting with the reader controls and then Settings/authentication. Reuse the existing clean candidate branch after the1.2.94 publication at188f62e7f963bc25ad7984c680f3737311ac2b28; preserve the original D:\SiloPlayer checkout and installed app.
 
