@@ -35,6 +35,13 @@ internal static class MediaLatestNativeFixture
                 var scale = owner.XamlRoot.RasterizationScale;
                 window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)(1280 * scale), (int)(720 * scale)));
                 var page = new ItemDetailPage { Width = 1280, Height = 720 }; owner.Children.Add(page); await Task.Delay(100);
+                if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") == "ratings-layout")
+                {
+                    await CheckRatingsLayoutAsync(window, owner, page, differences);
+                    if (differences.Count > 0) throw new InvalidOperationException(string.Join("\n", differences));
+                    Program.Log("PASS: RATINGS_LAYOUT_COMPLETED populated movie/series ratings reserve height above overview at wide/narrow widths.");
+                    return;
+                }
                 handler.HoldSetting = true;
                 page.ViewModel.Item = new MediaItemDetail { Type = "movie", ContentId = "pending", Title = "Pending title", LogoUrl = "https://media-latest-fixture.invalid/logo-pending" };
                 Call(page, "UpdateUI"); page.UpdateLayout(); await Task.Delay(100);
@@ -116,6 +123,78 @@ internal static class MediaLatestNativeFixture
         }
         finally { field.SetValue(null, original); }
     }
+    private static async Task CheckRatingsLayoutAsync(Window window, Grid owner, ItemDetailPage page, List<string> differences)
+    {
+        var displays = Microsoft.UI.Windowing.DisplayArea.FindAll();
+        var observedScales = new HashSet<double>();
+        for (var displayIndex = 0; displayIndex < displays.Count; displayIndex++)
+        {
+        if (displayIndex != 0 && displayIndex != displays.Count - 1) continue;
+        var display = displays[displayIndex];
+        window.AppWindow.Move(new Windows.Graphics.PointInt32(display.OuterBounds.X + 100, display.OuterBounds.Y - 1000));
+        await Task.Delay(150);
+        observedScales.Add(owner.XamlRoot.RasterizationScale);
+        Program.Log($"TRACE: display={display.OuterBounds.X},{display.OuterBounds.Y},{display.OuterBounds.Width},{display.OuterBounds.Height}; rasterization={owner.XamlRoot.RasterizationScale}.");
+        foreach (var type in new[] { "movie", "series" })
+        foreach (var width in new[] { 1280d, 460d })
+        foreach (var multiple in new[] { false, true })
+        foreach (var font in new[] { "theme", "Segoe UI" })
+        {
+            var scale = owner.XamlRoot.RasterizationScale;
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)(width * scale), (int)(720 * scale)));
+            page.Width = width;
+            page.ViewModel.IsSeries = type == "series";
+            page.ViewModel.Item = new MediaItemDetail
+            {
+                ContentId = $"ratings-{type}-{width}-{multiple}", Type = type, Title = "Rating alignment",
+                Overview = "A sheltered girl with telekinetic powers is bullied, leading to a horrific incident due to her mother's influence.",
+                Ratings = multiple
+                    ? [new() { Source = "imdb", Name = "IMDb", Display = "6.6" }, new() { Source = "tmdb", Name = "TMDB", Display = "7.5" }, new() { Source = "rt_critic", Name = "RT", Display = "91%" }, new() { Source = "letterboxd", Name = "Letterboxd", Display = "4.2" }, new() { Source = "other", Name = "Another provider", Display = "8.8" }]
+                    : [new() { Source = "imdb", Name = "IMDb", Display = "6.6" }, new() { Source = "tmdb", Name = "TMDB", Display = "7.5" }]
+            };
+            Call(page, "UpdateUI");
+            var scores = (StackPanel)page.FindName("ScoresPanel");
+            if (font != "theme") foreach (var text in Descendants(scores).OfType<TextBlock>()) text.FontFamily = new FontFamily(font);
+            await Task.Delay(150); page.UpdateLayout();
+            if (!multiple)
+            {
+                var tmdb = Descendants(scores).OfType<Image>().Single(image => image.Source is SvgImageSource);
+                var raster = new RenderTargetBitmap(); await raster.RenderAsync(tmdb);
+                var pixels = System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.ToArray(await raster.GetPixelsAsync());
+                if (!Enumerable.Range(0, pixels.Length / 4).Any(index => pixels[index * 4 + 3] > 128 && pixels[index * 4 + 1] > 100))
+                    differences.Add($"{type}/{width}/{font}: TMDB provider mark renders black instead of its visible green/cyan gradient.");
+            }
+            var overview = (FrameworkElement)page.FindName("OverviewText");
+            var scoreBounds = Bounds(scores, page);
+            var overviewBounds = Bounds(overview, page);
+            Program.Log($"TRACE: {type}/{width}/multiple={multiple}/font={font}: ratings={scoreBounds}, overview={overviewBounds}.");
+            if (scoreBounds.Width > overviewBounds.Width + 1)
+                differences.Add($"{type}/{width}/{multiple}/{font}: ratings overflow the available hero width.");
+            foreach (var entry in Descendants(scores).OfType<StackPanel>().Where(panel => panel.Children.OfType<TextBlock>().Any()))
+            {
+                var entryBounds = Bounds(entry, page);
+                Program.Log($"TRACE: {Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(entry)}={entryBounds}.");
+                if (entryBounds.Bottom > scoreBounds.Bottom + 1 || entryBounds.Bottom > overviewBounds.Top + 1)
+                    differences.Add($"{type}/{width}/{multiple}: rating {Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(entry)} extends below reserved score row into overview.");
+                if (entryBounds.Left < scoreBounds.Left - 1 || entryBounds.Right > scoreBounds.Right + 1)
+                    differences.Add($"{type}/{width}/{multiple}: rating extends outside the available score row width.");
+                foreach (var child in entry.Children.OfType<FrameworkElement>())
+                {
+                    var childBounds = Bounds(child, page);
+                    if (childBounds.Top < entryBounds.Top - 1 || childBounds.Bottom > entryBounds.Bottom + 1)
+                        differences.Add($"{type}/{width}/{multiple}: provider/score overflows its rating entry.");
+                    if (childBounds.Left < entryBounds.Left - 1 || childBounds.Right > entryBounds.Right + 1)
+                        differences.Add($"{type}/{width}/{multiple}: provider/score overflows its rating entry width.");
+                }
+            }
+            await MediaParityNativeFixture.CaptureAsync(owner, $"ratings-layout-{type}-{width}-{multiple}-{font.Replace(' ', '-')}-{scale}.png");
+        }
+        }
+        if (!observedScales.Contains(1d) || !observedScales.Contains(1.5d))
+            differences.Add("This regression requires offscreen windows on the configured100% and150% displays; both scales must actually be exercised.");
+    }
+    private static Windows.Foundation.Rect Bounds(FrameworkElement element, UIElement relativeTo)
+        => element.TransformToVisual(relativeTo).TransformBounds(new Windows.Foundation.Rect(0, 0, element.ActualWidth, element.ActualHeight));
     private static async Task CheckNaturalRailAsync(Window window, Grid owner, List<string> differences)
     {
         foreach (var (width, height) in new[] { (1024d,650d), (1024d,651d), (1440d,900d) })

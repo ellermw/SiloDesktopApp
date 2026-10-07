@@ -590,7 +590,8 @@ public sealed class ItemDetailCurrentParityTests
         var xaml = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml");
 
         Assert.Contains("CornerRadius=\"999\" Padding=\"10,4\"", xaml);
-        Assert.Contains("x:Name=\"ScoresPanel\" Orientation=\"Horizontal\" Spacing=\"20\"", xaml);
+        // Native ratings-layout coverage checks reserved height and wrapping;
+        // requiring a horizontal outer stack here preserved the overlap bug.
         Assert.Contains("x:Name=\"ImdbScoreText\" FontSize=\"15\" FontWeight=\"Bold\"", xaml);
         Assert.DoesNotContain("x:Name=\"TmdbScorePanel\"", xaml);
         Assert.Contains("foreach (var rating in item.Ratings ?? [])", page);

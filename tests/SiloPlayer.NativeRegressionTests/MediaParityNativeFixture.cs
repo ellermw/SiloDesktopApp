@@ -33,7 +33,7 @@ internal static class MediaParityNativeFixture
     private static async Task RunCoreAsync(StackPanel parent)
     {
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "first-navigation" or "series-loading") { await DetailFirstNavigationNativeFixture.RunAsync(parent); return; }
-        if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "latest-media") { await MediaLatestNativeFixture.RunAsync(parent); return; }
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "latest-media" or "ratings-layout") { await MediaLatestNativeFixture.RunAsync(parent); return; }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "hub-visual") { await HubCurrentCopyAsync(parent); return; }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "reader-real" or "reader-panel" or "reader-toc" or "reader-controls") { await ReaderInteropFixture.RunAsync(parent); return; }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "recent-unknown") { await MediaInteractionsNativeFixture.RunAsync(parent); return; }

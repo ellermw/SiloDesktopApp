@@ -6,9 +6,9 @@ Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/s
 
 ## Download
 
-[**Download Silo Desktop Player 1.2.92**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.92/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.2.94**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.94/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `548CFCC694747FC230C03F05F23C3F6B768130A51D0D29167456515ABA50BC1B`
+SHA-256: `CBC93218ED20CE0B9330897D615BCAA84485D2B3BDDD31A84BE8AE9C6F1789C7`
 
 The installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 
@@ -22,11 +22,11 @@ The reader includes Foliate and PDF.js; pinned sources, local adaptations and li
 
 ## Current parity
 
-**1.2.92 publishes the current installer checkpoint with 92 distinct verified corrections from the October 1 implementation pass.** The patch number follows the [correction ledger](docs/parity/2026-10-01-parity-implementation-ledger.md); it is not a claim that all parity work is complete. The release includes the earlier 1.2.0 feature batch and the OSD, detail-loading and notification-reconnect playback repairs tested locally.
+**1.2.94 includes 94 distinct verified corrections tracked since the October 1 implementation pass.** The patch number follows the [correction ledger](docs/parity/2026-10-01-parity-implementation-ledger.md); it is not a claim that all parity work is complete. This release corrects detail ratings overlapping the description at fractional display scaling and restores the TMDB logo's visible gradient. It includes the earlier 1.2.0 feature batch and the OSD, detail-loading and notification-reconnect playback repairs.
 
 The [14-package plan](docs/parity/2026-10-01-parity-implementation-plan.md) remains the objective. All packages still have final visual/end-to-end acceptance open. The table summarizes released implementation and specific remaining work, rather than treating implementation as completed parity.
 
-| Area | Included in 1.2.92 | Remaining acceptance / known gaps |
+| Area | Included in 1.2.94 | Remaining acceptance / known gaps |
 |---|---|---|
 | Login, profiles and navigation | Required password change, recovery, native OAuth, pairing, profile/PIN controls, branded navigation and Back | Provider routing, pairing cancellation/stale approval, session restoration, final layout/focus/DPI comparisons |
 | Home, library, search and personal lists | Current sections/cards, scoped library state, typed filters, paging, quick-search keyboard behavior, external Watchlist, notifications and calendar | Latest rating/capability/paging checks and final rendered page/menu comparisons |
@@ -40,13 +40,20 @@ The [14-package plan](docs/parity/2026-10-01-parity-implementation-plan.md) rema
 | Conditional dialogs | Metadata/person editing, matching/refresh, images, request seasons and file dialogs | Remaining field/permission/error-state and rendered dialog comparisons |
 | Server administration | Opens the Silo WebUI for server management | Outside the user-only desktop scope; the newly identified admin Seek Previews dialog is tracked separately |
 
-Release verification: **1,399 Release tests**, **15 checks against the actual published playback assembly**, and native first detail navigation/Back plus delayed single-season layout checks passed on the 1.2.92 rebuild. These checks cover the reproduced reconnect failure without certifying every page or every live playback condition. See the [release verification record](docs/releases/1.2.92.md).
+Release verification: **1,399 Release tests**, **15 checks against the actual published playback assembly**, **32 native rating-layout scenarios at 100%/150% scaling**, and native detail navigation/Back, delayed single-season loading and title-art/ordered-rating checks passed for 1.2.94. These checks cover the reproduced failures without certifying every page or every live playback condition. See the [release verification record](docs/releases/1.2.94.md).
 
 The official public Silo Server reference last fetched for this checkpoint on October 3 is `478afa5257332df52f10650cd00b88596562d4c9`. Original October 1 visual acceptance is tied to `8e2e840474a085c6df6571a5a2850f7eb996810c`; the [account](docs/parity/2026-10-03-account-finalization.md), [browse](docs/parity/2026-10-03-browse-finalization.md) and [media](docs/parity/2026-10-03-media-finalization.md) reports distinguish later obligations and remaining evidence. These references do not establish the production server revision.
 
 The [October 1 audit](docs/parity/2026-10-01-user-visual-functional-audit.md), [implementation ledger](docs/parity/2026-10-01-parity-implementation-ledger.md), and [September 30 queue record](docs/parity/2026-09-30-queue-progress.md) retain detailed scope and verification. Playback stability is the immediate priority while the reconnect repair is being tested.
 
 ## Latest release
+
+### 1.2.94 — detail rating alignment and visible TMDB mark
+
+- Keep movie and series ratings above the description. Measure rating rows within the hero width so wrapped entries reserve enough height, including at fractional display scaling.
+- Render the TMDB provider mark with its original green/cyan gradient instead of black against the dark background.
+- Verify 32 native rating-layout scenarios at 100%/150% scaling, existing detail/loading/title-art regressions, 1,399 Release tests and 15 published playback checks. See the [rating-layout diagnosis](docs/audit-gaps/2026-10-07-detail-rating-overlap.md).
+- Includes all 1.2.92 changes. Final WebUI parity and sustained-playback confirmation remain open.
 
 ### 1.2.92 — current checkpoint and playback reconnect repair
 

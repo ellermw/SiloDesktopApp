@@ -413,8 +413,10 @@
                             </Border>
                         </StackPanel>
 
-                        <!-- Scores: current WebUI ScoreRow (IMDb + Rotten Tomatoes only). -->
-                        <StackPanel x:Name="ScoresPanel" Orientation="Horizontal" Spacing="20" Visibility="Collapsed" VerticalAlignment="Center">
+                        <!-- Ordered server ratings wrap within the hero width. A
+                             horizontal outer stack measures the wrap panel at
+                             infinite width, under-reserving wrapped row height. -->
+                        <StackPanel x:Name="ScoresPanel" Orientation="Vertical" Visibility="Collapsed" VerticalAlignment="Center">
                             <TextBlock Text=" · " Foreground="{StaticResource TertiaryTextBrush}" FontSize="15" VerticalAlignment="Center" />
                             <!-- IMDb score -->
                             <StackPanel x:Name="ImdbScorePanel" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">

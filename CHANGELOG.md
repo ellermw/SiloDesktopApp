@@ -2,6 +2,14 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.94 (2026-10-07 — detail rating alignment and visible TMDB mark)
+
+- Correct movie/series ratings overlapping the description at fractional display scaling. The outer rating container now gives its wrap panel a bounded hero width during measurement, reserving enough height for wrapped rows and retaining entries within narrow windows.
+- Apply the existing TMDB SVG gradient directly to its path so WinUI renders the provider mark in green/cyan instead of black. Preserve provider ordering, scores, artwork geometry and spacing.
+- Verify 32 native rating-layout scenarios across movie/series, wide/narrow windows, two/five providers, theme/fallback fonts and actual 100%/150% display scales. Existing detail navigation, season loading, title-art/ordered-rating checks, 1,399 Release tests and 15 published playback checks pass.
+- The patch number reflects 94 verified corrections; 1.2.93 was an intermediate local alignment build, superseded by this combined installer. Final WebUI parity and sustained playback acceptance remain open.
+- See the [release record](docs/releases/1.2.94.md) and [rating-layout diagnosis](docs/audit-gaps/2026-10-07-detail-rating-overlap.md).
+
 ## 1.2.92 (2026-10-03 — current checkpoint and playback reconnect repair)
 
 - Publish the current installer checkpoint with version 1.2.92. The patch number reflects 92 verified distinct corrections in the October 1 parity ledger, including the notification-reconnect repair; it does not indicate completed visual parity.
