@@ -182,6 +182,12 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "account-latest")
             {
+                if (Environment.GetEnvironmentVariable("SILO_ACCOUNT_LATEST_CASE") == "network-login")
+                {
+                    await NetworkAuthNativeFixture.RunAsync(parent);
+                    Program.Log("PASS: native regression run completed.");
+                    return;
+                }
                 await AccountLatestNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed.");
                 return;

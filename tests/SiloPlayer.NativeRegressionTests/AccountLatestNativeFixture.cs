@@ -51,9 +51,20 @@ internal static class AccountLatestNativeFixture
             await Until(() => frame.Content is SettingsPage loaded && (bool)Read(loaded, "_pageInitialized")!);
             var page = (SettingsPage)frame.Content;
             var selected = Environment.GetEnvironmentVariable("SILO_ACCOUNT_LATEST_CASE");
+            if (string.IsNullOrWhiteSpace(selected)) selected = null;
+            if (selected is not (null or "title-art" or "identities" or "oauth" or "queued-user-refresh" or "network-link" or "shadowed" or "ratings"))
+                throw new ArgumentException("Unknown latest-account case; refusing a run with no acceptance checks.");
+            if (selected == "queued-user-refresh")
+            {
+                Click((Button)page.FindName("AccountPasswordTab")); await Until(() => (bool)Read(page, "_signInLoaded")!);
+                auth.SetCurrentUser(new() { Id = "fixture", Role = "user" });
+                await Call(page, "LoadAccountSignInAsync");
+                await OAuth(page, auth, wire, frame);
+            }
             if (selected is null or "title-art") await TitleArt(page, vm, wire, frame, window);
             if (selected is null or "identities") await Identities(page, auth, wire, frame, window);
             if (selected is null or "oauth") await OAuth(page, auth, wire, frame);
+            if (selected is null or "network-link") await NetworkLink(page, auth, wire);
             if (selected is null or "shadowed") await Shadowed(page, wire, frame);
             if (selected is null or "ratings") await Ratings(page, catalog, wire, frame);
             Program.Log("PASS bounded latest account native cases: " + (selected ?? "all"));
@@ -199,6 +210,28 @@ internal static class AccountLatestNativeFixture
         Check(auth.SessionGeneration == generation && !await NativeOAuthCallbacks.TryHandleAsync(callback) && wire.CompleteWrites == 2 && wire.CompletionVerifier.Length >= 43,
             "OAuth link changed login session, allowed replay or omitted verifier");
         await Capture(frame, "latest-identities-oauth-linked.png");
+        wire.ResetOAuthIdentity();
+        await Call(page, "LoadAccountSignInAsync");
+        foreach (var revoke in new Action[]
+        {
+            () => auth.SetCurrentUser(new() { Id = "other-account", Role = "user" }),
+            () => auth.SetCurrentUser(new() { Id = "fixture", Role = "user", Impersonation = new() { Active = true } })
+        })
+        {
+            Click(Buttons(body).Single(button => Equals(button.Content, "Connect Fixture SSO")));
+            All<PasswordBox>(body).Single(box => Equals(box.Header, "Silo password")).Password = "fixture-local";
+            start = null;
+            Click(Buttons(body).Single(button => Equals(button.Content, "Continue to Fixture SSO")));
+            await Until(() => start is not null);
+            var revokedCallback = Callback(start!);
+            revoke();
+            await Until(() => Read(page, "_signInHandshake") is null && (bool)Read(page, "_signInLoaded")!);
+            Check(!await NativeOAuthCallbacks.TryHandleAsync(revokedCallback) && wire.CompleteWrites == 2,
+                "A current account/impersonation change failed to revoke the provider callback");
+            auth.SetCurrentUser(new() { Id = "fixture", Role = "user" });
+            await Call(page, "LoadAccountSignInAsync");
+        }
+        Program.Log("PASS current account and impersonation changes still revoke the native sign-in flow");
         Program.Log("PASS actual native OAuth link recorded browser/password snapshot/PKCE/cancel/foreign callback/pending429 retained draft/retry/one-use callback/no session replacement");
     }
 
@@ -209,6 +242,34 @@ internal static class AccountLatestNativeFixture
         Check(All<TextBlock>(controls).Any(text => text.Text == "IMDb Rating") && !All<TextBlock>(controls).Any(text => text.Text is "TMDB Rating" or "RT Critics" or "RT Audience"), "Unavailable rating overlay controls offered");
         var draft = (CardOverlayPrefs)Read(page, "_cardOverlayDraft")!; Check(draft.Items.ContainsKey("rating_rt"), "Hidden rating preference removed from saved draft");
         await Capture(frame, "latest-rating-overlay-availability.png"); Program.Log("PASS actual rating controls availability and preserved hidden preference");
+    }
+
+    private static async Task NetworkLink(SettingsPage page, AuthService auth, Wire wire)
+    {
+        wire.Network = true;
+        Click((Button)page.FindName("AccountPasswordTab")); await Call(page, "LoadAccountSignInAsync");
+        var body = (StackPanel)page.FindName("AccountSignInBody");
+        Check(Buttons(body).Any(button => Equals(button.Content, "Connect Fixture Network")), "Settings filters out the current network sign-in provider");
+        Click(Buttons(body).Single(button => Equals(button.Content, "Connect Fixture Network")));
+        Check(All<TextBlock>(body).Any(text => text.Text.Contains("Fixture Owner") && text.Text.Contains("Fixture Network")), "Network connect form omits the device owner");
+        var password = All<PasswordBox>(body).Single(); password.Password = "submitted-password";
+        wire.Pending = NewGate(); Click(Buttons(body).Single(button => Equals(button.Content, "Connect")));
+        await Until(() => wire.NetworkWrites == 1); password.Password = "retained-draft";
+        Check(!Buttons(body).Single(button => Equals(button.Content, "Connecting…")).IsEnabled && wire.NetworkBody.GetProperty("installation_id").GetString() == "5" && wire.NetworkBody.GetProperty("password").GetString() == "submitted-password" && wire.NetworkBody.EnumerateObject().Count() == 2,
+            "Network link changes submitted password, includes directory credentials or permits duplicate submit");
+        wire.Pending.TrySetResult(Reject("network_identity_required", HttpStatusCode.Forbidden));
+        await Until(() => !(bool)Read(page, "_signInBusy")!); wire.Pending = null;
+        Check(All<TextBlock>(body).Any(text => text.Text == "Open this server at its Fixture Network address to connect Fixture Network.") && password.Password == "retained-draft", "Network link refusal loses draft or network-address feedback");
+        wire.Pending = NewGate(); Click(Buttons(body).Single(button => Equals(button.Content, "Connect")));
+        await Until(() => wire.NetworkWrites == 2);
+        wire.Pending.TrySetResult(Reject("validation_failed", HttpStatusCode.UnprocessableEntity, "body.password"));
+        await Until(() => !(bool)Read(page, "_signInBusy")!); wire.Pending = null;
+        Check(All<TextBlock>(body).Any(text => text.Text == "That isn't your current Silo password."), "Network link wrong password misreported");
+        var generation = auth.SessionGeneration;
+        Click(Buttons(body).Single(button => Equals(button.Content, "Connect")));
+        await Until(() => wire.NetworkWrites == 3 && (bool)Read(page, "_signInLoaded")! && All<TextBlock>(body).Any(text => text.Text == "Fixture Network"));
+        Check(auth.SessionGeneration == generation && wire.RefreshRequests == 0 && !Buttons(body).Any(button => Equals(button.Content, "Connect Fixture Network")), "Network link replaces login or retains connect action");
+        Program.Log("PASS actual network identity linking owner copy/local password snapshot/pending/no replay/refusal422 retry/linked identity/session retained");
     }
 
     private static TaskCompletionSource<HttpResponseMessage> NewGate() => new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -234,12 +295,14 @@ internal static class AccountLatestNativeFixture
         internal string[] ShownRatings = ["imdb", "tmdb", "rt_critic", "rt_audience"];
         internal List<(string Method, string Scope, bool? Value, string? Device)> TitleWrites = [];
         internal int CredentialsWrites, Unlinks, RefreshRequests, IdentityReads, CompleteWrites, TicketWrites;
+        internal bool Network; internal int NetworkWrites; internal JsonElement NetworkBody;
         internal string? TicketPassword;
         internal string CompletionVerifier = "";
         internal JsonElement CredentialsBody;
         internal TaskCompletionSource<HttpResponseMessage>? Pending;
         internal TaskCompletionSource<HttpResponseMessage>? IdentityPending;
         private readonly List<object> _linked = [new { id = "old", installation_id = "2", provider_name = "", username = "Fixture linked", email = "", linked_at = "2026-10-01T00:00:00Z" }];
+        internal void ResetOAuthIdentity() => _linked.RemoveAll(row => JsonSerializer.SerializeToElement(row).GetProperty("installation_id").GetString() == "3");
         internal Wire()
         {
             _fallback = new((HttpMessageHandler)Activator.CreateInstance(typeof(AccountCoverageNativeFixture).GetNestedType("Wire", BindingFlags.NonPublic)!, nonPublic: true)!);
@@ -264,7 +327,19 @@ internal static class AccountLatestNativeFixture
                 TitleWrites.Add((method, scope, value, device)); var response = Pending is { } gate ? await gate.Task.WaitAsync(ct) : Reply(new { key = "ui.title_art", value });
                 if (response.IsSuccessStatusCode) { if (scope == "profile") ProfileTitle = method == "DELETE" ? null : value; else DeviceTitle = method == "DELETE" ? null : value; } return response;
             }
-            if (path == "/api/v2/auth/providers") return Reply(new { items = new object[] { new { id = "local", display_name = "Silo password", mode = "credentials" }, new { id = "ldap", display_name = "Fixture Directory", mode = "credentials", installation_id = "1" }, new { id = "oidc", display_name = "Fixture SSO", mode = "oauth", installation_id = "3", native_start_path = "/api/v2/auth/oauth/3/native/start" } } });
+            if (path == "/api/v2/auth/providers")
+            {
+                var providers = new List<object> { new { id = "local", display_name = "Silo password", mode = "credentials" }, new { id = "ldap", display_name = "Fixture Directory", mode = "credentials", installation_id = "1" }, new { id = "oidc", display_name = "Fixture SSO", mode = "oauth", installation_id = "3", native_start_path = "/api/v2/auth/oauth/3/native/start" } };
+                if (Network) providers.Add(new { id = "network", display_name = "Fixture Network", mode = "network", installation_id = "5", network_identity = new { display_name = "Fixture Owner", username = "fixture-name" } });
+                return Reply(new { items = providers });
+            }
+            if (path == "/api/v2/account/identities/link-network")
+            {
+                ++NetworkWrites; using var doc = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); NetworkBody = doc.RootElement.Clone();
+                var response = Pending is { } gate ? await gate.Task.WaitAsync(ct) : Reply(new { id = "network", installation_id = "5", provider_name = "Fixture Network" }, HttpStatusCode.Created);
+                if (response.IsSuccessStatusCode) _linked.Add(new { id = "network", installation_id = "5", provider_name = "Fixture Network" });
+                return response;
+            }
             if (path == "/api/v2/account/identities") return Reply(new { items = _linked.ToArray(), can_unlink = CanUnlink });
             if (path == "/api/v2/account/identities/link-credentials") { ++CredentialsWrites; using var doc = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); CredentialsBody = doc.RootElement.Clone(); var response = Pending is { } gate ? await gate.Task.WaitAsync(ct) : Reply(new { id = "directory", installation_id = "1", provider_name = "Fixture Directory" }); if (response.IsSuccessStatusCode) _linked.Add(new { id = "directory", installation_id = "1", provider_name = "Fixture Directory", username = "fixture-name" }); return response; }
             if (path == "/api/v2/system/identity") { ++IdentityReads; Program.Log("TRACE latest OAuth wire identity read; pending=" + (IdentityPending is not null)); return IdentityPending is { } gate ? await gate.Task.WaitAsync(ct) : Reply(new { server_id = "fixture-server" }); }

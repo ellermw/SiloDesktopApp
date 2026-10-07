@@ -9,10 +9,19 @@ public class AuthProvider
     public string Mode { get; set; } = "";
     public string? IconUrl { get; set; }
     public string? NativeStartPath { get; set; }
+    public AuthProviderNetworkIdentity? NetworkIdentity { get; set; }
     [JsonNumberHandling(JsonNumberHandling.AllowReadingFromString)]
     public int InstallationId { get; set; }
     [JsonPropertyName("default")]
     public bool IsDefault { get; set; }
+}
+
+public sealed class AuthProviderNetworkIdentity
+{
+    public string DisplayName { get; set; } = "";
+    public string Username { get; set; } = "";
+    [JsonIgnore]
+    public string Name => !string.IsNullOrEmpty(DisplayName) ? DisplayName : Username;
 }
 
 public class AuthProvidersResponse

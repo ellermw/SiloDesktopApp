@@ -89,6 +89,36 @@
                         <TextBlock Text="Continue signing in in your browser." FontSize="14" TextWrapping="Wrap" />
                         <Button Content="Cancel sign-in" Click="CancelOAuth_Click" />
                     </StackPanel>
+                    <StackPanel Spacing="8" Visibility="{x:Bind ViewModel.HasNetworkProviders, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.NetworkProviders, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanStartAuthentication, Mode=OneWay}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><StackPanel Spacing="8" /></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Button Style="{StaticResource AccentButtonStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                            Padding="16,8" Tag="{Binding Provider}" Click="NetworkProviderButton_Click">
+                                        <Grid ColumnSpacing="{Binding IconGap}">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                            <Image Source="{Binding Provider.IconUrl, Converter={StaticResource UrlToImage}}" Width="20" Height="20" Stretch="Uniform"
+                                                   Visibility="{Binding Provider.IconUrl, Converter={StaticResource NullToVis}}" />
+                                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Label}" TextWrapping="Wrap" />
+                                                <TextBlock Text="{Binding Via}" FontSize="12" FontWeight="Normal" Opacity="0.8"
+                                                           Visibility="{Binding Via, Converter={StaticResource NullToVis}}" />
+                                            </StackPanel>
+                                        </Grid>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <Grid Margin="0,8,0,0" Visibility="{x:Bind ViewModel.ShowNetworkDivider, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <Border Height="1" Background="{StaticResource BorderBrush}" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="1" Text="or" FontSize="12" Margin="8,0" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <Border Grid.Column="2" Height="1" Background="{StaticResource BorderBrush}" VerticalAlignment="Center" />
+                        </Grid>
+                    </StackPanel>
                     <StackPanel
                         Spacing="12"
                         Visibility="{x:Bind ViewModel.HasOAuthProviders, Mode=OneWay, Converter={StaticResource BoolToVis}}">

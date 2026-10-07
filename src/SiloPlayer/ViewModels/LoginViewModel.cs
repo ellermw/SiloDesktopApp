@@ -25,6 +25,7 @@ public partial class LoginViewModel : ObservableObject
     private ApiRequestContext? _oauthContext;
     private long _oauthGeneration;
     private int _oauthRevision;
+    private int _networkRevision;
     public LoginNavigationRequest? NavigationRequest { get; set; }
     [ObservableProperty] private bool _sessionRestoreUnavailable;
     public string SessionRestoreMessage => NavigationRequest?.SessionRestoreErrorCode == "provider_unavailable"
@@ -35,7 +36,7 @@ public partial class LoginViewModel : ObservableObject
     [ObservableProperty] private bool _showPasswordForm;
     [ObservableProperty] private bool _isOAuthPending;
     public bool CanStartAuthentication => ProvidersReady && !IsLoading && !IsStartingDeviceLogin;
-    public bool ShouldAutoRedirect => CanStartAuthentication && !ShowPasswordForm && OAuthProviders.Count == 1 &&
+    public bool ShouldAutoRedirect => CanStartAuthentication && !ShowPasswordForm && NetworkProviders.Count == 0 && OAuthProviders.Count == 1 &&
         string.IsNullOrEmpty(ErrorMessage) && NavigationRequest is not { SignedOut: true } and not { SwitchAccount: true } and not { SessionRestoreUnavailable: true };
     public string FormattedDeviceCode => DeviceCodeText.Format(DeviceSession?.UserCode);
     public string SpokenDeviceCode => DeviceCodeText.Spoken(DeviceSession?.UserCode);
@@ -91,6 +92,11 @@ public partial class LoginViewModel : ObservableObject
 
     public ObservableCollection<AuthProvider> OAuthProviders { get; } = [];
     public ObservableCollection<AuthProvider> CredentialProviders { get; } = [];
+    public ObservableCollection<NetworkSignInOption> NetworkProviders { get; } = [];
+    [ObservableProperty] private bool _hasNetworkProviders;
+    public bool ShowNetworkDivider => ShowPasswordForm || HasOAuthProviders;
+    partial void OnShowPasswordFormChanged(bool value) => OnPropertyChanged(nameof(ShowNetworkDivider));
+    partial void OnHasOAuthProvidersChanged(bool value) => OnPropertyChanged(nameof(ShowNetworkDivider));
 
     // Kept as a compatibility alias for older source tests and XAML references.
     public ObservableCollection<AuthProvider> AuthProviders => OAuthProviders;
@@ -189,9 +195,12 @@ public partial class LoginViewModel : ObservableObject
             if (!CurrentAuthInfo(generation, context, ct)) return;
             OAuthProviders.Clear();
             CredentialProviders.Clear();
+            NetworkProviders.Clear();
 
             foreach (var provider in providers)
             {
+                if (provider.Mode == "network" && provider.InstallationId > 0)
+                { NetworkProviders.Add(new NetworkSignInOption(provider)); continue; }
                 if (string.Equals(provider.Mode, "oauth", StringComparison.OrdinalIgnoreCase) && provider.InstallationId > 0)
                 {
                     OAuthProviders.Add(provider);
@@ -210,7 +219,8 @@ public partial class LoginViewModel : ObservableObject
                 CredentialProviders.FirstOrDefault(p => p.IsDefault) ??
                 CredentialProviders.FirstOrDefault();
             HasOAuthProviders = OAuthProviders.Count > 0;
-            HasAuthProviders = HasOAuthProviders;
+            HasNetworkProviders = NetworkProviders.Count > 0;
+            HasAuthProviders = HasOAuthProviders || HasNetworkProviders;
             HasCredentialProviderPicker = CredentialProviders.Count > 1;
         }
         catch
@@ -218,6 +228,7 @@ public partial class LoginViewModel : ObservableObject
             if (!CurrentAuthInfo(generation, context, ct)) return;
             OAuthProviders.Clear();
             CredentialProviders.Clear();
+            NetworkProviders.Clear(); HasNetworkProviders = false;
             SelectedCredentialProvider = null;
             HasOAuthProviders = false;
             HasAuthProviders = false;
@@ -226,7 +237,7 @@ public partial class LoginViewModel : ObservableObject
         finally
         {
             if (CurrentAuthInfo(generation, context, ct))
-            { ProvidersReady = true; ShowPasswordForm = NavigationRequest is { LocalLogin: true } || CredentialProviders.Count > 0 || OAuthProviders.Count == 0; }
+            { ProvidersReady = true; ShowPasswordForm = NavigationRequest is { LocalLogin: true } || CredentialProviders.Count > 0 || OAuthProviders.Count == 0 && NetworkProviders.Count == 0; }
         }
     }
 
@@ -268,7 +279,42 @@ public partial class LoginViewModel : ObservableObject
     { ++_oauthRevision; _oauthAttempt?.Cancel(); _oauthAttempt = null; _oauthRegistration?.Dispose(); _oauthRegistration = null; _oauthContext = null; IsOAuthPending = false; IsLoading = false; }
 
     public void CancelAuthFlows()
-    { ++_authInfoGeneration; _authInfoCts?.Cancel(); CancelOAuth(); CancelDeviceLogin(clearSession: true); }
+    {
+        ++_authInfoGeneration; ++_networkRevision;
+        foreach (var choice in NetworkProviders) choice.IsPending = false;
+        _authInfoCts?.Cancel(); CancelOAuth(); CancelDeviceLogin(clearSession: true);
+    }
+
+    public async Task BeginNetworkSignInAsync(AuthProvider provider, CancellationToken ct = default)
+    {
+        if (!CanStartAuthentication || provider.Mode != "network" || !NetworkProviders.Any(option => ReferenceEquals(option.Provider, provider))) return;
+        var revision = ++_networkRevision; var context = _apiClient.CaptureContext();
+        var generation = _authService.SessionGeneration; var discovery = _authInfoGeneration;
+        bool Current() => revision == _networkRevision && discovery == _authInfoGeneration &&
+            !ct.IsCancellationRequested && _apiClient.IsCurrentContext(context) && generation == _authService.SessionGeneration;
+        var choice = NetworkProviders.Single(option => ReferenceEquals(option.Provider, provider));
+        IsLoading = true; ErrorMessage = null; choice.IsPending = true;
+        try
+        {
+            var tokens = await _authApi.SignInWithNetworkAsync(context.BaseUrl, provider.InstallationId, ct);
+            if (!Current()) return;
+            var user = await _authApi.GetMeAsync(context.BaseUrl, tokens.AccessToken, ct);
+            if (!Current()) return;
+            var response = new LoginResponse { AccessToken = tokens.AccessToken, RefreshToken = tokens.RefreshToken, ExpiresIn = tokens.ExpiresIn, User = user };
+            if (_authService.CompleteRecoveryLogin(response, generation, context.BaseUrl)) LoginSucceeded?.Invoke();
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (Current()) ErrorMessage = ex is ApiException problem
+                ? problem.StatusCode == 429 ? "Too many attempts. Wait a minute and try again." : ExternalSignInErrors.DescribeNetwork(problem.ErrorCode, provider.DisplayName)
+                : "Couldn't reach the server. Try again.";
+        }
+        finally
+        {
+            if (revision == _networkRevision) { choice.IsPending = false; IsLoading = false; }
+        }
+    }
 
     public async Task StartDeviceLoginAsync()
     {
@@ -494,7 +540,7 @@ public partial class LoginViewModel : ObservableObject
             {
                 "invalid_credentials" => "Invalid username or password.",
                 "user_disabled" => "This account has been disabled.",
-                "local_login_disabled" => "Password sign-in is turned off for this account. Use " + string.Join(", ", OAuthProviders.Select(p => p.DisplayName)) + " to sign in.",
+                "local_login_disabled" => "Password sign-in is turned off for this account. Use " + string.Join(", ", OAuthProviders.Select(p => p.DisplayName).Concat(NetworkProviders.Select(p => p.Provider.DisplayName))) + " to sign in.",
                 "password_expired" => "Your password at the sign-in provider has expired. Change it there before signing in.",
                 "permission_denied" => "This account is disabled.",
                 "not_permitted" or "account_disabled" or "provider_unavailable" => ExternalSignInErrors.Describe(ex.ErrorCode),

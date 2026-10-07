@@ -2,6 +2,13 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.97 (2026-10-07 — local reader/account/network sign-in checkpoint)
+
+- Correct six compact reader controls constrained by the shared36px minimum; actual native32px bounds and neighboring profile/tab/bookmark/progress checks pass.
+- Prevent an obsolete queued Settings account refresh from canceling a newly started provider connection. Preserve cancellation on current account and impersonation changes.
+- Support current Silo network-provider login and account linking, including owner/via labels, network-only/mixed OAuth routing, pending/refusal/retry, password snapshots, stale response rejection and no authentication replay.
+- 1,405 Release tests and15 published playback-service checks pass. The playback/OSD script is unchanged. This local checkpoint remains separate from published1.2.94 and incomplete whole-page parity; see the [checkpoint record](docs/releases/1.2.97.md).
+
 ## 1.2.94 (2026-10-07 — detail rating alignment and visible TMDB mark)
 
 - Correct movie/series ratings overlapping the description at fractional display scaling. The outer rating container now gives its wrap panel a bounded hero width during measurement, reserving enough height for wrapped rows and retaining entries within narrow windows.

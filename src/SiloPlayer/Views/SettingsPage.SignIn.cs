@@ -23,7 +23,16 @@ public sealed partial class SettingsPage
         Unloaded += (_, _) => { SignInAuth.UserChanged -= AccountSignInUserChanged; DeactivateAccountSignIn(); };
     }
     private void AccountSignInUserChanged()
-        => DispatcherQueue.TryEnqueue(() => { if (AccountPasswordPanel.Visibility == Visibility.Visible) _ = LoadAccountSignInAsync(); });
+    {
+        var revision = _signInRevision;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            // A newer explicit reload already owns the page. Do not let an
+            // older queued notification cancel a form started on that reload.
+            if (revision == _signInRevision && AccountPasswordPanel.Visibility == Visibility.Visible)
+                _ = LoadAccountSignInAsync();
+        });
+    }
     private AccountIdentityCollection _signInIdentities = new();
     private IReadOnlyList<AuthProvider> _signInProviders = [];
     private string? _signInMessage;
@@ -66,7 +75,7 @@ public sealed partial class SettingsPage
             var providers = await SignInApi.GetAuthProvidersAsync(ct);
             if (!CurrentSignIn(revision, context, generation, account) || ct.IsCancellationRequested) return;
             _signInIdentities = identities;
-            _signInProviders = providers.Where(provider => provider.InstallationId > 0 && provider.Mode is "oauth" or "credentials").ToArray();
+            _signInProviders = providers.Where(provider => provider.InstallationId > 0 && provider.Mode is "oauth" or "credentials" or "network").ToArray();
             _signInLoaded = true;
             RenderAccountSignIn();
         }
@@ -141,8 +150,11 @@ public sealed partial class SettingsPage
         _signInMessage = null; RenderAccountSignIn();
         var form = new StackPanel { Spacing = 16 };
         var directory = provider.Mode == "credentials";
+        var network = provider.Mode == "network";
         form.Children.Add(new TextBlock { Text = "Connect " + provider.DisplayName, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium });
-        form.Children.Add(SignInText((directory
+        form.Children.Add(SignInText((network
+            ? $"Confirm your Silo password to connect {(provider.NetworkIdentity?.Name is { Length: > 0 } owner ? owner + "'s " + provider.DisplayName + " account" : "the " + provider.DisplayName + " account")} on this device."
+            : directory
             ? $"Confirm your Silo password, then enter your {provider.DisplayName} username and password."
             : $"Confirm your Silo password, then sign in at {provider.DisplayName}.") + $" Afterwards you sign in with {provider.DisplayName} instead of your Silo password."));
         var password = new PasswordBox { Header = "Silo password", MaxLength = 1024 };
@@ -152,14 +164,14 @@ public sealed partial class SettingsPage
         if (directory) { form.Children.Add(username); form.Children.Add(directoryPassword); }
         var error = SignInText("", error: true); form.Children.Add(error);
         var commands = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        var submit = new Button { Content = directory ? "Connect" : "Continue to " + provider.DisplayName };
+        var submit = new Button { Content = directory || network ? "Connect" : "Continue to " + provider.DisplayName };
         var cancel = new Button { Content = "Cancel" };
         var cancelBrowser = new Button { Content = "Cancel sign-in", Visibility = Visibility.Collapsed };
         commands.Children.Add(submit); commands.Children.Add(cancel); commands.Children.Add(cancelBrowser); form.Children.Add(commands);
         var card = SignInSurface(form, 16); AccountSignInBody.Children.Add(card);
         cancel.Click += (_, _) => { if (!_signInBusy) RenderAccountSignIn(); };
         cancelBrowser.Click += (_, _) => { DeactivateAccountSignIn(); RenderAccountSignIn(); };
-        if (!directory && string.IsNullOrEmpty(provider.NativeStartPath))
+        if (!directory && !network && string.IsNullOrEmpty(provider.NativeStartPath))
         { submit.IsEnabled = false; error.Text = "This provider does not offer native sign-in at this server."; }
         submit.Click += async (_, _) =>
         {
@@ -174,9 +186,12 @@ public sealed partial class SettingsPage
             _signInBusy = true; submit.IsEnabled = cancel.IsEnabled = false; submit.Content = "Connecting…"; error.Text = "";
             try
             {
-                if (directory)
+                if (directory || network)
                 {
-                    await SignInApi.LinkAccountIdentityWithCredentialsAsync(context, provider.InstallationId, submittedPassword, username.Text, directoryPassword.Password, ct);
+                    if (network)
+                        await SignInApi.LinkAccountIdentityWithNetworkAsync(context, provider.InstallationId, submittedPassword, ct);
+                    else
+                        await SignInApi.LinkAccountIdentityWithCredentialsAsync(context, provider.InstallationId, submittedPassword, username.Text, directoryPassword.Password, ct);
                     if (!Current()) return;
                     _signInMessage = $"Connected {provider.DisplayName}. Sign in with it from now on."; _signInMessageIsError = false;
                     await LoadAccountSignInAsync(); await _accountPassword.LoadAsync();
@@ -225,7 +240,7 @@ public sealed partial class SettingsPage
             finally
             {
                 if (Current() && _signInHandshake is null)
-                { _signInBusy = false; submit.IsEnabled = cancel.IsEnabled = true; submit.Content = directory ? "Connect" : "Continue to " + provider.DisplayName; }
+                { _signInBusy = false; submit.IsEnabled = cancel.IsEnabled = true; submit.Content = directory || network ? "Connect" : "Continue to " + provider.DisplayName; }
             }
         };
     }
@@ -236,6 +251,7 @@ public sealed partial class SettingsPage
         if (problem.StatusCode == 429) return "Too many attempts. Wait a minute and try again.";
         return problem.ErrorCode switch
         {
+            "network_identity_required" => $"Open this server at its {provider.DisplayName} address to connect {provider.DisplayName}.",
             "validation_failed" when problem.ErrorLocation == "body.directory_password" => $"{provider.DisplayName} didn't accept that username and password.",
             "validation_failed" when problem.ErrorLocation == "body.password" => "That isn't your current Silo password.",
             "local_password_required" => "Your account has no Silo password to confirm this with. Ask an admin to connect the provider for you.",

@@ -2,6 +2,14 @@ namespace SiloPlayer.Core.Services;
 
 public static class ExternalSignInErrors
 {
+    public static string DescribeNetwork(string reason, string providerName) => reason switch
+    {
+        "network_identity_required" => $"Open this server at its {providerName} address to sign in this way.",
+        "not_permitted" => $"{providerName} doesn't allow this device to sign in to this server.",
+        "email_in_use" => $"An account with your email already exists. Sign in with your password, then connect {providerName} under Settings → Sign-in.",
+        "permission_denied" => Describe("account_disabled"),
+        _ => Describe(reason)
+    };
     public static string Describe(string reason, bool linking = false) => (linking, reason) switch
     {
         (_, "not_permitted") => "Your account at the sign-in provider isn't allowed to use this server.",

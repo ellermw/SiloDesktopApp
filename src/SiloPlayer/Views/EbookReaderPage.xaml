@@ -49,14 +49,14 @@
                         AutomationProperties.Name="Highlight selection" Click="Highlight_Click" Height="34" Padding="9,0">
                     <StackPanel Orientation="Horizontal" Spacing="5"><FontIcon Glyph="&#xE7E6;" FontSize="14" /><TextBlock Text="Highlight" FontSize="12" /></StackPanel>
                 </Button>
-                <Button x:Name="BookmarkButton" ToolTipService.ToolTip="Add bookmark" AutomationProperties.Name="Add bookmark" Click="Bookmark_Click" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0" />
-                <Button x:Name="ReadingRulerToolbarButton" ToolTipService.ToolTip="Reading ruler" AutomationProperties.Name="Toggle reading ruler" Click="ReadingRulerToolbar_Click" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0"><FontIcon Glyph="&#xE8D2;" FontSize="16" /></Button>
-                <Button x:Name="PanelToggleButton" ToolTipService.ToolTip="Close reader panel" AutomationProperties.Name="Close reader panel" Click="PanelToggle_Click" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0"><FontIcon x:Name="PanelToggleIcon" Glyph="&#xE89F;" FontSize="16" /></Button>
-                <Button x:Name="PreviousButton" Click="Previous_Click" ToolTipService.ToolTip="Previous page" AutomationProperties.Name="Previous page" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0"><FontIcon Glyph="&#xE76B;" FontSize="20" /></Button>
-                <Button x:Name="NextButton" Click="Next_Click" ToolTipService.ToolTip="Next page" AutomationProperties.Name="Next page" Width="32" Height="32" Padding="0" Background="Transparent" BorderThickness="0"><FontIcon Glyph="&#xE76C;" FontSize="20" /></Button>
+                <Button x:Name="BookmarkButton" ToolTipService.ToolTip="Add bookmark" AutomationProperties.Name="Add bookmark" Click="Bookmark_Click" Width="32" Height="32" MinHeight="32" Padding="0" Background="Transparent" BorderThickness="0" />
+                <Button x:Name="ReadingRulerToolbarButton" ToolTipService.ToolTip="Reading ruler" AutomationProperties.Name="Toggle reading ruler" Click="ReadingRulerToolbar_Click" Width="32" Height="32" MinHeight="32" Padding="0" Background="Transparent" BorderThickness="0"><FontIcon Glyph="&#xE8D2;" FontSize="16" /></Button>
+                <Button x:Name="PanelToggleButton" ToolTipService.ToolTip="Close reader panel" AutomationProperties.Name="Close reader panel" Click="PanelToggle_Click" Width="32" Height="32" MinHeight="32" Padding="0" Background="Transparent" BorderThickness="0"><FontIcon x:Name="PanelToggleIcon" Glyph="&#xE89F;" FontSize="16" /></Button>
+                <Button x:Name="PreviousButton" Click="Previous_Click" ToolTipService.ToolTip="Previous page" AutomationProperties.Name="Previous page" Width="32" Height="32" MinHeight="32" Padding="0" Background="Transparent" BorderThickness="0"><FontIcon Glyph="&#xE76B;" FontSize="20" /></Button>
+                <Button x:Name="NextButton" Click="Next_Click" ToolTipService.ToolTip="Next page" AutomationProperties.Name="Next page" Width="32" Height="32" MinHeight="32" Padding="0" Background="Transparent" BorderThickness="0"><FontIcon Glyph="&#xE76C;" FontSize="20" /></Button>
             </StackPanel>
 
-            <Button x:Name="DownloadButton" Grid.Column="4" Click="Download_Click" Height="32" Padding="12,0" Background="Transparent" BorderThickness="1"
+            <Button x:Name="DownloadButton" Grid.Column="4" Click="Download_Click" Height="32" MinHeight="32" Padding="12,0" Background="Transparent" BorderThickness="1"
                     AutomationProperties.Name="Download reader file">
                 <StackPanel Orientation="Horizontal" Spacing="6"><FontIcon Glyph="&#xE896;" FontSize="14" /><TextBlock Text="File" FontSize="12" /></StackPanel>
             </Button>

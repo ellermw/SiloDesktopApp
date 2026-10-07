@@ -127,6 +127,12 @@ public sealed partial class LoginPage : Page
         await StartOAuthAsync(provider);
     }
 
+    private async void NetworkProviderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: AuthProvider provider })
+            await ViewModel.BeginNetworkSignInAsync(provider, _appearanceCancellation?.Token ?? CancellationToken.None);
+    }
+
     private async Task StartOAuthAsync(AuthProvider provider)
     {
         try

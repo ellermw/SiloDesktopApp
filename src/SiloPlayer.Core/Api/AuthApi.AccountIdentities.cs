@@ -2,6 +2,13 @@ using SiloPlayer.Core.Models.Auth;
 namespace SiloPlayer.Core.Api;
 public partial class AuthApi
 {
+    public Task<OAuthCompleteResponse> SignInWithNetworkAsync(string baseUrl, int installationId, CancellationToken ct = default)
+        => client.PostUnauthenticatedAsync<OAuthCompleteResponse>(baseUrl,
+            "/api/v2/auth/network/" + installationId.ToString(System.Globalization.CultureInfo.InvariantCulture) + "/sign-in", new { }, ct);
+    public Task<AccountIdentity> LinkAccountIdentityWithNetworkAsync(ApiRequestContext context, int installationId,
+        string password, CancellationToken ct = default)
+        => client.SendRequestWithoutRefreshAsync<AccountIdentity>(context, HttpMethod.Post,
+            "/api/v2/account/identities/link-network", new { installation_id = installationId.ToString(System.Globalization.CultureInfo.InvariantCulture), password }, ct);
     public Task<AccountIdentityCollection> GetAccountIdentitiesAsync(ApiRequestContext context, CancellationToken ct = default)
         => client.SendRequestAsync<AccountIdentityCollection>(context, HttpMethod.Get, "/api/v2/account/identities", null, ct);
     public Task<AccountIdentity> LinkAccountIdentityWithCredentialsAsync(ApiRequestContext context, int installationId,
