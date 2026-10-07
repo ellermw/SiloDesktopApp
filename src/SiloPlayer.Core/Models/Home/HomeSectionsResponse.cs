@@ -38,6 +38,8 @@ public class MediaItem
     internal void NotifyArtworkUrlsChanged() => ArtworkUrlsChanged?.Invoke(this, EventArgs.Empty);
 
     public string ContentId { get; set; } = "";
+    /// <summary>Server-authorized playable target; may differ from the browse item.</summary>
+    public string? PlayContentId { get; set; }
     public string Type { get; set; } = "";
     public string Title { get; set; } = "";
     public int Year { get; set; }

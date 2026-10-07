@@ -28,6 +28,11 @@ internal static class BrowseAcceptanceNativeFixture
 {
     internal static async Task RunAsync(StackPanel parent)
     {
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_QUICK_VISUALS") == "1")
+        {
+            await BrowseQuickVisualNativeFixture.RunAsync();
+            return;
+        }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_QUICK_INTERACTIONS") == "1")
         {
             await BrowseQuickInteractionsNativeFixture.RunAsync(parent);

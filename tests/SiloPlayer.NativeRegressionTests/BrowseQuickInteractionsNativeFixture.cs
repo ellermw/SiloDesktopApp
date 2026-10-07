@@ -57,6 +57,46 @@ internal static class BrowseQuickInteractionsNativeFixture
                 if(query.Length>1)await Until(()=>Descendants<Button>(dialog).Any(button=>AutomationProperties.GetName(button).StartsWith("Open Alpha Feature")));
                 return(dialog,closed);
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_QUICK_POINTER") == "1")
+            {
+                var (pointerDialog, pointerClosed) = await Open("Alpha");
+                var input = (TextBox)pointerDialog.FindName("SearchBox");
+                input.Focus(FocusState.Programmatic);
+                var personRow = Descendants<Button>(pointerDialog).Single(button => AutomationProperties.GetName(button) == "Open Portrait Person, Person");
+                // WM_MOUSEMOVE alone does not synthesize WinUI pointer events
+                // for an offscreen island. Exercise its palette callback, then
+                // deliver actual owned Enter; do not move the user's pointer.
+                var pointerCallback = typeof(GlobalSearchDialog).GetMethod("SelectResultByPointer", BindingFlags.Instance | BindingFlags.NonPublic)
+                    ?? throw new InvalidOperationException("Quick Search has no pointer-selection callback.");
+                pointerCallback.Invoke(pointerDialog, new object[] { "person:portrait-person" });
+                await Task.Delay(60);
+                var pointerSelection = (SearchSelectionState)typeof(GlobalSearchDialog).GetField("_selection", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(pointerDialog)!;
+                Program.Log($"Quick native pointer callback: selected={pointerSelection.Index}, inputFocus={input.FocusState}.");
+                if (pointerSelection.Index != 1 || input.FocusState == FocusState.Unfocused) throw new InvalidOperationException("Quick pointer movement must select the person while retaining input focus.");
+                SendKey(0x0D); await pointerClosed;
+                if (routes.Count != 1 || routes[0].Type != typeof(PersonDetailPage) || routes[0].Parameter as string != "portrait-person") throw new InvalidOperationException("Enter after pointer selection did not pick that person.");
+                Program.Log("PASS: native palette pointer callback preserves input focus and owned Enter picks the highlighted person; physical pointer event delivery is not synthesized.");
+                return;
+            }
+            auth.SelectProfile("transition-profile");
+            var (transitionDialog, transitionClosed) = await Open("Alpha");
+            var transitionReads = wire.CatalogReads;
+            ((TextBox)transitionDialog.FindName("SearchBox")).Text = "Pending";
+            await Until(() => wire.CatalogReads > transitionReads);
+            if (Descendants<Button>(transitionDialog).Any(button => AutomationProperties.GetName(button).Contains("Alpha Feature")))
+                throw new InvalidOperationException("A new pending query retained the previous result rows and their Play action.");
+            transitionDialog.Hide(); await transitionClosed;
+            auth.SelectProfile("");
+            wire.RequestSearches = wire.RequestStatuses = 0;
+            var (debounceDialog, debounceClosed) = await Open("Alpha");
+            var debouncePlay = Descendants<Button>(debounceDialog).Single(button => AutomationProperties.GetName(button) == "Play Alpha Feature");
+            ((TextBox)debounceDialog.FindName("SearchBox")).Text = "Pending";
+            ((IInvokeProvider)new ButtonAutomationPeer(debouncePlay).GetPattern(PatternInterface.Invoke)).Invoke();
+            await Task.Delay(80);
+            if (debounceClosed.IsCompleted || wire.WatchReads != 0)
+                throw new InvalidOperationException("A retired Play action launched the previous item during the next query's debounce.");
+            debounceDialog.Hide(); await debounceClosed;
+            Program.Log("PASS: populated-to-pending Quick Search removes retired rows; stale Play cannot launch during debounce.");
             var (shortDialog,shortClosed)=await Open("A");await Task.Delay(450);
             if(wire.RequestSearches!=0||wire.RequestStatuses!=0)throw new InvalidOperationException("No-profile/one-character Quick Search must not discover request suggestions.");
             shortDialog.Hide();await shortClosed;
@@ -77,10 +117,14 @@ internal static class BrowseQuickInteractionsNativeFixture
             SendKey(0x26); await Task.Delay(60);
             Program.Log($"Quick keyboard after boundaries: selected={selection.Index}, keys={string.Join(",",actualKeys)}."); SendKey(0x0D);await keyboardClosed; Program.Log($"Quick keyboard afterEnter: selected={selection.Index}, keys={string.Join(",",actualKeys)}, routes={string.Join(" | ",routes.Select(route=>route.Type.Name+":"+route.Parameter))}.");
             if(routes.Count!=2||(routes[^1].Type!=typeof(ItemDetailPage)||routes[^1].Parameter as string!="alpha-movie"))throw new InvalidOperationException("Real Quick Search Down/Enter did not dismiss into the selected item's detail.");
+            var (unavailableDialog, unavailableClosed) = await Open("Unavailable");
+            if (Descendants<Button>(unavailableDialog).Any(button => AutomationProperties.GetName(button) == "Play Alpha Feature"))
+                throw new InvalidOperationException("Quick Search exposed Play despite the server returning no play_content_id.");
+            unavailableDialog.Hide(); await unavailableClosed;
             var (playDialog,playClosed)=await Open("Alpha");var play=Descendants<Button>(playDialog).Single(button=>AutomationProperties.GetName(button)=="Play Alpha Feature");play.Focus(FocusState.Programmatic);
             ((IInvokeProvider)new ButtonAutomationPeer(play).GetPattern(PatternInterface.Invoke)).Invoke();await playClosed;
-            await Until(()=>wire.WatchReads==1&&player.ContentId=="alpha-movie"&&!player.IsLoading);
-            if(routes.Count!=2||wire.LastWatchId!="alpha-movie")throw new InvalidOperationException("Actual thumbnail Play must dismiss and prepare the playable movie independently of detail navigation.");
+            await Until(()=>wire.WatchReads==1&&player.ContentId=="alpha-playable"&&!player.IsLoading);
+            if(routes.Count!=2||wire.LastWatchId!="alpha-playable")throw new InvalidOperationException("Actual thumbnail Play must use play_content_id independently of detail content_id.");
             Program.Log("PASS: real Quick Search no-profile/short-query request gating, neighbor detail UIA invocation, owned Down/Enter destination, and sibling thumbnail actual PlayerService watch request+dismissal.");
             var (portraitDialog,portraitClosed)=await Open("Alpha");
             var person=Descendants<Button>(portraitDialog).Single(button=>AutomationProperties.GetName(button)=="Open Portrait Person, Person");
@@ -115,9 +159,14 @@ internal static class BrowseQuickInteractionsNativeFixture
         {
             if(request.RequestUri?.Host!="quick-interaction.invalid")throw new InvalidOperationException("Quick Search fixture attempted external networking.");
             var path=request.RequestUri.AbsolutePath;Program.Log("Quick actual HTTP: "+request.RequestUri.PathAndQuery);object body=new{items=Array.Empty<object>()};var status=HttpStatusCode.OK;
+            if (request.RequestUri.Query.Contains("q=Pending") && (path == "/api/v2/catalog" || path == "/api/v2/catalog/people" || path.Contains("/requests/search")))
+            {
+                if (path == "/api/v2/catalog") CatalogReads++;
+                return HoldAsync(ct);
+            }
             if(path=="/portrait.png")return Task.FromResult(new HttpResponseMessage(status){Content=new ByteArrayContent(portrait)});
             if(path=="/api/v2/catalog/search/capabilities")body=new{people_media_scope=true};
-            else if(path=="/api/v2/catalog"){CatalogReads++;body=new{items=new[]{new{content_id="alpha-movie",title="Alpha Feature",type="movie",year=2025}},page=new{has_more=false}};}
+            else if(path=="/api/v2/catalog"){CatalogReads++;body=new{items=new[]{new{content_id="alpha-movie",play_content_id=request.RequestUri.Query.Contains("q=Unavailable")?null:"alpha-playable",title="Alpha Feature",type="movie",year=2025}},page=new{has_more=false}};}
             else if(path=="/api/v2/catalog/people")body=new{items=new[]{new{id="portrait-person",name="Portrait Person",photo_url="https://quick-interaction.invalid/portrait.png"}}};
             else if(path=="/api/v2/requests/status"){RequestStatuses++;body=new{requests_enabled=true};}
             else if(path.Contains("/requests/search")){RequestSearches++;body=new{results=Array.Empty<object>()};}
@@ -125,6 +174,11 @@ internal static class BrowseQuickInteractionsNativeFixture
             else if(path.StartsWith("/api/v2/settings/"))body=new{key="search.media_scope",value="video",items=Array.Empty<object>()};
             else if(path!="/api/v2/catalog/search/capabilities")throw new InvalidOperationException("Unexpected Quick Search fixture route: "+path);
             return Task.FromResult(new HttpResponseMessage(status){Content=new StringContent(JsonSerializer.Serialize(body))});
+        }
+        private static async Task<HttpResponseMessage> HoldAsync(CancellationToken ct)
+        {
+            await Task.Delay(Timeout.Infinite, ct);
+            throw new InvalidOperationException("Pending fixture unexpectedly completed.");
         }
     }
 }

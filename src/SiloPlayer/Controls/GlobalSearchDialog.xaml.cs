@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
@@ -54,7 +55,9 @@ public sealed partial class GlobalSearchDialog : ContentDialog
     private bool _peopleFirst;
     private bool _peoplePending;
     private bool _requestsPending;
-    private bool _optionalSearchFailed;
+    private bool _peopleSearchFailed;
+    private bool _catalogPending;
+    private bool _selectedByPointer;
 
     public GlobalSearchDialog()
     {
@@ -69,7 +72,9 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         // TextBox consumes arrow navigation before ordinary routed handlers.
         SearchBox.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(SearchBox_KeyDown), true);
         _scopeLoadTask = LoadScopeAsync();
-        CornerRadius = new CornerRadius(8);
+        CornerRadius = new CornerRadius(12);
+        SearchFooterHints.Children.Add(CreateKeyHint(["↑", "↓"], "Navigate"));
+        SearchFooterHints.Children.Add(CreateKeyHint(["Esc"], "Close"));
         Resources["ContentDialogPadding"] = new Thickness(0);
         Resources["ContentDialogMinHeight"] = 0d;
         Resources["ContentDialogMinWidth"] = 0d;
@@ -97,8 +102,29 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             frame.VerticalAlignment = VerticalAlignment.Top;
             frame.Margin = new Thickness(0, viewport.Height * .20, 0, 0);
         }
-        EscapeHint.Visibility = viewport.Width >= 640 && string.IsNullOrEmpty(SearchBox.Text.Trim()) ? Visibility.Visible : Visibility.Collapsed;
-        SearchFooter.Visibility = !string.IsNullOrEmpty(SearchBox.Text.Trim()) && viewport.Width >= 640 ? Visibility.Visible : Visibility.Collapsed;
+        SearchInputRow.Padding = new Thickness(viewport.Width >= 640 ? 24 : 20, 0, viewport.Width >= 640 ? 24 : 20, 0);
+        SyncSelectionHighlight();
+    }
+
+    private static Border CreateKeyChip(string key) => new()
+    {
+        CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 2, 6, 2),
+        BorderThickness = new Thickness(1), BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
+        Background = (Brush)Application.Current.Resources["SurfaceBrush"], VerticalAlignment = VerticalAlignment.Center,
+        IsHitTestVisible = false,
+        Child = new TextBlock { Text = key, FontFamily = new FontFamily("Consolas"), FontSize = 10, FontWeight = FontWeights.Medium,
+            LineHeight = 40d / 3, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] },
+    };
+
+    private static StackPanel CreateKeyHint(string[] keys, string label)
+    {
+        var hint = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        foreach (var key in keys) hint.Children.Add(CreateKeyChip(key));
+        hint.Children.Add(new TextBlock { Text = label, FontSize = 12, LineHeight = 16,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight, VerticalAlignment = VerticalAlignment.Center,
+            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        return hint;
     }
 
     private async Task LoadScopeAsync()
@@ -134,6 +160,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
     {
+        _selectedByPointer = false;
         _selection.ClearSelection();
         SyncSelectionHighlight();
         ScheduleSearch();
@@ -177,17 +204,17 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
         var cts = new CancellationTokenSource();
         _searchCts = cts;
+        _results.Clear();
+        _searchFailed = false;
+        _catalogPending = true;
         _requestResults.Clear();
         _peopleResults.Clear();
         _selection.Replace([]);
         _peoplePending = true;
         _requestsPending = true;
-        _optionalSearchFailed = false;
+        _peopleSearchFailed = false;
 
-        LoadingPanel.Visibility = Visibility.Visible;
-        ResultsScroll.Visibility = Visibility.Collapsed;
-        EmptyText.Visibility = Visibility.Collapsed;
-        ResultsDivider.Visibility = Visibility.Visible;
+        Render();
 
         try
         {
@@ -196,24 +223,24 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             var catalogTask = _catalogApi.SearchAsync(query, PreviewLimit, _mediaScope, cts.Token);
             var requestsTask = _requestDiscoveryEnabled && query.Length > 1 ? SearchRequestsAsync(query, cts.Token) : Task.FromResult(new List<RequestMediaResult>());
             var peopleTask = _peopleApi.SearchScopedAsync(query, _mediaScope == "all" ? null : _mediaScope, 4, cts.Token);
+            _ = PublishRequestResultsAsync(requestsTask, query, cts);
+            _ = PublishPeopleResultsAsync(peopleTask, query, cts);
             var response = await catalogTask;
             if (!IsCurrentSearchOwner(cts, query)) return;
 
             _results.Clear();
             _results.AddRange(response.Items);
+            _catalogPending = false;
             _hasMore = response.HasMore;
             _searchFailed = false;
             Render();
-            _ = PublishRequestResultsAsync(requestsTask, query, cts);
-            _ = PublishPeopleResultsAsync(peopleTask, query, cts);
         }
         catch (OperationCanceledException) { /* superseded by a newer query */ }
         catch
         {
             if (!IsCurrentSearchOwner(cts, query)) return;
             _results.Clear();
-            _requestResults.Clear();
-            _peopleResults.Clear();
+            _catalogPending = false;
             _hasMore = false;
             _searchFailed = true;
             Render();
@@ -240,7 +267,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         }
         catch
         {
-            if (IsCurrentSearchOwner(owner, query)) _optionalSearchFailed = true;
+            // Discovery is optional; a failed first read hides its section.
         }
         finally
         {
@@ -257,7 +284,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             _peopleResults.Clear(); _peopleResults.AddRange(people); Render();
         }
         catch (OperationCanceledException) { }
-        catch { if (IsCurrentSearchOwner(owner, query)) _optionalSearchFailed = true; }
+        catch { if (IsCurrentSearchOwner(owner, query)) _peopleSearchFailed = true; }
         finally
         {
             if (IsCurrentSearchOwner(owner, query)) { _peoplePending = false; Render(); }
@@ -302,8 +329,8 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
     private void Render()
     {
-        EscapeHint.Visibility = XamlRoot?.Size.Width >= 640 && string.IsNullOrEmpty(SearchBox.Text.Trim()) ? Visibility.Visible : Visibility.Collapsed;
-        LoadingPanel.Visibility = Visibility.Collapsed;
+        LoadingPanel.Visibility = (_catalogPending || _peoplePending) && !_searchFailed && _results.Count + _peopleResults.Count == 0
+            ? Visibility.Visible : Visibility.Collapsed;
 
         var query = SearchBox.Text.Trim();
         _renderedQuery = query;
@@ -312,6 +339,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         var peopleKeys = _peopleResults.Select(person => "person:" + person.Id);
         _selection.Replace((_peopleFirst ? peopleKeys.Concat(catalogKeys) : catalogKeys.Concat(peopleKeys))
             .Concat(_requestResults.Select(item => $"request:{item.MediaType}:{item.TmdbId}")));
+        SyncSelectionHighlight();
         if (string.IsNullOrEmpty(query))
         {
             ResultsScroll.Visibility = Visibility.Collapsed;
@@ -322,32 +350,25 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         }
 
         ResultsDivider.Visibility = Visibility.Visible;
+        ResultsScroll.Visibility = Visibility.Visible;
         SearchFooter.Visibility = XamlRoot?.Size.Width >= 640 ? Visibility.Visible : Visibility.Collapsed;
-        SearchFooterText.Text = "↑ ↓  Navigate     Esc  Close";
-        if (_optionalSearchFailed) SearchFooterText.Text = "Some search sources could not be loaded. Press Enter for the full search page.";
         ResultsPanel.Children.Clear();
 
-        if (_searchFailed)
+        EmptyText.Visibility = Visibility.Collapsed;
+        if (_searchFailed || _peopleSearchFailed && _results.Count + _peopleResults.Count == 0)
         {
-            ResultsScroll.Visibility = Visibility.Collapsed;
             EmptyText.Text = "Could not load results. Press Enter to open the search page.";
             EmptyText.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
+            EmptyText.Padding = new Thickness(12, 16, 12, 16);
             EmptyText.Visibility = Visibility.Visible;
-            return;
         }
-
-        if (_results.Count == 0 && _peopleResults.Count == 0 && _requestResults.Count == 0)
+        else if (!_catalogPending && !_peoplePending && !_requestsPending && _results.Count + _peopleResults.Count + _requestResults.Count == 0)
         {
-            ResultsScroll.Visibility = Visibility.Collapsed;
-            EmptyText.Text = _peoplePending || _requestsPending ? "Searching…"
-                : _optionalSearchFailed ? "Some search sources could not be loaded. Press Enter to retry on the search page." : "No matches";
+            EmptyText.Text = "No matches";
             EmptyText.Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"];
+            EmptyText.Padding = new Thickness(12, 24, 12, 24);
             EmptyText.Visibility = Visibility.Visible;
-            return;
         }
-
-        EmptyText.Visibility = Visibility.Collapsed;
-        ResultsScroll.Visibility = Visibility.Visible;
 
         void AddCatalogRows()
         {
@@ -369,7 +390,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             for (var i = 0; i < _peopleResults.Count; i++)
             {
                 var person = _peopleResults[i];
-                ResultsPanel.Children.Add(BuildResultRow(new MediaItem { Title = person.Name, PosterUrl = person.PhotoUrl, Type = "person" }, (_peopleFirst ? 0 : _results.Count) + i));
+                ResultsPanel.Children.Add(BuildResultRow(new MediaItem { ContentId = person.Id, Title = person.Name, PosterUrl = person.PhotoUrl, Type = "person" }, (_peopleFirst ? 0 : _results.Count) + i));
             }
         }
         if (_peopleFirst) AddCatalogRows();
@@ -378,22 +399,22 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             ResultsPanel.Children.Add(new Border
             {
                 Height = 1,
-                Margin = new Thickness(0, 4, 0, 0),
-                Background = (Brush)Application.Current.Resources["BorderBrush"],
+                Background = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["BorderBrush"]).Color) { Opacity = .6 },
             });
             if (_results.Count > 0)
             {
                 var header = new StackPanel
                 {
                     Orientation = Orientation.Horizontal,
-                    Spacing = 7,
-                    Margin = new Thickness(8, 10, 8, 4),
+                    Spacing = 8,
+                    Margin = new Thickness(12, 12, 12, 4),
                 };
                 header.Children.Add(new TextBlock
                 {
                     Text = "REQUEST TO ADD",
                     FontSize = 10,
-                    FontWeight = FontWeights.SemiBold,
+                    FontWeight = FontWeights.Medium,
+                    LineHeight = 15, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
                     CharacterSpacing = 100,
                     Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
                 });
@@ -406,6 +427,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
                     {
                         Text = _requestResults.Count.ToString(),
                         FontSize = 10,
+                        LineHeight = 15, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
                         Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
                     },
                 });
@@ -415,14 +437,17 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             {
                 ResultsPanel.Children.Add(new TextBlock
                 {
-                    Text = "Not in your library, but you can request:",
-                    Margin = new Thickness(8, 10, 8, 4),
+                    Text = _catalogPending || _searchFailed ? "Discovery matches:" : "Not in your library",
+                    Margin = new Thickness(12, 16, 12, 4),
                     FontSize = 12,
-                    Foreground = (Brush)Application.Current.Resources["WarningBrush"],
+                    LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+                    Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
                 });
             }
+            var suggestions = new StackPanel { Padding = new Thickness(4) };
             for (var i = 0; i < _requestResults.Count; i++)
-                ResultsPanel.Children.Add(BuildRequestRow(_requestResults[i], _results.Count + _peopleResults.Count + i));
+                suggestions.Children.Add(BuildRequestRow(_requestResults[i], _results.Count + _peopleResults.Count + i));
+            ResultsPanel.Children.Add(suggestions);
         }
         SyncSelectionHighlight();
     }
@@ -431,18 +456,19 @@ public sealed partial class GlobalSearchDialog : ContentDialog
     {
         var surface = new Border
         {
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = new CornerRadius(10),
             Padding = new Thickness(12, 8, 12, 8),
         };
         var grid = new Grid { ColumnSpacing = 12 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var thumb = new Border
         {
             Width = 40, Height = item.Type == "person" ? 40 : 56,
-            CornerRadius = new CornerRadius(item.Type == "person" ? 20 : 4),
-            Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"],
+            CornerRadius = new CornerRadius(item.Type == "person" ? 20 : 10),
+            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
             VerticalAlignment = VerticalAlignment.Center,
         };
         if (!string.IsNullOrWhiteSpace(item.PosterUrl))
@@ -464,9 +490,10 @@ public sealed partial class GlobalSearchDialog : ContentDialog
                 Text = item.Type == "person" ? string.Join("", (item.Title ?? "?").Split(' ', StringSplitOptions.RemoveEmptyEntries).Take(2).Select(part => part[0])).ToUpperInvariant() : (item.Title ?? string.Empty)[..Math.Min(item.Title?.Length ?? 0, 24)],
                 FontSize = item.Type == "person" ? 12 : 10,
                 TextAlignment = TextAlignment.Center,
-                TextWrapping = TextWrapping.Wrap,
+                TextWrapping = TextWrapping.WrapWholeWords,
+                LineHeight = item.Type == "person" ? 16 : 12.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
                 MaxLines = 3,
-                Margin = new Thickness(3),
+                Margin = new Thickness(4, 0, 4, 0),
                 VerticalAlignment = VerticalAlignment.Center,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             };
@@ -497,6 +524,12 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         });
         Grid.SetColumn(textStack, 1);
         grid.Children.Add(textStack);
+        var enterHint = CreateKeyChip("↵");
+        enterHint.Tag = "QuickSelectedEnter";
+        enterHint.Visibility = Visibility.Collapsed;
+        AutomationProperties.SetAccessibilityView(enterHint, AccessibilityView.Raw);
+        Grid.SetColumn(enterHint, 2);
+        grid.Children.Add(enterHint);
 
         surface.Child = grid;
         var row = new Button
@@ -512,12 +545,20 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         AutomationProperties.SetName(row,
             $"Open {item.Title}, {string.Join(", ", subtitle)}");
         row.Click += (_, _) => PickResult(index);
-        if (item.Type is not ("movie" or "episode")) return row;
+        row.PointerMoved += (_, _) => SelectResultByPointer((item.Type == "person" ? "person:" : "catalog:") + item.ContentId);
+        if (string.IsNullOrWhiteSpace(item.PlayContentId)) return row;
         var container = new Grid { Tag = index };
         container.Children.Add(row);
-        var play = new Button { Width = 40, Height = 40, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(12,0,0,0), Padding = new Thickness(0), CornerRadius = new CornerRadius(20), Content = new FontIcon { Glyph = "\uE768", FontSize = 16 }, Opacity = 0 };
+        var play = new Button { Width = 24, Height = 24, MinHeight = 0, MinWidth = 0, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(20,0,0,0), Padding = new Thickness(0), CornerRadius = new CornerRadius(12), Content = new FontIcon { Glyph = "\uE768", FontSize = 10 }, Opacity = 0 };
         AutomationProperties.SetName(play, $"Play {item.Title}");
-        play.Click += (_, _) => { Hide(); _ = App.Services.GetRequiredService<PlayerService>().PlayAsync(item.ContentId); };
+        var rowQuery = _renderedQuery;
+        var rowOwner = _searchCts;
+        play.Click += (_, _) =>
+        {
+            if (rowOwner == null || !IsCurrentSearchOwner(rowOwner, rowQuery)) return;
+            Hide();
+            _ = App.Services.GetRequiredService<PlayerService>().PlayAsync(item.PlayContentId);
+        };
         container.PointerEntered += (_, _) => play.Opacity = 1;
         container.PointerExited += (_, _) => { if (play.FocusState == FocusState.Unfocused) play.Opacity = 0; };
         play.GotFocus += (_, _) => play.Opacity = 1;
@@ -527,7 +568,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
 
     private Button BuildRequestRow(RequestMediaResult item, int index)
     {
-        var poster = new Border { Width = 40, Height = 56, CornerRadius = new CornerRadius(4), Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"] };
+        var poster = new Border { Width = 40, Height = 56, CornerRadius = new CornerRadius(10), Background = (Brush)Application.Current.Resources["SurfaceBrush"], Opacity = item.Request.Requestable ? 1 : .7 };
         if (!string.IsNullOrWhiteSpace(item.PosterUrl))
         {
             poster.Child = new Image
@@ -551,41 +592,39 @@ public sealed partial class GlobalSearchDialog : ContentDialog
                 VerticalAlignment = VerticalAlignment.Center,
             };
         }
-        var text = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-        text.Children.Add(new TextBlock { Text = item.Title, FontSize = 13, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+        var text = new StackPanel { Spacing = 0, VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(new TextBlock { Text = item.Title, FontSize = 14, FontWeight = FontWeights.Medium, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextTrimming = TextTrimming.CharacterEllipsis });
         var metadata = new List<string>();
         if (!string.IsNullOrWhiteSpace(item.YearText)) metadata.Add(item.YearText);
         metadata.Add(TypeLabel(item.MediaType));
-        text.Children.Add(new TextBlock { Text = string.Join(" \u00B7 ", metadata), FontSize = 11, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
-        var grid = new Grid { ColumnSpacing = 10 };
+        text.Children.Add(new TextBlock { Text = string.Join(" \u00B7 ", metadata), FontSize = 12, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        var grid = new Grid { ColumnSpacing = 12 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         Grid.SetColumn(text, 1); grid.Children.Add(poster); grid.Children.Add(text);
         var requestable = item.Request.Requestable;
-        var badge = new Border
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        if (!string.IsNullOrEmpty(item.Request.Status))
         {
-            CornerRadius = new CornerRadius(8),
-            Padding = new Thickness(8, 2, 8, 2),
-            BorderThickness = new Thickness(1),
-            BorderBrush = (Brush)Application.Current.Resources[requestable ? "WarningBrush" : "BorderBrush"],
-            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = new TextBlock
-            {
-                Text = requestable ? "REQUEST" : item.RequestLabel.ToUpperInvariant(),
-                FontSize = 9,
-                FontWeight = requestable ? FontWeights.SemiBold : FontWeights.Medium,
-                CharacterSpacing = 50,
-                Foreground = (Brush)Application.Current.Resources[requestable ? "WarningBrush" : "SecondaryTextBrush"],
-            },
-        };
-        Grid.SetColumn(badge, 2);
-        grid.Children.Add(badge);
+            var badge = ExternalTitleCard.StatusBadge(RequestViewerPolicy.Label(item.Request.Status, null, item.Request.State));
+            badge.CornerRadius = new CornerRadius(10);
+            badge.VerticalAlignment = VerticalAlignment.Center;
+            Grid.SetColumn(badge, 2); grid.Children.Add(badge);
+        }
+        else if (!requestable)
+        {
+            var reason = new TextBlock { Text = RequestViewerPolicy.Reason(item.Request.Reason), FontSize = 11, VerticalAlignment = VerticalAlignment.Center,
+                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] };
+            Grid.SetColumn(reason, 2); grid.Children.Add(reason);
+        }
+        var enter = CreateKeyChip("↵"); enter.Tag = "QuickSelectedEnter"; enter.Visibility = Visibility.Collapsed;
+        AutomationProperties.SetAccessibilityView(enter, AccessibilityView.Raw);
+        Grid.SetColumn(enter, 3); grid.Children.Add(enter);
         var surface = new Border
         {
-            CornerRadius = new CornerRadius(6),
-            Padding = new Thickness(8, 6, 8, 6),
+            CornerRadius = new CornerRadius(10),
+            Padding = new Thickness(12, 8, 12, 8),
             Child = grid,
         };
         var row = new Button
@@ -597,11 +636,11 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Content = surface,
             Tag = index,
-            Opacity = requestable ? 1 : 0.7,
         };
         AutomationProperties.SetName(row,
             $"Open request details for {item.Title}, {string.Join(", ", metadata)}");
         row.Click += (_, _) => PickResult(index);
+        row.PointerMoved += (_, _) => SelectResultByPointer($"request:{item.MediaType}:{item.TmdbId}");
         return row;
     }
 
@@ -618,10 +657,28 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         _ => type ?? "",
     };
 
+    private void SelectResultByPointer(string key)
+    {
+        if (_renderedQuery != SearchBox.Text.Trim()) return;
+        var previousIndex = _selection.Index;
+        _selectedByPointer = true;
+        _selection.Select(key);
+        if (_selection.Index == previousIndex) return;
+        SyncSelectionHighlight();
+    }
+
     private void SyncSelectionHighlight()
     {
+        var wide = XamlRoot?.Size.Width >= 640;
+        var hasQuery = !string.IsNullOrEmpty(SearchBox.Text.Trim());
+        EscapeHint.Visibility = wide && !hasQuery ? Visibility.Visible : Visibility.Collapsed;
+        SeeAllHint.Visibility = wide && hasQuery && _selection.Index < 0 && LoadingPanel.Visibility != Visibility.Visible
+            && ResultsScroll.Visibility == Visibility.Visible && _results.Count + _peopleResults.Count + _requestResults.Count > 0
+            ? Visibility.Visible : Visibility.Collapsed;
+        SearchFooter.Visibility = wide && hasQuery ? Visibility.Visible : Visibility.Collapsed;
         FrameworkElement? selectedElement = null;
-        foreach (var child in ResultsPanel.Children)
+        foreach (var child in ResultsPanel.Children.SelectMany(child => child is StackPanel group
+                     ? group.Children.Cast<UIElement>() : new[] { child }))
         {
             var candidate = child is Grid host ? host.Children.OfType<Button>().FirstOrDefault() : child;
             if (candidate is Button { Tag: int resultIndex, Content: Border surface } button)
@@ -629,6 +686,9 @@ public sealed partial class GlobalSearchDialog : ContentDialog
                 surface.Background = resultIndex == _selection.Index
                     ? (Brush)Application.Current.Resources["AccentBackgroundBrush"]
                     : new SolidColorBrush(Colors.Transparent);
+                if (surface.Child is Grid rowGrid)
+                    foreach (var hint in rowGrid.Children.OfType<Border>().Where(hint => hint.Tag as string == "QuickSelectedEnter"))
+                        hint.Visibility = wide && resultIndex == _selection.Index ? Visibility.Visible : Visibility.Collapsed;
                 if (resultIndex == _selection.Index)
                 {
                     selectedElement = button;
@@ -637,7 +697,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
         }
 
         // Scroll selected into view.
-        if (selectedElement is not null)
+        if (selectedElement is not null && !_selectedByPointer)
         {
             selectedElement.StartBringIntoView(new Microsoft.UI.Xaml.BringIntoViewOptions
             {
@@ -654,6 +714,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             case VirtualKey.Down:
                 if (_renderedQuery == SearchBox.Text.Trim())
                 {
+                    _selectedByPointer = false;
                     _selection.Move(1);
                     SyncSelectionHighlight();
                     e.Handled = true;
@@ -662,6 +723,7 @@ public sealed partial class GlobalSearchDialog : ContentDialog
             case VirtualKey.Up:
                 if (_renderedQuery == SearchBox.Text.Trim())
                 {
+                    _selectedByPointer = false;
                     _selection.Move(-1);
                     SyncSelectionHighlight();
                     e.Handled = true;

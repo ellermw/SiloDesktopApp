@@ -15,6 +15,8 @@ public sealed class SearchSelectionState
 
     public void ClearSelection() => Index = -1;
 
+    public void Select(string key) => Index = Array.IndexOf(_keys, key);
+
     public int Move(int direction)
     {
         if (_keys.Length == 0) return Index = -1;

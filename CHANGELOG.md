@@ -2,6 +2,14 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.104 (2026-10-07 — local easiest-first parity checkpoint)
+
+- Align Quick Search's responsive frame, keyboard hints, selected states and request suggestions with current public Silo WebUI main.
+- Use the server's playable target, publish healthy search sources independently, and prevent previous-query rows or Play actions from surviving a new query.
+- Select pointer-highlighted search results by identity while retaining input focus for Enter. Native callback/keyboard behavior is verified; physical mouse delivery remains a separate check.
+- Correct Notifications timestamp/action geometry and Preferences typography/switch spacing.
+- Seven distinct corrections after1.2.97, bringing the recorded total to104.1,406 unit tests,15 published playback checks and final native search/personal-list checks pass. [Installer and limitations](docs/releases/1.2.104.md). This local checkpoint is not a completed parity release; the published README download remains1.2.94.
+
 ## 1.2.97 (2026-10-07 — local reader/account/network sign-in checkpoint)
 
 - Correct six compact reader controls constrained by the shared36px minimum; actual native32px bounds and neighboring profile/tab/bookmark/progress checks pass.

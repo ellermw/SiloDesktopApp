@@ -248,7 +248,7 @@ public sealed class SearchRuntimeRegressionTests
 
         Assert.Contains(".Take(4)", dialog);
         Assert.Contains("Text = \"REQUEST TO ADD\"", dialog);
-        Assert.Contains("Text = \"Not in your library, but you can request:\"", dialog);
+        Assert.Contains("\"Not in your library\"", dialog);
         Assert.Contains("Width = 40, Height = 56", dialog);
         Assert.Contains("metadata.Add(TypeLabel(item.MediaType))", dialog);
         Assert.DoesNotContain("Request to add\", FontSize = 11", dialog);

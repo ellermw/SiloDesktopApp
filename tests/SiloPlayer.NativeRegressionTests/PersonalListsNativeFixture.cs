@@ -66,6 +66,8 @@ internal static class PersonalListsNativeFixture
                     var firstPoint = first.TransformToVisual(repeater).TransformPoint(new());
                     var secondPoint = second.TransformToVisual(repeater).TransformPoint(new());
                     Program.Log($"Watchlist actual grid={repeater.ActualWidth}, min={layout.MinItemWidth}, host={first.ActualWidth}, first={firstPoint.X},{firstPoint.Y}, second={secondPoint.X},{secondPoint.Y}.");
+                    foreach (var caption in Descendants<TextBlock>(first).Where(t => t.Text == "Fixture series" || t.Text == "SERIES · 2026" || t.Inlines.Count > 0))
+                        Program.Log($"Watchlist caption '{caption.Text}': y={caption.TransformToVisual(first).TransformPoint(new()).Y:R}, height={caption.ActualHeight:R}, font={caption.FontSize:R}, line={caption.LineHeight:R}, margin={caption.Margin}.");
                     if (Math.Abs(firstPoint.Y - secondPoint.Y) > 1 || secondPoint.X <= firstPoint.X)
                         throw new InvalidOperationException("The actual external watchlist collapses its intended columns into separate rows.");
                     // Page/Frame RTB omits unpainted padding; capture the exact
@@ -106,11 +108,31 @@ internal static class PersonalListsNativeFixture
                     // translated intermediate frames.
                     await Task.Delay(500);
                     await MediaParityNativeFixture.CaptureAsync(inboxViewport, $"notifications-{width:0}.png");
+                    var preferences = (Microsoft.UI.Xaml.Controls.Flyout)((Button)inbox.FindName("PreferencesButton")).Flyout;
+                    preferences.ShowAt((Button)inbox.FindName("PreferencesButton")); await Task.Delay(100);
+                    var preferencePanel = (FrameworkElement)inbox.FindName("PreferenceControlsPanel"); preferencePanel.UpdateLayout();
+                    await MediaParityNativeFixture.CaptureAsync(preferencePanel, $"notification-preferences-{width:0}.png");
+                    var preferenceLabels = Descendants<TextBlock>(preferencePanel).Where(t => t.Text is "Notifications" or "Favorites" or "Watchlist" or "Continue Watching" or "Next Up").ToArray();
+                    var labelMeasurements = string.Join(";", preferenceLabels.Select(t => $"{t.Text}:{t.FontSize:R}/{t.FontWeight.Weight}/{t.ActualHeight:R}"));
+                    Program.Log($"Inbox preference panel {width}: {preferencePanel.ActualWidth:R}x{preferencePanel.ActualHeight:R}, labels={labelMeasurements}.");
+                    if (Math.Abs(preferencePanel.ActualHeight - 251) > 1 || preferenceLabels.Length != 5 || preferenceLabels.Any(t => t.FontSize != 14 || t.FontWeight.Weight != 500 || Math.Abs(t.ActualHeight - 20) > .6))
+                        throw new InvalidOperationException("Notification preference label typography and row heights differ from current WebUI.");
+                    preferences.Hide(); await Task.Delay(30);
                     var list = (ListView)inbox.FindName("NotificationsList");
                     var firstRow = (ListViewItem)list.ContainerFromItem(notifications.Notifications[0]);
                     var rowRoot = Descendants<Grid>(firstRow).First(g => g.Name == "NotificationRowRoot");
                     var titleElement = Descendants<TextBlock>(rowRoot).First(t => t.Name == "NotificationTitleText");
                     Program.Log($"TRACE inbox geometry listY={list.TransformToVisual(inbox).TransformPoint(new()).Y}, rowY={rowRoot.TransformToVisual(inbox).TransformPoint(new()).Y}, titleY={titleElement.TransformToVisual(inbox).TransformPoint(new()).Y}, titleH={titleElement.ActualHeight}, rowH={rowRoot.ActualHeight}");
+                    var timestamp = Descendants<TextBlock>(rowRoot).Single(t => t.Text == notifications.Notifications[0].RelativeTime);
+                    var timestampRight = timestamp.TransformToVisual(rowRoot).TransformPoint(new()).X + timestamp.ActualWidth;
+                    var inlineRead = (Button)rowRoot.FindName("InlineMarkReadButton");
+                    var readOrigin = inlineRead.TransformToVisual(rowRoot).TransformPoint(new());
+                    var artwork = Descendants<Border>(rowRoot).Single(b => b.Width == 44 && b.Height == 64);
+                    Program.Log($"Inbox visual {width}: timestampRight={timestampRight:R}/{rowRoot.ActualWidth - 12:R}, inline={readOrigin.X:R},{readOrigin.Y:R} {inlineRead.ActualWidth:R}x{inlineRead.ActualHeight:R}, rowRadius={rowRoot.CornerRadius.TopLeft:R}, posterRadius={artwork.CornerRadius.TopLeft:R}.");
+                    if (Math.Abs(timestampRight - (rowRoot.ActualWidth - 12)) > .6 || rowRoot.CornerRadius.TopLeft != 16 || artwork.CornerRadius.TopLeft != 10
+                        || Math.Abs(inlineRead.ActualHeight - 28) > .6 || Math.Abs(inlineRead.ActualWidth - 28) > .6
+                        || Math.Abs(readOrigin.X - (rowRoot.ActualWidth - 36)) > .6 || Math.Abs(readOrigin.Y - (rowRoot.ActualHeight - 36)) > .6)
+                        throw new InvalidOperationException("Notification timestamp gutter/corners/28px inline action differ from current rendered WebUI.");
                     var visited = new List<(Type Page, object? Parameter)>();
                     navigation.NavigationRequestHandler = (type, parameter) => { visited.Add((type, parameter)); return true; };
                     var item = (ListViewItem)list.ContainerFromItem(notifications.Notifications[1]);

@@ -1,5 +1,7 @@
 # Remaining parity execution — October 7
 
+Latest user steering supersedes the earlier reader/account order: execute the difficulty list **14 down to1**, easiest first. Quick Search C098–102 and Notifications C103–104 are verified in local1.2.104. See the [easiest-first execution record](2026-10-07-easiest-first.md) for current acceptance and remaining work; the previous1.2.97 receipt below remains historical. The installed app and GitHub download remain unchanged.
+
 The user authorized continuing the14-group checklist, starting with the reader controls and then Settings/authentication. Reuse the existing clean candidate branch after the1.2.94 publication at188f62e7f963bc25ad7984c680f3737311ac2b28; preserve the original D:\SiloPlayer checkout and installed app.
 
 Official public main fetched directly from `https://github.com/Silo-Server/silo-server`: **74158b4a8a799192312c13253552b8030af8575c**. The last accepted reference was478afa5257332df52f10650cd00b88596562d4c9. The new reference changes652 files under web/src; this is not652 desktop defects. Record applicable deltas as each existing group is finalized, rather than treating older passing fixtures as current-source acceptance. EbookReader.tsx is unchanged between these commits.

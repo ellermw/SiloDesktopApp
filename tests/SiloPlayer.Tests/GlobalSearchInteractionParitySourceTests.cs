@@ -8,9 +8,9 @@ public sealed class GlobalSearchInteractionParitySourceTests
         var source = Read("src", "SiloPlayer", "Controls", "GlobalSearchDialog.xaml.cs");
 
         Assert.Contains("private FrameworkElement BuildResultRow", source);
-        Assert.Contains("item.Type is not (\"movie\" or \"episode\")", source);
+        Assert.Contains("string.IsNullOrWhiteSpace(item.PlayContentId)", source);
         Assert.Contains("AutomationProperties.SetName(play,", source);
-        Assert.Contains("PlayAsync(item.ContentId)", source);
+        Assert.Contains("PlayAsync(item.PlayContentId)", source);
         Assert.Contains("private Button BuildRequestRow", source);
         Assert.Contains("AutomationProperties.SetName(row,", source);
         Assert.Contains("row.Click += (_, _) => PickResult(index)", source);
@@ -39,8 +39,8 @@ public sealed class GlobalSearchInteractionParitySourceTests
         Assert.Contains("var response = await catalogTask;", source);
         Assert.Contains("_ = PublishRequestResultsAsync(requestsTask, query, cts);", source);
         Assert.True(
-            source.IndexOf("Render();", source.IndexOf("var response = await catalogTask;", StringComparison.Ordinal), StringComparison.Ordinal)
-            < source.IndexOf("_ = PublishRequestResultsAsync(requestsTask, query, cts);", StringComparison.Ordinal));
+            source.IndexOf("_ = PublishRequestResultsAsync(requestsTask, query, cts);", StringComparison.Ordinal)
+            < source.IndexOf("var response = await catalogTask;", StringComparison.Ordinal));
         Assert.Contains("this.Closed += OnClosed;", source);
         Assert.Contains("_debounceTimer?.Stop();", source);
         Assert.Contains("Interlocked.Exchange(ref _searchCts, null)", source);

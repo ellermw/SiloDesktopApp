@@ -38,7 +38,7 @@
         </ControlTemplate>
     </ContentDialog.Resources>
 
-    <Grid x:Name="SearchSurface" Width="464" MinHeight="72" RowSpacing="0">
+    <Grid x:Name="SearchSurface" Width="464" RowSpacing="0">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
@@ -47,7 +47,7 @@
         </Grid.RowDefinitions>
 
         <!-- Search input row -->
-        <Grid Grid.Row="0" ColumnSpacing="8" Padding="20,0" Height="48">
+        <Grid x:Name="SearchInputRow" Grid.Row="0" ColumnSpacing="8" Padding="20,0" Height="48">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
@@ -65,13 +65,26 @@
                 FontSize="14" Height="48" MinHeight="0" Padding="0,14,0,14" VerticalContentAlignment="Center"
                 Template="{StaticResource QuickSearchInputTemplate}"
                 TextChanged="SearchBox_TextChanged" />
-            <TextBlock x:Name="EscapeHint" Grid.Column="2"
-                       Text="ESC"
-                       FontSize="11"
-                       Foreground="{StaticResource TertiaryTextBrush}"
-                       CharacterSpacing="120"
-                       VerticalAlignment="Center"
-                       Margin="0,0,10,0" />
+            <Border x:Name="EscapeHint" Grid.Column="2" CornerRadius="4"
+                    BorderThickness="1" BorderBrush="{StaticResource BorderBrush}"
+                    Background="{StaticResource SurfaceBrush}" Padding="6,2"
+                    VerticalAlignment="Center" Margin="8,0,0,0" IsHitTestVisible="False">
+                <TextBlock Text="ESC" FontFamily="Consolas" FontSize="10" FontWeight="Medium"
+                           LineHeight="15" LineStackingStrategy="BlockLineHeight"
+                           Foreground="{StaticResource SecondaryTextBrush}" />
+            </Border>
+            <StackPanel x:Name="SeeAllHint" Grid.Column="2" Orientation="Horizontal" Spacing="6"
+                        VerticalAlignment="Center" Margin="8,0,0,0" Visibility="Collapsed"
+                        IsHitTestVisible="False">
+                <Border CornerRadius="4" BorderThickness="1" BorderBrush="{StaticResource BorderBrush}"
+                        Background="{StaticResource SurfaceBrush}" Padding="6,2">
+                    <TextBlock Text="↵" FontFamily="Consolas" FontSize="10" FontWeight="Medium"
+                               LineHeight="13.3333333333" LineStackingStrategy="BlockLineHeight"
+                               Foreground="{StaticResource SecondaryTextBrush}" />
+                </Border>
+                <TextBlock Text="See all" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight"
+                           Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+            </StackPanel>
         </Grid>
 
         <!-- Divider -->
@@ -86,36 +99,29 @@
                 VerticalScrollBarVisibility="Auto"
                 HorizontalScrollBarVisibility="Disabled"
                 Visibility="Collapsed">
-                <StackPanel x:Name="ResultsPanel" Spacing="0" Padding="8" />
-            </ScrollViewer>
-
-            <!-- Loading -->
-            <StackPanel x:Name="LoadingPanel" Orientation="Horizontal" Spacing="10"
-                        HorizontalAlignment="Center" VerticalAlignment="Center"
-                        Padding="0,20,0,20" Visibility="Collapsed">
-                <ProgressRing IsActive="True" Width="18" Height="18" />
-                <TextBlock Text="Searching..." FontSize="13"
-                           Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
-            </StackPanel>
+                <StackPanel Padding="8">
+            <Grid x:Name="LoadingPanel" Padding="12,24" Visibility="Collapsed">
+                <TextBlock Text="Searching..." FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight"
+                           TextAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" />
+            </Grid>
 
             <!-- Empty -->
             <TextBlock x:Name="EmptyText"
                        Text="No matches"
-                       FontSize="13"
-                       HorizontalAlignment="Center"
-                       Padding="0,20,0,20"
+                       FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight"
+                       TextAlignment="Center" TextWrapping="Wrap"
+                       Padding="12,24"
                        Foreground="{StaticResource SecondaryTextBrush}"
                        Visibility="Collapsed" />
+                    <StackPanel x:Name="ResultsPanel" Spacing="0" />
+                </StackPanel>
+            </ScrollViewer>
         </Grid>
 
         <Border Grid.Row="3" x:Name="SearchFooter" Visibility="Collapsed"
                 BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0"
                 Padding="12,8">
-            <TextBlock x:Name="SearchFooterText"
-                       Text="Press Enter to open the full search page."
-                       HorizontalAlignment="Center"
-                       FontSize="12"
-                       Foreground="{StaticResource SecondaryTextBrush}" />
+            <StackPanel x:Name="SearchFooterHints" Orientation="Horizontal" Spacing="16" HorizontalAlignment="Center" />
         </Border>
     </Grid>
 </ContentDialog>
