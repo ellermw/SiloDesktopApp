@@ -4,7 +4,26 @@ User direction: start at difficulty item14 and work backward. These difficulty n
 
 ## Execution order
 
-14 Quick Search;13 Favorites/Watchlist/Notifications;12 Person/Calendar;11 filters;10 metadata/conditional dialogs;9 Requests;8 collections/wizard;7 Home/library;6 movie/series/audio/manga detail;5 shared controls/shell;4 auth/profiles;3 Settings;2 Watch Party;1 native playback/reader.
+Updated after the user's status question: **neither14 nor13 is marked fully finalized**. Seven fixes in these areas are verified; that is distinct from completing their entire acceptance checklist. Earlier implementations and verified repairs in other areas remain retained.
+
+| Difficulty item | Area | Current status / next work |
+|---|---|---|
+|14|Quick Search|Fixes implemented and verified; final physical mouse hover/selection check remains open.|
+|13|Favorites / Watchlist / Notifications|In progress. Notifications row/preferences repairs verified; Watchlist badge sizing and remaining visual/interaction/state comparisons remain.|
+|12|Person / Calendar|Pending finalization.|
+|11|Filters|Pending finalization.|
+|10|Metadata / conditional dialogs|Pending finalization.|
+|9|Requests|Pending finalization.|
+|8|Collections / wizard|Pending finalization.|
+|7|Home / library|Pending finalization.|
+|6|Movie / series / audio / manga detail|Pending finalization.|
+|5|Shared controls / shell|Pending finalization.|
+|4|Authentication / profiles|Pending finalization; prior verified sign-in repairs retained.|
+|3|Settings|Pending finalization; prior verified account/linking repairs retained.|
+|2|Watch Party|Pending finalization.|
+|1|Native playback / reader|Pending hardening/final acceptance; prior playback and reader repairs retained.|
+
+Continue13, resolve14's remaining physical-input check when available, then work12 down to1. Pending finalization does not mean these features are absent or all earlier work must be repeated.
 
 ## Current checkpoint
 
