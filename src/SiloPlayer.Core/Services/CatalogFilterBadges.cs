@@ -6,29 +6,52 @@ namespace SiloPlayer.Core.Services;
 /// <summary>Readable secondary-filter badges, retaining the rules each remove action owns.</summary>
 public static class CatalogFilterBadges
 {
-    public sealed record Badge(string Label, QueryGroup Group, IReadOnlyList<QueryRule> Rules)
+    public sealed record Badge(string Label, QueryGroup Group, IReadOnlyList<QueryRule> Rules, QueryDefinition? Query = null)
     {
-        public void Remove() { foreach (var rule in Rules) Group.Rules.Remove(rule); }
+        public void Remove()
+        {
+            foreach (var rule in Rules) Group.Rules.Remove(rule);
+            if (Query == null) return;
+            if (Group.Match == "any" && Group.Rules is [{ Field: "original_language" }] remaining)
+            {
+                var all = Query.Groups.FirstOrDefault(group => group.Match == "all");
+                if (all == null) Group.Match = "all";
+                else { all.Rules.Add(remaining[0]); Group.Rules.Clear(); }
+            }
+            Query.Groups.RemoveAll(group => group.Rules.Count == 0);
+        }
     }
+
+    public static int ActiveCount(QueryDefinition query, string? mediaScope = null) => GuidedQuerySupport.CanEdit(query, mediaScope)
+        ? Create(query, mediaScope).Count : query.Groups.Sum(group => group.Rules.Count);
 
     public static IReadOnlyList<Badge> Create(QueryDefinition query, string? mediaScope = null)
     {
         var badges = new List<Badge>();
+        if (!GuidedQuerySupport.CanEdit(query, mediaScope)) return badges;
         foreach (var group in query.Groups)
         {
             // Bounds in an OR group are independent alternatives, not a range.
             var from = group.Match == "all" ? group.Rules.FirstOrDefault(rule => rule.Field == "year" && rule.Op == "gte") : null;
             var to = group.Match == "all" ? group.Rules.FirstOrDefault(rule => rule.Field == "year" && rule.Op == "lte") : null;
             var combinedYear = false;
+            var watched = group.Rules.FirstOrDefault(rule => rule.Field == "watched");
+            var progress = group.Rules.FirstOrDefault(rule => rule.Field == "in_progress");
             foreach (var rule in group.Rules)
             {
+                if (watched != null && progress != null && Value(watched) == "false" && Value(progress) == "false" &&
+                    (ReferenceEquals(rule, watched) || ReferenceEquals(rule, progress)))
+                {
+                    if (ReferenceEquals(rule, watched)) badges.Add(new(Label(watched, mediaScope), group, [watched, progress], query));
+                    continue;
+                }
                 if (from != null && to != null && (ReferenceEquals(rule, from) || ReferenceEquals(rule, to)))
                 {
-                    if (!combinedYear) badges.Add(new($"Year: {Value(from)}–{Value(to)}", group, [from, to]));
+                    if (!combinedYear) badges.Add(new($"Year: {Value(from)}–{Value(to)}", group, [from, to], query));
                     combinedYear = true;
                     continue;
                 }
-                badges.Add(new(Label(rule, mediaScope), group, [rule]));
+                badges.Add(new(Label(rule, mediaScope), group, [rule], query));
             }
         }
         return badges;

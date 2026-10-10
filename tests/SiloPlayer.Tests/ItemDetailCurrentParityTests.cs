@@ -89,9 +89,10 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("TitleText.LineStackingStrategy = LineStackingStrategy.BlockLineHeight", code);
         Assert.Contains("TitleText.LineHeight = TitleText.FontSize * (isSeason ? 1.1d : 0.98d)", code);
         Assert.Contains("FontWeight=\"ExtraBold\"", xaml);
-        Assert.Contains("_uiCustomizationService.GetPosterColumnCount(innerWidth)", code);
+        Assert.Contains("new CarouselRail(SimilarScroller, webUiEdges: true)", code);
         Assert.Contains("_ => contentWidth >= 1280 ? 8", customization);
-        Assert.Contains("card.SetCatalogGridLayout(cardWidth)", code);
+        Assert.Contains("card.SetLayout(cardWidth, showCaption)", code);
+        Assert.Contains("x:Name=\"SimilarPanel\" Orientation=\"Horizontal\" Spacing=\"20\"", xaml);
         Assert.Contains("response.Items.Take(12)", viewModel);
         Assert.Contains("x:Name=\"SeasonsPrevButton\"", xaml);
         Assert.Contains("x:Name=\"SeasonsNextButton\"", xaml);
@@ -409,7 +410,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("BookNarratorLine", xaml);
         Assert.Contains("Resume Reading", page);
         Assert.Contains("Listen from Start", xaml);
-        Assert.Contains("new EbookReaderNavigation(target, _readerTargetFileId)", page);
+        Assert.Contains("new EbookReaderNavigation(target, _readerTargetFileId, ViewModel.LibraryId)", page);
         Assert.Contains("startPositionOverride: chapter.AbsoluteStart", page);
         Assert.Contains("offset += Math.Max(0, version.Duration)", page);
         Assert.Contains("OrderByDescending(row => row.DurationSeconds)", page);
@@ -453,7 +454,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("LoadSeasonEpisodesAsync(", page);
         Assert.Contains("ViewModel.Item.ContentId,", page);
         Assert.Contains("navigationToken", page);
-        Assert.Contains("GetItemEpisodesAsync(seasonContentId)", page);
+        Assert.Contains("GetItemEpisodesAsync(seasonContentId, libraryId, ct)", page);
         Assert.Contains("PlayButtonText.Text = \"Play First Episode\"", page);
         Assert.Contains("_playableContentId = firstEpisode?.ContentId", page);
         Assert.Contains("No playable episodes found for this season.", page);
@@ -474,7 +475,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("ViewModel.Seasons[0]", page);
         Assert.Contains("singleSeason.ContentId", page);
         Assert.Contains("singleSeason.SeasonNumber", page);
-        Assert.Contains("GetItemEpisodesAsync(seasonContentId)", page);
+        Assert.Contains("GetItemEpisodesAsync(seasonContentId, libraryId, ct)", page);
         Assert.Contains("SeasonNumber == 0", page);
         Assert.Contains("EpisodesHeader.Text = ViewModel.SelectedSeasonNumber == 0", page);
         Assert.DoesNotContain("ViewModel.Seasons.Count <= 1", page);
@@ -506,13 +507,13 @@ public sealed class ItemDetailCurrentParityTests
         var landscape = Read("src", "SiloPlayer", "Controls", "LandscapeCard.xaml.cs");
 
         Assert.Contains("EpisodesSection.Visibility = Visibility.Collapsed", page);
-        Assert.Contains("Navigate<ItemDetailPage>(season.ContentId)", page);
+        Assert.Contains("Navigate<ItemDetailPage>(MediaNavigationContext.Detail(season.ContentId, ViewModel.LibraryId))", page);
         Assert.Contains("item.Type is \"season\" or \"episode\"", page);
         Assert.Contains("\"series\" => \"Mark Series Unwatched\"", page);
         Assert.Contains("\"season\" => \"Mark Season Unwatched\"", page);
         Assert.Contains("EpisodeContextText.Text = $\"S{item.SeasonNumber}", page);
         Assert.Contains("ItemSource = \"episode_carousel\"", page);
-        Assert.Contains("nav.Navigate<ItemDetailPage>(MediaItem.ContentId)", landscape);
+        Assert.Contains("nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, MediaNavigationContext.LibraryId(this)))", landscape);
         Assert.Contains("private void OnHeadingClick", landscape);
         Assert.Contains("MediaItem.ItemSource != \"episode_carousel\"", landscape);
         Assert.Contains("headingIsSeries ? MediaItem.SeriesId! : MediaItem.ContentId", landscape);
@@ -564,7 +565,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("_pendingSiblingEpisodeIndex * (cardWidth + gap)", page);
         Assert.DoesNotContain("cardCenter - viewport / 2d", page);
         Assert.Contains("x:Name=\"SiblingEpisodesPanel\"", xaml);
-        Assert.Contains("Margin=\"16,0,0,0\"", xaml);
+        Assert.Contains("SiblingEpisodesScrollViewer.Padding = new Thickness(narrow ? 2 : 16", page);
         Assert.Contains("Text=\"More Episodes\" Style=\"{StaticResource TitleTextStyle}\" FontSize=\"20\"", xaml);
         Assert.Contains("x:Name=\"SiblingEpisodesPrevButton\"", xaml);
         Assert.Contains("x:Name=\"SiblingEpisodesNextButton\"", xaml);
@@ -638,7 +639,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("DefaultLeafPlayLabel(item.Type)", page);
         Assert.Contains("? \"Play Episode\"", page);
         Assert.Contains("userData.WatchedCount > 0 || userData.InProgressCount > 0", page);
-        Assert.Contains("$\"{userData!.WatchedCount} of {season.EpisodeCount} episodes\"", page);
+        Assert.Contains("$\"{userData!.WatchedCount} of {count}\"", page);
         Assert.Contains("FormatSeasonProgressText(season)", page);
     }
 

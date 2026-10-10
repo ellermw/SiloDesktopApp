@@ -218,12 +218,30 @@ public sealed partial class SettingsPage : Page
         SettingsContentPanel.HorizontalAlignment = HorizontalAlignment.Left;
         SettingsHeaderGrid.Visibility = isCompact && !_showingSettingsOverview ? Visibility.Collapsed : Visibility.Visible;
         ReflowSettingsRows(SettingsContentPanel, isCompact);
+        ReflowSettingsDirectory();
         ReflowInterfacePresets();
         ReflowSettingsShell();
     }
 
     private void ReflowSettingsShell()
     {
+        var gutter = ActualWidth < 640 ? 16 : ActualWidth < 1024 ? 24 : ActualWidth < 1280 ? 40 : 48;
+        SettingsPageShell.MaxWidth = 1520 - gutter * 2;
+        if (SettingsHeaderGrid.Children.OfType<StackPanel>().FirstOrDefault() is { } heading && heading.Children.OfType<TextBlock>().FirstOrDefault() is { } headerTitle)
+        {
+            headerTitle.FontSize = Math.Clamp(SiloPlayer.Helpers.WebUiViewport.Width(this, ActualWidth) * .04, 32, 48);
+            headerTitle.LineHeight = headerTitle.FontSize * .95;
+            headerTitle.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+            heading.Spacing = 12;
+        }
+        SettingsHeaderSubtitle.FontSize = ActualWidth < 640 ? 14 : 16;
+        SettingsHeaderSubtitle.LineHeight = ActualWidth < 640 ? 21 : 24;
+        SettingsHeaderSubtitle.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        SettingsCurrentProfileButton.HorizontalAlignment = ActualWidth < 640 ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+        SettingsCurrentProfileButton.Width = Math.Min(448, Math.Max(0, ActualWidth - gutter * 2));
+        SettingsCurrentProfileButton.Background = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["SurfaceBrush"]).Color) { Opacity = .72 };
+        SettingsCurrentProfileButton.BorderBrush = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["BorderBrush"]).Color) { Opacity = .62 };
+        SettingsCurrentProfileButton.BorderThickness = new Thickness(1);
         var compactDetail = ActualWidth < 1024 && !_showingSettingsOverview;
         SettingsBackButton.Visibility = compactDetail ? Visibility.Collapsed : Visibility.Visible;
         SettingsLayoutGrid.Margin = new Thickness(0, compactDetail ? 12 : 40, 0, 0);
@@ -303,7 +321,8 @@ public sealed partial class SettingsPage : Page
         {
             var child = VisualTreeHelper.GetChild(parent, index);
             if (child is Grid grid && grid.ColumnDefinitions.Count == 2 && grid.Children.Count >= 2
-                && grid.Children[0] is TextBlock or StackPanel && grid != SettingsLayoutGrid && grid.Tag as string != "preset-icon-row" && grid.Tag as string != "title-art-row")
+                && grid.Children[0] is TextBlock or StackPanel && grid != SettingsLayoutGrid && grid.Tag as string != "preset-icon-row" && grid.Tag as string != "title-art-row"
+                && grid.Tag is not ("device-inline-row" or "device-value-row"))
             {
                 if (!_responsiveRows.TryGetValue(grid, out var original))
                 {
@@ -447,11 +466,14 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
         "ConnectApps" => ConnectAppsTab,
         "Profiles" => ProfilesTab,
         "Account" or "Password" => AccountPasswordTab,
+        "Sessions" or "SignedInSessions" => SessionsTab,
         _ => null,
     };
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        DeactivateDevices();
+        DeactivateLoginSessions();
         DeactivateLayoutTransfer();
         ViewModel.DeactivateTitleArt();
         DeactivateAccountSignIn();
@@ -827,11 +849,11 @@ _webhookPlexAuthCts?.Cancel();
             [
                 ("Playback", "Playback", "Quality, languages, skipping, and what plays next.", "\uE768", "video quality bitrate bandwidth spoken metadata language auto skip intros credits recaps preview auto play next up seek rewind fast forward fast-forward skip interval audiobook controls"),
                 ("Subtitles", "Subtitles", "Subtitle language, when they appear, and how they look.", "\uED1E", "subtitle forced captions font size color background position"),
-                ("Devices", "Your Devices", "Per-device quality, HDR, and audio or subtitle sync.", "\uE7F4", "devices tv phone tablet browser hdr dolby vision sound delay lip sync"),
+                ("Devices", "Your Devices", "Per-device quality, HDR, sync, and the profile this app opens.", "\uE7F4", "devices tv phone tablet browser hdr dolby vision sound delay lip sync who's watching profile picker remember profile launch"),
             ]),
             ("Appearance",
             [
-                ("Interface", "Navigation & Cards", "Your primary menu, poster size, and card captions.", "\uE7F8", "navigation menu poster size card captions title year artwork preset"),
+                ("Interface", "Navigation & Cards", "Your primary menu, poster size, card captions, and title art.", "\uE7F8", "navigation menu poster size card captions title year artwork preset title art logo clearlogo"),
                 ("CardOverlays", "Card Overlays", "Badges drawn on poster cards, and where they sit.", "\uE81E", "poster badges overlay accent color preset icon position quick actions enabled default inheritance"),
                 ("Accessibility", "Accessibility", "Text size, weight, contrast, and date and time formats.", "\uE7F3", "contrast readability motion transparency text size weight date time clock"),
             ]),
@@ -851,6 +873,7 @@ _webhookPlexAuthCts?.Cancel();
             ]),
             ("Account",
             [
+                ("Sessions", "Signed-in sessions", "See active sign-ins and sign out a browser or app.", "\uE7F4", "sessions active client device last seen sign out revoke security"),
                 ("Account", "Account", "Manage the shared account password.", "\uE72E", "account password credential sign in security"),
                 ("Profiles", "Profiles", "Household profile names, PINs, and library access.", "\uE77B", "profile name pin access primary household library create delete"),
                 ("NotificationsSettings", "Notifications", "New-episode alerts by email, Discord, push, or webhook.", "\uEA8F", "new episodes email discord browser push webhooks alerts digest url"),
@@ -863,14 +886,15 @@ _webhookPlexAuthCts?.Cancel();
             section.Children.Add(new TextBlock
             {
                 Text = group.Label,
+                Tag = group.Label,
                 FontSize = 20,
                 FontWeight = FontWeights.SemiBold,
             });
-            var cards = new WrapPanel { HorizontalSpacing = 12, VerticalSpacing = 12 };
+            var cards = new Grid { ColumnSpacing = 12, RowSpacing = 12, Tag = "settings-directory" };
             section.Children.Add(cards);
             foreach (var entry in group.Items)
             {
-                if ((entry.Tag is "Profiles" or "Account") && !_canManageProfiles || entry.Tag == "Requests" && !_requestsAvailable) continue;
+                if ((entry.Tag is "Profiles" or "Account" or "Sessions") && !_canManageProfiles || entry.Tag == "Requests" && !_requestsAvailable) continue;
                 var card = BuildSettingsOverviewCard(entry.Tag, entry.Label, entry.Description, entry.Glyph);
                 cards.Children.Add(card);
                 _settingsOverviewCards.Add(new SettingsOverviewCard(
@@ -881,11 +905,56 @@ _webhookPlexAuthCts?.Cancel();
             if (cards.Children.Count > 0)
                 SettingsOverviewGroups.Children.Add(section);
         }
+        ReflowSettingsDirectory();
+    }
+
+    private void ReflowSettingsDirectory()
+    {
+        if (SettingsOverviewGroups == null) return;
+        var desktop = ActualWidth >= 1024;
+        var columns = ActualWidth >= 1536 ? 4 : desktop ? 2 : 1;
+        SettingsOverviewGroups.Spacing = desktop ? 40 : 24;
+        foreach (var section in SettingsOverviewGroups.Children.OfType<StackPanel>())
+        {
+            if (section.Children.FirstOrDefault() is TextBlock heading)
+            {
+                heading.FontSize = desktop ? 16 : 11;
+                heading.CharacterSpacing = desktop ? -25 : 160;
+                if (heading.Tag is string label) heading.Text = desktop ? label : label.ToUpperInvariant();
+            }
+            foreach (var grid in section.Children.OfType<Grid>().Where(grid => Equals(grid.Tag, "settings-directory")))
+            {
+                grid.ColumnDefinitions.Clear(); grid.RowDefinitions.Clear();
+                grid.Background = desktop ? new SolidColorBrush(Colors.Transparent) : (Brush)Application.Current.Resources["CardBackgroundBrush"];
+                grid.CornerRadius = new CornerRadius(desktop ? 0 : 16);
+                for (var index = 0; index < columns; index++) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                var visible = grid.Children.OfType<Button>().Where(button => button.Visibility == Visibility.Visible).ToArray();
+                for (var index = 0; index < (visible.Length + columns - 1) / columns; index++) grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                for (var index = 0; index < visible.Length; index++)
+                {
+                    var card = visible[index]; Grid.SetColumn(card, index % columns); Grid.SetRow(card, index / columns);
+                    card.Width = double.NaN; card.Height = desktop ? 112 : double.NaN; card.MinHeight = 72;
+                    card.CornerRadius = new CornerRadius(desktop ? 16 : 0);
+                    card.HorizontalAlignment = HorizontalAlignment.Stretch;
+                    card.Background = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["CardBackgroundBrush"]).Color) { Opacity = desktop ? .45 : 0 };
+                    card.BorderBrush = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["BorderBrush"]).Color) { Opacity = desktop ? .70 : .60 };
+                    card.BorderThickness = desktop ? new Thickness(1) : new Thickness(0, 0, 0, index == visible.Length - 1 ? 0 : 1);
+                    card.Padding = new Thickness(16, desktop ? 16 : 12, 16, desktop ? 16 : 12);
+                    if (card.Content is Grid content && content.Children.OfType<StackPanel>().FirstOrDefault() is { } text)
+                    {
+                        if (content.Children.OfType<Border>().FirstOrDefault() is { } icon) icon.Width = icon.Height = desktop ? 40 : 36;
+                        if (text.Children.FirstOrDefault() is TextBlock label) label.FontSize = desktop ? 15 : 14;
+                        if (text.Children.LastOrDefault() is TextBlock description) description.MaxLines = desktop ? 3 : 0;
+                    }
+                }
+                grid.RowSpacing = desktop ? 12 : 0;
+            }
+        }
     }
 
     private Button BuildSettingsOverviewCard(string tag, string label, string description, string glyph)
     {
-        var text = new StackPanel { Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
+        var text = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
         text.Children.Add(new TextBlock { Text = label, FontSize = 15, FontWeight = FontWeights.SemiBold });
         text.Children.Add(new TextBlock
         {
@@ -899,12 +968,11 @@ _webhookPlexAuthCts?.Cancel();
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        content.Children.Add(new FontIcon
+        content.Children.Add(new Border
         {
-            Glyph = glyph,
-            FontSize = 19,
-            Foreground = (Brush)Application.Current.Resources["AccentBrush"],
+            Width = 40, Height = 40, CornerRadius = new CornerRadius(12), Background = (Brush)Application.Current.Resources["SurfaceBrush"],
             VerticalAlignment = VerticalAlignment.Center,
+            Child = tag == "Accessibility" ? WebUiIcon.Create("eye", 18) : WebUiIcon.Navigation(tag switch { "Playback" => "play", "Subtitles" => "subtitles", "Devices" or "Sessions" => "monitor-smartphone", "Interface" => "panel-top", "CardOverlays" => "layers", "HomeScreen" => "layout-dashboard", "Personalize" => "sparkles", "Requests" => "bookmark", "Libraries" => "library", "ConnectApps" => "cast", "WatchProviders" => "cloud", "WebhookSync" => "server", "Import" => "clock", "Account" => "key-round", "Profiles" => "users-round", "Notifications" => "bell", _ => "settings" }, 18),
         });
         Grid.SetColumn(text, 1);
         content.Children.Add(text);
@@ -936,6 +1004,8 @@ _webhookPlexAuthCts?.Cancel();
 
     private void ShowSettingsOverview()
     {
+        DeactivateDevices();
+        DeactivateLoginSessions();
         ViewModel.DeactivateTitleArt();
         DeactivateAccountSignIn();
         ++_overlayLoadGeneration;
@@ -952,7 +1022,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private void ShowSettingsDetail(Button button)
     {
-        if ((button.Tag is "Account" or "Profiles") && !_canManageProfiles || button.Tag is "Requests" && !_requestsAvailable) { ShowSettingsOverview(); return; }
+        if ((button.Tag is "Account" or "Profiles" or "Sessions") && !_canManageProfiles || button.Tag is "Requests" && !_requestsAvailable) { ShowSettingsOverview(); return; }
         _showingSettingsOverview = false;
         SettingsHeaderSubtitle.Text = "Manage your playback preferences, libraries, and display options.";
         SettingsOverviewPanel.Visibility = Visibility.Collapsed;
@@ -997,6 +1067,7 @@ _webhookPlexAuthCts?.Cancel();
                     ReferenceEquals(entry.Section, section) && entry.Button.Visibility == Visibility.Visible)
                     ? Visibility.Visible
                     : Visibility.Collapsed;
+            ReflowSettingsDirectory();
             var overviewMatches = _settingsOverviewCards.Count(entry => entry.Button.Visibility == Visibility.Visible);
             SettingsSearchStatus.Text = tokens.Length == 0
                 ? "Press Ctrl+K to search"
@@ -1007,7 +1078,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             (PlaybackTab, "playback quality language skipping video spoken metadata auto skip intros credits recaps preview auto play next up episodes seek rewind fast-forward audiobook intervals"),
             (SubtitlesTab, "subtitles subtitle language behavior forced captions font size family color outline background opacity position preview"),
-            (InterfaceTab, "navigation cards menu poster size card captions title year artwork preset primary menu"),
+            (InterfaceTab, "navigation cards menu poster size card captions title year artwork preset primary menu title art logo clearlogo apply all devices"),
             (AccessibilityTab, "accessibility readability contrast motion transparency text size weight high contrast preview date time format clock"),
             (HomeScreenTab, "home screen sections layout rows continue watching next up recently added library order scope reset"),
             (CardOverlaysTab, "card overlays poster badges overlay accent color preset preview icon position styling quick actions mode enabled default inheritance"),
@@ -1017,17 +1088,18 @@ _webhookPlexAuthCts?.Cancel();
             (ImportTab, "history import emby jellyfin plex watched mapping sync fetched matched unmatched progress skipped"),
             (WebhookSyncTab, "webhook sync plex emby jellyfin intake progress watched connections deliveries server url token"),
             (WatchProvidersTab, "watch providers trakt import export scrobble favorites history progress removals"),
-            (DevicesTab, "your devices device tv phone tablet browser this device forget hdr dolby vision frame rate fill screen audio subtitle sync offset"),
+            (DevicesTab, "your devices device tv phone tablet browser this device forget hdr dolby vision frame rate fill screen audio subtitle sync offset profile launch remember ask who's watching"),
             (NotificationsSettingsTab, "notifications new episodes email discord browser push webhooks per episode alerts digest url"),
             (ConnectAppsTab, "connect apps silo jellyfin compatible infuse swiftfin jellycon findroid sign in login server address username password pin"),
             (ProfilesTab, "profiles profile names pin access rules primary household library create delete"),
             (AccountPasswordTab, "account password credential sign in security"),
+            (SessionsTab, "signed-in sessions active client device last seen sign out revoke security"),
         };
 
         var matches = 0;
         foreach (var entry in entries)
         {
-            if ((ReferenceEquals(entry.Button, ProfilesTab) || ReferenceEquals(entry.Button, AccountPasswordTab)) && !_canManageProfiles || ReferenceEquals(entry.Button, RequestsTab) && !_requestsAvailable)
+            if ((ReferenceEquals(entry.Button, ProfilesTab) || ReferenceEquals(entry.Button, AccountPasswordTab) || ReferenceEquals(entry.Button, SessionsTab)) && !_canManageProfiles || ReferenceEquals(entry.Button, RequestsTab) && !_requestsAvailable)
             {
                 entry.Button.Visibility = Visibility.Collapsed;
                 continue;
@@ -1048,7 +1120,7 @@ _webhookPlexAuthCts?.Cancel();
         ConnectionsNavGroup.Visibility = new[] { ConnectAppsTab, WatchProvidersTab, WebhookSyncTab, ImportTab }
             .Any(button => button.Visibility == Visibility.Visible)
             ? Visibility.Visible : Visibility.Collapsed;
-        AccountNavGroup.Visibility = new[] { AccountPasswordTab, ProfilesTab, NotificationsSettingsTab }
+        AccountNavGroup.Visibility = new[] { SessionsTab, AccountPasswordTab, ProfilesTab, NotificationsSettingsTab }
             .Any(button => button.Visibility == Visibility.Visible)
             ? Visibility.Visible : Visibility.Collapsed;
 
@@ -1092,9 +1164,11 @@ _webhookPlexAuthCts?.Cancel();
         WatchProvidersPanel.Visibility = tag == "WatchProviders" ? Visibility.Visible : Visibility.Collapsed;
         NotificationsSettingsPanel.Visibility = tag == "NotificationsSettings" ? Visibility.Visible : Visibility.Collapsed;
         DevicesPanel.Visibility = tag == "Devices" ? Visibility.Visible : Visibility.Collapsed;
+        if (tag != "Devices") DeactivateDevices();
         ConnectAppsPanel.Visibility = tag == "ConnectApps" ? Visibility.Visible : Visibility.Collapsed;
         AccessibilityPanel.Visibility = tag == "Accessibility" ? Visibility.Visible : Visibility.Collapsed;
         SessionsPanel.Visibility = tag == "Sessions" ? Visibility.Visible : Visibility.Collapsed;
+        if (tag != "Sessions") DeactivateLoginSessions();
         if (tag != "WebhookSync") _webhookRefreshTimer?.Stop();
         if (tag != "Profiles") _householdSessionsTimer?.Stop();
 
@@ -2301,7 +2375,7 @@ _webhookPlexAuthCts?.Cancel();
         var selected = ViewModel.SelectedScope;
         HomeScopeComboBox.Items.Clear();
         HomeScopeComboBox.Items.Add(new ComboBoxItem { Content = "Home", Tag = "home" });
-        foreach (var library in ViewModel.LibraryCards)
+        foreach (var library in ViewModel.LibraryCards.Where(library => library.IsEnabled))
             HomeScopeComboBox.Items.Add(new ComboBoxItem { Content = library.LibraryName, Tag = $"library:{library.LibraryId}" });
         HomeScopeComboBox.SelectedItem = HomeScopeComboBox.Items.OfType<ComboBoxItem>().FirstOrDefault(i => Equals(i.Tag, selected)) ?? HomeScopeComboBox.Items[0];
     }
@@ -2309,6 +2383,11 @@ _webhookPlexAuthCts?.Cancel();
     private async void HomeScopeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (HomeScopeComboBox.SelectedItem is not ComboBoxItem { Tag: string scope } || scope == ViewModel.SelectedScope) return;
+        if (ViewModel.IsSavingHomeSections)
+        {
+            HomeScopeComboBox.SelectedItem = HomeScopeComboBox.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, ViewModel.SelectedScope));
+            return;
+        }
         ViewModel.SelectedScope = scope;
         await ViewModel.LoadHomeSectionsCommand.ExecuteAsync(null);
     }
@@ -2991,13 +3070,13 @@ _webhookPlexAuthCts?.Cancel();
     private void RebuildHomeSectionItems()
     {
         HomeSectionItemsContainer.Children.Clear();
-        HomeSectionsCountText.Text = $"{ViewModel.HomeSections.Count} {(ViewModel.HomeSections.Count == 1 ? "section" : "sections")}";
+        HomeSectionsCountText.Text = $"{ViewModel.HomeSections.Count} {(ViewModel.HomeSections.Count == 1 ? "row" : "rows")}";
 
         if (ViewModel.HomeSections.Count == 0)
         {
             HomeSectionItemsContainer.Children.Add(new TextBlock
             {
-                Text = "No sections configured.",
+                Text = "No rows on this page yet. Add a row to get started.",
                 FontSize = 13,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
                 Margin = new Thickness(0, 8, 0, 0),
@@ -3015,146 +3094,92 @@ _webhookPlexAuthCts?.Cancel();
     {
         var row = new Border
         {
-            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(19),
-            Padding = new Thickness(12),
-            AllowDrop = ViewModel.CanEditHomeSections,
+            Background = section.Hidden ? null : (Brush)Application.Current.Resources["SurfaceBrush"],
+            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(16), Padding = new Thickness(12), AllowDrop = ViewModel.CanEditHomeSections
         };
-
         var grid = new Grid { ColumnSpacing = 8 };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition());
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
         var grip = new Button
         {
-            Content = new FontIcon { Glyph = "\uE700", FontSize = 14 },
-            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            Padding = new Thickness(6),
-            VerticalAlignment = VerticalAlignment.Top,
-            CanDrag = ViewModel.CanEditHomeSections,
-            IsEnabled = ViewModel.CanEditHomeSections,
+            Content = new FontIcon { Glyph = "\uE700", FontSize = 14 }, Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Padding = new Thickness(4), CanDrag = ViewModel.CanEditHomeSections, IsEnabled = ViewModel.CanEditHomeSections
         };
         AutomationProperties.SetName(grip, $"Drag {section.Title}");
-        grip.DragStarting += (_, args) =>
-        {
-            args.Data.SetText(section.Id);
-            args.Data.RequestedOperation = DataPackageOperation.Move;
-        };
+        grip.DragStarting += (_, args) => { args.Data.SetText(section.Id); args.Data.RequestedOperation = DataPackageOperation.Move; };
         grid.Children.Add(grip);
-
-        var visBtn = new Button
-        {
-            Content = new FontIcon
-            {
-                Glyph = section.Hidden ? "\uED1A" : "\uE7B3",
-                FontSize = 14,
-                Foreground = (Brush)Application.Current.Resources[section.Hidden ? "SecondaryTextBrush" : "PrimaryTextBrush"],
-            },
-            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            Padding = new Thickness(6),
-            VerticalAlignment = VerticalAlignment.Top,
-            IsEnabled = ViewModel.CanEditHomeSections,
-        };
-        AutomationProperties.SetName(visBtn, $"{(section.Hidden ? "Show" : "Hide")} {section.Title}");
-        visBtn.Click += async (_, _) =>
-        {
-            ViewModel.ToggleSectionVisibility(section);
-            await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id);
-        };
-        Grid.SetColumn(visBtn, 1);
-        grid.Children.Add(visBtn);
-
+        var art = new Grid { Width = 72, Height = 60, Visibility = section.Hidden ? Visibility.Collapsed : Visibility.Visible };
+        art.Children.Add(new FontIcon { Glyph = "\uE8B9", FontSize = 22, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
+        Grid.SetColumn(art, 1); grid.Children.Add(art);
+        if (!section.Hidden) AttachHomeRowPeek(art, section);
         var info = new StackPanel { Spacing = 5, VerticalAlignment = VerticalAlignment.Center };
-        var titleRow = new WrapPanel { HorizontalSpacing = 6, VerticalSpacing = 4 };
-        titleRow.Children.Add(new TextBlock
-        {
-            Text = section.Title,
-            FontSize = 14,
-            FontWeight = FontWeights.Medium,
-            Foreground = section.Hidden
-                ? (Brush)Application.Current.Resources["SecondaryTextBrush"]
-                : (Brush)Application.Current.Resources["PrimaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center,
-            TextDecorations = section.Hidden ? Windows.UI.Text.TextDecorations.Strikethrough : Windows.UI.Text.TextDecorations.None,
-        });
-        titleRow.Children.Add(BuildHomeSectionBadge(HomeSectionTypeLabel(section.SectionType), false));
-        if (section.Featured) titleRow.Children.Add(BuildHomeSectionBadge("Featured", true));
-        titleRow.Children.Add(BuildHomeSectionBadge(section.Hidden ? "Hidden" : "Visible", false));
-        info.Children.Add(titleRow);
+        var title = new WrapPanel { HorizontalSpacing = 6, VerticalSpacing = 4 };
+        title.Children.Add(new TextBlock { Text = section.Title, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+        if (section.Featured) title.Children.Add(BuildHomeSectionBadge("Hero banner", true));
+        if (section.IsCustom) title.Children.Add(BuildHomeSectionBadge("Yours", false));
+        info.Children.Add(title);
         info.Children.Add(new TextBlock
         {
-            Text = $"{HomeSectionTypeLabel(section.SectionType)} · {section.ItemLimit} items",
-            FontSize = 13,
-            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
+            Text = section.Hidden ? "Hidden from this page" : $"{HomeRecipePresentation.Describe(section, ViewModel.SelectedScope.StartsWith("library:"), HomeSectionTypeLabel(section.SectionType))} · {HomeRecipePresentation.TitleCount(section.ItemLimit)}",
+            FontSize = 13, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
         });
-        Grid.SetColumn(info, 2);
-        grid.Children.Add(info);
-
-        var editBtn = new Button
+        var open = new Button { Content = info, HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch,
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"], Padding = new Thickness(0), IsEnabled = ViewModel.CanEditHomeSections };
+        AutomationProperties.SetName(open, $"Edit {section.Title}"); open.Click += async (_, _) => await EditHomeSectionAsync(section);
+        Grid.SetColumn(open, 2); grid.Children.Add(open);
+        var shown = new ToggleSwitch { IsOn = !section.Hidden, OnContent = "", OffContent = "", MinWidth = 0, IsEnabled = ViewModel.CanEditHomeSections, VerticalAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetName(shown, $"Show {section.Title} on this page");
+        shown.Toggled += async (_, _) =>
         {
-            Content = new FontIcon { Glyph = "\uE70F", FontSize = 13 },
-            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            Padding = new Thickness(6),
-            IsEnabled = ViewModel.CanEditHomeSections,
+            if (!ViewModel.CanEditHomeSections || shown.IsOn == !section.Hidden) return;
+            ViewModel.ToggleSectionVisibility(section); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id);
         };
-        AutomationProperties.SetName(editBtn, $"Edit {section.Title}");
-        ToolTipService.SetToolTip(editBtn, "Edit section");
-        editBtn.Click += async (_, _) => await EditHomeSectionAsync(section);
-        Grid.SetColumn(editBtn, 3);
-        grid.Children.Add(editBtn);
-
-        var delBtn = new Button
+        Grid.SetColumn(shown, 3); grid.Children.Add(shown);
+        var menu = new MenuFlyout();
+        void Action(string label, Func<Task> act, bool enabled = true)
         {
-            Content = new FontIcon { Glyph = "\uE74D", FontSize = 14, Foreground = (Brush)Application.Current.Resources["ErrorBrush"] },
-            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            Padding = new Thickness(6),
-            IsEnabled = ViewModel.CanEditHomeSections,
-        };
-        AutomationProperties.SetName(delBtn, $"Delete {section.Title}");
-        delBtn.Click += async (_, _) =>
-        {
-            var dialog = new ContentDialog
-            {
-                Title = section.IsCustom ? "Delete custom section?" : "Remove section?",
-                Content = section.IsCustom ? "Delete this custom section?" : "Remove this section from your home screen?",
-                PrimaryButtonText = section.IsCustom ? "Delete" : "Remove",
-                PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
-                CloseButtonText = "Cancel",
-                XamlRoot = XamlRoot,
-                DefaultButton = ContentDialogButton.Close,
-            };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-            ViewModel.RemoveSection(section);
-            await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
-        };
-        Grid.SetColumn(delBtn, 4);
-        grid.Children.Add(delBtn);
-
+            var item = new MenuFlyoutItem { Text = label, IsEnabled = ViewModel.CanEditHomeSections && enabled };
+            item.Click += async (_, _) => { if (ViewModel.CanEditHomeSections) await act(); }; menu.Items.Add(item);
+        }
+        Action("Edit row…", () => EditHomeSectionAsync(section));
+        if (!section.IsCustom && !string.IsNullOrEmpty(section.DefaultTitle) && section.Title != section.DefaultTitle)
+            Action("Use the original name", async () => { section.Title = section.DefaultTitle; RebuildHomeSectionItems(); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id); });
+        Action(section.Featured ? "Stop using as hero banner" : "Use as hero banner", async () =>
+        { section.Featured = !section.Featured; RebuildHomeSectionItems(); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id); });
+        Action("Move to top", async () => { ViewModel.HomeSections.Move(ViewModel.HomeSections.IndexOf(section), 0); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id); }, ViewModel.HomeSections.FirstOrDefault() != section);
+        Action("Move to bottom", async () => { ViewModel.HomeSections.Move(ViewModel.HomeSections.IndexOf(section), ViewModel.HomeSections.Count - 1); await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id); }, ViewModel.HomeSections.LastOrDefault() != section);
+        menu.Items.Add(new MenuFlyoutSeparator());
+        Action(section.IsCustom ? "Delete row…" : "Remove from my page…", () => RemoveHomeRowAsync(section));
+        var more = new Button { Content = new FontIcon { Glyph = "\uE712", FontSize = 16 }, Flyout = menu, Style = (Style)Application.Current.Resources["GhostButtonStyle"], Padding = new Thickness(5) };
+        AutomationProperties.SetName(more, $"More actions for {section.Title}"); Grid.SetColumn(more, 4); grid.Children.Add(more);
         row.Child = grid;
+        row.SizeChanged += (_, args) =>
+        {
+            art.Visibility = section.Hidden || args.NewSize.Width < 480 ? Visibility.Collapsed : Visibility.Visible;
+            shown.MinWidth = 0;
+        };
         row.DragOver += (_, args) =>
         {
-            if (!args.DataView.Contains(StandardDataFormats.Text)) return;
-            args.AcceptedOperation = DataPackageOperation.Move;
-            args.DragUIOverride.Caption = $"Move before {section.Title}";
+            if (!ViewModel.CanEditHomeSections || !args.DataView.Contains(StandardDataFormats.Text)) return;
+            args.AcceptedOperation = DataPackageOperation.Move; args.DragUIOverride.Caption = $"Move before {section.Title}";
         };
         row.Drop += async (_, args) =>
         {
-            if (!args.DataView.Contains(StandardDataFormats.Text)) return;
+            var context = App.Services.GetRequiredService<SettingsApi>().CaptureContext();
+            if (!ViewModel.CanEditHomeSections || !args.DataView.Contains(StandardDataFormats.Text)) return;
             var sourceId = await args.DataView.GetTextAsync();
+            if (!App.Services.GetRequiredService<SettingsApi>().IsCurrentContext(context)) return;
             var source = ViewModel.HomeSections.FirstOrDefault(candidate => candidate.Id == sourceId);
-            if (source is null || ReferenceEquals(source, section)) return;
-            var oldIndex = ViewModel.HomeSections.IndexOf(source);
-            var newIndex = ViewModel.HomeSections.IndexOf(section);
-            if (oldIndex < 0 || newIndex < 0) return;
-            ViewModel.HomeSections.Move(oldIndex, newIndex);
-            await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
+            if (source == null || ReferenceEquals(source, section) || !ViewModel.HomeSections.Contains(section)) return;
+            ViewModel.HomeSections.Move(ViewModel.HomeSections.IndexOf(source), ViewModel.HomeSections.IndexOf(section));
+            await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(source.Id);
         };
         return row;
     }
-
     private static Border BuildHomeSectionBadge(string text, bool accent) => new()
     {
         Background = (Brush)Application.Current.Resources[accent ? "AccentBackgroundBrush" : "SurfaceHoverBrush"],
@@ -3197,6 +3222,9 @@ _webhookPlexAuthCts?.Cancel();
 
     private async void HomeSectionsAdd_Click(object sender, RoutedEventArgs e)
     {
+        if (!ViewModel.CanEditHomeSections) return;
+        var api = App.Services.GetRequiredService<SettingsApi>(); var context = api.CaptureContext();
+        var scope = ViewModel.SelectedScope;
         RecipeCatalogResponse catalog;
         try
         {
@@ -3208,8 +3236,8 @@ _webhookPlexAuthCts?.Cancel();
             return;
         }
 
-        var selected = await RecipeGalleryDialog.ShowAsync(XamlRoot, catalog);
-        if (selected is null)
+        var selected = await RecipeGalleryDialog.ShowAsync(XamlRoot, catalog, CurrentHomePageLabel());
+        if (selected is null || !_layoutTransferActive || !api.IsCurrentContext(context) || ViewModel.SelectedScope != scope || !ViewModel.CanEditHomeSections)
             return;
 
         ViewModel.AddHomeSection(new SettingsSectionEntry
@@ -3228,38 +3256,15 @@ _webhookPlexAuthCts?.Cancel();
         await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
     }
 
-    private async void HomeSectionsAddCustom_Click(object sender, RoutedEventArgs e)
-    {
-        RecipeCatalogResponse catalog;
-        try
-        {
-            catalog = await LoadAllowedRecipeCatalogAsync();
-        }
-        catch (Exception ex)
-        {
-            App.Services.GetRequiredService<ToastService>().Error($"Could not load section types: {ex.Message}");
-            return;
-        }
-        var configured = await RecipeGalleryDialog.ShowEditorAsync(XamlRoot, catalog, null);
-        if (configured is null) return;
-        ViewModel.AddHomeSection(new SettingsSectionEntry
-        {
-            Id = Guid.NewGuid().ToString(),
-            SectionType = configured.SectionType,
-            Title = configured.Title,
-            Featured = configured.Featured,
-            ItemLimit = configured.ItemLimit,
-            Hidden = false,
-            IsCustom = true,
-            Customized = true,
-            Position = ViewModel.HomeSections.Count,
-            Config = configured.Config,
-        });
-        await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(null);
-    }
+    private void HomeSectionsAddCustom_Click(object sender, RoutedEventArgs e)
+        => HomeSectionsAdd_Click(sender, e);
 
     private async Task EditHomeSectionAsync(SettingsSectionEntry section)
     {
+        if (!ViewModel.CanEditHomeSections || !ViewModel.HomeSections.Contains(section)) return;
+        var api = App.Services.GetRequiredService<SettingsApi>(); var context = api.CaptureContext();
+        var scope = ViewModel.SelectedScope;
+        var original = HomeSectionWritePolicy.Snapshot(section);
         RecipeCatalogResponse catalog;
         try
         {
@@ -3270,13 +3275,16 @@ _webhookPlexAuthCts?.Cancel();
             App.Services.GetRequiredService<ToastService>().Error($"Could not load section editor: {ex.Message}");
             return;
         }
-        var configured = await RecipeGalleryDialog.ShowEditorAsync(XamlRoot, catalog, section);
-        if (configured is null) return;
-        section.SectionType = configured.SectionType;
-        section.Title = configured.Title;
-        section.Featured = configured.Featured;
-        section.ItemLimit = configured.ItemLimit;
-        section.Config = configured.Config;
+        var configured = await RecipeGalleryDialog.ShowEditorAsync(XamlRoot, catalog, section, CurrentHomePageLabel());
+        if (configured is null || !_layoutTransferActive || !api.IsCurrentContext(context) || ViewModel.SelectedScope != scope || !ViewModel.CanEditHomeSections) return;
+        section = ViewModel.HomeSections.FirstOrDefault(row => row.Id == original.Id)!;
+        if (section == null) { App.Services.GetRequiredService<ToastService>().Error("This row was removed while you were editing it."); return; }
+        // Apply only fields changed in this dialog, preserving newer row toggles or reads.
+        if (section.IsCustom && configured.SectionType != original.SectionType) section.SectionType = configured.SectionType;
+        if (configured.Title != original.Title) section.Title = configured.Title;
+        if (configured.Featured != original.Featured) section.Featured = configured.Featured;
+        if (configured.ItemLimit != original.ItemLimit) section.ItemLimit = configured.ItemLimit;
+        if (section.IsCustom && !HomeSectionWritePolicy.EqualConfig(configured.Config, original.Config)) section.Config = configured.Config;
         section.Customized = true;
         RebuildHomeSectionItems();
         await ViewModel.SaveHomeSectionsCommand.ExecuteAsync(section.Id);
@@ -3285,10 +3293,12 @@ _webhookPlexAuthCts?.Cancel();
     // B57: Confirm before destructive reset of all section customizations.
     private async void HomeSectionsReset_Click(object sender, RoutedEventArgs e)
     {
+        if (!ViewModel.CanEditHomeSections || ViewModel.IsSavingHomeSections) return;
+        var api = App.Services.GetRequiredService<SettingsApi>(); var context = api.CaptureContext(); var scope = ViewModel.SelectedScope;
         var dialog = new ContentDialog
         {
-            Title = "Reset section customizations",
-            Content = "Reset all section customizations to defaults? This action cannot be undone.",
+            Title = "Reset this page to the server's rows?",
+            Content = "Brings back hidden rows and original names, and removes rows you added. Only this profile changes.",
             PrimaryButtonText = "Reset",
             CloseButtonText = "Cancel",
             XamlRoot = this.XamlRoot,
@@ -3296,7 +3306,7 @@ _webhookPlexAuthCts?.Cancel();
         };
 
         var result = await dialog.ShowAsync();
-        if (result == ContentDialogResult.Primary)
+        if (result == ContentDialogResult.Primary && _layoutTransferActive && api.IsCurrentContext(context) && scope == ViewModel.SelectedScope)
         {
             await ViewModel.ResetHomeSectionsCommand.ExecuteAsync(null);
         }
@@ -4242,136 +4252,6 @@ _webhookPlexAuthCts?.Cancel();
         }
         if (routes.Children.Count > 0) stack.Children.Add(routes);
         card.Child = stack;
-        return card;
-    }
-
-    // ===== Sessions =====
-    private async Task LoadSessionsAsync()
-    {
-        await ViewModel.LoadSessionsCommand.ExecuteAsync(null);
-        RebuildSessionCards();
-    }
-
-    private void RebuildSessionCards()
-    {
-        SessionCardsContainer.Children.Clear();
-
-        if (ViewModel.Sessions.Count == 0)
-        {
-            SessionCardsContainer.Children.Add(new TextBlock
-            {
-                Text = "No active sessions found.",
-                Style = (Style)Application.Current.Resources["SecondaryTextStyle"],
-                Margin = new Thickness(0, 8, 0, 0),
-            });
-            return;
-        }
-
-        foreach (var session in ViewModel.Sessions)
-        {
-            SessionCardsContainer.Children.Add(BuildSessionCard(session));
-        }
-    }
-
-    private Border BuildSessionCard(SiloPlayer.Core.Models.Auth.AuthSession session)
-    {
-        var card = new Border
-        {
-            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
-            CornerRadius = new CornerRadius(16),
-            Padding = new Thickness(20, 16, 20, 16),
-            BorderBrush = session.IsCurrent
-                ? (Brush)Application.Current.Resources["AccentBrush"]
-                : (Brush)Application.Current.Resources["BorderBrush"],
-            BorderThickness = new Thickness(1),
-        };
-
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-        // Left: session info
-        var infoStack = new StackPanel { Spacing = 4 };
-
-        var nameRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        nameRow.Children.Add(new FontIcon
-        {
-            Glyph = "\uE7F7",
-            FontSize = 16,
-            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        nameRow.Children.Add(new TextBlock
-        {
-            Text = string.IsNullOrEmpty(session.DeviceName) ? "Unknown Device" : session.DeviceName,
-            FontSize = 14,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-
-        if (session.IsCurrent)
-        {
-            var currentBadge = new Border
-            {
-                Background = (Brush)Application.Current.Resources["AccentBrush"],
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(8, 2, 8, 2),
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            currentBadge.Child = new TextBlock
-            {
-                Text = "Current",
-                FontSize = 11,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)Application.Current.Resources["AccentForegroundBrush"],
-            };
-            nameRow.Children.Add(currentBadge);
-        }
-
-        infoStack.Children.Add(nameRow);
-
-        // IP and date
-        var detailsText = $"IP: {session.IpAddress}";
-        if (!string.IsNullOrEmpty(session.CreatedAt))
-        {
-            if (DateTime.TryParse(session.CreatedAt, out var created))
-                detailsText += $"  |  Created: {created.ToLocalTime():g}";
-            else
-                detailsText += $"  |  Created: {session.CreatedAt}";
-        }
-
-        infoStack.Children.Add(new TextBlock
-        {
-            Text = detailsText,
-            FontSize = 12,
-            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-        });
-
-        Grid.SetColumn(infoStack, 0);
-        grid.Children.Add(infoStack);
-
-        // Right: revoke button (not for current session)
-        if (!session.IsCurrent)
-        {
-            var revokeButton = new Button
-            {
-                Content = "Revoke",
-                Style = (Style)Application.Current.Resources["SecondaryButtonStyle"],
-                Padding = new Thickness(12, 6, 12, 6),
-                FontSize = 12,
-                VerticalAlignment = VerticalAlignment.Center,
-            };
-            revokeButton.Click += async (_, _) =>
-            {
-                await ViewModel.RevokeSessionCommand.ExecuteAsync(session.Id);
-                RebuildSessionCards();
-            };
-            Grid.SetColumn(revokeButton, 1);
-            grid.Children.Add(revokeButton);
-        }
-
-        card.Child = grid;
         return card;
     }
 
@@ -6321,9 +6201,10 @@ _webhookPlexAuthCts?.Cancel();
                     pin.Password = "";
                     pin.Focus(FocusState.Programmatic);
                 }
-                catch
+                catch (Exception ex)
                 {
-                    error.Text = "Verification failed";
+                    error.Text = ProfilePinFeedback.Lockout(ex) ?? "Verification failed";
+                    if (ProfilePinFeedback.Lockout(ex) != null) pin.Password = "";
                     error.Visibility = Visibility.Visible;
                     pin.Focus(FocusState.Programmatic);
                 }
@@ -6663,10 +6544,11 @@ _webhookPlexAuthCts?.Cancel();
                             return;
                         }
                     }
-                    catch
+                    catch (Exception ex)
                     {
                         App.Services.GetRequiredService<SiloPlayer.Services.ToastService>()
-                            .Error("Profile saved, but PIN verification failed");
+                            .Error(ProfilePinFeedback.Lockout(ex) is { } lockout
+                                ? $"Profile saved. {lockout}" : "Profile saved, but PIN verification failed");
                         await LoadProfilesAsync();
                         return;
                     }

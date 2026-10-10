@@ -198,6 +198,8 @@ internal static class AccountCoverageNativeFixture
         finally
         {
             wire.TasteGate?.TrySetCanceled(); wire.ProviderGate?.TrySetCanceled(); wire.RecoveryRequestGate?.TrySetCanceled(); wire.RecoverySaveGate?.TrySetCanceled(); navigation.Frame = null; frame.Content = null; window.Close();
+            // Drain Unloaded while this fixture's provider is still alive.
+            await Task.Delay(100);
             serviceField.SetValue(null, previous);
             foreach (var (brush, color) in resourceColors) brush.Color = color;
             SiloPlayer.Helpers.PageBackdrop.RefreshAll(); SiloPlayer.Helpers.AuthBackdrop.RefreshAll();

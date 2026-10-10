@@ -187,8 +187,8 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("ui.library_page_state", page);
         Assert.Contains("HomeSectionsCountText", xaml);
         Assert.DoesNotContain("Click=\"HomeSectionsSave_Click\"", xaml);
-        Assert.Contains("ViewModel.HomeSections.Move(oldIndex, newIndex)", page);
-        Assert.Matches("HomeSections\\.Move\\(oldIndex, newIndex\\);[\\s\\S]{0,160}SaveHomeSectionsCommand", page);
+        Assert.Contains("ViewModel.HomeSections.Move(ViewModel.HomeSections.IndexOf(source), ViewModel.HomeSections.IndexOf(section))", page);
+        Assert.Matches("HomeSections\\.Move\\(ViewModel.HomeSections.IndexOf\\(source\\), ViewModel.HomeSections.IndexOf\\(section\\)\\);[\\s\\S]{0,160}SaveHomeSectionsCommand", page);
         Assert.Matches("ToggleSectionVisibility\\(section\\);[\\s\\S]{0,160}SaveHomeSectionsCommand", page);
     }
 
@@ -268,18 +268,18 @@ public sealed class CurrentSettingsParitySourceTests
         var dialog = ReadRepoFile("src", "SiloPlayer", "Views", "Dialogs", "RecipeGalleryDialog.cs");
 
         Assert.Contains("RecipeGalleryDialog.ShowAsync", settings);
-        Assert.Contains("Search recipes...", dialog);
-        Assert.Contains("Library staples", dialog);
-        Assert.Contains("Hand-picked", dialog);
-        Assert.Contains("Back to gallery", dialog);
-        Assert.Contains("Show as featured hero", dialog);
+        Assert.Contains("Search rows", dialog);
+        Assert.Contains("Keep watching", dialog);
+        Assert.Contains("Collections & rules", dialog);
+        Assert.Contains("All rows", dialog);
+        Assert.Contains("Use as hero banner", dialog);
         Assert.Contains("continue_type", dialog);
         Assert.Contains("filter_library_ids", dialog);
         Assert.Contains("enabled_themes", dialog);
         Assert.Contains("rotation_cadence", dialog);
         Assert.Contains("anchor_item_id", dialog);
         Assert.Contains("user_collection_id", dialog);
-        Assert.Contains("Choose a synced collection before adding this section.", dialog);
+        Assert.Contains("Choose a collection before adding this row.", dialog);
     }
 
     [Fact]

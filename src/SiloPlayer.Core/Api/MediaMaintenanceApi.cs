@@ -62,16 +62,20 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
             ct);
     }
 
-    public Task ApplyMatchAsync(
+    public async Task<ItemMatchApplyResponse> ApplyMatchAsync(
         string itemId,
         ItemMatchApplyRequest request,
         CancellationToken ct = default)
     {
         EnsureSecureBaseUrl();
-        return client.PostNoContentAsync(
+        var context = client.CaptureContext();
+        var result = await client.SendRequestWithoutRefreshAsync<ItemMatchApplyResponse>(context, HttpMethod.Post,
             $"/api/v2/admin/items/{Uri.EscapeDataString(itemId)}/match/apply",
             V2Json.Body(request),
-            ct);
+            ct, allowNoContent: true);
+        ct.ThrowIfCancellationRequested();
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Match response authority changed.", ct);
+        return result ?? new();
     }
 
     public Task<MetadataRefreshReceipt> RefreshMetadataAsync(

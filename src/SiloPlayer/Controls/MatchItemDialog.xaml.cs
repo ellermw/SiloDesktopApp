@@ -9,6 +9,7 @@ using Windows.UI;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.MediaMaintenance;
 using SiloPlayer.Core.Models.Playback;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Controls;
 
@@ -25,6 +26,7 @@ public sealed partial class MatchItemDialog : ContentDialog
 
     public MatchCandidate? SelectedCandidate => _selectedCandidate;
     public bool HasAppliedMatch { get; private set; }
+    public string? AppliedContentId { get; private set; }
 
     public MatchItemDialog(string itemId)
         : this(itemId, "", null, "movie", null, null, null)
@@ -45,8 +47,21 @@ public sealed partial class MatchItemDialog : ContentDialog
         _itemType = string.IsNullOrWhiteSpace(itemType) ? "item" : itemType.Trim().ToLowerInvariant();
         _libraryId = libraryId;
         this.InitializeComponent();
-        Resources["ContentDialogMaxWidth"] = 896d;
-        Opened += (_, _) => UpdateViewport();
+        EditorDialogPresentation.Configure(this, 512, new Thickness(24));
+        var heading = new Grid();
+        heading.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
+        heading.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        heading.Children.Add(new TextBlock { Text = "Match Item", FontSize = 18, FontWeight = FontWeights.SemiBold,
+            Height = 18, LineHeight = 18, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
+        var close = EditorDialogPresentation.CornerClose(this);
+        close.Width = close.Height = 16; close.Padding = new Thickness(0); close.Margin = new Thickness(0, -8, -8, 0); close.VerticalAlignment = VerticalAlignment.Top;
+        Grid.SetColumn(close, 1); heading.Children.Add(close); Title = heading;
+        SearchIcon.Visibility = Visibility.Collapsed;
+        ((StackPanel)SearchButton.Content).Children.Insert(0, WebUiIcon.Create("search", 16, (Brush)Application.Current.Resources["AccentForegroundBrush"]));
+        foreach (var box in new[] { TitleBox, YearBox, ImdbIdBox, TmdbIdBox, TvdbIdBox, GenericTitleBox, GenericYearBox })
+            ConfigureInput(box);
+        Opened += (_, _) => { EditorDialogPresentation.PlaceCornerClose(this, heading, close); UpdateViewport(); if (XamlRoot != null) XamlRoot.Changed += RootChanged; };
+        Closed += (_, _) => { if (XamlRoot != null) XamlRoot.Changed -= RootChanged; };
         SizeChanged += (_, _) => UpdateViewport();
 
         CurrentTitleText.Text = string.IsNullOrWhiteSpace(title) ? "Untitled" : title;
@@ -87,10 +102,11 @@ public sealed partial class MatchItemDialog : ContentDialog
         ApplyStatusText.Visibility = Visibility.Visible;
         try
         {
-            await _maintenanceApi.ApplyMatchAsync(_itemId, new ItemMatchApplyRequest
+            var result = await _maintenanceApi.ApplyMatchAsync(_itemId, new ItemMatchApplyRequest
             {
                 ProviderIds = selected.ProviderIds,
             });
+            AppliedContentId = string.IsNullOrWhiteSpace(result.ContentId) ? _itemId : result.ContentId;
             HasAppliedMatch = true;
             App.Services.GetService<SiloPlayer.Services.ToastService>()?.Success("Match applied");
             Hide();
@@ -111,8 +127,30 @@ public sealed partial class MatchItemDialog : ContentDialog
 
     private void UpdateViewport()
     {
-        MatchBody.Width = Math.Max(240, Math.Min(800, (XamlRoot?.Size.Width ?? 960) - 80));
-        MatchBody.MaxHeight = Math.Max(160, (XamlRoot?.Size.Height ?? 900) * .8 - 140);
+        MatchBody.Width = Math.Max(0, Math.Min(462, (XamlRoot?.Size.Width ?? 960) - 50));
+        if (Title is Grid heading) heading.Width = MatchBody.Width;
+        var maxHeight = (XamlRoot?.Size.Height ?? 900) * .85;
+        Resources["ContentDialogMaxHeight"] = maxHeight;
+        var footerHeight = ApplyMatchButton.Visibility == Visibility.Visible ? 69 : 0;
+        MatchBody.RowSpacing = footerHeight > 0 ? 16 : 0;
+        MatchScroller.MaxHeight = Math.Max(60, maxHeight - 84 - footerHeight);
+        MatchBody.MaxHeight = Math.Max(60, maxHeight - 84);
+        var shell = EditorDialogPresentation.Descendants<Border>(this).FirstOrDefault(border => border.Name == "BackgroundElement");
+        if (shell != null) shell.MaxHeight = maxHeight;
+    }
+    private void RootChanged(XamlRoot sender, XamlRootChangedEventArgs args) => UpdateViewport();
+    private static void ConfigureInput(TextBox box)
+    {
+        box.FontSize = 14; box.MinHeight = 36; box.Padding = new Thickness(12, 4, 12, 4);
+        box.Resources["TextBoxTopHeaderMargin"] = new Thickness(0);
+        if (box.Header is string caption)
+            box.Header = new TextBlock { Text = caption, FontSize = 14, FontWeight = FontWeights.Medium,
+                Height = 14, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight };
+        foreach (var state in new[] { "", "PointerOver", "Focused" })
+        {
+            box.Resources["TextControlBackground" + state] = (Brush)Application.Current.Resources["AppBackgroundBrush"];
+            box.Resources["TextControlBorderBrush" + state] = (Brush)Application.Current.Resources[state == "Focused" ? "AccentBrush" : "BorderBrush"];
+        }
     }
 
     /// <summary>
@@ -230,14 +268,15 @@ public sealed partial class MatchItemDialog : ContentDialog
         if (!string.IsNullOrEmpty(v.Resolution)) parts.Add(v.Resolution);
         if (v.Hdr) parts.Add("HDR");
         if (!string.IsNullOrEmpty(v.CodecVideo)) parts.Add(v.CodecVideo.ToUpperInvariant());
-        return parts.Count > 0 ? string.Join(" ", parts) : $"Version {v.FileId}";
+        if (!string.IsNullOrEmpty(v.CodecAudio)) parts.Add(v.CodecAudio.ToUpperInvariant());
+        return parts.Count > 0 ? string.Join(" · ", parts) : $"Version {v.FileId}";
     }
 
     private FrameworkElement BuildVersionRow(FileVersion v)
     {
         var border = new Border
         {
-            Background = (SolidColorBrush)Application.Current.Resources["SurfaceRaisedBrush"],
+            Background = (SolidColorBrush)Application.Current.Resources["AppBackgroundBrush"],
             BorderBrush = (SolidColorBrush)Application.Current.Resources["BorderBrush"],
             BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8),
             Padding = new Thickness(10, 8, 8, 8),
@@ -247,12 +286,13 @@ public sealed partial class MatchItemDialog : ContentDialog
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var info = new StackPanel { Spacing = 2 };
+        var info = new StackPanel { Spacing = 6 };
         info.Children.Add(new TextBlock
         {
             Text = BuildVersionLabel(v),
-            FontSize = 13,
-            FontWeight = FontWeights.SemiBold,
+            FontSize = 14,
+            Height = 20, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+            FontWeight = FontWeights.Medium,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
         });
 
@@ -260,10 +300,10 @@ public sealed partial class MatchItemDialog : ContentDialog
 
         var pathRow = new TextBlock
         {
-            FontSize = 11,
+            FontSize = 12,
             FontFamily = new FontFamily("Consolas"),
-            TextWrapping = TextWrapping.NoWrap,
-            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextWrapping = TextWrapping.Wrap,
+            LineHeight = 19.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
         };
         if (!string.IsNullOrEmpty(folderName))
         {
@@ -275,7 +315,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         }
         pathRow.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run
         {
-            Text = fileName,
+                Text = " " + fileName,
             Foreground = (SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"],
         });
         ToolTipService.SetToolTip(pathRow, string.IsNullOrEmpty(folderPath) ? fileName : $"{folderPath}\\{fileName}");
@@ -290,10 +330,11 @@ public sealed partial class MatchItemDialog : ContentDialog
             {
                 Background = new SolidColorBrush(Colors.Transparent),
                 BorderThickness = new Thickness(0),
-                Padding = new Thickness(6),
+                Padding = new Thickness(0), Width = 28, Height = 28, MinHeight = 0, MinWidth = 0,
                 VerticalAlignment = VerticalAlignment.Top,
-                Content = new FontIcon { Glyph = "\uE8C8", FontSize = 13 },
+                Content = WebUiIcon.Create("copy", 12, (Brush)Application.Current.Resources["SecondaryTextBrush"]),
             };
+            AutomationProperties.SetName(copyBtn, "Copy full folder path for " + fileName);
             ToolTipService.SetToolTip(copyBtn, "Copy folder path");
             copyBtn.Click += (_, _) => CopyToClipboard(folderPath, "Copied folder path");
             Grid.SetColumn(copyBtn, 1);
@@ -433,6 +474,7 @@ public sealed partial class MatchItemDialog : ContentDialog
             CornerRadius = new CornerRadius(8),
             FontSize = 13,
         };
+        ConfigureInput(providerBox);
         providerBox.KeyDown += SearchField_KeyDown;
         AutomationProperties.SetName(providerBox, "Provider");
         row.Children.Add(providerBox);
@@ -443,6 +485,7 @@ public sealed partial class MatchItemDialog : ContentDialog
             CornerRadius = new CornerRadius(8),
             FontSize = 13,
         };
+        ConfigureInput(valueBox);
         valueBox.KeyDown += SearchField_KeyDown;
         AutomationProperties.SetName(valueBox, "Provider ID");
         Grid.SetColumn(valueBox, 1);
@@ -529,6 +572,8 @@ public sealed partial class MatchItemDialog : ContentDialog
         EmptyText.Visibility = Visibility.Collapsed;
         _selectedCandidate = null;
         ApplyMatchButton.Visibility = Visibility.Collapsed;
+        ApplyMatchFooter.Visibility = Visibility.Collapsed;
+        UpdateViewport();
         ApplyStatusText.Visibility = Visibility.Collapsed;
 
         try
@@ -745,8 +790,10 @@ public sealed partial class MatchItemDialog : ContentDialog
             if (_applying) return;
             ApplyStatusText.Visibility = Visibility.Collapsed;
             ApplyMatchButton.Visibility = Visibility.Visible;
+            ApplyMatchFooter.Visibility = Visibility.Visible;
             ApplyMatchButton.IsEnabled = true;
             ApplyMatchButton.Content = "Apply Match";
+            UpdateViewport();
         };
 
         return rowBtn;

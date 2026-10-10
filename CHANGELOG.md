@@ -2,6 +2,17 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.241 (2026-10-10 — approved combined parity release)
+
+- Complete the current 14-area implementation and finite visual/functional acceptance pass against official Silo Server main `1a7a3970a9928efb0157460c10888832a8a74eb1`.
+- Publish 241 deduplicated correction groups in the 1.2 ledger, including 76 newly reconciled groups and refinements of existing corrections. Tests, compiler repairs and stale assertion migrations do not inflate the count.
+- Finalize Collections draft/source/artwork/order behavior; Home/Library and shared responsive presentation; account/profile/Settings/session contracts; Watch Party selection; scoped playback, Shuffle, multipart and subtitle synchronization.
+- Repair season caption visibility, unused navigation/layout rows, Requests artwork expansion, recommendation carousels, toolbar clipping, notification presentation, filter option loading, Settings icons and menu/dialog styling.
+- Prevent rounded catalog durations from misclassifying healthy episode endings as interrupted streams. Natural Game of Thrones S1E1→S1E2 autoplay retains mouse controls, pause, fullscreen, Escape and Exit; next-episode runtime correctly displays 55 minutes.
+- Add current permission-gated marker/detection/seek-preview/split tools. Recheck role changes at submission and virtualize large file selections.
+- Verify 1,605 unit tests, 51 unique exact-payload native cases and 15 published playback checks. Preserve original failures and corrected fixture evidence in the combined report. The owner installed and approved the exact installer before GitHub publication.
+- Server administration remains in the WebUI. Universal pixel equality, all hardware/HDR combinations, two physical remote Party viewers and elimination of all historical midstream buffering are not asserted. See the [release record](docs/releases/1.2.241.md).
+
 ## 1.2.104 (2026-10-07 — local easiest-first parity checkpoint)
 
 - Align Quick Search's responsive frame, keyboard hints, selected states and request suggestions with current public Silo WebUI main.

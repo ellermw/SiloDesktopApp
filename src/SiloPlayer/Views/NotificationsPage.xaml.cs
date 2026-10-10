@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using System.Text.Json;
+using SiloPlayer.Core.Api;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
@@ -16,10 +18,17 @@ public sealed partial class NotificationsPage : Page
 {
     public NotificationsViewModel ViewModel { get; }
     private bool _syncingPreferences;
+    private readonly EventChannelClient? _events;
+    private readonly SiloApiClient? _client;
+    private IDisposable? _realtimeSubscription;
+    private long _realtimeRevision;
+    private static readonly JsonSerializerOptions NotificationJson = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
     public NotificationsPage()
     {
         ViewModel = App.Services.GetRequiredService<NotificationsViewModel>();
+        _events = App.Services.GetService<EventChannelClient>();
+        _client = App.Services.GetService<SiloApiClient>();
         DataContext = ViewModel;
         InitializeComponent();
         ((StackPanel)HeaderGrid.Children[0]).Children[0] = WebUiIcon.Create("bell", 24);
@@ -27,10 +36,18 @@ public sealed partial class NotificationsPage : Page
         ((StackPanel)PreferencesButton.Content).Children[0] = WebUiIcon.Create("settings-2", 16);
         NavigationCacheMode = NavigationCacheMode.Required;
         Loaded += NotificationsPage_Loaded;
+        Unloaded += (_, _) =>
+        {
+            ViewModel.PropertyChanged -= OnViewModelChanged;
+            DetachRealtime();
+        };
     }
 
     private async void NotificationsPage_Loaded(object sender, RoutedEventArgs e)
     {
+        ViewModel.PropertyChanged -= OnViewModelChanged;
+        ViewModel.PropertyChanged += OnViewModelChanged;
+        AttachRealtime();
         var load = ViewModel.LoadCommand.ExecuteAsync(null);
         UpdateVisuals();
         await load;
@@ -39,9 +56,88 @@ public sealed partial class NotificationsPage : Page
         UpdateVisuals();
     }
 
+    private void AttachRealtime()
+    {
+        if (_events == null || _client == null || _realtimeSubscription != null) return;
+        _realtimeRevision++;
+        _events.EventReceived += OnRealtimeEvent;
+        _events.SnapshotReceived += OnRealtimeSnapshot;
+        _realtimeSubscription = _events.Subscribe("notifications");
+    }
+
+    private void DetachRealtime()
+    {
+        _realtimeRevision++;
+        if (_events != null)
+        {
+            _events.EventReceived -= OnRealtimeEvent;
+            _events.SnapshotReceived -= OnRealtimeSnapshot;
+        }
+        _realtimeSubscription?.Dispose();
+        _realtimeSubscription = null;
+    }
+
+    private void QueueRealtime(Action apply)
+    {
+        if (_client == null || _realtimeSubscription == null) return;
+        var context = _client.CaptureContext();
+        var revision = _realtimeRevision;
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!IsLoaded || revision != _realtimeRevision || !_client.IsCurrentContext(context)) return;
+            apply(); UpdateVisuals();
+        });
+    }
+
+    private bool BelongsToProfile(JsonElement data)
+        => data.ValueKind == JsonValueKind.Object &&
+            (!data.TryGetProperty("profile_id", out var profile) || profile.ValueKind == JsonValueKind.Null ||
+             profile.ValueKind == JsonValueKind.String && profile.GetString() == _client?.CaptureContext().ProfileId);
+
+    private void OnRealtimeEvent(string channel, string name, JsonElement data)
+    {
+        if (channel != "notifications" || !BelongsToProfile(data)) return;
+        var payload = data.Clone();
+        QueueRealtime(() =>
+        {
+            if (!BelongsToProfile(payload)) return;
+            if (name == "notification.created")
+            {
+                var notification = payload.Deserialize<AppNotification>(NotificationJson);
+                if (notification != null) ViewModel.ApplyCreated(notification);
+            }
+            else if (name == "notification.read")
+            {
+                // Precision-bearing delivery cutoffs and all-read events need
+                // an authoritative query; do not guess timestamp tuple order.
+                if (payload.TryGetProperty("through_created_at", out _) ||
+                    payload.TryGetProperty("all", out var all) && all.ValueKind == JsonValueKind.True)
+                    _ = ViewModel.ReloadAsync();
+                else if (payload.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String && id.GetString() is { } value)
+                    ViewModel.ApplyRead(value);
+            }
+        });
+    }
+
+    private void OnRealtimeSnapshot(string channel, JsonElement data)
+    {
+        if (channel != "notifications" || data.ValueKind != JsonValueKind.Array) return;
+        QueueRealtime(() => { _ = ViewModel.ReloadAsync(); });
+    }
+
+    private void OnViewModelChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (!IsLoaded) return;
+        if (e.PropertyName is nameof(NotificationsViewModel.Preferences) or nameof(NotificationsViewModel.HasLoadedPreferences))
+            SyncPreferenceControls();
+        UpdatePreferenceError();
+        UpdateVisuals();
+    }
+
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         ViewModel.CancelPendingLoad();
+        DetachRealtime();
         base.OnNavigatedFrom(e);
     }
 
@@ -113,7 +209,9 @@ public sealed partial class NotificationsPage : Page
         PreferenceControlsPanel.Visibility = ViewModel.HasLoadedPreferences
             ? Visibility.Visible
             : Visibility.Collapsed;
-        PreferenceLoadFailedPanel.Visibility = ViewModel.HasLoadedPreferences
+        PreferenceLoadingPanel.Visibility = ViewModel.IsLoadingPreferences && !ViewModel.HasLoadedPreferences
+            ? Visibility.Visible : Visibility.Collapsed;
+        PreferenceLoadFailedPanel.Visibility = ViewModel.HasLoadedPreferences || ViewModel.IsLoadingPreferences
             ? Visibility.Collapsed
             : Visibility.Visible;
         PreferenceErrorText.Text = ViewModel.PreferencesErrorMessage ?? "";
@@ -163,10 +261,21 @@ public sealed partial class NotificationsPage : Page
     private void UpdateVisuals()
     {
         LoadingSkeleton.Visibility = ViewModel.IsLoading ? Visibility.Visible : Visibility.Collapsed;
-        NotificationsList.Visibility = ViewModel.IsLoading ? Visibility.Collapsed : Visibility.Visible;
-        EmptyState.Visibility = !ViewModel.IsLoading && ViewModel.IsEmpty ? Visibility.Visible : Visibility.Collapsed;
+        // Header/footer share the list's scroll surface; only rows are hidden
+        // while loading, so the page header and states keep their natural flow.
+        var rowSource = ViewModel.IsLoading ? null : ViewModel.Notifications;
+        if (!ReferenceEquals(NotificationsList.ItemsSource, rowSource))
+            NotificationsList.ItemsSource = rowSource;
+        EmptyState.Visibility = !ViewModel.IsLoading && ViewModel.IsEmpty && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
+            ? Visibility.Visible : Visibility.Collapsed;
         EmptyTitleText.Text = ViewModel.StatusFilter == "unread" ? "No unread notifications" : "No notifications yet";
+        InboxStateHost.Visibility = LoadingSkeleton.Visibility == Visibility.Visible || EmptyState.Visibility == Visibility.Visible
+            ? Visibility.Visible : Visibility.Collapsed;
+        InboxErrorPanel.Visibility = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage) ? Visibility.Collapsed : Visibility.Visible;
         LoadMoreButton.Visibility = ViewModel.HasMore ? Visibility.Visible : Visibility.Collapsed;
+        LoadMoreButton.IsEnabled = !ViewModel.IsLoading && !ViewModel.IsLoadingMore;
+        LoadMoreBusy.IsActive = ViewModel.IsLoadingMore;
+        LoadMoreBusy.Visibility = ViewModel.IsLoadingMore ? Visibility.Visible : Visibility.Collapsed;
         MarkAllButton.Visibility = ViewModel.UnreadCount > 0 ? Visibility.Visible : Visibility.Collapsed;
         UnreadButtonText.Text = ViewModel.UnreadCount > 0 ? $"Unread ({ViewModel.UnreadCount})" : "Unread";
         MarkAllButton.IsEnabled = ViewModel.CanMarkAllRead;
@@ -184,26 +293,39 @@ public sealed partial class NotificationsPage : Page
 
     private void NotificationRow_Loaded(object sender, RoutedEventArgs e)
     {
-        if (sender is not Grid { DataContext: AppNotification notification } row) return;
+        if (sender is Grid row) UpdateNotificationRow(row);
+    }
+
+    private void NotificationRow_DataContextChanged(FrameworkElement sender, DataContextChangedEventArgs args)
+    {
+        if (sender is Grid row) UpdateNotificationRow(row);
+    }
+
+    private static void UpdateNotificationRow(Grid row)
+    {
+        if (row.DataContext is not AppNotification notification) return;
         AutomationProperties.SetName(row,
             string.Join(", ", new[] { notification.DisplayTitle, notification.Subtitle, notification.RelativeTime }
                 .Where(value => !string.IsNullOrWhiteSpace(value))));
         if (row.FindName("NotificationTitleText") is TextBlock title)
             title.FontWeight = notification.IsUnread ? FontWeights.SemiBold : FontWeights.Medium;
-        if (notification.IsUnread && Application.Current.Resources["SurfaceBrush"] is SolidColorBrush surface)
-            row.Background = new SolidColorBrush(surface.Color) { Opacity = 0.3 };
+        var hovered = row.Tag is true && NotificationNavigation.Resolve(notification) != null;
+        if ((notification.IsUnread || hovered) && Application.Current.Resources["SurfaceBrush"] is SolidColorBrush surface)
+            row.Background = new SolidColorBrush(surface.Color) { Opacity = hovered ? 0.6 : 0.3 };
         else
             row.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
     }
 
     private void NotificationRow_PointerEntered(object sender, PointerRoutedEventArgs e)
     {
+        if (sender is Grid hovered) { hovered.Tag = true; UpdateNotificationRow(hovered); }
         if (sender is FrameworkElement row && row.FindName("InlineMarkReadButton") is Button button)
             button.Opacity = 1;
     }
 
     private void NotificationRow_PointerExited(object sender, PointerRoutedEventArgs e)
     {
+        if (sender is Grid hovered) { hovered.Tag = false; UpdateNotificationRow(hovered); }
         if (sender is FrameworkElement row && row.FindName("InlineMarkReadButton") is Button button)
             button.Opacity = 0;
     }
@@ -224,8 +346,12 @@ public sealed partial class NotificationsPage : Page
     {
         var width = e.NewSize.Width;
         if (width <= 0) return;
-        PageContent.Padding = new Thickness(16, 32, 16, 32);
+        // The WebUI combines the shared shell's 16/32px vertical gutter
+        // with the inbox's own 32px padding.
+        PageContent.Padding = new Thickness(16, 0, 16, 0);
+        NotificationsList.Padding = new Thickness(0, WebUiViewport.Width(this, width) >= 1024 ? 64 : 48, 0, 32);
         PageContent.Width = Math.Min(width, 768);
+        InboxHeader.Width = Math.Max(0, PageContent.Width - 32);
 
         var compact = width < 480;
         HeaderGrid.RowSpacing = compact ? 12 : 0;

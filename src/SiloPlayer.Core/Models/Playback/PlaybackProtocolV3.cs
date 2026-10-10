@@ -230,6 +230,7 @@ public sealed class PlaybackSubtitleArtifactV3
 
 public sealed class PlaybackSubtitleInventoryV3
 {
+    public string? SyncKey { get; set; }
     public string TrackId { get; set; } = "";
     public int CombinedIndex { get; set; }
     public string Source { get; set; } = "";

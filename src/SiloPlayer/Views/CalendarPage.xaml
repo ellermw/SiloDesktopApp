@@ -25,7 +25,7 @@
             <Setter Property="Foreground" Value="{StaticResource SecondaryTextBrush}" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="CornerRadius" Value="16" />
-            <Setter Property="Padding" Value="18,0" />
+            <Setter Property="Padding" Value="16,0" />
             <Setter Property="FontSize" Value="13" />
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Height" Value="32" />
@@ -91,6 +91,8 @@
             <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="12,0" />
         </Style>
 
         <!-- Library filter dropdown — use a sensible corner radius (half of MinHeight)
@@ -111,9 +113,9 @@
 
         <!-- Week strip day cell — min-w-[2.75rem] (44px) py-2 px-3 rounded-xl (12) -->
         <Style x:Key="WeekDayCellBorderStyle" TargetType="Border">
-            <Setter Property="CornerRadius" Value="12" />
-            <Setter Property="Padding" Value="12,6" />
-            <Setter Property="MinWidth" Value="44" />
+            <Setter Property="CornerRadius" Value="16" />
+            <Setter Property="Padding" Value="8,10" />
+            <Setter Property="MinHeight" Value="56" />
             <Setter Property="Background" Value="Transparent" />
         </Style>
     </Page.Resources>
@@ -168,15 +170,16 @@
 
                     <StackPanel Grid.Column="0" Spacing="0">
                         <TextBlock
-                            Text="Calendar"
+                            x:Name="CalendarTitle" Text="Calendar"
                             FontSize="32"
+                            CharacterSpacing="-25" LineHeight="36" LineStackingStrategy="BlockLineHeight"
                             FontWeight="Bold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                     </StackPanel>
 
                     <StackPanel x:Name="HeaderActions" Grid.Column="1"
                                 Orientation="Horizontal"
-                                Spacing="10"
+                                Spacing="8"
                                 VerticalAlignment="Center">
                         <!-- Filter pill group — outer wrapper height = 32 (pill) + 2*4 (padding)
                              = 40. Outer radius 20 is exactly half so ends are semicircles.
@@ -229,9 +232,9 @@
                     </StackPanel>
                 </Grid>
 
-                <Border x:Name="WeekNavigatorSpace" Margin="0,0,0,24" />
+                <Border x:Name="WeekNavigatorSpace" Margin="0,0,0,20" />
 
-                <Border x:Name="SelectedDayEmptyState" Margin="48,0,48,16" Padding="16,12" CornerRadius="14" Background="{StaticResource SurfaceBrush}" Visibility="Collapsed">
+                <Border x:Name="SelectedDayEmptyState" Margin="48,0,48,16" Padding="16,12" CornerRadius="20" Background="{StaticResource SurfaceBrush}" Visibility="Collapsed">
                     <TextBlock x:Name="SelectedDayEmptyText" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
                 </Border>
 
@@ -244,7 +247,7 @@
                     HorizontalAlignment="Stretch" />
 
                 <!-- ===== Day groups (populated from code-behind) ===== -->
-                <StackPanel x:Name="DaysPanel" Spacing="32" Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}" />
+                <StackPanel x:Name="DaysPanel" Spacing="24" Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}" />
 
                 <!-- Empty state -->
                 <StackPanel
@@ -252,16 +255,16 @@
                     Visibility="Collapsed"
                     HorizontalAlignment="Center"
                     Margin="48,32,48,48"
-                    Padding="48,48"
+                    Padding="0"
                     MinWidth="420"
                     Spacing="12">
                     <Border
                         Background="{StaticResource SurfaceBrush}"
                         BorderBrush="{StaticResource BorderBrush}"
-                        BorderThickness="1"
-                        CornerRadius="24"
-                        Padding="48,36"
-                        MinHeight="240">
+                        BorderThickness="0"
+                        CornerRadius="28.8"
+                        Padding="24,64"
+                        MinHeight="300">
                         <StackPanel Spacing="12"
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Center">
@@ -300,7 +303,7 @@
                     x:Name="WeekNavigatorBorder"
                     Margin="48,0,48,0" VerticalAlignment="Top" SizeChanged="WeekNavigator_SizeChanged"
                     Padding="16,12"
-                    CornerRadius="16"
+                    CornerRadius="20"
                     Background="{StaticResource SurfaceBrush}"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1">
@@ -318,6 +321,7 @@
                                 <Button
                                     Style="{StaticResource GhostButtonStyle}"
                                     Width="32" Height="32"
+                                    MinWidth="0" MinHeight="0"
                                     Padding="0"
                                     CornerRadius="16"
                                     Command="{x:Bind ViewModel.PrevWeekCommand}"
@@ -335,6 +339,7 @@
                                 <Button
                                     Style="{StaticResource GhostButtonStyle}"
                                     Width="32" Height="32"
+                                    MinWidth="0" MinHeight="0"
                                     Padding="0"
                                     CornerRadius="16"
                                     Command="{x:Bind ViewModel.NextWeekCommand}"

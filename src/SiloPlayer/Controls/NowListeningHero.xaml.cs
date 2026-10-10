@@ -19,13 +19,31 @@ public sealed partial class NowListeningHero : UserControl
     private MediaItem? _item;
     private double _progress;
     private MediaItemDetail? _detail;
+    private ApiRequestContext? _detailContext;
+    private ApiRequestContext? _detailRequestContext;
     private CancellationTokenSource? _detailCts;
     private PlayerService? _player;
-    private readonly List<(double Start, string Label)> _chapters = [];
+    private readonly List<NowListeningPresentation.Chapter> _chapters = [];
+    private int? _libraryId;
     private bool _subscribed;
     private byte[]? _posterBytes;
     private CancellationTokenSource? _artworkCts;
     private CancellationTokenSource? _backdropCts;
+
+    public int? LibraryId
+    {
+        get => _libraryId;
+        set
+        {
+            if (_libraryId == value) return;
+            _libraryId = value;
+            _detailCts?.Cancel();
+            _detail = null;
+            _detailContext = null;
+            _chapters.Clear();
+            if (_item != null) _ = HydrateDetailAsync(_item);
+        }
+    }
 
     public NowListeningHero()
     {
@@ -37,7 +55,9 @@ public sealed partial class NowListeningHero : UserControl
         Loaded += (_, _) =>
         {
             SubscribePlayer();
-            if (_item != null && _detail == null) _ = HydrateDetailAsync(_item);
+            InvalidateRetiredDetail();
+            if (_item != null && _detail == null && _detailCts is not { IsCancellationRequested: false })
+                _ = HydrateDetailAsync(_item);
             if (_item is { PosterUrl.Length: > 0 } item && (CoverImage.Source == null || _posterBytes == null) && (_artworkCts == null || _artworkCts.IsCancellationRequested))
                 _ = LoadPosterAsync(item);
             UpdateLiveState(); ScheduleBackdrop();
@@ -93,48 +113,60 @@ public sealed partial class NowListeningHero : UserControl
         if (_item == null) return;
         var active = _player?.ContentId == _item.ContentId && _player.IsAudiobook;
         var position = active ? _player!.Position : _detail?.UserData?.PositionSeconds ?? _item.PositionSeconds ?? 0;
-        var duration = active ? _player!.Duration : _detail?.Audiobook?.TotalDurationSeconds ?? _detail?.Versions.Sum(version => version.Duration) ?? _item.DurationSeconds ?? 0;
+        var duration = NowListeningPresentation.ResolveDuration(_detail?.Audiobook?.TotalDurationSeconds,
+            _detail?.Versions.Sum(version => version.Duration) ?? 0, _item.DurationSeconds);
+        if (duration <= 0 && active) duration = _player!.Duration;
         _progress = duration > 0 ? Math.Clamp(position / duration, 0, 1) : 0;
         var playing = active && !_player!.IsPaused;
         ResumeText.Text = playing ? "Pause" : position > 0 ? "Resume" : "Listen";
         SetTransportIcon(playing);
         var live = active ? _player!.CurrentAudiobookChapter : null;
-        var chapter = _chapters.LastOrDefault(chapter => chapter.Start <= position);
-        var chapterIndex = _chapters.FindLastIndex(chapter => chapter.Start <= position);
-        PositionText.Text = live != null ? $"Chapter {live.Index + 1} of {_player!.AudiobookChapters.Count} · {live.Title}"
-            : chapterIndex >= 0 ? $"Chapter {chapterIndex + 1} of {_chapters.Count} · {chapter.Label}" : duration > 0 ? FormatDuration(duration) : "";
-        TimeLeftText.Text = duration > 0 ? $"{FormatDuration(duration - position)} left" : "";
+        PositionText.Text = _chapters.Count > 0 ? NowListeningPresentation.ChapterLine(_chapters, position, duration)
+            : live != null ? NowListeningPresentation.FormatChapter(live.Index + 1, _player!.AudiobookChapters.Count, live.Title)
+            : NowListeningPresentation.ChapterLine(_chapters, position, duration);
+        TimeLeftText.Text = NowListeningPresentation.TimeLeft(position, duration) ?? "";
         UpdateProgressWidth();
     }
     private async Task HydrateDetailAsync(MediaItem item)
     {
-        _detailCts?.Cancel(); var owner = _detailCts = new CancellationTokenSource();
+        var owner = new CancellationTokenSource();
+        var previous = Interlocked.Exchange(ref _detailCts, owner); previous?.Cancel(); previous?.Dispose();
+        var catalog = App.Services.GetRequiredService<CatalogApi>();
+        var context = catalog.CaptureContext();
+        _detailRequestContext = context;
+        var libraryId = LibraryId;
         try
         {
-            var detail = await App.Services.GetRequiredService<CatalogApi>().GetItemDetailAsync(item.ContentId, owner.Token);
-            if (owner.IsCancellationRequested || _item?.ContentId != detail.ContentId || detail.Type != "audiobook") return;
-            _detail = detail; _chapters.Clear(); var cursor = 0d;
-            foreach (var file in detail.Versions.OrderBy(version => version.PresentationPartIndex ?? 0))
-            {
-                foreach (var chapter in file.Chapters?.OrderBy(chapter => chapter.StartSeconds).AsEnumerable() ?? [])
-                    _chapters.Add((cursor + chapter.StartSeconds, chapter.Title ?? $"Chapter {_chapters.Count + 1}"));
-                cursor += Math.Max(0, file.Duration);
-            }
-            var author = string.Join(", ", detail.Audiobook?.Authors.Select(person => person.Name) ?? []);
-            var narrator = string.Join(", ", detail.Audiobook?.Narrators.Select(person => person.Name) ?? []);
+            var detail = await catalog.GetItemDetailAsync(item.ContentId, libraryId, owner.Token);
+            if (owner.IsCancellationRequested || !ReferenceEquals(_detailCts, owner)
+                || catalog.CaptureContext() != context || LibraryId != libraryId
+                || _item?.ContentId != detail.ContentId || detail.Type != "audiobook") return;
+            _detail = detail; _detailContext = context; _chapters.Clear();
+            _chapters.AddRange(NowListeningPresentation.BuildChapters(detail.Versions));
+            var author = string.Join(", ", detail.Audiobook?.Authors.Select(person => person.Name?.Trim()).Where(name => !string.IsNullOrEmpty(name)) ?? []);
+            var narrator = string.Join(", ", detail.Audiobook?.Narrators.Select(person => person.Name?.Trim()).Where(name => !string.IsNullOrEmpty(name)) ?? []);
             CreditsText.Text = author + (!string.IsNullOrEmpty(narrator) ? (string.IsNullOrEmpty(author) ? "" : " · ") + "Narrated by " + narrator : "");
             CreditsText.Visibility = string.IsNullOrWhiteSpace(CreditsText.Text) ? Visibility.Collapsed : Visibility.Visible;
             UpdateLiveState();
         }
         catch (OperationCanceledException) { } catch { /* Section progress remains usable if optional detail fails. */ }
+        finally
+        {
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _detailCts, null, owner), owner))
+            {
+                _detailRequestContext = null;
+                owner.Dispose();
+            }
+        }
     }
 
     public void Bind(MediaItem item)
     {
         var changed = _item?.ContentId != item.ContentId;
         _item = item;
-        if (changed) { _detail = null; _chapters.Clear(); _posterBytes = null; _artworkCts?.Cancel(); _backdropCts?.Cancel(); CoverImage.Source = BackgroundImage.Source = null; }
-        if (changed || _detail == null) _ = HydrateDetailAsync(item);
+        InvalidateRetiredDetail();
+        if (changed) { _detail = null; _detailContext = null; _chapters.Clear(); _posterBytes = null; _artworkCts?.Cancel(); _backdropCts?.Cancel(); CoverImage.Source = BackgroundImage.Source = null; }
+        if (changed || (_detail == null && _detailCts is not { IsCancellationRequested: false })) _ = HydrateDetailAsync(item);
         TitleText.Text = item.Title;
         BalanceTitle();
         var authors = item.Audiobook?.Authors.Select(person => person.Name).Where(name => !string.IsNullOrWhiteSpace(name)).ToList() ?? [];
@@ -157,8 +189,17 @@ public sealed partial class NowListeningHero : UserControl
         UpdateProgressWidth();
 
         UpdateLiveState();
-        if (changed && IsLoaded) _ = HydrateDetailAsync(item);
         if (changed && !string.IsNullOrWhiteSpace(item.PosterUrl)) _ = LoadPosterAsync(item);
+    }
+
+    private void InvalidateRetiredDetail()
+    {
+        var context = _detailContext ?? _detailRequestContext;
+        if (!context.HasValue || App.Services.GetRequiredService<CatalogApi>().CaptureContext() == context.Value) return;
+        _detailCts?.Cancel();
+        _detail = null;
+        _detailContext = null;
+        _chapters.Clear();
     }
 
     private async Task LoadPosterAsync(MediaItem item)
@@ -262,21 +303,17 @@ public sealed partial class NowListeningHero : UserControl
         if (_item == null) return;
         var player = _player ?? App.Services.GetRequiredService<PlayerService>();
         if (player.IsAudiobook && player.ContentId == _item.ContentId) player.ToggleAudiobookPlayback();
-        else _ = player.PlayAsync(_item.ContentId);
+        else _ = player.PlayAsync(_item.ContentId, libraryId: LibraryId);
     }
 
     private void MoreInfo_Click(object sender, RoutedEventArgs e)
     {
         if (_item == null) return;
-        App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(_item.ContentId);
+        App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(MediaNavigationContext.Detail(_item.ContentId, LibraryId));
     }
 
     private static string FormatDuration(double seconds)
     {
-        if (!double.IsFinite(seconds) || seconds <= 0) return "0 min";
-        var totalMinutes = Math.Max(1, (long)Math.Floor(seconds / 60 + .5));
-        var hours = totalMinutes / 60; var minutes = totalMinutes % 60;
-        if (hours == 0) return $"{minutes} min";
-        return minutes == 0 ? $"{hours} hr" : $"{hours} hr {minutes} min";
+        return NowListeningPresentation.FormatDuration(seconds);
     }
 }

@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Services;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
@@ -25,24 +26,66 @@ internal static class ConditionalInspectionNativeFixture
         using var handler = new Wire(); using var http = new HttpClient(handler);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://inspection-fixture.invalid");
         var toast = new ToastService(); var container = new ToastContainer(); owner.Children.Add(container); toast.Register(container, owner.DispatcherQueue);
-        using var services = new ServiceCollection().AddSingleton(new CatalogApi(client)).AddSingleton(toast).BuildServiceProvider();
+        using var services = new ServiceCollection().AddSingleton(new CatalogApi(client)).AddSingleton(new MediaMaintenanceApi(client)).AddSingleton(toast).BuildServiceProvider();
         serviceField.SetValue(null, services);
         try
         {
             window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1000, 800)); window.AppWindow.Show(false); await Task.Delay(160);
             await RefreshAsync(owner, "wide");
+            await MatchAsync(owner, "wide");
             await FilesAsync(owner, handler, "populated", "wide");
             await FilesAsync(owner, handler, "empty", "wide");
             await FilesAsync(owner, handler, "failed", "wide");
             await FilesAsync(owner, handler, "delayed", "wide");
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(460, 480)); await Task.Delay(160);
             await RefreshAsync(owner, "narrow-short");
+            await MatchAsync(owner, "narrow-short");
             await FilesAsync(owner, handler, "populated", "narrow-short");
             Program.Log("PASS conditional refresh choice/pending/corner dismissal/retry and manga loading/error/empty/size/dividers/viewport/cancellation native cases");
         }
         finally { toast.Unregister(); serviceField.SetValue(null, originalServices); window.Close(); }
         await ConditionalEditorsNativeFixture.RunAsync(parent);
+    }
+    private static async Task MatchAsync(FrameworkElement owner, string size)
+    {
+        var dialog = new MatchItemDialog("fixture-movie", "Fixture movie", 2020, "movie", null,
+            [new FileVersion { FileId = 1, Resolution = "1080p", CodecVideo = "h264", CodecAudio = "dts", FilePath = "D:/Fixtures/Film/An exceptionally long filename that must remain readable when the dialog narrows.mkv" }], null)
+            { XamlRoot = owner.XamlRoot };
+        var showing = dialog.ShowAsync(); await Task.Delay(120);
+        try
+        {
+            var shell = Descendants<Border>(dialog).Single(border => border.Name == "BackgroundElement");
+            if (Math.Abs(dialog.ActualHeight - owner.XamlRoot.Size.Height) > 1)
+                throw new InvalidOperationException($"Match Item shrinks its centering surface: actual{dialog.ActualHeight}, viewport{owner.XamlRoot.Size.Height}.");
+            if (Math.Abs(shell.ActualWidth - Math.Min(512, owner.XamlRoot.Size.Width)) > 1)
+                throw new InvalidOperationException("Match Item width differs from the rendered WebUI512px desktop/full-width mobile frame.");
+            if (dialog.CloseButtonText.Length > 0 || dialog.Title is not Grid || !Descendants<Button>(dialog).Any(button => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == "Close"))
+                throw new InvalidOperationException("Match Item must use the corner Close action without a spare Cancel footer.");
+            var title = (TextBox)dialog.FindName("TitleBox");
+            if (Math.Abs(title.ActualWidth - Math.Min(458, owner.XamlRoot.Size.Width - 54)) > 1 || title.FontSize != 14)
+                throw new InvalidOperationException("Match Item search field density differs from the current WebUI.");
+            if (Math.Abs(title.ActualHeight - 50) > 1)
+                throw new InvalidOperationException($"Match Item headers add unwanted vertical space: actual{title.ActualHeight}, expected50px including the14px label and36px field.");
+            if (!Descendants<TextBlock>((DependencyObject)dialog.Content).Any(text => text.Text == "1080p · H264 · DTS"))
+                throw new InvalidOperationException("Match Item local media omits the audio format.");
+            if (shell.ActualHeight > owner.XamlRoot.Size.Height * .85 + 1)
+                throw new InvalidOperationException("Match Item exceeds its85percent viewport bound.");
+            var scroller = Descendants<ScrollViewer>((DependencyObject)dialog.Content).First();
+            scroller.ChangeView(null, scroller.ScrollableHeight, null, true); await Task.Delay(80);
+            var search = (Button)dialog.FindName("SearchButton");
+            var point = search.TransformToVisual(shell).TransformPoint(new Windows.Foundation.Point());
+            if (point.Y < 0 || point.Y + search.ActualHeight > shell.ActualHeight + 1)
+                throw new InvalidOperationException("Match Item final Search action cannot be reached in the short viewport.");
+            await CaptureAsync(dialog, $"inspection-match-{size}.png");
+            var close = Descendants<Button>(dialog).Single(button => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == "Close");
+            var closePoint = close.TransformToVisual(shell).TransformPoint(new Windows.Foundation.Point());
+            if (Math.Abs(closePoint.Y - 16) > 1 || Math.Abs(closePoint.X + close.ActualWidth - (shell.ActualWidth - 17)) > 1)
+                throw new InvalidOperationException("Match Item Close icon escapes or is clipped by the title presenter.");
+            Invoke(close); await showing;
+            if (dialog.HasAppliedMatch) throw new InvalidOperationException("Read-only Match Item dismissal applied metadata.");
+        }
+        finally { dialog.Hide(); await showing; }
     }
     private static async Task RefreshAsync(FrameworkElement owner, string size)
     {
@@ -50,6 +93,14 @@ internal static class ConditionalInspectionNativeFixture
         var dialog = new RefreshMetadataDialog(mode => { if (mode != "complete") throw new InvalidOperationException("Wrong refresh mode."); calls++; return pending.Task; }) { XamlRoot = owner.XamlRoot };
         var showing = dialog.ShowAsync();
         await Task.Delay(120);
+        if (size == "wide")
+        {
+            var quick = Field<Button>(dialog, "_quickButton"); var completeChoice = Field<Button>(dialog, "_completeButton");
+            if (Math.Abs(quick.ActualHeight - 98) > 1 || Math.Abs(completeChoice.ActualHeight - 98) > 1)
+                throw new InvalidOperationException("Refresh choice descriptions do not use the WebUI20px line boxes/98px rows.");
+            if (Math.Abs(((Grid)dialog.Title).ActualWidth - 462) > 1)
+                throw new InvalidOperationException("Refresh header shrinks around its title and leaves Close in the middle.");
+        }
         await CaptureAsync(dialog, $"inspection-refresh-{size}.png");
         var complete = Field<Button>(dialog, "_completeButton"); var cancel = Field<Button>(dialog, "_cancelButton");
         Invoke(complete); await UntilAsync(() => calls == 1);
@@ -58,7 +109,7 @@ internal static class ConditionalInspectionNativeFixture
         if (Descendants<ProgressRing>((DependencyObject)dialog.Content).Count(ring => ring.IsActive && ring.Visibility == Visibility.Visible) != 2)
             throw new InvalidOperationException("Refresh did not show both pending indicators.");
         await CaptureAsync(dialog, $"inspection-refresh-pending-{size}.png");
-        Invoke(((Grid)dialog.Title).Children.OfType<Button>().Single()); await showing;
+        Invoke(Descendants<Button>(dialog).Single(button => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == "Close")); await showing;
         if (pending.Task.IsCompleted) throw new InvalidOperationException("Corner dismissal canceled the queued refresh operation.");
         pending.SetResult(); await Task.Delay(100);
         if (calls != 1) throw new InvalidOperationException("Refresh dispatched duplicate work.");

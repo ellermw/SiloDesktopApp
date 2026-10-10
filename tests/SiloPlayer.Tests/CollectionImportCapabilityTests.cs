@@ -10,6 +10,14 @@ namespace SiloPlayer.Tests;
 public sealed class CollectionImportCapabilityTests
 {
     [Fact]
+    public async Task PersonalImportRejectsTemplatesRequiringAnAdminSourceProfile()
+    {
+        using var wire = new Wire(); var client = new SiloApiClient(new HttpClient(wire)); client.SetBaseUrl("https://collection-fixture.invalid");
+        var vm = new CollectionsViewModel(new CollectionsApi(client), new CatalogApi(client));
+        var created = await vm.ImportTemplateAsync(new() { Title = "Fixture", Template = new() { Source = "tmdb", RequiresProfile = true, Tmdb = new() { Preset = "popular", MediaType = "movie" } } });
+        Assert.Null(created); Assert.Empty(wire.Posts);
+    }
+    [Fact]
     public async Task StaleRetiredTemplateNeverSubmitsAndPublicTmdbListUsesItsRoute()
     {
         using var wire = new Wire(); var client = new SiloApiClient(new HttpClient(wire)); client.SetBaseUrl("https://collection-fixture.invalid");

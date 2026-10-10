@@ -6,7 +6,30 @@ namespace SiloPlayer.Core.Services;
 public static class QueryRuleValues
 {
     public static bool IsBoolean(string field) => field is "watched" or "favorited" or "in_watchlist" or "in_progress" or "hdr" or "dolby_vision";
-    public static bool IsNumeric(string field) => field is "year" or "rating_imdb" or "rating_tmdb" or "rating_rotten_tomatoes" or "bitrate" or "duration" or "user_rating";
+    public static bool IsNumeric(string field) => field is "year" or "decade" or "rating" or "rating_imdb" or "rating_tmdb" or "rating_rt_critic" or "rating_rt_audience" or "rating_rotten_tomatoes" or "bitrate" or "duration" or "runtime" or "user_rating";
+    public static bool IsDate(string field) => QueryFieldCatalog.Get(field)?.Kind == "date";
+
+    // Apply only to an explicit condition change. Loading saved rules must be lossless.
+    public static object? ForOperator(string field, string op, object? value)
+    {
+        object?[]? range = value switch
+        {
+            JsonElement { ValueKind: JsonValueKind.Array } json => json.EnumerateArray().Select(element => (object?)element.Clone()).ToArray(),
+            System.Collections.IEnumerable values when value is not string => values.Cast<object?>().ToArray(),
+            _ => null
+        };
+        if (op == "between" && (IsNumeric(field) || IsDate(field)))
+            return range?.Length == 2 ? value : new[] { "", "" };
+        if (range != null) value = range.FirstOrDefault() ?? "";
+        if (IsBoolean(field)) return Format(value) == "true";
+        if (IsDate(field))
+        {
+            var text = Format(value);
+            var pattern = op is "in_last" or "not_in_last" ? @"^\s*\d+\s*[hdwmy]\s*$" : @"^\d{4}-\d{2}-\d{2}$";
+            return System.Text.RegularExpressions.Regex.IsMatch(text, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase) ? text : "";
+        }
+        return value;
+    }
 
     public static object? Parse(string field, string op, string text)
     {

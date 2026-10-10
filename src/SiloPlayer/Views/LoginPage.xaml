@@ -62,6 +62,13 @@
                             FontSize="14" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" />
                     </StackPanel>
 
+                    <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Background="{StaticResource SurfaceBrush}"
+                            CornerRadius="6" Padding="12" Visibility="{x:Bind ViewModel.ShowEndedSession, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="{x:Bind ViewModel.EndedSessionTitle, Mode=OneWay}" FontWeight="SemiBold" FontSize="14" />
+                            <TextBlock Text="{x:Bind ViewModel.EndedSessionMessage, Mode=OneWay}" TextWrapping="Wrap" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+                        </StackPanel>
+                    </Border>
                     <!-- Error message -->
                     <Border
                         x:Name="ErrorBorder"

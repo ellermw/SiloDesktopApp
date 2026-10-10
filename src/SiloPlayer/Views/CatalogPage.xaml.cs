@@ -13,6 +13,7 @@ using SiloPlayer.Controls;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
 using SiloPlayer.Services;
+using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Views;
 
@@ -38,6 +39,7 @@ public sealed partial class CatalogPage : Page,
     private CancellationTokenSource? _navigationCts;
     private DispatcherTimer? _debounce;
     private int _offset;
+    private int _totalItems;
     private bool _hasMore;
     private bool _loading;
     private bool _initializing = true;
@@ -81,6 +83,8 @@ public sealed partial class CatalogPage : Page,
     public CatalogPage()
     {
         InitializeComponent();
+        CatalogToolbarChoices.Apply(TypeCombo, SortCombo, OrderCombo);
+        CatalogRetryIcon.Content = WebUiIcon.Create("refresh-cw", 16);
         ItemsRepeater.ItemsSource = _items;
         CatalogLoadingRepeater.ItemsSource = Enumerable.Range(0, 24).ToArray();
     }
@@ -238,7 +242,9 @@ public sealed partial class CatalogPage : Page,
             if (remove)
             {
                 _items.Remove(item);
-                CountText.Text = Math.Max(0, _items.Count).ToString("N0");
+                _totalItems = Math.Max(0, _totalItems - 1);
+                CountText.Text = _totalItems.ToString("N0");
+                ResultNounText.Text = _totalItems == 1 ? "RESULT" : "RESULTS";
                 EmptyText.Visibility = _items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
                 return;
             }
@@ -411,7 +417,8 @@ public sealed partial class CatalogPage : Page,
             _snapshot = response.Snapshot ?? _snapshot;
             _offset += response.Items.Count;
             _hasMore = response.HasMore || _offset < response.Total;
-            CountText.Text = response.Total.ToString("N0");
+            _totalItems = response.Total;
+            CountText.Text = _totalItems.ToString("N0");
             ResultNounText.Text = response.Total == 1 ? "RESULT" : "RESULTS";
             CountPanel.Visibility = response.TotalExact ? Visibility.Visible : Visibility.Collapsed;
             EmptyText.Visibility = _items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -429,7 +436,7 @@ public sealed partial class CatalogPage : Page,
             if (generation == Volatile.Read(ref _loadGeneration))
             {
                 var collectionUnavailable = ex is ApiException { StatusCode: 404 } && _source is "user_collection" or "library_collection";
-                CatalogErrorTitle.Text = collectionUnavailable ? "This collection isn't available" : "Couldn't load the catalog";
+                CatalogErrorTitle.Text = collectionUnavailable ? "This collection isn't available" : "Could not load catalog results.";
                 ErrorText.Text = collectionUnavailable ? "It may have been deleted, or you may not have access to it." : "The catalog request failed. Please retry.";
                 ErrorText.Visibility = Visibility.Visible;
                 CatalogErrorPanel.Visibility = Visibility.Visible;
@@ -476,7 +483,10 @@ public sealed partial class CatalogPage : Page,
     private void Filter_Changed(object sender, object e)
     {
         if (_initializing) return;
-        if (ReferenceEquals(sender, LibraryCombo)) _ = RefreshQueryScopeAsync();
+        if (ReferenceEquals(sender, TypeCombo))
+            QueryEditing.SetMediaScope(_catalogQuery, SelectedTag(TypeCombo) ?? _scope);
+        if (ReferenceEquals(sender, LibraryCombo) || ReferenceEquals(sender, TypeCombo))
+            _ = RefreshQueryScopeAsync();
         if (ReferenceEquals(sender, OrderCombo) && _source is "favorites" or "watchlist" or "history")
             _personalDefaultOrderTouched = true;
         if ((ReferenceEquals(sender, SortCombo) || ReferenceEquals(sender, OrderCombo))
@@ -723,7 +733,12 @@ public sealed partial class CatalogPage : Page,
         RemoveSelectedButton.IsEnabled = _selectedIds.Count > 0;
     }
 
-    private void OpenFilters_Click(object sender, RoutedEventArgs e) => FiltersSheet.IsOpen = true;
+    private void OpenFilters_Click(object sender, RoutedEventArgs e)
+    {
+        _catalogQuery.Sort = new() { Field = SelectedTag(SortCombo) ?? "added_at", Order = SelectedTag(OrderCombo) ?? "desc" };
+        _queryFilters?.Load(_catalogQuery, SelectedTag(TypeCombo) ?? _scope, SelectedLibrary());
+        FiltersSheet.IsOpen = true;
+    }
     private void CloseFilters_Click(object sender, RoutedEventArgs e) => FiltersSheet.IsOpen = false;
 
     private async void FilterMode_Click(object sender, RoutedEventArgs e)
@@ -996,7 +1011,9 @@ public sealed partial class CatalogPage : Page,
         PageShell.Width = width;
         PageShell.HorizontalAlignment = HorizontalAlignment.Center;
         var gutter = width < 640 ? 16d : width < 1024 ? 24d : 40d;
-        HeaderGrid.Margin = new Thickness(gutter, width < 640 ? 16 : 24, gutter, 24);
+        var viewportWidth = WebUiViewport.Width(this, windowWidth);
+        var shellTop = viewportWidth >= 1024 ? 32 : 16;
+        HeaderGrid.Margin = new Thickness(gutter, shellTop + (viewportWidth < 640 ? 16 : 24), gutter, 24);
         FilterPanel.Margin = new Thickness(gutter, 0, gutter, 18);
         LockedFiltersPanel.Margin = new Thickness(gutter, 0, gutter, 18);
         HistoryActions.Margin = new Thickness(gutter, 0, gutter, 18);
@@ -1004,7 +1021,7 @@ public sealed partial class CatalogPage : Page,
         WatchlistTabs.Margin = new Thickness(gutter, 0, gutter, 24);
         ExternalWatchlistScroller.Padding = new Thickness(gutter, 0, gutter, 28);
 
-        PageTitleText.FontSize = width < 640 ? 32 : width < 1024 ? 44 : 56;
+        PageTitleText.FontSize = Math.Clamp(viewportWidth * .05, 32, 56);
         PageTitleText.LineHeight = PageTitleText.FontSize * .95;
         PageSubtitleText.FontSize = width < 640 ? 14 : 16;
         PageSubtitleText.LineHeight = width < 640 ? 20 : 24;
@@ -1032,6 +1049,8 @@ public sealed partial class CatalogPage : Page,
         CatalogGridLayout.MinColumnSpacing = CatalogGridLayout.MinRowSpacing = gap;
         CatalogLoadingGridLayout.MinColumnSpacing = CatalogLoadingGridLayout.MinRowSpacing = gap;
         _catalogCardWidth = Math.Max(96, Math.Floor((contentWidth - (columns - 1) * gap) / columns));
+        CatalogGridLayout.MaximumRowsOrColumns = columns;
+        CatalogLoadingGridLayout.MaximumRowsOrColumns = columns;
         CatalogGridLayout.MinItemWidth = _catalogCardWidth;
         CatalogGridLayout.MinItemHeight = _catalogCardWidth * 1.5 + _uiCustomizationService.CardCaptionHeight;
         CatalogLoadingGridLayout.MinItemWidth = _catalogCardWidth;

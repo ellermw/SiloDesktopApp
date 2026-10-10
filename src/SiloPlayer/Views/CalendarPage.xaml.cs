@@ -42,6 +42,7 @@ public sealed partial class CalendarPage : Page
     private int _layoutBucket = -1;
     private double _gutter = 48;
     private double _eventCardWidth = 185;
+    private string _captionPresentation = "title_metadata";
     private CancellationTokenSource? _imageLoadCts;
     private readonly UICustomizationService _uiCustomization = App.Services.GetRequiredService<UICustomizationService>();
     private readonly Dictionary<string, Border> _focusedPills = new(StringComparer.Ordinal);
@@ -51,6 +52,7 @@ public sealed partial class CalendarPage : Page
     {
         ViewModel = App.Services.GetRequiredService<CalendarViewModel>();
         this.InitializeComponent();
+        BuildFilterPills();
         NavigationCacheMode = NavigationCacheMode.Required;
         BuildLoadingSkeleton();
     }
@@ -76,7 +78,7 @@ public sealed partial class CalendarPage : Page
                 ViewModel.Libraries.CollectionChanged += OnLibrariesChanged;
             }
 
-            if (!ViewModel.HasLoaded && ViewModel.ErrorMessage == null)
+            if ((!ViewModel.HasLoaded && ViewModel.ErrorMessage == null) || !ViewModel.HasCurrentContext)
                 await ViewModel.LoadCommand.ExecuteAsync(null);
 
             if (!_contentBuilt)
@@ -282,6 +284,7 @@ public sealed partial class CalendarPage : Page
 
     private void BuildWeekStrip()
     {
+        var compact = WebUiViewport.Width(this, ActualWidth) < 640;
         WeekStripPanel.Children.Clear();
         WeekStripPanel.ColumnDefinitions.Clear();
         for (var i = 0; i < 7; i++)
@@ -303,36 +306,35 @@ public sealed partial class CalendarPage : Page
             var cellSurface = new Border
             {
                 Style = (Style)Resources["WeekDayCellBorderStyle"],
+                Padding = compact ? new Thickness(2, 8, 2, 8) : new Thickness(8, 10, 8, 10),
+                MinHeight = compact ? 52 : 56,
             };
             if (selected)
             {
                 cellSurface.Background = (Brush)Application.Current.Resources["AccentBrush"];
                 cellSurface.BorderBrush = (Brush)Application.Current.Resources["AccentBrush"];
-                cellSurface.BorderThickness = new Thickness(1);
             }
             else if (today)
             {
                 // Highlight today with a subtle accent background (web: bg-primary/15 ring)
-                cellSurface.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent)
-                {
-                    Opacity = 1
-                };
-                cellSurface.Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"];
+                cellSurface.Background = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["AccentBrush"]).Color) { Opacity = .15 };
                 cellSurface.BorderBrush = (Brush)Application.Current.Resources["AccentBrush"];
-                cellSurface.BorderThickness = new Thickness(1);
             }
 
             var stack = new StackPanel
             {
                 HorizontalAlignment = HorizontalAlignment.Center,
-                Spacing = 1,
+                Spacing = compact ? 2 : 4,
             };
 
             // Day label (MON/TUE/…) — text-[11px] font-medium uppercase
             stack.Children.Add(new TextBlock
             {
                 Text = label.ToUpperInvariant(),
-                FontSize = 11,
+                FontSize = compact ? 10 : 11,
+                LineHeight = compact ? 15 : 16.5,
+                LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+                CharacterSpacing = 25,
                 FontWeight = Microsoft.UI.Text.FontWeights.Medium,
                 Foreground = selected
                     ? (Brush)Application.Current.Resources["AccentForegroundBrush"]
@@ -345,8 +347,10 @@ public sealed partial class CalendarPage : Page
             stack.Children.Add(new TextBlock
             {
                 Text = day.ToString(),
-                FontSize = 16,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                FontSize = compact ? 14 : 16,
+                LineHeight = compact ? 21 : 24,
+                LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+                FontWeight = Microsoft.UI.Text.FontWeights.Bold,
                 Foreground = selected
                     ? (Brush)Application.Current.Resources["AccentForegroundBrush"]
                     : today ? (Brush)Application.Current.Resources["AccentBrush"]
@@ -356,13 +360,13 @@ public sealed partial class CalendarPage : Page
 
             // Event dot — h-1.5 w-1.5 = 6x6. Always allocates 6px row so cells
             // with/without events have identical heights.
-            var dotContainer = new Grid { Height = 6, Width = 6, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 0) };
+            var dotContainer = new Grid { Height = 4, Width = 4, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 2, 0, 0) };
             if (hasEvents)
             {
                 dotContainer.Children.Add(new Ellipse
                 {
-                    Width = 6,
-                    Height = 6,
+                    Width = 4,
+                    Height = 4,
                     Fill = selected
                         ? (Brush)Application.Current.Resources["AccentForegroundBrush"]
                         : today ? (Brush)Application.Current.Resources["AccentBrush"]
@@ -372,15 +376,28 @@ public sealed partial class CalendarPage : Page
             stack.Children.Add(dotContainer);
 
             cellSurface.Child = stack;
+            // CSS rings do not consume layout space. Keep the outline separate
+            // so today's/selected cell does not make the whole week strip taller.
+            var cellContent = new Grid();
+            cellContent.Children.Add(cellSurface);
+            if (selected || today)
+                cellContent.Children.Add(new Border
+                {
+                    CornerRadius = new CornerRadius(16),
+                    BorderBrush = cellSurface.BorderBrush,
+                    BorderThickness = new Thickness(1),
+                    Opacity = selected ? 1 : .25,
+                    IsHitTestVisible = false,
+                });
             var cell = new Button
             {
-                Content = cellSurface,
+                Content = cellContent,
                 Padding = new Thickness(0),
                 Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
                 BorderThickness = new Thickness(0),
                 HorizontalAlignment = HorizontalAlignment.Stretch,
                 HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                CornerRadius = new CornerRadius(12),
+                CornerRadius = new CornerRadius(16),
             };
             AutomationProperties.SetName(
                 cell,
@@ -443,7 +460,8 @@ public sealed partial class CalendarPage : Page
         container.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         // --- Heading row: "Monday, April 7th" + optional "Today" pill ---
-        var headingGrid = new Grid { Margin = new Thickness(_gutter, 0, _gutter, 12) };
+        var headingGrid = new Grid { Margin = new Thickness(_gutter, 0, _gutter, 20) };
+        headingGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         headingGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         headingGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
@@ -451,7 +469,10 @@ public sealed partial class CalendarPage : Page
         {
             Text = CalendarViewModel.FormatDayHeading(day.Date),
             FontSize = 20,
+            LineHeight = 28,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            CharacterSpacing = -25,
             Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -465,17 +486,15 @@ public sealed partial class CalendarPage : Page
                 Background = (Brush)Application.Current.Resources["AccentBrush"],
                 Height = 20,
                 CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(10, 0, 10, 0),
-                Margin = new Thickness(10, 0, 0, 0),
+                Padding = new Thickness(8, 0, 8, 0),
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 Child = new TextBlock
                 {
                     Text = "TODAY",
                     FontSize = 10,
-                    FontWeight = Microsoft.UI.Text.FontWeights.Bold,
-                    CharacterSpacing = 100,
-                    Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
+                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                    Foreground = (Brush)Application.Current.Resources["AccentForegroundBrush"],
                     VerticalAlignment = VerticalAlignment.Center,
                 },
             };
@@ -483,9 +502,9 @@ public sealed partial class CalendarPage : Page
             headingGrid.Children.Add(todayPill);
         }
 
-        var pills = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, HorizontalAlignment = HorizontalAlignment.Right };
+        var pills = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
         foreach (var existing in headingGrid.Children.OfType<Border>().ToArray()) { headingGrid.Children.Remove(existing); pills.Children.Add(existing); }
-        var focused = new Border { Padding = new Thickness(8, 2, 8, 2), CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1), BorderBrush = (Brush)Application.Current.Resources["AccentBrush"], Visibility = day.Date == _selectedDay ? Visibility.Visible : Visibility.Collapsed, Child = new TextBlock { Text = "FOCUSED", FontSize = 10, Foreground = (Brush)Application.Current.Resources["AccentBrush"] } };
+        var focused = new Border { Height = 21, Padding = new Thickness(8, 2, 8, 2), CornerRadius = new CornerRadius(10), BorderThickness = new Thickness(1), BorderBrush = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["AccentBrush"]).Color) { Opacity = .4 }, Visibility = day.Date == _selectedDay ? Visibility.Visible : Visibility.Collapsed, Child = new TextBlock { Text = "FOCUSED", FontSize = 10, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["AccentBrush"], VerticalAlignment = VerticalAlignment.Center } };
         pills.Children.Add(focused); _focusedPills[day.Date] = focused; Grid.SetColumn(pills, 1); headingGrid.Children.Add(pills);
         Grid.SetRow(headingGrid, 0);
         container.Children.Add(headingGrid);
@@ -502,7 +521,7 @@ public sealed partial class CalendarPage : Page
         var cardsPanel = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 16,
+            Spacing = WebUiViewport.Width(this, ActualWidth) >= 1024 ? 20 : 16,
             Margin = new Thickness(_gutter, 0, _gutter, 0),
         };
 
@@ -510,8 +529,9 @@ public sealed partial class CalendarPage : Page
             cardsPanel.Children.Add(BuildEventCard(ev));
 
         scroller.Content = cardsPanel;
-        Grid.SetRow(scroller, 1);
-        container.Children.Add(scroller);
+        var rail = new CarouselRail(scroller, webUiEdges: true);
+        Grid.SetRow(rail, 1);
+        container.Children.Add(rail);
 
         return container;
     }
@@ -542,6 +562,9 @@ public sealed partial class CalendarPage : Page
             Opacity = ev.Watched ? .6 : 1,
         };
 
+        var artworkFallback = new DefaultArtwork { MediaType = ev.Type == "movie" ? "movie" : "series", Thumbhash = ev.PosterThumbhash };
+        artworkFallback.Visibility = string.IsNullOrEmpty(ev.PosterUrl) ? Visibility.Visible : Visibility.Collapsed;
+        posterPanel.Children.Add(artworkFallback);
         var posterImage = new Image
         {
             Stretch = Stretch.UniformToFill,
@@ -550,6 +573,8 @@ public sealed partial class CalendarPage : Page
             Opacity = 0,
         };
         posterPanel.Children.Add(posterImage);
+        posterImage.ImageOpened += (_, _) => artworkFallback.Visibility = Visibility.Collapsed;
+        posterImage.ImageFailed += (_, _) => { posterImage.Source = null; posterImage.Opacity = 0; artworkFallback.Visibility = Visibility.Visible; _ = artworkFallback.ShowThumbhashAsync(); };
         if (ev.Watched)
         {
             var check = new Border { Width = 32, Height = 32, CornerRadius = new CornerRadius(16), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(179, backgroundColor.R, backgroundColor.G, backgroundColor.B)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false, Child = new FontIcon { Glyph = "\uE73E", FontSize = 16 } };
@@ -574,13 +599,13 @@ public sealed partial class CalendarPage : Page
         // Badges (top-left) — only the first badge to keep the card clean, matching the web card's pill row size
         if (ev.Badges is { Count: > 0 })
         {
-            var badgeStack = new StackPanel
+            var badgeStack = new WrapPanel
             {
-                Orientation = Orientation.Horizontal,
-                Spacing = 4,
+                HorizontalSpacing = 4,
+                VerticalSpacing = 4,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(8, 8, 0, 0),
+                Margin = new Thickness(10, 10, 10, 0),
             };
             foreach (var badge in ev.Badges)
             {
@@ -593,12 +618,15 @@ public sealed partial class CalendarPage : Page
         root.Children.Add(posterPanel);
 
         // --- Text block under the poster ---
-        var textStack = new StackPanel { Margin = new Thickness(4, 10, 4, 0), Spacing = 2 };
+        var textStack = new StackPanel { Margin = new Thickness(4, 12, 4, 0), Spacing = 0 };
 
         textStack.Children.Add(new TextBlock
         {
             Text = ev.Title,
+            CharacterSpacing = -25,
             FontSize = 14,
+            LineHeight = 21,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources[ev.Watched ? "SecondaryTextBrush" : "PrimaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -606,34 +634,40 @@ public sealed partial class CalendarPage : Page
         });
 
         var subtitle = FormatSubtitle(ev);
-        if (!string.IsNullOrEmpty(subtitle))
+        if (_uiCustomization.CardPresentation.Caption == "title_metadata" && !string.IsNullOrEmpty(subtitle))
         {
             textStack.Children.Add(new TextBlock
             {
-                Text = subtitle,
+                Text = subtitle.ToUpperInvariant(),
                 FontSize = 11,
+                LineHeight = 16.5,
+                LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
                 FontWeight = Microsoft.UI.Text.FontWeights.Medium,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
                 CharacterSpacing = 140,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 MaxLines = 1,
-                Margin = new Thickness(0, 2, 0, 0),
+                Margin = new Thickness(0, 4, 0, 0),
             });
         }
 
         var airTime = FormatAirTime(ev.AirTime, ev.AirAt);
-        if (!string.IsNullOrEmpty(airTime))
+        if (_uiCustomization.CardPresentation.Caption == "title_metadata" && !string.IsNullOrEmpty(airTime))
         {
             textStack.Children.Add(new TextBlock
             {
                 Text = airTime,
                 FontSize = 11,
+                LineHeight = 16.5,
+                LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+                Margin = new Thickness(0, 2, 0, 0),
                 FontWeight = Microsoft.UI.Text.FontWeights.Medium,
                 Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
             });
         }
 
         Grid.SetRow(textStack, 1);
+        textStack.Visibility = _uiCustomization.CardPresentation.Caption == "artwork" ? Visibility.Collapsed : Visibility.Visible;
         root.Children.Add(textStack);
 
         // Use an actual button rather than a mouse-only tapped Grid. This keeps
@@ -670,7 +704,7 @@ public sealed partial class CalendarPage : Page
         };
 
         // Load the poster asynchronously (don't block UI on dozens of simultaneous decodes)
-        _ = LoadEventPosterAsync(posterImage, ev);
+        _ = LoadEventPosterAsync(posterImage, ev, artworkFallback);
 
         return cardButton;
     }
@@ -690,33 +724,36 @@ public sealed partial class CalendarPage : Page
 
         Brush background;
         Brush foreground;
+        Brush outline;
 
         if (isPremiere)
         {
-            background = (Brush)Application.Current.Resources["AccentBrush"];
-            foreground = (Brush)Application.Current.Resources["AccentForegroundBrush"];
+            foreground = (Brush)Application.Current.Resources["AccentBrush"];
+            background = new SolidColorBrush(((SolidColorBrush)foreground).Color) { Opacity = .2 };
+            outline = new SolidColorBrush(((SolidColorBrush)foreground).Color) { Opacity = .4 };
         }
         else if (isFinale)
         {
-            background = new SolidColorBrush(Windows.UI.Color.FromArgb(0xCC, 0x7C, 0x2D, 0x12));
-            foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(0xFF, 0xFF, 0xED, 0xD5));
+            background = new SolidColorBrush(Windows.UI.Color.FromArgb(230, 0x43, 0x14, 0x07));
+            foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 0xFF, 0xF7, 0xED));
+            outline = new SolidColorBrush(Windows.UI.Color.FromArgb(140, 0x9A, 0x34, 0x12));
         }
         else
         {
-            background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"];
+            background = (Brush)Application.Current.Resources["SurfaceBrush"];
             foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"];
+            outline = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["BorderBrush"]).Color) { Opacity = .5 };
         }
 
-        // Fixed-height 20px pill — radius = 10 (exactly half) gives a clean capsule.
-        // Using CornerRadius(999) on small borders produces warped ovals in WinUI 3
-        // because the radius isn't clamped to geometry half until render time and
-        // the antialiased fill goes wonky at extreme values.
+        //10px line +2px vertical padding +1px border on each side.
         return new Border
         {
             Background = background,
-            CornerRadius = new CornerRadius(10),
-            Height = 20,
-            Padding = new Thickness(10, 0, 10, 0),
+            CornerRadius = new CornerRadius(8),
+            Height = 16,
+            Padding = new Thickness(8, 2, 8, 2),
+            BorderThickness = new Thickness(1),
+            BorderBrush = outline,
             VerticalAlignment = VerticalAlignment.Top,
             HorizontalAlignment = HorizontalAlignment.Left,
             Child = new TextBlock
@@ -724,7 +761,9 @@ public sealed partial class CalendarPage : Page
                 Text = label.ToUpperInvariant(),
                 FontSize = 10,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                CharacterSpacing = 100,
+                CharacterSpacing = 50,
+                LineHeight = 10,
+                LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
                 Foreground = foreground,
                 VerticalAlignment = VerticalAlignment.Center,
             },
@@ -767,10 +806,10 @@ public sealed partial class CalendarPage : Page
         return null;
     }
 
-    private async Task LoadEventPosterAsync(Image target, CalendarEvent ev)
+    private async Task LoadEventPosterAsync(Image target, CalendarEvent ev, DefaultArtwork artworkFallback)
     {
         var url = ev.PosterUrl;
-        if (string.IsNullOrEmpty(url)) return;
+        if (string.IsNullOrEmpty(url)) { await artworkFallback.ShowThumbhashAsync(); return; }
         var ct = _imageLoadCts?.Token ?? CancellationToken.None;
 
         try
@@ -782,7 +821,7 @@ public sealed partial class CalendarPage : Page
                 token => imageService.GetImageAsync(ev.ContentId, "poster", url, httpClient, token),
                 ct);
             ct.ThrowIfCancellationRequested();
-            if (bytes == null) return;
+            if (bytes == null) { await artworkFallback.ShowThumbhashAsync(); return; }
 
             if (ev.Watched) bytes = await ArtworkEffects.TransformAsync(bytes, blur: false, ct);
             var bitmap = new BitmapImage
@@ -797,7 +836,7 @@ public sealed partial class CalendarPage : Page
             target.Source = bitmap;
             target.Opacity = 1;
         }
-        catch { /* ignore — card simply shows the placeholder background */ }
+        catch { if (!ct.IsCancellationRequested) await artworkFallback.ShowThumbhashAsync(); }
     }
 
     private void RenewImageLoadScope()
@@ -870,7 +909,7 @@ public sealed partial class CalendarPage : Page
                 {
                     Width = _eventCardWidth,
                     Height = _eventCardWidth * 1.5,
-                    CornerRadius = new CornerRadius(12),
+                    CornerRadius = new CornerRadius(16),
                     Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"],
                     Opacity = 0.62,
                 };
@@ -898,28 +937,34 @@ public sealed partial class CalendarPage : Page
     private void ApplyCalendarLayout(double width)
     {
         if (width <= 0) return;
-        _gutter = width < 640 ? 16 : width < 1024 ? 24 : width < 1280 ? 40 : 48;
+        var viewportWidth = WebUiViewport.Width(this, width);
+        _gutter = viewportWidth < 640 ? 16 : viewportWidth < 1024 ? 24 : viewportWidth < 1280 ? 40 : 48;
 
-        HeaderGrid.Margin = new Thickness(_gutter, width < 1024 ? 20 : 28, _gutter, 20);
+        HeaderGrid.Margin = new Thickness(_gutter, viewportWidth < 640 ? 32 : viewportWidth < 1024 ? 40 : 56, _gutter, 24);
+        CalendarTitle.FontSize = viewportWidth < 640 ? 24 : 30;
+        CalendarTitle.LineHeight = viewportWidth < 640 ? 32 : 36;
         WeekNavigatorBorder.Margin = new Thickness(_gutter, 0, _gutter, 0);
         SelectedDayEmptyState.Margin = new Thickness(_gutter, 0, _gutter, 16);
-        EmptyState.Margin = new Thickness(_gutter, 32, _gutter, 48);
+        EmptyState.Margin = new Thickness(_gutter, 8, _gutter, 0);
         EmptyState.MinWidth = 0;
         EmptyState.HorizontalAlignment = HorizontalAlignment.Stretch;
 
         var stackHeader = width < 700;
+        HeaderGrid.RowSpacing = stackHeader ? 12 : 0;
         Grid.SetRow(HeaderActions, stackHeader ? 1 : 0);
         Grid.SetColumn(HeaderActions, stackHeader ? 0 : 1);
         Grid.SetColumnSpan(HeaderActions, stackHeader ? 2 : 1);
         HeaderActions.HorizontalAlignment = stackHeader ? HorizontalAlignment.Left : HorizontalAlignment.Right;
 
-        PresetPillGroup.Visibility = width >= 1024 ? Visibility.Visible : Visibility.Collapsed;
-        CompactPresetComboBox.Visibility = width < 1024 ? Visibility.Visible : Visibility.Collapsed;
-        WeekNavigatorBorder.Padding = width < 640 ? new Thickness(8) : new Thickness(16, 12, 16, 12);
-        WeekStripPanel.ColumnSpacing = width < 640 ? 4 : 6;
+        PresetPillGroup.Visibility = viewportWidth >= 1024 ? Visibility.Visible : Visibility.Collapsed;
+        CompactPresetComboBox.Visibility = viewportWidth < 1024 ? Visibility.Visible : Visibility.Collapsed;
+        WeekNavigatorBorder.Padding = viewportWidth < 640 ? new Thickness(8) : new Thickness(12);
+        WeekStripPanel.ColumnSpacing = viewportWidth < 640 ? 4 : 6;
 
-        var bucket = width < 640 ? 0 : width < 1024 ? 1 : 2;
+        var bucket = viewportWidth < 640 ? 0 : viewportWidth < 1024 ? 1 : 2;
         var previousCardWidth = _eventCardWidth;
+        var previousCaption = _captionPresentation;
+        _captionPresentation = _uiCustomization.CardPresentation.Caption;
         _eventCardWidth = _uiCustomization.CardPresentation.PosterSize switch
         {
             "compact" => bucket switch { 0 => 120, 1 => 140, _ => 160 },
@@ -934,10 +979,11 @@ public sealed partial class CalendarPage : Page
         foreach (var element in _skeletonRows)
             element.Margin = new Thickness(_gutter, 0, _gutter, 0);
 
-        if (_layoutBucket != bucket || previousCardWidth != _eventCardWidth)
+        if (_layoutBucket != bucket || previousCardWidth != _eventCardWidth || previousCaption != _captionPresentation)
         {
             var hadLayout = _layoutBucket >= 0;
             _layoutBucket = bucket;
+            BuildWeekStrip();
             if (hadLayout && ViewModel.HasLoaded)
                 BuildDayRows();
         }

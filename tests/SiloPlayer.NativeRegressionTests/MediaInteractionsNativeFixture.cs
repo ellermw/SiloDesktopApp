@@ -139,6 +139,18 @@ internal static class MediaInteractionsNativeFixture
             Program.Log("TRACE: candidate before layout.");
             await LayoutAsync(room);
             var candidate = new SiloPlayer.Core.Models.Home.MediaItem { ContentId = "fixture-episode-2", Type = "episode", Title = "The episode ahead of the guest" };
+            // Spoiler classification requires the actual season context: an earlier
+            // episode unseen by the guest but watched by the host.
+            Set(room, "_drillDownEpisodes", new List<Episode> {
+                new() { ContentId = "fixture-episode-1", EpisodeNumber = 1, Title = "First" },
+                new() { ContentId = "fixture-episode-2", EpisodeNumber = 2, Title = "Second" }
+            });
+            ((Dictionary<string, WatchTogetherItemMemberState>)typeof(WatchTogetherRoomPage).GetField("_memberStates", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(room)!)["fixture-episode-1"] = new() {
+                ContentId = "fixture-episode-1", Members = [
+                    new() { UserId = 1, ProfileId = "host", State = "watched" },
+                    new() { UserId = 2, ProfileId = "guest", State = "unseen" }
+                ]
+            };
             handler.DelayMemberState = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Program.Log("TRACE: candidate before spotlight/member classification.");
             Invoke(room, "ShowCandidateSpotlight", candidate);
@@ -146,7 +158,7 @@ internal static class MediaInteractionsNativeFixture
             var action = (Button)room.FindName("CandidatePlayBtn");
             if (action.IsEnabled) throw new InvalidOperationException("Candidate action remains enabled before watch-state classification.");
             handler.DelayMemberState.SetResult(); await UntilAsync(() => action.IsEnabled);
-            if (!((TextBlock)room.FindName("CandidateMemberState")).Text.Contains("ahead")) throw new InvalidOperationException("Unseen guest episode does not expose spoiler warning.");
+            if (!((TextBlock)room.FindName("CandidateMemberState")).Text.Contains("Ahead of Riley Guest")) throw new InvalidOperationException("Unseen earlier guest episode does not expose spoiler warning.");
             var stages = handler.Stages;
             Invoke(room, "CandidatePlay_Click", action, new RoutedEventArgs());
             ContentDialog? dialog = null; await UntilAsync(() => (dialog = OpenDialog(parent)) != null);

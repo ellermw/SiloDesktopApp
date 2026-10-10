@@ -45,7 +45,13 @@ public sealed partial class MainWindow : Window
     private bool _notificationsAvailable = true;
     private int _notificationUnreadCount;
     private bool _isNarrowShell;
-    private bool _desktopSidebarOpen = true;
+    private readonly SidebarPresentationState _sidebarPresentation = new();
+    private bool _desktopSidebarOpen
+    {
+        get => _sidebarPresentation.BrowsingOpen;
+        set => _sidebarPresentation.BrowsingOpen = value;
+    }
+    private bool DesktopSidebarIsOpen => _sidebarPresentation.IsOpen;
     private bool _synchronizingDesktopPaneState;
     private long _paneOpenPropertyCallbackToken;
     private bool _mobileHeaderHidden;
@@ -178,6 +184,8 @@ public sealed partial class MainWindow : Window
         // Activate() is never called, so the subscription lives here now.
         _playerService.ShowPlayingNextRequested += OnShowPlayingNextRequested;
         _playerService.PostRollReturnRequested += OnPostRollReturnRequested;
+        _playerService.ShuffleChanged += OnShuffleChanged;
+        _playerService.ShuffleFailed += OnShuffleFailed;
 
         // Keep native video window matched to main window size
         this.SizeChanged += OnWindowSizeChanged;
@@ -231,7 +239,7 @@ public sealed partial class MainWindow : Window
         // lets NavigationView fight the user's choice during navigation.
         var desiredPaneDisplayMode = isNarrow
             ? NavigationViewPaneDisplayMode.LeftMinimal
-            : _desktopSidebarOpen
+            : DesktopSidebarIsOpen
                 ? NavigationViewPaneDisplayMode.Left
                 : NavigationViewPaneDisplayMode.LeftCompact;
         if (NavView.PaneDisplayMode != desiredPaneDisplayMode)
@@ -267,8 +275,8 @@ public sealed partial class MainWindow : Window
             // LeftCompact is the WinUI mode designed for a persistent icon rail.
             // Reassigning IsPaneOpen on every page load restarts NavigationView's
             // pane transition, so only change it when the real state differs.
-            if (NavView.IsPaneOpen != _desktopSidebarOpen)
-                NavView.IsPaneOpen = _desktopSidebarOpen;
+            if (NavView.IsPaneOpen != DesktopSidebarIsOpen)
+                NavView.IsPaneOpen = DesktopSidebarIsOpen;
         }
 
         UpdateSidebarPanePresentation(NavView.IsPaneOpen);
@@ -330,7 +338,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_isNarrowShell && NavView.IsPaneVisible && CanExposeAuthenticatedNavigation)
         {
-            if (!_desktopSidebarOpen)
+            if (!DesktopSidebarIsOpen)
             {
                 SynchronizeDesktopPaneState();
                 return;
@@ -434,6 +442,8 @@ public sealed partial class MainWindow : Window
         _authService.CredentialStoreFailed -= OnCredentialStoreFailed;
         _playerService.ShowPlayingNextRequested -= OnShowPlayingNextRequested;
         _playerService.PostRollReturnRequested -= OnPostRollReturnRequested;
+        _playerService.ShuffleChanged -= OnShuffleChanged;
+        _playerService.ShuffleFailed -= OnShuffleFailed;
         this.SizeChanged -= OnWindowSizeChanged;
         this.Activated -= OnWindowActivated;
         if (AppWindow != null) AppWindow.Changed -= OnAppWindowChanged;
@@ -540,6 +550,9 @@ public sealed partial class MainWindow : Window
                 _playerService.EnterPostRollPreview();
 
             PlayingNextOverlay.Visibility = Visibility.Visible;
+            PlayingNextPlayNowButton.IsEnabled = true;
+            UpdateShufflePostRoll();
+            if (_playerService.IsShufflePlayback) _ = _playerService.RefreshShuffleNextAsync();
 
             // Match the current WebUI: entering post-roll early does not start
             // autoplay while the episode is still visibly playing.
@@ -1132,6 +1145,7 @@ public sealed partial class MainWindow : Window
             expectedServerUrl: savedSession.ServerUrl);
 
         var refreshed = false;
+        var sessionEnded = false;
         for (var attempt = 1; attempt <= 2 && !refreshed; attempt++)
         {
             try
@@ -1153,9 +1167,11 @@ public sealed partial class MainWindow : Window
                 break;
 
             string? persistedRefresh = null;
+            var credentialReadSucceeded = false;
             try
             {
                 persistedRefresh = _credentialStore.LoadCredential(savedSession.ServerUrl, "refresh_token");
+                credentialReadSucceeded = true;
             }
             catch (Exception ex)
             {
@@ -1164,6 +1180,7 @@ public sealed partial class MainWindow : Window
 
             if (string.IsNullOrWhiteSpace(persistedRefresh))
             {
+                sessionEnded = credentialReadSucceeded;
                 LocalLog.AppendLine("auth_startup.txt", $"refresh_terminal | attempt={attempt}");
                 break;
             }
@@ -1207,7 +1224,9 @@ public sealed partial class MainWindow : Window
         _savedRestoreInProgress = false;
         HideMainNavigation();
         LocalLog.AppendLine("auth_startup.txt", "restore_abandoned");
-        ShowSavedSessionRetry(server);
+        if (sessionEnded)
+            _navigationService.Navigate<LoginPage>(new LoginNavigationRequest(server, SessionEnded: true));
+        else ShowSavedSessionRetry(server);
     }
 
     private void ShowSavedSessionRetry(ServerEntry server)
@@ -1277,6 +1296,16 @@ public sealed partial class MainWindow : Window
         {
             HideMainNavigation();
             _navigationService.Navigate<ChoosePasswordPage>();
+            return true;
+        }
+
+        if (settings.ProfileLaunchMode == "ask")
+        {
+            // Profile choice is a local launch preference. Authentication is
+            // restored, but no saved PIN authority or automatic profile choice
+            // may bypass the picker when the user requested it every launch.
+            HideMainNavigation();
+            _navigationService.Navigate<ProfileSelectPage>();
             return true;
         }
 
@@ -1438,7 +1467,7 @@ public sealed partial class MainWindow : Window
             // HideMainNavigation closes the pane while login/profile selection
             // owns the window. Restore the user's last explicit desktop state
             // before revealing it so the wrong state cannot render for a frame.
-            var desiredPaneOpen = !_isNarrowShell && _desktopSidebarOpen;
+            var desiredPaneOpen = !_isNarrowShell && DesktopSidebarIsOpen;
             if (NavView.IsPaneOpen != desiredPaneOpen)
                 NavView.IsPaneOpen = desiredPaneOpen;
             if (!NavView.IsPaneVisible)
@@ -1975,6 +2004,9 @@ public sealed partial class MainWindow : Window
 
     private void OnNavigated_SynchronizeShellChrome(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
+        _sidebarPresentation.Navigate(e.SourcePageType == typeof(ItemDetailPage)
+            || e.SourcePageType == typeof(PersonDetailPage)
+            || e.SourcePageType == typeof(RequestDetailPage));
         _lastShellPageType = e.SourcePageType;
         _lastShellParameter = e.Parameter;
 
@@ -1992,7 +2024,7 @@ public sealed partial class MainWindow : Window
 
         // Restore the authenticated shell at the frame boundary so navigation
         // never leaves the user-controlled pane in a transient hidden state.
-        var desiredPaneOpen = !_isNarrowShell && _desktopSidebarOpen;
+        var desiredPaneOpen = !_isNarrowShell && DesktopSidebarIsOpen;
         if (NavView.IsPaneOpen != desiredPaneOpen)
             NavView.IsPaneOpen = desiredPaneOpen;
         if (!NavView.IsPaneVisible)
@@ -2261,7 +2293,7 @@ public sealed partial class MainWindow : Window
             // requests must never overwrite the user's persistent desktop state.
             // The preference is changed only on input from the real pane-toggle
             // button, so an open preference means this close is unsolicited.
-            if (_desktopSidebarOpen)
+            if (DesktopSidebarIsOpen)
             {
                 args.Cancel = true;
                 SynchronizeDesktopPaneState();
@@ -2300,7 +2332,9 @@ public sealed partial class MainWindow : Window
 
     private void RememberDesktopSidebarState(bool isOpen)
     {
-        _desktopSidebarOpen = isOpen;
+        // A detail-page expansion is temporary; returning to browsing restores
+        // the saved preference rather than persisting route-driven changes.
+        if (!_sidebarPresentation.Toggle(isOpen)) return;
         try
         {
             var settings = _settingsService.Load();
@@ -2345,10 +2379,10 @@ public sealed partial class MainWindow : Window
             return;
         }
 
-        if (NavView.IsPaneOpen != _desktopSidebarOpen)
+        if (NavView.IsPaneOpen != DesktopSidebarIsOpen)
             SynchronizeDesktopPaneState();
         else
-            UpdateSidebarPanePresentation(_desktopSidebarOpen);
+            UpdateSidebarPanePresentation(DesktopSidebarIsOpen);
     }
 
     private void SynchronizeDesktopPaneState()
@@ -2364,14 +2398,14 @@ public sealed partial class MainWindow : Window
         _synchronizingDesktopPaneState = true;
         try
         {
-            var desiredMode = _desktopSidebarOpen
+            var desiredMode = DesktopSidebarIsOpen
                 ? NavigationViewPaneDisplayMode.Left
                 : NavigationViewPaneDisplayMode.LeftCompact;
             if (NavView.PaneDisplayMode != desiredMode)
                 NavView.PaneDisplayMode = desiredMode;
-            if (NavView.IsPaneOpen != _desktopSidebarOpen)
-                NavView.IsPaneOpen = _desktopSidebarOpen;
-            UpdateSidebarPanePresentation(_desktopSidebarOpen);
+            if (NavView.IsPaneOpen != DesktopSidebarIsOpen)
+                NavView.IsPaneOpen = DesktopSidebarIsOpen;
+            UpdateSidebarPanePresentation(DesktopSidebarIsOpen);
         }
         finally
         {

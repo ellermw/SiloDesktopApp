@@ -20,13 +20,13 @@ public sealed partial class CatalogPage
         if (_queryFilters == null) return;
         var owner = new CancellationTokenSource();
         Interlocked.Exchange(ref _queryOptionsOwner, owner)?.Cancel();
-        var library = SelectedLibrary(); var scope = _scope;
+        var library = SelectedLibrary(); var scope = SelectedTag(TypeCombo) ?? _scope;
         _queryFilters.Load(_catalogQuery, scope, library);
         try
         {
             var options = await _api.GetFiltersAsync(libraryId: library, scope: scope,
                 source: _source == "library" ? null : _source, sectionId: _sectionId, ct: owner.Token);
-            if (_queryOptionsOwner == owner && !owner.IsCancellationRequested && library == SelectedLibrary())
+            if (_queryOptionsOwner == owner && !owner.IsCancellationRequested && library == SelectedLibrary() && scope == (SelectedTag(TypeCombo) ?? _scope))
                 _queryFilters.Load(_catalogQuery, scope, library, options);
         }
         catch (OperationCanceledException) { }
@@ -47,7 +47,9 @@ public sealed partial class CatalogPage
         if (!string.IsNullOrWhiteSpace(_initialGenre)) _catalogQuery.Groups[0].Rules.Add(new() { Field = "genre", Op = "is", Value = _initialGenre });
         foreach (var (field, value) in new[] { ("genre", SelectedTag(GenreCombo)), ("studio", SelectedTag(StudioCombo)), ("country", SelectedTag(CountryCombo)), ("content_rating", SelectedTag(RatingCombo)), ("resolution", SelectedTag(ResolutionCombo)), ("audio_language", SelectedTag(AudioLanguageCombo)) })
             if (!string.IsNullOrWhiteSpace(value)) _catalogQuery.Groups[0].Rules.Add(new() { Field = field, Op = "is", Value = value });
+        _catalogQuery.Groups.RemoveAll(group => group.Rules.Count == 0);
         _queryFilters = new QueryFilterEditor();
+        _queryFilters.ConfigureSort(_source is not ("favorites" or "watchlist" or "history"), _source == "history" ? "date_viewed" : null);
         _queryFilters.Load(_catalogQuery, _scope, SelectedLibrary(), filters);
         FiltersSheet.ConfigureFilterHeader(_queryFilters.DetachModeSelector(), "Refine your catalog results");
         ConfigureCatalogFilterSheetBody();
@@ -65,12 +67,28 @@ public sealed partial class CatalogPage
         _queryChips = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 8 };
         FilterPanel.Children.Add(_queryChips);
         _queryFilters.Changed += () => { UpdateQueryFilterChips(); Filter_Changed(_queryFilters, new RoutedEventArgs()); };
+        _queryFilters.SortChanged += () =>
+        {
+            var sort = _catalogQuery.Sort; if (sort == null) return;
+            _initializing = true;
+            try
+            {
+                SortCombo.SelectedItem = SortCombo.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag as string == sort.Field);
+                OrderCombo.SelectedItem = OrderCombo.Items.OfType<ComboBoxItem>().FirstOrDefault(item => item.Tag as string == sort.Order);
+                OrderCombo.Visibility = Visibility.Visible;
+            }
+            finally { _initializing = false; }
+            if (PersonalCatalogSortPolicy.SupportsSourceOrder(_source)) QueuePersonalSortPreferenceSave();
+        };
         UpdateQueryFilterChips();
     }
 
     private void SizeCatalogFilterSheet()
     {
-        if (ActualWidth > 0) FiltersSheet.PreferredWidth = Math.Min(ActualWidth * .75, ActualWidth >= 640 ? 448 : double.PositiveInfinity);
+        if (ActualWidth <= 0) return;
+        var viewportWidth = SiloPlayer.Helpers.WebUiViewport.Width(this, ActualWidth);
+        FiltersSheet.PreferredWidth = Math.Min(ActualWidth,
+            Math.Min(viewportWidth * .75, viewportWidth >= 640 ? 448 : double.PositiveInfinity));
     }
 
     private void ConfigureCatalogFilterSheetBody()
@@ -109,7 +127,7 @@ public sealed partial class CatalogPage
             var chip = CatalogFilterBadgeView.Build(badge.Label, () => { badge.Remove(); _queryFilters?.Load(_catalogQuery, _scope, SelectedLibrary()); UpdateQueryFilterChips(); if (_queryFilters != null) Filter_Changed(_queryFilters, new RoutedEventArgs()); });
             _queryChips.Children.Add(chip);
         }
-        var count = badges.Count;
+        var count = CatalogFilterBadges.ActiveCount(_catalogQuery, _scope);
         FilterCountText.Text = count.ToString(); FilterCountBadge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 }

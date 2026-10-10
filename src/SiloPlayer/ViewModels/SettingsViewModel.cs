@@ -319,6 +319,7 @@ public partial class SettingsViewModel : ObservableObject
 
     // ===== Loading state =====
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanChangeHomePreference))]
     private bool _isLoading;
 
     [ObservableProperty]
@@ -403,14 +404,34 @@ public partial class SettingsViewModel : ObservableObject
     }
     [ObservableProperty] private bool _showAdvisoryAge;
     [ObservableProperty] private bool _hideWatchedItems;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanChangeHomePreference))]
+    private bool _isSavingHomePreference;
+    public bool CanChangeHomePreference => !IsLoading && !IsSavingHomePreference;
     [ObservableProperty] private bool _themeMusicEnabled;
     [ObservableProperty] private bool _themeMusicLoop;
     partial void OnThemeMusicEnabledChanged(bool value)
     { if (!_suppressSave) { if (!value) App.Services.GetService<ThemeMusicService>()?.Stop(); _ = SaveContractProfileSettingAsync("ui.theme_music_enabled", value); } }
     partial void OnThemeMusicLoopChanged(bool value)
     { if (!_suppressSave) _ = SaveContractProfileSettingAsync("ui.theme_music_loop", value); }
-    partial void OnHideWatchedItemsChanged(bool value)
-    { if (!_suppressSave) _ = SaveContractProfileSettingAsync("home.hide_watched_items", value); }
+    partial void OnHideWatchedItemsChanged(bool oldValue, bool newValue)
+    { if (!_suppressSave) _ = SaveHomePreferenceAsync(oldValue, newValue); }
+    private async Task SaveHomePreferenceAsync(bool previous, bool value)
+    {
+        var context = _settingsApi.CaptureContext();
+        IsSavingHomePreference = true;
+        try
+        {
+            var saved = await SaveContractProfileSettingAsync("home.hide_watched_items", value);
+            if (!saved && _settingsApi.IsCurrentContext(context))
+            {
+                _suppressSave = true;
+                try { HideWatchedItems = previous; }
+                finally { _suppressSave = false; }
+            }
+        }
+        finally { IsSavingHomePreference = false; }
+    }
     partial void OnShowAdvisoryAgeChanged(bool value)
     { if (!_suppressSave) _ = SaveContractProfileSettingAsync("catalog.show_advisory_age", value); }
 
@@ -658,7 +679,7 @@ public partial class SettingsViewModel : ObservableObject
     {
         try
         {
-            var libraries = await _catalogApi.GetLibrariesAsync();
+            var libraries = await _catalogApi.GetLibrariesAsync(includeHidden: true);
 
             _disabledLibraryIds = [];
             var libraryOrder = new List<int>();
@@ -1548,6 +1569,13 @@ public partial class SettingsViewModel : ObservableObject
     public ObservableCollection<SettingsSectionEntry> HomeSections { get; } = [];
     private readonly HashSet<string> _removedSystemSectionIds = new(StringComparer.Ordinal);
     private List<RawSectionOverride> _rawHomeOverrides = [];
+    private List<SettingsSectionEntry> _homeBaseline = [];
+    private List<SettingsSectionEntry>? _pendingHomeRows;
+    private HashSet<string> _pendingHomeRemoved = [];
+    private readonly HashSet<string> _homeTouchedIds = [];
+    private TaskCompletionSource<bool>? _homeWriteCompletion;
+    [ObservableProperty]
+    private bool _isSavingHomeSections;
 
     [ObservableProperty]
     private string _selectedScope = "home";
@@ -1560,6 +1588,11 @@ public partial class SettingsViewModel : ObservableObject
     private readonly Dictionary<string, string> _homeOverrideIds = [];
     private ApiRequestContext? _homeSectionsContext;
     private long _homeLoadGeneration;
+    public long HomeRowsRevision => _homeLoadGeneration;
+    public SettingsSectionEntry? SavedHomeRow(string id) => _homeBaseline.FirstOrDefault(row => row.Id == id);
+    public bool HomeRowsLoadedForCurrentScope => CanEditHomeSections && _homeSectionsContext.HasValue
+        && _settingsApi.IsCurrentContext(_homeSectionsContext.Value) && GetSectionScope() == _loadedHomeScope;
+    public Task WaitForHomeRowsWritesAsync() => _homeWriteCompletion?.Task ?? ResetHomeSectionsCommand.ExecutionTask ?? Task.CompletedTask;
     private (string Scope, string? LibraryId) _loadedHomeScope;
 
     [ObservableProperty]
@@ -1568,10 +1601,13 @@ public partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadHomeSectionsAsync()
     {
+        if (_homeWriteCompletion != null && _homeSectionsContext.HasValue && !_settingsApi.IsCurrentContext(_homeSectionsContext.Value))
+            await _homeWriteCompletion.Task;
+        if (IsSavingHomeSections && _settingsApi.IsCurrentContext(_homeSectionsContext ?? default)) return;
         var generation = ++_homeLoadGeneration;
         var context = _settingsApi.CaptureContext();
         var requestedScope = GetSectionScope();
-        if (_homeSectionsContext != context) _homeOverrideIds.Clear();
+        if (_homeSectionsContext != context || requestedScope != _loadedHomeScope) _homeOverrideIds.Clear();
         IsLoadingHomeSections = true;
         CanEditHomeSections = false;
         HomeSectionsEditStateMessage = "Loading saved section state before section changes are enabled.";
@@ -1592,6 +1628,7 @@ public partial class SettingsViewModel : ObservableObject
             {
                 HomeSections.Add(section);
             }
+            _homeBaseline = HomeSections.Select(HomeSectionWritePolicy.Snapshot).ToList();
             _removedSystemSectionIds.Clear();
             _rawHomeOverrides = overridesTask.Result.Overrides;
             foreach (var entry in overridesTask.Result.Overrides.Where(o => o.Removed == true && !string.IsNullOrWhiteSpace(o.SectionId)))
@@ -1610,52 +1647,81 @@ public partial class SettingsViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task SaveHomeSectionsAsync(string? changedSectionId)
     {
         if (!CanEditHomeSections || _homeSectionsContext == null || !_settingsApi.IsCurrentContext(_homeSectionsContext.Value) || GetSectionScope() != _loadedHomeScope)
         { ErrorMessage = "Reload this layout before saving."; return; }
+        _pendingHomeRows = HomeSections.Select(HomeSectionWritePolicy.Snapshot).ToList();
+        _pendingHomeRemoved = new HashSet<string>(_removedSystemSectionIds);
+        if (changedSectionId != null) _homeTouchedIds.Add(changedSectionId);
+        if (_homeWriteCompletion != null) { await _homeWriteCompletion.Task; return; }
+        var completion = _homeWriteCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var context = _homeSectionsContext.Value;
+        var savedScope = _loadedHomeScope;
+        IsSavingHomeSections = true;
         ErrorMessage = null;
+        string? failure = null;
         try
         {
-            // Match the WebUI's buildSectionOverrides contract: the payload is
-            // rebuilt from the currently visible rows. Starting with every raw
-            // override resurrected deleted custom sections on the next save.
-            var overrides = HomeSectionWritePolicy.Build(HomeSections, _rawHomeOverrides, _removedSystemSectionIds, _homeOverrideIds, changedSectionId);
-
-            var (scope, libraryId) = GetSectionScope();
-
-            await _settingsApi.UpdateProfileSectionsAsync(new SaveOverridesRequest
+            while (_pendingHomeRows != null && _settingsApi.IsCurrentContext(context) && GetSectionScope() == savedScope)
             {
-                Scope = scope,
-                LibraryId = libraryId,
-                Overrides = overrides,
-            });
-            if (string.Equals(scope, "home", StringComparison.OrdinalIgnoreCase))
-            {
-                WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
-                    MediaSurfaceChangeKind.HomeLayoutChanged,
-                    string.Empty));
+                var snapshot = _pendingHomeRows;
+                var removed = _pendingHomeRemoved;
+                _pendingHomeRows = null;
+                var overrides = HomeSectionWritePolicy.Build(snapshot, _rawHomeOverrides, removed, _homeOverrideIds,
+                    baseline: _homeBaseline, changedSectionIds: _homeTouchedIds);
+                try
+                {
+                    await _settingsApi.UpdateProfileSectionsAsync(new SaveOverridesRequest
+                    { Scope = savedScope.Scope, LibraryId = savedScope.LibraryId, Overrides = overrides });
+                    if (!_settingsApi.IsCurrentContext(context)) break;
+                    _rawHomeOverrides = overrides.Select(row => new RawSectionOverride
+                    {
+                        Id = row.Id ?? "", SectionId = row.SectionId ?? "", Position = row.Position, Hidden = row.Hidden ?? false,
+                        Removed = row.Removed ?? false, Title = row.Title ?? "", Featured = row.Featured, ItemLimit = row.ItemLimit,
+                        Config = row.Config == null ? "" : System.Text.Json.JsonSerializer.Serialize(row.Config),
+                        SectionType = row.SectionType ?? "", IsUserAdded = row.IsUserAdded ?? false,
+                        UserSectionType = row.UserSectionType ?? "", UserTitle = row.UserTitle ?? "",
+                        UserConfig = row.UserConfig == null ? "" : System.Text.Json.JsonSerializer.Serialize(row.UserConfig)
+                    }).ToList();
+                    _homeBaseline = snapshot;
+                    failure = null;
+                    if (savedScope.Scope == "home") WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.HomeLayoutChanged, string.Empty));
+                }
+                catch (Exception ex) { failure = $"Could not save your rows: {ex.Message}"; }
             }
-            ShowStatus("Home sections saved");
         }
-        catch (Exception ex)
+        finally
         {
-            var message = $"Failed to save home sections: {ex.Message}";
-            // Restore the last server-confirmed layout after an optimistic
-            // reorder/edit/delete fails, matching the WebUI rollback behavior.
-            await LoadHomeSectionsAsync();
-            ErrorMessage = message;
+            _pendingHomeRows = null; _homeTouchedIds.Clear();
+            // Hold page edits until the write has been reconciled with the server.
+            if (_settingsApi.IsCurrentContext(context) && GetSectionScope() == savedScope) CanEditHomeSections = false;
+            IsSavingHomeSections = false;
+            try
+            {
+                if (_settingsApi.IsCurrentContext(context) && GetSectionScope() == savedScope)
+                {
+                    await LoadHomeSectionsAsync();
+                    if (failure != null) ErrorMessage = failure;
+                    else ShowStatus("Home rows saved");
+                }
+            }
+            finally { _homeWriteCompletion = null; completion.TrySetResult(failure == null); }
         }
     }
 
     [RelayCommand]
     private async Task ResetHomeSectionsAsync()
     {
+        if (!CanEditHomeSections || IsSavingHomeSections || _homeWriteCompletion != null) return;
+        var context = _settingsApi.CaptureContext();
+        IsSavingHomeSections = true; CanEditHomeSections = false;
         try
         {
             var (scope, libraryId) = GetSectionScope();
             await _settingsApi.ResetProfileSectionsAsync(scope, libraryId);
+            if (!_settingsApi.IsCurrentContext(context)) return;
             if (string.Equals(scope, "home", StringComparison.OrdinalIgnoreCase))
             {
                 WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
@@ -1663,11 +1729,15 @@ public partial class SettingsViewModel : ObservableObject
                     string.Empty));
             }
             ShowStatus("Sections reset to default");
-            await LoadHomeSectionsAsync();
         }
         catch (Exception ex)
         {
             ErrorMessage = $"Failed to reset home sections: {ex.Message}";
+        }
+        finally
+        {
+            IsSavingHomeSections = false;
+            if (_settingsApi.IsCurrentContext(context)) await LoadHomeSectionsAsync();
         }
     }
 
@@ -1707,7 +1777,11 @@ public partial class SettingsViewModel : ObservableObject
         HomeSections.Remove(section);
     }
 
-    public void AddHomeSection(SettingsSectionEntry section) => HomeSections.Add(section);
+    public void AddHomeSection(SettingsSectionEntry section)
+    {
+        section.Position = HomeSections.Select(row => row.Position).DefaultIfEmpty(-1).Max() + 1;
+        HomeSections.Add(section);
+    }
 
     private static SectionOverride ToWireOverride(RawSectionOverride value) => new()
     {

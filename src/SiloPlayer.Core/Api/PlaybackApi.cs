@@ -5,7 +5,21 @@ namespace SiloPlayer.Core.Api;
 public partial class PlaybackApi(SiloApiClient client)
 {
     public Task<WatchDetailResponse> GetWatchDetailAsync(string contentId, CancellationToken ct = default)
-        => client.GetAsync<WatchDetailResponse>($"/api/v2/watch/{Uri.EscapeDataString(contentId)}", ct);
+        => GetWatchDetailAsync(contentId, libraryId: null, fileId: null, ct);
+
+    public async Task<WatchDetailResponse> GetWatchDetailAsync(string contentId, int? libraryId, int? fileId = null, CancellationToken ct = default)
+    {
+        var context = client.CaptureContext();
+        var path = $"/api/v2/watch/{Uri.EscapeDataString(contentId)}";
+        var query = new List<string>();
+        if (libraryId.HasValue) query.Add("library_id=" + libraryId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (fileId.HasValue) query.Add("file_id=" + fileId.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        if (query.Count > 0) path += "?" + string.Join('&', query);
+        var detail = await client.SendRequestAsync<WatchDetailResponse>(context, HttpMethod.Get, path, null, ct);
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Watch preparation authority changed.", ct);
+        detail.PreparedLibraryId = libraryId; detail.PreparedFileId = fileId;
+        return detail;
+    }
 
     public Task<PlaybackStartResponse> StartPlaybackAsync(PlaybackStartRequest request, CancellationToken ct = default)
         => throw new NotSupportedException("Playback API v2 requires a protocol-v3 playback plan.");
@@ -217,6 +231,8 @@ public class SubtitleListResponse
 
 public class SubtitleEntry
 {
+    public SubtitleTiming Timing { get; set; } = new();
+    public SubtitleSyncJob? Sync { get; set; }
     public long Id { get; set; }
     public int MediaFileId { get; set; }
     public string Provider { get; set; } = "";

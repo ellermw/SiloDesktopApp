@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Services;
 
@@ -13,11 +14,21 @@ public partial class CollectionsViewModel : ObservableObject
     private readonly CollectionsApi _collectionsApi;
     private readonly CatalogApi _catalogApi;
     private bool _loadInProgress;
+    private long _loadGeneration;
+    private ApiRequestContext? _loadContext;
+    private ApiRequestContext? _displayContext;
+    private Task<CollectionsApi.PersonalOrderSnapshot>? _dragSnapshot;
+    [ObservableProperty] private bool _isCollectionMutationPending;
+    private readonly AuthApi? _authApi;
+    private readonly SiloApiClient? _requestClient;
+    public ObservableCollection<Profile> Profiles { get; } = [];
+    public CollectionCapabilitiesResponse? Capabilities { get; private set; }
 
-    public CollectionsViewModel(CollectionsApi collectionsApi, CatalogApi catalogApi)
+    public CollectionsViewModel(CollectionsApi collectionsApi, CatalogApi catalogApi, AuthApi? authApi = null, SiloApiClient? requestClient = null)
     {
         _collectionsApi = collectionsApi;
         _catalogApi = catalogApi;
+        _authApi = authApi; _requestClient = requestClient;
     }
 
     public ObservableCollection<Collection> Collections { get; } = [];
@@ -62,10 +73,20 @@ public partial class CollectionsViewModel : ObservableObject
     [ObservableProperty]
     private string? _lastImportMessage;
 
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task LoadCollectionsAsync()
     {
-        if (_loadInProgress) return;
+        var context = _requestClient?.CaptureContext();
+        if (_loadInProgress && _loadContext == context) return;
+        var generation = ++_loadGeneration;
+        bool Current() => generation == _loadGeneration && (context == null || _requestClient!.IsCurrentContext(context.Value));
+        if (_displayContext != context)
+        {
+            Collections.Clear(); Groups.Clear(); ServerLibraries.Clear(); Profiles.Clear();
+            Capabilities = null; OnPropertyChanged(nameof(Capabilities));
+            _displayContext = context;
+        }
+        _loadContext = context;
 
         _loadInProgress = true;
         // Preserve the previous page while refreshing. Skeletons are useful
@@ -75,38 +96,42 @@ public partial class CollectionsViewModel : ObservableObject
         IsLoadingServerCollections = ServerLibraries.Count == 0;
         ErrorMessage = null;
         Task<ServerCollectionsResponse>? serverCollectionsTask = null;
+        var referenceTask = LoadViewerReferencesAsync();
 
         try
         {
             var collectionsTask = _collectionsApi.GetCollectionsAsync();
             serverCollectionsTask = _collectionsApi.GetServerCollectionsAsync();
             var response = await collectionsTask;
-            Collections.Clear();
-            foreach (var c in response.Collections)
-                Collections.Add(c);
-            Groups.Clear();
-            foreach (var group in response.Groups.OrderBy(group => group.SortOrder))
-                Groups.Add(group);
-
-            IsEmpty = Collections.Count == 0;
+            if (Current())
+            {
+                Collections.Clear();
+                foreach (var c in response.Collections) Collections.Add(c);
+                Groups.Clear();
+                foreach (var group in response.Groups.OrderBy(group => group.SortOrder)) Groups.Add(group);
+                IsEmpty = Collections.Count == 0;
+            }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            ErrorMessage = $"Failed to load collections: {ex.Message}";
+            if (Current()) ErrorMessage = $"Failed to load collections: {ex.Message}";
         }
+        catch (OperationCanceledException) { }
         finally
         {
-            IsLoading = false;
+            if (Current()) IsLoading = false;
         }
 
-        ServerLibraries.Clear();
         try
         {
             if (serverCollectionsTask != null)
             {
                 var serverResponse = await serverCollectionsTask;
-                foreach (var library in serverResponse.Libraries)
-                    ServerLibraries.Add(library);
+                if (Current())
+                {
+                    ServerLibraries.Clear();
+                    foreach (var library in serverResponse.Libraries) ServerLibraries.Add(library);
+                }
             }
         }
         catch
@@ -116,9 +141,32 @@ public partial class CollectionsViewModel : ObservableObject
         }
         finally
         {
-            IsLoadingServerCollections = false;
-            _loadInProgress = false;
+            if (generation == _loadGeneration)
+            {
+                IsLoadingServerCollections = false;
+                IsLoading = false;
+                _loadInProgress = false;
+            }
         }
+        await referenceTask;
+    }
+
+    private async Task LoadViewerReferencesAsync()
+    {
+        var context = _requestClient?.CaptureContext();
+        bool Current() => context == null || _requestClient!.IsCurrentContext(context.Value);
+        async Task ProfilesAsync()
+        {
+            if (_authApi == null) return;
+            try { var response = await _authApi.GetProfilesAsync(); if (!Current()) return; Profiles.Clear(); foreach (var profile in response.Profiles) Profiles.Add(profile); }
+            catch { /* Optional profile names must not hide the collection list. */ }
+        }
+        async Task CapabilitiesAsync()
+        {
+            try { var response = await _collectionsApi.GetCollectionCapabilitiesAsync(); if (!Current()) return; Capabilities = response; OnPropertyChanged(nameof(Capabilities)); }
+            catch { if (Current()) { Capabilities = null; OnPropertyChanged(nameof(Capabilities)); } }
+        }
+        await Task.WhenAll(ProfilesAsync(), CapabilitiesAsync());
     }
 
     public async Task<bool> CreateGroupAsync(string name)
@@ -209,16 +257,10 @@ public partial class CollectionsViewModel : ObservableObject
 
     public async Task<bool> DropCollectionAsync(string sourceId, string? targetId, string? targetGroupId)
     {
-        var source = Collections.FirstOrDefault(item => item.Id == sourceId);
+        if (IsCollectionMutationPending || Capabilities?.ItemReorder != true || _requestClient == null) return false;
+        var scope = Collections.Where(item => PersonalCollectionOwnership.IsOwn(item, _requestClient.ProfileId)).ToList();
+        var source = scope.FirstOrDefault(item => item.Id == sourceId);
         if (source == null) return false;
-
-        if (!string.Equals(source.GroupId, targetGroupId, StringComparison.Ordinal))
-            return await MoveCollectionToGroupAsync(source, targetGroupId);
-
-        var scope = Collections
-            .Where(item => string.Equals(item.GroupId, targetGroupId, StringComparison.Ordinal))
-            .OrderBy(item => item.SortOrder)
-            .ToList();
         var oldIndex = scope.FindIndex(item => item.Id == sourceId);
         var newIndex = targetId == null
             ? scope.Count - 1
@@ -227,9 +269,11 @@ public partial class CollectionsViewModel : ObservableObject
 
         scope.RemoveAt(oldIndex);
         scope.Insert(Math.Min(newIndex, scope.Count), source);
+        IsCollectionMutationPending = true;
         try
         {
-            await _collectionsApi.ReorderCollectionsAsync(scope.Select(item => item.Id).ToList(), targetGroupId);
+            var snapshot = _dragSnapshot == null ? await _collectionsApi.PreparePersonalOrderAsync(Collections.Where(item => PersonalCollectionOwnership.IsOwn(item, _requestClient.ProfileId)).Select(item => item.Id).ToArray()) : await _dragSnapshot;
+            await _collectionsApi.ReorderPersonalCollectionsAsync(snapshot, scope.Select(item => item.Id).ToList());
             await LoadCollectionsAsync();
             return true;
         }
@@ -238,6 +282,30 @@ public partial class CollectionsViewModel : ObservableObject
             ErrorMessage = $"Failed to reorder collections: {ex.Message}";
             return false;
         }
+        finally { _dragSnapshot = null; IsCollectionMutationPending = false; }
+    }
+
+    public Task BeginCollectionDragAsync()
+    {
+        if (Capabilities?.ItemReorder != true || _requestClient == null) return Task.CompletedTask;
+        _dragSnapshot = _collectionsApi.PreparePersonalOrderAsync(Collections.Where(item => PersonalCollectionOwnership.IsOwn(item, _requestClient.ProfileId)).Select(item => item.Id).ToArray());
+        // A canceled drag has no drop consumer. Observe its failed snapshot.
+        return ObserveAsync(_dragSnapshot);
+        static async Task ObserveAsync(Task snapshot) { try { await snapshot; } catch { } }
+    }
+    public void CancelCollectionDrag() => _dragSnapshot = null;
+
+    public async Task<bool> SetSharedAsync(Collection collection, bool shared)
+    {
+        if (IsCollectionMutationPending || _requestClient == null || !PersonalCollectionOwnership.IsOwn(collection, _requestClient.ProfileId)) return false;
+        IsCollectionMutationPending = true; ErrorMessage = null;
+        try
+        {
+            var updated = await _collectionsApi.UpdateCollectionAsync(collection.Id, new() { IsShared = shared });
+            UpsertCollection(updated); return true;
+        }
+        catch (Exception ex) { ErrorMessage = $"Could not change sharing: {ex.Message}"; return false; }
+        finally { IsCollectionMutationPending = false; }
     }
 
     public async Task<bool> MoveGroupAsync(CollectionGroup group, int offset)
@@ -313,6 +381,8 @@ public partial class CollectionsViewModel : ObservableObject
     [RelayCommand]
     private async Task SyncCollectionAsync(string id)
     {
+        if (IsCollectionMutationPending || (_requestClient != null && !Collections.Any(item => item.Id == id && PersonalCollectionOwnership.IsOwn(item, _requestClient.ProfileId)))) return;
+        IsCollectionMutationPending = true;
         try
         {
             var result = await _collectionsApi.SyncCollectionAsync(id);
@@ -333,6 +403,7 @@ public partial class CollectionsViewModel : ObservableObject
         {
             ErrorMessage = $"Failed to sync collection: {ex.Message}";
         }
+        finally { IsCollectionMutationPending = false; }
     }
 
     public async Task LoadTemplateFlowAsync()
@@ -354,7 +425,7 @@ public partial class CollectionsViewModel : ObservableObject
             TemplateGroups.Clear();
             foreach (var group in catalogTask.Result.Categories)
             {
-                var supported = group.Templates.Where(template => CollectionImportPolicy.CanCreate(capabilitiesTask.Result, template.Source)).ToList();
+                var supported = group.Templates.Where(template => CollectionImportPolicy.CanCreateTemplate(capabilitiesTask.Result, template)).ToList();
                 if (supported.Count > 0) TemplateGroups.Add(new() { Category = group.Category, Label = group.Label, Templates = supported });
             }
 
@@ -449,7 +520,7 @@ public partial class CollectionsViewModel : ObservableObject
         {
             var template = draft.Template;
             var capabilities = await _collectionsApi.GetCollectionCapabilitiesAsync();
-            if (!CollectionImportPolicy.CanCreate(capabilities, template.Source))
+            if (!CollectionImportPolicy.CanCreateTemplate(capabilities, template))
             {
                 TemplateErrorMessage = "This source is no longer available for new collections. Return to templates to choose a supported source. Existing collections can still sync.";
                 return null;
@@ -474,9 +545,9 @@ public partial class CollectionsViewModel : ObservableObject
                         ? draft.MDBListUrl.Trim()
                         : template.Mdblist?.Url;
 
-                    if (string.IsNullOrWhiteSpace(mdblistUrl))
+                    if (!CollectionImportPolicy.IsMDBListUrl(mdblistUrl))
                     {
-                        TemplateErrorMessage = "MDBList imports need a list URL.";
+                        TemplateErrorMessage = "Enter an MDBList list link, for example https://mdblist.com/lists/name/list.";
                         return null;
                     }
 
@@ -491,7 +562,7 @@ public partial class CollectionsViewModel : ObservableObject
                         PosterUrl = request.PosterUrl,
                         DisplayQueryDefinition = request.DisplayQueryDefinition,
                         SortConfig = request.SortConfig,
-                        Url = mdblistUrl
+                        Url = CollectionImportPolicy.CleanMDBListLink(mdblistUrl)
                     });
                     break;
 

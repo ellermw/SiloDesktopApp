@@ -223,7 +223,7 @@ public partial class PlayerService : IDisposable
     /// The cache is small, short-lived, and profile-scoped so it cannot leak
     /// playback preferences between profiles or grow during long browsing.
     /// </summary>
-    public void PrefetchWatchDetail(string? contentId)
+    public void PrefetchWatchDetail(string? contentId, int? libraryId = null, int? fileId = null)
     {
         if (string.IsNullOrWhiteSpace(contentId) || _closing)
             return;
@@ -232,14 +232,15 @@ public partial class PlayerService : IDisposable
         if (string.IsNullOrWhiteSpace(profileId))
             return;
 
+        var cacheKey = WatchPreparationKey(contentId, libraryId, fileId);
         var task = _watchDetailPrefetches.GetOrAdd(
-            contentId,
+            cacheKey,
             WatchPrefetchAuthorityKey(profileId),
-            () => _playbackApi.GetWatchDetailAsync(contentId, CancellationToken.None),
+            () => _playbackApi.GetWatchDetailAsync(contentId, libraryId, fileId, CancellationToken.None),
             DateTimeOffset.UtcNow,
             out var added);
         if (added)
-            _ = ObserveWatchDetailPrefetchAsync(contentId, task);
+            _ = ObserveWatchDetailPrefetchAsync(cacheKey, task);
     }
 
     /// <summary>
@@ -250,14 +251,18 @@ public partial class PlayerService : IDisposable
     /// </summary>
     public async Task<WatchDetailResponse> GetOrFetchWatchDetailAsync(
         string contentId,
-        CancellationToken ct = default)
-        => await GetOrFetchWatchDetailCoreAsync(contentId, consumePrefetch: false, ct: ct)
+        CancellationToken ct = default,
+        int? libraryId = null,
+        int? fileId = null)
+        => await GetOrFetchWatchDetailCoreAsync(contentId, consumePrefetch: false, ct: ct, libraryId: libraryId, fileId: fileId)
             .ConfigureAwait(false);
 
     private async Task<WatchDetailResponse> GetOrFetchWatchDetailCoreAsync(
         string contentId,
         bool consumePrefetch,
-        CancellationToken ct)
+        CancellationToken ct,
+        int? libraryId = null,
+        int? fileId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(contentId);
         var authority = _apiClient.CaptureContext();
@@ -265,8 +270,8 @@ public partial class PlayerService : IDisposable
         // Starting through the cache also coalesces callers that arrive before
         // a hover prefetch has fired (for example, Item Detail and Play racing
         // immediately after navigation).
-        PrefetchWatchDetail(contentId);
-        var prefetched = await TryGetPrefetchedWatchDetailAsync(contentId, consumePrefetch, ct)
+        PrefetchWatchDetail(contentId, libraryId, fileId);
+        var prefetched = await TryGetPrefetchedWatchDetailAsync(contentId, consumePrefetch, ct, libraryId, fileId)
             .ConfigureAwait(false);
         EnsurePreparationAuthority();
         if (prefetched != null)
@@ -274,7 +279,7 @@ public partial class PlayerService : IDisposable
 
         try
         {
-            var detail = await _playbackApi.GetWatchDetailAsync(contentId, ct).ConfigureAwait(false);
+            var detail = await _playbackApi.GetWatchDetailAsync(contentId, libraryId, fileId, ct).ConfigureAwait(false);
             EnsurePreparationAuthority();
             return detail;
         }
@@ -285,7 +290,7 @@ public partial class PlayerService : IDisposable
             // imposing this delay on successful requests.
             await Task.Delay(300, ct).ConfigureAwait(false);
             EnsurePreparationAuthority();
-            var detail = await _playbackApi.GetWatchDetailAsync(contentId, ct).ConfigureAwait(false);
+            var detail = await _playbackApi.GetWatchDetailAsync(contentId, libraryId, fileId, ct).ConfigureAwait(false);
             EnsurePreparationAuthority();
             return detail;
         }
@@ -315,7 +320,9 @@ public partial class PlayerService : IDisposable
     private async Task<WatchDetailResponse?> TryGetPrefetchedWatchDetailAsync(
         string contentId,
         bool consume,
-        CancellationToken ct)
+        CancellationToken ct,
+        int? libraryId = null,
+        int? fileId = null)
     {
         var profileId = _authService.SelectedProfileId;
         if (string.IsNullOrWhiteSpace(profileId))
@@ -325,11 +332,12 @@ public partial class PlayerService : IDisposable
         {
             var context = _apiClient.CaptureContext();
             var authorityKey = WatchPrefetchAuthorityKey(profileId);
+            var cacheKey = WatchPreparationKey(contentId, libraryId, fileId);
             var watchDetail = consume
                 ? await _watchDetailPrefetches.TryTakeAsync(
-                    contentId, authorityKey, DateTimeOffset.UtcNow, ct).ConfigureAwait(false)
+                    cacheKey, authorityKey, DateTimeOffset.UtcNow, ct).ConfigureAwait(false)
                 : await _watchDetailPrefetches.TryGetAsync(
-                    contentId, authorityKey, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
+                    cacheKey, authorityKey, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
             return _apiClient.IsCurrentContext(context) && watchDetail != null &&
                 string.Equals(watchDetail.ContentId, contentId, StringComparison.Ordinal)
                 ? watchDetail
@@ -531,7 +539,8 @@ public partial class PlayerService : IDisposable
                 _ = PlayAsync(
                     ContentId,
                     fileId: targetPart.Value.Version.FileId,
-                    startPositionOverride: mediaPosition);
+                    startPositionOverride: mediaPosition,
+                    libraryId: ActiveLibraryId);
                 return;
             }
         }
@@ -1164,22 +1173,21 @@ public partial class PlayerService : IDisposable
     // ── Next-episode metadata (set by ItemDetailPage before playback) ────
 
     private EpisodeNavigationSnapshot EpisodeNavigation => _episodeNavigation.Snapshot;
-    public string? NextEpisodeContentId => EpisodeNavigation.Next?.ContentId;
-    public string? NextEpisodeTitle => EpisodeNavigation.Next?.Title;
-    public string? NextEpisodeSeriesTitle => EpisodeNavigation.Next?.SeriesTitle;
-    public string? NextEpisodePosterUrl => EpisodeNavigation.Next?.PosterUrl;
-    public string? NextEpisodeOverview => EpisodeNavigation.Next?.Overview;
-    public string? NextEpisodeAirDate => EpisodeNavigation.Next?.AirDate;
-    public int NextEpisodeRuntime => EpisodeNavigation.Next?.RuntimeSeconds ?? 0;
+    public string? NextEpisodeContentId => IsShufflePlayback ? ShuffleNext?.ContentId : EpisodeNavigation.Next?.ContentId;
+    public string? NextEpisodeTitle => IsShufflePlayback ? ShuffleNext?.Title : EpisodeNavigation.Next?.Title;
+    public string? NextEpisodeSeriesTitle => IsShufflePlayback ? (ShuffleNext?.Type == "episode" ? ShuffleNext.SeriesTitle : ShuffleNext?.Title) : EpisodeNavigation.Next?.SeriesTitle;
+    public string? NextEpisodePosterUrl => IsShufflePlayback ? (ShuffleNext?.Type == "episode" ? ShuffleNext.PosterUrl ?? ShuffleNext.BackdropUrl : ShuffleNext?.BackdropUrl) : EpisodeNavigation.Next?.PosterUrl;
+    public string? NextEpisodeOverview => IsShufflePlayback ? ShuffleNext?.Overview : EpisodeNavigation.Next?.Overview;
+    public string? NextEpisodeAirDate => IsShufflePlayback ? ShuffleNext?.ReleaseDate : EpisodeNavigation.Next?.AirDate;
+    public int NextEpisodeRuntime => IsShufflePlayback ? Math.Clamp(ShuffleNext?.Runtime ?? 0, 0, int.MaxValue / 60) * 60 : EpisodeNavigation.Next?.RuntimeSeconds ?? 0;
     public string? PreviousEpisodeContentId => EpisodeNavigation.PreviousContentId;
 
     public bool HasEpisodeNavigationForCurrentPlayback =>
-        IsCurrentPlaybackSeriesEpisode() &&
+        !IsShufflePlayback && IsCurrentPlaybackSeriesEpisode() &&
         _episodeNavigation.IsOwnedBy(ContentId);
 
     public bool HasNextEpisodeForCurrentPlayback =>
-        IsCurrentPlaybackSeriesEpisode() &&
-        _episodeNavigation.HasNextFor(ContentId);
+        IsShufflePlayback ? ShuffleNext != null : IsCurrentPlaybackSeriesEpisode() && _episodeNavigation.HasNextFor(ContentId);
 
     private bool IsCurrentPlaybackSeriesEpisode()
     {
@@ -1235,7 +1243,7 @@ public partial class PlayerService : IDisposable
     {
         try
         {
-            var item = await _catalogApi.GetItemDetailAsync(contentId, ct).ConfigureAwait(false);
+            var item = await _catalogApi.GetItemDetailAsync(contentId, ActiveLibraryId, ct).ConfigureAwait(false);
             if (!ct.IsCancellationRequested && IsAudiobook &&
                 string.Equals(ContentId, contentId, StringComparison.Ordinal))
             {
@@ -1623,7 +1631,9 @@ public partial class PlayerService : IDisposable
         int? subtitleSelection = null,
         double? startPositionOverride = null,
         WatchDetailResponse? prefetchedWatchDetail = null,
-        SubtitleTrackSignature? subtitleTrackSignature = null)
+        SubtitleTrackSignature? subtitleTrackSignature = null,
+        int? libraryId = null,
+        string? shuffleId = null)
     {
         if (_closing)
             return;
@@ -1655,6 +1665,8 @@ public partial class PlayerService : IDisposable
                 subtitleTrackSignature,
                 startPositionOverride,
                 prefetchedWatchDetail,
+                libraryId,
+                shuffleId,
                 ownerCts.Token);
         }
         catch (OperationCanceledException) when (ownerCts.IsCancellationRequested)
@@ -1685,8 +1697,11 @@ public partial class PlayerService : IDisposable
         SubtitleTrackSignature? subtitleTrackSignature,
         double? startPositionOverride,
         WatchDetailResponse? prefetchedWatchDetail,
+        int? libraryId,
+        string? shuffleId,
         CancellationToken requestToken)
     {
+        StopSubtitleSync();
         ClearLiveSubtitleTranslation(restorePreviousSubtitle: false);
         // Fetch the effective device/profile style in parallel with playback
         // preparation so fresh launches render the first subtitle correctly
@@ -1741,6 +1756,9 @@ public partial class PlayerService : IDisposable
         // and retain their current OSC auto-skip latches.
         _autoSkipMarkerIdentity.Clear();
         ContentId = contentId;
+        ActiveLibraryId = libraryId;
+        if (string.IsNullOrWhiteSpace(shuffleId)) _shuffleController?.Leave();
+        else ShuffleController.Attach(shuffleId);
         _resumePosition = 0;
         _activeTransportPlan = null;
         _timelineOffsetSeconds = 0;
@@ -1786,7 +1804,8 @@ public partial class PlayerService : IDisposable
             // direct clicks still benefit from this overlap.
             WatchDetailResponse watchDetail;
             if (prefetchedWatchDetail != null &&
-                string.Equals(prefetchedWatchDetail.ContentId, contentId, StringComparison.Ordinal))
+                string.Equals(prefetchedWatchDetail.ContentId, contentId, StringComparison.Ordinal) &&
+                prefetchedWatchDetail.PreparedLibraryId == libraryId && prefetchedWatchDetail.PreparedFileId == fileId)
             {
                 EnsureMpvInitialized();
                 watchDetail = prefetchedWatchDetail;
@@ -1795,12 +1814,14 @@ public partial class PlayerService : IDisposable
             {
                 // Prefetch owns and observes the network task. The shared core
                 // call below consumes it after libmpv initialization finishes.
-                PrefetchWatchDetail(contentId);
+                PrefetchWatchDetail(contentId, libraryId, fileId);
                 EnsureMpvInitialized();
                 watchDetail = await GetOrFetchWatchDetailCoreAsync(
                     contentId,
                     consumePrefetch: true,
-                    ct: requestToken);
+                    ct: requestToken,
+                    libraryId: libraryId,
+                    fileId: fileId);
             }
             _playbackManager.UseWatchDetail(watchDetail);
             SetTitleFromWatchDetail(watchDetail);
@@ -1969,7 +1990,7 @@ public partial class PlayerService : IDisposable
             CancelPendingFileLoadTimeout();
             LogToFile("player_crash.txt", ex.ToString());
             if (ex is ApiException { StatusCode: 404 })
-                _watchDetailPrefetches.Invalidate(contentId);
+                _watchDetailPrefetches.Invalidate(WatchPreparationKey(contentId, libraryId, fileId));
             var (errTitle, errDetail) = DescribePlaybackError(ex);
             ErrorMessage = errDetail;
             IsLoading = false;
@@ -2717,6 +2738,7 @@ public partial class PlayerService : IDisposable
     public async Task ContinuePlayingNextAsync()
     {
         if (IsWatchTogetherPlayback) return;
+        if (IsShufflePlayback) { await ContinueShuffleAsync(); return; }
         var nextId = HasNextEpisodeForCurrentPlayback
             ? NextEpisodeContentId
             : null;
@@ -2732,7 +2754,7 @@ public partial class PlayerService : IDisposable
         // get torn down before the new session can start).
         try
         {
-            await PlayAsync(nextId);
+            await PlayAsync(nextId, libraryId: ActiveLibraryId);
             if (restoreFullscreen)
                 RestoreFullscreenAfterPostRollContinue();
         }
@@ -2744,11 +2766,11 @@ public partial class PlayerService : IDisposable
 
     public Task PlayPreviousEpisodeAsync()
     {
-        if (IsWatchTogetherPlayback) return Task.CompletedTask;
+        if (IsWatchTogetherPlayback || IsShufflePlayback) return Task.CompletedTask;
         var previousId = HasEpisodeNavigationForCurrentPlayback
             ? PreviousEpisodeContentId
             : null;
-        return string.IsNullOrEmpty(previousId) ? Task.CompletedTask : PlayAsync(previousId);
+        return string.IsNullOrEmpty(previousId) ? Task.CompletedTask : PlayAsync(previousId, libraryId: ActiveLibraryId);
     }
 
     /// <summary>
@@ -2758,6 +2780,7 @@ public partial class PlayerService : IDisposable
     /// </summary>
     public void CancelPlayingNext()
     {
+        _shuffleController?.Leave();
         _postRollActive = false;
         _postRollVideoEnded = false;
         _restoreFullscreenAfterPostRollContinue = false;
@@ -2827,7 +2850,7 @@ public partial class PlayerService : IDisposable
             string.IsNullOrWhiteSpace(NextEpisodeContentId))
             return;
 
-        PrefetchWatchDetail(NextEpisodeContentId);
+        PrefetchWatchDetail(NextEpisodeContentId, ActiveLibraryId);
         LogToFile(
             "state_trace.txt",
             $"Prefetching queued episode watch detail: {NextEpisodeContentId}");
@@ -2848,6 +2871,7 @@ public partial class PlayerService : IDisposable
     /// </summary>
     private async Task AutoDetectNextEpisodeAsync(CancellationToken ct)
     {
+        if (IsShufflePlayback) return;
         try
         {
             var ownerManager = _playbackManager;
@@ -2863,7 +2887,7 @@ public partial class PlayerService : IDisposable
             var seasonNumbers = new SortedSet<int> { wd.SeasonNumber.Value };
             try
             {
-                var seasons = await _catalogApi.GetSeasonsAsync(wd.SeriesId, ct);
+                var seasons = await _catalogApi.GetSeasonsAsync(wd.SeriesId, ActiveLibraryId, ct);
                 if (!IsEpisodeNavigationLookupCurrent(ownerManager, ownerContentId, ct)) return;
                 if (seasons.Seasons.Any(s => s.SeasonNumber == wd.SeasonNumber.Value + 1))
                     seasonNumbers.Add(wd.SeasonNumber.Value + 1);
@@ -2879,7 +2903,7 @@ public partial class PlayerService : IDisposable
             // Fetch them together so the OSC's previous/next buttons and the
             // post-roll metadata do not wait on up to three serial round trips.
             var episodeTasks = seasonNumbers
-                .Select(seasonNumber => _catalogApi.GetEpisodesAsync(wd.SeriesId, seasonNumber, ct))
+                .Select(seasonNumber => _catalogApi.GetEpisodesAsync(wd.SeriesId, seasonNumber, ActiveLibraryId, ct))
                 .ToArray();
             var episodeResponses = await Task.WhenAll(episodeTasks);
             if (!IsEpisodeNavigationLookupCurrent(ownerManager, ownerContentId, ct)) return;
@@ -2911,7 +2935,7 @@ public partial class PlayerService : IDisposable
                     next.StillUrl,
                     next.Overview,
                     next.AirDate,
-                    next.Runtime,
+                    Math.Clamp(next.Runtime, 0, int.MaxValue / 60) * 60,
                     next.SeasonNumber,
                     next.EpisodeNumber);
 
@@ -3245,7 +3269,8 @@ public partial class PlayerService : IDisposable
 
         FileVersion? bestVersion = null;
         if (fileId.HasValue)
-            bestVersion = versions.FirstOrDefault(v => v.FileId == fileId.Value);
+            bestVersion = versions.FirstOrDefault(v => v.FileId == fileId.Value)
+                ?? watchDetail.PlaybackVariants.SelectMany(variant => variant.Parts).SelectMany(part => part.Versions).FirstOrDefault(version => version.FileId == fileId.Value);
         bestVersion ??= _playbackManager!.SelectBestVariantVersion(
             versions,
             watchDetail.PlaybackVariants,
@@ -3836,7 +3861,13 @@ public partial class PlayerService : IDisposable
             SetPaused(true);
             return;
         }
-        var isSeriesEpisode = !string.IsNullOrWhiteSpace(WatchDetail?.SeriesId);
+        if (ContentId != null && PlaybackPartSequence.NextFileId(WatchDetail, ActiveMediaFileId) is int nextPartFileId)
+        {
+            _switchingContent = true;
+            _ = ContinueVideoPartAsync(ContentId, nextPartFileId);
+            return;
+        }
+        var isSeriesEpisode = !string.IsNullOrWhiteSpace(WatchDetail?.SeriesId) || IsShufflePlayback;
         if (isSeriesEpisode)
         {
             if (_playingNextShown)
@@ -3877,7 +3908,7 @@ public partial class PlayerService : IDisposable
     private async Task ContinueAudiobookPartAsync(string contentId, int fileId, double absoluteStart)
     {
         await ReportAudiobookProgressAsync(absoluteStart, force: true).ConfigureAwait(false);
-        await PlayAsync(contentId, fileId: fileId, startPositionOverride: absoluteStart).ConfigureAwait(false);
+        await PlayAsync(contentId, fileId: fileId, startPositionOverride: absoluteStart, libraryId: ActiveLibraryId).ConfigureAwait(false);
     }
 
     private static bool IsAtMediaEnd(double position, double duration)
@@ -3885,7 +3916,11 @@ public partial class PlayerService : IDisposable
         if (duration <= 0 || position < 0)
             return false;
 
-        var tolerance = Math.Clamp(duration * 0.0005, 0.75, 3.0);
+        // Catalog/plan duration is rounded independently from the final
+        // decoded timestamp. A real 3700.1s file was advertised as 3702s;
+        // the percentage-based tolerance retried that healthy EOF forever.
+        // Bound rounding allowance to three seconds and 2% for short clips.
+        var tolerance = Math.Min(duration * 0.02, 3.0);
         return position >= duration - tolerance;
     }
 
@@ -3909,10 +3944,11 @@ public partial class PlayerService : IDisposable
 
             if (!_playingNextShown &&
                 !IsWatchTogetherPlayback &&
+                !ShuffleAwaitsLaterPart &&
                 !_closing &&
                 !_switchingContent &&
                 !IsAudiobook &&
-                !string.IsNullOrWhiteSpace(WatchDetail?.SeriesId) &&
+                (!string.IsNullOrWhiteSpace(WatchDetail?.SeriesId) || IsShufflePlayback) &&
                 CurrentMediaDuration > 0 &&
                 mediaPosition > 0 &&
                 CurrentMediaDuration - mediaPosition <= 30)
@@ -5095,6 +5131,8 @@ public partial class PlayerService : IDisposable
             "osc-set-active-subtitle",
             (_pendingInitialServerSubtitleIndex ?? -1)
                 .ToString(System.Globalization.CultureInfo.InvariantCulture));
+        EnsureSubtitleSync();
+        SendSubtitleSyncState();
     }
 
     private void SendAudioTrackListToOsc()
@@ -5528,6 +5566,17 @@ public partial class PlayerService : IDisposable
                 break;
             case "silo-subtitle-ai":
                 dispatch.TryEnqueue(() => _ = ShowSubtitleAiDialogAsync());
+                break;
+            case "silo-subtitle-sync":
+            case "silo-subtitle-reset-timing":
+                if (args.Length > 1)
+                    _ = SubtitleSyncActionAsync(args[1], args[0] == "silo-subtitle-sync" ? "sync" : "reset");
+                break;
+            case "silo-subtitle-sync-reload":
+                _ = SubtitleSyncActionAsync("", "reload");
+                break;
+            case "silo-subtitle-sync-refresh":
+                _ = SubtitleSyncActionAsync("", "refresh");
                 break;
             case "silo-audio-select":
                 if (args.Length > 1 && int.TryParse(args[1], out var audioIdx))
@@ -5964,6 +6013,8 @@ public partial class PlayerService : IDisposable
         // attachment boundary. Do not restore the older dialog-open position:
         // playback is intentionally allowed to continue behind the modal.
         await RefreshSubtitlesAfterAiAsync(session.MediaFileId, downloadedSubtitleId);
+        if (downloadedSubtitleId is > 0 && _subtitleSyncCts is { } syncOwner)
+            await ReadSubtitleSyncAsync("stored-" + downloadedSubtitleId.Value, syncOwner.Token, watch: true);
     }
 
     private async Task ShowSubtitleAppearanceDialogAsync()
@@ -6168,7 +6219,7 @@ public partial class PlayerService : IDisposable
                 .ThenByDescending(r => string.Equals(r.Language, languages[0], StringComparison.OrdinalIgnoreCase))
                 .ThenBy(r => r.HearingImpaired)
                 .First();
-            await _playbackApi.DownloadSubtitleAsync(fileId, best);
+            var download = await _playbackApi.DownloadSubtitleAsync(fileId, best);
             var label = string.IsNullOrEmpty(best.ReleaseName)
                 ? $"{best.Language.ToUpperInvariant()} ({best.Provider})"
                 : $"{best.Language.ToUpperInvariant()} · {best.ReleaseName}";
@@ -6177,6 +6228,9 @@ public partial class PlayerService : IDisposable
             // Reload subtitles
             _ = Task.Run(LoadSubtitles);
             SendSubtitleListToOsc();
+            var subtitleId = download.Subtitle?.Id ?? download.Id;
+            if (subtitleId > 0 && _subtitleSyncCts is { } syncOwner)
+                await ReadSubtitleSyncAsync("stored-" + subtitleId, syncOwner.Token, watch: true);
         }
         catch (Exception ex)
         {
@@ -6266,6 +6320,8 @@ public partial class PlayerService : IDisposable
     {
         if (_closing) return; // Prevent duplicate close from spammed exit clicks
         _closing = true;
+        _shuffleController?.Leave();
+        ActiveLibraryId = null;
 
         LogToFile("state_trace.txt", $"CloseAsync called: State={State} _switchingContent={_switchingContent}");
         await CancelAndDrainPlayRequestAsync();
@@ -6336,6 +6392,7 @@ public partial class PlayerService : IDisposable
         // path (CloseAsync dispatch) instead of the next-episode path.
         ClearNextEpisodeHint();
         ClearPlaybackTerminalState();
+        StopSubtitleSync();
         ClearLiveSubtitleTranslation(restorePreviousSubtitle: false);
         ClearAudiobookSleepTimer();
 
@@ -6431,6 +6488,7 @@ public partial class PlayerService : IDisposable
         CancelPendingLoadedMediaInitialization();
         StopPlaybackStallWatchdog();
         ClearChapterThumbnailOverlayCache();
+        StopSubtitleSync();
         ClearLiveSubtitleTranslation(restorePreviousSubtitle: false);
         UpdateDisplayWakeLock(false);
         DisconnectWebSocket();
@@ -6560,6 +6618,12 @@ public partial class PlayerService : IDisposable
     {
         switch (ev.Name)
         {
+            case "subtitle_sync_updated":
+                ApplySubtitleSyncEvent(ev.Payload, timingChanged: false);
+                break;
+            case "subtitle_timing_changed":
+                ApplySubtitleSyncEvent(ev.Payload, timingChanged: true);
+                break;
             case "chapter_thumbnail_ready":
                 ApplyRealtimeChapterThumbnail(ev.Payload);
                 break;
@@ -6804,6 +6868,7 @@ public partial class PlayerService : IDisposable
             var baseIndex = existing.Count == 0 ? 0 : existing.Max(track => track.Index) + 1;
             var downloaded = response.Subtitles.Select((entry, offset) => new SubtitleTrackInfo
             {
+                SyncKey = "stored-" + entry.Id,
                 Id = entry.Id,
                 Index = baseIndex + offset,
                 MediaFileId = mediaFileId,

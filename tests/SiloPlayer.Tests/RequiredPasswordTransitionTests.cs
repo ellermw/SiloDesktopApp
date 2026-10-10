@@ -60,9 +60,9 @@ public class RequiredPasswordTransitionTests
 
     [Theory]
     [InlineData(false, false, "child")]
-    [InlineData(true, false, "other")]
+    [InlineData(true, false, "child")]
     [InlineData(false, true, "other")]
-    public void ImportTargetUsesActingProfileUnlessAdminOrPrimary(bool admin, bool primary, string expected)
+    public void ImportTargetUsesActingProfileUnlessActingAdminOrPrimary(bool admin, bool primary, string expected)
         => Assert.Equal(expected, HistoryImportScope.Target(new() { Role = admin ? "admin" : "user" },
             new() { Id = "child", IsPrimary = primary }, "other"));
 

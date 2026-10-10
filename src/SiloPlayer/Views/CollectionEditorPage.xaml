@@ -198,6 +198,7 @@
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <Border x:Name="ImportedEditorSurface" Grid.Column="0">
+                    <ContentControl x:Name="EditorEditGuard" IsTabStop="False" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
                     <StackPanel x:Name="EditorPrimaryColumn" Spacing="24">
 
                 <!-- ===== Basic Info Section ===== -->
@@ -274,7 +275,7 @@
                                            Foreground="{StaticResource SecondaryTextBrush}" />
                                 <ComboBox x:Name="ImportedDefaultSortCombo" HorizontalAlignment="Stretch"
                                           SelectionChanged="ImportedDefaultSort_Changed">
-                                    <ComboBoxItem Content="Collection order (default)" Tag="" IsSelected="True" />
+                                    <ComboBoxItem Content="List order" Tag="" IsSelected="True" />
                                     <ComboBoxItem Content="Title" Tag="title:asc" />
                                     <ComboBoxItem Content="Date Added" Tag="added_at:desc" />
                                     <ComboBoxItem Content="Release Date" Tag="release_date:desc" />
@@ -326,7 +327,7 @@
                             <StackPanel Orientation="Horizontal" Spacing="8">
                                 <Button Content="Choose image" Click="ChoosePoster_Click" Style="{StaticResource SecondaryButtonStyle}" />
                                 <Button x:Name="RemovePosterButton" Content="Remove poster" Click="RemovePoster_Click" Visibility="Collapsed" />
-                                <TextBlock x:Name="PosterFileStatusText" Text="JPG, PNG, or WebP · maximum 20 MB" VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" />
+                                <TextBlock x:Name="PosterFileStatusText" Text="JPG, PNG, or WebP · maximum 10 MB" VerticalAlignment="Center" FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" />
                             </StackPanel>
                         </StackPanel>
 
@@ -571,7 +572,7 @@
                             <Button x:Name="ImportedPosterDropTarget" Content="Click or drop image" Click="ChoosePoster_Click" Style="{StaticResource SecondaryButtonStyle}"
                                     AllowDrop="True" DragOver="PosterDrop_DragOver" Drop="PosterDrop_Drop"
                                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Center" Height="128" />
-                            <TextBlock x:Name="ImportedPosterFileStatusText" Text="JPG, PNG, or WebP · maximum 20 MB"
+                            <TextBlock x:Name="ImportedPosterFileStatusText" Text="JPG, PNG, or WebP · maximum 10 MB"
                                        FontSize="12" Foreground="{StaticResource TertiaryTextBrush}" />
                             <TextBox x:Name="ImportedPosterSourceUrlTextBox" Style="{StaticResource DarkTextBoxStyle}"
                                      PlaceholderText="https://example.com/image.jpg"
@@ -685,8 +686,7 @@
                                 Style="{StaticResource DarkTextBoxStyle}"
                                 PlaceholderText="Search for movies or shows to add..."
                                 MaxWidth="500"
-                                HorizontalAlignment="Stretch"
-                                KeyDown="SearchBox_KeyDown" />
+                                HorizontalAlignment="Stretch" />
 
                             <Button
                                 Grid.Column="1"
@@ -738,6 +738,7 @@
                 </Border>
 
                     </StackPanel>
+                    </ContentControl>
                     </Border>
 
                     <StackPanel x:Name="EditorSidebar" Grid.Column="1" Spacing="18">

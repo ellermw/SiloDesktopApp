@@ -17,6 +17,8 @@ public class AppSettings
     public List<ServerEntry> Servers { get; set; } = [];
     public string? DeviceId { get; set; }
     public string? LastProfileId { get; set; }
+    /// <summary>Local launch choice: remember the last profile, or ask on every launch.</summary>
+    public string ProfileLaunchMode { get; set; } = "remember";
     public string? LastTheme { get; set; }
     public bool DesktopSidebarOpen { get; set; } = true;
     public double? LibraryPosterWidth { get; set; }

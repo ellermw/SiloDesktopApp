@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Controls;
 
 namespace SiloPlayer.Views.Dialogs;
@@ -19,16 +20,17 @@ public static class RecipeGalleryDialog
 {
     private static readonly (string Key, string Label)[] CategoryLabels =
     [
-        ("library_staples", "Library staples"),
-        ("personalized", "Personalized"),
-        ("discovery", "Discovery"),
-        ("editorial", "Editorial"),
-        ("seasonal", "Seasonal"),
-        ("mood", "Mood"),
-        ("hand_picked", "Hand-picked"),
-        ("social", "Social"),
-        ("custom", "Custom"),
+        ("keep", "Keep watching"), ("new", "What's new"), ("popular", "Popular"),
+        ("picked", "Picked for you"), ("moods", "Moods & themes"), ("collections", "Collections & rules"),
     ];
+    private static string PickerGroup(string type) => type switch
+    {
+        "continue_watching" or "next_up" or "next_in_series" or "watchlist" or "favorites" => "keep",
+        "recently_added" or "recently_released" => "new",
+        "trending_on_server" or "most_watched" or "trending_discover" or "profile_activity_feed" => "popular",
+        "recommended_for_you" or "because_you_watched" or "similar_users_liked" or "taste_match" => "picked",
+        "collection" or "custom_filter" => "collections", _ => "moods"
+    };
 
     private static readonly (string Key, string Label, string Window, string Icon)[] SeasonalThemes =
     [
@@ -44,7 +46,7 @@ public static class RecipeGalleryDialog
 
     public static async Task<RecipeConfigurationResult?> ShowAsync(
         XamlRoot xamlRoot,
-        RecipeCatalogResponse catalog)
+        RecipeCatalogResponse catalog, string pageLabel = "Home")
     {
         while (true)
         {
@@ -52,7 +54,7 @@ public static class RecipeGalleryDialog
             if (choice is null)
                 return null;
 
-            var configured = await ShowConfigurationAsync(xamlRoot, choice);
+            var configured = await ShowConfigurationAsync(xamlRoot, choice, pageLabel);
             if (configured.BackToGallery)
                 continue;
             return configured.Result;
@@ -62,7 +64,7 @@ public static class RecipeGalleryDialog
     public static async Task<RecipeConfigurationResult?> ShowEditorAsync(
         XamlRoot xamlRoot,
         RecipeCatalogResponse catalog,
-        SettingsSectionEntry? section)
+        SettingsSectionEntry? section, string pageLabel = "Home")
     {
         var definitions = catalog.Categories
             .SelectMany(category => category.Value)
@@ -95,6 +97,7 @@ public static class RecipeGalleryDialog
             .Concat(fallbackTypes
                 .Where(fallback => !definitions.ContainsKey(fallback.Type))
                 .Select(fallback => new SectionTypeOption(fallback.Type, fallback.Label, "")))
+            .Where(option => option.Type is not ("genre" or "admin_curated_list" or "award_winners"))
             .OrderBy(option => option.Category)
             .ThenBy(option => option.Label, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
@@ -107,7 +110,7 @@ public static class RecipeGalleryDialog
             : new Dictionary<string, object>(section.Config);
         var title = new TextBox
         {
-            Header = "Title",
+            Header = "Row name",
             Text = section?.Title ?? "",
             PlaceholderText = SectionTypeLabel(selectedType),
         };
@@ -131,7 +134,7 @@ public static class RecipeGalleryDialog
         featuredRow.ColumnDefinitions.Add(new ColumnDefinition());
         featuredRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         var featuredCopy = new StackPanel { Spacing = 3 };
-        featuredCopy.Children.Add(new TextBlock { Text = "Featured", FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium });
+        featuredCopy.Children.Add(new TextBlock { Text = "Hero banner", FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium });
         featuredCopy.Children.Add(new TextBlock
         {
             Text = "Use this section as the hero banner on the home screen.",
@@ -178,7 +181,16 @@ public static class RecipeGalleryDialog
         }
 
         FrameworkElement typeControl;
-        if (section is not null && !section.IsCustom)
+        var contentLocked = section is { IsCustom: false } && !string.IsNullOrEmpty(section.Id) || HomeSectionWritePolicy.IsTrakt(section?.Config);
+        var variantHost = new StackPanel();
+        void RenderVariants()
+        {
+            variantHost.Children.Clear();
+            if (contentLocked || !definitions.TryGetValue(selectedType, out var definition)) return;
+            var variants = CreateVariantPicker(definition, config, title, () => BuildParamsAsync(selectedType, reset: false));
+            if (variants != null) variantHost.Children.Add(variants);
+        }
+        if (contentLocked)
         {
             typeControl = new StackPanel
             {
@@ -216,28 +228,33 @@ public static class RecipeGalleryDialog
                 selectedType = option.Type;
                 title.PlaceholderText = option.Label;
                 await BuildParamsAsync(selectedType, reset: true);
+                RenderVariants();
             };
             typeControl = typeCombo;
         }
 
         await BuildParamsAsync(selectedType, reset: false);
+        var parameterGuard = new ContentControl { Content = paramHost, IsEnabled = !contentLocked, IsTabStop = false,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch };
         var root = new StackPanel { Width = 500, Spacing = 14 };
         root.Children.Add(new TextBlock
         {
-            Text = section is null ? "Configure a new section." : "Modify this section's settings",
+            Text = section is null ? "Pick what this row shows, then make it yours." : "Changes apply only to this profile.",
             FontSize = 13,
             Foreground = ResourceBrush("SecondaryTextBrush"),
         });
         root.Children.Add(typeControl);
+        root.Children.Add(CreateProfilePreview(title, selectedType, section != null, pageLabel));
+        RenderVariants(); root.Children.Add(variantHost);
         root.Children.Add(title);
-        root.Children.Add(itemLimit);
-        root.Children.Add(featuredRow);
         root.Children.Add(new Border { Height = 1, Background = ResourceBrush("BorderBrush") });
-        root.Children.Add(paramHost);
+        root.Children.Add(parameterGuard);
         root.Children.Add(validation);
+        root.Children.Add(new Expander { Header = "More options", HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = new StackPanel { Spacing = 12, Children = { itemLimit, featuredRow } } });
 
         root.Width = double.NaN;
-        if (!await SectionEditorSheet.ShowAsync(xamlRoot, section is null ? "Add Section" : "Edit Section", root, section is null ? "Add Section" : "Save", () =>
+        if (!await HomeRowDialog.ShowAsync(xamlRoot, section is null ? "Add row" : "Edit row", root, section is null ? "Add row" : "Save", () =>
         {
             var definition = definitions.GetValueOrDefault(selectedType) ?? new RecipeDefinition { Type = selectedType };
             var message = Validate(definition, config);
@@ -258,18 +275,21 @@ public static class RecipeGalleryDialog
     {
         var choices = catalog.Categories
             .SelectMany(category => category.Value)
-            .Where(definition => !definition.AdminOnly || catalog.AllowAdminOnlyRecipes)
-            .SelectMany(definition => definition.Presets.Select(preset => new RecipeChoice(definition, preset)))
+            .Where(definition => definition.Type is not ("admin_curated_list" or "genre" or "award_winners")
+                && (!definition.AdminOnly || catalog.AllowAdminOnlyRecipes) && (definition.Presets.Count > 0 || definition.Type == "custom_filter"))
+            .Select(definition => new RecipeChoice(new RecipeDefinition { Type = definition.Type, Category = PickerGroup(definition.Type), Presets = definition.Presets,
+                SupportsRotation = definition.SupportsRotation, AvoidDuplicates = definition.AvoidDuplicates },
+                definition.Presets.FirstOrDefault() ?? new GalleryPreset { DisplayName = "Titles matching rules", DescriptionShort = "Build a row from rules, like genre and decade." }))
             .ToList();
 
         RecipeChoice? selected = null;
         var activeCategory = "all";
         var search = new TextBox
         {
-            PlaceholderText = "🔍 Search recipes...",
+            PlaceholderText = "Search, e.g. trending, 4K, Ghibli, Christmas",
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
-        AutomationProperties.SetName(search, "Search recipes");
+        AutomationProperties.SetName(search, "Search rows");
         var categoryBar = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 8 };
         var cards = new Grid { ColumnSpacing = 12, RowSpacing = 12 };
         cards.ColumnDefinitions.Add(new ColumnDefinition());
@@ -297,13 +317,13 @@ public static class RecipeGalleryDialog
         };
         empty.Children.Add(clearFilters);
 
-        var dialog = CreateDialog(xamlRoot, 800);
+        var dialog = CreateDialog(xamlRoot, 1000);
         var header = new Grid { Padding = new Thickness(0, 0, 0, 12) };
         header.ColumnDefinitions.Add(new ColumnDefinition());
         header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         header.Children.Add(new TextBlock
         {
-            Text = "Add a section",
+            Text = "Add a row · Step 1 of 2",
             FontSize = 16,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             VerticalAlignment = VerticalAlignment.Center,
@@ -336,7 +356,7 @@ public static class RecipeGalleryDialog
                 .ToList();
 
             empty.Visibility = filtered.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            emptyText.Text = $"No recipes match {(query.Length > 0 ? $"\"{query}\"" : "this filter")}.";
+            emptyText.Text = $"No rows match {(query.Length > 0 ? $"\"{query}\"" : "this filter")}.";
             for (var index = 0; index < filtered.Count; index++)
             {
                 if (index % columnCount == 0)
@@ -459,10 +479,10 @@ public static class RecipeGalleryDialog
 
     private static async Task<ConfigurationDialogResult> ShowConfigurationAsync(
         XamlRoot xamlRoot,
-        RecipeChoice choice)
+        RecipeChoice choice, string pageLabel)
     {
         var config = new Dictionary<string, object>(choice.Preset.DefaultParams);
-        var title = new TextBox { Header = "Title", Text = choice.Preset.DisplayName };
+        var title = new TextBox { Header = "Row name", Text = choice.Preset.DisplayName };
         var itemLimit = new NumberBox
         {
             Header = "Item limit",
@@ -471,7 +491,7 @@ public static class RecipeGalleryDialog
             Value = 20,
             SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
         };
-        var featured = new ToggleSwitch { Header = "Show as featured hero", IsOn = false };
+        var featured = new ToggleSwitch { Header = "Use as hero banner", IsOn = false };
         var paramHost = new StackPanel { Spacing = 12 };
         var validation = new TextBlock
         {
@@ -483,19 +503,6 @@ public static class RecipeGalleryDialog
 
         await BuildParameterFieldsAsync(choice.Definition, config, paramHost, validation);
 
-        var description = new Border
-        {
-            BorderBrush = ResourceBrush("AccentBrush"),
-            BorderThickness = new Thickness(2, 0, 0, 0),
-            Background = ResourceBrush("AccentBackgroundBrush"),
-            Padding = new Thickness(12, 9, 12, 9),
-            Child = new TextBlock
-            {
-                Text = choice.Preset.DescriptionLong ?? choice.Preset.DescriptionShort,
-                FontSize = 13,
-                TextWrapping = TextWrapping.Wrap,
-            },
-        };
         using var backCancellation = new CancellationTokenSource();
         var root = new StackPanel { Spacing = 14 };
         var backRequested = false;
@@ -511,7 +518,7 @@ public static class RecipeGalleryDialog
         });
         var back = new Button
         {
-            Content = "← Back to gallery",
+            Content = "← All rows",
             Style = ResourceStyle("GhostButtonStyle"),
             FontSize = 12,
         };
@@ -523,14 +530,18 @@ public static class RecipeGalleryDialog
         Grid.SetColumn(back, 1);
         header.Children.Add(back);
         root.Children.Add(header);
-        root.Children.Add(description);
+        root.Children.Add(new TextBlock { Text = "Step 2 of 2 · New rows go to the bottom of this page", FontSize = 13, Foreground = ResourceBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+        root.Children.Add(CreateProfilePreview(title, choice.Definition.Type, false, pageLabel));
+        var variants = CreateVariantPicker(choice.Definition, config, title, async () =>
+        { paramHost.Children.Clear(); await BuildParameterFieldsAsync(choice.Definition, config, paramHost, validation); });
+        if (variants != null) root.Children.Add(variants);
         root.Children.Add(title);
         root.Children.Add(paramHost);
         root.Children.Add(validation);
-        root.Children.Add(itemLimit);
-        root.Children.Add(featured);
+        root.Children.Add(new Expander { Header = "More options", HorizontalAlignment = HorizontalAlignment.Stretch,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch, Content = new StackPanel { Spacing = 12, Children = { itemLimit, featured } } });
 
-        var result = await SectionEditorSheet.ShowAsync(xamlRoot, choice.Preset.DisplayName, root, "Add section", () =>
+        var result = await HomeRowDialog.ShowAsync(xamlRoot, choice.Preset.DisplayName, root, "Add row", () =>
         {
             var error = Validate(choice.Definition, config);
             return error ?? (FilterEditorsValid(paramHost) ? null : "Check the highlighted filter values.");
@@ -558,6 +569,8 @@ public static class RecipeGalleryDialog
                 await AddCollectionFieldAsync(config, host);
                 break;
             case "continue_watching":
+                if (StringValue(config, "continue_type") == "reading")
+                { host.Children.Add(Hint("Continue reading (ebooks, beta)")); break; }
                 AddCombo(host, "Continue type", [
                     new Option("watching", "Watching"), new Option("listening", "Listening")],
                     StringValue(config, "continue_type", "watching"),
@@ -599,7 +612,72 @@ public static class RecipeGalleryDialog
                 validation.Text = "This recipe is available only from the administrative section editor.";
                 validation.Visibility = Visibility.Visible;
                 break;
+            case "custom_filter":
+                await BuildLegacyFilterFieldsAsync(config, host, false);
+                break;
         }
+    }
+
+    private static FrameworkElement? CreateVariantPicker(RecipeDefinition definition, Dictionary<string, object> config, TextBox title, Func<Task> rebuild)
+    {
+        var family = HomeRowVariants.Family(definition.Type);
+        if (family == null || HomeSectionWritePolicy.IsTrakt(config)
+            || definition.Type == "continue_watching" && StringValue(config, "continue_type") == "reading") return null;
+        var root = new StackPanel { Name = "HomeRowVariants", Spacing = 8 };
+        root.Children.Add(Label(family.Label));
+        var grid = new Grid { ColumnSpacing = 10, RowSpacing = 10 };
+        var group = Guid.NewGuid().ToString();
+        var selectedKey = HomeRowVariants.Selected(definition.Type, config);
+        var selectedName = definition.Presets.FirstOrDefault(preset => preset.Key == selectedKey)?.DisplayName;
+        var buttons = new List<RadioButton>();
+        foreach (var option in family.Options)
+        {
+            var preset = definition.Presets.FirstOrDefault(preset => preset.Key == option.Key);
+            var text = new StackPanel { Spacing = 3 };
+            text.Children.Add(new TextBlock { Text = option.Label, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium, TextWrapping = TextWrapping.Wrap });
+            var hint = option.Hint ?? preset?.DescriptionShort.TrimEnd('.');
+            if (!string.IsNullOrEmpty(hint)) text.Children.Add(new TextBlock { Text = hint, FontSize = 12, Foreground = ResourceBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap });
+            var button = new RadioButton { Content = text, Tag = option.Key, GroupName = group, IsChecked = option.Key == selectedKey,
+                HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalAlignment = VerticalAlignment.Stretch,
+                Padding = new Thickness(10), BorderThickness = new Thickness(1), BorderBrush = ResourceBrush("BorderBrush"), CornerRadius = new CornerRadius(12) };
+            AutomationProperties.SetName(button, option.Label);
+            button.Checked += async (_, _) =>
+            {
+                if (option.Key == selectedKey) return;
+                var follows = string.IsNullOrWhiteSpace(title.Text) || selectedName != null && title.Text == selectedName;
+                HomeRowVariants.Apply(definition.Type, config, option.Key);
+                selectedKey = option.Key; selectedName = preset?.DisplayName ?? option.Label;
+                if (follows) title.Text = selectedName;
+                foreach (var choiceButton in buttons) choiceButton.IsEnabled = false;
+                try { await rebuild(); }
+                finally { foreach (var choiceButton in buttons) choiceButton.IsEnabled = true; }
+            };
+            buttons.Add(button); grid.Children.Add(button);
+        }
+        void Resize(double width)
+        {
+            var columns = width < 560 ? family.Options.Length == 4 ? 2 : 1 : family.Options.Length is 2 or 3 or 4 ? family.Options.Length : 4;
+            grid.ColumnDefinitions.Clear(); grid.RowDefinitions.Clear();
+            for (var n = 0; n < columns; n++) grid.ColumnDefinitions.Add(new());
+            for (var n = 0; n < (buttons.Count + columns - 1) / columns; n++) grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+            for (var n = 0; n < buttons.Count; n++) { Grid.SetColumn(buttons[n], n % columns); Grid.SetRow(buttons[n], n / columns); }
+        }
+        root.SizeChanged += (_, args) => Resize(args.NewSize.Width);
+        Resize(700); root.Children.Add(grid); return root;
+    }
+
+    private static FrameworkElement CreateProfilePreview(TextBox title, string type, bool editing, string pageLabel)
+    {
+        var root = new StackPanel { Spacing = 12 };
+        var heading = new TextBlock { Text = string.IsNullOrWhiteSpace(title.Text) ? "Untitled row" : title.Text, FontSize = 16, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
+        title.TextChanged += (_, _) => heading.Text = string.IsNullOrWhiteSpace(title.Text) ? "Untitled row" : title.Text;
+        root.Children.Add(heading);
+        var body = new Grid { ColumnSpacing = 12 };
+        body.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); body.ColumnDefinitions.Add(new());
+        body.Children.Add(new Border { Width = 48, Height = 48, CornerRadius = new CornerRadius(12), Background = ResourceBrush("SurfaceBrush"), Child = WebUiIcon.Create(type == "collection" ? "folder" : "sparkles", 20) });
+        var copy = new TextBlock { Name = "HomeRowPreviewMessage", Text = editing ? $"You'll see your changes on {pageLabel} after you save." : $"You'll see it on {pageLabel} after you add it.", FontSize = 14, TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center, Foreground = ResourceBrush("SecondaryTextBrush") };
+        Grid.SetColumn(copy, 1); body.Children.Add(copy); root.Children.Add(body);
+        return new Border { Name = "HomeRowProfilePreview", Child = root, Padding = new Thickness(18, 16, 18, 16), CornerRadius = new CornerRadius(16), BorderThickness = new Thickness(1), BorderBrush = ResourceBrush("BorderBrush") };
     }
 
     private static async Task BuildLegacyFilterFieldsAsync(
@@ -739,7 +817,7 @@ public static class RecipeGalleryDialog
             foreach (var task in libraryTasks)
             {
                 var (library, response) = await task;
-                foreach (var collection in response.Collections)
+                foreach (var collection in response.Collections.Where(collection => collection.Visibility == "visible"))
                 {
                     if (StringValue(config, "source_provider") == "trakt" && (collection.CollectionType != "trakt" || collection.SourceConfig == null
                         || StringValue(collection.SourceConfig, "preset") != StringValue(config, "source_preset") || StringValue(collection.SourceConfig, "media_type") != StringValue(config, "media_type"))) continue;
@@ -993,8 +1071,11 @@ public static class RecipeGalleryDialog
         {
             var hasCollection = StringValue(config, "library_collection_id").Length > 0 || StringValue(config, "user_collection_id").Length > 0;
             var autoBacked = StringValue(config, "source_provider") == "trakt" && StringValue(config, "source_preset") is "trending" or "popular";
-            if (!hasCollection && !autoBacked) return "Choose a synced collection before adding this section.";
+            if (!hasCollection && !autoBacked) return "Choose a collection before adding this row.";
         }
+        if (definition.Type == "seasonal_themed" && config.TryGetValue("enabled_themes", out var themes)
+            && JsonSerializer.SerializeToElement(themes) is { ValueKind: JsonValueKind.Array } list && list.GetArrayLength() == 0)
+            return "Choose at least one seasonal theme.";
         if (definition.Type == "admin_curated_list" && StringListValue(config, "item_ids").Count == 0)
             return "Add at least one title to the curated list.";
         return null;

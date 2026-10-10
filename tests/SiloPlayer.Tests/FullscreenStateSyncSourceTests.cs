@@ -61,7 +61,8 @@ public sealed class FullscreenStateSyncSourceTests
         var previousStart = service.IndexOf("public Task PlayPreviousEpisodeAsync()", continueStart, StringComparison.Ordinal);
         var continueMethod = service[continueStart..previousStart];
         Assert.DoesNotContain("ClearNextEpisodeHint();", continueMethod);
-        Assert.Contains("await PlayAsync(nextId);", continueMethod);
+        Assert.Contains("await PlayAsync(nextId, libraryId: ActiveLibraryId);", continueMethod);
+        Assert.Contains("await ContinueShuffleAsync();", continueMethod);
     }
 
     [Fact]

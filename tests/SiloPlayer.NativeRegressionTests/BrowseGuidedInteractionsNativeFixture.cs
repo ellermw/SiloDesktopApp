@@ -26,14 +26,84 @@ internal static class BrowseGuidedInteractionsNativeFixture
         using var services = new ServiceCollection().AddSingleton(new CatalogApi(client)).AddSingleton(new PeopleApi(client)).BuildServiceProvider();
         var editor = new QueryFilterEditor { Width = 416, Height = 900 };
         var unknown = new QueryRule { Field = "fixture_unknown", Op = "fixture_op", Value = "retained advanced value" };
-        var query = new QueryDefinition { Groups = [new() { Rules = [unknown] }] };
+        var preserved = new QueryRule { Field = "country", Op = "is", Value = "GB" };
+        var query = new QueryDefinition { Groups = [new() { Rules = [preserved] }] };
         var filters = new CatalogFiltersResponse { Genres = ["Crime", "Drama"], OriginalLanguages = ["en", "fr"] };
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_FILTER_CAPABILITIES") == "1")
+        {
+            field.SetValue(null, services); parent.Children.Add(editor);
+            try
+            {
+                editor.Load(query, "series", 22, filters);
+                var advanced = (QueryRulesEditor)typeof(QueryFilterEditor).GetField("_advanced", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(editor)!;
+                for (var attempt = 0; attempt < 80 && !advanced.ExtendedRules; attempt++) await Task.Delay(25);
+                if (!advanced.ExtendedRules || advanced.ShownRatingSources?.Contains("rt_critic") != true)
+                    throw new InvalidOperationException("Mounted filter editor must receive current server extended-rule and shown-rating capabilities.");
+                Program.Log("PASS: FILTER_CAPABILITIES_COMPLETED actual mounted editor receives extended-query/ratings capabilities from its isolated API.");
+            }
+            finally { parent.Children.Remove(editor); field.SetValue(null, previous); }
+            return;
+        }
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_FILTER_REPRESENTATION") == "1")
+        {
+            field.SetValue(null, services); parent.Children.Add(editor);
+            try
+            {
+                var differences = new List<string>();
+                foreach (var (name, candidate, guidedExpected) in new (string, QueryDefinition, bool)[]
+                {
+                    ("empty", new(), true),
+                    ("ordinary", new() { Groups = [new() { Rules = [new() { Field = "genre", Op = "contains", Value = "Crime" }, new() { Field = "year", Op = "gte", Value = 2000 }] }] }, true),
+                    ("unknown", new() { Groups = [new() { Rules = [unknown] }] }, false),
+                    ("negated", new() { Groups = [new() { Rules = [new() { Field = "genre", Op = "is_not", Value = "Crime" }] }] }, false),
+                    ("strict-year", new() { Groups = [new() { Rules = [new() { Field = "year", Op = "gt", Value = 2000 }] }] }, false),
+                    ("repeated-people", new() { Groups = [new() { Rules = [new() { Field = "actor", Op = "is", Value = "Person One" }, new() { Field = "actor", Op = "is", Value = "Person Two" }] }] }, false),
+                    ("non-4k-resolution", new() { Groups = [new() { Rules = [new() { Field = "resolution", Op = "is", Value = "1080p" }] }] }, false),
+                    ("ebook-narrator", new() { MediaScope = "ebook", Groups = [new() { Rules = [new() { Field = "narrator", Op = "is", Value = "Narrator" }] }] }, false),
+                    ("or-genres", new() { Groups = [new() { Match = "any", Rules = [new() { Field = "genre", Op = "is", Value = "Crime" }, new() { Field = "genre", Op = "is", Value = "Drama" }] }] }, false),
+                    ("or-languages", new() { Groups = [new() { Match = "any", Rules = [new() { Field = "original_language", Op = "is", Value = "en" }, new() { Field = "original_language", Op = "is", Value = "fr" }] }] }, true),
+                })
+                {
+                    var before = JsonSerializer.Serialize(candidate);
+                    editor.Load(candidate, candidate.MediaScope ?? "video", 22, filters); await Task.Delay(60);
+                    var guided = (Button)typeof(QueryFilterEditor).GetField("_guidedButton", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(editor)!;
+                    var advanced = (QueryRulesEditor)typeof(QueryFilterEditor).GetField("_advanced", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(editor)!;
+                    if (guided.IsEnabled != guidedExpected || !guidedExpected && advanced.Visibility != Visibility.Visible)
+                        differences.Add($"{name}: current native editor does not disable Guided and show Advanced for rules Guided cannot fully represent.");
+                    if (before != JsonSerializer.Serialize(candidate)) differences.Add($"{name}: loading a mode changed its rules.");
+                }
+                if (differences.Count > 0) throw new InvalidOperationException(string.Join("\n", differences));
+                Program.Log("PASS: FILTER_REPRESENTATION_COMPLETED actual Guided availability/Advanced fallback and lossless loaded rules.");
+            }
+            finally { parent.Children.Remove(editor); field.SetValue(null, previous); }
+            return;
+        }
         editor.Load(query, "video", 22, filters);
         field.SetValue(null, services); parent.Children.Add(editor);
         try
         {
             await Task.Delay(120);
+            if (wire.FacetRequests != 0) throw new InvalidOperationException("Hidden Advanced controls performed facet lookups while Guided was displayed.");
             AutoSuggestBox Input(string caption) => Descendants<AutoSuggestBox>(editor).Single(box => box.Header is TextBlock header && header.Text == caption);
+            var initialQuery=JsonSerializer.Serialize(query);
+            var focusedGenres=Input("Genres");
+            focusedGenres.Focus(FocusState.Programmatic);
+            await Task.Delay(80);
+            if (!focusedGenres.IsSuggestionListOpen || !Values(focusedGenres).SequenceEqual(filters.Genres))
+                throw new InvalidOperationException("Opening Guided Genres must offer available choices before typing.");
+            if (initialQuery!=JsonSerializer.Serialize(query))
+                throw new InvalidOperationException("Opening Guided choices must not modify the draft.");
+            focusedGenres.IsSuggestionListOpen=false;
+            Program.Log("PASS: Guided focus opens bounded available choices without changing the query.");
+            var advancedToggle=Descendants<Button>(editor).Single(button=>button.Content?.ToString()=="Advanced");
+            ((IInvokeProvider)new ButtonAutomationPeer(advancedToggle).GetPattern(PatternInterface.Invoke)).Invoke();
+            await Task.Delay(60);
+            var rulesEditor=Descendants<QueryRulesEditor>(editor).Single();
+            if (!Descendants<TextBlock>(rulesEditor).Any(text=>text.Text=="Rule Groups"))
+                throw new InvalidOperationException("Advanced filter editor is missing the current Rule Groups heading.");
+            var guidedToggle=Descendants<Button>(editor).Single(button=>button.Content?.ToString()=="Guided");
+            ((IInvokeProvider)new ButtonAutomationPeer(guidedToggle).GetPattern(PatternInterface.Invoke)).Invoke();
+            await Task.Delay(60);
             foreach (var input in Descendants<AutoSuggestBox>(editor))
             {
                 var name = (input.Header as TextBlock)?.Text;
@@ -75,13 +145,13 @@ internal static class BrowseGuidedInteractionsNativeFixture
             }
             await Select(Input("Genres"), "Crime"); await Select(Input("Genres"), "Drama");
             await Select(Input("Original Language"), "en"); await Select(Input("Original Language"), "fr");
-            Program.Log("Guided export before HDR: " + JsonSerializer.Serialize(editor.Query) + "; original=" + ReferenceEquals(query, editor.Query) + "; unknown=" + query.Groups.SelectMany(group => group.Rules).Contains(unknown));
+            Program.Log("Guided export before HDR: " + JsonSerializer.Serialize(editor.Query) + "; original=" + ReferenceEquals(query, editor.Query) + "; preserved=" + query.Groups.SelectMany(group => group.Rules).Contains(preserved));
             var hdr = Descendants<ToggleButton>(editor).Single(button => button.Content?.ToString() == "HDR");
             hdr.StartBringIntoView(); var focusedHdr = hdr.Focus(FocusState.Programmatic); var toggle = new ToggleButtonAutomationPeer(hdr).GetPattern(PatternInterface.Toggle) as IToggleProvider; Program.Log($"HDR actual peer: checked={hdr.IsChecked}, focus={focusedHdr}, state={hdr.FocusState}, toggle={toggle != null}.");
             if (toggle == null) throw new InvalidOperationException("Actual HDR Toggle provider is unavailable; keyboard-only delivery did not activate it.");
             toggle.Toggle(); await Until(() => hdr.IsChecked == true);
-            Program.Log("Guided export after HDR: " + JsonSerializer.Serialize(editor.Query) + "; checked=" + hdr.IsChecked + "; focus=" + hdr.FocusState + "; unknown=" + query.Groups.SelectMany(group => group.Rules).Contains(unknown));
-            if (!query.Groups.Any(group => group.Match == "all" && group.Rules.Count(rule => rule.Field == "genre") == 2) || !query.Groups.Any(group => group.Match == "any" && group.Rules.Count(rule => rule.Field == "original_language") == 2) || !query.Groups.SelectMany(group => group.Rules).Any(rule => rule.Field == "hdr" && QueryRuleValues.Format(rule.Value) == "true") || !query.Groups.SelectMany(group => group.Rules).Contains(unknown))
+            Program.Log("Guided export after HDR: " + JsonSerializer.Serialize(editor.Query) + "; checked=" + hdr.IsChecked + "; focus=" + hdr.FocusState + "; preserved=" + query.Groups.SelectMany(group => group.Rules).Contains(preserved));
+            if (!query.Groups.Any(group => group.Match == "all" && group.Rules.Count(rule => rule.Field == "genre") == 2) || !query.Groups.Any(group => group.Match == "any" && group.Rules.Count(rule => rule.Field == "original_language") == 2) || !query.Groups.SelectMany(group => group.Rules).Any(rule => rule.Field == "hdr" && QueryRuleValues.Format(rule.Value) == "true") || !query.Groups.SelectMany(group => group.Rules).Contains(preserved))
                 throw new InvalidOperationException("Actual Guided genre/language/HDR interactions must retain ALL genres, ANY languages and the unrelated advanced rule.");
             Program.Log("PASS: actual rendered Guided two genres ALL/two languages ANY/HDR with unrelated advanced-rule preservation.");
             var manualGenres = Input("Genres");
@@ -105,7 +175,7 @@ internal static class BrowseGuidedInteractionsNativeFixture
             }
             await ClearGenres();
             await Select(manualGenres, "Crime"); await ClearGenres();
-            if (!query.Groups.Any(group => group.Match == "any" && group.Rules.Count(rule => rule.Field == "original_language") == 2) || !query.Groups.SelectMany(group => group.Rules).Contains(unknown)) throw new InvalidOperationException("Manual genre submit/clear must preserve selected languages and the unrelated advanced rule.");
+            if (!query.Groups.Any(group => group.Match == "any" && group.Rules.Count(rule => rule.Field == "original_language") == 2) || !query.Groups.SelectMany(group => group.Rules).Contains(preserved)) throw new InvalidOperationException("Manual genre submit/clear must preserve selected languages and the unrelated country rule.");
             Program.Log("PASS: actual manual comma-separated genres replace selected values; owned Backspace emits native TextChanged and empty submission clears manual values and a directly chosen suggestion, preserving unrelated rules.");
             var actor = Input("Actor"); wire.DelayPerson = true; await Type(actor, "Deferred Person");
             await Until(() => wire.PersonRequests == 1);
@@ -118,7 +188,7 @@ internal static class BrowseGuidedInteractionsNativeFixture
             if (author.ItemsSource != null) throw new InvalidOperationException("Failed scoped suggestions retained invalid options.");
             wire.FailFacet = false; await Type(author, "Recovered Author");
             await Until(() => Values(author).Contains("Recovered Author"));
-            if (!wire.FacetQuery.Contains("library_id=11") || !wire.FacetQuery.Contains("type=audiobook")) throw new InvalidOperationException("Recovered author suggestion lost audiobook library scope.");
+            if (!wire.FacetQuery.Contains("library_ids=11") || !wire.FacetQuery.Contains("type=audiobook")) throw new InvalidOperationException("Recovered author suggestion lost audiobook library scope.");
             Program.Log("PASS: mounted suggestion scope switch rejects ignored-cancellation people response; failed audiobook/library11 author lookup recovers.");
         }
         finally { foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(editor.XamlRoot)) popup.IsOpen = false; parent.Children.Remove(editor); field.SetValue(null, previous); }
@@ -147,9 +217,10 @@ internal static class BrowseGuidedInteractionsNativeFixture
         {
             if (request.RequestUri?.Host != "guided-interaction.invalid") throw new InvalidOperationException("Guided fixture attempted external networking.");
             var path = request.RequestUri.AbsolutePath; object body = new { items = Array.Empty<string>() }; var status = HttpStatusCode.OK;
-            if (path == "/api/v2/catalog/search/capabilities") body = new { people_media_scope = true };
+            if (path == "/api/v2/catalog/search/capabilities") body = new { people_media_scope = true, extended_query_rules = true, facet_value_search = true };
+            if (path == "/api/v2/capabilities/ratings") body = new { state = "available", sources = new[] { new { source = "rt_critic" } } };
             if (path == "/api/v2/catalog/people") { PersonRequests++; body = new { items = DelayPerson ? await PersonGate.Task : Array.Empty<object>() }; }
-            if (path == "/api/v2/catalog/filters/search") { FacetRequests++; FacetQuery = request.RequestUri.Query; status = FailFacet ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK; body = new { matches = new[] { "Recovered Author" } }; }
+            if (path == "/api/v2/catalog/filters/search") { FacetRequests++; FacetQuery = request.RequestUri.Query; status = FailFacet ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK; body = new { values = new[] { new { value = "Recovered Author", count = 1 } }, values_has_more = false }; }
             return new(status) { Content = new StringContent(JsonSerializer.Serialize(body)) };
         }
     }

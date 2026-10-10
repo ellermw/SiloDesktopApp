@@ -9,6 +9,19 @@ namespace SiloPlayer.Tests;
 public sealed class SiloApiClientTests
 {
     [Fact]
+    public async Task SimilarCardsUseTheCurrentTwelveItemContract()
+    {
+        string? path = null;
+        var handler = new DelegateHandler((request, _) =>
+        {
+            path = request.RequestUri!.PathAndQuery;
+            return Task.FromResult<HttpResponseMessage>(JsonResponse(HttpStatusCode.OK, """{"items":[{"content_id":"movie-1","play_content_id":"play-1","title":"A recommended title","poster_url":"https://fixture.invalid/poster"}]}"""));
+        });
+        var result = await new CatalogApi(CreateClient(handler)).GetSimilarAsync("movie:source");
+        Assert.Equal("/api/v2/recommendations/similar/movie%3Asource?limit=12", path);
+        Assert.Equal("play-1", Assert.Single(result.Items).PlayContentId);
+    }
+    [Fact]
     public void ResolveServerUrl_HandlesRootRelativeAndAbsoluteBrandingAssets()
     {
         var client = CreateClient(new DelegateHandler((_, _) =>

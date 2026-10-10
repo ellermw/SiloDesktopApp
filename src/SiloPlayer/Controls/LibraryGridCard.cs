@@ -18,7 +18,7 @@ public sealed class LibraryGridCard : Canvas
     private readonly CompositeTransform _cardHoverTransform;
     private readonly CompositeTransform _posterHoverTransform;
     private readonly UICustomizationService _uiCustomizationService;
-    private readonly TextBlock _fallbackTitle;
+    private readonly DefaultArtwork _artworkFallback;
     private readonly TextBlock _titleText;
     private readonly TextBlock _episodeTitleText;
     private readonly TextBlock _subtitleText;
@@ -52,7 +52,7 @@ public sealed class LibraryGridCard : Canvas
         var posterHeight = (double)Application.Current.Resources["PosterCardHeight"];
         var cardHeight = (double)Application.Current.Resources["PosterCardTotalHeight"];
         _posterHeight = posterHeight;
-        _overlayGeometry = CardOverlayGeometry.ForPoster(cardWidth);
+        _overlayGeometry = CardOverlayGeometry.ForPoster(cardWidth - 2, App.Services.GetRequiredService<CardOverlayService>().Preset);
 
         Width = cardWidth;
         Height = cardHeight;
@@ -61,20 +61,7 @@ public sealed class LibraryGridCard : Canvas
         _cardHoverTransform = new CompositeTransform();
         RenderTransform = _cardHoverTransform;
 
-        _fallbackTitle = new TextBlock
-        {
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextAlignment = TextAlignment.Center,
-            TextWrapping = TextWrapping.Wrap,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxLines = 3,
-            MaxWidth = Math.Max(80, cardWidth - 28),
-            FontSize = 14,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = Brush("SecondaryTextBrush"),
-            Padding = new Thickness(8),
-        };
+        _artworkFallback = new DefaultArtwork();
 
         _posterImage = new Image
         {
@@ -88,8 +75,15 @@ public sealed class LibraryGridCard : Canvas
         _posterImage.RenderTransform = _posterHoverTransform;
 
         var posterHost = new Grid();
+        posterHost.Children.Add(_artworkFallback);
         posterHost.Children.Add(_posterImage);
-        posterHost.Children.Add(_fallbackTitle);
+        _posterImage.ImageOpened += (_, _) => _artworkFallback.Visibility = Visibility.Collapsed;
+        _posterImage.ImageFailed += (_, _) =>
+        {
+            _posterImage.Source = null; _posterImage.Opacity = 0;
+            _artworkFallback.Visibility = Visibility.Visible;
+            _ = _artworkFallback.ShowThumbhashAsync();
+        };
 
         _overlayTopLeft = CreateOverlayHost(HorizontalAlignment.Left, VerticalAlignment.Top, _overlayGeometry);
         _overlayTopRight = CreateOverlayHost(HorizontalAlignment.Right, VerticalAlignment.Top, _overlayGeometry);
@@ -249,11 +243,9 @@ public sealed class LibraryGridCard : Canvas
         IsHitTestVisible = true;
         Opacity = 1;
 
-        var title = string.IsNullOrWhiteSpace(item.Title)
-            ? "Untitled"
-            : MediaItemDisplayText.BuildTitle(item);
-        _fallbackTitle.Text = title;
-        _fallbackTitle.Visibility = _posterImage.Source == null ? Visibility.Visible : Visibility.Collapsed;
+        _artworkFallback.Reset(item.Type, !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterThumbhash : item.BackdropThumbhash);
+        _artworkFallback.Visibility = string.IsNullOrWhiteSpace(item.PosterUrl) && string.IsNullOrWhiteSpace(item.BackdropUrl) ? Visibility.Visible : Visibility.Collapsed;
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, MediaItemDisplayText.BuildTitle(item));
         _titleText.Text = MediaItemDisplayText.BuildTitle(item);
         var episodeTitle = MediaItemDisplayText.BuildEpisodeTitle(item);
         _episodeTitleText.Text = episodeTitle ?? "";
@@ -271,6 +263,7 @@ public sealed class LibraryGridCard : Canvas
             var version = ++_posterLoadVersion;
             _ = LoadPosterAsync(item, imageUrl, version, _posterLoadCts.Token);
         }
+        else if (string.IsNullOrWhiteSpace(imageUrl)) _ = _artworkFallback.ShowThumbhashAsync();
     }
 
     /// <summary>Refreshes mutable profile state without restarting artwork loading.</summary>
@@ -311,7 +304,6 @@ public sealed class LibraryGridCard : Canvas
         _posterBackground.Height = posterHeight;
         _posterImage.Width = cardWidth;
         _posterImage.Height = posterHeight;
-        _fallbackTitle.MaxWidth = Math.Max(80, cardWidth - 28);
         _titleText.Width = Math.Max(0, cardWidth - 8);
         _episodeTitleText.Width = Math.Max(0, cardWidth - 8);
         _subtitleText.Width = Math.Max(0, cardWidth - 8);
@@ -324,8 +316,8 @@ public sealed class LibraryGridCard : Canvas
         SetTop(_quickWatchedButton, posterHeight - 42);
         SetTop(_quickFavoriteButton, posterHeight - 42);
 
-        var geometry = CardOverlayGeometry.ForPoster(cardWidth);
-        if (Math.Abs(geometry.Scale - _overlayGeometry.Scale) >= 0.001)
+        var geometry = CardOverlayGeometry.ForPoster(cardWidth - 2, App.Services.GetRequiredService<CardOverlayService>().Preset);
+        if (geometry != _overlayGeometry)
         {
             _overlayGeometry = geometry;
             ApplyOverlayHostGeometry();
@@ -342,8 +334,8 @@ public sealed class LibraryGridCard : Canvas
         SortKey = null;
         IsHitTestVisible = false;
         Opacity = 0.55;
-        _fallbackTitle.Text = "";
-        _fallbackTitle.Visibility = Visibility.Visible;
+        _artworkFallback.Reset(null);
+        _artworkFallback.Visibility = Visibility.Collapsed;
         _titleText.Text = "";
         _episodeTitleText.Text = "";
         _episodeTitleText.Visibility = Visibility.Collapsed;
@@ -364,8 +356,8 @@ public sealed class LibraryGridCard : Canvas
         SortKey = null;
         IsHitTestVisible = false;
         Opacity = 1;
-        _fallbackTitle.Text = "";
-        _fallbackTitle.Visibility = Visibility.Visible;
+        _artworkFallback.Reset(null);
+        _artworkFallback.Visibility = Visibility.Collapsed;
         _titleText.Text = "";
         _episodeTitleText.Text = "";
         _episodeTitleText.Visibility = Visibility.Collapsed;
@@ -394,8 +386,9 @@ public sealed class LibraryGridCard : Canvas
                 token => imageService.GetImageDiskPathAsync(item.ContentId, imageType, imageUrl, httpClient, token),
                 ct);
 
-            if (string.IsNullOrWhiteSpace(diskPath) || !IsCurrentPosterLoad(item, version, ct))
+            if (!IsCurrentPosterLoad(item, version, ct))
                 return;
+            if (string.IsNullOrWhiteSpace(diskPath)) { await _artworkFallback.ShowThumbhashAsync(); return; }
 
             await s_bitmapCreateLock.WaitAsync(ct);
             try
@@ -415,7 +408,6 @@ public sealed class LibraryGridCard : Canvas
 
                 _posterImage.Source = bitmapImage;
                 _posterImage.Opacity = 1;
-                _fallbackTitle.Visibility = Visibility.Collapsed;
             }
             finally
             {
@@ -423,7 +415,7 @@ public sealed class LibraryGridCard : Canvas
             }
         }
         catch (OperationCanceledException) { }
-        catch { }
+        catch { if (IsCurrentPosterLoad(item, version, ct)) await _artworkFallback.ShowThumbhashAsync(); }
         finally
         {
             if (version == _posterLoadVersion)
@@ -460,10 +452,10 @@ public sealed class LibraryGridCard : Canvas
         if (MediaItem == null)
             return;
 
-        App.Services.GetRequiredService<ItemDetailPrefetchCache>()
-            .Prefetch(MediaItem.ContentId);
+        var libraryId = MediaNavigationContext.LibraryId(this);
+        if (!libraryId.HasValue) App.Services.GetRequiredService<ItemDetailPrefetchCache>().Prefetch(MediaItem.ContentId);
         App.Services.GetRequiredService<NavigationService>()
-            .Navigate<ItemDetailPage>(MediaItem.ContentId);
+            .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, libraryId));
     }
 
     private void OnPointerEntered(object sender, PointerRoutedEventArgs e)
@@ -528,12 +520,12 @@ public sealed class LibraryGridCard : Canvas
             await Task.Delay(140, ct);
             if (!ct.IsCancellationRequested && ReferenceEquals(MediaItem, item))
             {
-                App.Services.GetRequiredService<ItemDetailPrefetchCache>()
-                    .Prefetch(item.ContentId);
+                var libraryId = MediaNavigationContext.LibraryId(this);
+                if (!libraryId.HasValue) App.Services.GetRequiredService<ItemDetailPrefetchCache>().Prefetch(item.ContentId);
                 if (item.Type is not ("movie" or "episode" or "audiobook"))
                     return;
                 App.Services.GetRequiredService<PlayerService>()
-                    .PrefetchWatchDetail(item.ContentId);
+                    .PrefetchWatchDetail(item.ContentId, libraryId);
             }
         }
         catch (OperationCanceledException) { }
@@ -696,8 +688,8 @@ public sealed class LibraryGridCard : Canvas
         var edge = _overlayGeometry.EdgeInset;
         _overlayTopLeft.Margin = new Thickness(edge);
         _overlayTopRight.Margin = new Thickness(edge);
-        _overlayBottomLeft.Margin = new Thickness(edge, edge, edge, 40 + edge);
-        _overlayBottomRight.Margin = new Thickness(edge, edge, edge, 40 + edge);
+        _overlayBottomLeft.Margin = new Thickness(edge);
+        _overlayBottomRight.Margin = new Thickness(edge);
     }
 
     private void ClearOverlays()
@@ -712,6 +704,8 @@ public sealed class LibraryGridCard : Canvas
     {
         ClearOverlays();
         var service = App.Services.GetRequiredService<CardOverlayService>();
+        _overlayGeometry = CardOverlayGeometry.ForPoster(Width - 2, service.Preset);
+        ApplyOverlayHostGeometry();
         if (!service.IsLoaded)
             _ = EnsureOverlaysLoadedAsync(item, service);
 

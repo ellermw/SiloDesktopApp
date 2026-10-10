@@ -21,6 +21,14 @@ public partial class ItemDetailViewModel : ObservableObject,
     private long _seasonsLoadGeneration;
     private long _episodesLoadGeneration;
     private long _watchedStateGeneration;
+    public int? LibraryId { get; private set; }
+    public Task LoadInLibraryAsync(string contentId, int? libraryId)
+    {
+        LibraryId = libraryId;
+        return LoadAsync(contentId);
+    }
+    private Task<MediaItemDetail> ReadDetailAsync(string contentId, CancellationToken ct) => LibraryId.HasValue
+        ? _catalogApi.GetItemDetailAsync(contentId, LibraryId, ct) : _detailPrefetchCache.GetAsync(contentId, ct);
 
     public ItemDetailViewModel(
         CatalogApi catalogApi,
@@ -111,7 +119,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             await pendingProgressSave.WaitAsync(cancellationToken);
             if (!ReferenceEquals(Item, item) || generation != Volatile.Read(ref _watchedStateGeneration)) return;
             _detailPrefetchCache.Invalidate(item.ContentId);
-            var refreshed = await _detailPrefetchCache.GetAsync(item.ContentId, cancellationToken);
+            var refreshed = await ReadDetailAsync(item.ContentId, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (!ReferenceEquals(Item, item) || generation != Volatile.Read(ref _watchedStateGeneration)) return;
             item.UserData = refreshed.UserData;
@@ -225,7 +233,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
         try
         {
-            var item = await _detailPrefetchCache.GetAsync(contentId, ct);
+            var item = await ReadDetailAsync(contentId, ct);
             ct.ThrowIfCancellationRequested();
             if (!ReferenceEquals(_loadCts, loadCts)) return;
             Item = item;
@@ -393,57 +401,22 @@ public partial class ItemDetailViewModel : ObservableObject,
         if (Item == null) return;
         var contentId = Item.ContentId;
         var generation = Interlocked.Increment(ref _similarLoadGeneration);
+        var context = _catalogApi.CaptureContext();
         SimilarLoadFailed = false;
         try
         {
             var response = await _catalogApi.GetSimilarAsync(contentId);
             if (generation != Volatile.Read(ref _similarLoadGeneration)
-                || Item?.ContentId != contentId) return;
-
-            // The API returns only IDs + scores, not full MediaItem objects.
-            // The current WebUI recommendation grid caps this surface at 12.
-            var tasks = response.Items.Take(12).Select(async s =>
-            {
-                try
-                {
-                    return await _catalogApi.GetItemDetailAsync(s.MediaItemId);
-                }
-                catch { return null; }
-            });
-
-            var details = await Task.WhenAll(tasks);
-
-            if (generation != Volatile.Read(ref _similarLoadGeneration)
-                || Item?.ContentId != contentId) return;
+                || Item?.ContentId != contentId || !_catalogApi.IsCurrentContext(context)) return;
 
             SimilarItems.Clear();
-
-            foreach (var detail in details)
-            {
-                if (detail == null) continue;
-
-                // Convert MediaItemDetail to MediaItem for PosterCard display
-                var mediaItem = new MediaItem
-                {
-                    ContentId = detail.ContentId,
-                    Type = detail.Type,
-                    Title = detail.Title,
-                    Year = detail.Year,
-                    Genres = detail.Genres,
-                    Overview = detail.Overview,
-                    PosterUrl = detail.PosterUrl,
-                    PosterThumbhash = detail.PosterThumbhash,
-                    BackdropUrl = detail.BackdropUrl,
-                    BackdropThumbhash = detail.BackdropThumbhash,
-                    LogoUrl = detail.LogoUrl,
-                };
-                SimilarItems.Add(mediaItem);
-            }
+            foreach (var item in response.Items.Take(12))
+                SimilarItems.Add(item);
         }
         catch (Exception ex)
         {
             if (generation != Volatile.Read(ref _similarLoadGeneration)
-                || Item?.ContentId != contentId) return;
+                || Item?.ContentId != contentId || !_catalogApi.IsCurrentContext(context)) return;
             SimilarLoadFailed = true;
             System.Diagnostics.Debug.WriteLine($"Similar-items load failed for {contentId}: {ex}");
         }
@@ -461,7 +434,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         SeasonsLoadFailed = false;
         try
         {
-            var response = await _catalogApi.GetSeasonsAsync(contentId);
+            var response = await _catalogApi.GetSeasonsAsync(contentId, LibraryId);
             if (generation != Volatile.Read(ref _seasonsLoadGeneration)
                 || Item?.ContentId != contentId) return;
             Seasons.Clear();
@@ -502,7 +475,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
         try
         {
-            var response = await _catalogApi.GetEpisodesAsync(contentId, seasonNumber);
+            var response = await _catalogApi.GetEpisodesAsync(contentId, seasonNumber, LibraryId);
             if (generation != Volatile.Read(ref _episodesLoadGeneration)
                 || Item?.ContentId != contentId) return;
             foreach (var episode in response.Episodes)

@@ -50,7 +50,9 @@ internal static class RequestInteractionNativeFixture
             var card = (Grid)typeof(RequestsPage).GetMethod("BuildMediaPosterCard", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [result])!;
             parent.Children.Add(card);
             await Task.Delay(100); card.UpdateLayout();
-            var image = Descendants(card).OfType<Image>().First();
+            // DefaultArtwork owns a separate collapsed thumbhash image.
+            // Exercise the visible poster, rather than that fallback's decoder surface.
+            var image = ((Grid)card.Children.OfType<Border>().First().Child).Children.OfType<Image>().Single();
             var bitmap = new WriteableBitmap(2, 2);
             using (var stream = bitmap.PixelBuffer.AsStream()) stream.Write(Enumerable.Repeat(new byte[] { 0, 0, 255, 255 }, 4).SelectMany(bytes => bytes).ToArray());
             bitmap.Invalidate(); image.Source = bitmap;
@@ -88,12 +90,15 @@ internal static class RequestInteractionNativeFixture
                 if (promoted)
                 {
                     var detail = (ItemDetailPage)frame.Content;
-                    await UntilAsync(() => detail.ViewModel.Item != null);
-                    await (Task)typeof(ItemDetailPage).GetMethod("LoadSeriesRequestActionAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
-                        .Invoke(detail, [detail.ViewModel.Item!, CancellationToken.None])!;
                     var more = (MenuFlyout)detail.FindName("MoreFlyout");
-                    if (!more.Items.OfType<MenuFlyoutItem>().Any(item => item.Text == "Request seasons"))
-                        failures.Add("The promoted library series has no missing-season request action.");
+                    // Item is published before the legacy favorite/watchlist reads
+                    // and OnNavigatedTo's initialization finish. Invoking the
+                    // private loader at that intermediate point races the real
+                    // navigation's capability reset. Require the actual page to
+                    // load its own action instead of synthesizing that lifecycle.
+                    await UntilAsync(() => !detail.ViewModel.IsLoading && detail.ViewModel.Item != null &&
+                        more.Items.OfType<MenuFlyoutItem>().Any(item => item.Text == "Request Seasons"));
+                    Program.Log($"PASS: promoted series naturally exposes Request seasons (staged={staged}) after its actual navigation load.");
                     if (!staged)
                     {
                         var requesting = (Task)typeof(ItemDetailPage).GetMethod("RequestSeriesSeasonsAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
@@ -161,7 +166,6 @@ internal static class RequestInteractionNativeFixture
                 typeof(RequestsPage).GetField("_activeTab", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, "yours");
                 typeof(RequestsPage).GetMethod("UpdateTabState", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null);
                 await Task.Delay(50); page.UpdateLayout();
-                if (Environment.GetEnvironmentVariable("SILO_NATIVE_REQUEST_HUB_CASE") == "status-help")
                 {
                     var help = (Button)typeof(RequestsPage).GetField("_mineHelp", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!;
                     help.Flyout.ShowAt(help);
@@ -172,6 +176,11 @@ internal static class RequestInteractionNativeFixture
                     Program.Log($"Actual request status help {width}: outer={presenter!.ActualWidth}, guide={((Border)((Flyout)help.Flyout).Content).ActualWidth}, padding={presenter.Padding}.");
                     if (Math.Abs(presenter.ActualWidth - 320) > 1)
                         throw new InvalidOperationException("Request status help must use the current320px popover and16px insets.");
+                    var guide = (Border)((Flyout)help.Flyout).Content;
+                    var guideBadges = ((Grid)guide.Child).Children.OfType<Border>().ToArray();
+                    if (guideBadges.Length != 8 || guideBadges.Any(badge => badge.ActualWidth >= 120 ||
+                        Math.Abs(badge.ActualHeight - 22) > 1 || badge.CornerRadius.TopLeft != 10))
+                        throw new InvalidOperationException("Request status badges must fit their labels in22px-high,10px-rounded pills rather than filling the120px guide column.");
                     // FlyoutPresenter itself has no RenderTargetBitmap surface
                     // on this WinUI version; capture its real content subtree.
                     await MediaParityNativeFixture.CaptureAsync((Border)((Flyout)help.Flyout).Content, $"requests-status-help-content-{width:0}.png");

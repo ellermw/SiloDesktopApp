@@ -85,7 +85,8 @@ internal static class AccountAdvancedNativeFixture
             Check(Math.Abs(previewCard.ActualWidth - (profileSection.ActualWidth - 34)) < 1 && Math.Abs(previewCard.ActualHeight - 178) < 2 && previewCard.CornerRadius.TopLeft == 16 && previewCard.BorderThickness.Left == 1 &&
                 fallback.FontSize == 30 && ((SolidColorBrush)fallback.Foreground).Color == accent.Color,
                 "Profile preview card/ring/initial does not match the pinned presentation");
-            Check(titleLines[0].ActualHeight == 18 && titleLines[1].ActualHeight == 20 && Math.Abs(previewOrigin.Y - 163) < 1 &&
+            Program.Log($"TRACE profile body: title={titleLines[0].ActualHeight}/{titleLines[1].ActualHeight}, previewY={previewOrigin.Y}, ring={ring.ActualWidth}x{ring.ActualHeight}/{ring.BorderThickness.Left}, gutter={((ScrollViewer)dialog.Content).Margin.Right}");
+            Check(titleLines[0].ActualHeight == 18 && titleLines[1].ActualHeight == 20 && Math.Abs(previewOrigin.Y - 163) <= 1 &&
                 ring.ActualWidth == 100 && ring.ActualHeight == 100 && ring.BorderThickness.Left == 2 && ((ScrollViewer)dialog.Content).Margin.Right == 8,
                 "Profile native max line boxes, inner ring or missing scrollbar gutter shift its matched body geometry");
             Check(styleGrid.Children.OfType<Button>().All(button => button.CornerRadius.TopLeft == 20 && button.Padding.Left == 16 && button.BorderThickness.Left == 1) &&
@@ -111,7 +112,7 @@ internal static class AccountAdvancedNativeFixture
     {
         frame.Width = 900; await Layout(frame); Show(page, "HomeScreen");
         await Until(() => vm.CanEditHomeSections && !vm.IsLoadingHomeSections);
-        var launch = (Button)page.FindName("HomeImportButton"); Click(launch);
+        var launch = (Button)page.FindName("HomeImportButton"); Invoke(page, "HomeImport_Click", launch, new RoutedEventArgs());
         await Until(() => Read(page, "_layoutTransferPreview") is ContentDialog);
         var input = (ContentDialog)Read(page, "_layoutTransferPreview")!;
         await Until(() => All<Button>(input).Any(button => button.Name == "PrimaryButton"));
@@ -152,23 +153,36 @@ internal static class AccountAdvancedNativeFixture
     }
     private static async Task HomeSaveAsync(Frame frame, SettingsPage page, SettingsViewModel vm, State wire)
     {
+        wire.HomeWrites = 0; wire.HomeTitle = "Saved Home fixture";
+        await vm.LoadHomeSectionsCommand.ExecuteAsync(null);
         frame.Width = 900; await Layout(frame); Show(page, "HomeScreen"); await Until(() => vm.CanEditHomeSections && vm.HomeSections.Count == 1);
         var original = vm.HomeSections.Single(); wire.HomeStatus = HttpStatusCode.UnprocessableEntity;
         var editing = (Task)Invoke(page, "EditHomeSectionAsync", original)!;
-        await Until(() => Popups(frame).Any(node => All<TextBlock>(node).Any(text => text.Text == "Edit Section")));
-        var sheet = Popups(frame).Single(node => All<TextBlock>(node).Any(text => text.Text == "Edit Section"));
-        await Until(() => All<TextBox>(sheet).Any(box => Equals(box.Header, "Title")));
-        All<TextBox>(sheet).Single(box => Equals(box.Header, "Title")).Text = "Rejected Home edit";
+        await Until(() => Popups(frame).Any(node => All<TextBlock>(node).Any(text => text.Text == "Edit row")));
+        var sheet = Popups(frame).Single(node => All<TextBlock>(node).Any(text => text.Text == "Edit row"));
+        await Until(() => All<TextBox>(sheet).Any(box => Equals(box.Header, "Row name")));
+        All<TextBox>(sheet).Single(box => Equals(box.Header, "Row name")).Text = "Rejected Home edit";
         Click(Buttons(sheet).Single(button => Equals(button.Content, "Save"))); await editing;
         Check(wire.HomeWrites == 1 && vm.HomeSections.Single().Title == "Saved Home fixture" && vm.ErrorMessage?.Contains("Fixture Home rejection") == true,
             "Rejected Home section edit did not restore server-confirmed state with a visible error");
         wire.HomeStatus = HttpStatusCode.OK; editing = (Task)Invoke(page, "EditHomeSectionAsync", vm.HomeSections.Single())!;
-        await Until(() => Popups(frame).Any(node => All<TextBlock>(node).Any(text => text.Text == "Edit Section")));
-        sheet = Popups(frame).Single(node => All<TextBlock>(node).Any(text => text.Text == "Edit Section"));
-        await Until(() => All<TextBox>(sheet).Any(box => Equals(box.Header, "Title")));
-        All<TextBox>(sheet).Single(box => Equals(box.Header, "Title")).Text = "Retried Home edit";
+        await Until(() => Popups(frame).Any(node => All<TextBlock>(node).Any(text => text.Text == "Edit row")));
+        sheet = Popups(frame).Single(node => All<TextBlock>(node).Any(text => text.Text == "Edit row"));
+        await Until(() => All<TextBox>(sheet).Any(box => Equals(box.Header, "Row name")));
+        All<TextBox>(sheet).Single(box => Equals(box.Header, "Row name")).Text = "Retried Home edit";
         Click(Buttons(sheet).Single(button => Equals(button.Content, "Save"))); await editing;
         Check(wire.HomeWrites == 2 && vm.HomeSections.Single().Title == "Retried Home edit", "Home section edit retry did not save the native editor result");
+        wire.HomeGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var current = vm.HomeSections.Single(); vm.ToggleSectionVisibility(current);
+        var first = vm.SaveHomeSectionsCommand.ExecuteAsync(current.Id);
+        await Until(() => wire.HomeWrites == 3);
+        current.Featured = true;
+        var second = vm.SaveHomeSectionsCommand.ExecuteAsync(current.Id);
+        Check(wire.HomeWrites == 3 && vm.IsSavingHomeSections, "Rapid Home row edits started overlapping whole-page writes");
+        var gate = wire.HomeGate; wire.HomeGate = null; gate.SetResult(Reply(new { }));
+        await Task.WhenAll(first, second);
+        Check(wire.HomeWrites == 4 && vm.HomeSections.Single().Hidden && vm.HomeSections.Single().Featured,
+            "Queued Home row save lost a newer toggle or refetched a stale optimistic draft");
         Program.Log("PASS actual Home section editor422 rollback/reopen/retry wire");
     }
     private static async Task LanguagesAsync(SettingsViewModel vm, State wire)
@@ -213,7 +227,7 @@ internal static class AccountAdvancedNativeFixture
         var picker = All<ComboBox>(list).Single(combo => Equals(combo.PlaceholderText, "All profiles"));
         Check(((ComboBoxItem)picker.Items[1]).Tag?.ToString() == "fixture", "Household profile picker does not place current profile first");
         Click(Buttons(list).First(button => button.Tag is UserDevice { DeviceId: "current" }));
-        await Until(() => All<TextBlock>(list).Any(text => text.Text == "Locked by your household"));
+        await Until(() => All<TextBlock>(list).Any(text => text.Text == "Household limit"));
         var locked = Row(list, "HDR"); Check(All<ToggleSwitch>(locked).Single().IsEnabled == false, "Household-locked HDR control permits editing");
         frame.Width = 1400; await Layout(frame); await Capture(frame, "account-devices-wide.png");
         var back = Buttons(list).Single(button => Equals(button.Content, "Back to devices"));
@@ -324,23 +338,43 @@ internal static class AccountAdvancedNativeFixture
         var original = JsonSerializer.Serialize(section.Config);
         var catalog = new RecipeCatalogResponse();
         var showing = RecipeGalleryDialog.ShowEditorAsync(frame.XamlRoot, catalog, section);
-        await Until(() => Popups(frame).Any(root => All<TextBlock>(root).Any(text => text.Text == "Edit Section")));
-        var root = Popups(frame).Single(root => All<TextBlock>(root).Any(text => text.Text == "Edit Section"));
-        var sheet = All<Grid>(root).Single(grid => grid.HorizontalAlignment == HorizontalAlignment.Right && grid.Width == 512);
+        await Until(() => Popups(frame).Any(root => All<TextBlock>(root).Any(text => text.Text == "Edit row")));
+        var root = Popups(frame).Single(root => All<TextBlock>(root).Any(text => text.Text == "Edit row"));
+        var sheet = All<Grid>(root).Single(grid => grid.Name == "HomeRowForm");
         await Until(() => sheet.ActualWidth > 0); await Layout(frame); ((FrameworkElement)root).UpdateLayout();
         Program.Log($"TRACE Home sheet wide client={frame.ActualWidth}x{frame.ActualHeight}, xamlRoot={frame.XamlRoot.Size.Width}x{frame.XamlRoot.Size.Height}, sheet={sheet.ActualWidth}x{sheet.ActualHeight}");
-        Check(Math.Abs(sheet.ActualWidth - 512) < 1, "Home editor did not realize source512px right sheet");
+        Check(Math.Abs(sheet.ActualWidth - 900) < 1, "Home row form did not fill the viewport below1024px");
         await Capture((FrameworkElement)root, "account-home-sheet-wide.png"); frame.Width = 460; await Layout(frame);
         Check(Math.Abs(sheet.ActualWidth - 460) < 1, "Home editor did not fit narrow viewport"); await Capture((FrameworkElement)root, "account-home-sheet-narrow.png");
         Click(Buttons(root).Single(button => Equals(button.Content, "Cancel"))); Check(await showing == null && JsonSerializer.Serialize(section.Config) == original, "Canceled Home recipe mutates saved grouped config");
         showing = RecipeGalleryDialog.ShowEditorAsync(frame.XamlRoot, catalog, section);
-        await Until(() => Popups(frame).Any(node => All<TextBlock>(node).Any(text => text.Text == "Edit Section")));
-        root = Popups(frame).Single(node => All<TextBlock>(node).Any(text => text.Text == "Edit Section"));
-        await Until(() => All<TextBox>(root).Any(input => Equals(input.Header, "Title")));
-        All<TextBox>(root).Single(input => Equals(input.Header, "Title")).Text = "Edited grouped fixture";
+        await Until(() => Popups(frame).Any(node => All<TextBlock>(node).Any(text => text.Text == "Edit row")));
+        root = Popups(frame).Single(node => All<TextBlock>(node).Any(text => text.Text == "Edit row"));
+        await Until(() => All<TextBox>(root).Any(input => Equals(input.Header, "Row name")));
+        All<TextBox>(root).Single(input => Equals(input.Header, "Row name")).Text = "Edited grouped fixture";
         Click(Buttons(root).Single(button => Equals(button.Content, "Save"))); var result = await showing;
         Check(result?.Title == "Edited grouped fixture" && JsonSerializer.Serialize(result.Config["groups"]) == groups.GetRawText(), "Recipe Save flattened grouped filters or ignored edited title");
-        Program.Log("PASS actual Home right sheet wide/narrow/Cancel grouped preservation/Save result");
+        frame.Width = 900; await Layout(frame);
+        var mood = new RecipeDefinition { Type = "mood_collection", Presets = [new() { Key = "mood_feel_good", DisplayName = "Feel-good films", DescriptionShort = "Comedy rated 7.0+ with 100+ votes." }] };
+        catalog.Categories["mood"] = [mood];
+        var moodRow = new SettingsSectionEntry { IsCustom = true, SectionType = "mood_collection", Title = "My tuned mood", Config = new() { ["mood"] = "unknown", ["min_rating"] = 9, ["future"] = true } };
+        showing = RecipeGalleryDialog.ShowEditorAsync(frame.XamlRoot, catalog, moodRow, "Movies");
+        await Until(() => Popups(frame).Any(node => All<RadioButton>(node).Count() == 8));
+        root = Popups(frame).Single(node => All<RadioButton>(node).Count() == 8);
+        var choices = All<RadioButton>(root).ToArray();
+        Check(choices.All(button => button.IsChecked != true), "An unmatched draft guessed a mood selection");
+        Check(All<TextBlock>(root).Any(text => text.Text == "Comedy rated 7.0+ with 100+ votes"), "Mood choices omitted the current server description");
+        Check(All<TextBlock>(root).Any(text => text.Text == "You'll see your changes on Movies after you save."), "Profile preview copy lost the scoped page");
+        choices.Single(button => Equals(button.Tag,"mood_feel_good")).IsChecked = true;
+        await Until(() => choices.All(button => button.IsEnabled));
+        await Capture((FrameworkElement)root,"account-home-variants-wide.png");
+        frame.Width = 460; await Layout(frame); ((FrameworkElement)root).UpdateLayout();
+        foreach (var button in choices) { Program.Log($"TRACE narrow variant {button.Tag}: width={button.ActualWidth}, form={frame.ActualWidth}, xamlRoot={frame.XamlRoot.Size.Width}"); Check(button.ActualWidth > 0 && button.ActualWidth <= frame.ActualWidth - 40 + 1, "Variant cards overflowed the narrow Home form"); }
+        await Capture((FrameworkElement)root,"account-home-variants-narrow.png");
+        Click(Buttons(root).Single(button => Equals(button.Content,"Save"))); result = await showing;
+        Check(result != null && Equals(result.Config["mood"],"feel_good") && result.Config["min_rating"].ToString() == "9" && result.Config.ContainsKey("future") && result.Title == "My tuned mood", "Selecting a variant overwrote custom rating/name/unknown tuning");
+        Check(Equals(moodRow.Config!["mood"],"unknown"), "Editor mutated original row before its caller saved");
+        Program.Log("PASS actual Home forms wide/narrow/Cancel/Save grouped preservation; unmatched variants, scoped preview, server hints and retained custom tuning.");
     }
     private static async Task PluginsAsync(Frame frame, SettingsPage page, SettingsViewModel vm)
     {
@@ -422,6 +456,9 @@ internal static class AccountAdvancedNativeFixture
         internal HttpStatusCode HomeStatus = HttpStatusCode.OK;
         internal TaskCompletionSource<HttpResponseMessage>? HomeGate, OverlayGeneralGate;
         internal string OverlayQuickActionMode = "both";
+        internal string HomeTitle = "Saved Home fixture";
+        internal bool HomeHidden, HomeFeatured;
+        internal List<JsonElement> SavedHomeOverrides = [];
         internal HttpStatusCode MetadataStatus = HttpStatusCode.OK;
         internal TaskCompletionSource<HttpResponseMessage>? MetadataGate;
         internal TaskCompletionSource<HttpResponseMessage>? DeviceGate, ProfileGate, TourGate;
@@ -434,9 +471,9 @@ internal static class AccountAdvancedNativeFixture
             if (path == "/api/v2/system/identity") return Task.FromResult(Reply(new { server_id = "fixture-server" }));
             if (path == "/api/v2/profile/sections/flags") return Task.FromResult(Reply(new { allow_profile_custom_sections = true }));
             if (path == "/api/v2/sections/recipes") return Task.FromResult(Reply(new { categories = new[] { new { category = "Browse", recipes = new[] { new { type = "recently_added", name = "Recently added", admin_only = false } } } } }));
-            if (path == "/api/v2/profile/sections/settings") return Task.FromResult(Reply(new { items = new[] { new { id = "home-fixture", section_type = "recently_added", title = "Saved Home fixture", item_limit = 20, is_custom = true, position = 0, config = new { } } } }));
+            if (path == "/api/v2/profile/sections/settings") return Task.FromResult(Reply(new { items = new[] { new { id = "home-fixture", section_type = "recently_added", title = HomeTitle, hidden = HomeHidden, featured = HomeFeatured, item_limit = 20, is_custom = true, position = 0, config = new { } } } }));
             if (path == "/api/v2/profile/sections" && method == "PUT") return HomeWrite(request, ct);
-            if (path == "/api/v2/profile/sections") return Task.FromResult(Reply(new { items = Array.Empty<object>() }));
+            if (path == "/api/v2/profile/sections") return Task.FromResult(Reply(new { items = SavedHomeOverrides }));
             if (path == "/api/v2/devices") return Task.FromResult(Reply(new { items = new[] { Device("current", "Current workstation", "fixture", "Primary", true, 1, DateTimeOffset.UtcNow.ToString("O")), Device("dormant", "Dormant tablet", "fixture", "Primary", false, 0, "2025-01-01T00:00:00Z"), Device("customized", "Customized old TV", "fixture", "Primary", false, 1, "2025-01-01T00:00:00Z"), Device("other", "Other profile desktop", "child", "Restricted", false, 0, DateTimeOffset.UtcNow.ToString("O")) }, page = new { has_more = false } }));
             if (path == "/api/v2/settings/values/effective")
             {
@@ -485,6 +522,20 @@ internal static class AccountAdvancedNativeFixture
         private async Task<HttpResponseMessage> TourWrite(HttpRequestMessage request, CancellationToken ct)
         { TourPayload = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync(ct)); TourWrites++; return TourGate != null ? await TourGate.Task.WaitAsync(ct) : Reply(new { }); }
         private async Task<HttpResponseMessage> HomeWrite(HttpRequestMessage request, CancellationToken ct)
-        { HomePayload = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync(ct)); HomeWrites++; return HomeGate != null ? await HomeGate.Task.WaitAsync(ct) : Reply(new { error = "validation_failed", message = "Fixture Home rejection" }, HomeStatus); }
+        {
+            var payload = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync(ct)); HomePayload = payload; HomeWrites++;
+            var response = HomeGate != null ? await HomeGate.Task.WaitAsync(ct) : Reply(new { error = "validation_failed", message = "Fixture Home rejection" }, HomeStatus);
+            if (response.IsSuccessStatusCode)
+            {
+                SavedHomeOverrides = payload.GetProperty("overrides").EnumerateArray().Select(row => row.Clone()).ToList();
+                foreach (var row in SavedHomeOverrides.Where(row => row.TryGetProperty("id", out var id) && id.GetString() == "home-fixture"))
+                {
+                    if (row.TryGetProperty("title", out var title)) HomeTitle = title.GetString()!;
+                    HomeHidden = row.TryGetProperty("hidden", out var hidden) && hidden.GetBoolean();
+                    HomeFeatured = row.TryGetProperty("featured", out var featured) && featured.GetBoolean();
+                }
+            }
+            return response;
+        }
     }
 }

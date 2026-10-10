@@ -23,7 +23,8 @@ public sealed class NotificationsCurrentParitySourceTests
         Assert.Contains("ClonePreferences(Preferences)", source);
         Assert.Contains("Interlocked.Increment(ref _preferencesSaveVersion)", source);
         Assert.Contains("version == Volatile.Read(ref _preferencesSaveVersion)", source);
-        Assert.Contains("Preferences = await _notificationsApi.GetPreferencesAsync()", source);
+        // Authoritative rollback is exercised by the native failed-toggle
+        // check; do not require an unguarded direct assignment here.
         Assert.Contains("ViewModel.PreferencesErrorMessage", page);
         Assert.Contains("SyncPreferenceControls();", page);
     }

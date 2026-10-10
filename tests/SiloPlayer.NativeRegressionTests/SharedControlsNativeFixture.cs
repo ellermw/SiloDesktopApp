@@ -70,9 +70,64 @@ internal static class SharedControlsNativeFixture
             foreach (var button in buttons.Children.OfType<Button>()) button.IsEnabled = false;
             await MediaParityNativeFixture.CaptureAsync(surface, "shared-controls-disabled.png");
             await CheckPageBackdropAsync(parent);
+            await CheckDialogThemeAsync(parent);
+            await CheckDiscardDialogAsync(parent);
             Program.Log("PASS: shared control default sizes, native state matrix, card padding and published Lucide SVG rendering.");
         }
         finally { parent.Children.Remove(surface); }
+    }
+    private static async Task CheckDialogThemeAsync(StackPanel parent)
+    {
+        var dialog = new ContentDialog { XamlRoot = parent.XamlRoot, Title = "Leave without saving?", Content = "Your unsaved changes will be lost.", PrimaryButtonText = "Leave", CloseButtonText = "Stay", DefaultButton = ContentDialogButton.Close };
+        var shown = dialog.ShowAsync();
+        try
+        {
+            await Task.Delay(180); dialog.UpdateLayout();
+            var primary = Find<Button>(dialog, "PrimaryButton"); var close = Find<Button>(dialog, "CloseButton");
+            Program.Log($"TRACE dialog primary={primary.Background}, close={close.Background}, styles={primary.Style == Application.Current.Resources["AccentButtonStyle"]}/{close.Style == Application.Current.Resources["OutlineButtonStyle"]}.");
+            if (primary.Background is not SolidColorBrush fill || fill.Color != ((SolidColorBrush)Application.Current.Resources["AccentBrush"]).Color)
+                throw new InvalidOperationException("Ordinary dialog primary button must use the selected Silo theme rather than Windows accent blue.");
+            if (close.Style != Application.Current.Resources["OutlineButtonStyle"])
+                throw new InvalidOperationException("Ordinary dialog cancel action must use the shared outline presentation even when it is the default keyboard target.");
+            VisualStateManager.GoToState(primary, "PointerOver", false);
+            await MediaParityNativeFixture.CaptureAsync(dialog, "shared-confirmation-hover.png");
+        }
+        finally { dialog.Hide(); await shown; }
+    }
+    private static async Task CheckDiscardDialogAsync(StackPanel parent)
+    {
+        var factory = typeof(SiloPlayer.Views.CollectionEditorPage).GetMethod("CreateDepartureDialog", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+        var dialog = (ContentDialog)factory.Invoke(null, [parent.XamlRoot])!;
+        dialog.Opened += (_, _) => dialog.DispatcherQueue.TryEnqueue(() =>
+        {
+            try
+            {
+            var commands = Find<Grid>(dialog, "CommandSpace");
+            Program.Log("TRACE discard queued root=" + parent.XamlRoot.Size.Width + "; columns=" + string.Join("|", commands.ColumnDefinitions.Select(column => column.Width)) + "; positions=" + string.Join("|", commands.Children.OfType<Button>().Select(button => button.Name + ":" + Grid.GetColumn(button))));
+            }
+            catch (InvalidOperationException error) { Program.Log("TRACE discard queued template pending: " + error.Message); }
+        });
+        var shown = dialog.ShowAsync();
+        try
+        {
+            await Task.Delay(180); dialog.UpdateLayout();
+            var title = dialog.Title as TextBlock;
+            if (title?.Text != "Discard unsaved changes?" || dialog.PrimaryButtonText != "Discard" || dialog.CloseButtonText != "Cancel")
+                throw new InvalidOperationException("Collection departure does not present the current discard/cancel confirmation.");
+            var background = Find<Border>(dialog, "BackgroundElement");
+            var primary = Find<Button>(dialog, "PrimaryButton");
+            Program.Log($"TRACE discard width={background.ActualWidth}; fill={(primary.Background as SolidColorBrush)?.Color}; error={((SolidColorBrush)Application.Current.Resources["ErrorBrush"]).Color}");
+            await MediaParityNativeFixture.CaptureAsync(dialog, "collection-discard-current.png");
+            if (Math.Abs(background.ActualWidth - 512) > 1 || primary.Background is not SolidColorBrush fill || fill.Color != ((SolidColorBrush)Application.Current.Resources["ErrorBrush"]).Color)
+                throw new InvalidOperationException("Discard confirmation must use a512px surface and destructive primary action.");
+            var cancel = Find<Button>(dialog, "CloseButton");
+            var finalCommands = Find<Grid>(dialog, "CommandSpace");
+            Program.Log("TRACE discard settled columns=" + string.Join("|", finalCommands.ColumnDefinitions.Select(column => column.Width)) + "; positions=" + string.Join("|", finalCommands.Children.OfType<Button>().Select(button => button.Name + ":" + Grid.GetColumn(button))));
+            if (cancel.TransformToVisual(background).TransformPoint(new Windows.Foundation.Point()).X >= primary.TransformToVisual(background).TransformPoint(new Windows.Foundation.Point()).X)
+                throw new InvalidOperationException("Wide discard confirmation must place Cancel before Discard.");
+            await MediaParityNativeFixture.CaptureAsync(dialog, "collection-discard-current.png");
+        }
+        finally { dialog.Hide(); await shown; }
     }
     private static async Task CheckPageBackdropAsync(StackPanel parent)
     {

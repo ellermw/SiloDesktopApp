@@ -5,6 +5,7 @@ public class SettingsSectionEntry
     public string Id { get; set; } = "";
     public string SectionType { get; set; } = "";
     public string Title { get; set; } = "";
+    public string? DefaultTitle { get; set; }
     public bool Featured { get; set; }
     public int ItemLimit { get; set; }
     public bool Hidden { get; set; }

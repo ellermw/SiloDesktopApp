@@ -126,7 +126,7 @@
 
         <ScrollViewer x:Name="ExternalWatchlistScroller" Grid.Row="4" Padding="40,0,40,28" Visibility="Collapsed">
             <StackPanel Spacing="24">
-                <Border Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="16">
+                <Border x:Name="ExternalWatchlistHintPanel" Background="{StaticResource SurfaceBrush}" CornerRadius="16" Padding="16">
                     <Grid x:Name="ExternalWatchlistHintGrid" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
                         <TextBlock x:Name="ExternalWatchlistHint" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                         <HyperlinkButton x:Name="ExternalWatchlistDiscoverLink" Content="Find more in Discover" FontSize="14" FontWeight="Medium" Padding="0" Height="20" MinHeight="20" HorizontalAlignment="Left" Click="WatchlistDiscover_Click" />
@@ -136,23 +136,41 @@
                     <ItemsRepeater.Layout><UniformGridLayout x:Name="ExternalTitlesLayout" MinItemWidth="180" MinItemHeight="330" MinColumnSpacing="16" MinRowSpacing="16" ItemsStretch="Fill" /></ItemsRepeater.Layout>
                     <ItemsRepeater.ItemTemplate><DataTemplate><ContentControl HorizontalContentAlignment="Stretch" /></DataTemplate></ItemsRepeater.ItemTemplate>
                 </ItemsRepeater>
+                <ItemsRepeater x:Name="ExternalTitlesSkeleton" Visibility="Collapsed" ElementPrepared="ExternalTitlesSkeleton_ElementPrepared" IsHitTestVisible="False">
+                    <ItemsRepeater.Layout><UniformGridLayout x:Name="ExternalTitlesSkeletonLayout" MinColumnSpacing="16" MinRowSpacing="16" ItemsStretch="Fill" /></ItemsRepeater.Layout>
+                    <ItemsRepeater.ItemTemplate><DataTemplate><Border Background="{StaticResource SurfaceBrush}" CornerRadius="16" /></DataTemplate></ItemsRepeater.ItemTemplate>
+                </ItemsRepeater>
                 <ProgressRing x:Name="ExternalTitlesLoading" Width="30" Height="30" HorizontalAlignment="Center" IsActive="False" Visibility="Collapsed" />
-                <StackPanel x:Name="ExternalTitlesState" HorizontalAlignment="Center" Spacing="12" Padding="16,64" MaxWidth="448">
-                    <TextBlock x:Name="ExternalTitlesStateText" TextAlignment="Center" TextWrapping="Wrap" FontSize="14" />
+                <Grid x:Name="ExternalTitlesStatePanel">
+                  <Rectangle x:Name="ExternalTitlesStateOutline" Stroke="{StaticResource BorderBrush}" StrokeThickness="1" StrokeDashArray="4,4" RadiusX="20" RadiusY="20" IsHitTestVisible="False" />
+                  <StackPanel x:Name="ExternalTitlesState" HorizontalAlignment="Center" Spacing="12" Padding="16,64">
+                    <ContentControl x:Name="ExternalTitlesStateIcon" HorizontalAlignment="Center" />
+                    <TextBlock x:Name="ExternalTitlesStateText" TextAlignment="Center" TextWrapping="Wrap" FontSize="16" FontWeight="Medium" LineHeight="24" LineStackingStrategy="BlockLineHeight" />
+                    <TextBlock x:Name="ExternalTitlesStateDescription" Text="Add movies and series from Discover to your watchlist. The ones the library doesn’t have yet wait here until they arrive." Foreground="{StaticResource SecondaryTextBrush}" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="448" />
                     <Button x:Name="ExternalTitlesRetry" Content="Retry" Click="ExternalTitlesRetry_Click" HorizontalAlignment="Center" Visibility="Collapsed" />
-                    <Button x:Name="ExternalTitlesDiscover" Content="Browse Discover" Click="WatchlistDiscover_Click" HorizontalAlignment="Center" Visibility="Collapsed" />
-                </StackPanel>
+                    <Button x:Name="ExternalTitlesDiscover" Click="WatchlistDiscover_Click" HorizontalAlignment="Center" Visibility="Collapsed" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="32" Padding="12,0"><StackPanel Orientation="Horizontal" Spacing="8"><ContentControl x:Name="ExternalTitlesDiscoverIcon" /><TextBlock Text="Browse Discover" FontSize="14" FontWeight="Medium" /></StackPanel></Button>
+                  </StackPanel>
+                </Grid>
             </StackPanel>
         </ScrollViewer>
         <ScrollViewer x:Name="CatalogScrollViewer" Grid.Row="4" Padding="40,0,40,28" ViewChanged="CatalogScroll_ViewChanged">
             <StackPanel Spacing="16">
-                <StackPanel x:Name="CatalogErrorPanel" Visibility="Collapsed" Spacing="12" Margin="0,48" HorizontalAlignment="Center" MaxWidth="448">
-                    <TextBlock x:Name="CatalogErrorTitle" Text="Couldn't load the catalog" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" TextAlignment="Center"/>
+                <Border x:Name="CatalogErrorPanel" Visibility="Collapsed" Padding="16,64" CornerRadius="{StaticResource Radius2XL}"
+                        Background="{StaticResource AppBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                  <StackPanel Spacing="12" HorizontalAlignment="Center">
+                    <TextBlock x:Name="CatalogErrorTitle" Text="Could not load catalog results." FontSize="16" FontWeight="Medium" LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap" TextAlignment="Center"/>
                     <TextBlock x:Name="ErrorText" Visibility="Collapsed" Foreground="{StaticResource SecondaryTextBrush}" FontSize="14"
-                               TextWrapping="Wrap" TextAlignment="Center" />
-                    <Button x:Name="CatalogRetryButton" Content="Retry" Click="CatalogRetry_Click" HorizontalAlignment="Center"/>
+                               LineHeight="20" LineStackingStrategy="BlockLineHeight" MaxWidth="448" TextWrapping="Wrap" TextAlignment="Center" />
+                    <Button x:Name="CatalogRetryButton" Style="{StaticResource OutlineButtonStyle}" Height="32" MinHeight="0" Padding="10,0" FontSize="14" FontWeight="Medium"
+                            Click="CatalogRetry_Click" HorizontalAlignment="Center" AutomationProperties.Name="Retry catalog">
+                        <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                            <ContentControl x:Name="CatalogRetryIcon" IsHitTestVisible="False" />
+                            <TextBlock Text="Retry catalog" LineHeight="20" LineStackingStrategy="BlockLineHeight" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
                     <Button x:Name="CatalogCollectionsButton" Content="All collections" Click="CatalogCollections_Click" Visibility="Collapsed" HorizontalAlignment="Center"/>
-                </StackPanel>
+                  </StackPanel>
+                </Border>
                 <ItemsRepeater x:Name="CatalogLoadingRepeater"
                                ElementPrepared="CatalogLoadingRepeater_ElementPrepared"
                                Visibility="Collapsed">
@@ -162,7 +180,7 @@
                                            MinItemHeight="281"
                                            MinColumnSpacing="12"
                                            MinRowSpacing="16"
-                                           ItemsStretch="Fill"
+                                           ItemsStretch="None"
                                            MaximumRowsOrColumns="8" />
                     </ItemsRepeater.Layout>
                     <ItemsRepeater.ItemTemplate>
@@ -178,14 +196,14 @@
                 <ItemsRepeater x:Name="ItemsRepeater" ElementPrepared="ItemsRepeater_ElementPrepared">
                     <ItemsRepeater.Layout>
                         <UniformGridLayout x:Name="CatalogGridLayout" MinItemWidth="150" MinItemHeight="260" MinColumnSpacing="12"
-                                           MinRowSpacing="16" ItemsStretch="Fill" MaximumRowsOrColumns="8" />
+                                           MinRowSpacing="16" ItemsStretch="None" MaximumRowsOrColumns="8" />
                     </ItemsRepeater.Layout>
                     <ItemsRepeater.ItemTemplate>
                         <DataTemplate x:DataType="models:MediaItem"><controls:PosterCard MediaItem="{x:Bind}" /></DataTemplate>
                     </ItemsRepeater.ItemTemplate>
                 </ItemsRepeater>
                 <ProgressRing x:Name="LoadingRing" Width="30" Height="30" HorizontalAlignment="Center" Visibility="Collapsed" />
-                <TextBlock x:Name="EmptyText" Text="No items found." HorizontalAlignment="Center" Visibility="Collapsed"
+                <TextBlock x:Name="EmptyText" Text="No items found." HorizontalAlignment="Center" Visibility="Collapsed" Margin="0,48" FontSize="16" LineHeight="24" LineStackingStrategy="BlockLineHeight"
                            Foreground="{StaticResource SecondaryTextBrush}" />
                 <Button x:Name="LoadMoreButton" Content="Load more" Click="LoadMore_Click" HorizontalAlignment="Center" Visibility="Collapsed" />
             </StackPanel>

@@ -1,4 +1,5 @@
 using Microsoft.Extensions.DependencyInjection;
+using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Documents;
 using Microsoft.UI.Xaml.Input;
@@ -13,6 +14,7 @@ using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Messaging;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 
@@ -41,7 +43,6 @@ public sealed partial class ItemDetailPage : Page
     private Grid? _tvViewport, _tvCopyHost;
     private ScrollViewer? _tvNavigation, _tvCopyScroll, _tvActionsScroll;
     private StackPanel? _tvNavigationItems, _tvPinnedActions;
-    private bool _seriesSeasonsResolved;
     private readonly Dictionary<FrameworkElement, int> _tvSectionIndexes = [];
 
     private uint? _siblingEpisodesDragPointerId;
@@ -85,6 +86,8 @@ public sealed partial class ItemDetailPage : Page
         ViewModel = App.Services.GetRequiredService<ItemDetailViewModel>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
+        SimilarCarouselHost.Children.Remove(SimilarScroller);
+        SimilarCarouselHost.Children.Add(new CarouselRail(SimilarScroller, webUiEdges: true));
         ComposeHeroLayout();
         UpdateThemeGradientColors();
 
@@ -92,6 +95,8 @@ public sealed partial class ItemDetailPage : Page
         Unloaded += (_, _) => { SettingsViewModel.TitleArtPreferenceChanged -= OnTitleArtPreferenceChanged; ++_titleArtRevision; };
         ContentScroll.ViewChanged += (_, _) => UpdateMangaStickyHeader();
         MangaStickyHeader.SizeChanged += (_, _) => UpdateMangaStickyHeader();
+        foreach (var section in new FrameworkElement[] { SeasonsSection, EpisodesSection, SiblingEpisodesSection })
+            section.RegisterPropertyChangedCallback(VisibilityProperty, (_, _) => SizeTvViewport());
     }
 
     private async Task LoadAdvisoryDisplayAsync(SiloPlayer.Core.Models.Catalog.MediaItemDetail item, CancellationToken ct)
@@ -125,13 +130,16 @@ public sealed partial class ItemDetailPage : Page
         _tvNavigationItems = new StackPanel { Spacing = 12 };
         _tvNavigationItems.SizeChanged += (_, _) =>
         {
-            if (ActualWidth >= 1024 && ActualHeight >= 651 && ViewModel.Item?.Type == "series" && SeriesLayoutSeasonCount != 1)
+            if (ActualWidth >= 1024 && ActualHeight >= 651 && ViewModel.Item?.Type is "series" or "season")
                 SizeTvViewport();
         };
         foreach (var section in new FrameworkElement[] { SeasonsSection, EpisodesSection, SiblingEpisodesSection })
             _tvSectionIndexes[section] = DetailContentPanel.Children.IndexOf(section);
         foreach (var section in new FrameworkElement[] { SeasonsSection, EpisodesSection, SiblingEpisodesSection })
-        { DetailContentPanel.Children.Remove(section); _tvNavigationItems.Children.Add(section); }
+        {
+            DetailContentPanel.Children.Remove(section);
+            _tvNavigationItems.Children.Add(section);
+        }
         _tvNavigation = new ScrollViewer { Content = _tvNavigationItems, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Padding = new Thickness(24, 12, 24, 12) };
         Grid.SetRow(_tvNavigation, 1); _tvViewport.Children.Add(_tvNavigation);
         DetailPageFlow.Children.Insert(0, _tvViewport);
@@ -149,12 +157,6 @@ public sealed partial class ItemDetailPage : Page
         _tvActionsScroll = new ScrollViewer { Content = _tvPinnedActions, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 180 };
         Grid.SetRow(_tvActionsScroll, 1); _tvCopyHost.Children.Add(_tvActionsScroll); HeroContentGrid.Children.Add(_tvCopyHost);
     }
-    // An empty collection before the companion request finishes means unknown,
-    // not multi-season. Use the detail count for the first paint, then the
-    // authoritative season result (including an empty result) once available.
-    private int? SeriesLayoutSeasonCount => _seriesSeasonsResolved || ViewModel.Seasons.Count > 0
-        ? ViewModel.Seasons.Count : ViewModel.Item?.SeasonCount;
-
     private void SizeTvViewport()
     {
         if (_tvViewport == null || _tvNavigation == null || _tvCopyHost == null || _tvCopyScroll == null || _tvActionsScroll == null) return;
@@ -164,8 +166,11 @@ public sealed partial class ItemDetailPage : Page
         if (XamlRoot is not { } root) return;
         var height = Math.Max(260, ActualHeight > 0 ? ActualHeight : root.Size.Height - 80);
         var narrow = ActualWidth < 1024;
+        var hasNavigation = _tvNavigationItems!.Children.OfType<FrameworkElement>().Any(section => section.Visibility == Visibility.Visible);
         var landscape = !narrow && height <= 650 && ActualWidth > height;
-        var naturalRail = !narrow && height >= 651 && ViewModel.Item?.Type == "series" && SeriesLayoutSeasonCount != 1;
+        // Current series-detail-viewport CSS applies to both the season rail
+        // and the episode grid, including a series with only one season.
+        var naturalRail = !narrow && height >= 651 && ViewModel.Item?.Type is "series" or "season";
         var naturalCopy = narrow || naturalRail;
         // The final mobile WebUI rules override the landscape viewport: copy
         // and actions determine the hero's height, then navigation follows it.
@@ -174,13 +179,22 @@ public sealed partial class ItemDetailPage : Page
         _tvViewport.RowDefinitions[0].Height = naturalCopy ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
         _tvViewport.ColumnDefinitions[1].Width = landscape ? new GridLength(35, GridUnitType.Star) : new GridLength(0);
         _tvViewport.ColumnDefinitions[0].Width = new GridLength(landscape ? 65 : 1, GridUnitType.Star);
-        _tvViewport.RowDefinitions[1].Height = naturalCopy ? GridLength.Auto : landscape ? new GridLength(0) : new GridLength(Math.Min(height * .4, ViewModel.Item?.Type == "series" ? 352 : 288));
+        _tvViewport.RowDefinitions[1].Height = !hasNavigation || landscape ? new GridLength(0) : GridLength.Auto;
         Grid.SetRow(_tvNavigation, landscape ? 0 : 1); Grid.SetColumn(_tvNavigation, landscape ? 1 : 0);
+        _tvNavigation.Visibility = hasNavigation ? Visibility.Visible : Visibility.Collapsed;
         _tvNavigation.Height = landscape ? Math.Min(256, height) : double.NaN;
+        _tvNavigation.MaxHeight = naturalCopy || !hasNavigation ? double.PositiveInfinity : landscape ? height : Math.Max(0, height - (height <= 650 ? 208 : 256));
         _tvNavigation.VerticalAlignment = landscape ? VerticalAlignment.Bottom : VerticalAlignment.Stretch;
         _tvNavigation.VerticalScrollBarVisibility = naturalCopy ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
         _tvNavigation.VerticalScrollMode = naturalCopy ? ScrollMode.Disabled : ScrollMode.Enabled;
-        _tvNavigation.Padding = narrow ? new Thickness(ActualWidth < 640 ? 16 : 24, 12, ActualWidth < 640 ? 16 : 24, 0) : new Thickness(landscape ? 12 : 24, 12, landscape ? 12 : 24, 12);
+        _tvNavigation.MaxWidth = landscape ? double.PositiveInfinity : 1400;
+        _tvNavigation.HorizontalAlignment = HorizontalAlignment.Stretch;
+        _tvNavigation.Padding = narrow ? new Thickness(ActualWidth < 640 ? 16 : 24, 12, ActualWidth < 640 ? 16 : 24, 0) : new Thickness(landscape ? 12 : 40, 12, landscape ? 12 : 40, 12);
+        SiblingEpisodesSection.Spacing = 4;
+        SiblingEpisodesPanel.Margin = new Thickness(0);
+        SiblingEpisodesScrollViewer.Padding = new Thickness(narrow ? 2 : 16, narrow ? 4 : 16, 0, narrow ? 4 : 16);
+        foreach (var card in SiblingEpisodesPanel.Children.OfType<LandscapeCard>())
+            card.SetCardWidth(SiblingEpisodeCardWidth(), 140);
         _tvCopyHost.RowDefinitions[0].Height = naturalCopy ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
         _tvCopyHost.Padding = new Thickness(4);
         // The original information scroller reserves its scrollbar gutter
@@ -192,9 +206,9 @@ public sealed partial class ItemDetailPage : Page
         _tvActionsScroll.VerticalScrollMode = naturalCopy ? ScrollMode.Disabled : ScrollMode.Enabled;
         _tvActionsScroll.MaxHeight = naturalCopy ? double.PositiveInfinity : 180;
         BackdropContainer.Height = double.NaN; BackdropContainer.MinHeight = naturalRail ? Math.Max(0, height - _tvNavigationItems!.ActualHeight - _tvNavigation.Padding.Top - _tvNavigation.Padding.Bottom) : 0;
-        BackdropContainer.MaxHeight = landscape ? Math.Max(0, height - 208) : double.PositiveInfinity;
+        BackdropContainer.MaxHeight = landscape && hasNavigation ? Math.Max(0, height - 208) : double.PositiveInfinity;
         BackdropContainer.VerticalAlignment = landscape ? VerticalAlignment.Top : VerticalAlignment.Stretch;
-        HeroContentGrid.VerticalAlignment = naturalCopy ? VerticalAlignment.Top : VerticalAlignment.Stretch;
+        HeroContentGrid.VerticalAlignment = narrow ? VerticalAlignment.Top : naturalRail ? VerticalAlignment.Bottom : VerticalAlignment.Stretch;
         HeroContentGrid.RowDefinitions[0].Height = naturalCopy ? GridLength.Auto : new GridLength(1, GridUnitType.Star);
         HeroContentGrid.RowDefinitions[1].Height = new GridLength(0);
         HeroContentGrid.ColumnSpacing = narrow || ViewModel.Item?.Type == "episode" ? 0 : 16;
@@ -206,12 +220,12 @@ public sealed partial class ItemDetailPage : Page
         var posterHeight = 330d;
         HeroPosterContainer.Height = posterHeight; HeroPosterContainer.Width = posterHeight * 2 / 3;
         HeroPosterContainer.VerticalAlignment = VerticalAlignment.Bottom;
-        FavoriteButton.Visibility = narrow || ViewModel.Item?.Type == "season" ? Visibility.Collapsed : Visibility.Visible;
+        FavoriteButton.Visibility = narrow || ViewModel.Item?.Type is "season" or "episode" ? Visibility.Collapsed : Visibility.Visible;
         StarRatingContainer.Visibility = narrow || ViewModel.Item?.Type is "season" or "episode" ? Visibility.Collapsed : Visibility.Visible;
         HeroActionsRow.HorizontalSpacing = narrow ? 8 : 12;
         UpdateWatchedButton();
         BuildMoreFlyout();
-        if (ViewModel.Episodes.Count > 0) LayoutEpisodeGrid();
+        EnsureEpisodeGridLayout();
         TitleText.MaxLines = narrow ? 3 : 2;
         TitleText.CharacterSpacing = -25;
         TitleText.FontSize = narrow ? Math.Clamp(ActualWidth * .06, 20, 30) : height > 800 ? 72 : 48;
@@ -677,10 +691,6 @@ public sealed partial class ItemDetailPage : Page
         if (SeasonsPanel.Children.Count > 0 && Math.Abs(_seasonCardWidth - seasonCardWidth) > 0.5)
             BuildSeasonCards();
 
-        var similarSkeletonWidth = width >= 1280 ? 178d : width >= 640 ? 150d : 130d;
-        foreach (var child in SimilarLoadingSkeleton.Children.OfType<SkeletonPoster>())
-            child.SetResponsiveWidth(similarSkeletonWidth);
-
         if (_tvViewport != null) SizeTvViewport();
         UpdateSimilarGridLayout(width, contentGutter);
         foreach (var panel in ExtrasGroupsPanel.Children.OfType<StackPanel>())
@@ -690,13 +700,27 @@ public sealed partial class ItemDetailPage : Page
 
     private void UpdateSimilarGridLayout(double width, double gutter)
     {
-        var innerWidth = Math.Max(280, Math.Min(1400, width) - (gutter * 2));
-        var columns = _uiCustomizationService.GetPosterColumnCount(innerWidth);
-        var cardWidth = Math.Max(110, (innerWidth - ((columns - 1) * 12)) / columns);
+        var viewport = WebUiViewport.Width(this, width);
+        var cardWidth = _uiCustomizationService.CardPresentation.PosterSize switch
+        {
+            "compact" => viewport >= 1024 ? 160d : viewport >= 640 ? 140d : 120d,
+            "large" => viewport >= 1024 ? 220d : viewport >= 640 ? 195d : 170d,
+            _ => viewport >= 1024 ? 185d : viewport >= 640 ? 160d : 140d,
+        };
+        var showCaption = _uiCustomizationService.CardPresentation.Caption != "artwork";
+        SimilarLoadingSkeleton.Spacing = viewport >= 1024 ? 20 : 16;
+        foreach (var placeholder in SimilarLoadingSkeleton.Children.OfType<StackPanel>())
+        {
+            placeholder.Width = cardWidth;
+            placeholder.Children.OfType<SkeletonPoster>().Single().SetResponsiveWidth(cardWidth);
+            var caption = placeholder.Children.OfType<SkeletonText>().Single();
+            caption.Width = cardWidth * .75; caption.HorizontalAlignment = HorizontalAlignment.Left;
+            caption.Visibility = showCaption ? Visibility.Visible : Visibility.Collapsed;
+        }
         foreach (var child in SimilarPanel.Children)
         {
-            if (child is PosterCard card)
-                card.SetCatalogGridLayout(cardWidth);
+            if (child is RecommendationPosterCard card)
+                card.SetLayout(cardWidth, showCaption);
         }
     }
 
@@ -754,17 +778,17 @@ public sealed partial class ItemDetailPage : Page
             alpha, background.R, background.G, background.B);
 
         DetailBottomTransparent.Color = WithAlpha(0);
-        DetailBottomSoft.Color = WithAlpha(0x33);
-        DetailBottomMid.Color = WithAlpha(0x8C);
-        DetailBottomStrong.Color = WithAlpha(0xEB);
+        DetailBottomSoft.Color = WithAlpha(0x1F);
+        DetailBottomMid.Color = WithAlpha(0x75);
+        DetailBottomStrong.Color = WithAlpha(0xDB);
         DetailBottomSolid.Color = WithAlpha(0xFF);
-        DetailLeftSolid.Color = WithAlpha(0xFF);
-        DetailLeftStrong.Color = WithAlpha(0xCC);
-        DetailLeftSoft.Color = WithAlpha(0x66);
+        DetailLeftSolid.Color = WithAlpha(0xEB);
+        DetailLeftStrong.Color = WithAlpha(0x9E);
+        DetailLeftSoft.Color = WithAlpha(0x3D);
         DetailLeftTransparent.Color = WithAlpha(0);
-        DetailVignetteStrong.Color = WithAlpha(0x66);
-        DetailVignetteSoft.Color = WithAlpha(0x33);
-        DetailVignetteTransparent.Color = WithAlpha(0);
+        DetailVignetteStrong.Color = Microsoft.UI.ColorHelper.FromArgb(0x2E, 0, 0, 0);
+        DetailVignetteSoft.Color = Microsoft.UI.ColorHelper.FromArgb(0, 0, 0, 0);
+        DetailVignetteTransparent.Color = Microsoft.UI.ColorHelper.FromArgb(0, 0, 0, 0);
 
         SkeletonLeftSolid.Color = WithAlpha(0xFF);
         SkeletonLeftMid.Color = WithAlpha(0xB3);
@@ -904,12 +928,13 @@ public sealed partial class ItemDetailPage : Page
         // companion watch request is still loading.
         _watchDetail = null;
         _selectedVersion = null;
+        _mediaActionCapabilitiesId = null;
+        _offerSeekPreviews = _offerMarkerDetection = _honorMarkerSettings = false;
         _playableContentId = null;
         _selectedAudioTrackIndex = null;
         _selectedSubtitleIndex = null;
         _selectedSubtitleSignature = null;
         _downloadedSubtitles = [];
-        _seriesSeasonsResolved = false;
         _seasonEpisodesErrorMessage = "Season not found";
         SeasonEpisodesFatalError.Visibility = Visibility.Collapsed;
         ContentScroll.Visibility = Visibility.Visible;
@@ -924,10 +949,12 @@ public sealed partial class ItemDetailPage : Page
             _playerService.PositionChanged += OnDetailPositionChanged;
         }
 
-        if (e.Parameter is string contentId && !string.IsNullOrEmpty(contentId))
+        var route = e.Parameter as ItemDetailNavigationArgs;
+        var contentId = e.Parameter as string ?? route?.ContentId;
+        if (!string.IsNullOrEmpty(contentId))
         {
             _currentContentId = contentId;
-            await ViewModel.LoadCommand.ExecuteAsync(contentId);
+            await ViewModel.LoadInLibraryAsync(contentId, route?.LibraryId);
             if (_currentContentId != contentId || navigationToken.IsCancellationRequested)
                 return;
             if (ViewModel.Item == null)
@@ -945,6 +972,7 @@ public sealed partial class ItemDetailPage : Page
             UpdateUI();
             AdvisoryAgeBadge.Visibility = Visibility.Collapsed;
             _ = LoadAdvisoryDisplayAsync(ViewModel.Item, navigationToken);
+            _ = LoadMediaActionCapabilitiesAsync(ViewModel.Item, navigationToken);
             var music = App.Services.GetService<SiloPlayer.Services.ThemeMusicService>();
             if (music != null) _ = music.SelectAsync(ViewModel.Item, navigationToken);
             _requestSeasonsContentId = null;
@@ -1038,7 +1066,6 @@ public sealed partial class ItemDetailPage : Page
                     return;
 
                 SeasonsLoadError.Visibility = Visibility.Collapsed;
-                _seriesSeasonsResolved = !ViewModel.SeasonsLoadFailed;
                 UpdateSeriesCountsFromLoadedSeasons();
                 SizeTvViewport();
 
@@ -1180,7 +1207,7 @@ public sealed partial class ItemDetailPage : Page
             btn.Click += (_, _) =>
             {
                 var nav = App.Services.GetRequiredService<NavigationService>();
-                nav.Navigate<ItemDetailPage>(contentId);
+                nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(contentId, ViewModel.LibraryId));
             };
         }
         return btn;
@@ -1206,7 +1233,7 @@ public sealed partial class ItemDetailPage : Page
         try
         {
             var catalogApi = App.Services.GetRequiredService<CatalogApi>();
-            var resp = await catalogApi.GetSeasonsAsync(seriesId);
+            var resp = await catalogApi.GetSeasonsAsync(seriesId, ViewModel.LibraryId);
             var season = resp?.Seasons?.FirstOrDefault(s => s.SeasonNumber == seasonNumber);
             if (season == null || string.IsNullOrEmpty(season.ContentId)) return;
 
@@ -1214,7 +1241,7 @@ public sealed partial class ItemDetailPage : Page
             seasonLink.Click += (_, _) =>
             {
                 var nav = App.Services.GetRequiredService<NavigationService>();
-                nav.Navigate<ItemDetailPage>(seasonContentId);
+                nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(seasonContentId, ViewModel.LibraryId));
             };
             seasonLink.IsEnabled = true;
         }
@@ -1250,7 +1277,7 @@ public sealed partial class ItemDetailPage : Page
         try
         {
             var catalogApi = App.Services.GetRequiredService<CatalogApi>();
-            var series = await catalogApi.GetItemDetailAsync(seriesId, ct);
+            var series = await catalogApi.GetItemDetailAsync(seriesId, ViewModel.LibraryId, ct);
             if (series == null) return false;
 
             var episode = ViewModel.Item!;
@@ -1468,7 +1495,7 @@ public sealed partial class ItemDetailPage : Page
             if (item.SeasonNumber.HasValue && item.EpisodeNumber.HasValue)
             {
                 EpisodeContextText.Text = $"S{item.SeasonNumber} \u00B7 E{item.EpisodeNumber}";
-                EpisodeContextText.Visibility = Visibility.Visible;
+                EpisodeContextText.Visibility = Visibility.Collapsed;
             }
             YearText.Text = FormatDetailDate(item.AirDate);
 
@@ -1483,8 +1510,12 @@ public sealed partial class ItemDetailPage : Page
                     : item.Title;
             TitleText.Text = string.IsNullOrWhiteSpace(item.SeriesTitle)
                 ? seasonLabel
-                : $"{item.SeriesTitle}: {seasonLabel}";
-            TaglineText.Visibility = Visibility.Collapsed;
+                : item.SeriesTitle;
+            var seasonIndicator = item.IsSpecials == true || item.SeasonNumber == 0 ? "Specials" : $"Season {item.SeasonNumber ?? 0}";
+            TaglineText.Text = seasonLabel != seasonIndicator ? seasonLabel : "";
+            TaglineText.Visibility = string.IsNullOrEmpty(TaglineText.Text) ? Visibility.Collapsed : Visibility.Visible;
+            SeasonCountText.Text = seasonIndicator.ToUpperInvariant();
+            SeasonCountBadge.Visibility = Visibility.Visible;
             YearText.Text = !string.IsNullOrWhiteSpace(item.AirDate) && item.AirDate.Length >= 4
                 ? item.AirDate[..4]
                 : item.Year > 0 ? item.Year.ToString() : "";
@@ -1547,7 +1578,10 @@ public sealed partial class ItemDetailPage : Page
             RuntimeText.Text = "";
         }
         if (item.Type == "season")
-            RuntimeText.Text = $"{item.EpisodeCount ?? ViewModel.Episodes.Count} EPISODES";
+        {
+            var count = item.EpisodeCount ?? ViewModel.Episodes.Count;
+            RuntimeText.Text = $"{count} {(count == 1 ? "EPISODE" : "EPISODES")}";
+        }
         MetaDot2.Visibility = Visibility.Collapsed;
 
         RuntimeBadge.Visibility = string.IsNullOrWhiteSpace(RuntimeText.Text)
@@ -1956,7 +1990,7 @@ public sealed partial class ItemDetailPage : Page
         foreach (var narration in item.Audiobook.OtherNarrations)
         {
             var choice = new MenuFlyoutItem { Text = (narration.Narrators.Count > 0 ? string.Join(", ", narration.Narrators) : "Unknown narrator") + (narration.Year > 0 ? $" · {narration.Year}" : "") };
-            choice.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(narration.ContentId);
+            choice.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(MediaNavigationContext.Detail(narration.ContentId, ViewModel.LibraryId));
             menu.Items.Add(choice);
         }
         menu.ShowAt(NarrationPickerButton);
@@ -2237,7 +2271,7 @@ public sealed partial class ItemDetailPage : Page
         await App.Services.GetRequiredService<Services.PlayerService>().PlayAsync(
             ViewModel.Item.ContentId,
             fileId: chapter.FileId,
-            startPositionOverride: chapter.AbsoluteStart);
+            startPositionOverride: chapter.AbsoluteStart, libraryId: ViewModel.LibraryId);
     }
 
     private sealed record AudiobookChapterRow(
@@ -2527,7 +2561,7 @@ public sealed partial class ItemDetailPage : Page
     private void MangaRead_Click(object sender, RoutedEventArgs e)
     {
         if (sender is Button { Tag: string contentId })
-            App.Services.GetRequiredService<NavigationService>().Navigate<EbookReaderPage>(new EbookReaderNavigation(contentId));
+            App.Services.GetRequiredService<NavigationService>().Navigate<EbookReaderPage>(new EbookReaderNavigation(contentId, LibraryId: ViewModel.LibraryId));
     }
 
     private async void MangaWatched_Click(object sender, RoutedEventArgs e)
@@ -3055,7 +3089,7 @@ public sealed partial class ItemDetailPage : Page
     {
         if (_currentContentId == null) return;
         App.Services.GetRequiredService<ItemDetailPrefetchCache>().Invalidate(_currentContentId);
-        Frame?.Navigate(typeof(ItemDetailPage), _currentContentId);
+        Frame?.Navigate(typeof(ItemDetailPage), _currentContentId == null ? null : MediaNavigationContext.Detail(_currentContentId, ViewModel.LibraryId));
     }
 
     private async Task SendDetailToRoomAsync(SiloPlayer.ViewModels.WatchTogetherRoomViewModel room)
@@ -3096,7 +3130,7 @@ public sealed partial class ItemDetailPage : Page
             {
                 if (item.Type == "series")
                     foreach (var season in ViewModel.Seasons)
-                        foreach (var ep in (await App.Services.GetRequiredService<CatalogApi>().GetEpisodesAsync(item.ContentId, season.SeasonNumber)).Episodes)
+                        foreach (var ep in (await App.Services.GetRequiredService<CatalogApi>().GetEpisodesAsync(item.ContentId, season.SeasonNumber, ViewModel.LibraryId)).Episodes)
                             targetChoice.Items.Add(new ComboBoxItem { Content = $"S{season.SeasonNumber} E{ep.EpisodeNumber} · {ep.Title}", Tag = ep.ContentId });
                 else
                     foreach (var ep in ViewModel.Episodes) targetChoice.Items.Add(new ComboBoxItem { Content = $"E{ep.EpisodeNumber} · {ep.Title}", Tag = ep.ContentId });
@@ -3145,6 +3179,19 @@ public sealed partial class ItemDetailPage : Page
         var item = ViewModel.Item;
         if (item == null) return;
         var hasOverflowActions = false;
+        if ((item.Type == "series" && ViewModel.Seasons.Sum(season => Math.Max(0, season.EpisodeCount)) > 1) ||
+            (item.Type == "season" && ViewModel.Episodes.Count(episode => episode.Files.Count > 0) > 1))
+        {
+            var shuffle = new MenuFlyoutItem { Text = "Shuffle" };
+            shuffle.Click += async (_, _) =>
+            {
+                if (!IsCurrentDetail(item.ContentId)) return;
+                shuffle.IsEnabled = false;
+                try { await App.Services.GetRequiredService<PlayerService>().StartShuffleAsync(new ShuffleScopeRequest(item.Type, item.ContentId), _navigationCts?.Token ?? default); }
+                finally { shuffle.IsEnabled = true; }
+            };
+            MoreFlyout.Items.Add(shuffle); hasOverflowActions = true;
+        }
         if (_tvViewport != null && ActualWidth < 1024)
         {
             if (item.Type != "season")
@@ -3181,9 +3228,13 @@ public sealed partial class ItemDetailPage : Page
             var edit = new MenuFlyoutItem { Text = "Edit Metadata", Icon = new FontIcon { Glyph = "\uE70F" } };
             edit.Click += async (_, _) =>
             {
+                var client = App.Services.GetRequiredService<SiloApiClient>();
+                var authority = client.CaptureContext();
+                if (!IsCurrentDetail(item.ContentId)) return;
                 var dialog = new SiloPlayer.Views.Dialogs.EditMetadataDialog(item) { XamlRoot = XamlRoot };
                 await dialog.ShowAsync();
-                if (dialog.HasSaved) { await ViewModel.LoadCommand.ExecuteAsync(item.ContentId); UpdateUI(); }
+                if (dialog.HasSaved && IsCurrentDetail(item.ContentId) && client.IsCurrentContext(authority))
+                { await ViewModel.LoadCommand.ExecuteAsync(item.ContentId); if (IsCurrentDetail(item.ContentId) && client.IsCurrentContext(authority)) UpdateUI(); }
             };
             MoreFlyout.Items.Add(edit); hasOverflowActions = true;
         }
@@ -3265,13 +3316,16 @@ public sealed partial class ItemDetailPage : Page
             hasOverflowActions = true;
         }
 
-        var addToCollection = new MenuFlyoutItem
+        if (item.Type is not ("season" or "episode"))
         {
-            Text = "Add to Collection",
-            Icon = new FontIcon { Glyph = "\uE8B7" },
-        };
-        addToCollection.Click += async (_, _) => await ShowAddToCollectionDialogAsync();
-        MoreFlyout.Items.Add(addToCollection);
+            var addToCollection = new MenuFlyoutItem
+            {
+                Text = "Add to Collection",
+                Icon = new FontIcon { Glyph = "\uE8B7" },
+            };
+            addToCollection.Click += async (_, _) => await ShowAddToCollectionDialogAsync();
+            MoreFlyout.Items.Add(addToCollection);
+        }
 
         if (_selectedVersion != null)
         {
@@ -3343,6 +3397,7 @@ public sealed partial class ItemDetailPage : Page
                 MoreFlyout.Items.Add(match);
             }
         }
+        CompleteCurrentMediaMenu(item);
     }
 
     private async Task LoadSeriesRequestActionAsync(MediaItemDetail item, CancellationToken ct)
@@ -3954,12 +4009,23 @@ public sealed partial class ItemDetailPage : Page
 
         await dialog.ShowAsync();
         if (dialog.HasAppliedMatch)
+            await CompleteAppliedMatchAsync(item, dialog.AppliedContentId);
+    }
+
+    private async Task CompleteAppliedMatchAsync(MediaItemDetail item, string? replacement)
+    {
+        App.Services.GetRequiredService<ItemDetailPrefetchCache>().Invalidate(item.ContentId);
+        if (replacement != null && replacement != item.ContentId)
         {
-            // The dialog performs the mutation and stays open when the server
-            // rejects it. Refresh only after its explicit success signal.
-            await ViewModel.ReloadAsync(item.ContentId);
-            UpdateUI();
+            if (_currentContentId == item.ContentId)
+                App.Services.GetRequiredService<NavigationService>().NavigateReplacingCurrentEntry<ItemDetailPage>(MediaNavigationContext.Detail(replacement, ViewModel.LibraryId));
+            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.ItemMetadataRefreshed, item.ContentId, item.SeriesId));
+            return;
         }
+        if (_currentContentId != item.ContentId) return;
+        await ViewModel.ReloadAsync(item.ContentId);
+        UpdateUI();
+        WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.ItemMetadataRefreshed, item.ContentId, item.SeriesId));
     }
 
     // ===== Media Locations (permission-gated read-only detail) =====
@@ -4762,7 +4828,7 @@ public sealed partial class ItemDetailPage : Page
         {
             var target = _readerTargetContentId ?? ViewModel.Item.ContentId;
             App.Services.GetRequiredService<NavigationService>()
-                .Navigate<EbookReaderPage>(new EbookReaderNavigation(target, _readerTargetFileId));
+                .Navigate<EbookReaderPage>(new EbookReaderNavigation(target, _readerTargetFileId, ViewModel.LibraryId));
             return;
         }
 
@@ -4789,7 +4855,7 @@ public sealed partial class ItemDetailPage : Page
         {
             // Navigate to episode detail page, not directly to player
             var nav = App.Services.GetRequiredService<NavigationService>();
-            nav.Navigate<ItemDetailPage>(contentId);
+            nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(contentId, ViewModel.LibraryId));
         }
     }
 
@@ -4801,7 +4867,7 @@ public sealed partial class ItemDetailPage : Page
         {
             var target = _readerTargetContentId ?? ViewModel.Item.ContentId;
             App.Services.GetRequiredService<NavigationService>()
-                .Navigate<EbookReaderPage>(new EbookReaderNavigation(target, _readerTargetFileId));
+                .Navigate<EbookReaderPage>(new EbookReaderNavigation(target, _readerTargetFileId, ViewModel.LibraryId));
             return;
         }
 
@@ -4902,7 +4968,7 @@ public sealed partial class ItemDetailPage : Page
             prefetchedWatchDetail: string.Equals(_watchDetail?.ContentId, contentId, StringComparison.Ordinal)
                 ? _watchDetail
                 : null,
-            subtitleTrackSignature: _selectedSubtitleSignature);
+            subtitleTrackSignature: _selectedSubtitleSignature, libraryId: ViewModel.LibraryId);
     }
 
     /// <summary>
@@ -5147,7 +5213,7 @@ public sealed partial class ItemDetailPage : Page
         try
         {
             var playerService = App.Services.GetRequiredService<Services.PlayerService>();
-            var watchDetail = await playerService.GetOrFetchWatchDetailAsync(contentId);
+            var watchDetail = await playerService.GetOrFetchWatchDetailAsync(contentId, libraryId: ViewModel.LibraryId);
             if (!string.Equals(_playableContentId, contentId, StringComparison.Ordinal)) return;
             _watchDetail = watchDetail;
             _downloadedSubtitles = [];
@@ -6616,10 +6682,7 @@ public sealed partial class ItemDetailPage : Page
 
         foreach (var item in ViewModel.SimilarItems)
         {
-            var posterCard = new PosterCard
-            {
-                MediaItem = item
-            };
+            var posterCard = new RecommendationPosterCard(item);
             SimilarPanel.Children.Add(posterCard);
         }
         UpdateResponsiveLayout(ActualWidth);
@@ -6648,7 +6711,8 @@ public sealed partial class ItemDetailPage : Page
     private void BuildHeroCrewLine(MediaItemDetail item)
     {
         var crew = item.Crew ?? [];
-        var directors = crew.Where(c => c.Job.Equals("Director", StringComparison.OrdinalIgnoreCase)).DistinctBy(c => c.Name).Take(2).ToList();
+        var leadJob = item.Type == "series" && crew.Any(c => c.Job == "Creator") ? "Creator" : "Director";
+        var directors = crew.Where(c => c.Job == leadJob).DistinctBy(c => c.Name).Take(2).ToList();
         var writers = crew.Where(c => c.Job.Equals("Writer", StringComparison.OrdinalIgnoreCase) || c.Job.Equals("Screenplay", StringComparison.OrdinalIgnoreCase)).DistinctBy(c => c.Name).Take(2).ToList();
         var authors = crew.Where(c => c.Job.Equals("Author", StringComparison.OrdinalIgnoreCase)).DistinctBy(c => c.Name).Take(3).ToList();
         var genres = item.Type is "movie" or "series" ? item.Genres ?? [] : [];
@@ -6752,7 +6816,10 @@ public sealed partial class ItemDetailPage : Page
         try
         {
             var catalogApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
-            var response = await catalogApi.GetItemEpisodesAsync(seasonContentId, ct);
+            var ownerContentId = _currentContentId;
+            var libraryId = ViewModel.LibraryId;
+            var response = await catalogApi.GetItemEpisodesAsync(seasonContentId, libraryId, ct);
+            if (ct.IsCancellationRequested || _currentContentId != ownerContentId || ViewModel.LibraryId != libraryId) return false;
             if (response?.Episodes != null && response.Episodes.Count > 0)
             {
                 ViewModel.SelectedSeasonNumber = seasonNumber;
@@ -6787,7 +6854,7 @@ public sealed partial class ItemDetailPage : Page
         var seriesId = ViewModel.Item?.SeriesId;
         var navigation = App.Services.GetRequiredService<NavigationService>();
         if (!string.IsNullOrWhiteSpace(seriesId))
-            navigation.Navigate<ItemDetailPage>(seriesId);
+            navigation.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(seriesId, ViewModel.LibraryId));
         else if (navigation.CanGoBack)
             navigation.GoBack();
         else
@@ -6854,23 +6921,25 @@ public sealed partial class ItemDetailPage : Page
     private async Task LoadSiblingEpisodesAsync()
     {
         var item = ViewModel.Item;
-        if (item?.Type != "episode" || string.IsNullOrEmpty(item.SeriesId)) return;
-
+        if (item?.Type != "episode") return;
         int? seasonNum = item.SeasonNumber;
-        if (seasonNum == null || seasonNum < 0) return;
+        if (string.IsNullOrEmpty(item.SeriesId) || seasonNum == null || seasonNum < 0)
+        {
+            HideSiblingEpisodes();
+            return;
+        }
 
         try
         {
             var catalogApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
-            var response = await catalogApi.GetEpisodesAsync(item.SeriesId, seasonNum.Value);
+            var response = await catalogApi.GetEpisodesAsync(item.SeriesId, seasonNum.Value, ViewModel.LibraryId);
             if (!ReferenceEquals(ViewModel.Item, item) ||
                 !string.Equals(_currentContentId, item.ContentId, StringComparison.Ordinal))
                 return;
 
             if (response?.Episodes == null || response.Episodes.Count <= 1)
             {
-                SiblingEpisodesSection.Visibility = Visibility.Collapsed;
-                SiblingEpisodesArrowPanel.Visibility = Visibility.Collapsed;
+                HideSiblingEpisodes();
                 return;
             }
 
@@ -6912,14 +6981,13 @@ public sealed partial class ItemDetailPage : Page
                 }
 
                 var card = new LandscapeCard { MediaItem = mediaItem };
-                card.SetCardWidth(240);
+                card.SetCardWidth(SiblingEpisodeCardWidth(), 140);
                 SiblingEpisodesPanel.Children.Add(card);
             }
 
             if (SiblingEpisodesPanel.Children.Count == 0)
             {
-                SiblingEpisodesSection.Visibility = Visibility.Collapsed;
-                SiblingEpisodesArrowPanel.Visibility = Visibility.Collapsed;
+                HideSiblingEpisodes();
             }
             else
             {
@@ -6933,12 +7001,19 @@ public sealed partial class ItemDetailPage : Page
                 !string.Equals(_currentContentId, item.ContentId, StringComparison.Ordinal))
                 return;
             System.Diagnostics.Debug.WriteLine($"Sibling episodes load failed for {item.ContentId}: {ex}");
-            SiblingEpisodesSection.Visibility = Visibility.Collapsed;
-            SiblingEpisodesLoadingSkeleton.Visibility = Visibility.Collapsed;
-            SiblingEpisodesScrollViewer.Visibility = Visibility.Collapsed;
-            SiblingEpisodesLoadError.Visibility = Visibility.Collapsed;
-            SiblingEpisodesArrowPanel.Visibility = Visibility.Collapsed;
+            HideSiblingEpisodes();
         }
+    }
+
+    private void HideSiblingEpisodes()
+    {
+        SiblingEpisodesSection.Visibility = Visibility.Collapsed;
+        SiblingEpisodesLoadingSkeleton.Visibility = Visibility.Collapsed;
+        SiblingEpisodesScrollViewer.Visibility = Visibility.Collapsed;
+        SiblingEpisodesLoadError.Visibility = Visibility.Collapsed;
+        SiblingEpisodesArrowPanel.Visibility = Visibility.Collapsed;
+        SiblingEpisodesPanel.Children.Clear();
+        _pendingSiblingEpisodeIndex = -1;
     }
 
     private void AlignSiblingEpisodeToStart(int episodeIndex)
@@ -6963,7 +7038,7 @@ public sealed partial class ItemDetailPage : Page
         // scrollTo(currentEpisodeIndex) on mount. Wait until WinUI has measured
         // the horizontal extent before applying the equivalent snap; clamping
         // against an unmeasured ScrollableWidth silently left the row at item 1.
-        const double cardWidth = 240d;
+        var cardWidth = SiblingEpisodeCardWidth();
         const double gap = 12d;
         var targetOffset = Math.Clamp(
             _pendingSiblingEpisodeIndex * (cardWidth + gap),
@@ -7306,6 +7381,8 @@ public sealed partial class ItemDetailPage : Page
 
     private void BuildCrew(List<CrewMember> crew)
     {
+        CreatorNamesPanel.Children.Clear();
+        CreatorsPanel.Visibility = Visibility.Collapsed;
         DirectorNamesPanel.Children.Clear();
         WriterNamesPanel.Children.Clear();
         ProducerNamesPanel.Children.Clear();
@@ -7326,7 +7403,9 @@ public sealed partial class ItemDetailPage : Page
         var producers = DeduplicateByName(crew.Where(c =>
             c.Job.Equals("Producer", StringComparison.OrdinalIgnoreCase)));
 
-        bool hasAny = directors.Count > 0 || writers.Count > 0 || producers.Count > 0;
+        var creators = ViewModel.Item?.Type == "series"
+            ? DeduplicateByName(crew.Where(c => c.Job == "Creator")) : [];
+        bool hasAny = creators.Count > 0 || directors.Count > 0 || writers.Count > 0 || producers.Count > 0;
         if (!hasAny)
         {
             CrewSection.Visibility = Visibility.Collapsed;
@@ -7335,6 +7414,7 @@ public sealed partial class ItemDetailPage : Page
 
         CrewSection.Visibility = Visibility.Visible;
 
+        ToggleCrewGroup(CreatorsPanel, CreatorNamesPanel, creators);
         ToggleCrewGroup(DirectorsPanel, DirectorNamesPanel, directors);
         ToggleCrewGroup(WritersPanel, WriterNamesPanel, writers);
         ToggleCrewGroup(ProducersPanel, ProducerNamesPanel, producers);
@@ -7531,6 +7611,8 @@ public sealed partial class ItemDetailPage : Page
         {
             Text = title,
             FontSize = 13,
+            LineHeight = 19.5,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
             FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
             Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis,
@@ -7575,7 +7657,7 @@ public sealed partial class ItemDetailPage : Page
             App.Services.GetRequiredService<ItemDetailPrefetchCache>()
                 .Prefetch(season.ContentId);
             App.Services.GetRequiredService<NavigationService>()
-                .Navigate<ItemDetailPage>(season.ContentId);
+                .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(season.ContentId, ViewModel.LibraryId));
         };
         cardButton.GotFocus += (_, _) => App.Services
             .GetRequiredService<ItemDetailPrefetchCache>()
@@ -7590,10 +7672,13 @@ public sealed partial class ItemDetailPage : Page
         {
             Text = FormatSeasonProgressText(season),
             Style = (Style)Application.Current.Resources["CaptionTextStyle"],
+            FontSize = 12,
+            LineHeight = 16,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
             Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
             TextTrimming = TextTrimming.CharacterEllipsis,
             MaxLines = 1,
-            Margin = new Thickness(2, 2, 2, 0)
+            Margin = new Thickness(2, 0, 2, 0)
         };
     }
 
@@ -7602,9 +7687,8 @@ public sealed partial class ItemDetailPage : Page
         var userData = season.UserData;
         var hasProgress = userData is { Played: false } &&
             (userData.WatchedCount > 0 || userData.InProgressCount > 0);
-        return hasProgress
-            ? $"{userData!.WatchedCount} of {season.EpisodeCount} episodes"
-            : $"{season.EpisodeCount} episodes";
+        var count = $"{season.EpisodeCount} {(season.EpisodeCount == 1 ? "episode" : "episodes")}";
+        return hasProgress ? $"{userData!.WatchedCount} of {count}" : count;
     }
 
     private async Task LoadSeasonPosterAsync(Border posterBorder, Season season)
@@ -7697,14 +7781,13 @@ public sealed partial class ItemDetailPage : Page
 
         // TV navigation overrides the ordinary episode grid on narrow and
         // short landscape viewports.
-        var viewportWidth = XamlRoot?.Content is FrameworkElement root && root.ActualWidth > 0
-            ? root.ActualWidth
-            : ActualWidth > 0 ? ActualWidth : EpisodesPanel.ActualWidth;
-        var horizontal = _tvViewport != null && viewportWidth < 1024;
-        var shortLandscape = _tvViewport != null && ActualHeight <= 650 && viewportWidth > ActualHeight;
-        int cols = horizontal ? ViewModel.Episodes.Count : shortLandscape ? 2 : GetEpisodeGridColumnCount(viewportWidth);
+        var (horizontal, cols) = EpisodeGridLayout();
+        _episodesHorizontal = horizontal;
         EpisodesScroll.HorizontalScrollMode = horizontal ? ScrollMode.Enabled : ScrollMode.Disabled;
         EpisodesScroll.HorizontalScrollBarVisibility = horizontal ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
+        EpisodesScroll.MaxHeight = double.PositiveInfinity;
+        EpisodesScroll.VerticalScrollMode = horizontal ? ScrollMode.Disabled : ScrollMode.Enabled;
+        EpisodesScroll.VerticalScrollBarVisibility = horizontal ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
 
         // Column definitions (equal-width fractions).
         for (int c = 0; c < cols; c++)
@@ -7742,13 +7825,8 @@ public sealed partial class ItemDetailPage : Page
         // Reflow when available width crosses a column boundary. Only re-layout
         // if column count would change; skip minor resize noise.
         if (ViewModel.Episodes.Count == 0) return;
-        var width = XamlRoot?.Content is FrameworkElement root && root.ActualWidth > 0
-            ? root.ActualWidth
-            : ActualWidth > 0 ? ActualWidth : e.NewSize.Width;
-        int newCols = _tvViewport != null && width < 1024 ? ViewModel.Episodes.Count
-            : _tvViewport != null && ActualHeight <= 650 && width > ActualHeight ? 2 : GetEpisodeGridColumnCount(width);
-        int currentCols = EpisodesPanel.ColumnDefinitions.Count;
-        if (newCols != currentCols) LayoutEpisodeGrid();
+        EnsureEpisodeGridLayout();
+        UpdateEpisodeRowCap();
     }
 
     private static int GetEpisodeGridColumnCount(double viewportWidth) => viewportWidth >= 1024 ? 5
@@ -7779,11 +7857,18 @@ public sealed partial class ItemDetailPage : Page
             BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
             BorderThickness = new Thickness(1),
         };
-        var stillPlaceholder = new FontIcon
+        var placeholderCanvas = new Canvas { Width = 24, Height = 24 };
+        var placeholderPath = (Microsoft.UI.Xaml.Shapes.Path)Microsoft.UI.Xaml.Markup.XamlReader.Load(
+            "<Path xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation' Data='M9 5 L21 12 L9 19 Z' StrokeThickness='2' StrokeLineJoin='Round'/>");
+        placeholderPath.Stroke = (Brush)Application.Current.Resources["SecondaryTextBrush"];
+        placeholderCanvas.Children.Add(placeholderPath);
+        var stillPlaceholder = new Viewbox
         {
-            Glyph = "\uE714",
-            FontSize = 28,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
+            Name = "EpisodeStillPlaceholder",
+            Width = 32,
+            Height = 32,
+            Opacity = .3,
+            Child = placeholderCanvas,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -7791,15 +7876,14 @@ public sealed partial class ItemDetailPage : Page
         if (!string.IsNullOrEmpty(episode.StillUrl))
             _ = LoadEpisodeStillAsync(stillBorder, episode);
 
-        // Wrap still in a Viewbox that enforces 16:9 aspect via a Grid.
+        // The ratio participates in the first measure, before caption layout.
+        // Assigning Height from SizeChanged could leave the scrollport with
+        // the old image-only extent until a later scroll/layout invalidation.
         var stillWrapper = new Grid();
-        stillWrapper.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-        stillWrapper.SizeChanged += (s, _) =>
-        {
-            if (s is Grid g) g.Height = g.ActualWidth * 9.0 / 16.0;
-        };
         stillWrapper.Children.Add(stillBorder);
         AddEpisodeCardOverlays(stillWrapper, episode);
+        var stillAspect = new EpisodeStillAspectPanel();
+        stillAspect.Children.Add(stillWrapper);
 
         // Progress bar overlay for in-progress episodes.
         Grid? progressTrack = null;
@@ -7915,7 +7999,7 @@ public sealed partial class ItemDetailPage : Page
         var content = new StackPanel
         {
             Spacing = 0,
-            Children = { stillWrapper, episodeNumberRow, titleText, episodeMetaText, overviewText },
+            Children = { stillAspect, episodeNumberRow, titleText, episodeMetaText, overviewText },
         };
 
         var defaultBg = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
@@ -7967,7 +8051,7 @@ public sealed partial class ItemDetailPage : Page
             App.Services.GetRequiredService<ItemDetailPrefetchCache>()
                 .Prefetch(episode.ContentId);
             App.Services.GetRequiredService<NavigationService>()
-                .Navigate<ItemDetailPage>(episode.ContentId);
+                .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(episode.ContentId, ViewModel.LibraryId));
         };
         button.GotFocus += (_, _) => App.Services
             .GetRequiredService<ItemDetailPrefetchCache>()
@@ -8184,10 +8268,15 @@ public sealed partial class ItemDetailPage : Page
 
     private async Task LoadSeriesPrimaryEpisodesAsync(string seasonContentId)
     {
+        var item = ViewModel.Item;
+        var libraryId = ViewModel.LibraryId;
+        var token = _navigationCts?.Token ?? CancellationToken.None;
+        bool Current() => item != null && IsCurrentDetail(item.ContentId) && ViewModel.LibraryId == libraryId && !token.IsCancellationRequested;
         try
         {
             var catalogApi = App.Services.GetRequiredService<CatalogApi>();
-            var response = await catalogApi.GetItemEpisodesAsync(seasonContentId);
+            var response = await catalogApi.GetItemEpisodesAsync(seasonContentId, libraryId, token);
+            if (!Current()) return;
             ViewModel.Episodes.Clear();
             foreach (var episode in response.Episodes)
                 ViewModel.Episodes.Add(episode);
@@ -8196,7 +8285,7 @@ public sealed partial class ItemDetailPage : Page
         }
         catch
         {
-            ViewModel.Episodes.Clear();
+            if (Current()) ViewModel.Episodes.Clear();
         }
     }
 

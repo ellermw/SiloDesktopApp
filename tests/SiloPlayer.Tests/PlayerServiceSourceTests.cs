@@ -61,19 +61,19 @@ public sealed class PlayerServiceSourceTests
         var hero = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Controls", "HeroCarousel.xaml.cs"));
         var detail = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs"));
 
-        Assert.Contains("public void PrefetchWatchDetail(string? contentId)", service, StringComparison.Ordinal);
+        Assert.Contains("public void PrefetchWatchDetail(string? contentId,", service, StringComparison.Ordinal);
         Assert.Contains("public async Task<WatchDetailResponse> GetOrFetchWatchDetailAsync", service, StringComparison.Ordinal);
         Assert.Contains("await GetOrFetchWatchDetailCoreAsync(", service, StringComparison.Ordinal);
         Assert.Contains("consumePrefetch: true", service, StringComparison.Ordinal);
-        Assert.Contains("PrefetchWatchDetail(contentId);", service, StringComparison.Ordinal);
+        Assert.Contains("PrefetchWatchDetail(contentId, libraryId, fileId);", service, StringComparison.Ordinal);
         Assert.Contains("_playbackManager.UseWatchDetail(watchDetail);", service, StringComparison.Ordinal);
         Assert.Contains("public WatchDetailResponse UseWatchDetail", manager, StringComparison.Ordinal);
         Assert.Contains("QueuePlaybackPrefetch();", card, StringComparison.Ordinal);
         Assert.Contains("await Task.Delay(140, ct);", card, StringComparison.Ordinal);
         Assert.Contains("QueuePlaybackPrefetch();", posterCard, StringComparison.Ordinal);
         Assert.Contains("QueuePlaybackPrefetch();", libraryCard, StringComparison.Ordinal);
-        Assert.Contains(".PrefetchWatchDetail(item.ContentId);", hero, StringComparison.Ordinal);
-        Assert.Contains("GetOrFetchWatchDetailAsync(contentId)", detail, StringComparison.Ordinal);
+        Assert.Contains(".PrefetchWatchDetail(item.ContentId", hero, StringComparison.Ordinal);
+        Assert.Contains("GetOrFetchWatchDetailAsync(contentId", detail, StringComparison.Ordinal);
         Assert.DoesNotContain("playbackApi.GetWatchDetailAsync(contentId)", detail, StringComparison.Ordinal);
 
         var playPrefetchIndex = service.IndexOf("// Prefetch owns and observes the network task", StringComparison.Ordinal);
@@ -280,7 +280,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("CurrentMediaDuration - mediaPosition <= 30", playerEvents);
         Assert.Contains("InvokeSubscribersSafely(ShowPlayingNextRequested, false", playerEvents);
         Assert.Contains("PrefetchQueuedEpisodeWatchDetail();", playerEvents);
-        Assert.Contains("PrefetchWatchDetail(NextEpisodeContentId);", source);
+        Assert.Contains("PrefetchWatchDetail(NextEpisodeContentId, ActiveLibraryId);", source);
         Assert.Contains("SendScriptMessage(\"osc-set-post-roll\", \"true\")", source);
         Assert.Contains("SendScriptMessage(\"osc-set-post-roll\", \"false\")", source);
     }

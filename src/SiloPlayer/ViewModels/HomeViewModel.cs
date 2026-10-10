@@ -147,6 +147,7 @@ public partial class HomeViewModel : ObservableObject,
     private CancellationTokenSource? _sectionLoadCts;
     private int _sectionLoadGeneration;
     private string? _loadedProfileId;
+    private ApiRequestContext? _loadedContext;
     private CancellationTokenSource? _realtimeRefreshCts;
     private bool _realtimeRefreshInProgress;
     private bool _realtimeRefreshRequested;
@@ -259,7 +260,8 @@ public partial class HomeViewModel : ObservableObject,
                 // Preserve the mounted visual tree and patch every row from the
                 // authoritative section endpoints. If the first layout has not
                 // loaded yet, fall back to the ordinary initial-load path.
-                if (!_hasLoadedLayout || FeaturedSections.Count + Sections.Count == 0)
+                if (!_hasLoadedLayout || FeaturedSections.Count + Sections.Count == 0
+                    || !_loadedContext.HasValue || !_homeApi.IsCurrentContext(_loadedContext.Value))
                 {
                     await LoadAsync();
                     continue;
@@ -290,15 +292,20 @@ public partial class HomeViewModel : ObservableObject,
         if (_loadInProgress) return;
 
         var profileId = _authService.SelectedProfileId;
-        if (!string.Equals(_loadedProfileId, profileId, StringComparison.Ordinal))
+        var context = _homeApi.CaptureContext();
+        if (_loadedContext != context || !string.Equals(_loadedProfileId, profileId, StringComparison.Ordinal))
         {
             _sectionLoadCts?.Cancel();
+            ++_sectionLoadGeneration;
             FeaturedSections.Clear();
             Sections.Clear();
+            ClearDismissState();
+            ShowUndoBanner = false;
             HasConfiguredSections = false;
             _hasLoadedLayout = false;
             _lastLoadedAt = DateTime.MinValue;
             _loadedProfileId = profileId;
+            _loadedContext = context;
         }
 
         // Skip API call if data was loaded recently and we already have content
@@ -319,6 +326,7 @@ public partial class HomeViewModel : ObservableObject,
             // the section skeleton immediately so the user sees structure
             // while items fetch in the background.
             var layout = await _homeApi.GetLayoutAsync();
+            if (!_homeApi.IsCurrentContext(context)) return;
 
             var previous = FeaturedSections
                 .Concat(Sections)
@@ -375,6 +383,7 @@ public partial class HomeViewModel : ObservableObject,
         }
         catch (Exception ex)
         {
+            if (!_homeApi.IsCurrentContext(context)) return;
             if (!hadContent)
                 ErrorMessage = "Unable to load the homepage";
             else
@@ -384,6 +393,14 @@ public partial class HomeViewModel : ObservableObject,
         finally
         {
             _loadInProgress = false;
+            if (!_homeApi.IsCurrentContext(context))
+            {
+                IsLoading = false;
+                // A cached page can remain mounted while its profile/server
+                // changes. Finish the new owner even when its first load was
+                // coalesced behind this retired request.
+                if (_isActive) _ = LoadAsync();
+            }
         }
     }
 
@@ -559,6 +576,7 @@ public partial class HomeViewModel : ObservableObject,
     private bool IsCurrentSectionLoad(int generation, CancellationToken ct, string sectionId) =>
         !ct.IsCancellationRequested
         && generation == _sectionLoadGeneration
+        && _loadedContext.HasValue && _homeApi.IsCurrentContext(_loadedContext.Value)
         && FeaturedSections.Concat(Sections).Any(section => section.Id == sectionId);
 
     private bool IsCurrentSectionRetry(

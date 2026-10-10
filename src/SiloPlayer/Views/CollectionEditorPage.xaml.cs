@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
@@ -16,13 +17,17 @@ public sealed partial class CollectionEditorPage : Page
     public CollectionEditorViewModel ViewModel { get; }
     private Dictionary<string, string>? _draftBaseline;
     private string? _editingCollectionId;
+    private CollectionEditorNavigationArgs? _creationRoute;
     private bool _editorActive;
+    private bool _initializingEditor;
     private int _editorLoadGeneration;
     private SiloPlayer.Controls.QueryRulesEditor? _rulesEditor;
     private byte[]? _renderedPosterBytes;
     private string? _renderedPosterUrl;
     private int _posterPreviewGeneration;
     private bool _suppressImportedSortEvents = true;
+    private bool _showAllManualItems;
+    private readonly DispatcherTimer _manualSearchDelay = new() { Interval = TimeSpan.FromMilliseconds(250) };
     private readonly SiloPlayer.Controls.CatalogSortChoices.Choice[] _importedSortChoices;
     private IReadOnlySet<string> _shownRatingSources = new HashSet<string>();
 
@@ -30,6 +35,8 @@ public sealed partial class CollectionEditorPage : Page
     {
         ViewModel = App.Services.GetRequiredService<CollectionEditorViewModel>();
         this.InitializeComponent();
+        // TextBox handles arrow navigation before ordinary routed handlers.
+        SearchBox.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(SearchBox_KeyDown), true);
         ImportedRemoveSelectedPoster.Content = SiloPlayer.Controls.WebUiIcon.Create("x", 12);
         ImportedRemovePosterButton.Content = SiloPlayer.Controls.WebUiIcon.Create("x", 12);
         _importedSortChoices = SiloPlayer.Controls.CatalogSortChoices.Capture(ImportedDefaultSortCombo);
@@ -53,8 +60,7 @@ public sealed partial class CollectionEditorPage : Page
         ViewModel.SearchResults.CollectionChanged += (_, _) =>
             DispatcherQueue.TryEnqueue(BuildSearchResultsUI);
 
-        ViewModel.PreviewItems.CollectionChanged += (_, _) =>
-            DispatcherQueue.TryEnqueue(BuildPreviewItemsUI);
+        ViewModel.PreviewItems.CollectionChanged += (_, _) => QueueSmartPreviewPresentation();
         ViewModel.SelectedLibraryIds.CollectionChanged += (_, _) =>
             DispatcherQueue.TryEnqueue(() => { UpdateEditorSummary(); UpdateDirtyDock(); });
         ViewModel.AllowedProfileIds.CollectionChanged += (_, _) =>
@@ -63,10 +69,18 @@ public sealed partial class CollectionEditorPage : Page
             DispatcherQueue.TryEnqueue(() => { UpdateEditorSummary(); UpdateDirtyDock(); UpdateRecoveryShell(); });
         ViewModel.PropertyChanged += (_, args) =>
         {
+            if (args.PropertyName == nameof(ViewModel.LoadedCollection)) DispatcherQueue.TryEnqueue(() => { if (_editorActive) BuildSavedSyncedContents(false); });
+            if (args.PropertyName is nameof(ViewModel.IsPreviewing) or nameof(ViewModel.HasPreview) or nameof(ViewModel.PreviewError) or nameof(ViewModel.PreviewTotal)) QueueSmartPreviewPresentation();
+            if (args.PropertyName == nameof(ViewModel.CollectionId) && _creationRoute != null && ViewModel.CollectionId != null)
+                _creationRoute.CollectionId = ViewModel.CollectionId;
             if (args.PropertyName is nameof(ViewModel.PosterFileBytes) or nameof(ViewModel.CurrentPosterUrl))
                 DispatcherQueue.TryEnqueue(async () => await RefreshPosterPreviewAsync());
         };
         SizeChanged += CollectionEditorPage_SizeChanged;
+        ConfigureCurrentEditor();
+        SearchBox.TextChanged += (_, _) => { _manualSearchOpen = true; _manualSearchHighlight = 0; _manualSearchDelay.Stop(); ViewModel.CancelItemSearch(); if (string.IsNullOrWhiteSpace(SearchBox.Text)) ViewModel.SearchResults.Clear(); else _manualSearchDelay.Start(); UpdateManualContents(ActualWidth < 640); };
+        _manualSearchDelay.Tick += async (_, _) => { _manualSearchDelay.Stop(); await ViewModel.SearchItemsCommand.ExecuteAsync(SearchBox.Text); };
+        ViewModel.PropertyChanged += (_, args) => { if (args.PropertyName is nameof(ViewModel.LastRemovedItem) or nameof(ViewModel.CanReorderManualItems) or nameof(ViewModel.IsManualMutationPending)) DispatcherQueue.TryEnqueue(BuildManualItemsUI); };
     }
 
     private void CollectionEditorPage_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -99,75 +113,10 @@ public sealed partial class CollectionEditorPage : Page
         SourceBannerActions.HorizontalAlignment = compactBanner ? HorizontalAlignment.Left : HorizontalAlignment.Right;
         SourceBannerActions.Margin = compactBanner ? new Thickness(0, 28, 0, 0) : new Thickness(0);
         ApplyImportedPresentation(e.NewSize.Width);
+        UpdateCurrentEditor();
     }
 
-    private void ApplyImportedPresentation(double width)
-    {
-        if (!ViewModel.IsImportedCollection || width <= 0) return;
-        PageTitle.FontSize = Math.Clamp(width * .04, 32, 48);
-        PageTitle.LineHeight = PageTitle.FontSize;
-        PageTitle.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
-        PageSubtitle.FontSize = width < 640 ? 14 : 16;
-        PageSubtitle.MaxWidth = double.PositiveInfinity;
-        NameTextBox.MaxWidth = DescriptionTextBox.MaxWidth = double.PositiveInfinity;
-        NameTextBox.HorizontalAlignment = DescriptionTextBox.HorizontalAlignment = HorizontalAlignment.Stretch;
-        NameTextBox.Height = 44; NameTextBox.FontSize = 15.2;
-        DescriptionTextBox.Height = 88;
-        DescriptionTextBox.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-        ImportedSourceBanner.Padding = new Thickness(width < 640 ? 24 : 32);
-        ImportedSourceBanner.CornerRadius = new CornerRadius(27.2);
-        SourceBrandMark.Width = SourceBrandMark.Height = width < 640 ? 64 : 72;
-        SourceBannerDescription.FontSize = 14;
-        SourceBannerDescription.LineHeight = 22.75;
-        SourceBannerDescription.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
-        OpenSourceButton.Height = SourceSyncButton.Height = 32;
-        OpenSourceButton.FontSize = SourceSyncButton.FontSize = 14;
-        var narrowFilters = width < 640;
-        Grid.SetColumn(MediaFilterCombo, narrowFilters ? 0 : 1);
-        Grid.SetRow(MediaFilterCombo, narrowFilters ? 1 : 0);
-        Grid.SetColumnSpan(WatchFilterCombo, narrowFilters ? 2 : 1);
-        Grid.SetColumnSpan(MediaFilterCombo, narrowFilters ? 2 : 1);
-        WatchFilterCombo.MinHeight = MediaFilterCombo.MinHeight = 44;
-        SourceSpecSheet.CornerRadius = new CornerRadius(22.4);
-        SourceSpecSheet.Padding = new Thickness(20);
-        SidebarTitle.Text = "SOURCE DETAILS"; SidebarTitle.FontSize = 11; SidebarTitle.CharacterSpacing = 200;
-        foreach (var text in new[] { SummaryModeLabel, SummaryLibrariesLabel, SummarySharedLabel, SummaryProfilesLabel }) text.FontSize = 11;
-        foreach (var text in new[] { SummaryModeText, SummaryLibrariesText, SummarySharedText, SummaryProfilesText }) text.FontSize = 12;
-        CollectionDirtyDock.CornerRadius = new CornerRadius(999);
-        CollectionDirtyDock.HorizontalAlignment = HorizontalAlignment.Center;
-        CollectionDirtyDock.Margin = new Thickness(16, 0, 16, 20);
-        CollectionDirtyDock.Padding = new Thickness(14, 8, 14, 8);
-        CollectionDirtyCount.FontSize = 12;
-        foreach (var button in Descendants<Button>(CollectionDirtyDock))
-        { button.Height = 32; button.FontSize = 12; button.Padding = new Thickness(12, 0, 12, 0); }
-        EditorPrimaryColumn.Spacing = 0;
-        ImportedEditorSurface.Background = (Brush)Application.Current.Resources["CardBackgroundBrush"];
-        ImportedEditorSurface.BorderBrush = (Brush)Application.Current.Resources["BorderBrush"];
-        ImportedEditorSurface.BorderThickness = new Thickness(1);
-        ImportedEditorSurface.CornerRadius = new CornerRadius(24);
-        var first = true;
-        foreach (var section in new[] { BasicInfoSection, ImportedSourceSection, ImportedSharingSection, ImportedVisibilitySection, ImportedPosterSection })
-        {
-            section.Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-            section.CornerRadius = new CornerRadius(0);
-            section.BorderThickness = first ? new Thickness(0) : new Thickness(0, 1, 0, 0);
-            section.Padding = width < 640 ? new Thickness(24, 28, 24, 28) : new Thickness(32);
-            first = false;
-            if (section.Child is Grid sectionGrid)
-            {
-                sectionGrid.ColumnSpacing = 40;
-                sectionGrid.RowSpacing = 24;
-                if (sectionGrid.ColumnDefinitions.Count == 2)
-                    sectionGrid.ColumnDefinitions[0].Width = width < 1024 ? new GridLength(0) : new GridLength(224);
-            }
-            foreach (var text in Descendants<TextBlock>(section))
-            {
-                if (text.FontSize == 18) text.FontSize = 16;
-                if (text.Text is "Name" or "Description" or "Default Sort")
-                { text.Text = text.Text.ToUpperInvariant(); text.FontSize = 11; text.CharacterSpacing = 140; }
-            }
-        }
-    }
+    private void ApplyImportedPresentation(double width) => UpdateCurrentEditor();
 
     private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
     {
@@ -182,32 +131,70 @@ public sealed partial class CollectionEditorPage : Page
     protected override async void OnNavigatedTo(NavigationEventArgs e)
     {
         base.OnNavigatedTo(e); _editorActive = true;
+        _creationRoute = e.Parameter as CollectionEditorNavigationArgs;
 
-        if (e.Parameter is string collectionId && !string.IsNullOrEmpty(collectionId))
+        var collectionId = e.Parameter as string ?? _creationRoute?.CollectionId;
+        if (!string.IsNullOrEmpty(collectionId))
         {
             _editingCollectionId = collectionId;
             await LoadEditorAsync(collectionId);
         }
         else
         {
-            CollectionNotFoundState.Visibility = Visibility.Collapsed;
-            await ViewModel.LoadReferenceDataCommand.ExecuteAsync(null);
-            BuildImportedOptionsUI();
-            UpdateEditorSummary();
+            await InitializeNewEditorAsync(_creationRoute?.Kind ?? "manual");
         }
     }
 
+    private async Task InitializeNewEditorAsync(string kind)
+    {
+        var generation = ++_editorLoadGeneration;
+        var client = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>();
+        var context = client.CaptureContext();
+        bool Current() => _editorActive && generation == _editorLoadGeneration && client.IsCurrentContext(context);
+        _initializingEditor = true; UpdateCurrentEditor(); UpdateRecoveryShell();
+        try
+        {
+            ViewModel.CollectionType = kind == "smart" ? "smart" : "manual";
+            if (kind == "smart") { ViewModel.RuleDefinition.MediaScope = null; ViewModel.RuleDefinition.Sort = new() { Field = "added_at", Order = "desc" }; }
+            CollectionNotFoundState.Visibility = Visibility.Collapsed;
+            await ViewModel.LoadReferenceDataCommand.ExecuteAsync(null);
+            if (!Current() || ViewModel.IsLoadUnavailable) return;
+            BuildImportedOptionsUI(); BuildRulesUI(); PopulateSmartFields();
+            UpdateEditorSummary(); UpdateSectionVisibility();
+            if (kind == "synced") await ConfigureSyncedCreationAsync();
+            if (!Current()) return;
+            _draftBaseline = CaptureDraft();
+        }
+        finally { if (Current()) { _initializingEditor = false; UpdateRecoveryShell(); UpdateDirtyDock(); ScheduleSmartPreview(); } }
+    }
+
     protected override void OnNavigatedFrom(NavigationEventArgs e)
-    { _editorActive = false; ++_editorLoadGeneration; base.OnNavigatedFrom(e); }
+    { _editorActive = false; ++_editorLoadGeneration; _smartPreviewDelay.Stop(); ViewModel.InvalidateEditorLoads(); _usageCancellation?.Cancel(); _listSearchDebounce?.Cancel(); _manualSearchDelay.Stop(); ViewModel.CancelItemSearch(); base.OnNavigatedFrom(e); }
 
     private async Task LoadEditorAsync(string collectionId)
     {
+        _editingCollectionId = collectionId;
         var generation = ++_editorLoadGeneration;
         await ViewModel.LoadExistingCommand.ExecuteAsync(collectionId);
         _shownRatingSources = await SiloPlayer.Controls.CatalogSortChoices.LoadShownSourcesAsync(App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>());
         if (!_editorActive || generation != _editorLoadGeneration) return;
         UpdateRecoveryShell();
         if (ViewModel.IsNotFound || ViewModel.IsLoadUnavailable) return;
+        if (!_usedNavigationPoster && _creationRoute?.CollectionId == collectionId && !string.IsNullOrWhiteSpace(_creationRoute.PosterUrl))
+        {
+            _usedNavigationPoster = true;
+            if (string.IsNullOrWhiteSpace(ViewModel.CurrentPosterUrl))
+            {
+                ViewModel.CurrentPosterIsCollage = _creationRoute.PosterIsCollage;
+                ViewModel.CurrentPosterUrl = _creationRoute.PosterUrl;
+            }
+        }
+        if (ViewModel.IsReadOnly)
+        {
+            App.Services.GetRequiredService<NavigationService>().Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs
+            { CollectionId = collectionId, Title = ViewModel.Name, Subtitle = "Shared collection", IsUserCollection = true });
+            return;
+        }
             PageTitle.Text = ViewModel.IsImportedCollection
                 ? ViewModel.Name
                 : $"Edit {ViewModel.Name}";
@@ -223,19 +210,28 @@ public sealed partial class CollectionEditorPage : Page
             UpdateTypeToggleUI();
             UpdateSectionVisibility();
             BuildImportedOptionsUI();
+            BuildSavedSyncedContents();
             ApplyReadOnlyState();
+            BuildRulesUI(); PopulateSmartFields();
             UpdateSourceBanner();
             UpdateEditorSummary();
             _draftBaseline = CaptureDraft(); UpdateDirtyDock();
+            _savedShared = ViewModel.IsShared;
+            ScheduleSmartPreview();
+            _ = LoadUsageRowsAsync(collectionId);
     }
     private async void RetryCollection_Click(object sender, RoutedEventArgs e)
-    { if (!ViewModel.IsLoading && _editingCollectionId is { } id) await LoadEditorAsync(id); }
+    {
+        if (ViewModel.IsLoading || _initializingEditor) return;
+        if (_editingCollectionId is { } id) await LoadEditorAsync(id);
+        else await InitializeNewEditorAsync(_creationRoute?.Kind ?? "manual");
+    }
     private void AllCollections_Click(object sender, RoutedEventArgs e) => App.Services.GetRequiredService<NavigationService>().Navigate<CollectionsPage>();
     private void UpdateRecoveryShell()
     {
         CollectionNotFoundState.Visibility = ViewModel.IsNotFound ? Visibility.Visible : Visibility.Collapsed;
         CollectionUnavailableState.Visibility = ViewModel.IsLoadUnavailable ? Visibility.Visible : Visibility.Collapsed;
-        CollectionEditorScroll.Visibility = ViewModel.IsLoading || ViewModel.IsNotFound || ViewModel.IsLoadUnavailable ? Visibility.Collapsed : Visibility.Visible;
+        CollectionEditorScroll.Visibility = _initializingEditor || ViewModel.IsLoading || ViewModel.IsNotFound || ViewModel.IsLoadUnavailable ? Visibility.Collapsed : Visibility.Visible;
         if (ViewModel.IsNotFound || ViewModel.IsLoadUnavailable || ViewModel.IsLoading) CollectionDirtyDock.Visibility = Visibility.Collapsed;
     }
 
@@ -244,14 +240,14 @@ public sealed partial class CollectionEditorPage : Page
         DispatcherQueue.TryEnqueue(async () =>
         {
             if (!_editorActive) return;
-            if (ViewModel.IsImportedCollection && ViewModel.CollectionId is { } id)
+            if (ViewModel.CollectionId is { } id)
                 await LoadEditorAsync(id);
             else OnDeleted();
         });
     }
 
     private void OnDeleted() => DispatcherQueue.TryEnqueue(() =>
-        App.Services.GetRequiredService<NavigationService>().Navigate<CollectionsPage>());
+    { _draftBaseline = null; App.Services.GetRequiredService<NavigationService>().Navigate<CollectionsPage>(); });
 
     private async void Discard_Click(object sender, RoutedEventArgs e)
     {
@@ -279,6 +275,13 @@ public sealed partial class CollectionEditorPage : Page
         ["profiles"] = string.Join(",", ViewModel.AllowedProfileIds.Order()), ["shared"] = ViewModel.IsShared.ToString(),
         ["visible"] = ViewModel.IncludeInServerCollections.ToString(), ["watch"] = ViewModel.WatchFilter, ["media"] = ViewModel.MediaFilter,
         ["sort"] = ViewModel.DefaultSortValue,
+        ["remove_poster"] = ViewModel.RemovePosterOnSave.ToString(),
+        ["rules"] = System.Text.Json.JsonSerializer.Serialize(ViewModel.RuleDefinition),
+        ["manual_draft"] = !ViewModel.IsEditing && ViewModel.CollectionType == "manual" ? string.Join(",", ViewModel.ManualItems.Select(item => item.MediaItemId)) : "",
+        ["synced_source"] = _newSynced ? _syncedSource : "",
+        ["synced_chart"] = _newSynced ? System.Text.Json.JsonSerializer.Serialize(new[] { (_chartPreset.SelectedItem as ComboBoxItem)?.Tag?.ToString(), (_chartMedia.SelectedItem as ComboBoxItem)?.Tag?.ToString(), (_chartWindow.SelectedItem as ComboBoxItem)?.Tag?.ToString() }) : "",
+        ["synced_pick"] = _newSynced ? System.Text.Json.JsonSerializer.Serialize(_syncedPick) : "",
+        ["synced_poster"] = _newSynced ? _syncedPickedPosterUrl ?? "" : "",
     };
 
     private void UpdateDirtyDock()
@@ -290,7 +293,8 @@ public sealed partial class CollectionEditorPage : Page
         CollectionDirtyDock.Visibility = imported && count > 0 && !ViewModel.IsReadOnly ? Visibility.Visible : Visibility.Collapsed;
         CollectionDirtyCount.Text = $"{count} change{(count == 1 ? "" : "s")}";
         DockSaveButton.IsEnabled = !ViewModel.IsSaving;
-        CollectionEditorScroll.Padding = new Thickness(0, 0, 0, imported && count > 0 ? 100 : 0);
+        CollectionEditorScroll.Padding = new Thickness(0);
+        UpdateCurrentEditor();
     }
 
     // ===== Type Toggle =====
@@ -362,6 +366,7 @@ public sealed partial class CollectionEditorPage : Page
             : Visibility.Collapsed;
         UpdateEditorSummary();
         ApplyImportedPresentation(ActualWidth);
+        UpdateCurrentEditor();
     }
 
     private void BuildImportedOptionsUI()
@@ -407,6 +412,9 @@ public sealed partial class CollectionEditorPage : Page
         {
             SiloPlayer.Controls.CatalogSortChoices.Apply(ImportedDefaultSortCombo, _importedSortChoices,
                 _shownRatingSources, null, ViewModel.DefaultSortValue, keepSavedEditorSort: true);
+            if (ViewModel.IsImportedCollection && ImportedDefaultSortCombo.Items.OfType<ComboBoxItem>()
+                .FirstOrDefault(item => Equals(item.Tag, "")) is { } listOrder)
+                listOrder.Content = "List order";
         }
         finally { _suppressImportedSortEvents = false; }
         LastSyncSummaryText.Text = ViewModel.LastSyncSummary ?? "Not synced yet";
@@ -527,13 +535,9 @@ public sealed partial class CollectionEditorPage : Page
     private void ApplyReadOnlyState()
     {
         var editable = !ViewModel.IsReadOnly;
-        SetDescendantControlsEnabled(BasicInfoSection, editable);
-        SetDescendantControlsEnabled(ImportedSourceSection, editable);
-        SetDescendantControlsEnabled(ImportedSharingSection, editable);
-        SetDescendantControlsEnabled(ImportedVisibilitySection, editable);
-        SetDescendantControlsEnabled(ImportedPosterSection, editable);
-        SetDescendantControlsEnabled(ManualItemsSection, editable);
-        SetDescendantControlsEnabled(SmartRulesSection, editable);
+        // Disable the editor as a whole. Re-enabling every child overrides
+        // source-specific locks and capability-disabled choices.
+        EditorEditGuard.IsEnabled = editable && !ViewModel.IsLoading && !ViewModel.IsSaving;
         SaveButton.IsEnabled = editable;
 
         // Editing never permits changing the collection's fundamental type,
@@ -544,16 +548,6 @@ public sealed partial class CollectionEditorPage : Page
         SourceUrlTextBox.IsEnabled = editable
             && ViewModel.HasEditableSourceUrl;
         if (!editable) PageTitle.Text = $"{ViewModel.Name} · Read-only";
-    }
-
-    private static void SetDescendantControlsEnabled(DependencyObject root, bool enabled)
-    {
-        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
-        {
-            var child = VisualTreeHelper.GetChild(root, i);
-            if (child is Control control) control.IsEnabled = enabled;
-            SetDescendantControlsEnabled(child, enabled);
-        }
     }
 
     private static void SelectByTag(ComboBox combo, string value)
@@ -645,9 +639,9 @@ public sealed partial class CollectionEditorPage : Page
     {
             if (file.ContentType is not ("image/jpeg" or "image/png" or "image/webp")) return;
             var properties = await file.GetBasicPropertiesAsync();
-            if (properties.Size > 20 * 1024 * 1024)
+            if (properties.Size > CollectionArtworkLimits.MaximumBytes)
             {
-                PosterFileStatusText.Text = "Image must be smaller than 20 MB.";
+                PosterFileStatusText.Text = CollectionArtworkLimits.OversizeMessage;
                 ImportedPosterFileStatusText.Text = PosterFileStatusText.Text;
                 return;
             }
@@ -704,7 +698,7 @@ public sealed partial class CollectionEditorPage : Page
             using (var writer = new Windows.Storage.Streams.DataWriter(stream.GetOutputStreamAt(0))) { writer.WriteBytes(bytes); await writer.StoreAsync(); }
             stream.Seek(0); bitmap = new(); await bitmap.SetSourceAsync(stream);
         }
-        else if (!string.IsNullOrWhiteSpace(url)) bitmap = new(new Uri(App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>().ResolveServerUrl(url)));
+        else if (!string.IsNullOrWhiteSpace(url)) bitmap = new(new Uri(App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>().ResolveServerUrl(url)!));
         if (generation != _posterPreviewGeneration) return;
         ImportedPosterPreview.Source = bitmap; PosterDraftPreview.Source = bitmap;
         ImportedPosterPreview.Visibility = PosterDraftPreview.Visibility = bitmap is null ? Visibility.Collapsed : Visibility.Visible;
@@ -712,64 +706,15 @@ public sealed partial class CollectionEditorPage : Page
         ImportedPosterDropTarget.Visibility = bitmap is null ? Visibility.Visible : Visibility.Collapsed;
         ImportedRemoveSelectedPoster.Visibility = bytes is { Length: > 0 } ? Visibility.Visible : Visibility.Collapsed;
         ImportedRemovePosterButton.Visibility = bytes is not { Length: > 0 } && !string.IsNullOrWhiteSpace(url) ? Visibility.Visible : Visibility.Collapsed;
+        _lastLookState = null;
+        UpdateLookPresentation(ActualWidth < 640);
     }
 
     private async void RemovePoster_Click(object sender, RoutedEventArgs e)
     {
-        var content = new StackPanel { Spacing = 10 };
-        content.Children.Add(new TextBlock
-        {
-            Text = "The collection will return to its generated artwork.",
-            TextWrapping = TextWrapping.Wrap
-        });
-        var error = new TextBlock
-        {
-            Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
-            TextWrapping = TextWrapping.Wrap,
-            Visibility = Visibility.Collapsed
-        };
-        content.Children.Add(error);
-        var dialog = new ContentDialog
-        {
-            XamlRoot = XamlRoot,
-            Title = "Remove poster?",
-            Content = content,
-            PrimaryButtonText = "Remove",
-            PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],
-            CloseButtonText = "Cancel",
-            DefaultButton = ContentDialogButton.Close
-        };
-        dialog.PrimaryButtonClick += async (_, args) =>
-        {
-            args.Cancel = true;
-            var deferral = args.GetDeferral();
-            try
-            {
-                dialog.IsPrimaryButtonEnabled = false;
-                dialog.PrimaryButtonText = "Removing...";
-                error.Visibility = Visibility.Collapsed;
-                await ViewModel.RemovePosterCommand.ExecuteAsync(null);
-                if (string.IsNullOrWhiteSpace(ViewModel.ErrorMessage))
-                {
-                    RemovePosterButton.Visibility = Visibility.Collapsed;
-                    ImportedRemovePosterButton.Visibility = Visibility.Collapsed;
-                    PosterFileStatusText.Text = "Poster removed";
-                    ImportedPosterFileStatusText.Text = "Poster removed";
-                    args.Cancel = false;
-                    return;
-                }
-
-                error.Text = ViewModel.ErrorMessage ?? "The poster could not be removed.";
-                error.Visibility = Visibility.Visible;
-            }
-            finally
-            {
-                dialog.PrimaryButtonText = "Remove";
-                dialog.IsPrimaryButtonEnabled = true;
-                deferral.Complete();
-            }
-        };
-        await dialog.ShowAsync();
+        await ViewModel.RemovePosterCommand.ExecuteAsync(null);
+        PosterFileStatusText.Text = ImportedPosterFileStatusText.Text = "Generated artwork after Save";
+        UpdateDirtyDock();
     }
 
     private async void DeleteCollection_Click(object sender, RoutedEventArgs e)
@@ -843,6 +788,9 @@ public sealed partial class CollectionEditorPage : Page
 
     private async void Save_Click(object sender, RoutedEventArgs e)
     {
+        if (_initializingEditor || ViewModel.IsLoading || ViewModel.IsLoadUnavailable) return;
+        CommitSmartLimit();
+        if (_newSynced) { await SaveSyncedCreationAsync(); return; }
         if (_rulesEditor?.IsValid == false) return;
         await ViewModel.SaveCommand.ExecuteAsync(null);
     }
@@ -862,96 +810,26 @@ public sealed partial class CollectionEditorPage : Page
 
     private void BuildRulesUI()
     {
+        _rulesEditor?.ReleaseCollectionLimitInput();
+        Detach(_smartLimit);
         RulesPanel.Children.Clear();
         NoRulesText.Visibility = ViewModel.RuleDefinition.Groups.Sum(group => group.Rules.Count) == 0
             ? Visibility.Visible : Visibility.Collapsed;
-        var editor = new SiloPlayer.Controls.QueryRulesEditor { IsEnabled = !ViewModel.IsReadOnly };
+        var editor = new SiloPlayer.Controls.QueryRulesEditor { IsEnabled = !ViewModel.IsReadOnly, AllowPersonalizedSorts = true, ShownRatingSources = _shownRatingSources, CollectionPresentation = true, CollectionLimitInput = _smartLimit };
+        editor.SortChanged += ViewModel.ClearSmartDefaultSort;
+        editor.Changed += () => { UpdateDirtyDock(); ScheduleSmartPreview(); };
         _rulesEditor = editor;
         editor.Load(ViewModel.RuleDefinition); RulesPanel.Children.Add(editor);
     }
 
-    private void BuildPreviewItemsUI()
-    {
-        PreviewItemsPanel.Children.Clear();
-
-        if (ViewModel.PreviewItems.Count > 0)
-        {
-            PreviewCountText.Text = $"{ViewModel.PreviewTotal} items matched";
-            PreviewCountText.Visibility = Visibility.Visible;
-
-            foreach (var item in ViewModel.PreviewItems)
-            {
-                PreviewItemsPanel.Children.Add(BuildPreviewItemRow(item));
-            }
-
-            if (ViewModel.PreviewTotal > ViewModel.PreviewItems.Count)
-            {
-                PreviewItemsPanel.Children.Add(new TextBlock
-                {
-                    Text = $"...and {ViewModel.PreviewTotal - ViewModel.PreviewItems.Count} more",
-                    FontSize = 12,
-                    Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
-                    Margin = new Thickness(8, 4, 0, 0)
-                });
-            }
-        }
-        else
-        {
-            PreviewCountText.Visibility = Visibility.Collapsed;
-        }
-    }
-
-    private Border BuildPreviewItemRow(CollectionPreviewItem item)
-    {
-        var row = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 10,
-            Padding = new Thickness(8, 6, 8, 6)
-        };
-
-        // Type badge
-        var typeBadge = new Border
-        {
-            Background = (Brush)Application.Current.Resources["AccentBackgroundBrush"],
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(6, 2, 6, 2),
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = new TextBlock
-            {
-                Text = item.Type.ToUpperInvariant(),
-                FontSize = 10,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)Application.Current.Resources["AccentBrush"]
-            }
-        };
-
-        var titleText = new TextBlock
-        {
-            Text = item.Title,
-            FontSize = 13,
-            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-
-        row.Children.Add(typeBadge);
-        row.Children.Add(titleText);
-
-        return new Border
-        {
-            CornerRadius = new CornerRadius(8),
-            Child = row
-        };
-    }
-
     // ===== Manual Items =====
 
-    private void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
+    private async void SearchBox_KeyDown(object sender, KeyRoutedEventArgs e)
     {
-        if (e.Key == Windows.System.VirtualKey.Enter)
+        if (e.Key is Windows.System.VirtualKey.Enter or Windows.System.VirtualKey.Down or Windows.System.VirtualKey.Up or Windows.System.VirtualKey.Escape)
         {
-            _ = ViewModel.SearchItemsCommand.ExecuteAsync(SearchBox.Text);
+            e.Handled = true;
+            await HandleManualTitleKeyAsync(e.Key);
         }
     }
 
@@ -963,116 +841,12 @@ public sealed partial class CollectionEditorPage : Page
     private void BuildSearchResultsUI()
     {
         SearchResultsPanel.Children.Clear();
+        _manualSearchResults.Visibility = _manualSearchOpen && ViewModel.SearchResults.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
 
         foreach (var item in ViewModel.SearchResults)
         {
             SearchResultsPanel.Children.Add(BuildSearchResultRow(item));
         }
-    }
-
-    private Border BuildSearchResultRow(MediaItem item)
-    {
-        var row = new Grid { ColumnSpacing = 10, Padding = new Thickness(8, 6, 8, 6) };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(80) });
-
-        var infoPanel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 10,
-            VerticalAlignment = VerticalAlignment.Center
-        };
-
-        var typeBadge = new Border
-        {
-            Background = (Brush)Application.Current.Resources["AccentBackgroundBrush"],
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(6, 2, 6, 2),
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = new TextBlock
-            {
-                Text = item.Type.ToUpperInvariant(),
-                FontSize = 10,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)Application.Current.Resources["AccentBrush"]
-            }
-        };
-
-        var titleText = new TextBlock
-        {
-            Text = $"{item.Title} ({item.Year})",
-            FontSize = 13,
-            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis
-        };
-
-        infoPanel.Children.Add(typeBadge);
-        infoPanel.Children.Add(titleText);
-
-        // Check if already added
-        bool alreadyAdded = ViewModel.ManualItems.Any(m =>
-            m.MediaItemId == item.ContentId || m.ContentId == item.ContentId);
-
-        Button addBtn;
-        if (alreadyAdded)
-        {
-            addBtn = new Button
-            {
-                Content = "Added",
-                IsEnabled = false,
-                FontSize = 12,
-                Padding = new Thickness(12, 4, 12, 4),
-                CornerRadius = new CornerRadius(8),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-        }
-        else
-        {
-            addBtn = new Button
-            {
-                Style = (Style)Application.Current.Resources["AccentButtonStyle"],
-                FontSize = 12,
-                Padding = new Thickness(12, 4, 12, 4),
-                CornerRadius = new CornerRadius(8),
-                HorizontalAlignment = HorizontalAlignment.Right,
-                VerticalAlignment = VerticalAlignment.Center,
-                Content = "Add"
-            };
-            var capturedItem = item;
-            addBtn.Click += async (_, _) =>
-            {
-                addBtn.IsEnabled = false;
-                await ViewModel.AddManualItemCommand.ExecuteAsync(capturedItem);
-                var added = ViewModel.ManualItems.Any(candidate => candidate.MediaItemId == capturedItem.ContentId);
-                addBtn.Content = added ? "Added" : "Add"; addBtn.IsEnabled = !added;
-            };
-        }
-
-        Grid.SetColumn(infoPanel, 0);
-        Grid.SetColumn(addBtn, 1);
-        row.Children.Add(infoPanel);
-        row.Children.Add(addBtn);
-
-        var border = new Border
-        {
-            CornerRadius = new CornerRadius(8),
-            Child = row
-        };
-
-        border.PointerEntered += (s, _) =>
-        {
-            if (s is Border b)
-                b.Background = (Brush)Application.Current.Resources["SurfaceHoverBrush"];
-        };
-        border.PointerExited += (s, _) =>
-        {
-            if (s is Border b)
-                b.Background = null;
-        };
-
-        return border;
     }
 
     private void BuildManualItemsUI()
@@ -1084,14 +858,28 @@ public sealed partial class CollectionEditorPage : Page
         ItemsSeparator.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
         AddedItemsHeader.Visibility = hasItems ? Visibility.Visible : Visibility.Collapsed;
         AddedItemsHeader.Text = $"Added Items ({ViewModel.ManualItems.Count})";
+        UpdateManualContents(ActualWidth < 640);
 
-        for (int i = 0; i < ViewModel.ManualItems.Count; i++)
+        for (int i = 0; i < (_showAllManualItems ? ViewModel.ManualItems.Count : Math.Min(10, ViewModel.ManualItems.Count)); i++)
         {
             ManualItemsPanel.Children.Add(BuildManualItemRow(ViewModel.ManualItems[i], i));
         }
+        if (ViewModel.ManualItems.Count > 10)
+        {
+            var more = new Button { Content = _showAllManualItems ? "Show less" : $"Show all {ViewModel.ManualItems.Count} titles", Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+            more.Click += (_, _) => { _showAllManualItems = !_showAllManualItems; BuildManualItemsUI(); }; ManualItemsPanel.Children.Add(more);
+        }
+        if (ViewModel.CanReorderManualItems)
+            ManualItemsPanel.Children.Add(new TextBlock { Text = "Drag, or focus a handle and press Space, then ↑ or ↓.", FontSize = 12.5,
+                Foreground = CurrentBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap, HorizontalAlignment = HorizontalAlignment.Right, Margin = new(0, 12, 0, 0) });
+        if (ViewModel.LastRemovedItem is { } removed)
+        {
+            var undo = new Button { Content = $"Removed {removed.Title} · Undo", Style = (Style)Application.Current.Resources["GhostButtonStyle"], Command = ViewModel.UndoRemoveManualItemCommand };
+            ManualItemsPanel.Children.Add(undo);
+        }
     }
 
-    private Border BuildManualItemRow(CollectionItem item, int index)
+    private Border BuildLegacyManualItemRow(CollectionItem item, int index)
     {
         var row = new Grid { ColumnSpacing = 8, Padding = new Thickness(8, 6, 8, 6) };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });

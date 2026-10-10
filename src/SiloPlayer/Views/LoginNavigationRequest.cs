@@ -10,4 +10,5 @@ public sealed record LoginNavigationRequest(
     Func<CancellationToken, Task<bool>>? RetryRestoreAsync = null,
     bool SignedOut = false,
     bool SwitchAccount = false,
-    bool LocalLogin = false);
+    bool LocalLogin = false,
+    bool SessionEnded = false);

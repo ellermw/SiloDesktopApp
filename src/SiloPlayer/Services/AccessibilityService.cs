@@ -9,7 +9,7 @@ namespace SiloPlayer.Services;
 /// <summary>Applies the WebUI readability preferences to native WinUI content.</summary>
 public sealed class AccessibilityService(SettingsService settingsService, ThemeService themeService)
 {
-    private sealed record Baseline(double FontSize, FontWeight FontWeight);
+    private sealed record Baseline(double FontSize, FontWeight FontWeight, double LineHeight = 0);
     private readonly ConditionalWeakTable<FrameworkElement, Baseline> _baselines = new();
 
     public void Apply(string textScale, string textWeight, bool highContrast, DependencyObject? root = null)
@@ -42,27 +42,32 @@ public sealed class AccessibilityService(SettingsService settingsService, ThemeS
 
     private void ApplyTypography(DependencyObject node, double scale, bool strong)
     {
+        // Capture/apply descendants while their inherited font is still unscaled.
+        // Changing a parent first made newly realized child baselines compound the scale.
+        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++)
+            ApplyTypography(VisualTreeHelper.GetChild(node, i), scale, strong);
+
         if (node is TextBlock text)
         {
-            var baseline = _baselines.GetValue(text, element => new Baseline(text.FontSize, text.FontWeight));
+            var baseline = _baselines.GetValue(text, element => new Baseline(text.FontSize, text.FontWeight, text.LineHeight));
             text.FontSize = baseline.FontSize * scale;
-            text.FontWeight = strong && baseline.FontWeight.Weight < FontWeights.SemiBold.Weight
-                ? FontWeights.SemiBold : baseline.FontWeight;
+            text.LineHeight = baseline.LineHeight * scale;
+            text.FontWeight = strong ? StrongWeight(baseline.FontWeight) : baseline.FontWeight;
         }
         else if (node is Control control)
         {
             var baseline = _baselines.GetValue(control, element => new Baseline(control.FontSize, control.FontWeight));
             control.FontSize = baseline.FontSize * scale;
-            control.FontWeight = strong && baseline.FontWeight.Weight < FontWeights.SemiBold.Weight
-                ? FontWeights.SemiBold : baseline.FontWeight;
+            control.FontWeight = strong ? StrongWeight(baseline.FontWeight) : baseline.FontWeight;
         }
-
-        for (var i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++)
-            ApplyTypography(VisualTreeHelper.GetChild(node, i), scale, strong);
     }
 
     private static string NormalizeScale(string? value) => value is "large" or "x-large" ? value : "default";
-    private static double ScaleFactor(string value) => value switch { "large" => 1.15, "x-large" => 1.3, _ => 1 };
+    private static double ScaleFactor(string value) => value switch { "large" => 1.125, "x-large" => 1.25, _ => 1 };
+    private static FontWeight StrongWeight(FontWeight baseline) => new()
+    {
+        Weight = baseline.Weight switch { < 500 => 520, < 600 => 600, < 700 => 700, _ => 800 }
+    };
 
     private static void SetBrush(string key, string hex)
     {

@@ -276,7 +276,7 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("CornerRadius=\"22\"", xaml);
         Assert.Contains("x:Key=\"ButtonBackgroundPointerOver\" Color=\"Transparent\"", xaml);
         Assert.Contains("x:Key=\"ButtonBackgroundPressed\" Color=\"Transparent\"", xaml);
-        Assert.Contains("Navigate<ItemDetailPage>(MediaItem.ContentId)", code);
+        Assert.Contains("Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, MediaNavigationContext.LibraryId(this)))", code);
         Assert.Contains("Navigate<EbookReaderPage>", code);
         Assert.Contains("ToggleAudiobookPlayback", code);
         Assert.Contains("item.BackdropUrl", code);

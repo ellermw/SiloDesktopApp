@@ -89,8 +89,8 @@ public sealed class UserDialogParitySourceTests
         var markup = ReadRepoFile("src", "SiloPlayer", "Controls", "MatchItemDialog.xaml");
         var source = ReadRepoFile("src", "SiloPlayer", "Controls", "MatchItemDialog.xaml.cs");
 
-        Assert.Contains("<ScrollViewer Grid.Row=\"0\"", markup);
-        Assert.Contains("x:Name=\"MatchBody\" MaxWidth=\"800\"", markup);
+        Assert.Contains("<ScrollViewer x:Name=\"MatchScroller\" Grid.Row=\"0\"", markup);
+        Assert.Contains("x:Name=\"MatchBody\" MaxWidth=\"462\"", markup);
         Assert.DoesNotContain("MaxHeight=\"360\"", markup);
         Assert.Contains("MatchBody.MaxHeight", source);
         Assert.Contains("_selectedCandidate == null || _applying", source);
@@ -181,7 +181,7 @@ public sealed class UserDialogParitySourceTests
         Assert.Contains("Active streams", settings);
         Assert.Contains("Playback happening on any profile in this account.", settings);
         Assert.Contains("session.Client", settings);
-        Assert.Contains("session.IpAddress", settings);
+        Assert.Contains("session.ClientIp", settings);
         Assert.Contains("session.NodeDisplayName", settings);
     }
 
@@ -206,15 +206,16 @@ public sealed class UserDialogParitySourceTests
     {
         var models = ReadRepoFile("src", "SiloPlayer.Core", "Models", "Collections", "CollectionImports.cs");
         var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "CollectionsViewModel.cs");
-        var page = ReadRepoFile("src", "SiloPlayer", "Views", "CollectionsPage.xaml.cs");
+        var page = ReadRepoFile("src", "SiloPlayer", "Views", "CollectionEditorPage.Synced.cs");
+        var editor = ReadRepoFile("src", "SiloPlayer", "ViewModels", "CollectionEditorViewModel.cs");
 
         Assert.Contains("public Dictionary<string, object>? SortConfig", models);
         Assert.Contains("SortConfig = request.SortConfig", viewModel);
         Assert.Contains("SortConfig = draft.SortConfig", viewModel);
-        Assert.Contains("\"Default Sort\"", page);
-        Assert.Contains("The order viewers get when they open this collection.", page);
-        Assert.Contains("BuildCollectionSortConfig", page);
-        Assert.Contains("__source_order", page);
+        Assert.Contains("Field(\"Order\", ImportedDefaultSortCombo)", page);
+        Assert.Contains("SortConfig = ViewModel.CaptureSortConfig()", page);
+        Assert.Contains("BuildCollectionSortConfig(DefaultSortValue)", editor);
+        Assert.Contains("_storedSortConfig", editor);
     }
 
     private static string Slice(string source, string start, string end)

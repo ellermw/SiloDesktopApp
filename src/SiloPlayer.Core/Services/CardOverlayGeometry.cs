@@ -11,13 +11,13 @@ public readonly record struct CardOverlayGeometry(
 {
     public const double PosterReferenceWidth = 185;
 
-    public static CardOverlayGeometry ForPoster(double cardWidth)
+    public static CardOverlayGeometry ForPoster(double cardWidth, string preset = "classic")
     {
         var width = double.IsFinite(cardWidth) && cardWidth > 0
             ? cardWidth
             : PosterReferenceWidth;
         var scale = width / PosterReferenceWidth;
-        return new CardOverlayGeometry(scale, 8 * scale, 4 * scale);
+        return new CardOverlayGeometry(scale, 8 * scale, (preset is "minimal" or "square" ? 2 : 4) * scale);
     }
 
     public static CardOverlayGeometry ForWideCard()

@@ -290,6 +290,7 @@ public class PlaybackManager : IDisposable
             },
             SubtitleUrls = plan.Subtitle.Inventory.Select(track => new SubtitleTrackInfo
             {
+                SyncKey = track.SyncKey,
                 TrackId = track.TrackId,
                 Index = track.CombinedIndex,
                 MediaFileId = plan.EffectiveMediaFileId,

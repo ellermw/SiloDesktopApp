@@ -152,6 +152,12 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "browse-acceptance")
             {
+                if (Environment.GetEnvironmentVariable("SILO_NATIVE_HOME_CURRENT") == "1")
+                {
+                    await HomeCurrentNativeFixture.RunAsync(parent);
+                    Program.Log("PASS: native regression run completed.");
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_WIZARD_PRESENTATION") == "1")
                 {
                     await BrowseWizardPresentationNativeFixture.RunAsync(parent);
@@ -195,12 +201,15 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-detail-parity")
             {
                 await RequestDetailParityNativeFixture.RunAsync(parent);
+                await RequestDetailPollingNativeFixture.RunAsync(parent);
+                await RequestDetailActionsNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed.");
                 return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "shared-controls")
             {
-                await SharedControlsNativeFixture.RunAsync(parent);
+                if (Environment.GetEnvironmentVariable("SILO_NATIVE_SHARED_CURRENT") == "1") await SharedCurrentNativeFixture.RunAsync(parent);
+                else await SharedControlsNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed.");
                 return;
             }

@@ -156,8 +156,8 @@
             <!-- Current WebUI /settings directory. The detail rail is only
                  shown after a section is opened. -->
             <StackPanel x:Name="SettingsOverviewPanel" Margin="0,32,0,0" Spacing="24" Visibility="Collapsed">
-                <Button x:Name="SettingsCurrentProfileButton" HorizontalAlignment="Left"
-                        MinWidth="360" Padding="16,12" CornerRadius="16"
+                <Button x:Name="SettingsCurrentProfileButton" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
+                        MaxWidth="448" MinHeight="64" Padding="16,12" CornerRadius="16"
                         Style="{StaticResource SecondaryButtonStyle}"
                         Click="SettingsCurrentProfile_Click" />
                 <StackPanel x:Name="SettingsOverviewGroups" Spacing="28" />
@@ -341,7 +341,7 @@
                                     Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Visibility="Collapsed">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
                                     <FontIcon Glyph="&#xE8EA;" FontSize="16" />
-                                    <TextBlock Text="Sessions" VerticalAlignment="Center" />
+                                    <TextBlock Text="Signed-in sessions" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
                         </StackPanel>
@@ -1301,21 +1301,22 @@
                 <StackPanel Spacing="12">
                     <TextBlock Text="Home screen" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock Text="Choose a scope, then arrange the sections that appear on that screen."
+                    <TextBlock Text="Choose the rows you see and their order. Only this profile changes, and it saves as you go."
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
                                TextWrapping="Wrap" />
                 </StackPanel>
 
                 <Border Style="{StaticResource SettingsGroupStyle}"><StackPanel Spacing="12">
                     <TextBlock Text="Home preferences" FontSize="14" FontWeight="SemiBold" />
-                    <ToggleSwitch Header="Hide watched items" IsOn="{x:Bind ViewModel.HideWatchedItems, Mode=TwoWay}" />
+                    <ToggleSwitch Header="Hide watched items" IsOn="{x:Bind ViewModel.HideWatchedItems, Mode=TwoWay}"
+                                  IsEnabled="{x:Bind ViewModel.CanChangeHomePreference, Mode=OneWay}" />
                     <TextBlock Text="Hide watched items from most Home sections. Featured and watch-history sections keep them." TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" />
                 </StackPanel></Border>
 
                 <!-- Scope group -->
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="0">
-                        <TextBlock Text="Scope" FontSize="14" FontWeight="SemiBold"
+                        <TextBlock Text="Page" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock Text="Pick the home screen or library-specific view you want to customize."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
@@ -1342,26 +1343,31 @@
                 </Border>
 
                 <!-- Sections group -->
-                <Border Style="{StaticResource SettingsGroupStyle}">
+                <Border x:Name="HomeRowsGroup" Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="8">
-                        <TextBlock Text="Sections" FontSize="14" FontWeight="SemiBold"
+                        <TextBlock Text="Rows" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="Add, reorder, or hide sections. Drag to change order."
+                        <TextBlock Text="Drag rows to change their order. Hidden rows stay here so you can bring them back."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                    TextWrapping="Wrap" />
 
                         <Grid Margin="0,4,0,4">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <StackPanel Orientation="Horizontal" Spacing="8">
-                                <Button Content="+ Add from Gallery" Style="{StaticResource SecondaryButtonStyle}"
+                                <Button Content="+ Add row" Style="{StaticResource AccentButtonStyle}"
                                         IsEnabled="{x:Bind ViewModel.CanEditHomeSections, Mode=OneWay}"
                                         Padding="14,7" Click="HomeSectionsAdd_Click" />
-                                <Button Content="+ Add Section" Style="{StaticResource AccentButtonStyle}"
+                                <Button Content="+ Add Section" Visibility="Collapsed" Style="{StaticResource AccentButtonStyle}"
                                         IsEnabled="{x:Bind ViewModel.CanEditHomeSections, Mode=OneWay}"
                                         Padding="14,7" Click="HomeSectionsAddCustom_Click" />
-                                <Button Content="Reset to Default" Style="{StaticResource SecondaryButtonStyle}"
-                                        IsEnabled="{x:Bind ViewModel.CanEditHomeSections, Mode=OneWay}"
-                                        Padding="14,7" Click="HomeSectionsReset_Click" />
+                                <Button Content="More" Style="{StaticResource SecondaryButtonStyle}" Padding="14,7">
+                                  <Button.Flyout><MenuFlyout>
+                                    <MenuFlyoutItem Text="Export layout" Click="HomeExport_Click" />
+                                    <MenuFlyoutItem Text="Import layout…" Click="HomeImport_Click" />
+                                    <MenuFlyoutSeparator />
+                                    <MenuFlyoutItem Text="Reset this page to the server's rows…" IsEnabled="{x:Bind ViewModel.CanEditHomeSections, Mode=OneWay}" Click="HomeSectionsReset_Click" />
+                                  </MenuFlyout></Button.Flyout>
+                                </Button>
                             </StackPanel>
                             <TextBlock x:Name="HomeSectionsCountText" Grid.Column="1" Text="0 sections"
                                        FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
@@ -1373,17 +1379,21 @@
                             Visibility="{x:Bind ViewModel.IsLoadingHomeSections, Mode=OneWay, Converter={StaticResource BoolToVis}}"
                             HorizontalAlignment="Left"
                             Width="24" Height="24" />
+                        <TextBlock Text="Saving your changes…" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                   Visibility="{x:Bind ViewModel.IsSavingHomeSections, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
 
                         <TextBlock Text="{x:Bind ViewModel.HomeSectionsEditStateMessage, Mode=OneWay}"
                                    Visibility="{x:Bind ViewModel.HomeSectionsEditStateMessage, Mode=OneWay, Converter={StaticResource NullToVis}}"
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        <Button Content="Reload rows" Click="HomeRowsReload_Click" HorizontalAlignment="Left"
+                                Visibility="{x:Bind ViewModel.HomeSectionsEditStateMessage, Mode=OneWay, Converter={StaticResource NullToVis}}" />
 
                         <!-- Section items (built in code-behind) -->
                         <StackPanel x:Name="HomeSectionItemsContainer" Spacing="8" />
                     </StackPanel>
                 </Border>
 
-                <Border Style="{StaticResource SettingsGroupStyle}"><StackPanel Spacing="12">
+                <Border Visibility="Collapsed" Style="{StaticResource SettingsGroupStyle}"><StackPanel Spacing="12">
                     <TextBlock Text="Export and import" FontSize="14" FontWeight="SemiBold" />
                     <TextBlock Text="Move saved layout overrides between profiles or servers. Private history and credentials are excluded." TextWrapping="Wrap" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
                     <controls:WrapPanel HorizontalSpacing="8" VerticalSpacing="8">
@@ -2254,9 +2264,9 @@
             <StackPanel x:Name="SessionsPanel" Spacing="24" Margin="0" Visibility="Collapsed">
 
                 <StackPanel Spacing="12">
-                    <TextBlock Text="Active Sessions" FontSize="24" FontWeight="SemiBold"
+                    <TextBlock Text="Signed-in sessions" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock Text="View and manage your active login sessions across devices."
+                    <TextBlock Text="See where your account is signed in, and sign out any session you don't recognize."
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
                                TextWrapping="Wrap" />
                 </StackPanel>

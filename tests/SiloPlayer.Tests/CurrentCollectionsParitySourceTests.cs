@@ -11,7 +11,7 @@ public sealed class CurrentCollectionsParitySourceTests
 
         Assert.Contains("Your collections", xaml);
         Assert.Contains("Server collections", xaml);
-        Assert.Contains("Curated shelves from across every library on this server.", xaml);
+        Assert.Contains("ServerCollectionsHeaderActions", xaml);
         Assert.Contains("Add group", xaml);
         Assert.DoesNotContain("Smart Wizard", xaml);
         Assert.Contains("BuildCollectionGroupSection", code);
@@ -20,7 +20,11 @@ public sealed class CurrentCollectionsParitySourceTests
         Assert.Contains("GroupDragPrefix", code);
         Assert.Contains("DropGroupAsync", viewModel);
         Assert.Contains("DropCollectionAsync", viewModel);
-        Assert.Contains("CollectionsLoadingRepeater", xaml);
+        Assert.Contains("CollectionsLoadingShell", xaml);
+        var posters = ReadRepoFile("src", "SiloPlayer", "Views", "CollectionsPage.Posters.cs");
+        Assert.Contains("BuildCollectionSkeletons", posters);
+        Assert.Contains("index < 7", posters);
+        Assert.Contains("return BuildPosterBoard(cards)", posters);
         Assert.Contains("IsLoadingServerCollections", viewModel);
         Assert.Contains("GetServerCollectionsAsync", viewModel);
         Assert.Contains("CreateGroupAsync", viewModel);

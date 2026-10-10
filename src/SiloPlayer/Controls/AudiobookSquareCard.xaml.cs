@@ -28,6 +28,8 @@ public sealed partial class AudiobookSquareCard : UserControl
     public AudiobookSquareCard()
     {
         InitializeComponent();
+        CoverImage.ImageOpened += (_, _) => ArtworkFallback.Visibility = Visibility.Collapsed;
+        CoverImage.ImageFailed += (_, _) => { CoverImage.Source = null; CoverImage.Opacity = 0; ArtworkFallback.Visibility = Visibility.Visible; _ = ArtworkFallback.ShowThumbhashAsync(); };
         MoreButton.Tapped += (_, args) => args.Handled = true;
         ContextRequested += Card_ContextRequested;
         Loaded += (_, _) => ObserveArtwork(MediaItem);
@@ -62,9 +64,9 @@ public sealed partial class AudiobookSquareCard : UserControl
         var generation = ++_posterGeneration;
         CoverImage.Source = null;
         CoverImage.Opacity = 0;
-        FallbackTitle.Visibility = Visibility.Visible;
+        ArtworkFallback.Reset(item.Type, item.PosterThumbhash);
+        ArtworkFallback.Visibility = string.IsNullOrWhiteSpace(item.PosterUrl) ? Visibility.Visible : Visibility.Collapsed;
         TitleText.Text = item.Title;
-        FallbackTitle.Text = item.Title;
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(this, item.Title);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(MoreButton, $"More actions for {item.Title}");
         var position = Math.Max(0, item.PositionSeconds ?? 0);
@@ -73,6 +75,7 @@ public sealed partial class AudiobookSquareCard : UserControl
         var remaining = Math.Max(0, duration - position);
         TimeLeftText.Text = remaining > 0 ? $"{FormatDuration(remaining)} left" : "";
         if (!string.IsNullOrWhiteSpace(item.PosterUrl)) _ = LoadPosterAsync(item, generation);
+        else _ = ArtworkFallback.ShowThumbhashAsync();
     }
 
     private async Task LoadPosterAsync(MediaItem item, int generation)
@@ -81,14 +84,12 @@ public sealed partial class AudiobookSquareCard : UserControl
         {
             var imageService = App.Services.GetRequiredService<ImageService>();
             var path = await imageService.GetImageDiskPathAsync(item.ContentId, "poster", item.PosterUrl!, App.Services.GetRequiredService<HttpClient>());
-            if (generation != _posterGeneration
-                || !ReferenceEquals(item, MediaItem)
-                || string.IsNullOrWhiteSpace(path)) return;
+            if (generation != _posterGeneration || !ReferenceEquals(item, MediaItem)) return;
+            if (string.IsNullOrWhiteSpace(path)) { await ArtworkFallback.ShowThumbhashAsync(); return; }
             CoverImage.Source = new BitmapImage { UriSource = new Uri(path), DecodePixelWidth = 260 };
             CoverImage.Opacity = 1;
-            FallbackTitle.Visibility = Visibility.Collapsed;
         }
-        catch { }
+        catch { if (generation == _posterGeneration && ReferenceEquals(item, MediaItem)) await ArtworkFallback.ShowThumbhashAsync(); }
     }
 
     private void ResetCard()
@@ -96,9 +97,9 @@ public sealed partial class AudiobookSquareCard : UserControl
         ++_posterGeneration;
         CoverImage.Source = null;
         CoverImage.Opacity = 0;
-        FallbackTitle.Visibility = Visibility.Visible;
+        ArtworkFallback.Reset(null);
+        ArtworkFallback.Visibility = Visibility.Collapsed;
         TitleText.Text = "";
-        FallbackTitle.Text = "";
         TimeLeftText.Text = "";
         ProgressFill.Width = 0;
         _isPointerOver = false;

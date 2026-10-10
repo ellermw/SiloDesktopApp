@@ -13,6 +13,7 @@ public class MediaItemDetail
         get => _playContentId;
         set { _playContentId = value; HasAuthoritativePlayTarget = true; }
     }
+    public int? PlaySeasonNumber { get; set; }
     [JsonIgnore]
     public bool HasAuthoritativePlayTarget { get; private set; }
     public string Type { get; set; } = "";

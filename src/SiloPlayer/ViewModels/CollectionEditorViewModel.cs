@@ -3,6 +3,7 @@ using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Models.Collections;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
@@ -20,9 +21,24 @@ public partial class CollectionEditorViewModel : ObservableObject
     private readonly SiloPlayer.Core.Services.AuthService _authService;
     private readonly HashSet<string> _originalManualItemIds = new(StringComparer.Ordinal);
     private bool _itemReorderSupported;
+    private int _editorLoadGeneration;
+    public void InvalidateEditorLoads() { ++_editorLoadGeneration; CancelPreview(); }
     [ObservableProperty] private bool _isManualMutationPending;
     [ObservableProperty] private bool _canReorderManualItems;
     private string _initialDefaultSortValue = "";
+    private Dictionary<string, object> _storedSortConfig = [];
+    private bool _clearSmartDefaultSort;
+    public void ClearSmartDefaultSort()
+    {
+        _clearSmartDefaultSort = true;
+        DefaultSortValue = "";
+    }
+    private string? _initialSyncSchedule;
+    public CollectionCapabilitiesResponse? Capabilities { get; private set; }
+    public Collection? LoadedCollection { get; private set; }
+    [ObservableProperty] private int? _syncSkippedTitles;
+    [ObservableProperty] private bool _isSyncing;
+    [ObservableProperty] private bool _removePosterOnSave;
 
     public CollectionEditorViewModel(
         CollectionsApi collectionsApi,
@@ -74,11 +90,16 @@ public partial class CollectionEditorViewModel : ObservableObject
 
     [ObservableProperty]
     private string? _searchQuery;
+    private int _itemSearchGeneration;
+    private CancellationTokenSource? _itemSearchCancellation;
+    [ObservableProperty] private CollectionItem? _lastRemovedItem;
+    private int _lastRemovedPosition;
 
     [ObservableProperty]
     private string? _sourceUrl;
     public string SourceKind { get; private set; } = "";
     public bool HasEditableSourceUrl => SourceKind is "mdblist" or "tmdb_list";
+    public bool CanEditSavedSyncSchedule => Capabilities?.SyncScheduleEditable == true && (CollectionType != "trakt" || !string.IsNullOrWhiteSpace(_initialSyncSchedule));
 
     [ObservableProperty]
     private string? _maxItemsText;
@@ -95,12 +116,18 @@ public partial class CollectionEditorViewModel : ObservableObject
     [ObservableProperty]
     private string? _currentPosterUrl;
 
+    [ObservableProperty]
+    private bool _currentPosterIsCollage;
+
     public byte[]? PosterFileBytes { get; private set; }
     public string? PosterFileName { get; private set; }
     public string PosterContentType { get; private set; } = "image/jpeg";
 
     public void SetPosterFile(string fileName, byte[] bytes, string? contentType)
     {
+        if (bytes.Length > CollectionArtworkLimits.MaximumBytes)
+            throw new ArgumentException(CollectionArtworkLimits.OversizeMessage, nameof(bytes));
+        RemovePosterOnSave = false;
         PosterFileName = fileName;
         PosterFileBytes = bytes;
         PosterContentType = string.IsNullOrWhiteSpace(contentType) ? "application/octet-stream" : contentType;
@@ -158,6 +185,8 @@ public partial class CollectionEditorViewModel : ObservableObject
 
     // Search results for adding manual items
     public ObservableCollection<MediaItem> SearchResults { get; } = [];
+    [ObservableProperty] private bool _isSearchingItems;
+    [ObservableProperty] private string? _itemSearchError;
 
     /// <summary>
     /// Raised when the collection is saved successfully so the page can navigate back.
@@ -168,22 +197,31 @@ public partial class CollectionEditorViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadReferenceDataAsync()
     {
+        var generation = ++_editorLoadGeneration;
+        var context = _catalogApi.CaptureContext();
+        IsLoading = true; ErrorMessage = null; IsLoadUnavailable = false;
         try
         {
             var librariesTask = _catalogApi.GetLibrariesAsync();
             var profilesTask = _settingsApi.GetProfilesAsync();
-            await Task.WhenAll(librariesTask, profilesTask, _collectionsApi.GetCollectionCapabilitiesAsync());
+            var capabilitiesTask = _collectionsApi.GetCollectionCapabilitiesAsync();
+            await Task.WhenAll(librariesTask, profilesTask, capabilitiesTask);
+            if (generation != _editorLoadGeneration || !_catalogApi.IsCurrentContext(context)) return;
+            Capabilities = capabilitiesTask.Result;
             AvailableLibraries.Clear();
             foreach (var library in librariesTask.Result) AvailableLibraries.Add(library);
             AvailableProfiles.Clear();
             foreach (var profile in profilesTask.Result.Profiles) AvailableProfiles.Add(profile);
         }
-        catch (Exception ex) { ErrorMessage = $"Failed to load collection options: {ex.Message}"; }
+        catch (Exception ex) { if (generation == _editorLoadGeneration && _catalogApi.IsCurrentContext(context)) { IsLoadUnavailable = true; ErrorMessage = $"Failed to load collection options: {ex.Message}"; } }
+        finally { if (generation == _editorLoadGeneration) IsLoading = false; }
     }
 
     [RelayCommand]
     private async Task LoadExistingAsync(string collectionId)
     {
+        var generation = ++_editorLoadGeneration;
+        var context = _catalogApi.CaptureContext();
         IsLoading = true;
         ErrorMessage = null; IsLoadUnavailable = false; IsNotFound = false;
         Task<Collection>? collectionTask = null;
@@ -197,8 +235,10 @@ public partial class CollectionEditorViewModel : ObservableObject
             var profilesTask = _settingsApi.GetProfilesAsync();
             var capabilitiesTask = _collectionsApi.GetCollectionCapabilitiesAsync();
             await Task.WhenAll(collectionsTask, librariesTask, profilesTask, capabilitiesTask);
+            if (generation != _editorLoadGeneration || !_catalogApi.IsCurrentContext(context)) return;
 
             _itemReorderSupported = capabilitiesTask.Result.ItemReorder;
+            Capabilities = capabilitiesTask.Result;
             CanReorderManualItems = false;
             var collection = collectionsTask.Result;
             if (collection == null)
@@ -208,23 +248,29 @@ public partial class CollectionEditorViewModel : ObservableObject
             }
 
             IsEditing = true;
-            IsReadOnly = !string.IsNullOrWhiteSpace(_authService.SelectedProfileId) &&
-                !string.Equals(collection.CreatorProfileId, _authService.SelectedProfileId, StringComparison.Ordinal);
+            LoadedCollection = collection;
+            SyncSkippedTitles = null;
+            IsReadOnly = !SiloPlayer.Core.Services.PersonalCollectionOwnership.IsOwn(collection, _authService.SelectedProfileId);
             CollectionId = collection.Id;
             Name = collection.Name;
             Description = collection.Description;
             CollectionType = collection.CollectionType;
-            SourceKind = CollectionType == "tmdb" && ReadSourceConfigValue(collection.SourceConfig, "mode") == "tmdb_list"
-                ? "tmdb_list" : CollectionType;
+            SourceKind = CollectionType == "tmdb" ? ReadSourceConfigValue(collection.SourceConfig, "mode") switch
+            {
+                "tmdb_list" => "tmdb_list", "tmdb_discover" => "tmdb_discover", _ => "tmdb"
+            } : CollectionType;
             IsShared = collection.IsShared;
             SourceUrl = collection.SourceUrl;
             MaxItemsText = ReadSourceConfigValue(collection.SourceConfig, "max_items")
                 ?? ReadSourceConfigValue(collection.SourceConfig, "limit");
-            SyncSchedule = FormatSyncSchedule(collection.SyncSchedule);
+            SyncSchedule = FormatSyncSchedule(collection.SyncCadence ?? collection.SyncSchedule);
+            _initialSyncSchedule = SyncSchedule;
+            RemovePosterOnSave = false;
             IncludeInServerCollections = collection.IncludeInServerCollections;
             PosterSourceUrl = "";
             ClearPosterFile();
             CurrentPosterUrl = collection.PosterUrl;
+            CurrentPosterIsCollage = collection.PosterIsCollage;
             LastSyncSummary = BuildLastSyncSummary(collection);
             SourceProviderLabel = SourceKind switch { "tmdb_list" => "TMDB List", "tmdb" => "TMDB", "trakt" => "Trakt", "mdblist" => "MDBList", _ => SourceKind };
             SourceLastNote = collection.LastSyncMessage;
@@ -237,13 +283,15 @@ public partial class CollectionEditorViewModel : ObservableObject
             AvailableProfiles.Clear();
             foreach (var profile in profilesTask.Result.Profiles) AvailableProfiles.Add(profile);
             SelectedLibraryIds.Clear();
-            foreach (var id in ReadSourceConfigIntList(collection.SourceConfig, "library_ids"))
+            foreach (var id in collection.CollectionType == "smart" ? collection.QueryDefinition?.LibraryIds ?? [] : ReadSourceConfigIntList(collection.SourceConfig, "library_ids"))
                 SelectedLibraryIds.Add(id);
             AllowedProfileIds.Clear();
             foreach (var id in collection.AllowedProfileIds) AllowedProfileIds.Add(id);
             ReadDisplayFilters(collection.DisplayQueryDefinition);
             _initialWatchFilter = WatchFilter; _initialMediaFilter = MediaFilter;
             DefaultSortValue = ReadCollectionSortValue(collection.SortConfig);
+            _storedSortConfig = collection.SortConfig == null ? [] : new(collection.SortConfig);
+            _clearSmartDefaultSort = false;
             _initialDefaultSortValue = DefaultSortValue;
 
             // Load rules from query definition
@@ -255,6 +303,7 @@ public partial class CollectionEditorViewModel : ObservableObject
             if (collection.CollectionType == "manual")
             {
                 var itemsResponse = await _collectionsApi.GetCollectionItemsAsync(collectionId);
+                if (generation != _editorLoadGeneration || !_catalogApi.IsCurrentContext(context)) return;
                 ManualItems.Clear();
                 _originalManualItemIds.Clear();
                 foreach (var item in itemsResponse.Items)
@@ -267,20 +316,21 @@ public partial class CollectionEditorViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            if (generation != _editorLoadGeneration || !_catalogApi.IsCurrentContext(context)) return;
             IsNotFound = collectionTask?.Exception?.Flatten().InnerExceptions.OfType<ApiException>().Any(error => error.StatusCode == 404) == true;
             IsLoadUnavailable = !IsNotFound;
             ErrorMessage = IsNotFound ? "Collection not found." : $"Failed to load collection: {ex.Message}";
         }
         finally
         {
-            IsLoading = false;
+            if (generation == _editorLoadGeneration) IsLoading = false;
         }
     }
 
     [RelayCommand]
     private async Task SaveAsync()
     {
-        if (IsReadOnly) return;
+        if (IsReadOnly || IsSaving) return;
         if (string.IsNullOrWhiteSpace(Name))
         {
             ErrorMessage = "Collection name is required.";
@@ -300,6 +350,7 @@ public partial class CollectionEditorViewModel : ObservableObject
                     Name = Name.Trim(),
                     Description = Description?.Trim() ?? "",
                     IsShared = IsShared,
+                    IncludeInServerCollections = IncludeInServerCollections,
                     AllowedProfileIds = [.. AllowedProfileIds],
                     PosterSourceUrl = string.IsNullOrWhiteSpace(PosterSourceUrl) ? null : PosterSourceUrl.Trim()
                 };
@@ -307,30 +358,38 @@ public partial class CollectionEditorViewModel : ObservableObject
                 if (CollectionType == "smart")
                 {
                     request.QueryDefinition = BuildQueryDefinition();
+                    if (_clearSmartDefaultSort) request.SortConfig = _storedSortConfig.Where(pair => pair.Key is not ("field" or "order")).ToDictionary(pair => pair.Key, pair => pair.Value);
                 }
+                if (CollectionType == "manual" && (WatchFilter != _initialWatchFilter || MediaFilter != _initialMediaFilter))
+                    request.DisplayQueryDefinition = BuildDisplayQueryDefinition();
 
                 if (IsImportedCollection)
                 {
-                    if (!string.IsNullOrWhiteSpace(MaxItemsText) && !int.TryParse(MaxItemsText, out _))
+                    if (CollectionType != "trakt" && !string.IsNullOrWhiteSpace(MaxItemsText) && (!int.TryParse(MaxItemsText, out var itemLimit) || itemLimit < 1))
                     {
-                        ErrorMessage = "Max items must be a number.";
+                        ErrorMessage = "Title limit must be a positive whole number.";
                         return;
                     }
 
                     if (SourceKind == "tmdb_list" && !SiloPlayer.Core.Services.CollectionImportPolicy.IsTMDBListUrl(SourceUrl))
                     { ErrorMessage = "Enter a public TMDB list URL or numeric list ID."; return; }
+                    if (SourceKind == "mdblist" && !SiloPlayer.Core.Services.CollectionImportPolicy.IsMDBListUrl(SourceUrl))
+                    { ErrorMessage = "Enter a valid MDBList list link."; return; }
                     if (HasEditableSourceUrl)
-                        request.SourceUrl = string.IsNullOrWhiteSpace(SourceUrl) ? null : SourceUrl.Trim();
+                        request.SourceUrl = SourceKind == "mdblist" ? SiloPlayer.Core.Services.CollectionImportPolicy.CleanMDBListLink(SourceUrl) : SourceUrl?.Trim();
+                    if (CanEditSavedSyncSchedule && SyncSchedule != _initialSyncSchedule && SyncSchedule is "" or "daily" or "weekly" or "monthly")
+                        request.SyncSchedule = SyncSchedule;
 
-                    request.MaxItems = int.TryParse(MaxItemsText, out var maxItems) && maxItems > 0
-                        ? maxItems
-                        : 0;
+                    if (CollectionType != "trakt")
+                    {
+                        request.MaxItems = int.TryParse(MaxItemsText, out var maxItems) && maxItems > 0 ? maxItems : 0;
+                        request.LibraryIds = [.. SelectedLibraryIds];
+                    }
                     request.IncludeInServerCollections = IncludeInServerCollections;
-                    request.LibraryIds = [.. SelectedLibraryIds];
                     if (WatchFilter != _initialWatchFilter || MediaFilter != _initialMediaFilter)
                         request.DisplayQueryDefinition = BuildDisplayQueryDefinition();
                     if (!string.Equals(DefaultSortValue, _initialDefaultSortValue, StringComparison.Ordinal))
-                        request.SortConfig = BuildCollectionSortConfig(DefaultSortValue);
+                        request.SortConfig = CaptureSortConfig();
                 }
 
                 if (PosterFileBytes is { Length: > 0 } poster && !string.IsNullOrWhiteSpace(PosterFileName))
@@ -349,6 +408,8 @@ public partial class CollectionEditorViewModel : ObservableObject
                     Description = string.IsNullOrWhiteSpace(Description) ? null : Description.Trim(),
                     CollectionType = CollectionType,
                     IsShared = IsShared,
+                    IncludeInServerCollections = IncludeInServerCollections,
+                    DisplayQueryDefinition = CollectionType == "manual" ? BuildDisplayQueryDefinition() : null,
                     AllowedProfileIds = [.. AllowedProfileIds],
                     PosterSourceUrl = string.IsNullOrWhiteSpace(PosterSourceUrl) ? null : PosterSourceUrl.Trim()
                 };
@@ -358,15 +419,22 @@ public partial class CollectionEditorViewModel : ObservableObject
                     request.QueryDefinition = BuildQueryDefinition();
                 }
 
-                var created = PosterFileBytes is { Length: > 0 } poster && !string.IsNullOrWhiteSpace(PosterFileName)
-                    ? await _collectionsApi.CreateCollectionAsync(request, PosterFileName, poster, PosterContentType)
-                    : await _collectionsApi.CreateCollectionAsync(request);
+                // Retain the resource identity before optional metadata/artwork
+                // writes. A failed follow-up must resume editing this resource.
+                var description = request.Description;
+                var sourcePoster = request.PosterSourceUrl;
+                request.Description = null; request.PosterSourceUrl = null;
+                var created = await _collectionsApi.CreateCollectionAsync(request);
 
                 // Creation is already durable at this point. Switch to edit mode before
                 // any follow-up item request so a retry cannot create a second collection.
                 CollectionId = created.Id;
                 IsEditing = true;
                 _originalManualItemIds.Clear();
+                if (description != null || !string.IsNullOrWhiteSpace(sourcePoster))
+                    await _collectionsApi.UpdateCollectionAsync(created.Id, new() { Description = description, PosterSourceUrl = sourcePoster });
+                if (PosterFileBytes is { Length: > 0 } poster && !string.IsNullOrWhiteSpace(PosterFileName))
+                    await _collectionsApi.UpdateCollectionAsync(created.Id, new(), PosterFileName, poster, PosterContentType);
 
                 // For manual collections, add items after creation
                 if (CollectionType == "manual" && ManualItems.Count > 0)
@@ -397,6 +465,11 @@ public partial class CollectionEditorViewModel : ObservableObject
                 }
             }
 
+            if (RemovePosterOnSave && PosterFileBytes is not { Length: > 0 } && string.IsNullOrWhiteSpace(PosterSourceUrl) && CollectionId is { } savedId)
+            {
+                await _collectionsApi.DeleteCollectionImageAsync(savedId);
+                RemovePosterOnSave = false;
+            }
             PosterFileBytes = null;
             PosterFileName = null;
             if (!keepEditorOpen)
@@ -439,6 +512,12 @@ public partial class CollectionEditorViewModel : ObservableObject
             ["order"] = order,
         };
     }
+    public Dictionary<string, object> CaptureSortConfig()
+    {
+        var result = _storedSortConfig.Where(pair => pair.Key is not ("field" or "order")).ToDictionary(pair => pair.Key, pair => pair.Value);
+        foreach (var pair in BuildCollectionSortConfig(DefaultSortValue)) result[pair.Key] = pair.Value;
+        return result;
+    }
 
     private static string JsonValueText(object? value)
         => value is JsonElement element
@@ -469,18 +548,31 @@ public partial class CollectionEditorViewModel : ObservableObject
     [RelayCommand]
     private async Task SyncNowAsync()
     {
-        if (IsReadOnly || string.IsNullOrWhiteSpace(CollectionId) || !IsImportedCollection) return;
+        if (IsReadOnly || IsSaving || string.IsNullOrWhiteSpace(CollectionId) || !IsImportedCollection) return;
+        var id = CollectionId; var generation = _editorLoadGeneration; var context = _catalogApi.CaptureContext();
         IsSaving = true;
+        IsSyncing = true;
         ErrorMessage = null;
         try
         {
-            var result = await _collectionsApi.SyncCollectionAsync(CollectionId);
+            var result = await _collectionsApi.SyncCollectionAsync(id);
+            if (generation != _editorLoadGeneration || CollectionId != id || !_catalogApi.IsCurrentContext(context)) return;
+            if (LoadedCollection is { } collection)
+            {
+                collection.ItemCount = result.ItemsMatched;
+                collection.LastSyncStatus = result.Status;
+                collection.LastSyncMessage = result.Message;
+                collection.LastSyncAt = result.CompletedAt;
+                SourceItemCountText = result.ItemsMatched.ToString("N0");
+                SyncSkippedTitles = result.ItemsUnmatched;
+                OnPropertyChanged(nameof(LoadedCollection));
+            }
             LastSyncSummary = string.IsNullOrWhiteSpace(result.Message)
                 ? $"Sync {result.Status}"
                 : result.Message;
         }
-        catch (Exception ex) { ErrorMessage = $"Sync failed: {ex.Message}"; }
-        finally { IsSaving = false; }
+        catch (Exception ex) { if (generation == _editorLoadGeneration && _catalogApi.IsCurrentContext(context)) ErrorMessage = $"Sync failed: {ex.Message}"; }
+        finally { IsSyncing = false; IsSaving = false; }
     }
 
     [RelayCommand]
@@ -499,59 +591,19 @@ public partial class CollectionEditorViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private async Task RemovePosterAsync()
+    private Task RemovePosterAsync()
     {
-        if (IsReadOnly || string.IsNullOrWhiteSpace(CollectionId)) return;
+        if (IsReadOnly || IsSaving) return Task.CompletedTask;
         ErrorMessage = null;
-        var deleted = false;
-        try
-        {
-            await _collectionsApi.DeleteCollectionImageAsync(CollectionId);
-            deleted = true;
-            CurrentPosterUrl = null; PosterFileBytes = null; PosterFileName = null;
-            // The refreshed viewer read may supply generated artwork rather
-            // than leaving the editor permanently blank after poster removal.
-            CurrentPosterUrl = (await _collectionsApi.GetCollectionAsync(CollectionId)).PosterUrl;
-            PosterFileBytes = null;
-            PosterFileName = null;
-        }
-        catch (Exception ex) { ErrorMessage = deleted ? $"Poster removed; generated artwork could not be refreshed: {ex.Message}" : $"Failed to remove poster: {ex.Message}"; }
+        RemovePosterOnSave = true;
+        CurrentPosterUrl = null; PosterSourceUrl = ""; ClearPosterFile();
+        return Task.CompletedTask;
     }
 
     [RelayCommand]
     private async Task PreviewAsync()
     {
-        if (!RuleDefinition.Groups.Any(group => group.Rules.Count > 0))
-        {
-            ErrorMessage = "Add at least one rule to preview.";
-            return;
-        }
-
-        IsPreviewing = true;
-        ErrorMessage = null;
-        PreviewItems.Clear();
-
-        try
-        {
-            var request = new CollectionPreviewRequest
-            {
-                QueryDefinition = BuildQueryDefinition(),
-                Limit = 20
-            };
-
-            var response = await _collectionsApi.PreviewCollectionAsync(request);
-            foreach (var item in response.Items)
-                PreviewItems.Add(item);
-            PreviewTotal = response.Total;
-        }
-        catch (Exception ex)
-        {
-            ErrorMessage = $"Preview failed: {ex.Message}";
-        }
-        finally
-        {
-            IsPreviewing = false;
-        }
+        await RefreshPreviewAsync();
     }
 
     [RelayCommand]
@@ -574,25 +626,37 @@ public partial class CollectionEditorViewModel : ObservableObject
         foreach (var group in RuleDefinition.Groups) group.Rules.Remove(rule);
     }
 
-    [RelayCommand]
+    [RelayCommand(AllowConcurrentExecutions = true)]
     private async Task SearchItemsAsync(string? query)
     {
-        if (string.IsNullOrWhiteSpace(query)) return;
-
+        CancelItemSearch();
+        var generation = _itemSearchGeneration;
         SearchResults.Clear();
+        if (string.IsNullOrWhiteSpace(query)) return;
+        var cancellation = _itemSearchCancellation = new();
+        var context = _catalogApi.CaptureContext();
+        IsSearchingItems = true;
 
         try
         {
             // Use the catalog search with the query parameter
             var response = await _catalogApi.GetCatalogAsync(
-                libraryId: 0, q: query, limit: 20);
+                libraryId: 0, q: query.Trim(), limit: 12, ct: cancellation.Token);
+            if (cancellation.IsCancellationRequested || generation != _itemSearchGeneration || context != _catalogApi.CaptureContext()) return;
             foreach (var item in response.Items)
                 SearchResults.Add(item);
         }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
         catch
-        {
-            // Search failure is non-fatal
-        }
+        { if (generation == _itemSearchGeneration && context == _catalogApi.CaptureContext()) ItemSearchError = "The search didn't work."; }
+        finally
+        { if (generation == _itemSearchGeneration) IsSearchingItems = false; }
+    }
+    public void CancelItemSearch()
+    {
+        ++_itemSearchGeneration;
+        _itemSearchCancellation?.Cancel(); _itemSearchCancellation?.Dispose(); _itemSearchCancellation = null;
+        IsSearchingItems = false; ItemSearchError = null;
     }
 
     [RelayCommand]
@@ -619,6 +683,7 @@ public partial class CollectionEditorViewModel : ObservableObject
         try
         {
             if (IsEditing && !string.IsNullOrWhiteSpace(CollectionId)) await _collectionsApi.RemoveCollectionItemAsync(CollectionId, item.MediaItemId);
+            _lastRemovedPosition = ManualItems.IndexOf(item); LastRemovedItem = item;
             ManualItems.Remove(item); _originalManualItemIds.Remove(item.MediaItemId);
             await RefreshManualOrderEligibilityAsync();
         }
@@ -626,16 +691,44 @@ public partial class CollectionEditorViewModel : ObservableObject
         finally { IsManualMutationPending = false; }
     }
 
+    [RelayCommand]
+    private async Task UndoRemoveManualItemAsync()
+    {
+        if (LastRemovedItem is not { } item || IsReadOnly || IsManualMutationPending || ManualItems.Any(entry => entry.MediaItemId == item.MediaItemId)) return;
+        IsManualMutationPending = true; ErrorMessage = null;
+        try
+        {
+            if (IsEditing && CollectionId is { } id) await _collectionsApi.RestoreCollectionItemAsync(id, item.MediaItemId, item.Position);
+            ManualItems.Insert(Math.Clamp(_lastRemovedPosition, 0, ManualItems.Count), item);
+            if (IsEditing) _originalManualItemIds.Add(item.MediaItemId);
+            LastRemovedItem = null;
+            await RefreshManualOrderEligibilityAsync();
+        }
+        catch (Exception ex) { ErrorMessage = $"Could not restore item: {ex.Message}"; }
+        finally { IsManualMutationPending = false; }
+    }
+
     private async Task RefreshManualOrderEligibilityAsync()
     {
         CanReorderManualItems = false;
+        if (!IsEditing && CollectionId == null && !IsReadOnly && CollectionType == "manual")
+        {
+            CanReorderManualItems = ManualItems.Count > 1;
+            return;
+        }
         if (IsEditing && !IsReadOnly && _itemReorderSupported && CollectionId != null)
             CanReorderManualItems = await _collectionsApi.IsCompleteItemOrderAsync(CollectionId, ManualItems.Select(item => item.MediaItemId).ToList());
     }
 
     public async Task MoveManualItemAsync(int oldIndex, int newIndex)
     {
-        if (IsReadOnly || IsManualMutationPending || !CanReorderManualItems || CollectionId == null || oldIndex < 0 || newIndex < 0 || oldIndex >= ManualItems.Count || newIndex >= ManualItems.Count) return;
+        if (IsReadOnly || IsManualMutationPending || !CanReorderManualItems || oldIndex < 0 || newIndex < 0 || oldIndex >= ManualItems.Count || newIndex >= ManualItems.Count || oldIndex == newIndex) return;
+        if (!IsEditing && CollectionId == null && CollectionType == "manual")
+        {
+            ManualItems.Move(oldIndex, newIndex);
+            return;
+        }
+        if (CollectionId == null) return;
         IsManualMutationPending = true; ErrorMessage = null;
         var ordered = ManualItems.Select(item => item.MediaItemId).ToList();
         var id = ordered[oldIndex]; ordered.RemoveAt(oldIndex); ordered.Insert(newIndex, id);
@@ -649,7 +742,9 @@ public partial class CollectionEditorViewModel : ObservableObject
 
     private QueryDefinition BuildQueryDefinition()
     {
-        return SiloPlayer.Core.Services.QueryEditing.Clone(RuleDefinition);
+        var query = SiloPlayer.Core.Services.QueryEditing.Clone(RuleDefinition);
+        if (query.MediaScope == "all") query.MediaScope = null;
+        return query;
     }
 
     private DisplayQueryDefinition BuildDisplayQueryDefinition()
@@ -665,6 +760,7 @@ public partial class CollectionEditorViewModel : ObservableObject
             Groups = rules.Count == 0 ? [] : [new QueryGroup { Match = "all", Rules = rules }]
         };
     }
+    public DisplayQueryDefinition CaptureDisplayQuery() => BuildDisplayQueryDefinition();
 
     private void ReadDisplayFilters(DisplayQueryDefinition? definition)
     {
@@ -758,15 +854,15 @@ public partial class CollectionEditorViewModel : ObservableObject
     private static string FormatSyncSchedule(string? schedule)
     {
         if (string.IsNullOrWhiteSpace(schedule))
-            return "Manual only";
+            return "";
 
         return schedule.Trim() switch
         {
-            "daily" => "Daily",
-            "weekly" => "Weekly",
-            "monthly" => "Monthly",
-            "none" => "Manual only",
-            var raw => raw
+            "daily" => "daily",
+            "weekly" => "weekly",
+            "monthly" => "monthly",
+            "none" => "",
+            _ => "custom"
         };
     }
 }

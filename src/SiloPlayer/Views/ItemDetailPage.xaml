@@ -173,17 +173,17 @@
                         AnchorY="0.2"
                         EnableKenBurns="True" />
 
-                    <!-- Brightness overlay: web uses brightness(0.4), so ~60% darkening -->
-                    <Border Background="Black" Opacity="0.6" />
+                    <!-- Current WebUI detail heroes use a10% background tint. -->
+                    <Border x:Name="DetailBackdropTint" Background="{StaticResource AppBackgroundBrush}" Opacity="0.1" />
 
                     <!-- Bottom-to-top gradient (hero-gradient) -->
                     <Border>
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                                 <GradientStop x:Name="DetailBottomTransparent" Color="Transparent" Offset="0.0" />
-                                <GradientStop x:Name="DetailBottomSoft" Color="#33101722" Offset="0.25" />
-                                <GradientStop x:Name="DetailBottomMid" Color="#8C101722" Offset="0.5" />
-                                <GradientStop x:Name="DetailBottomStrong" Color="#EB101722" Offset="0.8" />
+                                <GradientStop x:Name="DetailBottomSoft" Color="#1F101722" Offset="0.46" />
+                                <GradientStop x:Name="DetailBottomMid" Color="#75101722" Offset="0.66" />
+                                <GradientStop x:Name="DetailBottomStrong" Color="#DB101722" Offset="0.86" />
                                 <GradientStop x:Name="DetailBottomSolid" Color="#101722" Offset="1.0" />
                             </LinearGradientBrush>
                         </Border.Background>
@@ -193,22 +193,22 @@
                     <Border>
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
-                                <GradientStop x:Name="DetailLeftSolid" Color="#101722" Offset="0.0" />
-                                <GradientStop x:Name="DetailLeftStrong" Color="#CC101722" Offset="0.2" />
-                                <GradientStop x:Name="DetailLeftSoft" Color="#66101722" Offset="0.4" />
-                                <GradientStop x:Name="DetailLeftTransparent" Color="Transparent" Offset="0.6" />
+                                <GradientStop x:Name="DetailLeftSolid" Color="#EB101722" Offset="0.0" />
+                                <GradientStop x:Name="DetailLeftStrong" Color="#9E101722" Offset="0.18" />
+                                <GradientStop x:Name="DetailLeftSoft" Color="#3D101722" Offset="0.36" />
+                                <GradientStop x:Name="DetailLeftTransparent" Color="Transparent" Offset="0.52" />
                             </LinearGradientBrush>
                         </Border.Background>
                     </Border>
 
-                    <!-- Vignette: combined left + bottom gradient -->
+                    <!-- Current soft radial edge vignette. -->
                     <Border>
                         <Border.Background>
-                            <LinearGradientBrush StartPoint="0,1" EndPoint="1,0">
-                                <GradientStop x:Name="DetailVignetteStrong" Color="#66101722" Offset="0.0" />
-                                <GradientStop x:Name="DetailVignetteSoft" Color="#33101722" Offset="0.3" />
-                                <GradientStop x:Name="DetailVignetteTransparent" Color="Transparent" Offset="0.6" />
-                            </LinearGradientBrush>
+                            <RadialGradientBrush Center="0.62,0.4" RadiusX="1.2" RadiusY="1">
+                                <GradientStop x:Name="DetailVignetteTransparent" Color="Transparent" Offset="0" />
+                                <GradientStop x:Name="DetailVignetteSoft" Color="Transparent" Offset="0.55" />
+                                <GradientStop x:Name="DetailVignetteStrong" Color="#2E000000" Offset="1" />
+                            </RadialGradientBrush>
                         </Border.Background>
                     </Border>
 
@@ -951,6 +951,10 @@
                         <TextBlock Text="Crew" Style="{StaticResource TitleTextStyle}" FontSize="20" />
                         <Border Background="{StaticResource SurfaceBrush}" CornerRadius="12" Padding="20,16">
                             <StackPanel Spacing="12">
+                                <Grid x:Name="CreatorsPanel" ColumnDefinitions="Auto,*" ColumnSpacing="24" Visibility="Collapsed">
+                                    <TextBlock Text="Creators" Width="88" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
+                                    <StackPanel x:Name="CreatorNamesPanel" Grid.Column="1" Orientation="Horizontal" Spacing="0" />
+                                </Grid>
                                 <Grid x:Name="DirectorsPanel" ColumnDefinitions="Auto,*" ColumnSpacing="24" Visibility="Collapsed">
                                     <TextBlock Text="Directors" Width="88" FontSize="13" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" VerticalAlignment="Center" />
                                     <StackPanel x:Name="DirectorNamesPanel" Grid.Column="1" Orientation="Horizontal" Spacing="0" />
@@ -1009,7 +1013,7 @@
                     <!-- Seasons (for series only) -->
                     <StackPanel x:Name="SeasonsSection" Visibility="Collapsed" Spacing="12">
                         <Grid Margin="0,0,0,8">
-                            <TextBlock Text="Seasons" Style="{StaticResource TitleTextStyle}" FontSize="20" />
+                            <TextBlock Text="Seasons" Style="{StaticResource TitleTextStyle}" FontSize="20" LineHeight="28" LineStackingStrategy="BlockLineHeight" />
                             <TextBlock x:Name="SeasonsTotalText" HorizontalAlignment="Right"
                                        VerticalAlignment="Bottom" FontSize="14"
                                        Foreground="{StaticResource SecondaryTextBrush}" />
@@ -1036,6 +1040,7 @@
                         </Border>
                         <Grid>
                             <ScrollViewer x:Name="SeasonsScrollViewer"
+                                Margin="0,-4,0,0" Padding="0,4,0,20"
                                 IsTabStop="True"
                                 KeyDown="HorizontalCarousel_KeyDown"
                                 ViewChanged="SeasonsScrollViewer_ViewChanged"
@@ -1216,12 +1221,17 @@
                     <!-- More Like This section -->
                     <StackPanel x:Name="SimilarSection" Visibility="Collapsed" Spacing="20">
                         <TextBlock Text="More Like This" Style="{StaticResource TitleTextStyle}" FontSize="20" />
-                        <controls:WrapPanel x:Name="SimilarLoadingSkeleton"
-                                            HorizontalSpacing="12" VerticalSpacing="12"
-                                            Visibility="Collapsed">
-                            <controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster />
-                            <controls:SkeletonPoster /><controls:SkeletonPoster /><controls:SkeletonPoster />
-                        </controls:WrapPanel>
+                        <ScrollViewer HorizontalScrollMode="Disabled" VerticalScrollMode="Disabled"
+                                      HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="SimilarLoadingSkeleton" Orientation="Horizontal" Spacing="20" Visibility="Collapsed">
+                                <StackPanel Spacing="6"><controls:SkeletonPoster /><controls:SkeletonText Height="16" /></StackPanel>
+                                <StackPanel Spacing="6"><controls:SkeletonPoster /><controls:SkeletonText Height="16" /></StackPanel>
+                                <StackPanel Spacing="6"><controls:SkeletonPoster /><controls:SkeletonText Height="16" /></StackPanel>
+                                <StackPanel Spacing="6"><controls:SkeletonPoster /><controls:SkeletonText Height="16" /></StackPanel>
+                                <StackPanel Spacing="6"><controls:SkeletonPoster /><controls:SkeletonText Height="16" /></StackPanel>
+                                <StackPanel Spacing="6"><controls:SkeletonPoster /><controls:SkeletonText Height="16" /></StackPanel>
+                            </StackPanel>
+                        </ScrollViewer>
                         <Border x:Name="SimilarLoadError" Visibility="Collapsed"
                                 Background="{StaticResource SurfaceBrush}"
                                 BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
@@ -1233,7 +1243,12 @@
                                         Style="{StaticResource SecondaryButtonStyle}" Padding="12,6" />
                             </StackPanel>
                         </Border>
-                        <controls:WrapPanel x:Name="SimilarPanel" HorizontalSpacing="12" VerticalSpacing="12" />
+                        <Grid x:Name="SimilarCarouselHost">
+                            <ScrollViewer x:Name="SimilarScroller" HorizontalScrollMode="Enabled" VerticalScrollMode="Disabled"
+                                          HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
+                                <StackPanel x:Name="SimilarPanel" Orientation="Horizontal" Spacing="20" />
+                            </ScrollViewer>
+                        </Grid>
                     </StackPanel>
 
                 </StackPanel>

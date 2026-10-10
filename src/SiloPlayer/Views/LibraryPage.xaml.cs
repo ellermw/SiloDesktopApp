@@ -35,39 +35,8 @@ public sealed partial class LibraryPage : Page,
         string? InitialTab = null,
         string? InitialGenre = null);
 
-    private static readonly (string Label, string Value)[] AdvancedRuleFields =
-    [
-        ("Genre", "genre"), ("Year", "year"), ("IMDb Rating", "rating_imdb"),
-        ("Type", "type"), ("Content Rating", "content_rating"), ("Studio", "studio"),
-        ("Actor", "actor"), ("Director", "director"), ("Writer", "writer"),
-        ("Producer", "producer"), ("Author", "author"), ("Narrator", "narrator"),
-        ("Series", "series"), ("Network", "network"), ("Country", "country"),
-        ("Match Status", "status"), ("Added", "added_at"), ("Release Date", "release_date"),
-        ("Watched", "watched"), ("Favorited", "favorited"), ("In Watchlist", "in_watchlist"),
-        ("In Progress", "in_progress"), ("Resolution", "resolution"), ("HDR", "hdr"),
-        ("Dolby Vision", "dolby_vision"), ("Bitrate", "bitrate"),
-        ("Audio Language", "audio_language"), ("Original Language", "original_language"),
-    ];
+    private QueryFilterEditor? _sharedFilterEditor;
 
-    private static readonly (string Label, string Value)[] AdvancedRuleOperators =
-    [
-        ("is", "is"), ("is not", "is_not"), ("contains", "contains"),
-        (">=", "gte"), ("<=", "lte"), (">", "gt"), ("<", "lt"),
-        ("between", "between"), ("in the last", "in_last"),
-    ];
-
-    private static IReadOnlyList<(string Label, string Value)> GetAdvancedOperators(string field) => field switch
-    {
-        "type" or "studio" or "network" or "country" or "original_language" or "content_rating" or
-            "actor" or "director" or "writer" or "producer" or "author" or "narrator" or "series" or
-            "resolution" or "audio_language" => [("is", "is"), ("is not", "is_not")],
-        "genre" => [("is", "is"), ("is not", "is_not"), ("contains", "contains")],
-        "year" => [("is", "is"), ("is not", "is_not"), (">=", "gte"), ("<=", "lte"), (">", "gt"), ("<", "lt"), ("between", "between")],
-        "rating_imdb" or "bitrate" => [(">=", "gte"), ("<=", "lte"), (">", "gt"), ("<", "lt"), ("between", "between")],
-        "added_at" or "release_date" => [(">", "gt"), ("<", "lt"), ("between", "between"), ("in the last", "in_last")],
-        "watched" or "favorited" or "in_watchlist" or "in_progress" or "hdr" or "dolby_vision" => [("is", "is")],
-        _ => AdvancedRuleOperators,
-    };
     // B42: Persist last-viewed tab + filters per library across navigations.
     // Web parses this from the URL (?tab=library|collections); we don't have
     // routing yet, so we mirror the page state in a per-library in-memory dict.
@@ -193,6 +162,7 @@ public sealed partial class LibraryPage : Page,
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
+        CatalogToolbarChoices.Apply(BrowseTypeComboBox, SortComboBox, OrderComboBox);
         var savedWidth = App.Services.GetRequiredService<SettingsService>().Load().LibraryPosterWidth;
         _posterWidthOverride = savedWidth is { } width && double.IsFinite(width) ? Math.Clamp(width, 100, 300) : null;
         _settingPosterSize = true;
@@ -272,13 +242,15 @@ public sealed partial class LibraryPage : Page,
 
     private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
     {
+        SizeLibraryFilterSheet();
         // Tailwind breakpoints used by LibraryPage/LibraryHeader in the current
         // WebUI: px-4, sm:px-6, lg:px-10, xl:px-12.
-        var width = e.NewSize.Width;
+        var width = WebUiViewport.Width(this, e.NewSize.Width);
         var horizontalGutter = width >= 1280 ? 48d : width >= 1024 ? 40d : width >= 640 ? 24d : 16d;
 
         HeaderGrid.Margin = new Thickness(horizontalGutter, 0, horizontalGutter, 0);
-        FilterBar.Margin = new Thickness(horizontalGutter, 8, horizontalGutter, 16);
+        HeaderGrid.Height = width >= 1024 ? 81 : width >= 640 ? 77 : 74;
+        FilterBar.Margin = new Thickness(horizontalGutter, width >= 640 ? 40 : 32, horizontalGutter, width >= 640 ? 24 : 20);
         ActiveFiltersBar.Margin = new Thickness(horizontalGutter, 0, horizontalGutter, 12);
         LibrarySkeletonScroll.Padding = new Thickness(horizontalGutter, 0, horizontalGutter, 24);
         LibraryViewportHost.Padding = new Thickness(horizontalGutter, 0, horizontalGutter, 24);
@@ -292,24 +264,27 @@ public sealed partial class LibraryPage : Page,
             collectionsGutter,
             collectionsVerticalPadding);
         CollectionsTitle.FontSize = Math.Clamp(width * 0.04, 32, 48);
+        CollectionsTitle.LineHeight = CollectionsTitle.FontSize * .95;
         CollectionsSubtitle.FontSize = width >= 640 ? 16 : 14;
+        CollectionsBody.Width = Math.Min(1320, Math.Max(0, e.NewSize.Width - collectionsGutter * 2));
 
         var tallHeroRatio = width >= 1024 ? 0.72 : 0.60;
         RecommendedHeroSkeleton.Height = Math.Clamp(e.NewSize.Height * tallHeroRatio, 420, 760);
 
         var compact = width < 640;
+        UpdateShuffleHeader();
         LibraryEyebrow.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
         if (compact)
         {
-            Grid.SetColumn(TabBarBorder, 0);
-            Grid.SetColumnSpan(TabBarBorder, 2);
-            TabBarBorder.HorizontalAlignment = HorizontalAlignment.Center;
+            Grid.SetColumn(LibraryHeaderActions, 0);
+            Grid.SetColumnSpan(LibraryHeaderActions, 2);
+            LibraryHeaderActions.HorizontalAlignment = HorizontalAlignment.Center;
         }
         else
         {
-            Grid.SetColumn(TabBarBorder, 1);
-            Grid.SetColumnSpan(TabBarBorder, 1);
-            TabBarBorder.HorizontalAlignment = HorizontalAlignment.Right;
+            Grid.SetColumn(LibraryHeaderActions, 1);
+            Grid.SetColumnSpan(LibraryHeaderActions, 1);
+            LibraryHeaderActions.HorizontalAlignment = HorizontalAlignment.Right;
         }
     }
 
@@ -374,6 +349,7 @@ public sealed partial class LibraryPage : Page,
                 ? Visibility.Visible
                 : Visibility.Collapsed;
             ViewModel.Library = library;
+            UpdateShuffleHeader();
 
             // F7: set window title to the library name
             if (App.MainWindowInstance is MainWindow mw)
@@ -469,7 +445,7 @@ public sealed partial class LibraryPage : Page,
             ViewModel.AdvancedGroups.Clear();
             foreach (var saved in state.QueryGroups)
             {
-                var restoredGroup = new EditableQueryGroup { Match = saved.Match };
+                var restoredGroup = new EditableQueryGroup { Match = saved.Match, AdditionalProperties = saved.AdditionalProperties };
                 foreach (var rule in saved.Rules) restoredGroup.Rules.Add(rule);
                 ViewModel.AdvancedGroups.Add(restoredGroup);
             }
@@ -509,6 +485,7 @@ public sealed partial class LibraryPage : Page,
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        _shuffleLaunch?.Cancel();
         base.OnNavigatedFrom(e);
         FlushLibraryStateSave();
         foreach (var owner in _facetOwners.Values) owner.Cancel(); _facetOwners.Clear();
@@ -910,7 +887,7 @@ public sealed partial class LibraryPage : Page,
             Tab = tab,
             Axis = _currentAudiobookAxis,
             Match = ViewModel.UseAdvancedRules ? ViewModel.AdvancedRulesMatch : "all",
-            QueryGroups = ViewModel.UseAdvancedRules ? ViewModel.AdvancedGroups.Select(group => new QueryGroup { Match = group.Match, Rules = group.Rules.ToList() }).ToList() : [],
+            QueryGroups = ViewModel.UseAdvancedRules ? ViewModel.AdvancedGroups.Select(group => new QueryGroup { Match = group.Match, AdditionalProperties = group.AdditionalProperties, Rules = group.Rules.ToList() }).ToList() : [],
             Sort = ViewModel.SelectedSort ?? "title",
             Order = ViewModel.SelectedOrder ?? "asc",
             MediaType = ViewModel.SelectedType,
@@ -1268,10 +1245,25 @@ public sealed partial class LibraryPage : Page,
         SaveViewState(_currentTab); // B42
     }
 
-    private void OpenFilters_Click(object sender, RoutedEventArgs e)
+    private async void OpenFilters_Click(object sender, RoutedEventArgs e)
     {
+        if (!ViewModel.UseAdvancedRules)
+        {
+            ViewModel.SeedAdvancedRulesFromGuided();
+            ViewModel.UseAdvancedRules = true;
+        }
+        BuildAdvancedRulesPanel();
+        GuidedFiltersScroll.Visibility = Visibility.Collapsed;
+        AdvancedFiltersScroll.Visibility = Visibility.Visible;
         FiltersSheet.IsOpen = true;
-        _ = ViewModel.EnsureFiltersLoadedAsync();
+        var editor = _sharedFilterEditor;
+        var library = ViewModel.Library;
+        var catalog = App.Services.GetRequiredService<CatalogApi>();
+        var context = catalog.CaptureContext();
+        await ViewModel.EnsureFiltersLoadedAsync();
+        if (IsLoaded && FiltersSheet.IsOpen && ReferenceEquals(editor, _sharedFilterEditor) &&
+            ReferenceEquals(library, ViewModel.Library) && context == catalog.CaptureContext())
+            editor?.UpdateOptions(LibraryFilterOptions());
     }
 
     private void CloseFilters_Click(object sender, RoutedEventArgs e)
@@ -1279,209 +1271,96 @@ public sealed partial class LibraryPage : Page,
         FiltersSheet.IsOpen = false;
     }
 
-    private async void GuidedFilterMode_Click(object sender, RoutedEventArgs e)
+    private void GuidedFilterMode_Click(object sender, RoutedEventArgs e)
     {
-        if (!ViewModel.UseAdvancedRules) return;
-        ViewModel.UseAdvancedRules = false;
-        GuidedFiltersScroll.Visibility = Visibility.Visible;
-        AdvancedFiltersScroll.Visibility = Visibility.Collapsed;
-            GuidedFilterModeButton.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
-        AdvancedFilterModeButton.Style = (Style)Resources["OutlineButtonStyle"];
-        await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
-        await FillViewportAsync();
-        UpdateActiveFilterBadges();
+        OpenFilters_Click(sender, e);
     }
 
-    private async void AdvancedFilterMode_Click(object sender, RoutedEventArgs e)
+    private void AdvancedFilterMode_Click(object sender, RoutedEventArgs e)
     {
-        if (!ViewModel.UseAdvancedRules)
-            ViewModel.SeedAdvancedRulesFromGuided();
-        ViewModel.UseAdvancedRules = true;
-        BuildAdvancedRulesPanel();
-        _suppressFilterEvents = true;
-        AdvancedMatchComboBox.SelectedIndex = ViewModel.AdvancedRulesMatch == "any" ? 1 : 0;
-        _suppressFilterEvents = false;
-        GuidedFiltersScroll.Visibility = Visibility.Collapsed;
-        AdvancedFiltersScroll.Visibility = Visibility.Visible;
-        GuidedFilterModeButton.Style = (Style)Resources["OutlineButtonStyle"];
-            AdvancedFilterModeButton.Style = (Style)Application.Current.Resources["AccentButtonStyle"];
-        await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
-        await FillViewportAsync();
-        UpdateActiveFilterBadges();
+        OpenFilters_Click(sender, e);
     }
+
+    private QueryDefinition BuildLibraryRuleDraft() => new()
+    {
+        Match = ViewModel.AdvancedRulesMatch,
+        Sort = new() { Field = ViewModel.SelectedSort ?? "title", Order = ViewModel.SelectedOrder ?? "asc" },
+        MediaScope = ViewModel.SelectedType ?? ViewModel.Library?.Type,
+        Groups = ViewModel.AdvancedGroups.Select(group => new QueryGroup
+        {
+            Match = group.Match, AdditionalProperties = group.AdditionalProperties, Rules = group.Rules.ToList()
+        }).ToList()
+    };
+
+    private CatalogFiltersResponse LibraryFilterOptions() => new()
+    {
+        Genres = ViewModel.Genres.Where(value => !string.IsNullOrWhiteSpace(value)).ToList(),
+        Studios = ViewModel.Studios.Where(value => !string.IsNullOrWhiteSpace(value)).ToList(),
+        Countries = ViewModel.Countries.Where(value => !string.IsNullOrWhiteSpace(value)).ToList(),
+        Networks = ViewModel.Networks.Where(value => !string.IsNullOrWhiteSpace(value)).ToList(),
+        ContentRatings = ViewModel.ContentRatings.Where(value => !string.IsNullOrWhiteSpace(value)).ToList(),
+        OriginalLanguages = ViewModel.OriginalLanguages.Where(value => !string.IsNullOrWhiteSpace(value)).ToList(),
+        AudioLanguages = ViewModel.AudioLanguages.Where(value => !string.IsNullOrWhiteSpace(value)).ToList()
+    };
 
     private void BuildAdvancedRulesPanel()
     {
         AdvancedRulesHost.Children.Clear();
-        foreach (var group in ViewModel.AdvancedGroups)
-            AdvancedRulesHost.Children.Add(BuildAdvancedGroupCard(group));
-    }
-
-    private FrameworkElement BuildAdvancedGroupCard(EditableQueryGroup group)
-    {
-        var content = new StackPanel { Spacing = 10 };
-        var header = new Grid
+        var query = BuildLibraryRuleDraft();
+        _sharedFilterEditor = new QueryFilterEditor();
+        _sharedFilterEditor.ConfigureSort();
+        _sharedFilterEditor.Load(query, query.MediaScope, ViewModel.Library?.Id, LibraryFilterOptions());
+        FiltersSheet.ConfigureFilterHeader(_sharedFilterEditor.DetachModeSelector(), "Refine your catalog results");
+        SizeLibraryFilterSheet();
+        _sharedFilterEditor.SortChanged += () =>
         {
-            ColumnDefinitions =
+            if (query.Sort is not {} sort) return;
+            ViewModel.SelectedSort = sort.Field; ViewModel.SelectedOrder = sort.Order;
+            _suppressFilterEvents = true;
+            try
             {
-                new ColumnDefinition { Width = GridLength.Auto },
-                new ColumnDefinition { Width = new GridLength(96) },
-                new ColumnDefinition(),
-                new ColumnDefinition { Width = new GridLength(36) },
-            },
-            ColumnSpacing = 8,
-        };
-        header.Children.Add(new TextBlock
-        {
-            Text = "Match",
-            FontSize = 12,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        var match = new ComboBox { MinWidth = 88 };
-        foreach (var (label, value) in new[] { ("ALL", "all"), ("ANY", "any") })
-        {
-            var item = new ComboBoxItem { Content = label, Tag = value };
-            match.Items.Add(item);
-            if (group.Match == value) match.SelectedItem = item;
-        }
-        match.SelectionChanged += (_, _) =>
-        {
-            if (match.SelectedItem is ComboBoxItem { Tag: string value })
-            {
-                group.Match = value == "any" ? "any" : "all";
-                QueueAdvancedRuleApply();
+                if (SortComboBox.ItemsSource is IEnumerable<SortOption> sorts) SortComboBox.SelectedItem = sorts.FirstOrDefault(option => option.Value == sort.Field);
+                _orderAsc = sort.Order == "asc"; UpdateOrderButton();
             }
+            finally { _suppressFilterEvents = false; }
         };
-        Grid.SetColumn(match, 1);
-        header.Children.Add(match);
-        var rulesLabel = new TextBlock
+        _sharedFilterEditor.Changed += () =>
         {
-            Text = "rules",
-            FontSize = 12,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"],
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        Grid.SetColumn(rulesLabel, 2);
-        header.Children.Add(rulesLabel);
-        var removeGroup = new Button
-        {
-            Width = 36,
-            Height = 36,
-            Padding = new Thickness(0),
-            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            Content = new FontIcon { Glyph = "\uE74D", FontSize = 12 },
-        };
-        removeGroup.Click += (_, _) =>
-        {
-            ViewModel.AdvancedGroups.Remove(group);
-            if (ViewModel.AdvancedGroups.Count == 0)
-                ViewModel.AdvancedGroups.Add(LibraryViewModel.CreateEmptyAdvancedGroup());
-            BuildAdvancedRulesPanel();
+            StoreLibraryRuleDraft(query);
+            var populated = QueryEditing.Clone(query); populated.Groups = QueryEditing.PopulatedGroups(query);
+            GuidedFilterModeButton.IsEnabled = GuidedQuerySupport.CanEdit(populated, query.MediaScope);
             QueueAdvancedRuleApply();
         };
-        Grid.SetColumn(removeGroup, 3);
-        header.Children.Add(removeGroup);
-        content.Children.Add(header);
-
-        foreach (var rule in group.Rules)
-            content.Children.Add(BuildAdvancedRuleRow(group, rule));
-
-        var addRule = new Button
-        {
-            Content = "Add Rule",
-            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            HorizontalAlignment = HorizontalAlignment.Left,
-        };
-        addRule.Click += (_, _) =>
-        {
-            group.Rules.Add(new QueryRule { Field = "genre", Op = "is", Value = "" });
-            BuildAdvancedRulesPanel();
-        };
-        content.Children.Add(addRule);
-
-        return new Border
-        {
-            Padding = new Thickness(12),
-            CornerRadius = new CornerRadius(10),
-            BorderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["BorderBrush"],
-            BorderThickness = new Thickness(1),
-            Child = content,
-        };
+        AdvancedRulesHost.Children.Add(_sharedFilterEditor);
+        var guided = QueryEditing.Clone(query); guided.Groups = QueryEditing.PopulatedGroups(query);
+        GuidedFilterModeButton.IsEnabled = GuidedQuerySupport.CanEdit(guided, query.MediaScope);
     }
 
-    private FrameworkElement BuildAdvancedRuleRow(EditableQueryGroup group, QueryRule rule)
+    private void StoreLibraryRuleDraft(QueryDefinition query)
     {
-        var panel = new StackPanel { Spacing = 8 };
-        var header = new Grid { ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition { Width = new GridLength(116) }, new ColumnDefinition { Width = new GridLength(36) } }, ColumnSpacing = 8 };
-        var field = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-        foreach (var (label, value) in AdvancedRuleFields)
+        ViewModel.AdvancedRulesMatch = query.Match; ViewModel.AdvancedGroups.Clear();
+        foreach (var group in query.Groups)
         {
-            var item = new ComboBoxItem { Content = label, Tag = value };
-            field.Items.Add(item);
-            if (value == rule.Field) field.SelectedItem = item;
+            var editable = new EditableQueryGroup { Match = group.Match, AdditionalProperties = group.AdditionalProperties };
+            foreach (var rule in group.Rules) editable.Rules.Add(rule);
+            ViewModel.AdvancedGroups.Add(editable);
         }
-        if (field.SelectedItem == null) field.SelectedIndex = 0;
-        field.SelectionChanged += (_, _) =>
-        {
-            if (field.SelectedItem is ComboBoxItem { Tag: string value })
-            {
-                rule.Field = value;
-                rule.Op = GetAdvancedOperators(value)[0].Value;
-                rule.Value = DefaultAdvancedValue(value);
-                BuildAdvancedRulesPanel();
-                QueueAdvancedRuleApply();
-            }
-        };
-
-        var op = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-        foreach (var (label, value) in GetAdvancedOperators(rule.Field))
-        {
-            var item = new ComboBoxItem { Content = label, Tag = value };
-            op.Items.Add(item);
-            if (value == rule.Op) op.SelectedItem = item;
-        }
-        if (op.SelectedItem == null) op.SelectedIndex = 0;
-        op.SelectionChanged += (_, _) =>
-        {
-            if (op.SelectedItem is ComboBoxItem { Tag: string value })
-            {
-                rule.Op = value;
-                rule.Value = value == "between" ? new object[] { "", "" } : DefaultAdvancedValue(rule.Field);
-                BuildAdvancedRulesPanel();
-                QueueAdvancedRuleApply();
-            }
-        };
-
-        var remove = new Button
-        {
-            Width = 36,
-            Height = 36,
-            Padding = new Thickness(0),
-            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            Content = new FontIcon { Glyph = "\uE74D", FontSize = 12 },
-        };
-        remove.Click += (_, _) =>
-        {
-            group.Rules.Remove(rule);
-            if (group.Rules.Count == 0)
-                ViewModel.AdvancedGroups.Remove(group);
-            if (ViewModel.AdvancedGroups.Count == 0)
-                ViewModel.AdvancedGroups.Add(LibraryViewModel.CreateEmptyAdvancedGroup());
-            BuildAdvancedRulesPanel();
-            QueueAdvancedRuleApply();
-        };
-        Grid.SetColumn(op, 1);
-        Grid.SetColumn(remove, 2);
-        header.Children.Add(field);
-        header.Children.Add(op);
-        header.Children.Add(remove);
-
-        panel.Children.Add(header);
-        panel.Children.Add(BuildAdvancedValueEditor(rule));
-        return panel;
     }
 
+    private void SizeLibraryFilterSheet()
+    {
+        if (ActualWidth <= 0) return;
+        var viewportWidth = WebUiViewport.Width(this, ActualWidth);
+        FiltersSheet.PreferredWidth = Math.Min(ActualWidth,
+            Math.Min(viewportWidth * .75, viewportWidth >= 640 ? 448 : double.PositiveInfinity));
+    }
+
+    private void RefreshSharedLibraryScope()
+    {
+        if (!ViewModel.UseAdvancedRules) return;
+        var query = BuildLibraryRuleDraft(); QueryEditing.SetMediaScope(query, query.MediaScope);
+        StoreLibraryRuleDraft(query); BuildAdvancedRulesPanel();
+    }
     private void AddAdvancedGroup_Click(object sender, RoutedEventArgs e)
     {
         ViewModel.AdvancedGroups.Add(LibraryViewModel.CreateEmptyAdvancedGroup());
@@ -1511,125 +1390,12 @@ public sealed partial class LibraryPage : Page,
 
     private async Task ApplyAdvancedRulesAsync()
     {
+        if (_sharedFilterEditor?.IsValid == false) return;
         await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
         await FillViewportAsync();
         UpdateActiveFilterBadges();
         SaveViewState(_currentTab);
     }
-
-    private static object CoerceAdvancedValue(string field, string value)
-    {
-        var trimmed = value.Trim();
-        if (field is "watched" or "favorited" or "in_watchlist" or "in_progress" or "hdr" or "dolby_vision")
-            return bool.TryParse(trimmed, out var boolean) ? boolean : trimmed;
-        if (field is "year" or "runtime" or "rating_imdb" or "bitrate" &&
-            double.TryParse(trimmed, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var number))
-            return number;
-        return trimmed;
-    }
-
-    private FrameworkElement BuildAdvancedValueEditor(QueryRule rule)
-    {
-        if (rule.Op == "between")
-        {
-            var values = rule.Value is System.Collections.IEnumerable enumerable and not string
-                ? enumerable.Cast<object?>().Select(value => value?.ToString() ?? "").Take(2).ToList()
-                : [];
-            while (values.Count < 2) values.Add("");
-            var grid = new Grid
-            {
-                ColumnDefinitions = { new ColumnDefinition(), new ColumnDefinition() },
-                ColumnSpacing = 8,
-            };
-            for (var index = 0; index < 2; index++)
-            {
-                var capturedIndex = index;
-                var box = new TextBox
-                {
-                    PlaceholderText = index == 0 ? "From" : "To",
-                    Text = values[index],
-                };
-                box.TextChanged += (_, _) =>
-                {
-                    values[capturedIndex] = box.Text;
-                    rule.Value = values.Select(value => CoerceAdvancedValue(rule.Field, value)).ToArray();
-                    QueueAdvancedRuleApply();
-                };
-                Grid.SetColumn(box, index);
-                grid.Children.Add(box);
-            }
-            return grid;
-        }
-
-        if (IsAdvancedBooleanField(rule.Field))
-        {
-            var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-            foreach (var (label, value) in new[] { ("True", true), ("False", false) })
-            {
-                var item = new ComboBoxItem { Content = label, Tag = value };
-                combo.Items.Add(item);
-                if (rule.Value is bool current && current == value) combo.SelectedItem = item;
-            }
-            if (combo.SelectedItem == null) combo.SelectedIndex = 0;
-            combo.SelectionChanged += (_, _) =>
-            {
-                if (combo.SelectedItem is ComboBoxItem { Tag: bool value })
-                {
-                    rule.Value = value;
-                    QueueAdvancedRuleApply();
-                }
-            };
-            return combo;
-        }
-
-        var selectValues = GetAdvancedSelectValues(rule.Field);
-        if (selectValues.Count > 0)
-        {
-            var combo = new ComboBox { HorizontalAlignment = HorizontalAlignment.Stretch };
-            foreach (var (label, value) in selectValues)
-            {
-                var item = new ComboBoxItem { Content = label, Tag = value };
-                combo.Items.Add(item);
-                if (string.Equals(rule.Value?.ToString(), value, StringComparison.OrdinalIgnoreCase)) combo.SelectedItem = item;
-            }
-            if (combo.SelectedItem == null) combo.SelectedIndex = 0;
-            combo.SelectionChanged += (_, _) =>
-            {
-                if (combo.SelectedItem is ComboBoxItem { Tag: string value })
-                {
-                    rule.Value = value;
-                    QueueAdvancedRuleApply();
-                }
-            };
-            return combo;
-        }
-
-        var valueBox = new TextBox
-        {
-            PlaceholderText = rule.Op == "in_last" ? "e.g. 30d, 2w" : "Value...",
-            Text = rule.Value?.ToString() ?? "",
-        };
-        valueBox.TextChanged += (_, _) =>
-        {
-            rule.Value = CoerceAdvancedValue(rule.Field, valueBox.Text);
-            QueueAdvancedRuleApply();
-        };
-        return valueBox;
-    }
-
-    private static object DefaultAdvancedValue(string field) => IsAdvancedBooleanField(field) ? false : "";
-
-    private static bool IsAdvancedBooleanField(string field) =>
-        field is "watched" or "favorited" or "in_watchlist" or "in_progress" or "hdr" or "dolby_vision";
-
-    private static IReadOnlyList<(string Label, string Value)> GetAdvancedSelectValues(string field) => field switch
-    {
-        "type" => [("Movie", "movie"), ("Series", "series"), ("Episode", "episode"), ("Audiobook", "audiobook"), ("Ebook", "ebook"), ("Manga", "manga")],
-        "resolution" => [("4K (2160p)", "2160p"), ("1080p", "1080p"), ("720p", "720p"), ("SD", "480p")],
-        "status" => [("Matched", "matched"), ("Unmatched", "unmatched"), ("Ambiguous", "ambiguous")],
-        "content_rating" => [("G", "G"), ("PG", "PG"), ("PG-13", "PG-13"), ("R", "R"), ("TV-Y", "TV-Y"), ("TV-G", "TV-G"), ("TV-PG", "TV-PG"), ("TV-14", "TV-14"), ("TV-MA", "TV-MA"), ("NR", "NR")],
-        _ => [],
-    };
 
     private async void MediaTypeComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
@@ -1637,6 +1403,7 @@ public sealed partial class LibraryPage : Page,
         if (MediaTypeComboBox.SelectedItem is ComboBoxItem item && item.Tag is string type)
         {
             ViewModel.SelectedType = string.IsNullOrEmpty(type) ? null : type;
+            RefreshSharedLibraryScope();
             _suppressFilterEvents = true;
             if (BrowseTypeComboBox.ItemsSource is IEnumerable<FilterOption> browseOptions)
                 BrowseTypeComboBox.SelectedItem = browseOptions.FirstOrDefault(option => option.Value == type)
@@ -1968,6 +1735,7 @@ public sealed partial class LibraryPage : Page,
             return;
 
         ViewModel.SelectedType = string.IsNullOrEmpty(option.Value) ? null : option.Value;
+        RefreshSharedLibraryScope();
         _suppressFilterEvents = true;
         MediaTypeComboBox.SelectedIndex = IndexOfMediaType(ViewModel.SelectedType);
         if (ViewModel.Library is { } library)
@@ -2633,17 +2401,18 @@ public sealed partial class LibraryPage : Page,
         var availableWidth = Math.Max(
             120,
             GetLibraryViewportWidth());
+        var breakpointWidth = WebUiViewport.Width(this, ActualWidth);
         var columns = _uiCustomizationService.CardPresentation.PosterSize switch
         {
-            "compact" => availableWidth switch
+            "compact" => breakpointWidth switch
             {
                 >= 1280 => 10, >= 1024 => 8, >= 768 => 6, >= 640 => 5, _ => 3,
             },
-            "large" => availableWidth switch
+            "large" => breakpointWidth switch
             {
                 >= 1280 => 6, >= 1024 => 5, >= 768 => 4, >= 640 => 3, _ => 2,
             },
-            _ => availableWidth switch
+            _ => breakpointWidth switch
             {
                 >= 1280 => 8, >= 1024 => 7, >= 768 => 5, >= 640 => 4, _ => 3,
             },
@@ -2972,6 +2741,7 @@ public sealed partial class LibraryPage : Page,
         {
             var catalogApi = App.Services.GetRequiredService<CatalogApi>();
             var libraryId = ViewModel.Library?.Id ?? 0;
+            RecommendedHeroCarousel.LibraryId = RecommendedNowListeningHero.LibraryId = libraryId;
             var layoutResponse = await catalogApi.GetLibraryLayoutAsync(libraryId, cancellationToken);
             if (version != _recommendationsVersion || _currentTab != "Recommended")
                 return;
@@ -3235,6 +3005,7 @@ public sealed partial class LibraryPage : Page,
         bool failed,
         int libraryId)
     {
+        RecommendedHeroCarousel.LibraryId = RecommendedNowListeningHero.LibraryId = libraryId;
         if (failed)
             return;
 
@@ -3727,24 +3498,14 @@ public sealed partial class LibraryPage : Page,
 
     private double GetCollectionCardWidth()
     {
-        var viewportWidth = Math.Max(360, CollectionsPanel.ActualWidth);
-        var contentWidth = Math.Min(1320, Math.Max(300, viewportWidth - 80));
-        var columns = _uiCustomizationService.CardPresentation.PosterSize switch
-        {
-            "compact" => contentWidth switch
-            {
-                >= 1280 => 10, >= 1024 => 8, >= 768 => 6, >= 640 => 5, _ => 3,
-            },
-            "large" => contentWidth switch
-            {
-                >= 1280 => 6, >= 1024 => 5, >= 768 => 4, >= 640 => 3, _ => 2,
-            },
-            _ => contentWidth switch
-            {
-                >= 1280 => 8, >= 1024 => 7, >= 768 => 5, >= 640 => 4, _ => 3,
-            },
-        };
-        return Math.Max(96, (contentWidth - (columns - 1) * (_uiCustomizationService.CardPresentation.PosterSize == "large" ? 16 : 12)) / columns);
+        var viewportWidth = WebUiViewport.Width(this, ActualWidth);
+        var contentWidth = Math.Min(1320, Math.Max(0, CollectionsPanel.ActualWidth - CollectionsPanel.Padding.Left - CollectionsPanel.Padding.Right));
+        var columns = _uiCustomizationService.GetPosterColumnCount(viewportWidth);
+        var gap = _uiCustomizationService.CardPresentation.PosterSize == "large" ? 16 : 12;
+        // Raster rounding must leave room for all columns instead of wrapping
+        // the last card when a fractional width rounds upward in WinUI.
+        var scale = XamlRoot?.RasterizationScale ?? 1;
+        return Math.Floor(Math.Max(1, (contentWidth - (columns - 1) * gap) / columns) * scale) / scale;
     }
 
     private void CollectionsPanel_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -3992,25 +3753,18 @@ public sealed partial class LibraryPage : Page,
 
         if (ViewModel.UseAdvancedRules)
         {
-            foreach (var rule in ViewModel.AdvancedGroups
-                         .SelectMany(group => group.Rules)
-                         .Where(rule => !string.IsNullOrWhiteSpace(rule.Value?.ToString())).ToList())
-            {
-                var captured = rule;
-                filters.Add((captured.Field.Replace('_', ' '),
-                    $"{captured.Op.Replace('_', ' ')} {FormatAdvancedRuleValue(captured.Value)}",
-                    () =>
-                    {
-                        var owner = ViewModel.AdvancedGroups.FirstOrDefault(group => group.Rules.Contains(captured));
-                        owner?.Rules.Remove(captured);
-                        if (owner is { Rules.Count: 0 }) ViewModel.AdvancedGroups.Remove(owner);
-                        if (ViewModel.AdvancedGroups.Count == 0)
-                            ViewModel.AdvancedGroups.Add(LibraryViewModel.CreateEmptyAdvancedGroup());
-                        BuildAdvancedRulesPanel();
-                    }));
-            }
+            var query = BuildLibraryRuleDraft(); query.Groups = QueryEditing.PopulatedGroups(query);
+            foreach (var badge in CatalogFilterBadges.Create(query, query.MediaScope))
+                FilterBadgesPanel.Children.Add(CatalogFilterBadgeView.Build(badge.Label, async () =>
+                {
+                    badge.Remove(); StoreLibraryRuleDraft(query); BuildAdvancedRulesPanel(); await ApplyAdvancedRulesAsync();
+                }));
+            var count = CatalogFilterBadges.ActiveCount(query, query.MediaScope);
+            ActiveFiltersBar.Visibility = FilterBadgesPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            FilterCountText.Text = count.ToString(); FilterCountBadge.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            ClearAllFiltersButton.Visibility = count > 1 ? Visibility.Visible : Visibility.Collapsed;
+            return;
         }
-
         if (!ViewModel.UseAdvancedRules)
         {
             if (!string.IsNullOrEmpty(ViewModel.SelectedType))
@@ -4178,7 +3932,6 @@ public sealed partial class LibraryPage : Page,
         if (ViewModel.UseAdvancedRules)
         {
             ViewModel.AdvancedGroups.Clear();
-            ViewModel.AdvancedGroups.Add(LibraryViewModel.CreateEmptyAdvancedGroup());
             ViewModel.AdvancedRulesMatch = "all";
             AdvancedMatchComboBox.SelectedIndex = 0;
             BuildAdvancedRulesPanel();
@@ -4240,6 +3993,7 @@ public sealed partial class LibraryPage : Page,
         HdrToggle.IsChecked = false;
         DolbyVisionToggle.IsChecked = false;
         UpdateMultiSelectLabels();
+        if (ViewModel.UseAdvancedRules) BuildAdvancedRulesPanel();
         _suppressFilterEvents = false;
 
         ActiveFiltersBar.Visibility = Visibility.Collapsed;

@@ -41,4 +41,12 @@ public static class DateTimeDisplay
 
     public static string FormatDateTime(DateTimeOffset value, bool seconds = false)
         => $"{FormatDate(value)} {FormatTime(value, seconds)}";
+
+    public static string FormatShortDateTime(DateTimeOffset value)
+    {
+        var preference = App.Services.GetRequiredService<SettingsService>().Load().UiDateFormat;
+        var culture = preference switch { "DD/MM/YYYY" => CultureInfo.GetCultureInfo("en-GB"), "MM/DD/YYYY" => CultureInfo.GetCultureInfo("en-US"), _ => CultureInfo.CurrentCulture };
+        var day = value.ToLocalTime().ToString(preference == "DD/MM/YYYY" ? "d MMM" : "MMM d", culture);
+        return $"{day}, {FormatTime(value)}";
+    }
 }

@@ -11,16 +11,27 @@ public sealed class CarouselRail : Grid
 {
     private readonly ScrollViewer _scroll;
     private readonly Button _previous, _next;
+    private readonly bool _webUiEdges;
+    private readonly Border? _previousFade, _nextFade;
     private bool _hovered, _focused, _dragging;
     private uint? _pointer;
     private double _startX, _startOffset;
-    public CarouselRail(ScrollViewer scroll)
+    public CarouselRail(ScrollViewer scroll, bool webUiEdges = false)
     {
+        _webUiEdges = webUiEdges;
         _scroll = scroll; scroll.HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden;
         scroll.VerticalScrollBarVisibility = ScrollBarVisibility.Disabled;
         Children.Add(scroll);
-        _previous = Arrow("back", "Previous titles", HorizontalAlignment.Left, -1);
-        _next = Arrow("chevron-right", "Next titles", HorizontalAlignment.Right, 1);
+        if (webUiEdges)
+        {
+            scroll.IsTabStop = true;
+            AutomationProperties.SetName(scroll, "Media carousel");
+            _previousFade = Fade(HorizontalAlignment.Left);
+            _nextFade = Fade(HorizontalAlignment.Right);
+            Children.Add(_previousFade); Children.Add(_nextFade);
+        }
+        _previous = Arrow("back", webUiEdges ? "Scroll left" : "Previous titles", HorizontalAlignment.Left, -1);
+        _next = Arrow("chevron-right", webUiEdges ? "Scroll right" : "Next titles", HorizontalAlignment.Right, 1);
         Children.Add(_previous); Children.Add(_next);
         PointerEntered += (_, _) => { _hovered = true; UpdateArrows(); };
         PointerExited += (_, _) => { _hovered = false; UpdateArrows(); };
@@ -59,13 +70,56 @@ public sealed class CarouselRail : Grid
     {
         var button = new Button { Content = WebUiIcon.Create(icon, 18), Width = 32, Height = 32, MinHeight = 0, Padding = new Thickness(6), CornerRadius = new CornerRadius(16),
             HorizontalAlignment = alignment, VerticalAlignment = VerticalAlignment.Center, Background = (Brush)Application.Current.Resources["AppBackgroundBrush"], BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], BorderThickness = new Thickness(1), Opacity = 0 };
+        if (_webUiEdges)
+        {
+            button.Width = button.Height = 44; button.MinWidth = button.MinHeight = 0;
+            button.Padding = new Thickness(0); button.CornerRadius = new CornerRadius(0);
+            button.VerticalAlignment = VerticalAlignment.Center; button.BorderThickness = new Thickness(0);
+            button.Background = EdgeGradient(alignment); button.Content = WebUiIcon.Create(icon, 24);
+        }
         AutomationProperties.SetName(button, name); button.Click += (_, _) => Move(direction); return button;
     }
-    private void Move(int direction) => _scroll.ChangeView(Math.Clamp(_scroll.HorizontalOffset + direction * Math.Max(240, _scroll.ViewportWidth * .8), 0, _scroll.ScrollableWidth), null, null);
+    private Border Fade(HorizontalAlignment alignment) => new()
+    {
+        Width = 40, HorizontalAlignment = alignment, IsHitTestVisible = false,
+        Background = EdgeGradient(alignment), Visibility = Visibility.Collapsed,
+    };
+    private static Brush EdgeGradient(HorizontalAlignment alignment)
+    {
+        var color = ((SolidColorBrush)Application.Current.Resources["AppBackgroundBrush"]).Color;
+        return new LinearGradientBrush
+        {
+            StartPoint = new(alignment == HorizontalAlignment.Left ? 0 : 1, .5),
+            EndPoint = new(alignment == HorizontalAlignment.Left ? 1 : 0, .5),
+            GradientStops = { new() { Color = Microsoft.UI.ColorHelper.FromArgb(204, color.R, color.G, color.B), Offset = 0 }, new() { Color = Microsoft.UI.ColorHelper.FromArgb(0, color.R, color.G, color.B), Offset = 1 } },
+        };
+    }
+    private void Move(int direction)
+    {
+        var distance = Math.Max(240, _scroll.ViewportWidth * .8);
+        if (_webUiEdges && _scroll.Content is StackPanel panel && panel.Children.FirstOrDefault() is FrameworkElement card)
+        {
+            // Match slidesToScroll:auto: page by the number of complete cards
+            // in the viewport, preserving aligned card starts at each edge.
+            var step = card.ActualWidth + panel.Spacing;
+            if (step > 0)
+                distance = Math.Max(1, Math.Floor((_scroll.ViewportWidth - panel.Margin.Left - panel.Margin.Right + panel.Spacing) / step)) * step;
+        }
+        _scroll.ChangeView(Math.Clamp(_scroll.HorizontalOffset + direction * distance, 0, _scroll.ScrollableWidth), null, null);
+    }
     private void UpdateArrows()
     {
         _previous.IsEnabled = _scroll.HorizontalOffset > 1;
         _next.IsEnabled = _scroll.HorizontalOffset < _scroll.ScrollableWidth - 1;
+        if (_webUiEdges)
+        {
+            foreach (var button in new[] { _previous, _next })
+            {
+                button.Visibility = button.IsEnabled ? Visibility.Visible : Visibility.Collapsed;
+            }
+            _previousFade!.Visibility = _previous.IsEnabled ? Visibility.Visible : Visibility.Collapsed;
+            _nextFade!.Visibility = _next.IsEnabled ? Visibility.Visible : Visibility.Collapsed;
+        }
         _previous.Opacity = (_hovered || _focused) && _previous.IsEnabled ? 1 : 0;
         _next.Opacity = (_hovered || _focused) && _next.IsEnabled ? 1 : 0;
     }

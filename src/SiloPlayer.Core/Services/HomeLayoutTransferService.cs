@@ -4,7 +4,7 @@ using SiloPlayer.Core.Models.Home;
 
 namespace SiloPlayer.Core.Services;
 
-public sealed class HomeLayoutTransferService(SettingsApi settings, CatalogApi catalog, CollectionsApi collections, AuthApi account, AuthService auth)
+public sealed class HomeLayoutTransferService(SettingsApi settings, CatalogApi catalog, CollectionsApi collections, AuthApi account)
 {
     private ApiRequestContext? _previewContext;
     private HomeLayoutPlan? _previewPlan;
@@ -37,14 +37,13 @@ public sealed class HomeLayoutTransferService(SettingsApi settings, CatalogApi c
         var identity = await settings.GetServerIdentityAsync(ct); Check(context, ct);
         var libraries = await catalog.GetLibrariesAsync(ct); Check(context, ct);
         var recipes = await settings.GetRecipeCatalogAsync(ct); Check(context, ct);
-        var flags = await settings.GetSectionFlagsAsync(ct); Check(context, ct);
         var personal = await collections.GetCollectionsAsync(ct); Check(context, ct);
         // Profile references are queried through the same selected server/client authority.
         var profiles = await account.GetProfilesAsync(ct); Check(context, ct);
         var target = new HomeLayoutTarget(identity.ServerId,
             libraries.Select(l => new HomeLayoutLibrary { Id = l.Id, Name = l.Name, Type = l.Type }).ToArray(),
             recipes.Categories.Values.SelectMany(r => r).GroupBy(r => r.Type).ToDictionary(g => g.Key, g => g.First().AdminOnly),
-            auth.CurrentUser?.Role == "admin" || flags.AllowProfileCustomSections,
+            true,
             personal.Collections.Select(c => c.Id).ToHashSet(), profiles.Profiles.Select(p => p.Id).ToHashSet());
         var plan = HomeLayoutTransfer.Plan(file, target); _previewContext = context; _previewPlan = plan; return plan;
     }

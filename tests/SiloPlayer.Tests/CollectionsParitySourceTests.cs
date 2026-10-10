@@ -145,12 +145,15 @@ public sealed class CollectionsParitySourceTests
         Assert.Contains("Browse Templates", xaml);
         Assert.Contains("Start from a template", xaml);
 
-        Assert.Contains("ShowCollectionTemplateGalleryAsync", page);
-        Assert.Contains("BuildTemplateGalleryDialog", page);
-        Assert.Contains("BuildTemplateConfigPanel", page);
-        Assert.Contains("BuildMDBListBrowser", page);
-        Assert.Contains("ImportTemplateAsync", page);
-
+        var synced = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Views", "CollectionEditorPage.Synced.cs"));
+        Assert.Contains("OpenNewCollectionPickerAsync", page);
+        Assert.Contains("NewCollectionDialog", page);
+        Assert.Contains("new CollectionEditorNavigationArgs(\"smart\")", page);
+        Assert.Contains("new CollectionEditorNavigationArgs(\"synced\")", page);
+        Assert.DoesNotContain("ShowCollectionTemplateGalleryAsync", page);
+        Assert.Contains("ConfigureSyncedCreationAsync", synced);
+        Assert.Contains("CollectionPickRow.Create", synced);
+        Assert.Contains("ImportTemplateAsync", synced);
         Assert.Contains("TemplateGroups", vm);
         Assert.Contains("TemplateImportDraft", vm);
         Assert.Contains("LoadTemplateFlowAsync", vm);
@@ -174,7 +177,7 @@ public sealed class CollectionsParitySourceTests
         Assert.True(File.Exists(wizardViewModel));
         Assert.Contains("SmartCollectionWizardViewModel", app);
         Assert.Contains("SmartCollectionWizardPage", documentTitle);
-        Assert.Contains("New Collection", collectionsXaml);
+        Assert.Contains("New collection", collectionsXaml);
         Assert.DoesNotContain("Smart Wizard", collectionsXaml);
         Assert.Contains("Navigate<SmartCollectionWizardPage>", collectionsPage);
         Assert.DoesNotContain("IsAdmin", File.ReadAllText(wizardViewModel));

@@ -51,6 +51,25 @@ public sealed class MediaMaintenanceApiTests
         Assert.Equal("329865", json.RootElement.GetProperty("provider_ids").GetProperty("tmdb").GetString());
     }
 
+    [Fact]
+    public async Task ApplyMatchRetainsReplacementIdentityFromCurrentServer()
+    {
+        var handler = new RecordingHandler("{\"content_id\":\"series-tvdb-78107\",\"updated\":true}");
+        Task task = CreateApi(handler).ApplyMatchAsync("local-abc", new ItemMatchApplyRequest()); await task;
+        var result = task.GetType().GetProperty("Result")?.GetValue(task);
+        Assert.Equal("series-tvdb-78107", result?.GetType().GetProperty("ContentId")?.GetValue(result));
+    }
+
+    [Fact]
+    public async Task ApplyMatchDoesNotRefreshAndReplayARejectedMutation()
+    {
+        using var handler = new RecordingHandler("{\"error\":\"unauthorized\",\"message\":\"expired\"}", HttpStatusCode.Unauthorized);
+        using var http = new HttpClient(handler); var client = new SiloApiClient(http); client.SetBaseUrl("https://example.test"); client.SetAccessToken("fixture-only");
+        var refreshes = 0; client.SetTokenRefresher(_ => { refreshes++; return Task.FromResult(true); });
+        await Assert.ThrowsAsync<ApiException>(() => new MediaMaintenanceApi(client).ApplyMatchAsync("local-abc", new()));
+        Assert.Equal(0, refreshes); Assert.Equal(1, handler.RequestCount);
+    }
+
     [Theory]
     [InlineData("quick")]
     [InlineData("complete")]

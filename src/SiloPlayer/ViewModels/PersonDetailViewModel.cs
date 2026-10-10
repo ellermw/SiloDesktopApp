@@ -19,6 +19,7 @@ public partial class PersonDetailViewModel : ObservableObject
     private CancellationTokenSource? _refreshCts;
     private CancellationTokenSource? _refreshRequestCts;
     private string? _autoRefreshRequestedPersonId;
+    private bool _filmographyPagingBlocked;
 
     public PersonDetailViewModel(PeopleApi peopleApi, CatalogApi catalogApi, SiloApiClient apiClient)
     {
@@ -46,16 +47,20 @@ public partial class PersonDetailViewModel : ObservableObject
     private bool _isLoadingMoreFilmography;
 
     [ObservableProperty]
+    private bool _isLoadingFilmography;
+
+    [ObservableProperty]
     private bool _isRefreshing;
 
     public ObservableCollection<MediaItem> Filmography { get; } = [];
     public bool ActingAdmin { get; set; }
+    public Func<DateTime, string> FormatPersonDate { get; set; } = date => date.ToString("MMM d, yyyy");
 
     /// <summary>Page size for filmography pagination (matches webui 60).</summary>
     private const int FilmographyPageSize = 60;
 
     /// <summary>Whether there are more filmography items to fetch.</summary>
-    public bool FilmographyHasMore => Filmography.Count < FilmographyTotal;
+    public bool FilmographyHasMore => !_filmographyPagingBlocked && Filmography.Count < FilmographyTotal;
 
     public string AgeDisplay
     {
@@ -88,7 +93,7 @@ public partial class PersonDetailViewModel : ObservableObject
             if (!string.IsNullOrEmpty(Person.BirthDate))
             {
                 if (DateTime.TryParse(Person.BirthDate, out var birth))
-                    parts.Add($"Born {birth:MMMM d, yyyy}");
+                    parts.Add($"Born {FormatPersonDate(birth)}");
                 else
                     parts.Add($"Born {Person.BirthDate}");
             }
@@ -97,7 +102,7 @@ public partial class PersonDetailViewModel : ObservableObject
             {
                 var age = ComputeAge(Person.BirthDate, Person.DeathDate);
                 if (DateTime.TryParse(Person.DeathDate, out var death))
-                    parts.Add($"Died {death:MMMM d, yyyy}{(age > 0 ? $" (age {age})" : "")}");
+                    parts.Add($"Died {FormatPersonDate(death)}{(age > 0 ? $" (age {age})" : "")}");
                 else
                     parts.Add($"Died {Person.DeathDate}");
             }
@@ -112,7 +117,7 @@ public partial class PersonDetailViewModel : ObservableObject
         {
             if (Person == null || string.IsNullOrEmpty(Person.BirthDate)) return "";
             return DateTime.TryParse(Person.BirthDate, out var birth)
-                ? $"Born {birth:MMMM d, yyyy}"
+                ? $"Born {FormatPersonDate(birth)}"
                 : $"Born {Person.BirthDate}";
         }
     }
@@ -124,7 +129,7 @@ public partial class PersonDetailViewModel : ObservableObject
             if (Person == null || string.IsNullOrEmpty(Person.DeathDate)) return "";
             var age = ComputeAge(Person.BirthDate, Person.DeathDate);
             var label = DateTime.TryParse(Person.DeathDate, out var death)
-                ? $"Died {death:MMMM d, yyyy}"
+                ? $"Died {FormatPersonDate(death)}"
                 : $"Died {Person.DeathDate}";
             return age > 0 ? $"{label} (age {age})" : label;
         }
@@ -156,34 +161,24 @@ public partial class PersonDetailViewModel : ObservableObject
         IsLoading = true;
         ErrorMessage = null;
         SelectedTypeFilter = "all";
-        Task<Person>? personTask = null;
-        Task<CatalogResponse>? filmographyTask = null;
-
         try
         {
-            personTask = _peopleApi.GetPersonAsync(personId, cts.Token);
-            filmographyTask = _catalogApi.GetPersonFilmographyAsync(
-                personId, null, limit: FilmographyPageSize, offset: 0, cts.Token);
-            await Task.WhenAll(personTask, filmographyTask);
+            var personTask = _peopleApi.GetPersonAsync(personId, cts.Token);
+            // Filmography owns its loading/error state independently. Its
+            // handler observes failures even if the person request fails first.
+            var filmographyTask = LoadFilmographyAsync(personId, "all");
+            var person = await personTask;
             if (!ReferenceEquals(_pageCts, cts) || !_apiClient.IsCurrentContext(context)) return;
-
-            ApplyFilmography(filmographyTask.Result);
             IsLoading = false;
-            await PublishReadPersonAsync(personTask.Result, cts.Token);
+            await PublishReadPersonAsync(person, cts.Token);
+            await filmographyTask;
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
         catch (Exception ex)
         {
             if (!ReferenceEquals(_pageCts, cts) || !_apiClient.IsCurrentContext(context)) return;
-            if (personTask?.IsCompletedSuccessfully == true)
-            {
-                // The profile-scoped catalog read has its own retry surface.
-                // Its 404 does not mean the successfully read person vanished.
-                ErrorMessage = $"Could not load filmography: {ex.Message}";
-                IsLoading = false;
-                await PublishReadPersonAsync(personTask.Result, cts.Token);
-            }
-            else if (personTask?.Exception?.Flatten().InnerExceptions.OfType<ApiException>().Any(error => error.StatusCode == 404) == true)
+            CancelFilmographyLoad();
+            if (ex is ApiException { StatusCode: 404 })
             {
                 Person = null;
                 Filmography.Clear(); FilmographyTotal = 0;
@@ -301,23 +296,27 @@ public partial class PersonDetailViewModel : ObservableObject
     private async Task LoadFilmographyAsync(string personId, string typeFilter)
     {
         var cts = new CancellationTokenSource();
+        var context = _apiClient.CaptureContext();
         var previous = Interlocked.Exchange(ref _filmographyCts, cts);
         previous?.Cancel();
         previous?.Dispose();
-        IsLoadingMoreFilmography = true;
+        IsLoadingFilmography = true;
+        _filmographyPagingBlocked = false;
+        ErrorMessage = null;
+        Filmography.Clear(); FilmographyTotal = 0;
         try
         {
             var type = typeFilter == "all" ? null : typeFilter;
             var response = await _catalogApi.GetPersonFilmographyAsync(
                 personId, type, limit: FilmographyPageSize, offset: 0, cts.Token);
-            if (ReferenceEquals(_filmographyCts, cts)) ApplyFilmography(response);
+            if (ReferenceEquals(_filmographyCts, cts) && _apiClient.IsCurrentContext(context)) ApplyFilmography(response);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
-        catch (Exception ex) { if (ReferenceEquals(_filmographyCts, cts)) ErrorMessage = ex.Message; }
+        catch (Exception ex) { if (ReferenceEquals(_filmographyCts, cts) && _apiClient.IsCurrentContext(context)) ErrorMessage = $"Could not load filmography: {ex.Message}"; }
         finally
         {
             if (ReferenceEquals(Interlocked.CompareExchange(ref _filmographyCts, null, cts), cts))
-                IsLoadingMoreFilmography = false;
+                IsLoadingFilmography = false;
             cts.Dispose();
         }
     }
@@ -330,12 +329,13 @@ public partial class PersonDetailViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadMoreFilmographyAsync()
     {
-        if (IsLoadingMoreFilmography || !FilmographyHasMore || Person == null) return;
+        if (IsLoadingFilmography || IsLoadingMoreFilmography || !FilmographyHasMore || Person == null) return;
 
         var personId = Person.Id;
         var typeFilter = SelectedTypeFilter;
         var offset = Filmography.Count;
         var cts = new CancellationTokenSource();
+        var context = _apiClient.CaptureContext();
         var previous = Interlocked.Exchange(ref _filmographyCts, cts);
         previous?.Cancel();
         previous?.Dispose();
@@ -345,14 +345,28 @@ public partial class PersonDetailViewModel : ObservableObject
             var type = typeFilter == "all" ? null : typeFilter;
             var response = await _catalogApi.GetPersonFilmographyAsync(
                 personId, type, limit: FilmographyPageSize, offset: offset, cts.Token);
-            if (!ReferenceEquals(_filmographyCts, cts)) return;
+            if (!ReferenceEquals(_filmographyCts, cts) || !_apiClient.IsCurrentContext(context)) return;
+            var ids = Filmography.Select(item => item.ContentId).ToHashSet(StringComparer.Ordinal);
             foreach (var item in response.Items)
-                Filmography.Add(item);
+                if (ids.Add(item.ContentId)) Filmography.Add(item);
             FilmographyTotal = response.Total;
+            if (Filmography.Count == offset && Filmography.Count < FilmographyTotal)
+            {
+                _filmographyPagingBlocked = true;
+                ErrorMessage = "Could not load more filmography. Reload to try again.";
+            }
             OnPropertyChanged(nameof(FilmographyHasMore));
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
-        catch (Exception ex) { if (ReferenceEquals(_filmographyCts, cts)) ErrorMessage = ex.Message; }
+        catch (Exception ex)
+        {
+            if (ReferenceEquals(_filmographyCts, cts) && _apiClient.IsCurrentContext(context))
+            {
+                _filmographyPagingBlocked = true;
+                ErrorMessage = $"Could not load more filmography: {ex.Message}";
+                OnPropertyChanged(nameof(FilmographyHasMore));
+            }
+        }
         finally
         {
             if (ReferenceEquals(Interlocked.CompareExchange(ref _filmographyCts, null, cts), cts))
@@ -379,6 +393,7 @@ public partial class PersonDetailViewModel : ObservableObject
         filmography?.Cancel();
         filmography?.Dispose();
         IsLoadingMoreFilmography = false;
+        IsLoadingFilmography = false;
     }
 
     private void ApplyFilmography(CatalogResponse response)

@@ -10,6 +10,7 @@ namespace SiloPlayer.Core.Services;
 public static class AuthorizationPolicy
 {
     public const string MetadataCuration = "metadata_curation";
+    public const string MarkerEdit = "marker_edit";
 
     public static bool IsActingAdmin(AuthService auth)
         => IsActingAdmin(
@@ -41,4 +42,6 @@ public static class AuthorizationPolicy
 
     public static bool CanCurateMetadata(AuthService auth)
         => HasPermission(auth, MetadataCuration);
+    public static bool CanEditMarkers(AuthService auth)
+        => HasPermission(auth, MarkerEdit);
 }

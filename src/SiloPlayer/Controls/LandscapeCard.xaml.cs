@@ -47,6 +47,8 @@ public sealed partial class LandscapeCard : UserControl
     public LandscapeCard()
     {
         this.InitializeComponent();
+        BackdropImage.ImageOpened += (_, _) => ArtworkFallback.Visibility = Visibility.Collapsed;
+        BackdropImage.ImageFailed += (_, _) => { BackdropImage.Source = null; BackdropImage.Opacity = 0; ArtworkFallback.Visibility = Visibility.Visible; _ = ArtworkFallback.ShowThumbhashAsync(); };
         this.Loaded += (_, _) =>
         {
             ObserveArtwork(MediaItem);
@@ -74,12 +76,15 @@ public sealed partial class LandscapeCard : UserControl
             _playbackPrefetchCts?.Dispose();
             _playbackPrefetchCts = null;
             BackdropImage.Source = null;
+            ArtworkFallback.Visibility = MediaItem == null ? Visibility.Collapsed : Visibility.Visible;
         };
     }
 
-    public void SetCardWidth(double width)
+    private double _minimumCardWidth = 180;
+    public void SetCardWidth(double width, double minimumWidth = 180)
     {
-        _cardWidth = Math.Max(UsePosterAspect ? 96 : 180, width);
+        _minimumCardWidth = minimumWidth;
+        _cardWidth = Math.Max(UsePosterAspect ? 96 : minimumWidth, width);
         Width = _cardWidth;
         RootGrid.Width = _cardWidth;
         var imageHeight = UsePosterAspect
@@ -125,7 +130,7 @@ public sealed partial class LandscapeCard : UserControl
     {
         if (d is LandscapeCard card && card.RootGrid != null)
         {
-            card.SetCardWidth(card._cardWidth);
+            card.SetCardWidth(card._cardWidth, card._minimumCardWidth);
             if (card.MediaItem != null)
                 card.UpdateContent(card.MediaItem);
         }
@@ -133,7 +138,7 @@ public sealed partial class LandscapeCard : UserControl
 
     private void UpdateContent(MediaItem item)
     {
-        SetCardWidth(_cardWidth);
+        SetCardWidth(_cardWidth, _minimumCardWidth);
         _loadCts?.Cancel();
         _loadCts = new CancellationTokenSource();
         var ct = _loadCts.Token;
@@ -198,7 +203,7 @@ public sealed partial class LandscapeCard : UserControl
             ResetTextPresentation();
             TitleText.Text = item.SeriesTitle!;
             string epLine = $"Season {item.SeasonNumber} Episode {item.EpisodeNumber}";
-            if (!string.IsNullOrEmpty(item.Title) && item.Title != item.SeriesTitle)
+            if (!string.IsNullOrEmpty(item.Title))
                 epLine += $" \u2022 {item.Title}";
             SubtitleText.Text = epLine;
             SubtitleText.Visibility = Visibility.Visible;
@@ -216,6 +221,10 @@ public sealed partial class LandscapeCard : UserControl
         if (badgeLabel != null)
         {
             BadgeText.Text = badgeLabel;
+            BadgeText.Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"];
+            var primary = ((Microsoft.UI.Xaml.Media.SolidColorBrush)BadgeText.Foreground).Color;
+            BadgePill.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(51, primary.R, primary.G, primary.B));
+            BadgePill.BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(102, primary.R, primary.G, primary.B));
             BadgePill.Visibility = Visibility.Visible;
         }
         else
@@ -259,7 +268,9 @@ public sealed partial class LandscapeCard : UserControl
         if (!overlayService.IsLoaded)
             _ = EnsureBadgesLoadedAsync(item, ct);
 
-        NoImageText.Visibility = Visibility.Visible;
+        BackdropImage.Source = null;
+        ArtworkFallback.Reset(item.Type, !UsePosterAspect && !string.IsNullOrEmpty(item.BackdropUrl) ? item.BackdropThumbhash : item.PosterThumbhash ?? item.BackdropThumbhash);
+        ArtworkFallback.Visibility = string.IsNullOrWhiteSpace(item.PosterUrl) && string.IsNullOrWhiteSpace(item.BackdropUrl) ? Visibility.Visible : Visibility.Collapsed;
         BackdropImage.Opacity = 0;
 
         _ = LoadImageAsync(item, ct);
@@ -322,6 +333,10 @@ public sealed partial class LandscapeCard : UserControl
             && item.UserState?.Played != true
             && item.PositionSeconds is > 0
             && item.DurationSeconds is > 0;
+        // Badges share the artwork's edge strip with progress. Hover actions
+        // cover them; they do not reserve a permanent empty strip.
+        var bottom = hasPartialProgress ? 16 : 8;
+        OverlayBottomLeft.Margin = OverlayBottomRight.Margin = new Thickness(8, 8, 8, bottom);
         if (!hasPartialProgress)
         {
             ProgressContainer.Visibility = Visibility.Collapsed;
@@ -401,7 +416,7 @@ public sealed partial class LandscapeCard : UserControl
             imageUrl = item.BackdropUrl;
             usesBackdrop = true;
         }
-        if (string.IsNullOrEmpty(imageUrl)) return;
+        if (string.IsNullOrEmpty(imageUrl)) { await ArtworkFallback.ShowThumbhashAsync(); return; }
 
         try
         {
@@ -422,7 +437,8 @@ public sealed partial class LandscapeCard : UserControl
             var diskPath = await imageService.GetImageDiskPathAsync(
                 item.ContentId, imageType, imageUrl, httpClient, ct);
 
-            if (ct.IsCancellationRequested || string.IsNullOrEmpty(diskPath)) return;
+            if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem)) return;
+            if (string.IsNullOrEmpty(diskPath)) { await ArtworkFallback.ShowThumbhashAsync(); return; }
 
             // Decode at 2x logical width so hi-DPI displays (and the 1.04× hover
             // scale) keep the source crisp. Logical means WinUI also multiplies
@@ -436,7 +452,6 @@ public sealed partial class LandscapeCard : UserControl
                 UriSource = new Uri(diskPath),
             };
             BackdropImage.Source = bitmapImage;
-            NoImageText.Visibility = Visibility.Collapsed;
             // Smooth fade-in matching webui transition-opacity duration-300
             var fadeIn = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
             {
@@ -456,6 +471,7 @@ public sealed partial class LandscapeCard : UserControl
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
+            if (!ct.IsCancellationRequested && ReferenceEquals(item, MediaItem)) await ArtworkFallback.ShowThumbhashAsync();
             LocalLog.AppendLine(
                 "item_detail_images.txt",
                 $"landscape_image_failed content={item.ContentId} source={item.ItemSource} " +
@@ -477,7 +493,7 @@ public sealed partial class LandscapeCard : UserControl
         // Always play the actual content_id on the card — the server resolves
         // episode → file; we don't rewrite to series_id here (that would break
         // resume for the specific episode the card represents).
-        navigationService.Navigate<ItemDetailPage>(MediaItem.ContentId);
+        navigationService.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, MediaNavigationContext.LibraryId(this)));
     }
 
     private void OnCardKeyDown(object sender, KeyRoutedEventArgs e)
@@ -491,7 +507,7 @@ public sealed partial class LandscapeCard : UserControl
         App.Services.GetRequiredService<ItemDetailPrefetchCache>()
             .Prefetch(MediaItem.ContentId);
         App.Services.GetRequiredService<NavigationService>()
-            .Navigate<ItemDetailPage>(MediaItem.ContentId);
+            .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, MediaNavigationContext.LibraryId(this)));
         e.Handled = true;
     }
 
@@ -503,7 +519,7 @@ public sealed partial class LandscapeCard : UserControl
         var nav = App.Services.GetRequiredService<NavigationService>();
         if (MediaItem.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase))
         {
-            nav.Navigate<EbookReaderPage>(new EbookReaderNavigation(MediaItem.ContentId));
+            nav.Navigate<EbookReaderPage>(new EbookReaderNavigation(MediaItem.ContentId, LibraryId: MediaNavigationContext.LibraryId(this)));
             return;
         }
 
@@ -514,11 +530,11 @@ public sealed partial class LandscapeCard : UserControl
                 string.Equals(player.ContentId, MediaItem.ContentId, StringComparison.Ordinal))
                 player.ToggleAudiobookPlayback();
             else
-                _ = player.PlayAsync(MediaItem.ContentId);
+                _ = player.PlayAsync(MediaItem.ContentId, libraryId: MediaNavigationContext.LibraryId(this));
             return;
         }
 
-        nav.Navigate<ItemDetailPage>(MediaItem.ContentId);
+        nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, MediaNavigationContext.LibraryId(this)));
     }
 
     private void OnHeadingClick(object sender, RoutedEventArgs e)
@@ -532,7 +548,7 @@ public sealed partial class LandscapeCard : UserControl
                 || MediaItem.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase));
         var contentId = headingIsSeries ? MediaItem.SeriesId! : MediaItem.ContentId;
         App.Services.GetRequiredService<ItemDetailPrefetchCache>().Prefetch(contentId);
-        nav.Navigate<ItemDetailPage>(contentId);
+        nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(contentId, MediaNavigationContext.LibraryId(this)));
     }
 
     private void OnMetadataClick(object sender, RoutedEventArgs e)
@@ -542,12 +558,12 @@ public sealed partial class LandscapeCard : UserControl
         var isMangaChapter = MediaItem.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase)
             && !string.IsNullOrWhiteSpace(MediaItem.SeriesId);
         if (isMangaChapter)
-            nav.Navigate<EbookReaderPage>(new EbookReaderNavigation(MediaItem.ContentId));
+            nav.Navigate<EbookReaderPage>(new EbookReaderNavigation(MediaItem.ContentId, LibraryId: MediaNavigationContext.LibraryId(this)));
         else
         {
             App.Services.GetRequiredService<ItemDetailPrefetchCache>()
                 .Prefetch(MediaItem.ContentId);
-            nav.Navigate<ItemDetailPage>(MediaItem.ContentId);
+            nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, MediaNavigationContext.LibraryId(this)));
         }
     }
 

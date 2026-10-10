@@ -6,6 +6,8 @@ namespace SiloPlayer.Core.Models.Playback;
 
 public class WatchDetailResponse
 {
+    [JsonIgnore] public int? PreparedLibraryId { get; set; }
+    [JsonIgnore] public int? PreparedFileId { get; set; }
     public string ContentId { get; set; } = "";
     public string Type { get; set; } = "";
     public string Title { get; set; } = "";

@@ -5,6 +5,16 @@ namespace SiloPlayer.Core.Services;
 
 public static class QueryEditing
 {
+    public static void SetMediaScope(QueryDefinition query, string? scope)
+    {
+        if (scope == "ebook" && query.MediaScope != "ebook")
+        {
+            foreach (var group in query.Groups) group.Rules.RemoveAll(rule => rule.Field == "narrator");
+            query.Groups.RemoveAll(group => group.Rules.Count == 0);
+        }
+        query.MediaScope = scope == "all" ? null : scope;
+    }
+
     // A detached draft retains unknown fields and JsonElement value types.
     public static QueryDefinition Clone(QueryDefinition? query) => query == null ? new()
         : JsonSerializer.Deserialize<QueryDefinition>(JsonSerializer.Serialize(query))!;

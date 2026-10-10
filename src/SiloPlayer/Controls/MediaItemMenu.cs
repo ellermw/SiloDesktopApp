@@ -291,7 +291,12 @@ public static class MediaItemMenu
             await dialog.ShowAsync();
             if (dialog.HasAppliedMatch)
             {
-                stateChanged?.Invoke();
+                var moved = dialog.AppliedContentId is {} target && target != item.ContentId;
+                App.Services.GetService<ItemDetailPrefetchCache>()?.Invalidate(item.ContentId);
+                var navigation = App.Services.GetService<NavigationService>();
+                if (moved && navigation?.Frame?.Content is ItemDetailPage current && current.ViewModel.Item?.ContentId == item.ContentId)
+                    navigation.NavigateReplacingCurrentEntry<ItemDetailPage>(dialog.AppliedContentId);
+                else stateChanged?.Invoke();
                 WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                     MediaSurfaceChangeKind.ItemMetadataRefreshed,
                     item.ContentId,

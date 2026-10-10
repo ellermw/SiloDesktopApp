@@ -205,6 +205,7 @@ public partial class SearchViewModel : ObservableObject
     {
         MediaScope = scope is "all" or "video" or "audiobook" ? scope : "video";
         MediaType = MediaScope == "all" ? null : MediaScope;
+        QueryEditing.SetMediaScope(AdvancedQuery, MediaType);
         _ = SaveMediaScopePreferenceAsync(MediaScope);
         if (!string.IsNullOrWhiteSpace(Query)) await SearchAsync();
     }
@@ -215,6 +216,7 @@ public partial class SearchViewModel : ObservableObject
             ? type
             : null;
         MediaType = normalized;
+        QueryEditing.SetMediaScope(AdvancedQuery, normalized);
         MediaScope = type switch
         {
             "video" => "video",

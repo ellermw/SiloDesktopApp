@@ -164,7 +164,7 @@ public sealed partial class LoginPage : Page
         catch (SiloPlayer.Core.Api.ApiException ex) when (ex.StatusCode == 401)
         {
             if (!Current()) return;
-            ViewModel.SetNavigationRequest(request with { SessionRestoreUnavailable = false });
+            ViewModel.SetNavigationRequest(request with { SessionRestoreUnavailable = false, SessionEnded = true });
             ViewModel.ErrorMessage = "Your sign-in has expired. Sign in again.";
         }
         catch (SiloPlayer.Core.Api.ApiException ex)

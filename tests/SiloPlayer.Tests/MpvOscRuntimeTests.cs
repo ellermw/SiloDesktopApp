@@ -5,6 +5,40 @@ namespace SiloPlayer.Tests;
 public sealed class MpvOscRuntimeTests
 {
     [Theory]
+    [InlineData(360)]
+    [InlineData(500)]
+    [InlineData(720)]
+    public void SubtitleSyncActionsRemainAboveTheTimelineOnShortWindows(int height)
+    {
+        var result = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            osc_test_layout()
+            state.subtitle_menu_visible = true
+            state.subtitle_ai_available = true
+            state.active_subtitle = 0
+            state.subtitle_tracks = {
+                {index=0, language='en', source='downloaded', codec='srt'},
+                {index=1, language='fr', source='external', codec='srt'},
+                {index=2, language='de', source='embedded', codec='srt'}
+            }
+            handlers['osc-set-subtitle-sync']('[{"index":0,"key":"stored-9","status":"Timing changed, but the new cues could not load. Reload to try again.","sync":true,"reset":true,"reload":true}]')
+            local actions, max_bottom, min_top = {}, 0, math.huge
+            for _, row in ipairs(state.subtitle_menu_items) do
+                actions[row.action] = true
+                max_bottom = math.max(max_bottom, row.y + row.h)
+                min_top = math.min(min_top, row.y)
+            end
+            mp.set_property('user-data/probe-result', tostring(actions.sync and actions.reset_timing and actions.sync_reload)
+                .. ':' .. tostring(min_top >= 10) .. ':' .. tostring(max_bottom < state.layout.seek_bar.y))
+            """, rawAss: true, windowWidth: 640, windowHeight: height, resultProperty: "user-data/probe-result", beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """);
+        Assert.Equal("true:true:true", result);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void AutoplayIntroPreferenceRefreshPreservesTheLiveControlsScript(bool refreshWhileSeekPending)

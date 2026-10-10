@@ -30,8 +30,16 @@ public partial class LoginViewModel : ObservableObject
     [ObservableProperty] private bool _sessionRestoreUnavailable;
     public string SessionRestoreMessage => NavigationRequest?.SessionRestoreErrorCode == "provider_unavailable"
         ? "Can't reach the sign-in provider right now." : "Can't restore your session right now.";
+    public bool ShowEndedSession => NavigationRequest is { SignedOut: true } or { SessionEnded: true };
+    public string EndedSessionTitle => NavigationRequest is { SignedOut: true } ? "You're signed out" : "Your session ended";
+    public string EndedSessionMessage => NavigationRequest is { SignedOut: true }
+        ? "Sign in again whenever you're ready." : "This sign-in expired or was signed out. Sign in again to continue.";
     public void SetNavigationRequest(LoginNavigationRequest? request)
-    { NavigationRequest = request; SessionRestoreUnavailable = request?.SessionRestoreUnavailable == true; OnPropertyChanged(nameof(SessionRestoreMessage)); }
+    {
+        NavigationRequest = request; SessionRestoreUnavailable = request?.SessionRestoreUnavailable == true;
+        OnPropertyChanged(nameof(SessionRestoreMessage)); OnPropertyChanged(nameof(ShowEndedSession));
+        OnPropertyChanged(nameof(EndedSessionTitle)); OnPropertyChanged(nameof(EndedSessionMessage));
+    }
     [ObservableProperty] private bool _providersReady;
     [ObservableProperty] private bool _showPasswordForm;
     [ObservableProperty] private bool _isOAuthPending;
@@ -418,8 +426,8 @@ public partial class LoginViewModel : ObservableObject
                 if (result.Status is "denied" or "expired" or "consumed" or "canceled")
                 {
                     var message = result.Status == "denied"
-                        ? "Approval was denied. Start over to try again."
-                        : "This code is no longer valid. Start over to generate a new one.";
+                        ? "Approval was denied. Start a new code to try again."
+                        : "This code is no longer valid. Start a new one.";
                     _deviceCompleted = true; DeviceSession = null; DeviceQrImage = null; ErrorMessage = message;
                     return;
                 }

@@ -43,6 +43,7 @@ public sealed partial class CollectionBrowsePage : Page
 
     private QueryDefinition _browseQuery = new();
     private NavArgs? _currentArgs;
+    public int? CurrentLibraryId => _currentArgs?.LibraryId;
     private readonly ObservableCollection<MediaItem> _items = [];
     private CancellationTokenSource? _loadCts;
     private string? _sort;
@@ -69,6 +70,7 @@ public sealed partial class CollectionBrowsePage : Page
         _collectionsApi = App.Services.GetRequiredService<CollectionsApi>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
+        CatalogToolbarChoices.Apply(MediaScopeCombo, SortCombo, OrderCombo);
         _sortChoices = CatalogSortChoices.Capture(SortCombo);
         RefreshSortChoices();
         PosterRepeater.ItemsSource = _items;
@@ -209,7 +211,9 @@ public sealed partial class CollectionBrowsePage : Page
         var count = _total > 0 ? _total : _items.Count;
         ItemCountText.Text = count.ToString("N0");
         ItemCountLabel.Text = count == 1 ? "RESULT" : "RESULTS";
-        CountPanel.Visibility = ActualWidth >= 720 ? Visibility.Visible : Visibility.Collapsed;
+        CollectionShuffleButton.Visibility = count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        CountPanel.Visibility = count > 0 || ActualWidth >= 720 ? Visibility.Visible : Visibility.Collapsed;
+        ItemCountText.Visibility = ItemCountLabel.Visibility = ActualWidth >= 720 ? Visibility.Visible : Visibility.Collapsed;
         LoadedCountText.Text = _hasMore
             ? $"Showing {_items.Count:N0} of {count:N0}"
             : $"{count:N0} {(count == 1 ? "item" : "items")}";
@@ -328,12 +332,18 @@ public sealed partial class CollectionBrowsePage : Page
         _mediaScope = MediaScopeCombo.SelectedItem is ComboBoxItem { Tag: string scope } && !string.IsNullOrWhiteSpace(scope)
             ? scope
             : null;
+        SiloPlayer.Core.Services.QueryEditing.SetMediaScope(_browseQuery, _mediaScope);
+        CollectionQueryFilters.Load(_browseQuery, _mediaScope, _currentArgs.LibraryId);
+        UpdateActiveFilterBadge();
         RefreshSortChoices();
         await LoadFirstPageAsync();
     }
 
     private async void FiltersButton_Click(object sender, RoutedEventArgs e)
     {
+        CollectionQueryFilters.ConfigureSort();
+        _browseQuery.Sort = new() { Field = _sort ?? "added_at", Order = _order ?? "desc" };
+        CollectionQueryFilters.Load(_browseQuery, _mediaScope, _currentArgs?.LibraryId);
         FiltersSheet.IsOpen = true;
         if (_currentArgs is not {} args) return;
         try
@@ -348,6 +358,14 @@ public sealed partial class CollectionBrowsePage : Page
     private async void ApplyFilters_Click(object sender, RoutedEventArgs e)
     {
         if (!CollectionQueryFilters.IsValid) return;
+        if (_browseQuery.Sort is {} sort && (sort.Field != (_sort ?? "added_at") || sort.Order != (_order ?? "desc")))
+        {
+            _sort = sort.Field; _order = sort.Order; _explicitSourceOrder = false;
+            _suppressSortEvents = true;
+            try { SelectComboTag(SortCombo, _sort); SelectComboTag(OrderCombo, _order); OrderCombo.IsEnabled = true; }
+            finally { _suppressSortEvents = false; }
+            await RememberCollectionSortAsync();
+        }
         FiltersSheet.IsOpen = false;
         UpdateActiveFilterBadge();
         await LoadFirstPageAsync();
@@ -402,9 +420,10 @@ public sealed partial class CollectionBrowsePage : Page
             var button = CatalogFilterBadgeView.Build(badge.Label, async () => { badge.Remove(); CollectionQueryFilters.Load(_browseQuery, _mediaScope, _currentArgs?.LibraryId); UpdateActiveFilterBadge(); await LoadFirstPageAsync(); });
             ActiveFiltersPanel.Children.Add(button);
         }
-        var activeCount = ActiveFiltersPanel.Children.Count;
+        var activeCount = SiloPlayer.Core.Services.CatalogFilterBadges.ActiveCount(_browseQuery, _mediaScope);
         ActiveFilterCountText.Text = activeCount.ToString();
-        ActiveFilterCountBadge.Visibility = ActiveFiltersPanel.Visibility = activeCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ActiveFilterCountBadge.Visibility = activeCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ActiveFiltersPanel.Visibility = ActiveFiltersPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private List<FilterBadge> BuildActiveFilterBadges()
@@ -484,7 +503,7 @@ public sealed partial class CollectionBrowsePage : Page
         CollectionToolbar.Margin = new Thickness(gutter, 0, gutter, 14);
         ContentScroll.Padding = new Thickness(gutter, 0, gutter, 24);
         LoadingSkeleton.Padding = new Thickness(gutter, 0, gutter, 24);
-        CountPanel.Visibility = !compact ? Visibility.Visible : Visibility.Collapsed;
+        UpdateCountDisplay();
         ReflowToolbar(e.NewSize.Width);
         UpdateCatalogGridLayout(e.NewSize.Width, gutter);
     }
@@ -509,8 +528,8 @@ public sealed partial class CollectionBrowsePage : Page
             return;
         }
 
-        MediaScopeCombo.MinWidth = narrow ? 132 : 150;
-        SortCombo.MinWidth = narrow ? 154 : 180;
+        MediaScopeCombo.MinWidth = 0;
+        SortCombo.MinWidth = 0;
         Grid.SetColumn(MediaScopeCombo, 0);
         Grid.SetColumn(SortCombo, 1);
         Grid.SetColumn(OrderCombo, narrow ? 0 : 2);
@@ -547,6 +566,7 @@ public sealed partial class CollectionBrowsePage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        _shuffleLaunch?.Cancel();
         _isNavigated = false;
         ++_navigationGeneration;
         _uiCustomizationService.Changed -= UICustomization_Changed;
@@ -579,6 +599,7 @@ public sealed partial class CollectionBrowsePage : Page
 
     private void ShowLoading()
     {
+        CollectionShuffleButton.Visibility = Visibility.Collapsed;
         LoadingSkeleton.Visibility = Visibility.Visible;
         ContentScroll.Visibility = Visibility.Collapsed;
         EmptyState.Visibility = Visibility.Collapsed;
@@ -603,6 +624,7 @@ public sealed partial class CollectionBrowsePage : Page
 
     private void ShowError(string message)
     {
+        CollectionShuffleButton.Visibility = Visibility.Collapsed;
         LoadingSkeleton.Visibility = Visibility.Collapsed;
         ContentScroll.Visibility = Visibility.Collapsed;
         EmptyState.Visibility = Visibility.Collapsed;

@@ -47,6 +47,7 @@ internal static class ConditionalEditorsNativeFixture
             await CaseAsync("editor narrow capture and Cancel", () => CaptureEditorsAsync(owner, wire, "narrow"));
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1100, 900)); await Task.Delay(120);
             await CaseAsync("metadata unchanged save", () => UnchangedAsync(new EditMetadataDialog(Movie()), owner, wire));
+            await CaseAsync("metadata tag entry duplicate removal and save", () => TagsAsync(owner, wire));
             await CaseAsync("person unchanged save", () => UnchangedAsync(new EditPersonDialog(Person()), owner, wire));
             await CaseAsync("metadata diff clear pending rejection retry", () => MetadataSaveAsync(owner, wire));
             await CaseAsync("person diff clear pending rejection retry", () => PersonSaveAsync(owner, wire));
@@ -55,6 +56,9 @@ internal static class ConditionalEditorsNativeFixture
             await CaseAsync("image pending tab switch keeps submitted type", () => ImageTabSwitchAsync(owner, wire));
             foreach (var translated in new[] { 0, 1, 3 })
                 await CaseAsync("translation result " + translated, () => TranslationAsync(owner, wire, translated));
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(460, 740)); await Task.Delay(120);
+            await CaseAsync("narrow translation visibility", () => TranslationVisibilityAsync(owner, wire));
+            window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1100, 900)); await Task.Delay(100);
             await CaseAsync("permission revocation metadata/person/images", () => PermissionAsync(owner, wire, auth));
             if (Failures.Count > 0) throw new InvalidOperationException("Conditional editor native failures: " + string.Join(" | ", Failures));
             Program.Log("PASS conditional editor native wide/narrow, unchanged and Cancel no-write, diff-only/null, pending/rejection retry, immediate image/lock merge and revoked permissions");
@@ -90,7 +94,18 @@ internal static class ConditionalEditorsNativeFixture
             Check(texts.Any(text => text.Text == "1 locked"), "metadata header locked count absent");
             var navigation = Field<StackPanel>(metadata, "_navigation");
             Check(navigation.Orientation == (size == "narrow" ? Orientation.Horizontal : Orientation.Vertical), "metadata navigation does not match viewport");
+            Check(navigation.Children.OfType<Button>().First().BorderThickness == (size == "narrow" ? new Thickness(0, 0, 0, 2) : new Thickness(0, 0, 2, 0)),
+                "metadata active tab has no responsive selection edge");
+            var tabs = navigation.Children.OfType<Button>().ToArray();
+            if (size == "wide")
+            {
+                var firstTab = tabs[0].TransformToVisual(metadata).TransformPoint(new Windows.Foundation.Point());
+                var secondTab = tabs[1].TransformToVisual(metadata).TransformPoint(new Windows.Foundation.Point());
+                Check(Math.Abs(secondTab.Y - firstTab.Y - 36) < 1, "metadata tabs retain an extra inter-tab gap absent from the WebUI");
+            }
             var fields = Field<Dictionary<string, TextBox>>(metadata, "_textInputs");
+            if (size == "narrow") Check(Math.Abs(fields["title"].ActualWidth - 426) < 1,
+                "narrow metadata fields lose32px to a duplicate outer horizontal gutter");
             var sort = fields["sort_title"].TransformToVisual(metadata).TransformPoint(new Windows.Foundation.Point());
             var original = fields["original_title"].TransformToVisual(metadata).TransformPoint(new Windows.Foundation.Point());
             Check(size == "wide" ? Math.Abs(sort.Y - original.Y) < 2 && original.X > sort.X : original.Y > sort.Y,
@@ -102,13 +117,37 @@ internal static class ConditionalEditorsNativeFixture
             Program.Log("TRACE metadata " + size + " body=" + Field<Grid>(metadata, "_root").ActualWidth + "x" + Field<Grid>(metadata, "_root").ActualHeight);
             Check(metadata.CornerRadius.TopLeft == 12, "metadata dialog corner radius differs from current editor");
             await CaptureAsync(metadata, $"edit-metadata-{size}-general.png");
-            Section(metadata, "Dates & Ratings"); await Task.Delay(80); await CaptureAsync(metadata, $"edit-metadata-{size}-dates.png");
+            Section(metadata, "Dates & Ratings"); await Task.Delay(80);
+            Check(Descendants<TextBlock>(metadata).Any(text => text.Text == "RATINGS"), "metadata ratings section heading disappears before its fields are realized");
+            await CaptureAsync(metadata, $"edit-metadata-{size}-dates.png");
+            Section(metadata, "Tags & Genres"); await Task.Delay(80); metadata.UpdateLayout();
+            var tags = Field<Dictionary<string, MetadataTagsInput>>(metadata, "_tagInputs")["genres"];
+            var tagEntry = Descendants<TextBox>(tags).Single();
+            var tagRemove = Descendants<Button>(tags).First();
+            var entryTop = tagEntry.TransformToVisual(tags).TransformPoint(new Windows.Foundation.Point()).Y;
+            var chipTop = tagRemove.TransformToVisual(tags).TransformPoint(new Windows.Foundation.Point()).Y;
+            Check(Math.Abs(entryTop - chipTop) < 10 && tags.ActualHeight <= 40, "metadata tags and entry are split into separate rows instead of one outlined field");
+            await CaptureAsync(metadata, $"edit-metadata-{size}-tags.png");
             Section(metadata, "External IDs"); await Task.Delay(80);
             var imdb = fields["imdb_id"].TransformToVisual(metadata).TransformPoint(new Windows.Foundation.Point());
             var tmdb = fields["tmdb_id"].TransformToVisual(metadata).TransformPoint(new Windows.Foundation.Point());
             Check(Math.Abs(imdb.X - tmdb.X) < 1 && tmdb.Y > imdb.Y && Math.Abs(fields["imdb_id"].ActualWidth - fields["tmdb_id"].ActualWidth) < 1,
                 "metadata External IDs are not full-width stacked rows");
-            Section(metadata, "Images"); await Task.Delay(100); await CaptureAsync(metadata, $"edit-metadata-{size}-images.png");
+            Section(metadata, "Images"); await Task.Delay(100); metadata.UpdateLayout();
+            var imageSection = Field<Dictionary<string, StackPanel>>(metadata, "_sections")["images"];
+            var artwork = imageSection.Children.OfType<WrapPanel>().Single();
+            var firstImage = Descendants<Image>(artwork.Children.OfType<Button>().First()).Single();
+            Check(size != "wide" || Math.Abs(firstImage.ActualWidth - 192.5) < 1,
+                "metadata poster widths wrap the fourth desktop image into another row");
+            if (size == "wide")
+            {
+                var posterCards = artwork.Children.OfType<Button>().ToArray();
+                Check(posterCards.Length == 4 && Math.Abs(posterCards[3].TransformToVisual(artwork).TransformPoint(new Windows.Foundation.Point()).Y - posterCards[0].TransformToVisual(artwork).TransformPoint(new Windows.Foundation.Point()).Y) < 1,
+                    "four actual poster choices must stay on the first desktop row after native layout rounding");
+            }
+            Check(imageSection.Children.OfType<Button>().Single().Visibility == Visibility.Collapsed,
+                "metadata image Apply action occupies space before an image is selected");
+            await CaptureAsync(metadata, $"edit-metadata-{size}-images.png");
             Close(metadata); await showing;
             Check(wire.Writes.Count == 0, "metadata Cancel performed a write");
         }
@@ -154,6 +193,12 @@ internal static class ConditionalEditorsNativeFixture
                     Check(number.Y > content.Y && Math.Abs(number.Y - runtime.Y) < 2 && runtime.X > number.X,
                         "episode number/runtime does not use the subsequent paired row");
                 }
+                var sections = Field<Dictionary<string, StackPanel>>(dialog, "_sections");
+                if (sections.ContainsKey("images")) { Section(dialog, "Images"); await Task.Delay(60); }
+                var hints = sections.TryGetValue("images", out var images)
+                    ? Descendants<TextBlock>(images).Where(text => text.Text.StartsWith("Only seeing one poster?", StringComparison.Ordinal)).ToArray() : [];
+                Check(hints.Length == (type == "season" ? 1 : 0), "season artwork plugin-update notice must appear only for seasons");
+                if (type == "season" && hints.Length == 1) Check(hints[0].FontSize == 11 && hints[0].TextWrapping == TextWrapping.Wrap, "season artwork notice must wrap at current source size");
                 Close(dialog); await showing;
                 Check(wire.Writes.Count == 0, "metadata variant inspection performed a write");
             }
@@ -242,16 +287,16 @@ internal static class ConditionalEditorsNativeFixture
             Section(dialog, "Images");
             var images = Field<Dictionary<string, StackPanel>>(dialog, "_sections")["images"];
             var grid = images.Children.OfType<WrapPanel>().Single();
-            await UntilAsync(() => grid.Children.OfType<Button>().Count() == 2);
+            await UntilAsync(() => grid.Children.OfType<Button>().Count() == 4);
             Invoke(grid.Children.OfType<Button>().Last());
             Invoke(images.Children.OfType<Button>().Single()); await UntilAsync(() => wire.Writes.Count == 1);
-            var tabs = images.Children.OfType<StackPanel>().Single();
+            var tabs = Descendants<StackPanel>(images).Single(panel => panel.Children.OfType<Button>().Any(button => Equals(button.Content, "Backdrops")));
             var backdrop = tabs.Children.OfType<Button>().Single(button => Equals(button.Content, "Backdrops"));
             Check(backdrop.IsEnabled, "source image tabs were disabled during apply"); Invoke(backdrop);
             await UntilAsync(() => grid.Children.OfType<Button>().Count() == 0);
             wire.ImageGate.SetResult(Response(HttpStatusCode.OK, "{}")); await UntilAsync(() => dialog.IsPrimaryButtonEnabled);
             Invoke(tabs.Children.OfType<Button>().Single(button => Equals(button.Content, "Posters")));
-            await UntilAsync(() => grid.Children.OfType<Button>().Count() == 2);
+            await UntilAsync(() => grid.Children.OfType<Button>().Count() == 4);
             dialog.UpdateLayout(); await Task.Delay(40);
             Check(wire.Writes[0].Body.GetProperty("type").GetString() == "poster", "pending image apply wire changed type");
             var correctCurrent = Descendants<TextBlock>(grid.Children.OfType<Button>().Last()).Any(text => text.Text == "Current")
@@ -272,6 +317,13 @@ internal static class ConditionalEditorsNativeFixture
             var languages = Descendants<ComboBox>(dialog).Single(combo => Equals(combo.Header, "Language"));
             languages.SelectedItem = languages.Items.OfType<ComboBoxItem>().First();
             var button = Descendants<Button>(dialog).Single(button => Equals(button.Content, "Translate"));
+            dialog.UpdateLayout();
+            var translationY = button.TransformToVisual(dialog).TransformPoint(new Windows.Foundation.Point()).Y;
+            var runtime = Field<Dictionary<string, NumberBox>>(dialog, "_numberInputs")["runtime"];
+            var runtimeY = runtime.TransformToVisual(dialog).TransformPoint(new Windows.Foundation.Point()).Y;
+            Check(translationY < runtimeY, "translation controls are placed after runtime rather than before the content-rating row");
+            var scroll = Field<ScrollViewer>(dialog, "_scroll");
+            Check(scroll.ScrollableHeight < 1, "wide metadata translation form scrolls despite sufficient viewport space");
             var expected = translated == 0 ? "Nothing to translate — all descriptions are already localized."
                 : $"Translated {translated} description{(translated == 1 ? "" : "s")}.";
             Invoke(button); await UntilAsync(() => wire.Writes.Count == 1 && button.IsEnabled && dialog.HasSaved);
@@ -281,6 +333,52 @@ internal static class ConditionalEditorsNativeFixture
             Check(payload.GetProperty("target_language").GetString() != "" && !payload.GetProperty("include_children").GetBoolean()
                 && !payload.GetProperty("force").GetBoolean(), "translation request lost language/movie/force contract");
             Close(dialog); await showing; Check(wire.Writes.Count == 1, "Cancel wrote metadata after immediate translation");
+        }
+        finally { dialog.Hide(); await showing; wire.TranslationTotal = null; }
+    }
+    private static async Task TagsAsync(FrameworkElement owner, Wire wire)
+    {
+        wire.Reset(); var dialog = new EditMetadataDialog(Movie()) { XamlRoot = owner.XamlRoot }; var showing = dialog.ShowAsync(); await Task.Delay(120);
+        try
+        {
+            Section(dialog, "Tags & Genres"); await Task.Delay(60);
+            var tags = Field<Dictionary<string, MetadataTagsInput>>(dialog, "_tagInputs")["genres"];
+            var input = Descendants<TextBox>(tags).Single(); input.Text = "Comedy, Drama"; await Task.Delay(60);
+            Check(tags.Values.SequenceEqual(new[] { "Drama", "Comedy" }), "comma tag entry loses input or duplicates an existing value");
+            var remove = Descendants<Button>(tags).Single(button => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(button) == "Remove Drama");
+            Invoke(remove); await Task.Delay(60);
+            Check(tags.Values.SequenceEqual(new[] { "Comedy" }) && Descendants<TextBox>(tags).Single().Text.Length == 0,
+                "inline tag removal loses the remaining value or restores committed text");
+            Save(dialog); await UntilAsync(() => wire.Writes.Count == 1 && dialog.HasSaved); await showing;
+            Check(wire.Writes[0].Body.GetProperty("genres").EnumerateArray().Select(value => value.GetString()).SequenceEqual(new[] { "Comedy" }),
+                "tag changes do not reach the metadata diff write");
+        }
+        finally { dialog.Hide(); await showing; }
+    }
+    private static async Task TranslationVisibilityAsync(FrameworkElement owner, Wire wire)
+    {
+        wire.Reset(); wire.TranslationTotal = 0;
+        var dialog = new EditMetadataDialog(Movie()) { XamlRoot = owner.XamlRoot }; var showing = dialog.ShowAsync();
+        try
+        {
+            await UntilAsync(() => Descendants<Button>(dialog).Any(button => Equals(button.Content, "Translate")));
+            dialog.UpdateLayout(); await Task.Delay(60);
+            var shell = Descendants<Border>(dialog).Single(border => border.Name == "BackgroundElement");
+            var cancel = Descendants<Button>(dialog).Single(button => button.Name == "CloseButton");
+            var shellTop = shell.TransformToVisual(owner).TransformPoint(new Windows.Foundation.Point()).Y;
+            var cancelTop = cancel.TransformToVisual(owner).TransformPoint(new Windows.Foundation.Point()).Y;
+            Check(shellTop >= 31 && shellTop + shell.ActualHeight <= owner.ActualHeight - 31,
+                "narrow translation dialog escapes its viewport margins");
+            Check(cancelTop >= 0 && cancelTop + cancel.ActualHeight <= owner.ActualHeight - 31,
+                "narrow translation dialog hides its Cancel footer");
+            var scroll = Field<ScrollViewer>(dialog, "_scroll");
+            scroll.ChangeView(null, scroll.ScrollableHeight, null, true); await Task.Delay(80);
+            var runtime = Field<Dictionary<string, NumberBox>>(dialog, "_numberInputs")["runtime"];
+            var runtimeTop = runtime.TransformToVisual(scroll).TransformPoint(new Windows.Foundation.Point()).Y;
+            Check(runtimeTop >= 0 && runtimeTop + runtime.ActualHeight <= scroll.ActualHeight,
+                "narrow translation form cannot scroll to its final runtime field");
+            await CaptureAsync(dialog, "edit-metadata-narrow-translation-bottom.png");
+            Close(dialog); await showing; Check(wire.Writes.Count == 0, "translation inspection Cancel performed a write");
         }
         finally { dialog.Hide(); await showing; wire.TranslationTotal = null; }
     }
@@ -342,7 +440,7 @@ internal static class ConditionalEditorsNativeFixture
                 if (path.EndsWith("/images/apply")) { _applied = true; if (ImageGate != null) return await ImageGate.Task.WaitAsync(ct); return Response(HttpStatusCode.OK, "{}"); }
                 if (request.Method == HttpMethod.Patch && PatchGate != null) return await PatchGate.Task.WaitAsync(ct);
             }
-            if (path.EndsWith("/images")) return Response(HttpStatusCode.OK, """{"items":[{"type":"poster","url":"","original_url":"https://fixture.invalid/old-poster","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/new-poster","provider_id":"fixture","language":"en"}],"current":{"poster_url":"https://fixture.invalid/old-poster"},"provider_errors":{},"page":{"has_more":false,"next_cursor":""}}""");
+            if (path.EndsWith("/images")) return Response(HttpStatusCode.OK, """{"items":[{"type":"poster","url":"","original_url":"https://fixture.invalid/old-poster","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/alternate-poster-1","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/alternate-poster-2","provider_id":"fixture","language":"en"},{"type":"poster","url":"","original_url":"https://fixture.invalid/new-poster","provider_id":"fixture","language":"en"}],"current":{"poster_url":"https://fixture.invalid/old-poster"},"provider_errors":{},"page":{"has_more":false,"next_cursor":""}}""");
             if (path.EndsWith("/metadata-translation/jobs")) return Response(HttpStatusCode.OK, JsonSerializer.Serialize(new { jobs = new[] { new { id = "fixture-translation", status = "completed", fields_total = TranslationTotal ?? 0, fields_done = TranslationTotal ?? 0 } } }, Json));
             if (path.Contains("metadata-ai")) return Response(HttpStatusCode.OK, TranslationTotal == null ? "{\"state\":\"disabled\"}" : "{\"state\":\"available\"}");
             if (path.Contains("/people/")) return Response(HttpStatusCode.OK, JsonSerializer.Serialize(Person(), Json));

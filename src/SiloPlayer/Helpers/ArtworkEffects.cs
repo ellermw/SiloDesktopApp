@@ -6,6 +6,22 @@ namespace SiloPlayer.Helpers;
 
 internal static class ArtworkEffects
 {
+    /// <summary>RequestPosterCard's brightness(.85) saturate(.8), preserving artwork alpha.</summary>
+    public static async Task<byte[]> DimRequestPosterAsync(byte[] bytes)
+    {
+        using var sourceStream = new MemoryStream(bytes);
+        var device = CanvasDevice.GetSharedDevice();
+        using var bitmap = await CanvasBitmap.LoadAsync(device, sourceStream.AsRandomAccessStream());
+        using var darkened = new ColorMatrixEffect { Source = bitmap,
+            ColorMatrix = new Matrix5x4 { M11 = .85f, M22 = .85f, M33 = .85f, M44 = 1 } };
+        using var saturated = new SaturationEffect { Source = darkened, Saturation = .8f };
+        using var target = new CanvasRenderTarget(device, (float)bitmap.Size.Width, (float)bitmap.Size.Height, 96);
+        using (var drawing = target.CreateDrawingSession()) drawing.DrawImage(saturated);
+        using var output = new MemoryStream();
+        await target.SaveAsync(output.AsRandomAccessStream(), CanvasBitmapFileFormat.Png);
+        return output.ToArray();
+    }
+
     /// <summary>CSS object-cover followed by blur64/brightness.45/saturation1.15 in viewport pixels.</summary>
     public static async Task<byte[]> TransformBackdropAsync(byte[] bytes, double width, double height, CancellationToken ct = default)
     {

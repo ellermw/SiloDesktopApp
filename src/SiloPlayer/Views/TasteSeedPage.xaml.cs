@@ -79,6 +79,28 @@ public sealed partial class TasteSeedPage : Page
     }
 
     private double _tasteWidth = 147;
+    private void TastePoster_Loaded(object sender, RoutedEventArgs args)
+    {
+        if (sender is not Image { Parent: Grid card } image) return;
+        foreach (var fallback in card.Children.OfType<DefaultArtwork>())
+        {
+            fallback.Visibility = image.Source == null ? Visibility.Visible : Visibility.Collapsed;
+            if (image.Source == null) _ = fallback.ShowThumbhashAsync();
+            else _ = fallback.ObserveConvertedImageAsync(image);
+        }
+    }
+    private void TastePoster_ImageOpened(object sender, RoutedEventArgs args)
+    {
+        if (sender is Image { Parent: Grid card })
+            foreach (var fallback in card.Children.OfType<DefaultArtwork>()) fallback.Visibility = Visibility.Collapsed;
+    }
+    private void TastePoster_ImageFailed(object sender, ExceptionRoutedEventArgs args)
+    {
+        if (sender is not Image { Parent: Grid card } image) return;
+        image.Source = null;
+        foreach (var fallback in card.Children.OfType<DefaultArtwork>())
+        { fallback.Visibility = Visibility.Visible; _ = fallback.ShowThumbhashAsync(); }
+    }
     private void ReflowTastePicker()
     {
         var narrow = ActualWidth < 640;

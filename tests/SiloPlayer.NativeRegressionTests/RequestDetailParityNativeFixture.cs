@@ -34,6 +34,7 @@ internal static class RequestDetailParityNativeFixture
         services.GetRequiredService<ToastService>().Register(toast, parent.DispatcherQueue);
         try
         {
+            await LoadedBackdropAsync(parent);
             foreach (var width in new[] { 1280d, 900d, 500d })
             {
                 var page = new RequestDetailPage { Width = width, Height = 800 }; pages.Add(page); parent.Children.Add(page);
@@ -102,6 +103,63 @@ internal static class RequestDetailParityNativeFixture
         finally { services.GetRequiredService<ToastService>().Unregister(); parent.Children.Remove(toast); foreach (var page in pages) parent.Children.Remove(page); field.SetValue(null, previous); }
     }
     private static RequestFeatureStatus Features() => new() { RequestsEnabled = true, Allowed = true, State = "available", SeasonRequestsSupported = true, WatchlistTitlesSupported = true, WatchlistRequests = true, FollowSupported = true, DownloadProgressSupported = true };
+    private static async Task LoadedBackdropAsync(StackPanel parent)
+    {
+        foreach (var (width, height) in new[] { (500d, 800d), (1920d, 1048d), (2566d, 984d), (3440d, 1408d), (3840d, 2128d), (5120d, 1440d) })
+        {
+            var page = new RequestDetailPage { Width = width, Height = height };
+            parent.Children.Add(page);
+            try
+            {
+                var item = new RequestMediaDetail { MediaType = "series", TmdbId = 17486,
+                    Title = "Scrubs: Interns", Year = 2009, NumberOfSeasons = 1, NumberOfEpisodes = 11,
+                    Status = "Ended", VoteAverage = 5.1, VoteCount = 21,
+                    Creators = ["Bill Lawrence"], Networks = ["ABC"], Genres = ["Comedy"],
+                    Overview = "Sunny, a whiz in both Pre-Med and Film, makes a video diary for her mother of her first year at Sacred Heart.",
+                    Request = new() { Requestable = true } };
+                Set(page, "_item", item); Set(page, "_features", Features()); Invoke(page, "Render", item);
+                ((FrameworkElement)page.FindName("LoadingLayer")).Visibility = Visibility.Collapsed;
+                await LayoutAsync(page, width, height);
+                if (width >= 1024 && ((Grid)page.FindName("HeroContent")).RowSpacing != 0)
+                    throw new InvalidOperationException("Empty desktop hero row reserves a24px gap below its poster/copy.");
+                var request = ((WrapPanel)page.FindName("ActionsPanel")).Children.OfType<Button>().Single(button => AutomationProperties.GetAutomationId(button) == "request");
+                var expectedInk = ((SolidColorBrush)Application.Current.Resources["AccentForegroundBrush"]).Color;
+                var glyph = Descendants(request).OfType<Microsoft.UI.Xaml.Shapes.Path>().FirstOrDefault();
+                if (glyph?.Stroke is not SolidColorBrush ink || ink.Color != expectedInk)
+                    throw new InvalidOperationException("Primary Request glyph is invisible against its accent background.");
+                var facts = Descendants((FrameworkElement)page.FindName("MetadataPanel")).OfType<TextBlock>().Select(text => text.Text).ToArray();
+                if (!facts.Contains("11 EPISODES") || facts.Contains("Comedy") || ((TextBlock)page.FindName("CrewText")).Text != "Created by Bill Lawrence  ·  Comedy")
+                    throw new InvalidOperationException("External-title episode count or overview/crew/genre data placement differs from the current WebUI.");
+                var info = (FrameworkElement)page.FindName("HeroInfo");
+                double Top(string name) => ((FrameworkElement)page.FindName(name)).TransformToVisual(info).TransformPoint(new Windows.Foundation.Point()).Y;
+                if (!(Top("MetadataPanel") < Top("ScorePanel") && Top("ScorePanel") < Top("OverviewText") && Top("OverviewText") < Top("CrewText") && Top("CrewText") < Top("ActionsPanel")))
+                    throw new InvalidOperationException("External-title facts/score/overview/crew/action order differs.");
+                if (!Descendants((FrameworkElement)page.FindName("ScorePanel")).OfType<Image>().Any())
+                    throw new InvalidOperationException("External-title rating lacks the shared TMDB provider mark.");
+                var hero = (FrameworkElement)page.FindName("HeroGrid");
+                var before = hero.ActualHeight;
+                var backdrop = page.FindName("BackdropImage");
+                var decoded = new Microsoft.UI.Xaml.Media.Imaging.WriteableBitmap(4096, 2304);
+                if (backdrop is Image image) image.Source = decoded;
+                else if (backdrop is BackdropImage artwork) artwork.Source = decoded;
+                else throw new InvalidOperationException("Unknown request backdrop presentation.");
+                await LayoutAsync(page, width, height);
+                Program.Log($"TRACE: loaded request backdrop viewport={width}x{height}, hero before={before}, after={hero.ActualHeight}.");
+                if (Math.Abs(hero.ActualHeight - before) > 1)
+                    throw new InvalidOperationException("Decoded backdrop changes external-title hero layout and displaces visible actions.");
+                if (width >= 1024)
+                {
+                    var actions = (FrameworkElement)page.FindName("ActionsPanel");
+                    var bottom = actions.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point(0, actions.ActualHeight)).Y;
+                    if (bottom > height || Math.Abs(hero.ActualHeight - height * .72) > 1)
+                        throw new InvalidOperationException($"Loaded external-title actions exceed the viewport: bottom={bottom}, hero={hero.ActualHeight}.");
+                }
+                await MediaParityNativeFixture.CaptureAsync(page, $"requests-loaded-backdrop-{width:0}.png");
+            }
+            finally { parent.Children.Remove(page); }
+        }
+        Program.Log("PASS: actual decoded4096x2304 backdrop preserves external-title hero and visible actions at500x800/1920x1048/2566x984/3440x1408/3840x2128/5120x1440.");
+    }
     private static async Task EditablePendingSeasonsAsync(StackPanel parent)
     {
         var item = new RequestMediaDetail { Title = "Editable season draft", MediaType = "series", Availability = "partial", Request = new() { Requestable = true },

@@ -7,16 +7,17 @@
     Background="{StaticResource AppBackgroundBrush}"
     SizeChanged="Page_SizeChanged">
 
-    <Page.Resources><converters:BoolToVisibilityConverter x:Key="BoolToVis" /><converters:UrlToImageSourceConverter x:Key="UrlToImage" /></Page.Resources>
+    <Page.Resources>
+        <converters:BoolToVisibilityConverter x:Key="BoolToVis" /><converters:UrlToImageSourceConverter x:Key="UrlToImage" />
+        <!-- The row owns its rounded hover surface; the container only routes input. -->
+        <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="Transparent" />
+        <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="Transparent" />
+    </Page.Resources>
 
-    <Grid x:Name="PageContent" MaxWidth="768" HorizontalAlignment="Center" Padding="16,32" RowSpacing="16">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
-        </Grid.RowDefinitions>
-
+    <Grid x:Name="PageContent" MaxWidth="768" HorizontalAlignment="Center" Padding="16,0">
+        <ListView x:Name="NotificationsList" ItemsSource="{Binding Notifications}" IsItemClickEnabled="True" ItemClick="NotificationsList_ItemClick" SelectionMode="None" VerticalAlignment="Top" Padding="0,64,0,32">
+            <ListView.Header>
+                <StackPanel x:Name="InboxHeader" Spacing="16" Margin="0,0,0,16">
         <Grid x:Name="HeaderGrid" ColumnSpacing="8" RowSpacing="12" Margin="0,0,0,8">
             <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -31,8 +32,13 @@
                 <StackPanel Orientation="Horizontal" Spacing="7"><FontIcon Glyph="&#xE713;" FontSize="15" /><TextBlock Text="Preferences" /></StackPanel>
                 <Button.Flyout>
                     <Flyout Placement="BottomEdgeAlignedRight">
-                        <Flyout.FlyoutPresenterStyle><Style TargetType="FlyoutPresenter"><Setter Property="Padding" Value="16" /><Setter Property="MaxWidth" Value="320" /></Style></Flyout.FlyoutPresenterStyle>
-                        <Grid Width="288" Padding="0">
+                        <Flyout.FlyoutPresenterStyle><Style TargetType="FlyoutPresenter"><Setter Property="Padding" Value="16" /><Setter Property="MaxWidth" Value="320" /><Setter Property="CornerRadius" Value="16" /><Setter Property="BorderThickness" Value="1" /><Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" /><Setter Property="Background" Value="{StaticResource PopoverBrush}" /><Setter Property="Foreground" Value="{StaticResource PopoverForegroundBrush}" /></Style></Flyout.FlyoutPresenterStyle>
+                        <Grid Width="286" Padding="0">
+                            <StackPanel x:Name="PreferenceLoadingPanel" Spacing="12" Visibility="Collapsed">
+                                <Border Height="24" CornerRadius="10" Background="{StaticResource SurfaceBrush}" />
+                                <Border Height="24" CornerRadius="10" Background="{StaticResource SurfaceBrush}" />
+                                <Border Height="24" CornerRadius="10" Background="{StaticResource SurfaceBrush}" />
+                            </StackPanel>
                             <StackPanel x:Name="PreferenceControlsPanel" Spacing="14">
                             <StackPanel.Resources>
                                 <x:Double x:Key="ToggleSwitchPreContentMargin">0</x:Double>
@@ -70,33 +76,17 @@
             </Button>
         </Grid>
 
-        <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">
+        <StackPanel Orientation="Horizontal" Spacing="6">
             <Button x:Name="AllButton" Content="All" Click="Filter_Click" Tag="all" Height="32" MinHeight="32" Padding="12,4" FontSize="14" />
             <Button x:Name="UnreadButton" Click="Filter_Click" Tag="unread" Height="32" MinHeight="32" Padding="12,4" FontSize="14"><TextBlock x:Name="UnreadButtonText" Text="Unread" /></Button>
         </StackPanel>
 
-        <Grid Grid.Row="2">
-            <ListView x:Name="NotificationsList" ItemsSource="{Binding Notifications}" IsItemClickEnabled="True" ItemClick="NotificationsList_ItemClick" SelectionMode="None">
-                <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="0" /><Setter Property="Margin" Value="0,0,0,4" /></Style></ListView.ItemContainerStyle>
-                <ListView.ItemTemplate>
-                    <DataTemplate x:DataType="models:AppNotification">
-                        <Grid x:Name="NotificationRowRoot" Padding="12" ColumnSpacing="12" MinHeight="88" CornerRadius="16" Loaded="NotificationRow_Loaded" PointerEntered="NotificationRow_PointerEntered" PointerExited="NotificationRow_PointerExited">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                            <Border Width="44" Height="64" CornerRadius="10" Background="{StaticResource SurfaceBrush}"><Image Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" /></Border>
-                            <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Top">
-                                <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><Ellipse Width="8" Height="8" Fill="{StaticResource AccentBrush}" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" VerticalAlignment="Center" /><TextBlock x:Name="NotificationTitleText" Grid.Column="1" Text="{x:Bind DisplayTitle}" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{x:Bind RelativeTime}" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" /></Grid>
-                                <TextBlock Text="{x:Bind Subtitle}" FontSize="14" LineHeight="20" Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
-                                <ItemsControl ItemsSource="{x:Bind ReasonLabels}">
-                                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="4" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate><DataTemplate><Border Padding="7,2" CornerRadius="10" Background="{StaticResource SurfaceBrush}"><TextBlock Text="{Binding}" FontSize="10" Foreground="{StaticResource SecondaryTextBrush}" /></Border></DataTemplate></ItemsControl.ItemTemplate>
-                                </ItemsControl>
-                            </StackPanel>
-                            <Button x:Name="InlineMarkReadButton" Grid.Column="0" Grid.ColumnSpan="2" HorizontalAlignment="Right" Tag="{x:Bind}" Click="MarkRead_Click" Tapped="MarkRead_Tapped" GotFocus="InlineMarkReadButton_GotFocus" LostFocus="InlineMarkReadButton_LostFocus" Width="28" Height="28" MinHeight="0" MinWidth="0" CornerRadius="10" Margin="0,0,-4,-4" Padding="0" VerticalAlignment="Bottom" Opacity="0" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" ToolTipService.ToolTip="Mark as read" AutomationProperties.Name="Mark as read"><FontIcon Glyph="&#xE73E;" FontSize="14" /></Button>
-                        </Grid>
-                    </DataTemplate>
-                </ListView.ItemTemplate>
-            </ListView>
+        <StackPanel x:Name="InboxErrorPanel" Visibility="Collapsed" Spacing="8" HorizontalAlignment="Center">
+            <Button x:Name="ReloadButton" Content="Reload notifications" Click="Reload_Click" Visibility="Collapsed" Style="{StaticResource OutlineButtonStyle}" />
 
+            <TextBlock x:Name="ErrorText" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" TextAlignment="Center" AutomationProperties.LiveSetting="Polite" />
+        </StackPanel>
+            <Grid x:Name="InboxStateHost">
             <StackPanel x:Name="LoadingSkeleton" Spacing="8" Visibility="Collapsed">
                 <Border Height="80" CornerRadius="12" Background="{StaticResource SurfaceBrush}" Opacity="0.55" />
                 <Border Height="80" CornerRadius="12" Background="{StaticResource SurfaceBrush}" Opacity="0.55" />
@@ -104,17 +94,42 @@
                 <Border Height="80" CornerRadius="12" Background="{StaticResource SurfaceBrush}" Opacity="0.55" />
                 <Border Height="80" CornerRadius="12" Background="{StaticResource SurfaceBrush}" Opacity="0.55" />
             </StackPanel>
-            <StackPanel x:Name="EmptyState" Spacing="10" HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" MaxWidth="400">
+            <StackPanel x:Name="EmptyState" Spacing="12" Margin="0,80" HorizontalAlignment="Center" VerticalAlignment="Top" Visibility="Collapsed" MaxWidth="384">
                 <FontIcon Glyph="&#xE7ED;" FontSize="40" Opacity="0.5" HorizontalAlignment="Center" />
-                <TextBlock x:Name="EmptyTitleText" Text="No notifications yet" HorizontalAlignment="Center" />
+                <TextBlock x:Name="EmptyTitleText" Text="No notifications yet" FontSize="14" LineHeight="20" HorizontalAlignment="Center" />
                 <TextBlock Text="You will be notified here when new episodes arrive for series you favorite, watchlist, or are watching." TextAlignment="Center" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
             </StackPanel>
-        </Grid>
-
-        <StackPanel Grid.Row="3" Spacing="8" HorizontalAlignment="Center">
-            <Button x:Name="ReloadButton" Content="Reload notifications" Click="Reload_Click" Visibility="Collapsed" Style="{StaticResource OutlineButtonStyle}" />
-            <Button x:Name="LoadMoreButton" Content="Load more" Click="LoadMore_Click" Style="{StaticResource OutlineButtonStyle}" Visibility="Collapsed" />
-            <TextBlock x:Name="ErrorText" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" TextAlignment="Center" AutomationProperties.LiveSetting="Polite" />
-        </StackPanel>
+            </Grid>
+                </StackPanel>
+            </ListView.Header>
+                <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="0" /><Setter Property="CornerRadius" Value="16" /><Setter Property="Margin" Value="0,0,0,4" /></Style></ListView.ItemContainerStyle>
+                <ListView.ItemTemplate>
+                    <DataTemplate x:DataType="models:AppNotification">
+                        <Grid x:Name="NotificationRowRoot" Padding="12" ColumnSpacing="12" MinHeight="88" CornerRadius="16" Loaded="NotificationRow_Loaded" DataContextChanged="NotificationRow_DataContextChanged" PointerEntered="NotificationRow_PointerEntered" PointerExited="NotificationRow_PointerExited">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="44" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <Border Width="44" Height="64" CornerRadius="10" Background="{StaticResource SurfaceBrush}"><Image Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" /></Border>
+                            <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Top">
+                                <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><Ellipse Width="8" Height="8" Fill="{StaticResource AccentBrush}" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" VerticalAlignment="Center" /><TextBlock x:Name="NotificationTitleText" Grid.Column="1" Text="{x:Bind DisplayTitle}" FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Grid.Column="2" Text="{x:Bind RelativeTime}" FontSize="12" LineHeight="16" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" /></Grid>
+                                <TextBlock Text="{x:Bind Subtitle}" FontSize="14" LineHeight="20" Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
+                                <ItemsControl x:Name="NotificationReasons" Margin="0,4,0,0" ItemsSource="{x:Bind ReasonLabels}">
+                                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><StackPanel Orientation="Horizontal" Spacing="4" /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate><DataTemplate><Border Padding="8,2" CornerRadius="10" Background="{StaticResource SurfaceBrush}"><TextBlock Text="{Binding}" FontSize="10" LineHeight="15" LineStackingStrategy="BlockLineHeight" FontWeight="Medium" Foreground="{StaticResource SecondaryTextBrush}" /></Border></DataTemplate></ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                            <Button x:Name="InlineMarkReadButton" Grid.Column="0" Grid.ColumnSpan="2" HorizontalAlignment="Right" Tag="{x:Bind}" Click="MarkRead_Click" Tapped="MarkRead_Tapped" GotFocus="InlineMarkReadButton_GotFocus" LostFocus="InlineMarkReadButton_LostFocus" Width="28" Height="28" MinHeight="0" MinWidth="0" CornerRadius="10" Margin="0,0,-4,-4" Padding="0" VerticalAlignment="Bottom" Opacity="0" Visibility="{x:Bind IsUnread, Converter={StaticResource BoolToVis}}" ToolTipService.ToolTip="Mark as read" AutomationProperties.Name="Mark as read"><FontIcon Glyph="&#xE73E;" FontSize="14" /></Button>
+                        </Grid>
+                    </DataTemplate>
+                </ListView.ItemTemplate>
+            <ListView.Footer>
+                <StackPanel Margin="0,20,0,0" HorizontalAlignment="Center">
+            <Button x:Name="LoadMoreButton" Click="LoadMore_Click" Style="{StaticResource OutlineButtonStyle}" Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal" Spacing="8">
+                    <ProgressRing x:Name="LoadMoreBusy" Width="16" Height="16" Visibility="Collapsed" IsActive="False" />
+                    <TextBlock Text="Load more" />
+                </StackPanel>
+            </Button>
+                </StackPanel>
+            </ListView.Footer>
+        </ListView>
     </Grid>
 </Page>

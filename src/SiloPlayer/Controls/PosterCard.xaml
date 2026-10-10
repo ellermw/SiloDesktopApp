@@ -3,6 +3,7 @@
     x:Class="SiloPlayer.Controls.PosterCard"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:SiloPlayer.Controls"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
@@ -79,22 +80,7 @@
                 </Image.RenderTransform>
             </Image>
 
-            <!-- Fallback title (webui: centered text line-clamp-3 when no
-                 poster URL). Hidden when a poster loads successfully. -->
-            <TextBlock
-                x:Name="FallbackTitle"
-                Visibility="Collapsed"
-                HorizontalAlignment="Center"
-                VerticalAlignment="Center"
-                TextAlignment="Center"
-                TextWrapping="Wrap"
-                MaxLines="3"
-                MaxWidth="140"
-                FontSize="14"
-                FontWeight="SemiBold"
-                Foreground="{StaticResource SecondaryTextBrush}"
-                TextTrimming="CharacterEllipsis"
-                Padding="8" />
+            <controls:DefaultArtwork x:Name="ArtworkFallback" Visibility="Collapsed" />
 
             <!-- Bottom gradient overlay (from-black/55) -->
             <Border VerticalAlignment="Bottom" Height="96" IsHitTestVisible="False">

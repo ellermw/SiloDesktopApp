@@ -136,8 +136,14 @@ internal static class AudiobookDetailInteractionsNativeFixture
             mpv.GetType().GetEvent("PauseChanged")!.AddEventHandler(mpv, pauseChanged);
             mpv.GetType().GetEvent("PositionChanged")!.AddEventHandler(mpv, positionChanged);
             InvokePublic(mpv, "LoadFile", wave, null, 0d); InvokePublic(mpv, "Play");
-            await UntilAsync(() => !(bool)mpv.GetType().GetProperty("IsPaused")!.GetValue(mpv)! && player.Position > 0);
+            try { await UntilAsync(() => !(bool)mpv.GetType().GetProperty("IsPaused")!.GetValue(mpv)! && !player.IsPaused && player.Position > 0); }
+            catch
+            {
+                Program.Log($"TRACE local transport wait: native paused={mpv.GetType().GetProperty("IsPaused")!.GetValue(mpv)}, position={mpv.GetType().GetProperty("Position")!.GetValue(mpv)}, player paused={player.IsPaused}, position={player.Position}.");
+                throw;
+            }
             Invoke(page, "UpdateActiveAudiobook");
+            Program.Log($"TRACE active narration: item={page.ViewModel.Item?.ContentId}/{page.ViewModel.Item?.Type}, player={player.ContentId}/{player.State}, audio={player.IsAudiobook}, paused={player.IsPaused}, attached={ReferenceEquals(typeof(ItemDetailPage).GetField("_playerService", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(page),player)}, button={((TextBlock)page.FindName("PlayButtonText")).Text}, progress={((FrameworkElement)page.FindName("BookProgressSummaryText")).Visibility}");
             if (((TextBlock)page.FindName("PlayButtonText")).Text != "Pause" || ((FrameworkElement)page.FindName("BookProgressSummaryText")).Visibility != Visibility.Visible)
                 throw new InvalidOperationException("Active audiobook detail does not show Pause and current progress.");
             var play = (Button)page.FindName("PrimaryPlayButton");

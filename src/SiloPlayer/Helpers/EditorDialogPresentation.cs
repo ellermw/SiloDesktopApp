@@ -32,6 +32,28 @@ internal static class EditorDialogPresentation
         close.Click += (_, _) => dialog.Hide(); return close;
     }
 
+    internal static void PlaceCornerClose(ContentDialog dialog, Grid? header, Button close)
+    {
+        // A negative header margin clips the icon in WinUI's title presenter.
+        // Put the corner action inside the full dialog surface instead.
+        var background = Descendants<Border>(dialog).FirstOrDefault(border => border.Name == "BackgroundElement");
+        if (background?.Child is not FrameworkElement content) return;
+        header?.Children.Remove(close);
+        Grid overlay;
+        if (content is Grid grid && grid.Name == "EditorCornerCloseOverlay") overlay = grid;
+        else
+        {
+            background.Child = null;
+            overlay = new Grid { Name = "EditorCornerCloseOverlay" }; overlay.Children.Add(content); background.Child = overlay;
+        }
+        if (!overlay.Children.Contains(close)) overlay.Children.Add(close);
+        Grid.SetColumn(close, 0); Grid.SetRow(close, 0);
+        Grid.SetColumnSpan(close, Math.Max(1, overlay.ColumnDefinitions.Count));
+        Grid.SetRowSpan(close, Math.Max(1, overlay.RowDefinitions.Count));
+        close.Margin = new Thickness(16); close.HorizontalAlignment = HorizontalAlignment.Right;
+        close.VerticalAlignment = VerticalAlignment.Top;
+    }
+
     internal static void ReflowCommands(ContentDialog dialog, bool narrow, Thickness padding, Button? reset = null, double buttonHeight = 32, bool stackNarrow = false)
     {
         // The reference dialog reserves32px above and below a constrained viewport.

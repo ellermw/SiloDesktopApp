@@ -20,7 +20,7 @@ public sealed class CurrentLibraryParitySourceTests
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "LibraryPage.xaml");
 
-        Assert.Contains("x:Name=\"HeaderGrid\" Grid.Row=\"0\" Height=\"70\"", xaml);
+        Assert.Contains("x:Name=\"HeaderGrid\" Grid.Row=\"0\" Height=\"81\"", xaml);
         Assert.Contains("x:Name=\"HeaderDivider\"", xaml);
         Assert.Contains("SizeChanged=\"Page_SizeChanged\"", xaml);
         Assert.Contains("x:Name=\"LibraryTitle\"", xaml);
@@ -29,7 +29,7 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("x:Name=\"OrderComboBox\"", xaml);
         Assert.Contains("x:Name=\"OpenFiltersButton\"", xaml);
         Assert.Contains("x:Name=\"FiltersSheet\"", xaml);
-        Assert.Contains("Refine your catalog results", xaml);
+        Assert.Contains("x:Name=\"GuidedFiltersScroll\"", xaml);
         Assert.DoesNotContain("AVAILABLE NOW", xaml);
     }
 
@@ -42,8 +42,9 @@ public sealed class CurrentLibraryParitySourceTests
         var customization = ReadRepoFile("src", "SiloPlayer", "Services", "UICustomizationService.cs");
 
         Assert.Contains("_uiCustomizationService.CardPresentation.PosterSize switch", page);
-        Assert.Contains("\"compact\" => availableWidth switch", page);
-        Assert.Contains("\"large\" => availableWidth switch", page);
+        Assert.Contains("var breakpointWidth = WebUiViewport.Width(this, ActualWidth)", page);
+        Assert.Contains("\"compact\" => breakpointWidth switch", page);
+        Assert.Contains("\"large\" => breakpointWidth switch", page);
         Assert.Contains("_ => contentWidth >= 1280 ? 8", customization);
         Assert.Contains("itemWidth * 1.5", page);
         Assert.Contains("isAudiobook ? itemWidth", page);
@@ -101,16 +102,13 @@ public sealed class CurrentLibraryParitySourceTests
         Assert.Contains("x:Name=\"AdvancedFilterModeButton\"", xaml);
         Assert.Contains("x:Name=\"AdvancedRulesHost\"", xaml);
         Assert.Contains("x:Name=\"AdvancedMatchComboBox\"", xaml);
-        Assert.Contains("BuildAdvancedRuleRow", page);
-        Assert.Contains("CoerceAdvancedValue", page);
-        Assert.Contains("GetAdvancedOperators", page);
-        Assert.Contains("BuildAdvancedValueEditor", page);
-        Assert.Contains("rule.Op == \"between\"", page);
-        Assert.Contains("IsAdvancedBooleanField", page);
+        Assert.Contains("new QueryFilterEditor", page);
+        Assert.Contains("_sharedFilterEditor?.IsValid == false", page);
+        Assert.Contains("GuidedQuerySupport.CanEdit", page);
         Assert.Contains("ObservableCollection<EditableQueryGroup> AdvancedGroups", viewModel);
-        Assert.Contains("BuildAdvancedGroupCard", page);
+        Assert.Contains("BuildLibraryRuleDraft", page);
         Assert.Contains("AddAdvancedGroup_Click", page);
-        Assert.Contains("UseAdvancedRules ? null : SelectedType", viewModel);
+        Assert.Contains("type: SelectedType", viewModel);
         Assert.Contains("queryGroups: BuildAdvancedGroups()", viewModel);
         Assert.Contains("extraRulesMatch", api);
         Assert.Contains("queryGroupsMatch", api);

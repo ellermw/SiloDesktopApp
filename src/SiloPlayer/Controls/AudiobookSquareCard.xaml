@@ -3,6 +3,7 @@
     x:Class="SiloPlayer.Controls.AudiobookSquareCard"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:SiloPlayer.Controls"
     Width="184" Height="232"
     IsTabStop="True"
     UseSystemFocusVisuals="True"
@@ -24,10 +25,7 @@
                             <CompositeTransform x:Name="CoverHoverTransform" />
                         </Image.RenderTransform>
                     </Image>
-                    <TextBlock x:Name="FallbackTitle" Margin="14" TextWrapping="Wrap"
-                               TextAlignment="Center" MaxLines="3" FontSize="13"
-                               FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}"
-                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    <controls:DefaultArtwork x:Name="ArtworkFallback" />
                 </Grid>
             </Border>
             <Border VerticalAlignment="Bottom" Height="5" Margin="8"

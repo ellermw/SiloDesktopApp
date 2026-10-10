@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Controls;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
@@ -27,6 +28,7 @@ internal static class BrowsePersonNativeFixture
         auth.SetCurrentUser(new() { Id = "fixture", Role = "admin" });
         auth.SelectProfile("fixture", profile: new() { Id = "fixture", Name = "Fixture", IsPrimary = true });
         var people = new PeopleApi(client); var catalog = new CatalogApi(client); var settings = new SettingsApi(client);
+        var localSettings = new SettingsService(Path.Combine(Program.ResultDirectory, "person-settings"));
         using var images = new ImageService(Path.Combine(Program.ResultDirectory, "person-images"));
         var frame = new Frame(); var owner = new Grid(); owner.Children.Add(frame);
         var navigation = new NavigationService { Frame = frame };
@@ -37,6 +39,7 @@ internal static class BrowsePersonNativeFixture
             [typeof(CatalogApi)] = catalog, [typeof(HttpClient)] = http, [typeof(ImageService)] = images,
             [typeof(UICustomizationService)] = new UICustomizationService(settings), [typeof(NavigationService)] = navigation,
             [typeof(ToastService)] = new ToastService(),
+            [typeof(SettingsService)] = localSettings,
         }, () => new PersonDetailViewModel(people, catalog, client)));
         try
         {
@@ -48,6 +51,98 @@ internal static class BrowsePersonNativeFixture
                 navigation.Navigate<PersonDetailPage>(id);
                 await Until(() => frame.Content is PersonDetailPage page && !page.ViewModel.IsLoading && (page.ViewModel.Person != null || page.ViewModel.ErrorMessage != null));
                 await Task.Delay(80); return Page();
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_PERSON_LOADING") == "1")
+            {
+                var differences = new List<string>();
+                foreach (var width in new[] { 1280, 900, 500 })
+                {
+                    var scale = owner.XamlRoot.RasterizationScale;
+                    window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)Math.Round(width * scale), (int)Math.Round(900 * scale)));
+                    wire.PersonGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var pendingReads = wire.PersonReads;
+                    navigation.Navigate<PersonDetailPage>("loading-" + width);
+                    await Until(() => wire.PersonReads > pendingReads && Page().ViewModel.IsLoading);
+                    await Task.Delay(100); Page().UpdateLayout();
+                    var skeleton = (StackPanel)Page().FindName("PersonSkeletonShell");
+                    var boxes = Descendants<SkeletonBox>(skeleton).ToArray();
+                    var photo = boxes.SingleOrDefault(box => box.Height == 270 || box.Height == 210);
+                    var bio = boxes.SingleOrDefault(box => box.Height == 64);
+                    if (boxes.Length != 5 || photo?.ActualWidth != (width < 640 ? 140 : 180) || photo?.CornerRadius.TopLeft != 16 || bio == null)
+                        differences.Add($"{width}: pending person must render only five current hero placeholders with responsive portrait, name, two facts and biography.");
+                    else
+                    {
+                        var photoPoint = photo.TransformToVisual(skeleton).TransformPoint(new());
+                        var bioPoint = bio.TransformToVisual(skeleton).TransformPoint(new());
+                        if (width < 1024 ? bioPoint.Y <= photoPoint.Y + photo.ActualHeight : bioPoint.X < photoPoint.X + photo.ActualWidth + 31)
+                            differences.Add($"{width}: pending hero must use the same stacked/desktop layout as the WebUI.");
+                    }
+                    wire.PersonGate.TrySetResult(true); wire.PersonGate = null;
+                    await Until(() => !Page().ViewModel.IsLoading);
+                }
+                wire.FilmographyGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                var filmReads = wire.FilmographyReads;
+                navigation.Navigate<PersonDetailPage>("filmography-pending");
+                await Until(() => wire.FilmographyReads > filmReads);
+                await Task.Delay(150);
+                if (Page().ViewModel.Person?.Id != "filmography-pending" || Page().ViewModel.IsLoading || ((ScrollViewer)Page().FindName("ContentScroll")).Visibility != Visibility.Visible)
+                    differences.Add("Independent filmography latency hides the already available person header.");
+                wire.FilmographyGate.TrySetResult(true); wire.FilmographyGate = null;
+                await Until(() => !Page().ViewModel.IsLoading && Page().ViewModel.Filmography.Count == 1);
+                if (differences.Count > 0) throw new InvalidOperationException(string.Join("\n", differences));
+                Program.Log("PASS: PERSON_LOADING_COMPLETED responsive pending hero and visible person before independent filmography completes.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_PERSON_LAYOUT") == "1")
+            {
+                var differences = new List<string>();
+                foreach (var width in new[] { 1280, 900, 500 })
+                {
+                    var scale = owner.XamlRoot.RasterizationScale;
+                    window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)Math.Round(width * scale), (int)Math.Round(900 * scale)));
+                    var preferences = localSettings.Load(); preferences.UiDateFormat = width == 900 ? "YYYY-MM-DD" : width == 500 ? "DD/MM/YYYY" : "MM/DD/YYYY"; localSettings.Save(preferences);
+                    var person = await Open("layout-" + width); person.UpdateLayout();
+                    var photo = (Border)person.FindName("PersonPhotoBorder");
+                    var filter = (Button)person.FindName("FilterAllButton");
+                    var personRefresh = (Button)person.FindName("RefreshPersonButton");
+                    var badge = (Border)person.FindName("BirthDateBadge"); var label = (TextBlock)badge.Child;
+                    var bio = (TextBlock)person.FindName("BioText");
+                    var viewport = (FrameworkElement)((ScrollViewer)person.FindName("ContentScroll")).Content;
+                    var photoPoint = photo.TransformToVisual(viewport).TransformPoint(new());
+                    var name = (TextBlock)person.FindName("PersonName");
+                    var bioPoint = bio.TransformToVisual(viewport).TransformPoint(new());
+                    Program.Log($"TRACE person rhythm {width}: name={name.ActualHeight}, badge={badge.ActualHeight}, bioY={bioPoint.Y}, photoY={photoPoint.Y}");
+                    if (width >= 1024 && Math.Abs(bioPoint.Y - photoPoint.Y - 94) > 1)
+                        differences.Add($"{width}: biography starts{bioPoint.Y-photoPoint.Y}px below the portrait; current WebUI requires94px after its36px name,26px facts and spacing.");
+                    var expectedHeroTop = width >= 1024 ? 120 : width >= 640 ? 104 : 88;
+                    if (Math.Abs(photoPoint.Y - expectedHeroTop) > 1)
+                        differences.Add($"{width}: person hero starts at {photoPoint.Y}, expected {expectedHeroTop} with outer page padding.");
+                    if (bio.Text.Contains('\n') || bio.Text.Contains("  ", StringComparison.Ordinal) || !bio.Text.Contains("Second paragraph", StringComparison.Ordinal))
+                        differences.Add($"{width}: biography must follow WebUI normal whitespace without extra paragraph gaps or lost text.");
+                    if (Math.Abs(badge.ActualHeight - 26) > 1)
+                        differences.Add($"{width}: person metadata line box gives {badge.ActualHeight}px badge instead of26px.");
+                    if (photo.CornerRadius.TopLeft != 16 || photo.ActualWidth != (width < 640 ? 140 : 180))
+                        differences.Add($"{width}: current person portrait requires16px corners and responsive140/180 width.");
+                    if (filter.CornerRadius.TopLeft != 10 || filter.FontWeight.Weight != 500 || ((StackPanel)filter.Parent).Spacing != 6)
+                        differences.Add($"{width}: filmography tabs require10px corners, Medium weight and6px gaps.");
+                    if (personRefresh.FontSize != 14 || personRefresh.Padding.Left != 10 || Descendants<TextBlock>(personRefresh).Any(text => text.FontSize != 14))
+                        differences.Add($"{width}: current small icon action requires14px labels and10px horizontal padding.");
+                    if (badge.CornerRadius.TopLeft < 13 || badge.Padding.Top != 4 || Math.Abs(badge.Padding.Left - 9.6) > .01 || badge.BorderThickness.Top != 1 ||
+                        Math.Abs(label.FontSize - 11.2) > .01 || label.LineHeight != 16 || label.FontWeight.Weight != 600 || label.CharacterSpacing != 40 || label.Text != label.Text.ToUpperInvariant())
+                        differences.Add($"{width}: actual person facts do not use the shared uppercase metadata-badge typography/pill/padding/border.");
+                    var expectedDate = width == 900 ? "BORN 1970-01-02" : width == 500 ? "BORN 2 JAN 1970" : "BORN JAN 2, 1970";
+                    if (label.Text != expectedDate) differences.Add($"{width}: visible birth facts ignore preference-aware medium date formatting: {label.Text}.");
+                    wire.EmptyFilmography = true;
+                    var emptyPerson = await Open("empty-" + width); await Until(() => !emptyPerson.ViewModel.IsLoadingFilmography);
+                    var empty = (TextBlock)emptyPerson.FindName("FilmographyEmptyText");
+                    if (empty.Visibility != Visibility.Visible || empty.FontSize != 16 || empty.Margin.Top != 48 || empty.Margin.Bottom != 48)
+                        differences.Add($"{width}: empty filmography differs from current16px text/48px vertical padding.");
+                    wire.EmptyFilmography = false;
+                    await MediaParityNativeFixture.CaptureAsync(owner, $"person-source-layout-{width}.png");
+                }
+                if (differences.Count > 0) throw new InvalidOperationException(string.Join("\n", differences));
+                Program.Log("PASS: PERSON_SOURCE_LAYOUT_COMPLETED actual responsive portrait, metadata badges, icon actions and filmography tabs.");
+                return;
             }
             wire.PersonStatus = HttpStatusCode.NotFound;
             var missing = await Open("missing");
@@ -91,6 +186,7 @@ internal static class BrowsePersonNativeFixture
         }
         finally
         {
+            wire.PersonGate?.TrySetResult(true); wire.FilmographyGate?.TrySetResult(true);
             active?.Hide();
             if (frame.Content is PersonDetailPage page) page.ViewModel.Cancel();
             frame.Content = null; await Task.Delay(100);
@@ -119,20 +215,23 @@ internal static class BrowsePersonNativeFixture
         internal HttpStatusCode PersonStatus = HttpStatusCode.OK, FilmographyStatus = HttpStatusCode.OK;
         internal int PersonReads, Refreshes, Writes; internal string Name = "Native Person";
         internal TaskCompletionSource<HttpResponseMessage>? RefreshGate;
+        internal TaskCompletionSource<bool>? PersonGate, FilmographyGate;
+        internal int FilmographyReads;
+        internal bool EmptyFilmography;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri?.Host != "browse-person.invalid") throw new InvalidOperationException("Actual Person fixture attempted external networking.");
             var path = request.RequestUri.AbsolutePath; object body = new { items = Array.Empty<object>(), page = new { has_more = false } }; var status = HttpStatusCode.OK;
             if (path == "/artwork.png") return new(HttpStatusCode.OK) { Content = new ByteArrayContent(Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j8uoAAAAASUVORK5CYII=")) };
-            if (path.StartsWith("/api/v2/catalog/people/")) { PersonReads++; status = PersonStatus; body = Person(path.Split('/').Last()); }
+            if (path.StartsWith("/api/v2/catalog/people/")) { PersonReads++; if (PersonGate != null) await PersonGate.Task.WaitAsync(ct); status = PersonStatus; body = Person(path.Split('/').Last()); }
             if (path.StartsWith("/api/v2/admin/people/") && path.EndsWith("/refresh")) { Refreshes++; return await RefreshGate!.Task.WaitAsync(ct); }
             if (path.StartsWith("/api/v2/admin/people/") && request.Method == HttpMethod.Patch)
             { Writes++; using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); Name = json.RootElement.GetProperty("name").GetString()!; body = Person(path.Split('/').Last()); }
             if (path == "/api/v2/catalog" && request.RequestUri.Query.Contains("source=person"))
-            { status = FilmographyStatus; body = new { items = new[] { new { content_id = "film-one", type = "movie", title = "Recovered Film" } }, total = 1, page = new { has_more = false } }; }
+            { FilmographyReads++; if (FilmographyGate != null) await FilmographyGate.Task.WaitAsync(ct); status = FilmographyStatus; body = new { items = EmptyFilmography ? [] : new[] { new { content_id = "film-one", type = "movie", title = "Recovered Film" } }, total = EmptyFilmography ? 0 : 1, page = new { has_more = false } }; }
             if (status != HttpStatusCode.OK) body = new { message = "isolated unavailable response" };
             return new(status) { Content = new StringContent(JsonSerializer.Serialize(body)) };
         }
-        private object Person(string id) => new { id, name = Name, bio = "A cached biography for actual admin actions.", birth_date = "1970-01-02", photo_url = "https://browse-person.invalid/artwork.png", tmdb_id = "7" };
+        private object Person(string id) => new { id, name = Name, bio = id.StartsWith("layout-") ? "A cached biography.\n\nSecond paragraph  remains readable." : "A cached biography for actual admin actions.", birth_date = "1970-01-02", photo_url = "https://browse-person.invalid/artwork.png", tmdb_id = "7" };
     }
 }

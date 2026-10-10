@@ -220,7 +220,8 @@ public sealed partial class ProfileSelectPage : Page
         if (ViewModel.IsPinRequired)
         {
             App.Services.GetRequiredService<Services.ToastService>()
-                .Error("Profile created, but PIN verification failed");
+                .Error(ViewModel.PinErrorMessage?.StartsWith("Too many incorrect PINs.", StringComparison.Ordinal) == true
+                    ? $"Profile created. {ViewModel.PinErrorMessage}" : "Profile created, but PIN verification failed");
         }
     }
 

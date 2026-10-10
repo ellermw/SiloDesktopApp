@@ -32,6 +32,10 @@ public sealed partial class HeroCarousel : UserControl
     private string? _lastDisplayedContentId;
     private string? _lastDisplayedBackdropUrl;
     private string? _lastDisplayedBackdropThumbhash;
+    private PlayerService? _player;
+    private bool _playerSubscribed;
+    private bool _previousMetadataWasText;
+    public int? LibraryId { get; set; }
 
     // F-series hero polish:
     // - Crossfade between BackdropImageA / BackdropImageB. `_activeIsA`
@@ -77,6 +81,7 @@ public sealed partial class HeroCarousel : UserControl
     {
         if (d is HeroCarousel carousel)
         {
+            var previousCount = carousel._items?.Count ?? 0;
             carousel.CancelBackdropLoad(clearImages: e.NewValue == null);
             var previousContentId = carousel._items != null
                 && carousel._currentIndex >= 0
@@ -102,12 +107,18 @@ public sealed partial class HeroCarousel : UserControl
             }
             carousel.BuildDots();
             carousel.ShowCurrentItem();
+            var currentContentId = nextItems is { Count: > 0 } ? nextItems[carousel._currentIndex].ContentId : null;
+            if (carousel.IsLoaded && (previousCount != (nextItems?.Count ?? 0)
+                || !string.Equals(previousContentId, currentContentId, StringComparison.Ordinal)))
+                carousel.StartAutoAdvance();
         }
     }
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         _animationsEnabled = AreSystemAnimationsEnabled();
+        SubscribePlayer();
+        RefreshPrimaryAction();
         StartAutoAdvance();
         UpdateThemeGradientColors();
         UpdateHeightFromWindow();
@@ -178,9 +189,18 @@ public sealed partial class HeroCarousel : UserControl
             else
             {
                 SlideControlsPanel.VerticalAlignment = VerticalAlignment.Bottom;
-                SlideControlsPanel.Margin = new Thickness(0, 0, 24, 20);
+                SlideControlsPanel.Margin = new Thickness(0, 0,
+                    width >= 1280 ? 48 : width >= 1024 ? 40 : 24,
+                    width >= 1024 ? 32 : 24);
                 ProgressRailContainer.Visibility = Visibility.Visible;
             }
+            SlideControlsPanel.Spacing = width < 640 ? 8 : 12;
+            SlideCounterSeparator.Visibility = width < 640 ? Visibility.Collapsed : Visibility.Visible;
+            SlideCounterSlash.Visibility = width < 640 ? Visibility.Visible : Visibility.Collapsed;
+            PauseCarouselIcon.FontSize = width < 640 ? 12 : 14;
+            HeroBottomBorder.Visibility = HeroVignetteBorder.Visibility = IsTall ? Visibility.Collapsed : Visibility.Visible;
+            HeroTopScrim.Visibility = IsTall ? Visibility.Visible : Visibility.Collapsed;
+            UpdateThemeGradientColors();
         }
     }
 
@@ -193,17 +213,22 @@ public sealed partial class HeroCarousel : UserControl
             alpha, background.R, background.G, background.B);
 
         HeroBottomTransparent.Color = WithAlpha(0);
-        HeroBottomSoft.Color = WithAlpha(0x33);
-        HeroBottomMid.Color = WithAlpha(0x8C);
-        HeroBottomStrong.Color = WithAlpha(0xEB);
+        HeroBottomTransparent.Offset = IsTall ? .12 : .34;
+        HeroBottomSoft.Offset = IsTall ? .30 : .50;
+        HeroBottomMid.Offset = IsTall ? .52 : .70;
+        HeroBottomStrong.Offset = IsTall ? .74 : .88;
+        HeroBottomFull.Offset = IsTall ? .90 : 1;
+        HeroBottomSoft.Color = WithAlpha(31);
+        HeroBottomMid.Color = WithAlpha((byte)Math.Round(255 * (IsTall ? .45 : .48)));
+        HeroBottomStrong.Color = WithAlpha((byte)Math.Round(255 * (IsTall ? .86 : .88)));
+        HeroBottomFull.Color = WithAlpha(0xFF);
         HeroBottomSolid.Color = WithAlpha(0xFF);
-        HeroLeftSolid.Color = WithAlpha(0xFF);
-        HeroLeftStrong.Color = WithAlpha(0xCC);
-        HeroLeftSoft.Color = WithAlpha(0x66);
+        HeroTopStrong.Color = WithAlpha(179);
+        HeroTopSoft.Color = WithAlpha(77);
+        HeroLeftSolid.Color = WithAlpha(224);
+        HeroLeftStrong.Color = WithAlpha(148);
+        HeroLeftSoft.Color = WithAlpha(56);
         HeroLeftTransparent.Color = WithAlpha(0);
-        HeroVignetteStrong.Color = WithAlpha(0x66);
-        HeroVignetteSoft.Color = WithAlpha(0x33);
-        HeroVignetteTransparent.Color = WithAlpha(0);
     }
 
     // Height is managed by UpdateHeightFromWindow, no SizeChanged needed
@@ -211,6 +236,7 @@ public sealed partial class HeroCarousel : UserControl
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         StopAutoAdvance();
+        UnsubscribePlayer();
         CancelBackdropLoad(clearImages: false);
         DetachSizeRoot();
     }
@@ -347,6 +373,7 @@ public sealed partial class HeroCarousel : UserControl
         HeroTitleShadow.Text = item.Title;
         BalanceTitle();
         HeroOverview.Text = item.Overview ?? "";
+        HeroOverview.Visibility = string.IsNullOrEmpty(item.Overview) ? Visibility.Collapsed : Visibility.Visible;
         UpdatePrimaryAction(item);
 
         // Eyebrow: "FEATURED — No. 01"
@@ -354,6 +381,8 @@ public sealed partial class HeroCarousel : UserControl
 
         // Slide counter: "01 / 04"
         SlideCounterText.Text = $"{(_currentIndex + 1):D2} / {_items.Count:D2}";
+        SlideCounterCurrent.Text = $"{(_currentIndex + 1):D2}";
+        SlideCounterTotal.Text = $"{_items.Count:D2}";
 
         // The current WebUI keeps the active hero slide mounted when home
         // sections refresh with updated item data. Keep the rail/backdrop
@@ -363,6 +392,7 @@ public sealed partial class HeroCarousel : UserControl
             AnimateProgressRail();
 
         HeroMetaPillsRow.Children.Clear();
+        _previousMetadataWasText = false;
         var runtimeSeconds = item.Runtime > 0 && double.IsFinite(item.Runtime * 60d)
             ? item.Runtime * 60d : item.DurationSeconds;
         var runtime = FormatRuntime(runtimeSeconds);
@@ -383,16 +413,17 @@ public sealed partial class HeroCarousel : UserControl
             var primaryRating = RatingPresentation.PrimaryCardRating(item.RatingImdb, item.RatingTmdb);
             if (primaryRating != null)
             {
-                AddHeroMetaSeparator();
                 var entry = DisplayRatingEntry.Create(primaryRating, small: true, foreground: new SolidColorBrush(Microsoft.UI.Colors.White));
                 entry.Opacity = .85;
                 HeroMetaPillsRow.Children.Add(entry);
+                _previousMetadataWasText = false;
             }
             foreach (var genre in item.Genres.Select(genre => genre.Trim()).Where(genre => genre.Length > 0).Distinct().Take(2))
                 AddHeroMeta(genre);
             if (!string.IsNullOrEmpty(contentRating)) AddHeroMeta(contentRating);
         }
 
+        HeroMetaPillsRow.Visibility = HeroMetaPillsRow.Children.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         SlideControlsPanel.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
         PrevButton.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
         NextButton.Visibility = _items.Count > 1 ? Visibility.Visible : Visibility.Collapsed;
@@ -435,13 +466,13 @@ public sealed partial class HeroCarousel : UserControl
         var nav = App.Services.GetRequiredService<NavigationService>();
         if (item.Type.Equals("ebook", StringComparison.OrdinalIgnoreCase))
         {
-            nav.Navigate<EbookReaderPage>(new EbookReaderNavigation(item.ContentId));
+            nav.Navigate<EbookReaderPage>(new EbookReaderNavigation(item.ContentId, LibraryId: LibraryId));
             return;
         }
 
         if (item.Type is not ("movie" or "episode" or "audiobook"))
         {
-            nav.Navigate<ItemDetailPage>(item.ContentId);
+            nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(item.ContentId, LibraryId));
             return;
         }
 
@@ -457,7 +488,7 @@ public sealed partial class HeroCarousel : UserControl
                 return;
             }
 
-            await player.PlayAsync(item.ContentId);
+            await player.PlayAsync(item.ContentId, libraryId: LibraryId);
             UpdatePrimaryAction(item);
         }
         catch (Exception ex)
@@ -476,7 +507,7 @@ public sealed partial class HeroCarousel : UserControl
     {
         if (_items == null || _items.Count == 0 || _currentIndex >= _items.Count) return;
         App.Services.GetRequiredService<NavigationService>()
-            .Navigate<ItemDetailPage>(_items[_currentIndex].ContentId);
+            .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(_items[_currentIndex].ContentId, LibraryId));
     }
 
     private void UpdatePrimaryAction(MediaItem item)
@@ -514,6 +545,31 @@ public sealed partial class HeroCarousel : UserControl
         {
             PlayButtonText.Text = "Listen";
         }
+    }
+
+    private void SubscribePlayer()
+    {
+        _player ??= App.Services.GetRequiredService<PlayerService>();
+        if (_playerSubscribed) return;
+        _playerSubscribed = true;
+        _player.PauseChanged += OnPlayerPauseChanged;
+        _player.ContentLoaded += OnPlayerContentChanged;
+    }
+
+    private void UnsubscribePlayer()
+    {
+        if (!_playerSubscribed || _player == null) return;
+        _playerSubscribed = false;
+        _player.PauseChanged -= OnPlayerPauseChanged;
+        _player.ContentLoaded -= OnPlayerContentChanged;
+    }
+
+    private void OnPlayerPauseChanged(bool _) => DispatcherQueue.TryEnqueue(RefreshPrimaryAction);
+    private void OnPlayerContentChanged() => DispatcherQueue.TryEnqueue(RefreshPrimaryAction);
+    private void RefreshPrimaryAction()
+    {
+        if (!IsLoaded || _items == null || _currentIndex >= _items.Count) return;
+        UpdatePrimaryAction(_items[_currentIndex]);
     }
 
     private static string? FormatRuntime(double? seconds)
@@ -677,33 +733,27 @@ public sealed partial class HeroCarousel : UserControl
 
     private void AddHeroMeta(string text)
     {
-        AddHeroMetaSeparator();
-        HeroMetaPillsRow.Children.Add(new TextBlock
+        var entry = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+        if (_previousMetadataWasText)
+            entry.Children.Add(new TextBlock
+            {
+                Text = "\u00B7", FontSize = 13.12, CharacterSpacing = 20,
+                Opacity = .55, Margin = new Thickness(9.6, 0, 9.6, 0),
+                Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+        entry.Children.Add(new TextBlock
         {
             Text = text,
-            FontSize = 13,
+            FontSize = 13.12,
+            CharacterSpacing = 20,
             FontWeight = Microsoft.UI.Text.FontWeights.Medium,
             Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
             Opacity = 0.85,
             VerticalAlignment = VerticalAlignment.Center,
         });
-    }
-
-    private void AddHeroMetaSeparator()
-    {
-        if (HeroMetaPillsRow.Children.Count > 0)
-        {
-            HeroMetaPillsRow.Children.Add(new TextBlock
-            {
-                Text = "\u00B7",
-                FontSize = 13,
-                Opacity = 0.55,
-                Margin = new Thickness(7, 0, 7, 0),
-                Foreground = new SolidColorBrush(Microsoft.UI.Colors.White),
-                VerticalAlignment = VerticalAlignment.Center,
-            });
-        }
-
+        HeroMetaPillsRow.Children.Add(entry);
+        _previousMetadataWasText = true;
     }
 
     private void BalanceTitle()
@@ -757,7 +807,7 @@ public sealed partial class HeroCarousel : UserControl
         var anim = new DoubleAnimation
         {
             From = 0,
-            To = 100,
+            To = 144,
             Duration = new Duration(TimeSpan.FromSeconds(8)),
             EnableDependentAnimation = true,
         };

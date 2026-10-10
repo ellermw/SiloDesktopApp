@@ -52,6 +52,15 @@ public static class DeviceSettingDisplay
         !Hidden.Contains(definition.Key) && definition.Data.GetProperty("introduced_in").GetInt32() <= revision
         && !(definition.Key == "playback.auto_skip_intro" && revision >= 7)).ToArray();
     public static bool CanWrite(ContractEffectiveSettingEntry entry) => entry.ConstraintKind != "locked";
+    public static string? InheritedSource(ContractEffectiveSettingEntry entry, string ownerLabel)
+        => entry.Source switch { "profile" => $"From {ownerLabel} profile", "default" => "App default", _ => null };
+    public static string ConstraintExplanation(ContractEffectiveSettingEntry entry)
+    {
+        if (entry.ConstraintKind == "locked") return "This is set for your household and can't be changed here.";
+        if (entry.StoredValue is { } stored && DeviceSettingDefinition.Scalar(stored) != DeviceSettingDefinition.Scalar(entry.Value))
+            return $"Your household settings limit this to {DeviceSettingDefinition.Scalar(entry.Value)}, so your choice of {DeviceSettingDefinition.Scalar(stored)} isn't available right now.";
+        return "Your household settings limit this option.";
+    }
     public static bool IsDormant(UserDevice device, DateTimeOffset now) => !device.IsCurrentDevice && device.ChangedCount == 0
         && (!DateTimeOffset.TryParse(device.LastSeenAt, out var seen) || now - seen > TimeSpan.FromDays(90));
 }

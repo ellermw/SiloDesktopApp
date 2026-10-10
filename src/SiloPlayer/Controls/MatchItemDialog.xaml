@@ -7,15 +7,14 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d"
     Title="Match Item"
-    CloseButtonText="Cancel"
     DefaultButton="None">
 
-    <Grid x:Name="MatchBody" MaxWidth="800" RowSpacing="12">
+    <Grid x:Name="MatchBody" MaxWidth="462" RowSpacing="16">
         <Grid.RowDefinitions>
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer x:Name="MatchScroller" Grid.Row="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
         <StackPanel Spacing="16" Padding="0,0,4,0">
         <!-- Current item summary. The WebUI keeps this visible above the
              search form so an administrator cannot accidentally match the
@@ -23,18 +22,18 @@
         <Border
             Background="{StaticResource SurfaceRaisedBrush}"
             CornerRadius="8"
-            Padding="12,9">
+            Padding="12,8">
             <StackPanel Orientation="Horizontal" Spacing="8">
                 <TextBlock
                     x:Name="CurrentTitleText"
                     FontSize="14"
-                    FontWeight="SemiBold"
+                    FontWeight="Medium"
                     Foreground="{StaticResource PrimaryTextBrush}"
                     TextTrimming="CharacterEllipsis"
                     MaxWidth="450" />
                 <TextBlock
                     x:Name="CurrentYearText"
-                    FontSize="13"
+                    FontSize="14"
                     Foreground="{StaticResource SecondaryTextBrush}"
                     VerticalAlignment="Center" />
                 <Border
@@ -54,8 +53,8 @@
         <!-- Local media section (admin-only): folder/file paths for each version
              (movies) or library roots (series). Mirrors webui MediaLocations +
              FolderPathsList used inside MatchItemDialog. -->
-        <StackPanel x:Name="LocalMediaSection" Spacing="8" Visibility="Collapsed">
-            <TextBlock Text="Local media" FontSize="14" FontWeight="SemiBold"
+        <StackPanel x:Name="LocalMediaSection" Spacing="12" Visibility="Collapsed">
+            <TextBlock Text="Local media" FontSize="16" FontWeight="SemiBold" Height="24" LineHeight="24" LineStackingStrategy="BlockLineHeight"
                        Foreground="{StaticResource PrimaryTextBrush}" />
             <StackPanel x:Name="LocalMediaPanel" Spacing="6" />
             <TextBlock x:Name="LocalMediaEmpty" FontSize="12"
@@ -66,7 +65,7 @@
         <!-- The current WebUI exposes title/year and provider identifiers as
              independent fields. Keeping them separate avoids guessing whether
              a numeric query means TMDB, TVDB, ISBN, or another provider. -->
-        <Grid x:Name="VideoSearchFields" ColumnSpacing="12" RowSpacing="10">
+        <Grid x:Name="VideoSearchFields" ColumnSpacing="12" RowSpacing="12">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="*" />
@@ -82,7 +81,7 @@
                 Grid.ColumnSpan="2"
                 Header="Title"
                 PlaceholderText="Title"
-                FontSize="13"
+                FontSize="14"
                 CornerRadius="8"
                 KeyDown="SearchField_KeyDown" />
             <TextBox
@@ -92,7 +91,7 @@
                 Header="Year"
                 PlaceholderText="Year"
                 InputScope="Number"
-                FontSize="13"
+                FontSize="14"
                 CornerRadius="8"
                 KeyDown="SearchField_KeyDown" />
             <TextBox
@@ -101,7 +100,7 @@
                 Grid.Column="1"
                 Header="IMDb ID"
                 PlaceholderText="tt1234567"
-                FontSize="13"
+                FontSize="14"
                 CornerRadius="8"
                 KeyDown="SearchField_KeyDown" />
             <TextBox
@@ -110,7 +109,7 @@
                 Grid.Column="0"
                 Header="TMDB ID"
                 PlaceholderText="12345"
-                FontSize="13"
+                FontSize="14"
                 CornerRadius="8"
                 KeyDown="SearchField_KeyDown" />
             <TextBox
@@ -119,7 +118,7 @@
                 Grid.Column="1"
                 Header="TVDB ID"
                 PlaceholderText="12345"
-                FontSize="13"
+                FontSize="14"
                 CornerRadius="8"
                 KeyDown="SearchField_KeyDown" />
         </Grid>
@@ -135,7 +134,7 @@
                     Grid.Column="0"
                     Header="Title"
                     PlaceholderText="Title"
-                    FontSize="13"
+                    FontSize="14"
                     CornerRadius="8"
                     KeyDown="SearchField_KeyDown" />
                 <TextBox
@@ -144,7 +143,7 @@
                     Header="Year"
                     PlaceholderText="Year"
                     InputScope="Number"
-                    FontSize="13"
+                    FontSize="14"
                     CornerRadius="8"
                     KeyDown="SearchField_KeyDown" />
             </Grid>
@@ -172,7 +171,7 @@
             Style="{StaticResource AccentButtonStyle}"
             Click="SearchButton_Click">
             <StackPanel Orientation="Horizontal" Spacing="7">
-                <FontIcon x:Name="SearchIcon" Glyph="&#xE721;" FontSize="13" />
+                <FontIcon x:Name="SearchIcon" Glyph="&#xE721;" FontSize="14" />
                 <TextBlock x:Name="SearchButtonText" Text="Search" />
             </StackPanel>
         </Button>
@@ -189,7 +188,7 @@
         <StackPanel x:Name="ResultsSection" Spacing="8" Visibility="Collapsed">
             <TextBlock Text="Results" FontSize="12" FontWeight="SemiBold"
                        Foreground="{StaticResource PrimaryTextBrush}" />
-            <TextBlock x:Name="TruncatedText" Text="Showing the first 500 matches. Narrow your search to find more." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" Visibility="Collapsed"/>
+            <TextBlock x:Name="TruncatedText" Text="Showing the first 500 matches. Refine the title, year, or provider ID to narrow the results." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" Visibility="Collapsed"/>
             <StackPanel x:Name="ResultsPanel" Spacing="4" />
         </StackPanel>
 
@@ -197,7 +196,7 @@
         <TextBlock
             x:Name="EmptyText"
             Text=""
-            FontSize="13"
+            FontSize="14"
             Foreground="{StaticResource SecondaryTextBrush}"
             HorizontalAlignment="Center"
             Visibility="Collapsed" />
@@ -213,14 +212,15 @@
         </StackPanel>
         </ScrollViewer>
 
+        <Border x:Name="ApplyMatchFooter" Grid.Row="1" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0" Visibility="Collapsed">
         <Button
             x:Name="ApplyMatchButton"
-            Grid.Row="1"
             HorizontalAlignment="Stretch"
             HorizontalContentAlignment="Center"
             Style="{StaticResource AccentButtonStyle}"
             Content="Apply Match"
             Visibility="Collapsed"
             Click="ApplyMatch_Click" />
+        </Border>
     </Grid>
 </ContentDialog>

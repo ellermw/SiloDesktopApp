@@ -23,6 +23,11 @@ internal static class MediaParityNativeFixture
         => services; // Compatibility for the shared runner; dependencies are scoped below.
     internal static async Task RunAsync(StackPanel parent)
     {
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") == "more-current") { await MediaMoreActionsNativeFixture.RunAsync(parent); return; }
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") == "tools-current") { await MediaToolsDialogsNativeFixture.RunAsync(parent); return; }
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "party-picker") { await PartyPickerNativeFixture.RunAsync(parent); return; }
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "playback-scope") { await PlaybackScopeNativeFixture.RunAsync(parent); return; }
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "tv-first-caption") { await MediaFirstCaptionNativeFixture.RunAsync(); return; }
         var field = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var original = (IServiceProvider)field.GetValue(null)!;
         using var media = new MediaServices(original);
@@ -33,7 +38,7 @@ internal static class MediaParityNativeFixture
     private static async Task RunCoreAsync(StackPanel parent)
     {
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "first-navigation" or "series-loading") { await DetailFirstNavigationNativeFixture.RunAsync(parent); return; }
-        if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "latest-media" or "ratings-layout") { await MediaLatestNativeFixture.RunAsync(parent); return; }
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "latest-media" or "ratings-layout" or "similar-layout") { await MediaLatestNativeFixture.RunAsync(parent); return; }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "hub-visual") { await HubCurrentCopyAsync(parent); return; }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "reader-real" or "reader-panel" or "reader-toc" or "reader-controls") { await ReaderInteropFixture.RunAsync(parent); return; }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "recent-unknown") { await MediaInteractionsNativeFixture.RunAsync(parent); return; }
@@ -272,7 +277,8 @@ internal static class MediaParityNativeFixture
         var client = new SiloApiClient(new HttpClient(handler));
         client.SetBaseUrl("https://reader-settings-fixture.invalid"); client.SetProfile("fixture-profile");
         var api = new EbooksApi(client);
-        using var services = new ServiceCollection().AddSingleton(api).AddSingleton(new CatalogApi(client)).AddSingleton(new ToastService()).BuildServiceProvider();
+        using var scopedServices = new ServiceCollection().AddSingleton(api).AddSingleton(new CatalogApi(client)).AddSingleton(new ToastService()).BuildServiceProvider();
+        var services = new ReaderServices(scopedServices, (IServiceProvider)original!);
         serviceField.SetValue(null, services);
         var pages = new List<EbookReaderPage>();
         try
@@ -379,6 +385,9 @@ internal static class MediaParityNativeFixture
         }
         public void Dispose() { _coordinator?.ClearActiveRoom(); foreach (var room in _rooms) room.Dispose(); _http.Dispose(); }
     }
+    private sealed class ReaderServices(IServiceProvider scoped, IServiceProvider fallback) : IServiceProvider
+    { public object? GetService(Type type) => scoped.GetService(type) ?? fallback.GetService(type); }
+
     private sealed class ReaderSettingsHandler : HttpMessageHandler
     {
         internal bool Fail, Conflict;

@@ -13,6 +13,7 @@ using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
+using SiloPlayer.Controls;
 
 internal static class BrowseLibraryStateNativeFixture
 {
@@ -82,6 +83,45 @@ internal static class BrowseLibraryStateNativeFixture
             if(Field<string>(beta,"_currentAudiobookAxis")!="books"||beta.ViewModel.UseAdvancedRules)throw new InvalidOperationException("Profile switch leaked Alpha's saved axis/query into Beta's independent Library state.");
             wire.ReleaseDeferred();await Task.Delay(200);
             if(Descendants<TextBlock>(beta).Any(text=>text.Text=="Late wrong narrator")||Descendants<TextBlock>((DependencyObject)recreated.FindName("AudiobookGroupsHost")).Any(text=>text.Text=="Late wrong narrator"))throw new InvalidOperationException("Ignored-cancellation old profile/axis response published after Library navigation.");
+            wire.AllowBetaFilterState=true;
+            var openFilters=(Button)beta.FindName("OpenFiltersButton");
+            ((IInvokeProvider)new ButtonAutomationPeer(openFilters).GetPattern(PatternInterface.Invoke)).Invoke();
+            var sheet=(SlideSheet)beta.FindName("FiltersSheet");
+            await Until(()=>sheet.IsOpen);
+            await Until(()=>wire.FiltersStarted);
+            var loadingEditor=Field<QueryFilterEditor>(beta,"_sharedFilterEditor");
+            var year=Descendants<NumberBox>(loadingEditor).First();
+            year.Value=1999;
+            wire.FilterGate.TrySetResult();
+            await Until(()=>beta.ViewModel.Genres.Contains("Crime"));
+            await Task.Delay(100);
+            var genreInput=Descendants<AutoSuggestBox>(loadingEditor).Single(box=>box.Header is TextBlock label&&label.Text=="Genres");
+            genreInput.Focus(FocusState.Programmatic);
+            await Task.Delay(80);
+            if(genreInput.ItemsSource is not System.Collections.IEnumerable available||!available.Cast<object>().Any(value=>value.ToString()=="Crime"))
+                throw new InvalidOperationException("Library filter editor never received its delayed available genres.");
+            if(!ReferenceEquals(loadingEditor,Field<QueryFilterEditor>(beta,"_sharedFilterEditor"))||!loadingEditor.Query.Groups.SelectMany(group=>group.Rules).Any(rule=>rule.Field=="year"&&QueryRuleValues.Format(rule.Value)=="1999"))
+                throw new InvalidOperationException("Delayed Library options replaced the active editor or lost its in-flight year draft.");
+            genreInput.IsSuggestionListOpen=false;
+            var layoutFailures=new List<string>();
+            foreach(var width in new[]{1280,900,500})
+            {
+                var scale=owner.XamlRoot.RasterizationScale;
+                window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)Math.Round(width*scale),(int)Math.Round(900*scale)));
+                await Task.Delay(100);beta.UpdateLayout();
+                var expectedWidth=width>=640?448:width*.75;
+                if(Math.Abs(sheet.PreferredWidth-expectedWidth)>1)layoutFailures.Add($"{width}: Library filter drawer width{sheet.PreferredWidth}, expected{expectedWidth}.");
+                var visibleCopy=Descendants<TextBlock>(sheet).Where(text=>text.Visibility==Visibility.Visible).Select(text=>text.Text).ToArray();
+                if(visibleCopy.Count(text=>text=="Refine your catalog results")!=1||visibleCopy.Any(text=>text.StartsWith("Build rule groups directly",StringComparison.Ordinal)))
+                    layoutFailures.Add($"{width}: Library drawer still includes obsolete/duplicate help before the current editor.");
+                var body=(Grid)sheet.SheetContent;
+                var scroll=(ScrollViewer)beta.FindName("AdvancedFiltersScroll");
+                if(body.RowDefinitions.Count!=2||body.RowSpacing!=16||scroll.Padding.Top!=0)
+                    layoutFailures.Add($"{width}: filter body must contain only the scrolling editor and fixed footer with16px gap.");
+            }
+            sheet.IsOpen=false;
+            if(layoutFailures.Count>0)throw new InvalidOperationException(string.Join("\n",layoutFailures));
+            Program.Log("PASS: Library filter sheet matches448px desktop/75% narrow width, one header and bounded editor/footer.");
             Program.Log("PASS: actual saved grouped typed Library query/author axis, native Narrators selection persists state, fresh-page restore, separate profile state and deferred ignored-cancellation old-axis rejection.");
         }
         finally{AppDomain.CurrentDomain.FirstChanceException -= restoreFailure;wire.ReleaseDeferred();frame?.Navigate(typeof(Page));field.SetValue(null,previous);await Task.Delay(250);navigation.Frame=null;owner.Children.Clear();window.Close();}
@@ -93,7 +133,8 @@ internal static class BrowseLibraryStateNativeFixture
     private sealed class Wire:HttpMessageHandler
     {
         internal string SavedAlpha="?tab=library&type=authors&match=any&groups[0][match]=all&groups[0][rules][0][field]=year&groups[0][rules][0][op]=between&groups[0][rules][0][value][0]=1980&groups[0][rules][0][value][1]=2001";
-        internal int StateWrites;internal bool DeferNarrator,DeferredStarted;
+        internal int StateWrites;internal bool DeferNarrator,DeferredStarted,AllowBetaFilterState,FiltersStarted;
+        internal readonly TaskCompletionSource FilterGate=new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource gate=new(TaskCreationOptions.RunContinuationsAsynchronously);internal void ReleaseDeferred()=>gate.TrySetResult();
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
@@ -104,7 +145,7 @@ internal static class BrowseLibraryStateNativeFixture
             if(path.Contains("/settings/values/")&&request.Method==HttpMethod.Put)
             {
                 var payload=JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync(ct)); Program.Log("Library actual state write: "+payload.GetRawText());
-                if(path.EndsWith("ui.library_page_state")){StateWrites++;if(profile!="alpha")throw new InvalidOperationException("Old Alpha state write escaped into another profile.");SavedAlpha=payload.GetProperty("value").GetProperty("libraries").GetProperty("11").GetProperty("search").GetString()!;}
+                if(path.EndsWith("ui.library_page_state")){StateWrites++;if(profile!="alpha"&&!(profile=="beta"&&AllowBetaFilterState))throw new InvalidOperationException("Old Alpha state write escaped into another profile.");if(profile=="alpha")SavedAlpha=payload.GetProperty("value").GetProperty("libraries").GetProperty("11").GetProperty("search").GetString()!;}
                 body=new{key="ui.library_page_state",value=new{},source="profile"};
             }
             else if(path=="/api/v2/events/ws-ticket")return new(HttpStatusCode.ServiceUnavailable){Content=new StringContent("{\"error\":\"fixture_no_socket\",\"message\":\"Local fixture has no events socket\"}")};
@@ -118,7 +159,7 @@ internal static class BrowseLibraryStateNativeFixture
                 body=new{items=new[]{new{name,item_count=1,total_duration_seconds=60,poster_urls=Array.Empty<string>()}},total=1,page=new{has_more=false}};
             }
             else if(path=="/api/v2/catalog")body=new{items=new[]{new{content_id="beta-book",type="audiobook",title="Beta independent book"}},total=1,window_cursor="library-state",page=new{has_more=false}};
-            else if(path=="/api/v2/catalog/filters")body=new{genres=Array.Empty<string>(),authors=Array.Empty<string>(),narrators=Array.Empty<string>(),series=Array.Empty<string>()};
+            else if(path=="/api/v2/catalog/filters"){FiltersStarted=true;await FilterGate.Task;body=new{genres=new[]{"Crime","Drama"},authors=Array.Empty<string>(),narrators=Array.Empty<string>(),series=Array.Empty<string>()};}
             else if(path=="/api/v2/catalog/search/capabilities")body=new{people_media_scope=true};
             else if(path=="/api/v2/user/libraries")body=new{items=new[]{new{id=11,name="Audiobooks",type="audiobook"}}};
             else throw new InvalidOperationException("Unexpected Library fixture route: "+path);

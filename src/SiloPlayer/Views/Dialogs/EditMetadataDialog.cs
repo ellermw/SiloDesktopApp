@@ -23,7 +23,7 @@ public sealed class EditMetadataDialog : ContentDialog
     private readonly Dictionary<string, FrameworkElement> _fieldGroups = [];
     private readonly List<(Grid Grid, string[][] Rows)> _fieldLayouts = [];
     private readonly Button _reset;
-    private readonly StackPanel _navigation = new() { Spacing = 4 };
+    private readonly StackPanel _navigation = new();
     private readonly StackPanel _body = new() { Spacing = 24 };
     private readonly ScrollViewer _scroll;
     private readonly ScrollViewer _navigationScroll;
@@ -38,6 +38,7 @@ public sealed class EditMetadataDialog : ContentDialog
     private readonly MediaMaintenanceApi _api;
     private readonly CancellationTokenSource _lifetime = new();
     private bool _pending, _imagePending;
+    private Action? _resizeImages;
     public bool HasSaved { get; private set; }
     private Brush Brush(string key) => (Brush)Application.Current.Resources[key];
     private Brush TranslucentBrush(string key, double opacity)
@@ -86,14 +87,15 @@ public sealed class EditMetadataDialog : ContentDialog
         if (item.Type is "movie" or "series")
         {
             Number(dates, "rating_imdb", "IMDb Rating", 0, 10); Number(dates, "rating_tmdb", "TMDB Rating", 0, 10);
-            Number(dates, "rating_rt_critic", "RT Critics Score", 0, 100); Number(dates, "rating_rt_audience", "RT Audience Score", 0, 100);
+            Number(dates, "rating_rt_critic", "RT Critic Score", 0, 100); Number(dates, "rating_rt_audience", "RT Audience Score", 0, 100);
             var tags = Section("tags", "Tags & Genres");
             foreach (var key in item.Type == "series" ? new[] { "genres", "studios", "networks", "countries" } : new[] { "genres", "studios", "countries" })
             {
                 var input = new MetadataTagsInput((string[])_state.Fields[key]!);
                 _tagInputs[key] = input;
                 input.Changed += (_, _) => { _state.Set(key, input.Values); RefreshLocks(); };
-                tags.Children.Add(Label(key, char.ToUpper(key[0]) + key[1..])); tags.Children.Add(input);
+                var group = new StackPanel { Spacing = 6 };
+                group.Children.Add(Label(key, char.ToUpper(key[0]) + key[1..])); group.Children.Add(input); tags.Children.Add(group);
             }
         }
         var ids = Section("ids", "External IDs");
@@ -112,7 +114,9 @@ public sealed class EditMetadataDialog : ContentDialog
         BuildFieldLayout(general, generalRows.ToArray());
         BuildFieldLayout(dates, [["year", "release_date", "first_air_date"], ["last_air_date", "air_time", "air_timezone"], ["air_date"], ["rating_imdb", "rating_tmdb"], ["rating_rt_critic", "rating_rt_audience"]]);
         BuildFieldLayout(ids, [["imdb_id"], ["tmdb_id"], ["tvdb_id"]]);
-        if (_fieldGroups.TryGetValue("rating_imdb", out var rating) && rating.Parent is FrameworkElement ratingRow)
+        // An unselected section has not acquired a visual Parent yet. Its stored
+        // layout still owns the rating row and is the authority for insertion.
+        if (_fieldGroups.TryGetValue("rating_imdb", out var rating) && _fieldLayouts.Select(layout => layout.Grid).FirstOrDefault(grid => grid.Children.Contains(rating)) is Grid ratingRow)
             dates.Children.Insert(dates.Children.IndexOf(ratingRow), new TextBlock { Text = "RATINGS", FontSize = 11,
                 FontWeight = FontWeights.SemiBold, CharacterSpacing = 100, Margin = new Thickness(0, 8, 0, 0), Foreground = Brush("SecondaryTextBrush") });
         _reset = new Button { Content = "Reset to Provider", FontSize = 13, Height = 32, MinHeight = 0,
@@ -138,10 +142,26 @@ public sealed class EditMetadataDialog : ContentDialog
     private StackPanel Section(string key, string title)
     {
         var panel = new StackPanel { Spacing = 16 }; _sections[key] = panel; _body.Children.Add(panel);
-        var button = new Button { Content = title, FontSize = 13, Padding = new Thickness(16, 8, 16, 8), MinHeight = 36, CornerRadius = new CornerRadius(0), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+        var button = new Button { Content = title, Tag = key, FontSize = 13, FontWeight = FontWeights.Medium, Padding = new Thickness(16, 8, 16, 8), Height = 36, MinHeight = 36, CornerRadius = new CornerRadius(0), HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
         button.Click += (_, _) => ShowSection(key); _navigation.Children.Add(button); return panel;
     }
-    private void ShowSection(string key) { foreach (var section in _sections) section.Value.Visibility = section.Key == key ? Visibility.Visible : Visibility.Collapsed; _scroll.ChangeView(null, 0, null); if (XamlRoot is not null) Reflow(); }
+    private void ShowSection(string key)
+    {
+        foreach (var section in _sections) section.Value.Visibility = section.Key == key ? Visibility.Visible : Visibility.Collapsed;
+        RefreshNavigation(); _scroll.ChangeView(null, 0, null); if (XamlRoot is not null) Reflow();
+    }
+    private void RefreshNavigation()
+    {
+        var narrow = (XamlRoot?.Size.Width ?? 1100) < 640;
+        foreach (var button in _navigation.Children.OfType<Button>())
+        {
+            var selected = _sections[(string)button.Tag].Visibility == Visibility.Visible;
+            button.Foreground = Brush(selected ? "PrimaryTextBrush" : "SecondaryTextBrush");
+            button.Background = selected ? TranslucentBrush("AccentBrush", .08) : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
+            button.BorderBrush = Brush("AccentBrush");
+            button.BorderThickness = selected ? narrow ? new Thickness(0, 0, 0, 2) : new Thickness(0, 0, 2, 0) : new Thickness(0);
+        }
+    }
     private void BuildFieldLayout(StackPanel section, string[][] rows)
     {
         var rowIndex = 0;
@@ -157,7 +177,7 @@ public sealed class EditMetadataDialog : ContentDialog
     private void Reflow()
     {
         var width = XamlRoot?.Size.Width ?? 1100; var narrow = width < 640;
-        _root.Width = Math.Max(260, Math.Min(1022, width - 34));
+        _root.Width = Math.Max(260, Math.Min(1022, width - (narrow ? 2 : 34)));
         _header.Width = _root.Width;
         _scroll.Padding = narrow ? new Thickness(16) : new Thickness(24, 20, 24, 20);
         foreach (var (grid, rows) in _fieldLayouts)
@@ -182,12 +202,19 @@ public sealed class EditMetadataDialog : ContentDialog
         }
         // Match the reference flex body's natural active-form height, with its viewport cap.
         // Reflow the fields first so measurement uses the current column layout.
+        _resizeImages?.Invoke();
         _body.Measure(new Windows.Foundation.Size(Math.Max(1, _root.Width - (narrow ? 0 : 160) - _scroll.Padding.Left - _scroll.Padding.Right), double.PositiveInfinity));
         var naturalBody = _body.DesiredSize.Height + _scroll.Padding.Top + _scroll.Padding.Bottom;
-        _root.Height = Math.Min(Math.Min(580, (XamlRoot?.Size.Height ?? 900) * .7), naturalBody + (narrow ? 44 : 0));
+        EditorDialogPresentation.ReflowCommands(this, narrow, narrow ? new Thickness(16, 12, 16, 12) : new Thickness(20, 14, 20, 14), _reset);
+        _header.Measure(new Windows.Foundation.Size(_root.Width, double.PositiveInfinity));
+        var commands = EditorDialogPresentation.Descendants<Grid>(this).FirstOrDefault(grid => grid.Name == "CommandSpace");
+        commands?.Measure(new Windows.Foundation.Size(_root.Width, double.PositiveInfinity));
+        // The WebUI flex body uses its natural form height. Reserve the actual header,
+        // footer and32px viewport margins rather than imposing an extra580px scroll cap.
+        var bodyLimit = Math.Max(80, (XamlRoot?.Size.Height ?? 900) - 64 - _header.DesiredSize.Height - (commands?.DesiredSize.Height ?? (narrow ? 96 : 60)) - 2);
+        _root.Height = Math.Min(bodyLimit, naturalBody + (narrow ? 44 : 0));
         foreach (var input in _numberInputs.Values)
             foreach (var text in EditorDialogPresentation.Descendants<TextBox>(input)) text.Style = (Style)Application.Current.Resources["DarkTextBoxStyle"];
-        EditorDialogPresentation.ReflowCommands(this, narrow, narrow ? new Thickness(16, 12, 16, 12) : new Thickness(20, 14, 20, 14), _reset);
         _navigation.Orientation = narrow ? Orientation.Horizontal : Orientation.Vertical;
         _root.ColumnDefinitions[0].Width = narrow ? new GridLength(0) : new GridLength(160);
         Grid.SetRow(_navigationScroll, narrow ? 0 : 1); Grid.SetColumnSpan(_navigationScroll, narrow ? 2 : 1);
@@ -195,7 +222,8 @@ public sealed class EditMetadataDialog : ContentDialog
         _navigationScroll.VerticalScrollBarVisibility = narrow ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
         Grid.SetColumn(_scroll, narrow ? 0 : 1); Grid.SetColumnSpan(_scroll, narrow ? 2 : 1);
         // Horizontal navigation scrolls on small windows instead of clipping.
-        if (narrow) { _navigation.Spacing = 0; } else _navigation.Spacing = 4;
+        _navigation.Spacing = 0;
+        RefreshNavigation();
     }
     private Grid Label(string key, string text)
     {
@@ -296,7 +324,9 @@ public sealed class EditMetadataDialog : ContentDialog
             controls.Children.Add(languages); controls.Children.Add(forceGroup); controls.Children.Add(button);
             var status = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed, Foreground = Brush("SecondaryTextBrush") };
             panel.Children.Add(controls); panel.Children.Add(status);
-            _sections["general"].Children.Add(new Border { Child = panel, Padding = new Thickness(12), BorderThickness = new Thickness(1), BorderBrush = Brush("BorderBrush"), CornerRadius = new CornerRadius(10), Background = TranslucentBrush("MutedBrush", .3) });
+            var general = _sections["general"];
+            var ratingRow = (UIElement)_fieldGroups["content_rating"].Parent;
+            general.Children.Insert(general.Children.IndexOf(ratingRow), new Border { Child = panel, Padding = new Thickness(12), BorderThickness = new Thickness(1), BorderBrush = Brush("BorderBrush"), CornerRadius = new CornerRadius(10), Background = TranslucentBrush("MutedBrush", .3) });
             Reflow();
             button.Click += async (_, _) =>
             {
@@ -336,40 +366,98 @@ public sealed class EditMetadataDialog : ContentDialog
     }
     private void BuildImages(StackPanel panel)
     {
+        panel.Spacing = 12;
         var notice = new TextBlock { Text = "Image changes apply immediately and are not affected by Cancel.", FontSize = 11, TextWrapping = TextWrapping.Wrap };
         notice.Foreground = Brush("SecondaryTextBrush");
         panel.Children.Add(new Border { Child = notice, Padding = new Thickness(12, 8, 12, 8), Background = TranslucentBrush("MutedBrush", .5), CornerRadius = new CornerRadius(12) });
+        if (_item.Type == "season")
+        {
+            var hint = new Grid { ColumnSpacing = 8 };
+            hint.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            hint.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            hint.Children.Add(WebUiIcon.Create("circle-alert", 14, Brush("WarningBrush")));
+            var copy = new TextBlock { Text = "Only seeing one poster? Check for plugin updates and update TMDB and TVDB to load full season artwork galleries.",
+                FontSize = 11, TextWrapping = TextWrapping.Wrap, Foreground = Brush("WarningBrush") };
+            Grid.SetColumn(copy, 1); hint.Children.Add(copy);
+            panel.Children.Add(new Border { Child = hint, Padding = new Thickness(12, 6, 12, 6), CornerRadius = new CornerRadius(8),
+                BorderThickness = new Thickness(1), BorderBrush = TranslucentBrush("WarningBrush", .2), Background = TranslucentBrush("WarningBrush", .05) });
+        }
         var tabs = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-        var textless = new ToggleButton { Content = "Textless", FontSize = 11 }; tabs.Children.Add(textless); panel.Children.Add(tabs);
-        var warnings = new TextBlock { Foreground = Brush("WarningBrush"), FontSize = 11, TextWrapping = TextWrapping.Wrap }; panel.Children.Add(warnings);
-        var grid = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 8 }; panel.Children.Add(grid);
-        var apply = new Button { Content = "Apply Selected Image", IsEnabled = false }; panel.Children.Add(apply);
+        var textless = new ToggleButton { Content = "Textless", FontSize = 11, FontWeight = FontWeights.Medium, Height = 30, MinHeight = 0,
+            Padding = new Thickness(10, 6, 10, 6), BorderThickness = new Thickness(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
+            Foreground = Brush("SecondaryTextBrush"), CornerRadius = new CornerRadius(10), HorizontalAlignment = HorizontalAlignment.Right };
+        var tabRow = new Grid(); tabRow.Children.Add(tabs); tabRow.Children.Add(textless); panel.Children.Add(tabRow);
+        var warnings = new TextBlock { Foreground = Brush("WarningBrush"), FontSize = 11, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed }; panel.Children.Add(warnings);
+        var grid = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 8, Margin = new Thickness(0, 0, 12, 4) }; panel.Children.Add(grid);
+        var apply = new Button { Content = "Apply Poster", IsEnabled = false, Visibility = Visibility.Collapsed, Height = 32, MinHeight = 32,
+            Style = (Style)Application.Current.Resources["AccentButtonStyle"], HorizontalAlignment = HorizontalAlignment.Stretch }; panel.Children.Add(apply);
         List<JsonElement>? images = null; JsonElement current = default, selection = default; var type = "poster"; var applied = new Dictionary<string, string>();
+        var cards = new List<(Button Button, Image Picture, Border Selection)>();
+        void ResizeImages()
+        {
+            var narrow = (XamlRoot?.Size.Width ?? 1100) < 640;
+            var columns = type == "poster" ? narrow ? 3 : 4 : narrow ? 2 : 3;
+            var available = _root.Width - (narrow ? 0 : 160) - _scroll.Padding.Left - _scroll.Padding.Right - 12;
+            // WrapPanel receives rounded DesiredSize values. Round the card budget
+            // down in physical pixels so the fourth card cannot exceed that row.
+            var scale = XamlRoot?.RasterizationScale ?? 1;
+            var cardWidth = Math.Max(24, Math.Floor((available - (columns - 1) * 8) / columns * scale) / scale);
+            foreach (var (card, picture, _) in cards)
+            {
+                card.Width = cardWidth;
+                picture.Width = cardWidth - 2; picture.Height = picture.Width * (type == "poster" ? 1.5 : 9d / 16);
+            }
+        }
+        _resizeImages = ResizeImages;
+        void SelectionPresentation()
+        {
+            foreach (var (card, _, badge) in cards)
+            {
+                var original = (string)card.Tag;
+                var selected = selection.ValueKind == JsonValueKind.Object && String(selection, "original_url") == original;
+                var isCurrent = original == (applied.GetValueOrDefault(type) ?? String(current, type + "_url"));
+                card.BorderBrush = selected ? Brush("AccentBrush") : isCurrent ? TranslucentBrush("AccentBrush", .5) : Brush("BorderBrush");
+                badge.Visibility = selected && !isCurrent ? Visibility.Visible : Visibility.Collapsed;
+            }
+            apply.Visibility = selection.ValueKind == JsonValueKind.Object ? Visibility.Visible : Visibility.Collapsed;
+            apply.IsEnabled = !_imagePending && selection.ValueKind == JsonValueKind.Object;
+            apply.Content = _imagePending ? "Applying..." : "Apply " + char.ToUpperInvariant(type[0]) + type[1..];
+        }
         void Render()
         {
-            grid.Children.Clear(); selection = default; apply.IsEnabled = false;
+            grid.Children.Clear(); cards.Clear(); selection = default; apply.IsEnabled = false;
             var choices = images?.Where(image => String(image, "type") == type && (textless.IsChecked != true || type == "logo" || String(image, "language").Length == 0)).ToArray() ?? [];
-            if (choices.Length == 0) { grid.Children.Add(new TextBlock { Text = textless.IsChecked == true ? "No textless images available." : "No images available.", FontSize = 14 }); return; }
-            var columns = type == "poster" ? (_root.Width < 560 ? 3 : 4) : (_root.Width < 560 ? 2 : 3);
-            var width = Math.Max(70, (_root.Width - (_root.Width < 560 ? 0 : 176) - 32 - (columns - 1) * 8) / columns);
+            foreach (var tab in tabs.Children.OfType<Button>()) tab.Style = (Style)Application.Current.Resources[Equals(tab.Tag, type) ? "AccentButtonStyle" : "GhostButtonStyle"];
+            if (choices.Length == 0) grid.Children.Add(new TextBlock { Text = textless.IsChecked == true ? "No textless images available." : "No images available.", FontSize = 14 });
             foreach (var image in choices)
             {
-                var picture = new Image { Width = width, Height = type == "poster" ? width * 1.5 : width * 9 / 16, Stretch = Stretch.UniformToFill };
+                var picture = new Image { Stretch = Stretch.UniformToFill };
                 if (String(image, "url") is { Length: > 0 } url) picture.Source = (ImageSource)new UrlToImageSourceConverter().Convert(url, typeof(ImageSource), null!, "");
-                var body = new StackPanel(); body.Children.Add(picture);
+                var body = new Grid(); body.Children.Add(picture);
                 var original = String(image, "original_url"); var isCurrent = original == (applied.GetValueOrDefault(type) ?? String(current, type + "_url"));
-                if (isCurrent) body.Children.Add(new TextBlock { Text = "Current", FontSize = 11, Foreground = Brush("AccentBrush") });
-                body.Children.Add(new TextBlock { Text = String(image, "provider_id").ToUpperInvariant() + " · " + String(image, "language"), FontSize = 10, TextTrimming = TextTrimming.CharacterEllipsis });
-                var button = new Button { Content = body, Padding = new Thickness(0), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), BorderBrush = Brush(isCurrent ? "AccentBrush" : "BorderBrush") };
+                if (isCurrent) body.Children.Add(new Border { Margin = new Thickness(4), Padding = new Thickness(6, 2, 6, 2), CornerRadius = new CornerRadius(4),
+                    Background = TranslucentBrush("AccentBrush", .9), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
+                    Child = new TextBlock { Text = "Current", FontSize = 9, Foreground = Brush("AccentForegroundBrush"), FontWeight = FontWeights.SemiBold } });
+                var selectionBadge = new Border { Tag = "selection", Width = 20, Height = 20, Margin = new Thickness(4), CornerRadius = new CornerRadius(10),
+                    Background = Brush("AccentBrush"), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Visibility = Visibility.Collapsed,
+                    Child = WebUiIcon.Create("check", 12, Brush("AccentForegroundBrush")) };
+                body.Children.Add(selectionBadge);
+                body.Children.Add(new Border { Padding = new Thickness(4, 0, 4, 0), Margin = new Thickness(4), CornerRadius = new CornerRadius(4),
+                    Background = new SolidColorBrush(Microsoft.UI.Colors.Black) { Opacity = .6 }, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Bottom,
+                    Child = new TextBlock { Text = String(image, "provider_id").ToUpperInvariant(), FontSize = 9, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) } });
+                var button = new Button { Content = body, Tag = original, Padding = new Thickness(0), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
+                cards.Add((button, picture, selectionBadge));
                 button.Click += (_, _) => { if (_imagePending) return; selection = selection.ValueKind == JsonValueKind.Object && String(selection, "original_url") == original ? default : image;
-                    foreach (var child in grid.Children.OfType<Button>()) child.BorderBrush = Brush("BorderBrush"); button.BorderBrush = Brush(selection.ValueKind == JsonValueKind.Object ? "AccentBrush" : "BorderBrush"); apply.IsEnabled = selection.ValueKind == JsonValueKind.Object; };
+                    SelectionPresentation(); Reflow(); };
                 grid.Children.Add(button);
             }
+            ResizeImages(); SelectionPresentation(); if (XamlRoot is not null) Reflow();
         }
         foreach (var imageType in _item.Type == "season" ? new[] { "poster" } : new[] { "poster", "backdrop", "logo" })
         {
-            var button = new Button { Content = imageType switch { "poster" => "Posters", "backdrop" => "Backdrops", _ => "Logos" }, FontSize = 12, Padding = new Thickness(12, 6, 12, 6) };
-            button.Click += (_, _) => { type = imageType; textless.IsChecked = false; textless.Visibility = type == "logo" ? Visibility.Collapsed : Visibility.Visible; Render(); }; tabs.Children.Insert(tabs.Children.Count - 1, button);
+            var button = new Button { Content = imageType switch { "poster" => "Posters", "backdrop" => "Backdrops", _ => "Logos" }, Tag = imageType, FontSize = 12, FontWeight = FontWeights.Medium,
+                Height = 30, MinHeight = 0, Padding = new Thickness(12, 6, 12, 6), Style = (Style)Application.Current.Resources[imageType == "poster" ? "AccentButtonStyle" : "GhostButtonStyle"] };
+            button.Click += (_, _) => { type = imageType; textless.IsChecked = false; textless.Visibility = type == "logo" ? Visibility.Collapsed : Visibility.Visible; Render(); }; tabs.Children.Add(button);
         }
         textless.Click += (_, _) => Render();
         apply.Click += async (_, _) =>
@@ -380,12 +468,12 @@ public sealed class EditMetadataDialog : ContentDialog
                 applied[selectedType] = String(selected, "original_url"); _state.SetLock(10, true); HasSaved = true; Changed();
                 _item = await App.Services.GetRequiredService<CatalogApi>().GetItemDetailAsync(_item.ContentId); RefreshLocks(); Render(); Toast().Success("Image applied successfully"); }
             catch (Exception ex) { Toast().Error(ex.Message); }
-            finally { _imagePending = false; IsPrimaryButtonEnabled = !_pending; apply.Content = "Apply Selected Image"; apply.IsEnabled = selection.ValueKind == JsonValueKind.Object; }
+            finally { _imagePending = false; IsPrimaryButtonEnabled = !_pending; SelectionPresentation(); }
         };
         Opened += async (_, _) =>
         {
             grid.Children.Add(new ProgressRing { IsActive = true, Width = 24, Height = 24 });
-            try { var result = await _api.GetImagesAsync(_item.ContentId, _lifetime.Token); images = result.Items; current = result.Current; warnings.Text = result.Errors.Count > 0 ? "Could not load from " + string.Join(", ", result.Errors.Keys.Select(key => key.ToUpperInvariant())) : ""; Render(); }
+            try { var result = await _api.GetImagesAsync(_item.ContentId, _lifetime.Token); images = result.Items; current = result.Current; warnings.Text = result.Errors.Count > 0 ? "Could not load from " + string.Join(", ", result.Errors.Keys.Select(key => key.ToUpperInvariant())) : ""; warnings.Visibility = result.Errors.Count > 0 ? Visibility.Visible : Visibility.Collapsed; Render(); }
             catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
             catch { grid.Children.Clear(); grid.Children.Add(new TextBlock { Text = "Failed to load images.", FontSize = 14 }); }
         };

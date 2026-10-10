@@ -94,6 +94,8 @@
                 VerticalAlignment="Center"
                 Visibility="Collapsed">
                 <StackPanel Orientation="Horizontal" Spacing="7" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Button x:Name="CollectionShuffleButton" Content="Shuffle" Click="CollectionShuffle_Click"
+                            Visibility="Collapsed" Style="{StaticResource OutlineButtonStyle}" CornerRadius="999" Margin="0,0,12,0" VerticalAlignment="Center" />
                     <TextBlock
                         x:Name="ItemCountText"
                         FontSize="30"

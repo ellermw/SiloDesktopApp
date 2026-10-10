@@ -221,6 +221,7 @@ public sealed class MDBListListSummary
     public string Name { get; set; } = "";
     public string Slug { get; set; } = "";
     public string Description { get; set; } = "";
+    [System.Text.Json.Serialization.JsonPropertyName("media_type")]
     public string Mediatype { get; set; } = "";
     public int Items { get; set; }
     public int Likes { get; set; }

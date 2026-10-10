@@ -15,6 +15,7 @@ using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Settings;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Controls;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
@@ -42,6 +43,7 @@ internal static class BrowseCalendarArtworkNativeFixture
         }, () => model!));
         try
         {
+            var layoutDifferences = new List<string>();
             foreach (var (size, width, expectedWidth) in new[] { ("compact", 460, 120d), ("standard", 900, 160d), ("large", 1280, 220d) })
             {
                 frame = new Frame(); navigation.Frame = frame;
@@ -51,6 +53,13 @@ internal static class BrowseCalendarArtworkNativeFixture
                 if (other == today) other = DateTime.Parse(model.WeekStart).AddDays(2).ToString("yyyy-MM-dd");
                 model.Days.Add(new() { Date = today, Items = [new() { ContentId = "watched-art", Type = "movie", Title = "Watched Feature", Watched = true, PosterUrl = "https://calendar-art.invalid/cover.png" }, new() { ContentId = "color-art", Type = "movie", Title = "Upcoming Feature", PosterUrl = "https://calendar-art.invalid/cover.png" }] });
                 model.Days.Add(new() { Date = other, Items = [new() { ContentId = "other-day", Type = "movie", Title = "Other scheduled title" }] });
+                if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_CALENDAR_LAYOUT") == "1")
+                {
+                    model.Days[0].Items[0].Badges = ["series_premiere"];
+                    model.Days[0].Items[0].AirTime = "21:00";
+                    model.Days[0].Items[1].AirTime = "21:00";
+                    for (var i = 0; i < 12; i++) model.Days[0].Items.Add(new() { ContentId = "overflow-" + i, Type = "movie", Title = "Carousel title " + i });
+                }
                 var owner = new Grid { Background = (Brush)Application.Current.Resources["AppBackgroundBrush"] };
                 owner.Children.Add(frame); var window = new Window { Content = owner };
                 try
@@ -58,10 +67,95 @@ internal static class BrowseCalendarArtworkNativeFixture
                     window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000)); window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, 900)); window.AppWindow.Show(false); await Task.Delay(100);
                     var scale = owner.XamlRoot.RasterizationScale; window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)Math.Round(width * scale), (int)Math.Round(900 * scale)));
                     frame.Navigate(typeof(CalendarPage)); var page = (CalendarPage)frame.Content;
+                    if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_CALENDAR_LAYOUT") == "1")
+                    {
+                        var initialPreset = (Button)page.FindName("FilterFollowingBtn");
+                        if (initialPreset.Background is not SolidColorBrush activeBrush || activeBrush.Color != ((SolidColorBrush)Application.Current.Resources["AccentBrush"]).Color)
+                            layoutDifferences.Add($"{width}: the saved Following preset is not highlighted before asynchronous Calendar results arrive.");
+                    }
                     await presentation.SaveCardPresentationAsync(new() { PosterSize = size });
                     await Until(() => Field<double>(page, "_eventCardWidth") == expectedWidth);
+                    if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_CALENDAR_LAYOUT") == "1")
+                    {
+                        page.UpdateLayout();
+                        var heading = Descendants<TextBlock>(page).Single(text => text.Text == "Calendar");
+                        var header = (Grid)page.FindName("HeaderGrid");
+                        var actions = (StackPanel)page.FindName("HeaderActions");
+                        var preset = (Button)page.FindName("FilterFollowingBtn");
+                        var navigator = (Border)page.FindName("WeekNavigatorBorder");
+                        if (((Border)page.FindName("WeekNavigatorSpace")).Margin.Bottom != 20)
+                            layoutDifferences.Add($"{width}: the first day starts more than the current20px after the navigator.");
+                        var selectedEmpty = (Border)page.FindName("SelectedDayEmptyState");
+                        var expectedNavigatorHeight = width < 640 ? 120 : 140.5;
+                        if (Math.Abs(navigator.ActualHeight - expectedNavigatorHeight) > 1 || (width >= 700 && header.RowSpacing != 0))
+                            layoutDifferences.Add($"{width}: unused header row or week navigator line boxes add incorrect vertical space; navigator={navigator.ActualHeight}, gap={header.RowSpacing}.");
+                        var firstCard = Descendants<Button>(page).First(button => AutomationProperties.GetName(button).StartsWith("Watched Feature, Movie", StringComparison.Ordinal));
+                        var title = Descendants<TextBlock>(firstCard).Single(text => text.Text == "Watched Feature");
+                        if (title.LineHeight != 21 || ((StackPanel)VisualTreeHelper.GetParent(title)).Margin.Top != 12)
+                            layoutDifferences.Add($"{width}: Calendar caption does not retain rendered WebUI21px title line and12px top spacing.");
+                        var movieCaption = Descendants<TextBlock>(firstCard).Single(text => text.FontSize == 11 && text.CharacterSpacing == 140);
+                        if (movieCaption.Text != "MOVIE") layoutDifferences.Add($"{width}: Calendar metadata caption must render uppercase.");
+                        var firstDayHeading = Descendants<TextBlock>(page).Single(text => text.Text == CalendarViewModel.FormatDayHeading(today));
+                        var todayLabel = Descendants<TextBlock>(page).Single(text => text.Text == "TODAY");
+                        var todayPoint = todayLabel.TransformToVisual(firstDayHeading).TransformPoint(new());
+                        if (todayPoint.X > firstDayHeading.ActualWidth + 24 || todayLabel.Foreground is not SolidColorBrush todayForeground || todayForeground.Color != ((SolidColorBrush)Application.Current.Resources["AccentForegroundBrush"]).Color)
+                            layoutDifferences.Add($"{width}: Today badge must sit beside the day heading with the primary foreground.");
+                        var cardPanel = Descendants<StackPanel>(page).First(panel => panel.Children.OfType<Button>().Contains(firstCard));
+                        var expectedCardHeight = expectedWidth * 1.5 + 72;
+                        Program.Log($"Calendar caption geometry{width}: card={firstCard.ActualHeight}, expected={expectedCardHeight}, row={cardPanel.ActualHeight}.");
+                        if (Math.Abs(firstCard.ActualHeight - expectedCardHeight) > 2 || cardPanel.ActualHeight + 1 < firstCard.ActualHeight)
+                            layoutDifferences.Add($"{width}: all three caption lines must fit the row before the next day; height={firstCard.ActualHeight}, row={cardPanel.ActualHeight}.");
+                        if (cardPanel.Spacing != (width >= 1024 ? 20 : 16)) layoutDifferences.Add($"{width}: Calendar cards must use the desktop20px carousel gap.");
+                        var rail = Descendants<CarouselRail>(page).FirstOrDefault();
+                        if (rail == null) layoutDifferences.Add($"{width}: Calendar is missing carousel edge/keyboard/drag controls.");
+                        else
+                        {
+                            var next = Descendants<Button>(rail).Single(button => AutomationProperties.GetName(button) == "Scroll right");
+                            var scroll = Descendants<ScrollViewer>(rail).Single();
+                            if (next.Width != 44 || next.Height != 44 || next.VerticalAlignment != VerticalAlignment.Center || scroll.HorizontalScrollBarVisibility != ScrollBarVisibility.Hidden)
+                                layoutDifferences.Add($"{width}: Calendar edge controls differ from current44px WebUI arrows.");
+                            Invoke(next); await Until(() => scroll.HorizontalOffset > 0);
+                            var previousArrow = Descendants<Button>(rail).Single(button => AutomationProperties.GetName(button) == "Scroll left");
+                            Invoke(previousArrow); await Until(() => scroll.HorizontalOffset < 1);
+                        }
+                        var premiere = Descendants<TextBlock>(firstCard).Single(text => text.Text == "SERIES PREMIERE");
+                        var premiereBorder = (Border)premiere.Parent;
+                        if (premiereBorder.Height != 16 || premiereBorder.Padding.Left != 8 || premiere.CharacterSpacing != 50 || ((FrameworkElement)premiereBorder.Parent).Margin.Left != 10)
+                            layoutDifferences.Add($"{width}: Calendar artwork badges differ from current10px inset/16px pill/8px padding/0.05em tracking.");
+                        await presentation.SaveCardPresentationAsync(new() { PosterSize = size, Caption = "artwork" });
+                        await Task.Delay(100); page.UpdateLayout();
+                        var artworkCard = Descendants<Button>(page).First(button => AutomationProperties.GetName(button).StartsWith("Watched Feature, Movie", StringComparison.Ordinal));
+                        if (Descendants<TextBlock>(artworkCard).Any(text => text.Text == "Watched Feature" && text.Visibility == Visibility.Visible && ((FrameworkElement)VisualTreeHelper.GetParent(text)).Visibility == Visibility.Visible))
+                            layoutDifferences.Add($"{width}: artwork-only Calendar still renders captions.");
+                        await presentation.SaveCardPresentationAsync(new() { PosterSize = size, Caption = "title" });
+                        await Task.Delay(100); page.UpdateLayout();
+                        var titleCard = Descendants<Button>(page).First(button => AutomationProperties.GetName(button).StartsWith("Watched Feature, Movie", StringComparison.Ordinal));
+                        if (Descendants<TextBlock>(titleCard).Any(text => text.FontSize == 11 && text.Visibility == Visibility.Visible))
+                            layoutDifferences.Add($"{width}: title-only Calendar still renders metadata.");
+                        if (heading.FontSize != (width < 640 ? 24 : 30) || heading.CharacterSpacing != -25 || header.Margin.Top != (width < 640 ? 32 : width < 1024 ? 40 : 56) || header.Margin.Bottom != 24 || actions.Spacing != 8)
+                            layoutDifferences.Add($"{width}: header typography, outer vertical rhythm and action gaps differ from current Calendar.");
+                        if (preset.Padding.Left != 16 || navigator.Padding.Left != (width < 640 ? 8 : 12) || selectedEmpty.CornerRadius.TopLeft != 20)
+                            layoutDifferences.Add($"{width}: preset/navigator padding and selected-day empty radius differ from current source.");
+                        var dayButtons = Descendants<Button>((Grid)page.FindName("WeekStripPanel")).ToArray();
+                        Program.Log($"Calendar measured{width}: header={header.ActualHeight}, navigator={navigator.ActualHeight}; days=" + string.Join(" | ", dayButtons.Select(button => $"{button.ActualHeight}:" + string.Join(",", Descendants<TextBlock>(button).Select(text => $"{text.Text}={text.ActualHeight}/line{text.LineHeight}/padding{text.Padding}/margin{text.Margin}")))));
+                        var labels = dayButtons.SelectMany(button => Descendants<TextBlock>(button)).ToArray();
+                        var dots = dayButtons.SelectMany(button => Descendants<Microsoft.UI.Xaml.Shapes.Ellipse>(button)).ToArray();
+                        if (!labels.Any(text => text.FontWeight.Weight == 700 && text.FontSize == (width < 640 ? 14 : 16)) || dots.Any(dot => dot.Width != 4))
+                            layoutDifferences.Add($"{width}: week-day number typography/event dots differ from responsive navigator.");
+                        model.Days.Clear(); model.IsEmpty = true; await Task.Delay(100);
+                        var emptyShell = (StackPanel)page.FindName("EmptyState"); var emptyPanel = emptyShell.Children.OfType<Border>().Single();
+                        if (emptyShell.Padding.Left != 0 || emptyShell.Margin.Top != 8 || emptyPanel.MinHeight != 300 || Math.Abs(emptyPanel.CornerRadius.TopLeft - 28.8) > .01 || emptyPanel.Padding.Left != 24 || emptyPanel.Padding.Top != 64 || emptyPanel.BorderThickness.Top != 0)
+                            layoutDifferences.Add($"{width}: empty week uses additional nested padding and the wrong panel height/radius/border.");
+                        await MediaParityNativeFixture.CaptureAsync(owner, $"calendar-source-layout-{width}.png");
+                        continue;
+                    }
                     bool HasCard(string title) => Descendants<Button>(page).Any(button => AutomationProperties.GetName(button) == title + ", Movie");
-                    Image Poster(string title) => Descendants<Image>(Descendants<Button>(page).Single(button => AutomationProperties.GetName(button) == title + ", Movie")).Single();
+                    Image Poster(string title)
+                    {
+                        var card = Descendants<Button>(page).Single(button => AutomationProperties.GetName(button) == title + ", Movie");
+                        var root = (Grid)card.Content;
+                        return root.Children.OfType<Grid>().Single().Children.OfType<Image>().Single();
+                    }
                     await Until(() => HasCard("Watched Feature") && HasCard("Upcoming Feature") && Poster("Watched Feature").Source != null && Poster("Upcoming Feature").Source != null);
                     var watched = Poster("Watched Feature"); var color = Poster("Upcoming Feature");
                     page.UpdateLayout(); await Until(() => watched.ActualWidth > 0 && watched.ActualHeight > 0 && color.ActualWidth > 0 && color.ActualHeight > 0); await Task.Delay(100);
@@ -94,6 +188,12 @@ internal static class BrowseCalendarArtworkNativeFixture
                     await Capture(owner, $"browse-calendar-artwork-{size}-{width}.png");
                 }
                 finally { if (frame.Content is CalendarPage) frame.Navigate(typeof(Page)); await Task.Delay(80); owner.Children.Remove(frame); window.Close(); }
+            }
+            if (layoutDifferences.Count > 0) throw new InvalidOperationException(string.Join("\n", layoutDifferences));
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_CALENDAR_LAYOUT") == "1")
+            {
+                Program.Log("PASS: CALENDAR_SOURCE_LAYOUT_COMPLETED actual responsive header, preset/navigator padding, day typography/dots and empty-week panel.");
+                return;
             }
             if (wire.PreferenceWrites != 3) throw new InvalidOperationException("Mounted Calendar preference proof must persist each of the three actual card sizes.");
             Program.Log("PASS: actual Calendar local-color watched grayscale/opacity/32px centered badge, persisted compact/normal/large mounted preferences, and day/Today image-identity retention.");

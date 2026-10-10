@@ -52,7 +52,7 @@ internal static class AccountLatestNativeFixture
             var page = (SettingsPage)frame.Content;
             var selected = Environment.GetEnvironmentVariable("SILO_ACCOUNT_LATEST_CASE");
             if (string.IsNullOrWhiteSpace(selected)) selected = null;
-            if (selected is not (null or "title-art" or "identities" or "oauth" or "queued-user-refresh" or "network-link" or "shadowed" or "ratings"))
+            if (selected is not (null or "title-art" or "identities" or "oauth" or "queued-user-refresh" or "network-link" or "shadowed" or "ratings" or "current-settings"))
                 throw new ArgumentException("Unknown latest-account case; refusing a run with no acceptance checks.");
             if (selected == "queued-user-refresh")
             {
@@ -67,13 +67,96 @@ internal static class AccountLatestNativeFixture
             if (selected is null or "network-link") await NetworkLink(page, auth, wire);
             if (selected is null or "shadowed") await Shadowed(page, wire, frame);
             if (selected is null or "ratings") await Ratings(page, catalog, wire, frame);
+            if (selected is null or "current-settings")
+            {
+                await CurrentSettings(page, wire, local, frame, window);
+                await CurrentPin(authApi, settingsApi, catalog, auth, local, wire);
+            }
             Program.Log("PASS bounded latest account native cases: " + (selected ?? "all"));
         }
         finally
         {
             wire.Pending?.TrySetResult(Reply(new { })); wire.IdentityPending?.TrySetResult(Reply(new { server_id = "fixture-server" }));
+            wire.PinPending?.TrySetResult(Reply(new { valid = false })); wire.SessionDeletePending?.TrySetResult(Reply(new { }));
             frame.Content = null; await Task.Delay(100); window.Close(); serviceField.SetValue(null, previous);
         }
+    }
+
+    private static async Task CurrentPin(AuthApi api, SettingsApi settings, CatalogApi catalog, AuthService auth, SettingsService local, Wire wire)
+    {
+        var vm = new ProfileSelectViewModel(api, settings, catalog, auth, local);
+        var candidate = new Profile { Id = "pin-candidate", Name = "PIN fixture", HasPin = true };
+        await vm.SelectProfileCommand.ExecuteAsync(candidate); vm.Pin = "1234";
+        wire.PinResponse = Reject("profile_pin_locked", HttpStatusCode.TooManyRequests);
+        wire.PinResponse.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(61));
+        await vm.VerifyPinCommand.ExecuteAsync(null);
+        Check(vm.IsPinRequired && vm.Pin == "" && vm.PinErrorMessage == "Too many incorrect PINs. Try again in 2 minutes.", "Native profile PIN lockout must clear the draft and use Retry-After minutes");
+        wire.PinResponse = Reply(new { valid = false }); vm.Pin = "1234"; await vm.VerifyPinCommand.ExecuteAsync(null);
+        Check(vm.PinErrorMessage == "Incorrect PIN" && vm.Pin == "", "Wrong PIN must clear its draft without inventing lockout");
+        wire.PinPending = NewGate(); vm.Pin = "1234"; var pending = vm.VerifyPinCommand.ExecuteAsync(null);
+        await Until(() => wire.PinChecks >= 3); var original = auth.SelectedProfileId;
+        vm.CancelPinCommand.Execute(null);
+        wire.PinPending.TrySetResult(Reply(new { valid = true, profile_token = "fixture-only-pin-proof" })); await pending;
+        Check(auth.SelectedProfileId == original && vm.SelectedProfile == null, "Canceled PIN request activated a retired profile");
+        wire.PinPending = null; wire.PinResponse = null;
+        Program.Log("PASS native PIN429 Retry-After/wrong draft/canceled stale approval");
+    }
+
+    private static async Task CurrentSettings(SettingsPage page, Wire wire, SettingsService local, Frame frame, Window window)
+    {
+        var overview = page.GetType().GetMethod("ShowSettingsOverview", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        overview.Invoke(page, null); await Task.Delay(80);
+        var sections = (StackPanel)page.FindName("SettingsOverviewGroups");
+        Check(Buttons(sections).Any(button => Equals(button.Tag, "Sessions")), "Current sessions directory entry is absent");
+        foreach (var (width, columns) in new[] { (1400, 2), (1700, 4), (460, 1) })
+        {
+            frame.Width = width; window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, ClientHeight)); await Task.Delay(100); frame.UpdateLayout();
+            var grid = All<Grid>(sections).First(row => Equals(row.Tag, "settings-directory"));
+            Check(grid.ColumnDefinitions.Count == columns, "Settings directory must use current responsive column counts");
+            var profile = (Button)page.FindName("SettingsCurrentProfileButton");
+            Check(Math.Abs(profile.ActualWidth - Math.Min(448, ((FrameworkElement)page.FindName("SettingsPageShell")).ActualWidth)) <= 1, "Settings profile tile does not fill the current448px maximum");
+            if (width >= 1536) Check(((FrameworkElement)page.FindName("SettingsPageShell")).ActualWidth <= 1424.5, "Settings shell treats the1520px border-box maximum as inner content width");
+            var title = All<TextBlock>((Grid)page.FindName("SettingsHeaderGrid")).Single(text => text.Text == "Settings");
+            Check(Math.Abs(title.LineHeight - title.FontSize * .95) <= .1, "Settings title misses the current.95 line height");
+            if (columns > 1) Check(Math.Abs(grid.Children.OfType<Button>().First().ActualHeight - 112) <= 1, "Desktop settings cards must be 112px tall");
+        }
+        frame.Width = 1400; window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1400, ClientHeight));
+        await Task.Delay(100);
+        Click(Buttons(sections).Single(button => Equals(button.Tag, "Devices"))); await Until(() => All<RadioButton>((StackPanel)page.FindName("DevicesContentHost")).Any(button => Equals(button.Content, "Ask who's watching")));
+        var choices = All<RadioButton>((StackPanel)page.FindName("DevicesContentHost")).ToArray();
+        choices.Single(button => Equals(button.Content, "Ask who's watching")).IsChecked = true;
+        Check(local.Load().ProfileLaunchMode == "ask", "Ask-at-launch choice was not persisted locally");
+        choices.Single(button => Equals(button.Content, "Remember last profile")).IsChecked = true;
+        Check(local.Load().ProfileLaunchMode == "remember", "Remember-at-launch choice was not persisted locally");
+
+        wire.SessionsAvailable = false;
+        Click((Button)page.FindName("SessionsTab")); await Until(() => !(bool)Read(page, "_loginSessionLoading")!);
+        var sessions = (StackPanel)page.FindName("SessionCardsContainer");
+        Check(All<TextBlock>(sessions).Any(text => text.Text.Contains("unavailable on this server")), "Session capability unavailable state missing");
+        Check(wire.SessionReads == 0, "Unavailable sessions capability must prevent list requests");
+        wire.SessionsAvailable = true; await Call(page, "LoadSessionsAsync", false);
+        Check(Buttons(sessions).Any(button => Equals(button.Content, "Sign out this app")), "Current session excluded from items must still render");
+        Check(All<TextBlock>(sessions).Any(text => text.Text == "Chrome on Windows"), "User-agent session name is not summarized");
+        Click(Buttons(sessions).Single(button => Equals(button.Content, "Load more sessions")));
+        await Until(() => wire.SessionReads == 2 && !(bool)Read(page, "_loginSessionLoading")!);
+        Check(All<TextBlock>(sessions).Count(text => text.Text == "Chrome on Windows") == 1, "Appended sessions must deduplicate by session identity");
+        Check(All<TextBlock>(sessions).Any(text => text.Text == "Living Room TV"), "Session continuation did not append next page");
+        Click(Buttons(sessions).First(button => Equals(button.Content, "Sign out")));
+        await Until(() => Read(page, "_loginSessionDialog") is ContentDialog);
+        var dialog = (ContentDialog)Read(page, "_loginSessionDialog")!;
+        await Until(() => All<Button>(dialog).Any(button => button.Name == "PrimaryButton"));
+        wire.SessionDeletePending = NewGate(); Click(All<Button>(dialog).Single(button => button.Name == "PrimaryButton"));
+        await Until(() => wire.SessionDeletes == 1);
+        Check(!dialog.IsPrimaryButtonEnabled && dialog.CloseButtonText == "", "Pending session signout permits another submission/cancel");
+        wire.SessionDeletePending.TrySetResult(Reject("session_unavailable", HttpStatusCode.Conflict));
+        await Until(() => dialog.IsPrimaryButtonEnabled); wire.SessionDeletePending = null;
+        Check(Read(page, "_loginSessionDialog") is ContentDialog, "Rejected signout discarded its confirmation");
+        Click(All<Button>(dialog).Single(button => button.Name == "PrimaryButton"));
+        await Until(() => wire.SessionDeletes == 2 && Read(page, "_loginSessionDialog") is null && !(bool)Read(page, "_loginSessionLoading")!);
+        Check(!All<TextBlock>(sessions).Any(text => text.Text == "Chrome on Windows"), "Successful session revoke did not remove the retired session on refresh");
+        Check(wire.RefreshRequests == 0, "Session mutation triggered an authentication replay");
+        await Pairs(frame, window, "current-sessions", sessions);
+        Program.Log("PASS actual current Settings directory/launch preference/session capability/metadata/current session/pagination/pending rejection retry");
     }
 
     private static async Task TitleArt(SettingsPage page, SettingsViewModel vm, Wire wire, Frame frame, Window window)
@@ -296,6 +379,13 @@ internal static class AccountLatestNativeFixture
         internal List<(string Method, string Scope, bool? Value, string? Device)> TitleWrites = [];
         internal int CredentialsWrites, Unlinks, RefreshRequests, IdentityReads, CompleteWrites, TicketWrites;
         internal bool Network; internal int NetworkWrites; internal JsonElement NetworkBody;
+        internal bool SessionsAvailable = true;
+        internal int SessionReads, SessionDeletes;
+        private readonly HashSet<string> _signedOutSessions = [];
+        internal TaskCompletionSource<HttpResponseMessage>? SessionDeletePending;
+        internal int PinChecks;
+        internal HttpResponseMessage? PinResponse;
+        internal TaskCompletionSource<HttpResponseMessage>? PinPending;
         internal string? TicketPassword;
         internal string CompletionVerifier = "";
         internal JsonElement CredentialsBody;
@@ -312,6 +402,29 @@ internal static class AccountLatestNativeFixture
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath; var method = request.Method.Method;
+            if (path == "/api/v2/profiles/pin-candidate/verify-pin")
+            {
+                ++PinChecks;
+                return PinPending is { } pinGate ? await pinGate.Task.WaitAsync(ct) : PinResponse ?? Reply(new { valid = false });
+            }
+            if (path == "/api/v2/auth/sessions/capabilities") return Reply(new { available = SessionsAvailable });
+            if (path == "/api/v2/auth/sessions")
+            {
+                ++SessionReads;
+                var first = !request.RequestUri.Query.Contains("cursor=");
+                var current = new { id = "current", current = true, device_name = "Silo Windows", device_platform = "Windows", created_at = "2026-10-09T00:00:00Z" };
+                var chrome = new { id = "chrome", current = false, device_name = "Mozilla/5.0 (Windows NT 10.0) Chrome/130.0", created_at = "2026-10-09T00:00:00Z" };
+                var tv = new { id = "tv", current = false, device_name = "Living Room TV", device_platform = "Android TV", created_at = "2026-10-09T00:00:00Z" };
+                var items = (first ? new object[] { chrome } : new object[] { chrome, tv }).Where(row => !_signedOutSessions.Contains(JsonSerializer.SerializeToElement(row).GetProperty("id").GetString()!)).ToArray();
+                return Reply(new { current_session = current, items, page = new { has_more = first, next_cursor = first ? "opaque+next" : null } });
+            }
+            if (path.StartsWith("/api/v2/auth/sessions/") && method == "DELETE")
+            {
+                ++SessionDeletes;
+                var response = SessionDeletePending is { } gate ? await gate.Task.WaitAsync(ct) : new(HttpStatusCode.NoContent);
+                if (response.IsSuccessStatusCode) _signedOutSessions.Add(path.Split('/').Last());
+                return response;
+            }
             if (path == "/api/v2/auth/refresh") ++RefreshRequests;
             if (path == "/api/v2/settings/contract/capabilities") return Reply(new { api_version = 1, manifest_revision = 16, supports_batched_effective = Batched, supports_idempotent_writes = true, supports_atomic_shortcuts = true, client_families = new[] { "web", "desktop" } });
             if (path == "/api/v2/settings/values/effective")

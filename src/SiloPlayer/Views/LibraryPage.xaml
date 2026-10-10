@@ -26,11 +26,13 @@
             <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="BorderThickness" Value="0" />
             <Setter Property="MinHeight" Value="0" />
+            <Setter Property="Height" Value="35" />
             <Setter Property="MinWidth" Value="0" />
         </Style>
 
         <!-- Active pill tab (web: bg-accent text-primary) -->
         <Style x:Key="PillTabButtonActiveStyle" TargetType="Button">
+            <Setter Property="Height" Value="35" />
             <Setter Property="Background" Value="{StaticResource SurfaceHoverBrush}" />
             <Setter Property="Foreground" Value="{StaticResource PrimaryTextBrush}" />
             <Setter Property="CornerRadius" Value="18" />
@@ -94,10 +96,10 @@
         </Grid.RowDefinitions>
 
         <!-- Header: overlays hero in Recommended tab (webui: LibraryHeader with overlay prop) -->
-        <Grid x:Name="HeaderGrid" Grid.Row="0" Height="70" Margin="48,0" Canvas.ZIndex="10"
+        <Grid x:Name="HeaderGrid" Grid.Row="0" Height="81" Margin="48,0" Canvas.ZIndex="10"
               Background="{StaticResource AppBackgroundBrush}">
             <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
@@ -136,6 +138,9 @@
                         Visibility="Collapsed" />
                 </StackPanel>
 
+                <StackPanel x:Name="LibraryHeaderActions" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <Button x:Name="LibraryShuffleButton" Click="LibraryShuffle_Click" Content="Shuffle"
+                        Style="{StaticResource PillTabButtonStyle}" Visibility="Collapsed" ToolTipService.ToolTip="Shuffle" />
                 <!-- Pill tab bar (web: surface-panel-subtle rounded-[1.2rem] gap-1 p-1) -->
                 <Border
                     x:Name="TabBarBorder"
@@ -168,6 +173,7 @@
                             Tag="Collections" />
                     </StackPanel>
                 </Border>
+                </StackPanel>
             </Grid>
             <Border x:Name="HeaderDivider" Grid.RowSpan="2" Height="1"
                     VerticalAlignment="Bottom" HorizontalAlignment="Stretch"
@@ -178,7 +184,7 @@
         <Grid
             x:Name="FilterBar"
             Grid.Row="1"
-            Margin="48,8,48,16"
+            Margin="48,40,48,24"
             Canvas.ZIndex="10"
             Background="{StaticResource AppBackgroundBrush}"
             ColumnDefinitions="Auto,Auto,Auto,Auto,*"
@@ -459,19 +465,21 @@
             Padding="40,56,40,56"
             SizeChanged="CollectionsPanel_SizeChanged"
             Visibility="Collapsed">
-            <StackPanel Spacing="24" MaxWidth="1320" HorizontalAlignment="Center">
+            <StackPanel x:Name="CollectionsBody" Spacing="24" MaxWidth="1320" HorizontalAlignment="Center">
                 <!-- Collections header (web: page-header) -->
-                <StackPanel x:Name="CollectionsHeader" Spacing="6" Visibility="Collapsed">
+                <StackPanel x:Name="CollectionsHeader" Spacing="12" Visibility="Collapsed">
                     <TextBlock
                         x:Name="CollectionsTitle"
                         Text="Collections"
                         FontSize="48"
-                        FontWeight="Bold"
+                        FontWeight="ExtraBold" CharacterSpacing="-50"
+                        LineHeight="45.6" LineStackingStrategy="BlockLineHeight"
                         Foreground="{StaticResource PrimaryTextBrush}" />
                     <TextBlock
                         x:Name="CollectionsSubtitle"
                         Text="Browse hand-picked shelves and smart lists created for this library."
                         FontSize="14"
+                        LineHeight="24" LineStackingStrategy="BlockLineHeight" TextWrapping="Wrap"
                         Foreground="{StaticResource SecondaryTextBrush}" />
                 </StackPanel>
 
@@ -525,21 +533,13 @@
             Canvas.ZIndex="100"
             Title="Filters">
             <controls:SlideSheet.SheetContent>
-                <Grid RowSpacing="12">
+                <Grid RowSpacing="16">
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                         <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
 
-                    <TextBlock
-                        Grid.Row="0"
-                        Text="Refine your catalog results"
-                        FontSize="13"
-                        Foreground="{StaticResource SecondaryTextBrush}" />
-
-                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6">
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
                         <Button x:Name="GuidedFilterModeButton" Content="Guided"
                                 Style="{StaticResource AccentButtonStyle}"
                                 MinWidth="0" Padding="12,5" Click="GuidedFilterMode_Click" />
@@ -548,7 +548,7 @@
                                 MinWidth="0" Padding="12,5" Click="AdvancedFilterMode_Click" />
                     </StackPanel>
 
-                    <ScrollViewer x:Name="GuidedFiltersScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto">
+                    <ScrollViewer x:Name="GuidedFiltersScroll" Grid.Row="0" VerticalScrollBarVisibility="Auto">
                         <StackPanel Spacing="14" Padding="0,4,8,12">
                             <StackPanel x:Name="MediaTypeFilterField" Spacing="6">
                                 <TextBlock Text="Media Type" FontSize="12" FontWeight="SemiBold"
@@ -776,13 +776,10 @@
                         </StackPanel>
                     </ScrollViewer>
 
-                    <ScrollViewer x:Name="AdvancedFiltersScroll" Grid.Row="2"
+                    <ScrollViewer x:Name="AdvancedFiltersScroll" Grid.Row="0"
                                   VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
-                        <StackPanel Spacing="14" Padding="0,4,8,12">
-                            <TextBlock Text="Build rule groups directly. Groups and their rules can each match all or any."
-                                       TextWrapping="Wrap" FontSize="12"
-                                       Foreground="{StaticResource SecondaryTextBrush}" />
-                            <StackPanel Spacing="6">
+                        <StackPanel Spacing="14" Padding="0,0,0,16">
+                            <StackPanel Spacing="6" Visibility="Collapsed">
                                 <TextBlock Text="Match groups" FontSize="12" FontWeight="SemiBold"
                                            Foreground="{StaticResource SecondaryTextBrush}" />
                                 <ComboBox x:Name="AdvancedMatchComboBox" HorizontalAlignment="Stretch"
@@ -792,18 +789,18 @@
                                 </ComboBox>
                             </StackPanel>
                             <StackPanel x:Name="AdvancedRulesHost" Spacing="10" />
-                            <Button Content="Add Group" Style="{StaticResource OutlineButtonStyle}"
+                            <Button Content="Add Group" Style="{StaticResource OutlineButtonStyle}" Visibility="Collapsed"
                                     HorizontalAlignment="Left" Click="AddAdvancedGroup_Click" />
                         </StackPanel>
                     </ScrollViewer>
 
-                    <Border Grid.Row="3" Padding="0,12,0,0"
+                    <Border Grid.Row="1" Padding="0,16,0,0"
                             BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
                         <Grid ColumnDefinitions="*,Auto">
                             <Button Content="Clear All" Style="{StaticResource OutlineButtonStyle}"
-                                    HorizontalAlignment="Left" Click="ClearAllFilters_Click" />
+                                    Height="32" MinHeight="32" FontSize="14" HorizontalAlignment="Left" Click="ClearAllFilters_Click" />
                             <Button Grid.Column="1" Content="Done" Style="{StaticResource AccentButtonStyle}"
-                                    Click="CloseFilters_Click" />
+                                    Height="32" MinHeight="32" FontSize="14" Click="CloseFilters_Click" />
                         </Grid>
                     </Border>
                 </Grid>

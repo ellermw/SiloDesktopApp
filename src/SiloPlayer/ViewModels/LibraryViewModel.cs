@@ -12,6 +12,7 @@ namespace SiloPlayer.ViewModels;
 public sealed class EditableQueryGroup
 {
     public string Match { get; set; } = "all";
+    public Dictionary<string, System.Text.Json.JsonElement>? AdditionalProperties { get; set; }
     public ObservableCollection<QueryRule> Rules { get; } = [];
 }
 
@@ -928,7 +929,7 @@ public partial class LibraryViewModel : ObservableObject
             audioLanguage: UseAdvancedRules ? null : SelectedAudioLanguage,
             yearMin: UseAdvancedRules ? null : SelectedYearMin,
             yearMax: UseAdvancedRules ? null : SelectedYearMax,
-            type: UseAdvancedRules ? null : SelectedType,
+            type: SelectedType,
             extraRules: BuildExtraRules(),
             extraRulesMatch: AdvancedRulesMatch,
             queryGroups: BuildAdvancedGroups(),
@@ -1020,7 +1021,7 @@ public partial class LibraryViewModel : ObservableObject
             audioLanguage: UseAdvancedRules ? null : SelectedAudioLanguage,
             yearMin: UseAdvancedRules ? null : SelectedYearMin,
             yearMax: UseAdvancedRules ? null : SelectedYearMax,
-            type: UseAdvancedRules ? null : SelectedType,
+            type: SelectedType,
             extraRules: BuildExtraRules(),
             extraRulesMatch: AdvancedRulesMatch,
             queryGroups: BuildAdvancedGroups(),
@@ -1106,8 +1107,7 @@ public partial class LibraryViewModel : ObservableObject
             if (value != null) group.Rules.Add(new QueryRule { Field = field, Op = op, Value = value });
         }
 
-        Add("genre", "is", SelectedGenre);
-        Add("type", "is", SelectedType);
+        if (SelectedGenres.Count == 0) Add("genre", "is", SelectedGenre);
         Add("content_rating", "is", SelectedContentRating);
         Add("studio", "is", SelectedStudio);
         Add("country", "is", SelectedCountry);
@@ -1117,8 +1117,14 @@ public partial class LibraryViewModel : ObservableObject
         if (int.TryParse(SelectedYearMax, out var yearMax)) Add("year", "lte", yearMax);
         foreach (var rule in BuildGuidedExtraRules())
             Add(rule.Field, rule.Op, rule.Value);
-        if (group.Rules.Count == 0)
-            group.Rules.Add(new QueryRule { Field = "genre", Op = "contains", Value = "" });
+        if (group.Rules.Count == 0) AdvancedGroups.Remove(group);
+        if (SelectedOriginalLanguages.Count > 1)
+        {
+            var languages = new EditableQueryGroup { Match = "any" };
+            foreach (var language in SelectedOriginalLanguages)
+                languages.Rules.Add(new() { Field = "original_language", Op = "is", Value = language });
+            AdvancedGroups.Add(languages);
+        }
         AdvancedRulesMatch = "all";
     }
 
@@ -1143,30 +1149,21 @@ public partial class LibraryViewModel : ObservableObject
             .Select(group => new QueryGroup
             {
                 Match = group.Match == "any" ? "any" : "all",
+                AdditionalProperties = group.AdditionalProperties,
                 Rules = group.Rules
                     .Where(rule => !string.IsNullOrWhiteSpace(rule.Field) &&
                         !string.IsNullOrWhiteSpace(rule.Op) &&
-                        HasAdvancedRuleValue(rule.Value))
-                    .Select(rule => new QueryRule { Field = rule.Field, Op = rule.Op, Value = rule.Value })
+                        (rule.Value is not string text || !string.IsNullOrWhiteSpace(text)))
                     .ToList()
             })
             .Where(group => group.Rules.Count > 0)
             .ToList();
     }
 
-    private static bool HasAdvancedRuleValue(object? value)
-    {
-        if (value is null) return false;
-        if (value is string text) return !string.IsNullOrWhiteSpace(text);
-        if (value is System.Collections.IEnumerable values)
-            return values.Cast<object?>().All(HasAdvancedRuleValue);
-        return true;
-    }
-
     public static EditableQueryGroup CreateEmptyAdvancedGroup()
     {
         var group = new EditableQueryGroup();
-        group.Rules.Add(new QueryRule { Field = "genre", Op = "contains", Value = "" });
+        group.Rules.Add(new QueryRule { Field = "genre", Op = "is", Value = "" });
         return group;
     }
 

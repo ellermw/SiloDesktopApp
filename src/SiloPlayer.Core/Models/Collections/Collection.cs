@@ -18,6 +18,7 @@ public class Collection
     public string? SourceUrl { get; set; }
     public Dictionary<string, object>? SourceConfig { get; set; }
     public string? SyncSchedule { get; set; }
+    public string? SyncCadence { get; set; }
     public string? NextSyncAt { get; set; }
     public string? LastSyncAt { get; set; }
     public string? LastSyncStatus { get; set; }
@@ -25,6 +26,7 @@ public class Collection
     public int ItemCount { get; set; }
     public bool IncludeInServerCollections { get; set; }
     public string? PosterUrl { get; set; }
+    public bool PosterIsCollage { get; set; }
     public string? PosterThumbhash { get; set; }
     public string CreatedAt { get; set; } = "";
     public string UpdatedAt { get; set; } = "";
@@ -108,6 +110,8 @@ public class DisplayQueryDefinition
 
 public class CollectionCapabilitiesResponse
 {
+    public bool MdblistSearch { get; set; }
+    public bool SyncScheduleEditable { get; set; }
     public bool ItemReorder { get; set; }
     public bool Artwork { get; set; }
     public bool? Imports { get; set; }

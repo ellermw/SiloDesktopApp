@@ -25,6 +25,9 @@ public sealed partial class CatalogPage
         if (_source != "watchlist") return;
         _watchlistTitles = App.Services.GetRequiredService<WatchlistViewModel>();
         ExternalTitlesRepeater.ItemsSource = _watchlistTitles.ExternalTitles;
+        ExternalTitlesSkeleton.ItemsSource = Enumerable.Range(0, 6).ToArray();
+        ExternalTitlesStateIcon.Content = WebUiIcon.Create("bookmark", 32);
+        ExternalTitlesDiscoverIcon.Content = WebUiIcon.Create("compass", 16);
         _watchlistTitles.ExternalTitles.CollectionChanged += ExternalTitles_Changed;
         _watchlistAttached = true;
         ExternalWatchlistScroller.SizeChanged += ExternalWatchlist_SizeChanged;
@@ -47,13 +50,17 @@ public sealed partial class CatalogPage
     private async Task LoadWatchlistTitlesAsync()
     {
         if (_watchlistTitles == null) return;
-        ExternalTitlesLoading.Visibility = Visibility.Visible; ExternalTitlesLoading.IsActive = true;
-        ExternalTitlesState.Visibility = Visibility.Collapsed;
+        ExternalTitlesLoading.Visibility = Visibility.Collapsed; ExternalTitlesLoading.IsActive = true;
+        ExternalTitlesSkeleton.Visibility = Visibility.Visible;
+        ExternalTitlesState.Visibility = ExternalTitlesStatePanel.Visibility = Visibility.Collapsed;
+        ExternalWatchlistHintPanel.Visibility = ExternalWatchlistHintGrid.Visibility = Visibility.Collapsed;
+        ExternalTitlesRepeater.Visibility = Visibility.Collapsed;
         await _watchlistTitles.LoadExternalTitlesAsync();
         if (!_watchlistAttached) return;
         WatchlistTabs.Visibility = _watchlistTitles.ExternalTitlesSupported ? Visibility.Visible : Visibility.Collapsed;
         if (!_watchlistTitles.ExternalTitlesSupported) _externalWatchlist = false;
         ExternalTitlesLoading.IsActive = false; ExternalTitlesLoading.Visibility = Visibility.Collapsed;
+        ExternalTitlesSkeleton.Visibility = Visibility.Collapsed;
         ExternalWatchlistHint.Text = "These titles aren't in the library yet, so they can't be played. " +
             (_watchlistTitles.WatchlistRequests
                 ? "They've been requested for you. When one arrives, it moves to In your library and you get a notification."
@@ -70,7 +77,14 @@ public sealed partial class CatalogPage
         var error = _watchlistTitles.ExternalTitlesError != null;
         var empty = _watchlistTitles.ExternalTitles.Count == 0;
         ExternalTitlesState.Visibility = ExternalTitlesLoading.IsActive ? Visibility.Collapsed : error || empty ? Visibility.Visible : Visibility.Collapsed;
-        ExternalTitlesStateText.Text = error ? "Could not load these titles." : "Nothing waiting for the library\nAdd movies and series from Discover to your watchlist. The ones the library doesn't have yet wait here until they arrive.";
+        ExternalTitlesStatePanel.Visibility = ExternalTitlesState.Visibility;
+        var loaded = !ExternalTitlesLoading.IsActive && !error && !empty;
+        ExternalWatchlistHintPanel.Visibility = ExternalWatchlistHintGrid.Visibility = loaded ? Visibility.Visible : Visibility.Collapsed;
+        ExternalTitlesRepeater.Visibility = loaded ? Visibility.Visible : Visibility.Collapsed;
+        ExternalTitlesStateText.Text = error ? "Could not load these titles." : "Nothing waiting for the library";
+        ExternalTitlesStateIcon.Visibility = ExternalTitlesStateDescription.Visibility = !error && empty ? Visibility.Visible : Visibility.Collapsed;
+        ExternalTitlesStateOutline.StrokeDashArray = error ? null : new DoubleCollection { 4, 4 };
+        ExternalTitlesStateOutline.Visibility = Visibility.Visible;
         ExternalTitlesRetry.Visibility = error ? Visibility.Visible : Visibility.Collapsed;
         ExternalTitlesDiscover.Visibility = empty && !error ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -133,6 +147,11 @@ public sealed partial class CatalogPage
         ExternalTitlesLayout.MinItemWidth = Math.Max(1, _externalTitleWidth - gap);
         ExternalTitlesLayout.MinItemHeight = _externalTitleWidth * 1.5 + (_uiCustomizationService.CardPresentation.Caption == "artwork" ? 24 : 80);
         ExternalTitlesLayout.MaximumRowsOrColumns = columns;
+        ExternalTitlesSkeletonLayout.MinItemWidth = ExternalTitlesLayout.MinItemWidth;
+        ExternalTitlesSkeletonLayout.MinItemHeight = _externalTitleWidth * 1.5;
+        ExternalTitlesSkeletonLayout.MaximumRowsOrColumns = columns;
+        for (var i = 0; i < 6; i++)
+            if (ExternalTitlesSkeleton.TryGetElement(i) is Border placeholder) { placeholder.Width = _externalTitleWidth; placeholder.Height = _externalTitleWidth * 1.5; }
         ExternalWatchlistTabLabel.Text = ActualWidth < 640 ? "Not in library" : "Not in your library yet";
         var compact = breakpointWidth < 640;
         ExternalWatchlistHintGrid.ColumnDefinitions[1].Width = compact ? new GridLength(0) : GridLength.Auto;
@@ -142,6 +161,11 @@ public sealed partial class CatalogPage
         if (_watchlistTitles == null) return;
         for (var i = 0; i < _watchlistTitles.ExternalTitles.Count; i++)
             if (ExternalTitlesRepeater.TryGetElement(i) is ContentControl host) SetExternalTitle(host, _watchlistTitles.ExternalTitles[i]);
+    }
+
+    private void ExternalTitlesSkeleton_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs e)
+    {
+        if (e.Element is Border placeholder) { placeholder.Width = _externalTitleWidth; placeholder.Height = _externalTitleWidth * 1.5; }
     }
 
     private void ExternalTitlesRepeater_ElementPrepared(ItemsRepeater sender, ItemsRepeaterElementPreparedEventArgs e)

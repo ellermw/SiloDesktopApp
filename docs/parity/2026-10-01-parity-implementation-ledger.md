@@ -1,10 +1,14 @@
 # Parity implementation ledger
 
+**Current reconciled total:241; approved release1.2.241.** The final register at the end of this document counts76 new correction groups plus the previous165 and lists excluded duplicate refinements. [Final acceptance and exact-payload evidence](2026-10-09-combined-verification.md) supersede the historical checkpoint statuses below. The owner installed the final candidate, reported it working well and approved GitHub publication on October10.
+
+**October9 latest-main follow-up:** official88dac5cdae81d52f215a64d5ea079cc189ea93f2 artwork and Collection10MiB findings are implemented as **two proposed correction groups**. [Current evidence](2026-10-09-current-main-implementation.md): Release publish,1,550 full-suite passes,42 affected checks after final adjustments,15 final published-service passes; new native artwork cases compile and remain unrun while computer control is paused. Keep these separate fromC165 and earlier proposed groups until final acceptance/deduplication; no release-number increment or installer is implied.
+
 Specification: [October 1 audit](2026-10-01-user-visual-functional-audit.md). Plan: [implementation plan](2026-10-01-parity-implementation-plan.md). Authorized implementation, final installer, main push and README/release link by user on October 1.
 
 Baseline: current dirty 1.2.0 candidate, branch codex/parity-top-three, base3488a4942ee0d03448bd609d04334e74b963bc7d; official8e2e840474a085c6df6571a5a2850f7eb996810c freshly fetched again. No existing work discarded.
 
-Verified distinct product corrections: **104** at the current checkpoint. This is a running count, not a final version or a claim of complete visual parity. Planned final version **1.2.N** uses the final distinct correction total; overlapping findings and multiple tests of the same correction count once. Implementation, visual acceptance and functional acceptance remain independent. Shared-control geometry is verified against the pinned WebUI contract in the actual native host; whole-page paired acceptance remains separate.
+Verified distinct product corrections: **165** at the current implementation checkpoint. This is a running count, not a final version or a claim of complete visual parity. Planned final version **1.2.N** uses the final distinct correction total; overlapping findings and multiple tests of the same correction count once. Implementation, visual acceptance and functional acceptance remain independent. Shared-control geometry is verified against the pinned WebUI contract in the actual native host; whole-page paired acceptance remains separate.
 
 October2 official main fetched directly: `478afa5257332df52f10650cd00b88596562d4c9`. Current audited acceptance remains tied to8e2e; newer auth/settings, rating/catalog and detail/trickplay obligations are recorded separately in the October2 account/browse delta reports and media implementation report. They are not implemented/accepted merely because older component gates pass.
 
@@ -148,6 +152,47 @@ The October 1 checkpoint ran 26 focused tests with zero failures across notifica
 | C106 | Ctrl+K closes the open native palette and permits reopening | Physical104 RED remains open; physical108 and accepted108 owned keyboard fixture dismiss. Input handles the modal-isolated chord; main window also retains a single active dialog owner. |
 | C107 | Clicking the palette backdrop dismisses without selecting obscured content | Physical104 RED remains open; physical108 closes and stays on Home. Accepted108 native fixture identifies the actual separate WinUI smoke popup and confirms handler ownership is released on close. |
 | C108 | Shortcut dismissal retains the query for reopening, matching current WebUI | Live Chrome Ctrl+K retains Game of Thrones; physical108 does the same. Native accepted108 proves retained query, unselected full-search Enter, and Escape cleanup without navigation. |
+| C109 | Five poster-overlay presets size their badges from scaled font, padding and border, with current preset colors | `parity-personal-overlay-red108.log` reproduces all five height/paint mismatches; candidate109 native checks pass against the current source measurements. |
+| C110 | Poster overlay corners use the artwork boundary and current download-progress clearance | `parity-personal-placement-red109.log` reproduces extra40px bottom reservation and4px progress clearance; `parity-personal-placement-green110.log` passes actual PosterCard/LibraryGridCard and external-title preset geometry. |
+| C111 | Personal Catalog empty and error states use current spacing, bordered error panel and icon retry control | `parity-personal-states-red110.log` reproduces the rendered differences; `parity-personal-states-green111.log` passes actual Favorites/Watchlist routes, native menu removals, empty/error/retry and held loads at1280/900/500. |
+| C112 | A completed notification inbox becomes usable independently of pending count/preferences queries | `parity-personal-inbox-red111.log` proves a populated inbox still reports loading; `parity-personal-inbox-green114.log` and `parity-personal-notification-states-green116.log` prove VM readiness and real rendered list without waiting for optional preferences. |
+| C113 | Loading older notification pages preserves the first displayed page's Mark-all cutoff | Inbox RED sends older-page-cutoff; GREEN sends first-page-cutoff after loading older rows. The API updates its cutoff only for a first-page request. |
+| C114 | Repeated/self-cycling notification cursors stop pagination and expose reload while retaining accepted rows | Two actual paging RED cases accept repeated cursors; GREEN rejects both before appending and prevents another Load-more request until Reload. |
+| C115 | Pending notification preferences paint three skeleton rows instead of failure | `parity-personal-notification-states-red111.log` reproduces false failure; GREEN116 verifies actual pending preference panel visibility and independent completed inbox. |
+| C116 | Notification empty state uses current top padding and is excluded when the inbox request fails | Native RED111 reproduces centered empty copy and empty/error coexistence; GREEN116 verifies80px padding,12px gaps, error exclusion, Reload and actual unread-tab empty copy. |
+| C117 | Mounted notification inbox subscribes to created/read events and reconnect snapshots, with scoped dispatcher and unload ownership | `parity-personal-realtime-red116.log` proves the actual event subscription leaves rows stale; GREEN117 verifies created/read, duplicate/foreign profile events, all/unread filters, snapshot reconciliation and handler release. An added unread-row dedup regression reproduced a double decrement during review; `parity-personal-inbox-green117.log` passes it. Counted within this correction. |
+| C118 | Notification cache and optional responses retain their originating profile/account context | `parity-personal-profile-red117.log` proves another profile reuses cached rows; `parity-personal-optional-profile-red117.log` accepts a late foreign-context preferences response. `parity-personal-inbox-green118.log` passes both, plus prior inbox/recovery behavior. Mutation and dispatcher guards retain the same ownership rule. |
+
+| C119 | Actual notification Load more disables and displays its busy indicator while the continuation is pending | `parity-personal-pages-red118.log` reproduces the enabled pending control; `parity-personal-pages-green119.log` invokes the real native button and verifies pending disable, appended rows and final-page disappearance. |
+| C120 | Person portrait uses current16px rounding and Surface fallback with responsive140/180px width | `parity-person-layout-red119.log` fails actual portrait contracts at1280/900/500; `parity-person-person_layout-green124.log` passes the same native assertions. |
+| C121 | Person filmography tabs use current corner, medium type,6px gap and selected/inactive theme paints | The same layout RED/GREEN verifies mounted tabs at three widths; source paints follow foreground/10 and border/20 or /10. Physical hover and paired paint acceptance remain queued. |
+| C122 | Person icon actions use current small-button14px text and10px horizontal padding | Layout RED/GREEN asserts the real button and its rendered label rather than just XAML source. Existing actual Refresh/Edit/recovery gates pass in `parity-person-person_actions-green124.log`. |
+| C123 | Person fact badges use the shared metadata pill typography, padding, border, theme mix and uppercase display | Layout RED/GREEN checks the actual birth badge and label at three widths. Display transformation does not alter API metadata. |
+| C124 | Pending person hero uses the current five-placeholder responsive layout | `parity-person-loading-red119.log` reproduces the fixed portrait and extra filmography rows at all three widths; `parity-person-person_loading-green124.log` verifies five hero placeholders and stacked/desktop arrangement. |
+| C125 | Person header becomes usable independently of filmography loading | The same loading RED/GREEN withholds the actual catalog request and verifies the already available header remains visible. The catalog has its own loading/cancellation/error state and24 responsive placeholders.64 focused Person/Notification unit tests pass in `parity-person-unit124.log`. |
+
+| C126 | Calendar week loads independently of the optional library filter lookup | `parity-calendar-loading-red124.log` shows the held library read prevents any week; `parity-calendar-loading-green127.log` verifies the available week/loading completion before the optional response. |
+| C127 | Calendar replies and cached views retain their original profile context | The same RED accepts a foreign-profile week; GREEN rejects it. Cached page reentry checks context and clears prior profile's library selection/data before reloading. |
+| C128 | Calendar responsive header and day-group rhythm follow current source | `parity-calendar-layout-red124.log` reproduces heading type/top spacing/action gap differences at460/900/1280. `parity-person-calendar-calendar_layout-final135.log` passes actual native contracts. |
+| C129 | Calendar navigator padding and responsive day-number/event-dot presentation follow current source | The same native RED/GREEN verifies navigator/preset padding, selected-empty rounding, responsive bold day numbers and4px event dots. Physical/sticky/paired paint checks remain queued. |
+| C130 | Empty Calendar week uses the current single padded300px panel with28.8px corners | The same RED/GREEN verifies removal of duplicate outer padding,24/64 panel padding and border-free source geometry at three widths. |
+| C131 | Person birth/death facts honor preference-aware medium dates | `parity-person-date-empty-red130.log` shows full-month dates ignore MM/DD, DD/MM and ISO preferences; `parity-person-calendar-person_layout-final135.log` verifies the actual uppercase displayed birth text in all three formats. The existing shared date formatter supplies the page's date rendering. |
+| C132 | Empty Person filmography uses current16px copy and48px vertical padding | The same RED/GREEN verifies actual empty state geometry at1280/900/500. |
+| C133 | Canceling a Calendar query leaves its requested week unaccepted rather than reusing another week's loaded flag | `parity-calendar-person-paging-red132.log` reproduces a canceled Next-week query retaining HasLoaded; `parity-person-calendar-unit135.log` passes the cancellation regression. |
+| C134 | Nonadvancing or failed Person filmography pages retain accepted rows and stop automatic retry | The same RED repeats empty/duplicate continuation reads; GREEN passes both, rejects repeated rows and clears the stop/error state on a fresh filter query. |
+| C135 | Person continuation results/errors remain scoped to the originating profile | The same RED appends a held response after profile change; GREEN retains only the previously accepted row and rejects the late continuation. |
+| C136 | Queries Guided cannot fully represent open Advanced, disable Guided and retain their original rules | `parity-filters-representation-red135.log` reproduces seven mounted failures; `parity-filters-filter_representation-final141.log` verifies ten actual mode/JSON preservation cases. |
+| C137 | Filter badges/counts represent complete Guided rules and preserve group semantics when removed | `parity-filters-badges-red136.log` reproduces misleading chips, double-counted Unwatched and one remaining language in an ANY group; `parity-filters-badges-green137.log` passes. Nonrepresentable queries use raw rule counts without misleading chips. |
+| C138 | Explicit condition changes normalize ranges/scalars and absolute/relative date values | `parity-filters-values-red137.log` reproduces retained arrays/scalars and incompatible dates. `parity-filters-filter_values-final140.log` passes actual selectors, with lossless saved JSON loading. |
+| C139 | Incomplete ranges block submission immediately and recover after completing both endpoints | The same RED accepts newly selected and loaded incomplete ranges; the same GREEN verifies initial validation without rewriting saved values, and actual From/To textbox recovery. |
+| C140 | Rules Advanced cannot represent remain read-only, lossless and explicitly removable | `parity-filters-opaque-red139.log` reproduces editable unknown fields/operators, string booleans and malformed ranges. `parity-filters-filter_opaque-final140.log` verifies actual read-only rows/removal. A fixture check was corrected to inspect the rule row rather than internal textbox templates of root/group selectors. |
+| C141 | Selecting Ebooks removes narrator rules/empty groups while preserving the rest of the query | `parity-filters-scope-red140.log` reproduces narrators in the actual Search request; `parity-filters-scope-native-red140.log` reproduces both mounted Catalog/Collection selectors. `parity-filters-unit141.log` passes67 focused tests including emitted groups/opaque JSON; `parity-filters-scope-native-green141.log` passes both selectors. Catalog suggestions follow selected type and reject obsolete-scope replies. |
+
+Current141 verification: full unit suite1,423 passes (`parity-filters-unit-full141.log`); scoped native Guided/Advanced representation and real suggestion interactions pass on141; published playback15 passes (`parity-filters-playback141.log`). Range transitions/validation, opaque rows and combined query recovery pass on140 before the separate scope-change repair. No live paired/physical visual acceptance is implied.
+
+Combined browse limitation: `parity-filters-browse-baseline135.log` and `parity-filters-browse-full137.log` both fail the old Template title20px assertion. Current public `CollectionTemplateCard.tsx` uses a14.5px truncated radio row while native retains an older wrapped gallery card. This is not a new filter regression or accepted Collections parity. Keep the gallery/wizard repair and its replacement source contract with8; checks after that failure did not execute in the combined run. Typed/scoped Advanced controls, sorting/source-order integration, separate Library filters and final paired/physical acceptance remain open for11.
+
+October9 staging ruling: continue implementation13 through1 without computer control, then perform paired/physical acceptance after the user resumes control. This supersedes item-by-item physical acceptance as the execution order, not the acceptance requirements. C109–141 are verified implementation corrections; the source/installer version is not yet bumped from1.2.108, and no unfinished item is finalized. Public main fetched directly: **7696287dd4c617fecee6c980b8b500cb35b90697**. Items13 and12 await live paired/physical verification;11 remains in progress. Catalog collection ownership/action changes since051253dd are queued for item8. Deferred Abbott Elementary reports stay with item6.
 
 October7 item14 finalization: [acceptance record](2026-10-07-easiest-first.md) and [local1.2.108 installer](../releases/1.2.108.md). Physical pointer delivery and exact hover/Enter destination now pass, resolving C101's earlier limitation.13 through1 remain open; proceed without another user authorization checkpoint. No whole-app parity claim or GitHub publication is implied by this local item release.
 
@@ -163,3 +208,148 @@ October3 checkpoint: Quick input/boundaries28, E01 scoped library-state27b/calle
 
 Ruling: user's explicit instruction starts implementation against the already reviewed audit/repair list. No repeated design approval requested. Root retains existing isolated worktree and uses separate file ownership for parallel domain work; coordinated builds avoid output races. Release authorization does not authorize closing installed playback or production changes.
 
+
+## October9 filter implementation checkpoint — C142–152
+
+Public reference22e3a0ba7c1431dda77b957ed1012508d23f2b80, fetched directly from public GitHub. The user requested continuous execution and one combined visual/physical verification at the end. Control remains paused. Candidate payloads are local tests; product metadata remains1.2.108.
+
+| ID | Product correction | Evidence |
+|---|---|---|
+| C142 | Advanced fields/operators follow media scope, extended capability and shown-rating eligibility, retaining saved hidden fields | `parity-filters-fields-red141.log`; native FILTER_FIELDS143/144/152 pass. |
+| C143 | Advanced values use numeric units, date/range, relative amount/unit and typed select controls | Same native field packet; FILTER_VALUES152 passes lossless load and range recovery. |
+| C144 | Mounted editors read actual extended-query and ratings capabilities without replacing typed drafts | FILTER_CAPABILITIES143 RED,144/152 GREEN. Capability gates now separate request contexts. |
+| C145 | Library uses the shared typed rule editor instead of a divergent private implementation | `parity-filters-library-red144.log` reproduces three failures; Library native146/147/151/153 passes. |
+| C146 | Library requests retain opaque rule/group properties and false/null values | Library request RED144;103 focused146 GREEN and full152 includes the behavioral regression. |
+| C147 | Library Guided/Advanced share the same draft; migration retains OR languages, avoids duplicate genres and keeps toolbar media scope in requests | Library modes unit/native RED146;13 focused147 GREEN and actual mounted mode transition passes147/151/153. |
+| C148 | Facet lookups support current ranked responses/library_ids and older name-only servers | Three actual transport failures in facets RED147; facets GREEN148. Old servers receive no empty lookup. |
+| C149 | Advanced languages retain codes with readable names and scoped/retryable loading; facets offer server suggestions | Pickers RED147/GREEN149/152. Neighbor check exposed hidden Advanced lookups while Guided was visible; hidden-lookups RED152 and Guided153 GREEN verify deferral until visible. This repair is included in C149, not counted again. |
+| C150 | Advanced sort/direction reaches result requests and page toolbars, leaving saved source order after explicit selection | Sort RED149; FILTER_SORT151 and actual Favorites/Search/Collection wire152 GREEN. Wire assertion corrected to actual v2 `sort=-year`; no failed product behavior was suppressed. |
+| C151 | Library badges/counts/removal use the shared lossless group contract | Library badges RED149; Library native151/153 GREEN; ebook narrator cleanup shared with other callers. |
+| C152 | Browse toolbar selects fit their selected labels rather than reserving oversized fixed widths | Toolbar RED149/GREEN152. Shared helper applied to Catalog/Search/Library/Collection; final paired geometry remains unaccepted. |
+
+Full152 Release suite:1,429 pass, zero fail/skip. Published playback152:15 pass. Native152: sort wire, toolbar, fields, pickers, values, opaque rules, capabilities and representation pass. Native153: Guided suggestions/hidden lookup deferral, query validation, Library rules and scope selectors pass. Old general browse template failure remains queued for8; no whole-browse passing claim. #11 implemented, awaiting the final combined visual/physical stage.
+
+C153: metadata matching follows a replacement content ID and never refreshes the obsolete detail. API/native RED152 reproduced the discarded ID;14 MediaMaintenance tests pass153, including204 compatibility and rejected mutations without refresh/replay. Actual conditional153-final passes the dialog response, replacement route, stale-page navigation rejection and absence of a second HTTP request. Menu callers retain matching replacement behavior. Season-artwork hint C154 is being checked before the #10 checkpoint.
+C154: season artwork editors now show the current plugin-update notice only for seasons, with wrapping11px copy,14px circle-alert icon and warning border/background. Actual native153 RED demonstrates the missing hint; conditional154-final GREEN includes series/season/episode exclusion, edit/Cancel, role revocation and image pending/apply/lock neighbors. The first green attempt exposed a fixture trying to open Images for episodes (source excludes that tab); the fixture now inspects conditional availability. No product failure was suppressed.
+
+Difficulty10 implementation checkpoint: current public metadata/person/refresh/manga dialogs and image/match deltas reviewed. Replacement matching and season notice are repaired; actual conditional154-final completes normally. Final paired/physical acceptance remains open.
+
+Difficulty9 implementation checkpoint: Requests/RequestBrowse/RequestDetail/season/status/download/current query paths compared to22e3. Only RequestPosterCard/RequestToAddSection production deltas since8e2 are px→rem typography; shared typography5/final responsive comparison owns that dependency. Native request-interactions153 passes independent hub loading/recovery/mounted polling, grouped Yours/progress/skeletons, poster hover/press/exit retention, promoted Back and exact Season2 payload. Request-detail154-final passes responsive hero/progress, editable pending season draft/snapshot, Follow/Watchlist/Cancel rejection/retry and mounted30-second polling authority/no-overlap/completion/unload. No new correction counted. Requests implemented, awaiting final combined visual/physical verification.
+
+October9 Collections continuation — current22e3 official source, not the older gallery reference. #8 remains in progress.
+- C155: shared/missing-profile collections expose no owner-only hover edits, Delete, reorder/context moves or drag. Actual native ownership RED154/GREEN155 pass. Empty active profile no longer grants management.
+- C156: actual New collection waits for Manual/Smart/Synced selection; Manual routes to its manual editor instead of always starting Smart. Native creation RED155/GREEN157 passes. Synced capability loading/error/retry/off and current copy are implemented; final paired decorative/responsive shell and full synced-editor flow remain open. No write occurs when picking or canceling a type.
+- C157: personal template listing and submitted imports exclude templates requiring admin source profiles and retired/unsupported source types. Actual VM/API RED156 exposes the forbidden import;17 focused import/discovery/v2 checks pass157, including no POST for an admin-profile template.
+Remaining8: personal/shared ownership-group poster boards, server library selector/deduplication/See all, capability-gated drag and sharing/add-row menus; current synced-list picker and editable saved source; current editor section/header/order/where-shown/row usage/save/conflict flows; updated current template and full neighbor checks. Old template-card20px assertion is stale against current14.5px radio-row source and remains a failed general-browse gate until the actual creation flow is replaced. No visual/whole-item acceptance or new installer is claimed.
+
+## October 9 continuous implementation — Collections continuation
+
+Current source: public22e3a0ba7c1431dda77b957ed1012508d23f2b80. Computer control remains paused. User requires one combined verification after all implementation steps; no new per-item installer or release is implied.
+
+| ID | Distinct correction | Evidence already obtained before the final-verification direction |
+|---|---|---|
+|C158|Personal/shared poster boards replace retired text tiles, with strict owner-only management.|collections-layout-green158-final actual native pass; focused ownership/import unit pass.|
+|C159|Server collection pills, deduplication and bounded one-row board retain correct library context.|collections-server-green159 actual native pass. See-all header placement remains in final source refinements.|
+|C160|Collection loads reject previous authority and retain healthy rows after failed refresh.|Two actual VM transport regressions RED160/GREEN160; full collection subset subsequently73 pass165.|
+|C161|Editor missing/foreign owner fails closed.|Editor ownership RED161/GREEN161; existing rule fixtures now explicitly represent an owner.|
+|C162|Manual Show-only and library-tab visibility drafts reach create/update requests.|Actual manual request RED162/GREEN162. No invented manual library/sort persistence added.|
+|C163|Current single-column editor shell replaces retired sidebar layout.|Editor-shell RED163/GREEN163-b actual native pass at1280/460. Header/actions/Look refinements remain staged below.|
+|C164|Synced creation has its own page, chart constraints, explicit Create and durable created identity.|Route RED163-b/GREEN164; actual synced-form-green164-final passes no pre-create write and one successful import.|
+|C165|Personal order uses global own-only permutation and captured revision instead of retired groups.|Actual cross-group transport RED165/GREEN165,73 focused collection unit tests pass. Final physical/keyboard reorder acceptance pending.|
+
+Staged after these gates, **not yet included in the verified count**: owner menus and Add to my Home reviewable row editor; current-source capability-only synced tabs, MDBList search/link validation/media mapping, eligible libraries/order/limit/named sync controls; saved schedule capability guard; staged artwork removal; failed create-follow-up continuation; retirement of old reachable template routes; shared/server/chooser presentation refinements. Tests for the final combined stage are being prepared rather than repeatedly rerun.
+
+Known final blocker to diagnose in the owned native fixture: owner-menu host exits abnormally during card layout, before menu invocation. This is not accepted as a production root cause or a passing gate. Fixture profile duplication and shared flyout attachment are under source review; no installed app was controlled. Whole8 remains in progress until finite remaining implementation and final acceptance are addressed.
+
+## October9 combined source checkpoint
+
+Source implementation reached all14 difficulty groups. [Current source reports, independent review repairs and final automated evidence](2026-10-09-combined-verification.md) supersede the earlier in-progress staging descriptions. Final Release publish passes;1,524 full-suite tests,3 additional real headless-mpv menu cases and15 published-service playback checks pass. Native host compiles but window/paired/physical/live acceptance has not run during paused computer control.
+
+Keep verified correction IDs atC165 until new proposed source corrections are reconciled with the applicable acceptance gates. The eight Collections list groups, eight Home/library groups, seven shared groups, current account/media/party/playback/subtitle source groups and root integration repairs are recorded in their source reports; overlapping fixes extend one correction rather than inflating the count. Compilation/fixture repairs, stale assertion migration and the disproven duplicate-parent inference are excluded. Product version1.2.108 is unchanged; no new installer/commit/push or production change occurred.
+
+## Final candidate reconciliation — October 9 resumed acceptance
+
+The local candidate is **1.2.241**: **241 distinct correction groups** across the 1.2 workstream, including 76 newly reconciled groups below. This is the requested correction-total version policy; it is not108 plus the ledger total. Current official public reference is1a7a3970a9928efb0157460c10888832a8a74eb1. Historical proposed/unrun wording above records its original checkpoint; the final combined report and exact-payload receipt supersede that status.
+
+Count extensions once: chooser cards/shell extendC156; boards extendC158/C159; owner-menu geometry/help/toggle followsC044; editor header/Look/footer/Departure extendsC163; durable synced creation alreadyC164; current row-order transport alreadyC165. Shared catalog vertical gutters/Person/Calendar/Notifications and request badges extend their existing presentation corrections. Filter choices/lazy-option handoff/Advanced rhythm extendC149 and Guided chrome; toolbar's measured58px reserve extendsC152. Home heading and bottom badge rhythm extend the existing Home/overlay corrections. Singular counts/responsive sibling widths extendC066; metadata tabs/four-poster rounding extend the existing metadata/image corrections. Fixture repairs, test migrations, disproven hypotheses, build fixes and additional checks add zero corrections.
+
+| ID | Distinct product correction | Accepted evidence family |
+|---|---|---|
+|C166|Home ownership includes the captured server/auth/access context.|home-current|
+|C167|Listening chapter captions, ordered chapters and duration fallback match the current contract.|home-current|
+|C168|Listening hydration is one owned library-scoped request instead of duplicate reads.|home-current|
+|C169|Hero Pause/Resume follows the mounted native audiobook controller.|home-current; media-full|
+|C170|Late slideshow arrivals start the timer and retained slides preserve its cycle.|home-current|
+|C171|Hero absent metadata collapses and rating/text separators follow their distinct roles.|home-current|
+|C172|Home and Library heroes use their respective gradients, scrim and editorial rail.|home-current|
+|C173|Home nested loading cards receive the responsive size and loading/error gutters.|home-current|
+|C174|External title captions obey the configured artwork/title display policy.|shared-current|
+|C175|External artwork crops and clips within the current rounded frame.|shared-current|
+|C176|Artwork dimming uses brightness/saturation while preserving opaque pixel alpha.|shared-current|
+|C177|External card action reveal, hit targets and pending keyboard authority agree.|shared-current|
+|C178|External bookmark geometry responds to the window breakpoint and current completion tooltip.|shared-current|
+|C179|Current collection action icons render distinct Lucide nodes instead of plus fallbacks.|shared-current; collections-owner|
+|C180|Accessibility text scaling/weights restore baselines without inherited compounding.|shared-base; shared-current|
+|C181|PIN throttling reports Retry-After and rejects canceled/stale create or verification results.|account-latest-full; account-auth|
+|C182|Ended-session navigation exposes the current signed-out banner.|account-latest-full; account-network|
+|C183|Local startup supports Remember last profile and Ask who is watching.|settings-current; account-latest-full|
+|C184|Settings directory uses current responsive groups, dimensions and visible valid icons.|settings-current; SettingsIconAssetTests; physical directory|
+|C185|Device selection keys both profile and device and keeps value controls responsive.|settings-current; account-advanced-full|
+|C186|Settings libraries include hidden entries without contaminating visible-library cache.|account-latest-full|
+|C187|History imports respect the acting profile rather than account-admin status alone.|account-latest-full; account-home-import|
+|C188|Signed-in sessions implement current capability, cursor, current-session and revoke contracts.|settings-current|
+|C189|Home row edits preserve inherited fields, serialize saves and reconcile failures without losing authority.|account-home-save; account-recipe; account-home-import|
+|C190|Collection Home usages and seeded row edits retain their explicit Home/library scope.|collections-current; collections-owner; account-recipe|
+|C191|Party picker resolves the fresh resume season and original source metadata.|party-picker|
+|C192|Party series selection retains its responsive header, season rail and bounded episode body.|party-picker|
+|C193|Party next-up chooses earliest unfinished member episodes and reveals/scrolls the actual target.|party-picker|
+|C194|Party episode confirmation stays inline with the selected series and season.|party-picker|
+|C195|Party earlier-episode risk keys both user and profile and waits for member evidence.|party-picker; media-full|
+|C196|Party member refresh and delayed selection replies preserve current room/candidate authority.|party-picker; party-actions|
+|C197|Server-owned Shuffle supports all current scopes and protects advance/skip from passive-read races.|playback-scope; ShufflePlaybackTests|
+|C198|Watch preparation, next/previous navigation and reader routes retain library/file scope and coalesced cache identity.|playback-scope; PlaybackLibraryScopeTests|
+|C199|Video multipart completion continues the authorized edition before advancing Shuffle.|PlaybackPartSequenceTests; playback-scope|
+|C200|Subtitle sync supports advertised opaque keys, capability/state and strong-ETag mutations without replay.|SubtitleSyncBehaviorTests|
+|C201|Subtitle sync polling and realtime observations have session/file ownership and bounded lifetimes.|SubtitleSyncBehaviorTests|
+|C202|Subtitle menu and job feedback expose current actions/outcomes and fit short native windows.|real mpv OSC 360/500/720; physical subtitle menu|
+|C203|Corrected subtitle cues attach atomically while preserving old cues, local delay and playback ownership.|SubtitleSyncBehaviorTests; published playback|
+|C204|Desktop series and season heroes use the current natural-height rule for every season count.|tv-first-caption; media-latest; physical Abbott|
+|C205|Long episode grids cap at four complete measured rows and clear the cap after reflow.|tv-first-caption|
+|C206|Episode still aspect is reserved in the first measure so captions participate immediately.|tv-first-caption; physical Abbott|
+|C207|Missing episode artwork uses the current outlined Play fallback.|tv-first-caption|
+|C208|Absent/empty/single/error sibling navigation removes its entire layout reserve.|tv-first-caption; physical Abbott episode|
+|C209|Series crew prefers Creator and supporting crew clears correctly on other types.|tv-first-caption; media-latest|
+|C210|Season and episode overflow excludes unsupported Add to Collection.|media-actions; media-more-current|
+|C211|Current catalog default artwork and renewed URLs retain cache/failure ownership.|calendar-artwork; unit current-main artwork cases|
+|C212|Collection artwork accepts the current 10MiB limit.|collections-current; unit artwork limit cases|
+|C213|Collection source picks use current radio/poster/source-tag/schedule rows.|collections-discovery; collections-jpeg|
+|C214|Collection shared ownership attribution and tag placement use their current caption roles.|collections-current; collections-owner|
+|C215|Collection list loading retains its shell and responsive poster skeletons.|collections-current|
+|C216|New collection options initialize before editing and retain the loading/retry draft baseline.|collections-current; collection recovery tests|
+|C217|Smart scope/order/rules and automatic 24-poster preview use the current query contract, including omitted All scope.|collections-current; guided-filters; live matching 451138 count|
+|C218|Synced source/chart/search/library/limit/cadence fields obey capability and source locks.|collections-current; collection recovery tests|
+|C219|Staged artwork removal remains local and does not resurrect after late source updates.|collections-current|
+|C220|Creation follow-up failures preserve the durable created identity rather than recreating it.|collections-current; collection recovery tests|
+|C221|Manual unsaved drafts survive navigation and Undo preserves their original placement.|collections-draft-reorder; collection mutation tests|
+|C222|Synced result refresh updates status/count/time while retaining edited fields.|collections-current; SyncedCollectionRecoveryTests|
+|C223|Template artwork and attribution survive source selection; decoding runs on the owning dispatcher.|collections-jpeg; collections-queued-artwork; physical Synced|
+|C224|Delayed search events cannot clear a selected template, and source selection preserves custom copy.|collections-discovery; physical Synced|
+|C225|Manual search uses bounded poster results, keyboard selection and explicit retry without premature writes.|collections-current; physical Manual|
+|C226|Manual reorder receives handled keyboard events and captured pointer release, including unsaved drafts.|collections-draft-reorder; manual-release-physical|
+|C227|Similar-title reads request 12 rich cards once and reject retired profile results.|similar-layout; SimilarCatalogContractTests|
+|C228|Similar titles use the current horizontal rail and separate title/detail and Play targets.|similar-layout; physical Game of Thrones rail|
+|C229|Detail routes temporarily compact the sidebar while retaining the saved browse preference.|shared-base; physical Quick Search and Home return|
+|C230|Detail backdrop uses the current light tint, gradients and radial treatment.|media-latest; native backdrop RED/GREEN; physical series|
+|C231|Catalog loading/results honor the calculated column count without stretch-induced missing columns.|caller-grids; personal-lists|
+|C232|Decoded external request artwork cannot expand the hero Auto row.|requests-detail; live Scrubs Interns|
+|C233|External request detail facts, rating, overview/crew and auto-request explanation match current roles.|requests-detail; live Scrubs Interns|
+|C234|Item marker edits expose current diffs/history/settings with captured permission and revision.|media-tools-current; MediaToolApiTests|
+|C235|Item detection follows current settings and only uses the documented legacy404 fallback.|media-tools-current; MediaToolApiTests|
+|C236|Seek preview status/actions/polling follow current capability and item authority.|media-tools-current; MediaToolApiTests|
+|C237|Split versions uses complete paged files, revision-owned dry run and bounded recycled selection.|media-tools-current; actual2500-file final review regression|
+|C238|Media tool submission rechecks the current role even when user/profile identity is unchanged.|media-more-current; media-tools-current final review RED/GREEN|
+|C239|Rounded media duration no longer misclassifies a healthy episode end as a premature EOF recovery loop.|playback-scope RED/GREEN; live natural S1E1 to S1E2 autoplay|
+|C240|Next episode runtime converts catalog minutes to seconds before post-roll display.|playback-scope RED/GREEN; live55min display|
+|C241|Shared confirmation template retains WinUI commands while using theme actions instead of Windows accent.|shared-base; conditional-dialogs; media-tools-current|
+
+Final acceptance is finite and documented in [combined verification](2026-10-09-combined-verification.md). Native pixel rounding, Windows titlebar/window management, libmpv decoder behavior, native Plex pairing and the Calendar visibility-preserving scroll offset are explicit native differences. No blanket100% pixel/device/network equivalence or universal buffering resolution is asserted. Final GitHub publication requires the user's installer approval; no commit/push/release is authorized yet.

@@ -26,6 +26,7 @@ public sealed partial class PersonDetailPage : Page
     public PersonDetailPage()
     {
         ViewModel = App.Services.GetRequiredService<PersonDetailViewModel>();
+        ViewModel.FormatPersonDate = date => DateTimeDisplay.FormatDate(new DateTimeOffset(date), medium: true);
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
 
@@ -53,7 +54,7 @@ public sealed partial class PersonDetailPage : Page
                         ? Visibility.Visible : Visibility.Collapsed;
                 });
             }
-            else if (args.PropertyName is nameof(PersonDetailViewModel.Person) or nameof(PersonDetailViewModel.ErrorMessage) or nameof(PersonDetailViewModel.IsLoading) or nameof(PersonDetailViewModel.IsRefreshing))
+            else if (args.PropertyName is nameof(PersonDetailViewModel.Person) or nameof(PersonDetailViewModel.ErrorMessage) or nameof(PersonDetailViewModel.IsLoading) or nameof(PersonDetailViewModel.IsRefreshing) or nameof(PersonDetailViewModel.IsLoadingFilmography))
             {
                 DispatcherQueue.TryEnqueue(UpdateUI);
             }
@@ -152,10 +153,14 @@ public sealed partial class PersonDetailPage : Page
             BirthplaceBadge.Visibility = Visibility.Collapsed;
         }
 
+        UpdateMetadataBadges();
+
         // Bio
         if (!string.IsNullOrEmpty(person.Bio))
         {
-            BioText.Text = person.Bio;
+            // CSS white-space:normal collapses ASCII whitespace in the WebUI
+            // biography. Preserve nonbreaking spaces and all meaningful text.
+            BioText.Text = System.Text.RegularExpressions.Regex.Replace(person.Bio, "[ \\t\\r\\n\\f]+", " ").Trim();
             // Show "Show more" if bio is long enough to be truncated
             ShowMoreBioButton.Visibility = Visibility.Collapsed;
         }
@@ -231,34 +236,55 @@ public sealed partial class PersonDetailPage : Page
     private void ApplyResponsiveLayout(double width)
     {
         if (width <= 0) return;
-        var gutter = width >= 1024 ? 40d
-            : width >= 640 ? 24d
+        var viewport = WebUiViewport.Width(this, width);
+        var outerGutter = viewport >= 1280 ? 48d : viewport >= 1024 ? 40d : viewport >= 640 ? 24d : 16d;
+        var outerTop = viewport >= 1024 ? 32d : 16d;
+        PersonViewportShell.Padding = new Thickness(outerGutter, outerTop, outerGutter, outerTop);
+        var gutter = viewport >= 1024 ? 40d
+            : viewport >= 640 ? 24d
             : 16d;
-        PersonContentShell.Padding = new Thickness(gutter, width >= 640 ? 88 : 72, gutter, width >= 640 ? 32 : 24);
-        BackButton.Margin = new Thickness(8, width >= 640 ? 24 : 16, 0, 0);
-        PersonSkeletonShell.Padding = new Thickness(gutter, width >= 640 ? 40 : 32, gutter, 48);
-        PersonHeader.ColumnSpacing = width >= 1024 ? 32 : 24;
-        PersonDivider.Margin = new Thickness(-gutter, width >= 640 ? 32 : 24, -gutter, width >= 640 ? 32 : 24);
-        var photoWidth = width >= 640 ? 180d : 140d;
+        PersonContentShell.Padding = new Thickness(gutter, viewport >= 640 ? 88 : 72, gutter, viewport >= 640 ? 32 : 24);
+        BackButton.Margin = new Thickness(8, viewport >= 640 ? 24 : 16, 0, 0);
+        PersonSkeletonShell.MaxWidth = 1400 + 2 * outerGutter;
+        PersonSkeletonShell.Padding = new Thickness(gutter + outerGutter, outerTop + (viewport >= 640 ? 40 : 32), gutter + outerGutter, 48);
+        PersonHeader.ColumnSpacing = viewport >= 1024 ? 32 : 24;
+        PersonDivider.Margin = new Thickness(-gutter, viewport >= 640 ? 32 : 24, -gutter, viewport >= 640 ? 32 : 24);
+        var photoWidth = viewport >= 640 ? 180d : 140d;
         PersonPhotoBorder.Width = photoWidth;
         PersonPhotoBorder.Height = photoWidth * 1.5;
-        PersonName.FontSize = width >= 640 ? 30 : 24;
-        PersonName.LineHeight = width >= 640 ? 36 : 32;
-        var stacked = width < 1024;
+        PersonName.FontSize = viewport >= 640 ? 30 : 24;
+        PersonName.LineHeight = viewport >= 640 ? 36 : 32;
+        var stacked = viewport < 1024;
         PersonHeader.RowSpacing = stacked ? 24 : 0;
         PersonDivider.Opacity = .1;
         PersonHeader.ColumnDefinitions[0].Width = stacked ? new GridLength(1, GridUnitType.Star) : GridLength.Auto;
         PersonHeader.ColumnDefinitions[1].Width = stacked ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
         Grid.SetColumn(PersonInfo, stacked ? 0 : 1);
         Grid.SetRow(PersonInfo, stacked ? 1 : 0);
+        PersonSkeletonHeader.ColumnSpacing = PersonHeader.ColumnSpacing;
+        PersonSkeletonHeader.RowSpacing = PersonHeader.RowSpacing;
+        PersonSkeletonHeader.ColumnDefinitions[0].Width = PersonHeader.ColumnDefinitions[0].Width;
+        PersonSkeletonHeader.ColumnDefinitions[1].Width = PersonHeader.ColumnDefinitions[1].Width;
+        PersonSkeletonPhoto.Width = photoWidth;
+        PersonSkeletonPhoto.Height = photoWidth * 1.5;
+        Grid.SetColumn(PersonSkeletonInfo, stacked ? 0 : 1);
+        Grid.SetRow(PersonSkeletonInfo, stacked ? 1 : 0);
         PersonPhotoBorder.HorizontalAlignment = HorizontalAlignment.Left;
 
-        var innerWidth = Math.Max(320, Math.Min(1400, width) - (gutter * 2));
+        var innerWidth = Math.Max(96, Math.Min(1400, width - outerGutter * 2) - (gutter * 2));
         var columns = _uiCustomizationService.GetPosterColumnCount(innerWidth);
         var gap = _uiCustomizationService.CardPresentation.PosterSize == "large" ? 16d : 12d;
         FilmographyGridLayout.MinColumnSpacing = gap;
         FilmographyGridLayout.MinRowSpacing = gap;
         _filmographyCardWidth = Math.Max(96, (innerWidth - ((columns - 1) * gap)) / columns);
+        FilmographySkeletonGrid.HorizontalSpacing = gap;
+        FilmographySkeletonGrid.VerticalSpacing = gap;
+        foreach (var placeholder in FilmographySkeletonGrid.Children.OfType<StackPanel>())
+        {
+            placeholder.Width = _filmographyCardWidth;
+            ((SkeletonBox)placeholder.Children[0]).Height = _filmographyCardWidth * 1.5;
+            ((SkeletonBox)placeholder.Children[1]).Width = _filmographyCardWidth * .75;
+        }
         FilmographyGridLayout.MaximumRowsOrColumns = columns;
         FilmographyGridLayout.MinItemWidth = _filmographyCardWidth;
         FilmographyGridLayout.MinItemHeight = (_filmographyCardWidth * 1.5) + _uiCustomizationService.CardCaptionHeight;
@@ -279,8 +305,19 @@ public sealed partial class PersonDetailPage : Page
     {
         if (!_isActive) return;
         int count = ViewModel.Filmography.Count;
-        FilmographyEmptyText.Visibility = count == 0 && !ViewModel.IsLoading
+        FilmographyEmptyText.Visibility = count == 0 && !ViewModel.IsLoading && !ViewModel.IsLoadingFilmography && ViewModel.ErrorMessage == null
             ? Visibility.Visible : Visibility.Collapsed;
+        FilmographySkeletonGrid.Visibility = ViewModel.IsLoadingFilmography ? Visibility.Visible : Visibility.Collapsed;
+        if (ViewModel.IsLoadingFilmography && FilmographySkeletonGrid.Children.Count == 0)
+        {
+            for (var i = 0; i < 24; i++)
+            {
+                var placeholder = new StackPanel { Width = _filmographyCardWidth, Spacing = 8 };
+                placeholder.Children.Add(new SkeletonBox { Height = _filmographyCardWidth * 1.5, CornerRadius = new CornerRadius(16) });
+                placeholder.Children.Add(new SkeletonBox { Width = _filmographyCardWidth * .75, Height = 16, HorizontalAlignment = HorizontalAlignment.Left });
+                FilmographySkeletonGrid.Children.Add(placeholder);
+            }
+        }
     }
 
     private void UpdateFilterTabStyles()
@@ -295,6 +332,38 @@ public sealed partial class PersonDetailPage : Page
         FilterSeriesButton.Style = filter == "series"
             ? (Style)Resources["FilterTabActiveStyle"]
             : (Style)Resources["FilterTabStyle"];
+
+        var foreground = ((Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]).Color;
+        var border = ((Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["BorderBrush"]).Color;
+        foreach (var button in new[] { FilterAllButton, FilterMoviesButton, FilterSeriesButton })
+        {
+            var selected = button.Tag?.ToString() == filter;
+            button.BorderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(selected ? (byte)51 : (byte)26, border.R, border.G, border.B));
+            button.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(selected
+                ? Microsoft.UI.ColorHelper.FromArgb(26, foreground.R, foreground.G, foreground.B)
+                : Microsoft.UI.Colors.Transparent);
+        }
+    }
+
+    private void UpdateMetadataBadges()
+    {
+        // Person facts use the same theme-derived .metadata-badge as media facts.
+        var foreground = ((Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["PrimaryTextBrush"]).Color;
+        var muted = ((Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["SecondaryTextBrush"]).Color;
+        var border = ((Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["BorderBrush"]).Color;
+        var fillBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(20, foreground.R, foreground.G, foreground.B));
+        var borderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(140, border.R, border.G, border.B));
+        static byte Mix(byte first, byte second) => (byte)Math.Round(first * .72 + second * .28);
+        var textBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(255,
+            Mix(foreground.R, muted.R), Mix(foreground.G, muted.G), Mix(foreground.B, muted.B)));
+        foreach (var badge in new[] { BirthDateBadge, AgeBadge, DeathDateBadge, BirthplaceBadge })
+        {
+            badge.Background = fillBrush;
+            badge.BorderBrush = borderBrush;
+            var text = (TextBlock)badge.Child;
+            text.Text = text.Text.ToUpperInvariant();
+            text.Foreground = textBrush;
+        }
     }
 
     private async void FilterTab_Click(object sender, RoutedEventArgs e)

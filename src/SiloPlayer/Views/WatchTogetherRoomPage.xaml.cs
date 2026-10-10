@@ -70,6 +70,7 @@ public sealed partial class WatchTogetherRoomPage : Page
     {
         ViewModel = App.Services.GetRequiredService<WatchTogetherCoordinator>().ActiveRoom ?? App.Services.GetRequiredService<WatchTogetherRoomViewModel>();
         this.InitializeComponent();
+        InitializeSeriesPicker();
         var stageCode = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         stageCode.Children.Add(SiloPlayer.Controls.WebUiIcon.Create("copy", 14));
         stageCode.Children.Add(new TextBlock { Text = "Code", FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
@@ -243,6 +244,7 @@ public sealed partial class WatchTogetherRoomPage : Page
         catch { }
         _searchDebounce.Stop();
         _browseCts?.Cancel();
+        ++_candidateStateRevision;
     }
 
     private void ViewModel_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -276,6 +278,7 @@ public sealed partial class WatchTogetherRoomPage : Page
     private void UpdateRoomUi()
     {
         var room = ViewModel.Room;
+        UpdatePickerConfirmation();
 
         CodeText.Text = ViewModel.DisplayCode;
         PhaseText.Text = $"{(room?.Phase == "playing" ? "Playing" : room?.SelectionMode == "vote" ? "Voting" : "Live")} · {room?.MemberCount ?? 0} here";
@@ -298,7 +301,7 @@ public sealed partial class WatchTogetherRoomPage : Page
         if (_memberFingerprint != fingerprint)
         {
             _memberFingerprint = fingerprint;
-            if (_browseRevision > 0) _ = RunHostSearchAsync();
+            if (_browseRevision > 0) _ = RefreshPickerMembersAsync();
         }
         _modeLabel.Text = isVoteMode ? "Everyone votes" : "Host picks";
         UpdateModeChip(ActualWidth);
@@ -752,6 +755,7 @@ public sealed partial class WatchTogetherRoomPage : Page
         HostSearchResults.Visibility = Visibility.Visible;
         DrillDownPanel.Visibility = Visibility.Collapsed;
         CandidateSpotlight.Visibility = Visibility.Collapsed;
+        ClearSeriesPick();
         SearchEmptyState.Visibility = Visibility.Visible;
         HostSearchBox.Focus(FocusState.Programmatic);
         _ = RunHostSearchAsync();
@@ -765,6 +769,9 @@ public sealed partial class WatchTogetherRoomPage : Page
 
     private async Task RunHostSearchAsync()
     {
+        ClearSeriesPick();
+        DrillDownPanel.Visibility = Visibility.Collapsed;
+        CandidateSpotlight.Visibility = Visibility.Collapsed;
         _browseCts?.Cancel(); _browseCts?.Dispose();
         var ct = (_browseCts = new CancellationTokenSource()).Token;
         var revision = ++_browseRevision;
@@ -873,7 +880,8 @@ public sealed partial class WatchTogetherRoomPage : Page
             RegisterMemberDots(dots);
             body.Children.Add(dots);
             var button = new Button { Tag = item, Content = body, Padding = new Thickness(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new Thickness(0) };
-            button.Click += HostSearchResult_Click;
+            button.Click += async (_, _) => await SelectBrowseItemAsync(item,
+                title == "Continue together" && _nextUp.TryGetValue(item.ContentId, out var next) ? next.SeasonNumber : null);
             cards.Children.Add(button);
         }
         shelf.Children.Add(new ScrollViewer { Content = cards, HorizontalScrollMode = ScrollMode.Enabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollMode = ScrollMode.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled });
@@ -883,12 +891,13 @@ public sealed partial class WatchTogetherRoomPage : Page
     private async Task LoadMemberStatesAsync(IEnumerable<string> ids, long revision, CancellationToken ct)
     {
         if (!ViewModel.Capabilities.MemberState || ViewModel.RoomId == null || ViewModel.RoomToken == null) return;
+        var roomId = ViewModel.RoomId; var roomToken = ViewModel.RoomToken;
         try
         {
             foreach (var batch in ids.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().Order().Chunk(200))
             {
-                var result = await App.Services.GetRequiredService<SiloPlayer.Core.Api.PlaybackApi>().GetWatchTogetherMemberStateAsync(ViewModel.RoomId, ViewModel.RoomToken, batch, ct);
-                if (revision != _browseRevision || ct.IsCancellationRequested) return;
+                var result = await App.Services.GetRequiredService<SiloPlayer.Core.Api.PlaybackApi>().GetWatchTogetherMemberStateAsync(roomId, roomToken, batch, ct);
+                if (revision != _browseRevision || ct.IsCancellationRequested || !HasCurrentBrowseState()) return;
                 _stateMembers = result.Members;
                 foreach (var item in result.Items) _memberStates[item.ContentId] = item;
             }
@@ -946,12 +955,17 @@ public sealed partial class WatchTogetherRoomPage : Page
     private string? _drillDownSeriesId;
     private SiloPlayer.Core.Models.Home.MediaItem? _drillDownSeries;
     private bool _showingEpisodes;
+    private int? _drillDownInitialSeason;
+    private List<SiloPlayer.Core.Models.Catalog.Episode> _drillDownEpisodes = [];
 
     /// <summary>
     /// Called when a search result is selected. Movies go directly to candidate spotlight.
     /// Series drill down into seasons → episodes.
     /// </summary>
     public async void OnSearchResultSelected(SiloPlayer.Core.Models.Home.MediaItem item)
+        => await SelectBrowseItemAsync(item, null);
+
+    private async Task SelectBrowseItemAsync(SiloPlayer.Core.Models.Home.MediaItem item, int? initialSeason)
     {
         if (item.Type == "movie")
         {
@@ -963,104 +977,173 @@ public sealed partial class WatchTogetherRoomPage : Page
         {
             _drillDownSeriesId = item.ContentId;
             _drillDownSeries = item;
+            _drillDownInitialSeason = initialSeason;
             await ShowSeasonsAsync(item);
         }
     }
 
     private async Task ShowSeasonsAsync(SiloPlayer.Core.Models.Home.MediaItem series)
+        => await ShowSeasonsCoreAsync(series, chooseSeason: true);
+
+    private async Task ShowSeasonsCoreAsync(SiloPlayer.Core.Models.Home.MediaItem series, bool chooseSeason)
     {
         SetBrowseResultsVisible(false);
         DrillDownPanel.Visibility = Visibility.Visible;
         CandidateSpotlight.Visibility = Visibility.Collapsed;
+        ClearSeriesPick();
+        _pickerSeasonNumber = null;
+        _pickerNextUpId = null;
+        PickerSeasons.Children.Clear();
+        SetSeriesPickerHeader(series, null);
         DrillDownTitle.Text = series.Title;
         DrillDownSubtitle.Text = "Pick a season";
-        DrillDownSubtitle.Visibility = Visibility.Visible;
+        DrillDownSubtitle.Visibility = Visibility.Collapsed;
         DrillDownBackText.Text = "Back to results";
         _showingEpisodes = false;
+        _drillDownEpisodes.Clear();
+        DrillDownItems.ItemsSource = null;
+        DrillDownItems.Layout = new UniformGridLayout { MinItemWidth = 220, MinItemHeight = 76, MinColumnSpacing = 10, MinRowSpacing = 10, ItemsStretch = UniformGridLayoutItemsStretch.Fill };
+        SetDrillDownPending(true);
+
+        _browseCts?.Cancel(); _browseCts?.Dispose();
+        var ct = (_browseCts = new CancellationTokenSource()).Token;
+        var revision = ++_browseRevision;
+        CapturePickerAuthority();
 
         try
         {
-            _browseCts?.Cancel(); _browseCts?.Dispose();
-            var ct = (_browseCts = new CancellationTokenSource()).Token;
-            var revision = ++_browseRevision;
             var catalogApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
-            var seasonsResp = await catalogApi.GetSeasonsAsync(series.ContentId, ct);
-            if (revision != _browseRevision || ct.IsCancellationRequested) return;
+            var seasonsTask = catalogApi.GetSeasonsAsync(series.ContentId, ct);
+            // The fresh detail carries play_season_number. A prior season-list
+            // or continue-together target must not silently choose for search.
+            var detailTask = chooseSeason && !_drillDownInitialSeason.HasValue
+                ? ReadPickerSeriesDetailAsync(catalogApi, series.ContentId, ct)
+                : Task.FromResult<SiloPlayer.Core.Models.Catalog.MediaItemDetail?>(null);
+            await Task.WhenAll(seasonsTask, detailTask);
+            if (revision != _browseRevision || ct.IsCancellationRequested || !HasCurrentBrowseState()) return;
+            var seasonsResp = await seasonsTask;
+            var detail = await detailTask;
+            SetSeriesPickerHeader(series, detail, seasonsResp.Seasons.Count);
+            BuildPickerSeasons(seasonsResp.Seasons);
+            if (_drillDownInitialSeason.HasValue) _ = RefreshSeriesPickerHeaderAsync(series, seasonsResp.Seasons.Count);
             var seasonItems = seasonsResp.Seasons.Select(s => new SiloPlayer.Core.Models.Home.MediaItem
             {
                 ContentId = s.ContentId,
-                Title = s.SeasonNumber == 0 ? "Specials" : $"Season {s.SeasonNumber}",
+                Title = !string.IsNullOrWhiteSpace(s.Title) ? s.Title : s.SeasonNumber == 0 ? "Specials" : $"Season {s.SeasonNumber}",
                 Type = "season",
                 PosterUrl = s.PosterUrl,
                 Overview = $"{s.EpisodeCount} episode{(s.EpisodeCount == 1 ? "" : "s")}",
                 Year = s.SeasonNumber,
             }).ToList();
             DrillDownItems.ItemsSource = seasonItems;
-            if (_nextUp.TryGetValue(series.ContentId, out var next))
+            SetDrillDownPending(false);
+            if (chooseSeason)
             {
-                var season = seasonItems.FirstOrDefault(item => item.Year == next.SeasonNumber);
+                var number = SiloPlayer.Core.Services.WatchPartyPickerPolicy.ResolveSeason(seasonsResp.Seasons, _drillDownInitialSeason, detail?.PlaySeasonNumber);
+                var season = seasonItems.FirstOrDefault(item => item.Year == number);
+                if (season == null && number.HasValue)
+                    season = new() { Type = "season", Year = number.Value, Title = number == 0 ? "Specials" : $"Season {number}" };
                 if (season != null) await ShowEpisodesAsync(season);
+                else DrillDownEmptyText.Visibility = Visibility.Visible;
             }
         }
         catch (OperationCanceledException) { }
-        catch { DrillDownItems.ItemsSource = null; }
+        catch
+        {
+            if (revision != _browseRevision || ct.IsCancellationRequested || !HasCurrentBrowseState()) return;
+            DrillDownItems.ItemsSource = null; SetDrillDownPending(false); DrillDownEmptyText.Visibility = Visibility.Visible;
+        }
     }
 
     private async Task ShowEpisodesAsync(SiloPlayer.Core.Models.Home.MediaItem season)
     {
         if (string.IsNullOrWhiteSpace(_drillDownSeriesId)) return;
+        _pickerSeasonNumber = season.Year;
+        UpdatePickerSeasonButtons();
+        if (_seriesPicked != null) { ++_candidateStateRevision; _candidateStateLoading = true; CandidatePlayBtn.IsEnabled = false; UpdatePickerConfirmation(); }
+        _pickerNextUpId = null;
+        _pickerRows.Clear();
+        _pickerNextCaptions.Clear();
+        _pickerStills.Clear();
+        _pickerActions.Clear();
         DrillDownTitle.Text = season.Title;
         DrillDownSubtitle.Visibility = Visibility.Collapsed;
         DrillDownBackText.Text = "Back to seasons";
         _showingEpisodes = true;
+        _drillDownEpisodes.Clear();
+        _drillDownMemberStateTask = Task.CompletedTask;
+        DrillDownItems.ItemsSource = null;
+        DrillDownItems.Layout = new StackLayout { Orientation = Orientation.Vertical, Spacing = 4 };
+        SetDrillDownPending(true);
+        _browseCts?.Cancel(); _browseCts?.Dispose();
+        var ct = (_browseCts = new CancellationTokenSource()).Token;
+        var revision = ++_browseRevision;
+        CapturePickerAuthority();
         try
         {
-            _browseCts?.Cancel(); _browseCts?.Dispose();
-            var ct = (_browseCts = new CancellationTokenSource()).Token;
-            var revision = ++_browseRevision;
             var seasonNumber = season.Year;
             var catalogApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
             var response = await catalogApi.GetEpisodesAsync(_drillDownSeriesId, seasonNumber, ct);
-            if (revision != _browseRevision || ct.IsCancellationRequested) return;
-            var items = response.Episodes.Select(ep => new SiloPlayer.Core.Models.Home.MediaItem
+            if (revision != _browseRevision || ct.IsCancellationRequested || !HasCurrentBrowseState()) return;
+            _drillDownEpisodes = SiloPlayer.Core.Services.WatchPartyPickerPolicy.PlayableEpisodes(response.Episodes);
+            var items = _drillDownEpisodes.Select(ep => new SiloPlayer.Core.Models.Home.MediaItem
             {
-                ContentId = ep.ContentId, Title = $"{ep.EpisodeNumber}. {ep.Title}", Type = "episode", Overview = ep.Overview ?? "", PosterUrl = ep.StillUrl,
+                ContentId = ep.ContentId, Title = ep.Title, Type = "episode", Overview = ep.Overview ?? "", PosterUrl = ep.StillUrl, PosterThumbhash = ep.StillThumbhash,
+                BackdropUrl = ep.StillUrl, BackdropThumbhash = ep.StillThumbhash, SeriesId = _drillDownSeriesId, SeriesTitle = _drillDownSeries?.Title,
+                SeasonNumber = seasonNumber, EpisodeNumber = ep.EpisodeNumber, Runtime = ep.Runtime,
                 Year = DateTime.TryParse(ep.AirDate, out var airDate) ? airDate.Year : 0
             }).ToList();
             DrillDownItems.ItemsSource = items;
-            await LoadMemberStatesAsync(items.Select(item => item.ContentId), revision, ct);
+            DrillDownTitle.Text = (seasonNumber == 0 ? "SPECIALS" : $"SEASON {seasonNumber}") + (items.Count > 0 ? $" · {items.Count} EPISODES" : "");
+            _drillDownMemberStateTask = LoadMemberStatesAsync(items.Select(item => item.ContentId), revision, ct);
+            SetDrillDownPending(false);
+            DrillDownEmptyText.Visibility = items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            await _drillDownMemberStateTask;
+            if (revision == _browseRevision && !ct.IsCancellationRequested && HasCurrentBrowseState())
+            {
+                UpdatePickerNextUp();
+                if (_seriesPicked is { } picked) await LoadCandidateMemberStateAsync(picked);
+            }
         }
         catch (OperationCanceledException) { }
-        catch { DrillDownItems.ItemsSource = null; }
+        catch
+        {
+            if (revision != _browseRevision || ct.IsCancellationRequested || !HasCurrentBrowseState()) return;
+            DrillDownItems.ItemsSource = null; SetDrillDownPending(false); DrillDownEmptyText.Visibility = Visibility.Visible;
+            if (_seriesPicked is { } picked) await LoadCandidateMemberStateAsync(picked);
+        }
     }
 
     private async void DrillDownResult_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: SiloPlayer.Core.Models.Home.MediaItem item }) return;
         if (item.Type == "season") await ShowEpisodesAsync(item);
-        else ShowCandidateSpotlight(item);
+        else ShowSeriesEpisodePick(item);
     }
 
     private void DrillDownBack_Click(object sender, RoutedEventArgs e)
     {
         if (_showingEpisodes && _drillDownSeries != null)
         {
-            _ = ShowSeasonsAsync(_drillDownSeries);
+            _ = ShowSeasonsCoreAsync(_drillDownSeries, chooseSeason: false);
             return;
         }
         DrillDownPanel.Visibility = Visibility.Collapsed;
         CandidateSpotlight.Visibility = Visibility.Collapsed;
+        _browseCts?.Cancel(); ++_browseRevision;
         SetBrowseResultsVisible(true);
     }
 
     private void ShowCandidateSpotlight(SiloPlayer.Core.Models.Home.MediaItem item)
     {
+        ClearSeriesPick();
         SetBrowseResultsVisible(false);
         DrillDownPanel.Visibility = Visibility.Collapsed;
         CandidateSpotlight.Visibility = Visibility.Visible;
 
         CandidateTitle.Text = item.Title ?? "";
-        CandidateMeta.Text = $"{item.Year}  ·  {item.Type}";
+        CandidateMeta.Text = item.Type == "episode" && item.SeasonNumber.HasValue && item.EpisodeNumber.HasValue
+            ? $"{item.SeriesTitle} · S{item.SeasonNumber} E{item.EpisodeNumber}" : $"{item.Year}  ·  {item.Type}";
         CandidateOverview.Text = item.Overview ?? "";
         CandidatePlayBtn.Tag = item;
         _ = LoadCandidateMemberStateAsync(item);
@@ -1095,22 +1178,34 @@ public sealed partial class WatchTogetherRoomPage : Page
 
     private async Task LoadCandidateMemberStateAsync(SiloPlayer.Core.Models.Home.MediaItem item)
     {
+        var revision = ++_candidateStateRevision;
+        var client = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>();
+        var authority = client.CaptureContext(); var roomId = ViewModel.RoomId; var roomToken = ViewModel.RoomToken;
+        bool Current() => revision == _candidateStateRevision && ReferenceEquals(CandidatePlayBtn.Tag, item)
+            && IsCurrentCandidateVisible(item) && ViewModel.RoomId == roomId && ViewModel.RoomToken == roomToken && client.IsCurrentContext(authority);
         CandidateMemberState.Text = "";
         _candidateSpoilerRisk = false;
         _candidateStateLoading = false;
         CandidatePlayBtn.IsEnabled = !ViewModel.IsBusy;
+        UpdatePickerConfirmation();
         if (!ViewModel.Capabilities.MemberState || ViewModel.RoomId == null || ViewModel.RoomToken == null) return;
         _candidateStateLoading = true; CandidatePlayBtn.IsEnabled = false;
+        UpdatePickerConfirmation();
         try
         {
-            var state = await App.Services.GetRequiredService<SiloPlayer.Core.Api.PlaybackApi>().GetWatchTogetherMemberStateAsync(ViewModel.RoomId, ViewModel.RoomToken, [item.ContentId]);
-            if (CandidatePlayBtn.Tag != item) return;
-            CandidateMemberState.Text = string.Join("  ·  ", state.Items.SelectMany(i => i.Members).Select(m => (state.Members.FirstOrDefault(person => person.ProfileId == m.ProfileId)?.DisplayName ?? "Member") + ": " + m.State.Replace('_', ' ')));
-            _candidateSpoilerRisk = item.Type == "episode" && state.Items.SelectMany(i => i.Members).Any(m => m.State == "unseen");
-            if (_candidateSpoilerRisk) CandidateMemberState.Text += "\nThis episode may be ahead of some members. Check with the room before staging.";
+            await _drillDownMemberStateTask;
+            if (!Current()) return;
+            var state = await App.Services.GetRequiredService<SiloPlayer.Core.Api.PlaybackApi>().GetWatchTogetherMemberStateAsync(roomId!, roomToken!, [item.ContentId]);
+            if (!Current()) return;
+            foreach (var value in state.Items) _memberStates[value.ContentId] = value;
+            CandidateMemberState.Text = string.Join("  ·  ", state.Items.SelectMany(i => i.Members).Select(m => (state.Members.FirstOrDefault(person => person.UserId == m.UserId && person.ProfileId == m.ProfileId)?.DisplayName ?? "Member") + ": " + m.State.Replace('_', ' ')));
+            var picked = _drillDownEpisodes.FirstOrDefault(episode => episode.ContentId == item.ContentId);
+            var risk = picked == null ? null : SiloPlayer.Core.Services.WatchPartyPickerPolicy.FindSpoilerRisk(picked, _drillDownEpisodes, ViewModel.Room?.Members ?? _stateMembers, _memberStates);
+            _candidateSpoilerRisk = risk != null;
+            if (risk != null) CandidateMemberState.Text += $"\nAhead of {string.Join(", ", risk.Names)} — they haven't watched episode {risk.EpisodeNumber}.";
         }
-        catch { if (CandidatePlayBtn.Tag == item) { CandidateMemberState.Text = "Member watch state unavailable. Retry selection to check again."; _candidateSpoilerRisk = item.Type == "episode"; } }
-        finally { if (CandidatePlayBtn.Tag == item) { _candidateStateLoading = false; CandidatePlayBtn.IsEnabled = !ViewModel.IsBusy; } }
+        catch { if (Current()) CandidateMemberState.Text = "Member watch state unavailable. Retry selection to check again."; }
+        finally { if (Current()) { _candidateStateLoading = false; CandidatePlayBtn.IsEnabled = !ViewModel.IsBusy; UpdatePickerConfirmation(); } }
     }
 
     private async void CandidatePlay_Click(object sender, RoutedEventArgs e)
@@ -1118,36 +1213,52 @@ public sealed partial class WatchTogetherRoomPage : Page
         if (sender is not Button { Tag: SiloPlayer.Core.Models.Home.MediaItem candidate }) return;
         var contentId = candidate.ContentId;
         if (string.IsNullOrEmpty(ViewModel.RoomId)) return;
+        var client = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>();
+        var authority = client.CaptureContext(); var roomId = ViewModel.RoomId; var roomToken = ViewModel.RoomToken;
+        var revision = _candidateStateRevision;
+        bool Current() => revision == _candidateStateRevision && ReferenceEquals(CandidatePlayBtn.Tag, candidate) && IsCurrentCandidateVisible(candidate)
+            && ViewModel.RoomId == roomId && ViewModel.RoomToken == roomToken && client.IsCurrentContext(authority);
 
         if (ViewModel.IsBusy || _candidateStateLoading) return;
-        if (_candidateSpoilerRisk)
+        if (_candidateSpoilerRisk && !IsSeriesPickerCandidate(candidate))
         {
-            var confirmation = new ContentDialog { XamlRoot = XamlRoot, Title = "This episode may contain spoilers", Content = "Some room members haven't watched this episode. Queue it anyway?", PrimaryButtonText = "Queue episode", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
-            if (await confirmation.ShowAsync() != ContentDialogResult.Primary || CandidatePlayBtn.Tag != candidate) return;
+            var confirmation = new ContentDialog { XamlRoot = XamlRoot, Title = "This episode may contain spoilers", Content = CandidateMemberState.Text + " Queue it anyway?", PrimaryButtonText = "Queue episode", CloseButtonText = "Cancel", DefaultButton = ContentDialogButton.Close };
+            if (await confirmation.ShowAsync() != ContentDialogResult.Primary || !Current()) return;
         }
         ViewModel.IsBusy = true; ViewModel.ErrorMessage = null; CandidatePlayBtn.IsEnabled = false;
+        UpdatePickerConfirmation();
         try
         {
             var playbackApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.PlaybackApi>();
             if ((!ViewModel.IsHost || ViewModel.IsVoteMode) && !string.IsNullOrWhiteSpace(ViewModel.RoomToken))
             {
                 var contentType = candidate.Type == "episode" ? "episode" : "movie";
-                var result = await playbackApi.CreateWatchTogetherSuggestionAsync(ViewModel.RoomId!, ViewModel.RoomToken!, contentId, contentType, CandidateTitle.Text, CandidateMeta.Text, candidate.PosterUrl);
+                var result = await playbackApi.CreateWatchTogetherSuggestionAsync(roomId, roomToken!, contentId, contentType, CandidateTitle.Text, CandidateMeta.Text, candidate.PosterUrl);
+                if (!Current()) return;
                 ViewModel.Suggestions.Clear();
                 foreach (var suggestion in result.Suggestions) ViewModel.Suggestions.Add(suggestion);
             }
             else
             {
                 var resp = ViewModel.IsPlaying
-                    ? await playbackApi.SelectWatchTogetherRoomItemAsync(ViewModel.RoomId!, contentId)
-                    : await playbackApi.StageWatchTogetherRoomItemAsync(ViewModel.RoomId!, contentId);
+                    ? await playbackApi.SelectWatchTogetherRoomItemAsync(roomId, contentId)
+                    : await playbackApi.StageWatchTogetherRoomItemAsync(roomId, contentId);
+                if (!Current()) return;
                 ViewModel.Room = resp.Room;
             }
             CandidateSpotlight.Visibility = Visibility.Collapsed;
             ClearSearchButton_Click(this, new RoutedEventArgs());
         }
-        catch (Exception ex) { ViewModel.ErrorMessage = $"Could not stage or suggest this title: {ex.Message}"; }
-        finally { ViewModel.IsBusy = false; CandidatePlayBtn.IsEnabled = true; }
+        catch (Exception ex) { if (Current()) ViewModel.ErrorMessage = $"Could not stage or suggest this title: {ex.Message}"; }
+        finally
+        {
+            if (ViewModel.RoomId == roomId && ViewModel.RoomToken == roomToken)
+            {
+                ViewModel.IsBusy = false;
+                CandidatePlayBtn.IsEnabled = !_candidateStateLoading;
+                UpdatePickerConfirmation();
+            }
+        }
     }
 
     private void ModeButton_Click(object sender, RoutedEventArgs e)
@@ -1235,6 +1346,7 @@ public sealed partial class WatchTogetherRoomPage : Page
         UpdateInviteLayout(width);
         PageShell.Padding = new Thickness(0);
         RoomWorkspace.Height = Math.Max(320, e.NewSize.Height);
+        UpdateSeriesPickerLayout(DrillDownPanel.ActualWidth);
         _roomScroll.Padding = new Thickness(width < 640 ? 16 : 20, 16, width < 640 ? 16 : 20, 16);
         var showPoster = width >= 640;
         StagedPosterBorder.Visibility = showPoster ? Visibility.Visible : Visibility.Collapsed;

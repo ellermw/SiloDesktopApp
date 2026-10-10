@@ -2770,12 +2770,17 @@ end
 
 local function render_subtitle_menu()
     if not state.subtitle_menu_visible then
+        state.subtitle_sync_menu_open = false
         if state.subtitle_menu_overlay then
             state.subtitle_menu_overlay.data = ""
             state.subtitle_menu_overlay:update()
         end
         state.subtitle_menu_items = {}
         return
+    end
+    if not state.subtitle_sync_menu_open then
+        state.subtitle_sync_menu_open = true
+        mp.commandv("script-message", "silo-subtitle-sync-refresh")
     end
 
     update_osd_dimensions()
@@ -2806,7 +2811,18 @@ local function render_subtitle_menu()
     -- Keep the popup on-screen even when a file exposes dozens of embedded
     -- subtitle tracks. The wheel moves the bounded track window while the
     -- fixed actions remain reachable at the bottom.
-    local action_count = state.subtitle_ai_available and 4 or 3
+    local selected_sync = nil
+    for _, entry in ipairs(state.subtitle_sync or {}) do
+        if entry.index == state.active_subtitle then selected_sync = entry; break end
+    end
+    local sync_rows = 0
+    if selected_sync then
+        if selected_sync.status and selected_sync.status ~= "" then sync_rows = sync_rows + 2 end
+        if selected_sync.sync then sync_rows = sync_rows + 1 end
+        if selected_sync.reset then sync_rows = sync_rows + 1 end
+        if selected_sync.reload then sync_rows = sync_rows + 1 end
+    end
+    local action_count = (state.subtitle_ai_available and 4 or 3) + sync_rows
     local fixed_rows = 1 + action_count -- Off + delay/search/appearance/optional AI
     -- Keep the entire popup above the seek bar's pointer target. Deriving the
     -- track window from the screen height alone can make a clamped popup cover
@@ -2814,6 +2830,22 @@ local function render_subtitle_menu()
     local menu_bottom = (L.seek_bar and L.seek_bar.y or
         (L.btn_cc and L.btn_cc.y or H - math.floor(config.hud_height * sc)))
         - math.floor(8 * sc)
+    -- Sync adds fixed controls below the track window. Fit the minimum popup
+    -- (one track plus every fixed action) above the seek rail on short windows.
+    -- This changes only the submenu's scale, never transport hit coordinates.
+    local minimum_height = padding * 2 + item_h + 4 + track_item_h
+        + 8 + action_count * item_h + 8
+    local available_height = math.max(1, menu_bottom - math.floor(10 * sc))
+    if minimum_height > available_height then
+        local fixed_gap_height = 4 + 8 + 8
+        sc = sc * math.max(1, available_height - fixed_gap_height) / math.max(1, minimum_height - fixed_gap_height)
+        fs = math.max(9, math.floor(config.stats_font_size * sc))
+        fs_small = math.max(9, math.floor((config.stats_font_size - 2) * sc))
+        padding = math.floor(config.stats_padding * sc)
+        item_h = math.floor((config.stats_line_height + 4) * sc)
+        track_item_h = math.floor((config.stats_line_height + 16) * sc)
+        menu_w = math.min(math.floor(340 * sc), math.max(120, W - 20))
+    end
     local fixed_height = padding * 2 + item_h + 4 + 8
         + action_count * item_h + 8
     local max_visible_tracks = math.max(1,
@@ -2924,6 +2956,34 @@ local function render_subtitle_menu()
     end
 
     cy = cy + 4  -- divider space
+    local keyboard_row = 1 + visible_tracks
+    if selected_sync then
+        if selected_sync.status and selected_sync.status ~= "" then
+            local lines = wrap_display_text(selected_sync.status, 42, 2)
+            for n, line in ipairs(lines) do
+                draw_text(ass, menu_x + padding, cy + (n - 0.5) * item_h,
+                    ass_escape_text(line), fs_small, config.dim_text_color, "38", 1.0, 4)
+            end
+            cy = cy + item_h * 2
+        end
+        for _, action in ipairs({
+            { name = "sync", show = selected_sync.sync, label = selected_sync.busy and "Syncing…" or "Sync to audio" },
+            { name = "reset_timing", show = selected_sync.reset, label = "Reset timing" },
+            { name = "sync_reload", show = selected_sync.reload, label = "Reload sync status" },
+        }) do
+            if action.show then
+                keyboard_row = keyboard_row + 1
+                if state.keyboard_menu_kind == "subtitles" and state.keyboard_menu_index == keyboard_row then
+                    draw_rounded_rect(ass, menu_x + 2, cy, menu_x + menu_w - 2, cy + item_h, 4, config.text_color, "E6", 1.0)
+                end
+                draw_text(ass, menu_x + padding, cy + item_h / 2, action.label,
+                    fs_small, config.text_color, selected_sync.busy and action.name ~= "sync_reload" and "A0" or "00", 1.0, 4)
+                table.insert(state.subtitle_menu_items, { x = menu_x, y = cy, w = menu_w, h = item_h,
+                    action = action.name, key = selected_sync.key, disabled = selected_sync.busy and action.name ~= "sync_reload" })
+                cy = cy + item_h
+            end
+        end
+    end
 
     -- WebUI delay rail: label, minus, current value, plus, and reset in one row.
     local delay_ms = math.floor((mp.get_property_number("sub-delay") or 0) * 1000 + 0.5)
@@ -2940,7 +3000,6 @@ local function render_subtitle_menu()
     draw_text(ass, plus_x, cy + item_h / 2, "+", fs, config.text_color, delay_alpha, 1.0, 5)
     draw_text(ass, reset_x, cy + item_h / 2, "Reset", fs_small,
         config.dim_text_color, delay_ms ~= 0 and delay_alpha or "A0", 1.0, 5)
-    local keyboard_row = 1 + visible_tracks
     if state.active_subtitle >= 0 then
         keyboard_row = keyboard_row + 1
         if state.keyboard_menu_kind == "subtitles"
@@ -3188,6 +3247,38 @@ end
 --------------------------------------------------------------------------------
 -- Notice Overlay (admin messages via WebSocket)
 --------------------------------------------------------------------------------
+
+local function render_subtitle_sync_notice()
+    local data = state.subtitle_sync_notice
+    if not data or not data.title or state.osc_disabled then
+        if state.subtitle_sync_overlay then state.subtitle_sync_overlay.data = ""; state.subtitle_sync_overlay:update() end
+        return
+    end
+    update_osd_dimensions()
+    local W, sc = state.osd_width, ui_scale()
+    local width, pad, line_h = math.min(math.floor(360 * sc), W - 24), math.floor(16 * sc), math.floor(22 * sc)
+    local x, y = W - width - math.floor(16 * sc), math.floor(24 * sc)
+    local lines = wrap_display_text(data.detail or "", math.max(18, math.floor((width - pad * 2) / (7 * sc))), 3)
+    local height = pad * 2 + line_h * (1 + #lines) + (data.tone == "progress" and math.floor(12 * sc) or 0)
+    local ass = assdraw.ass_new()
+    draw_rounded_rect(ass, x, y, x + width, y + height, 12 * sc, "141414", "18", 1.0)
+    draw_text(ass, x + pad, y + pad + line_h / 2, ass_escape_text(data.title), math.floor(14 * sc),
+        config.text_color, "00", 1.0, 4, nil, true)
+    for n, line in ipairs(lines) do
+        draw_text(ass, x + pad, y + pad + line_h * (n + 0.5), ass_escape_text(line), math.floor(12 * sc),
+            config.dim_text_color, "18", 1.0, 4)
+    end
+    if data.tone == "progress" then
+        local bar_y = y + height - pad / 2
+        draw_rounded_rect(ass, x + pad, bar_y, x + width - pad, bar_y + 3 * sc, sc, "555555", "00", 1.0)
+        draw_rounded_rect(ass, x + pad, bar_y, x + pad + (width - pad * 2) * clamp(tonumber(data.percent) or 0, 0, 100) / 100,
+            bar_y + 3 * sc, sc, config.text_color, "00", 1.0)
+    end
+    if not state.subtitle_sync_overlay then state.subtitle_sync_overlay = mp.create_osd_overlay("ass-events") end
+    state.subtitle_sync_overlay.data, state.subtitle_sync_overlay.res_x, state.subtitle_sync_overlay.res_y = ass.text, W, state.osd_height
+    state.subtitle_sync_overlay.z = 81
+    state.subtitle_sync_overlay:update()
+end
 
 local function render_notice()
     if state.osc_disabled or not state.notice_visible then
@@ -4270,7 +4361,8 @@ local function keyboard_menu_items(kind, source)
             or (kind == "quality" and (item.action == "version" or item.action == "quality"))
             or (kind == "subtitles" and (item.action == "off" or item.action == "select"
                 or item.action == "delay" or item.action == "delay_reset"
-                or item.action == "search" or item.action == "appearance" or item.action == "ai"))
+                or item.action == "search" or item.action == "appearance" or item.action == "ai"
+                or item.action == "sync" or item.action == "reset_timing" or item.action == "sync_reload"))
         if include then table.insert(result, item) end
     end
     return result
@@ -4380,7 +4472,13 @@ local function activate_keyboard_menu_item()
     local item = items[state.keyboard_menu_index]
     if not item then return true end
     if kind == "subtitles" then
-        if item.action == "off" then
+        if item.action == "sync" or item.action == "reset_timing" or item.action == "sync_reload" then
+            if not item.disabled then
+                local intent = item.action == "sync" and "silo-subtitle-sync" or item.action == "reset_timing" and "silo-subtitle-reset-timing" or "silo-subtitle-sync-reload"
+                mp.commandv("script-message", intent, item.key or "")
+            end
+            return true
+        elseif item.action == "off" then
             mp.commandv("script-message", "silo-subtitle-select", "-1")
         elseif item.action == "select" then
             mp.commandv("script-message", "silo-subtitle-select", tostring(item.index))
@@ -4803,7 +4901,13 @@ local function handle_mouse_down()
         local handled = false
         for _, item in ipairs(state.subtitle_menu_items) do
             if point_in_rect(mx, my, item) then
-                if item.action == "off" then
+                if item.action == "sync" or item.action == "reset_timing" or item.action == "sync_reload" then
+                    if not item.disabled then
+                        local intent = item.action == "sync" and "silo-subtitle-sync" or item.action == "reset_timing" and "silo-subtitle-reset-timing" or "silo-subtitle-sync-reload"
+                        mp.commandv("script-message", intent, item.key or "")
+                    end
+                    return
+                elseif item.action == "off" then
                     mp.commandv("script-message", "silo-subtitle-select", "-1")
                 elseif item.action == "select" then
                     mp.commandv("script-message", "silo-subtitle-select", tostring(item.index))
@@ -5304,6 +5408,23 @@ local function observe_properties()
         end
     end)
 
+    mp.register_script_message("osc-set-subtitle-sync", function(json_str)
+        local ok, data = pcall(require("mp.utils").parse_json, json_str)
+        if ok and data then state.subtitle_sync = data; render_subtitle_menu() end
+    end)
+    mp.register_script_message("osc-subtitle-sync-notice", function(json_str)
+        local ok, data = pcall(require("mp.utils").parse_json, json_str)
+        if not ok then return end
+        if state.subtitle_sync_timer then state.subtitle_sync_timer:kill(); state.subtitle_sync_timer = nil end
+        state.subtitle_sync_notice = data
+        render_subtitle_sync_notice()
+        if data and data.title and data.tone ~= "progress" then
+            state.subtitle_sync_timer = mp.add_timeout(data.tone == "warning" and 9 or 6, function()
+                state.subtitle_sync_notice = nil; render_subtitle_sync_notice()
+            end)
+        end
+    end)
+
     mp.register_script_message("osc-show-playback-failure", function(json_str)
         local ok, data = pcall(require("mp.utils").parse_json, json_str)
         if not ok or not data then return end
@@ -5615,6 +5736,7 @@ local function observe_properties()
             if state.audio_menu_visible then render_audio_menu() end
             if state.chapter_menu_visible then render_chapter_menu() end
             if state.notice_visible then render_notice() end
+            if state.subtitle_sync_notice then render_subtitle_sync_notice() end
             if state.skip_visible then render_skip_button() end
             if state.next_ep_visible then render_next_episode_button() end
             if state.next_ep_countdown_active then render_next_episode_countdown() end
@@ -6049,6 +6171,8 @@ local function init()
         if state.subtitle_menu_overlay then state.subtitle_menu_overlay:remove() end
         if state.quality_menu_overlay then state.quality_menu_overlay:remove() end
         if state.notice_overlay then state.notice_overlay:remove() end
+        if state.subtitle_sync_overlay then state.subtitle_sync_overlay:remove() end
+        if state.subtitle_sync_timer then state.subtitle_sync_timer:kill() end
         if state.skip_overlay then state.skip_overlay:remove() end
         if state.next_ep_overlay then state.next_ep_overlay:remove() end
         if state.next_ep_countdown_overlay then state.next_ep_countdown_overlay:remove() end

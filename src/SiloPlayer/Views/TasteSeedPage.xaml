@@ -66,9 +66,9 @@
                             <Button Tag="{x:Bind}" Click="Item_Click" Background="Transparent" BorderThickness="0" Padding="0" CornerRadius="12" HorizontalAlignment="Left"
                                     AutomationProperties.Name="{x:Bind AccessibleName, Mode=OneWay}">
                                 <Grid Width="147" Height="221" CornerRadius="12" Background="Transparent">
-                                    <TextBlock Text="{x:Bind Title}" TextWrapping="Wrap" TextAlignment="Center" FontSize="12" FontWeight="Medium" MaxLines="3"
-                                               VerticalAlignment="Center" Margin="12" Foreground="{StaticResource SecondaryTextBrush}"/>
-                                        <Image Source="{x:Bind Item.PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill"/>
+                                    <controls:DefaultArtwork MediaType="{x:Bind Item.Type}" Thumbhash="{x:Bind Item.PosterThumbhash}" />
+                                    <Image Source="{x:Bind Item.PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill"
+                                           Loaded="TastePoster_Loaded" ImageOpened="TastePoster_ImageOpened" ImageFailed="TastePoster_ImageFailed" />
                                     <Border Background="{StaticResource AccentBrush}" Opacity="0.2" Visibility="{x:Bind IsSelected, Mode=OneWay, Converter={StaticResource BoolToVis}}" CornerRadius="12" />
                                     <Border Width="28" Height="28" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0" CornerRadius="14" BorderThickness="1" BorderBrush="#99FFFFFF" Background="#66000000" Visibility="{x:Bind IsSelected, Mode=OneWay, Converter={StaticResource InverseBoolToVis}}" />
                                     <Border Width="28" Height="28" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,8,8,0" CornerRadius="14" BorderThickness="1" BorderBrush="{StaticResource AccentBrush}" Background="{StaticResource AccentBrush}" Visibility="{x:Bind IsSelected, Mode=OneWay, Converter={StaticResource BoolToVis}}">

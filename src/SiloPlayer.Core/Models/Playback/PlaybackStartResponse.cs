@@ -31,6 +31,7 @@ public class PlaybackStartResponse
 
 public class SubtitleTrackInfo
 {
+    public string? SyncKey { get; set; }
     public string? TrackId { get; set; }
     public long? Id { get; set; }
     public int Index { get; set; }

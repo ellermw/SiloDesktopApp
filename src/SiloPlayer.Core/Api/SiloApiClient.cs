@@ -7,11 +7,12 @@ using SiloPlayer.Core.Models;
 
 namespace SiloPlayer.Core.Api;
 
-public class ApiException(string errorCode, string message, int statusCode, string? errorLocation = null) : Exception(message)
+public class ApiException(string errorCode, string message, int statusCode, string? errorLocation = null, double? retryAfterSeconds = null) : Exception(message)
 {
     public string ErrorCode { get; } = errorCode;
     public int StatusCode { get; } = statusCode;
     public string? ErrorLocation { get; } = errorLocation;
+    public double? RetryAfterSeconds { get; } = retryAfterSeconds;
 }
 
 public readonly record struct ProfileVerificationContext(
@@ -160,10 +161,10 @@ public class SiloApiClient
     }
 
     public async Task<T> SendRequestWithoutRefreshAsync<T>(ApiRequestContext context, HttpMethod method,
-        string path, object? body, CancellationToken ct = default)
+        string path, object? body, CancellationToken ct = default, bool allowNoContent = false)
     {
         using var request = CreateContextBoundRequest(context, method, path, body);
-        return await SendAsync<T>(request, ct, allowTokenRefresh: false).ConfigureAwait(false);
+        return await SendAsync<T>(request, ct, allowTokenRefresh: false, allowNoContent: allowNoContent).ConfigureAwait(false);
     }
 
     public async Task SendNoContentRequestWithoutRefreshAsync(ApiRequestContext context, HttpMethod method,
@@ -174,15 +175,39 @@ public class SiloApiClient
     }
 
     private HttpRequestMessage CreateContextBoundRequest(ApiRequestContext context, HttpMethod method,
-        string path, object? body)
+        string path, object? body, IReadOnlyDictionary<string, string>? headers = null)
     {
         // Check and capture identity atomically. Refresh retries also check these
         // request generations, so a profile switch cannot re-author this write.
         lock (_authStateGate)
         {
             if (!IsCurrentContext(context)) throw new OperationCanceledException("API context changed.");
-            return CreateRequest(method, path, body, null);
+            return CreateRequest(method, path, body, headers);
         }
+    }
+
+    public async Task<ApiResponse<T>> GetWithETagAsync<T>(ApiRequestContext context, string path, CancellationToken ct = default)
+    {
+        using var request = CreateContextBoundRequest(context, HttpMethod.Get, path, null);
+        using var response = await SendWithRetryAsync(request, ct).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode) await ThrowApiException(response, request, ct).ConfigureAwait(false);
+        var value = await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct).ConfigureAwait(false);
+        if (!IsCurrentContext(context)) throw new OperationCanceledException("API context changed.", ct);
+        return new(value ?? throw new InvalidDataException("Empty API response."), response.Headers.ETag?.ToString());
+    }
+
+    public async Task<ApiResponse<T>> PutWithETagWithoutRefreshAsync<T>(ApiRequestContext context, string path,
+        object body, string etag, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(etag) || etag.StartsWith("W/", StringComparison.Ordinal))
+            throw new ArgumentException("A strong validator is required.", nameof(etag));
+        using var request = CreateContextBoundRequest(context, HttpMethod.Put, path, body,
+            new Dictionary<string, string> { ["If-Match"] = etag });
+        using var response = await SendWithRetryAsync(request, ct, allowTokenRefresh: false).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode) await ThrowApiException(response, request, ct).ConfigureAwait(false);
+        var value = await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct).ConfigureAwait(false);
+        if (!IsCurrentContext(context)) throw new OperationCanceledException("API context changed.", ct);
+        return new(value ?? throw new InvalidDataException("Empty API response."), response.Headers.ETag?.ToString());
     }
 
     private HttpRequestMessage CreateRequest(HttpMethod method, string path, object? body, IReadOnlyDictionary<string, string>? headers)
@@ -921,7 +946,8 @@ public class SiloApiClient
     private async Task<T> SendAsync<T>(
         HttpRequestMessage request,
         CancellationToken ct,
-        bool allowTokenRefresh = true)
+        bool allowTokenRefresh = true,
+        bool allowNoContent = false)
     {
         // ConfigureAwait(false) on both awaits so the HTTP and JSON work
         // doesn't capture the calling SynchronizationContext — on WinUI 3
@@ -944,6 +970,7 @@ public class SiloApiClient
             browseResponse == null ? null : $"{browseResponse}-body-and-json"))
         {
             if (!response.IsSuccessStatusCode) await ThrowApiException(response, request, ct).ConfigureAwait(false);
+            if (allowNoContent && response.StatusCode == System.Net.HttpStatusCode.NoContent) return default!;
             return (await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct).ConfigureAwait(false))!;
         }
     }
@@ -987,7 +1014,12 @@ public class SiloApiClient
             try { _profileVerificationRequired?.Invoke(context); }
             catch { }
         }
-        throw new ApiException(code ?? "unknown", detail ?? $"HTTP {(int)response.StatusCode}", (int)response.StatusCode, location);
+        var retryAfter = response.Headers.RetryAfter;
+        double? retrySeconds = retryAfter?.Delta?.TotalSeconds;
+        if (retrySeconds == null && retryAfter?.Date is { } retryAt)
+            retrySeconds = (retryAt - DateTimeOffset.UtcNow).TotalSeconds;
+        throw new ApiException(code ?? "unknown", detail ?? $"HTTP {(int)response.StatusCode}", (int)response.StatusCode, location,
+            retrySeconds is { } seconds ? Math.Max(0, seconds) : null);
     }
 
     private static ProfileVerificationContext CreateProfileVerificationContext(HttpRequestMessage request)

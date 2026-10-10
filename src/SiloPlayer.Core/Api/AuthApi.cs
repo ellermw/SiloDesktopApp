@@ -296,6 +296,22 @@ public partial class AuthApi(SiloApiClient client)
     public async Task<AuthSessionsResponse> GetSessionsAsync(CancellationToken ct = default)
         => new() { Sessions = await client.GetAllItemsAsync<AuthSession>("/api/v2/auth/sessions?limit=100", ct) };
 
+    public Task<LoginSessionCapabilities> GetLoginSessionCapabilitiesAsync(CancellationToken ct = default)
+        => client.GetAsync<LoginSessionCapabilities>("/api/v2/auth/sessions/capabilities", ct);
+
+    public async Task<AuthSessionsResponse> GetSessionsPageAsync(string? cursor = null, CancellationToken ct = default)
+    {
+        var page = await client.GetAsync<AuthSessionsResponse>("/api/v2/auth/sessions?limit=50" +
+            (cursor == null ? "" : "&cursor=" + Uri.EscapeDataString(cursor)), ct);
+        if (page.Page == null || page.Page.HasMore && string.IsNullOrWhiteSpace(page.Page.NextCursor))
+            throw new InvalidDataException("Invalid session pagination. Reload the list.");
+        return page;
+    }
+
     public Task RevokeSessionAsync(string id, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v2/auth/sessions/{Uri.EscapeDataString(id)}", ct);
+        => RevokeSessionAsync(client.CaptureContext(), id, ct);
+
+    public Task RevokeSessionAsync(ApiRequestContext context, string id, CancellationToken ct = default)
+        => client.SendNoContentRequestWithoutRefreshAsync(context, HttpMethod.Delete,
+            $"/api/v2/auth/sessions/{Uri.EscapeDataString(id)}", null, ct);
 }

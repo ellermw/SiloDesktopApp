@@ -119,10 +119,36 @@ internal static class SharedAppearanceNativeFixture
         foreach (var name in new[] { "DateFormatButtons", "TimeFormatButtons", "TextSizeButtons" })
             if (((StackPanel)page.FindName(name)).Orientation != Orientation.Vertical)
                 throw new InvalidOperationException($"Narrow accessibility choices {name} overflow horizontally.");
-        var text = new TextBlock { Text = "Readability fixture", FontSize = 20 };
+        var text = new TextBlock { Text = "Readability fixture", FontSize = 20, LineHeight = 30 };
         accessibility.Apply("x-large", "strong", true, text);
-        if (Math.Abs(text.FontSize - 26) > .01)
+        if (Math.Abs(text.FontSize - 25) > .01 || Math.Abs(text.LineHeight - 37.5) > .01 || text.FontWeight.Weight != 520)
             throw new InvalidOperationException("Shared appearance broke text scaling.");
+        accessibility.Apply("large", "default", false, text);
+        if (Math.Abs(text.FontSize - 22.5) > .01 || Math.Abs(text.LineHeight - 33.75) > .01 || text.FontWeight.Weight != 400)
+            throw new InvalidOperationException("Shared appearance large scale compounded or failed to restore normal weight.");
+        accessibility.Apply("default", "default", false, text);
+        if (text.FontSize != 20 || text.LineHeight != 30)
+            throw new InvalidOperationException("Shared appearance cannot restore original font and explicit line height.");
+        var typography = new StackPanel();
+        foreach (var weight in new ushort[] { 400, 500, 600, 700 })
+            typography.Children.Add(new TextBlock { Text = "Weight role", FontWeight = new Windows.UI.Text.FontWeight { Weight = weight } });
+        parent.Children.Add(typography); typography.UpdateLayout();
+        try
+        {
+            accessibility.Apply("default", "strong", false, typography);
+            if (!typography.Children.Cast<TextBlock>().Select(t => t.FontWeight.Weight).SequenceEqual(new ushort[] { 520, 600, 700, 800 }))
+                throw new InvalidOperationException("Strong typography no longer follows body/medium/semibold/bold source roles.");
+            var inherited = new TextBlock { Text = "Inherited font" };
+            var button = new Button { Content = inherited, FontSize = 20 };
+            typography.Children.Add(button); await Task.Delay(30); typography.UpdateLayout();
+            var originalChildSize = inherited.FontSize;
+            accessibility.Apply("x-large", "default", false, button);
+            accessibility.Apply("x-large", "default", false, button);
+            if (button.FontSize != 25 || Math.Abs(inherited.FontSize - originalChildSize * 1.25) > .01)
+                throw new InvalidOperationException("Text descendants inherit or compound their parent accessibility scale twice.");
+        }
+        finally { parent.Children.Remove(typography); }
+        accessibility.Apply("x-large", "strong", true, text);
         await CaptureAsync(page, "appearance-narrow-highcontrast.png");
         parent.Children.Remove(page);
 

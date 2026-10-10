@@ -25,10 +25,16 @@ public sealed class QueryFilterEditor : UserControl
     public QueryDefinition Query { get; private set; } = new();
     public bool IsValid => _advanced.IsValid;
     public event Action? Changed;
+    public event Action? SortChanged;
+    public void ConfigureSort(bool personalized = true, string? onlyPersonalized = null)
+    {
+        _advanced.AllowPersonalizedSorts = personalized; _advanced.OnlyPersonalizedSort = onlyPersonalized;
+    }
     private bool _advancedMode;
     private readonly StackPanel _modes = new() { Orientation = Orientation.Horizontal, Spacing = 4 };
     private readonly Button _guidedButton = new() { Content = "Guided", Height = 24, MinHeight = 0, MinWidth = 0, FontSize = 12, Padding = new(8, 0, 8, 0) };
     private readonly Button _advancedButton = new() { Content = "Advanced", Height = 24, MinHeight = 0, MinWidth = 0, FontSize = 12, Padding = new(8, 0, 8, 0) };
+    private readonly TextBlock _guidedUnavailable = new() { Text = GuidedQuerySupport.UnavailableMessage, FontSize = 12, TextWrapping = TextWrapping.Wrap, Visibility = Visibility.Collapsed };
 
     public FrameworkElement DetachModeSelector()
     {
@@ -41,8 +47,10 @@ public sealed class QueryFilterEditor : UserControl
         Content = _body;
         _guidedButton.Click += (_, _) => ShowMode(false); _advancedButton.Click += (_, _) => ShowMode(true);
         _modes.Children.Add(_guidedButton); _modes.Children.Add(_advancedButton); _body.Children.Add(_modes);
-        _body.Children.Add(_guided); _body.Children.Add(_advanced);
-        _advanced.Changed += () => Changed?.Invoke();
+        _guidedUnavailable.Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"];
+        _body.Children.Add(_guidedUnavailable); _body.Children.Add(_guided); _body.Children.Add(_advanced);
+        _advanced.Changed += () => { UpdateGuidedAvailability(); Changed?.Invoke(); };
+        _advanced.SortChanged += () => SortChanged?.Invoke();
         // These overrides belong only to Guided's source bg-background inputs.
         var background = (Brush)Application.Current.Resources["AppBackgroundBrush"];
         foreach (var key in new[] { "TextControlBackground", "TextControlBackgroundFocused", "TextControlBackgroundPointerOver", "ComboBoxBackground", "ComboBoxBackgroundFocused", "ComboBoxBackgroundPointerOver", "ComboBoxBackgroundPressed" })
@@ -55,18 +63,38 @@ public sealed class QueryFilterEditor : UserControl
     {
         if (_scope != scope || _libraryId != libraryId) _options = new Dictionary<string, IReadOnlyList<string>>();
         Query = query; _scope = scope; _libraryId = libraryId;
-        if (filters != null) _options = new Dictionary<string, IReadOnlyList<string>>
+        if (filters != null) SetOptions(filters);
+        _advanced.ConfigureCatalogScope(scope, libraryId); _advanced.Options = _options; _advanced.Load(query);
+        UpdateGuidedAvailability(); BuildGuided(); ShowMode(_advancedMode);
+    }
+
+    private void SetOptions(CatalogFiltersResponse filters)
+    {
+        _options = new Dictionary<string, IReadOnlyList<string>>
         {
             ["genre"] = filters.Genres, ["content_rating"] = filters.ContentRatings, ["country"] = filters.Countries,
             ["studio"] = filters.Studios, ["network"] = filters.Networks, ["resolution"] = filters.Resolutions,
             ["audio_language"] = filters.AudioLanguages, ["original_language"] = filters.OriginalLanguages,
+            ["subtitle_language"] = filters.SubtitleLanguages,
         };
-        _advanced.ConfigureCatalogScope(scope, libraryId); _advanced.Options = _options; _advanced.Load(query);
-        BuildGuided(); ShowMode(_advancedMode);
+    }
+
+    public void UpdateOptions(CatalogFiltersResponse filters)
+    {
+        SetOptions(filters);
+        _advanced.Options = _options;
+        foreach (var input in Descendants<AutoSuggestBox>(_guided))
+        {
+            if (input.Tag is not string field || !_options.TryGetValue(field, out var values) ||
+                input.FocusState == FocusState.Unfocused && !input.IsSuggestionListOpen) continue;
+            input.ItemsSource = values.Where(value => value.Contains(input.Text, StringComparison.OrdinalIgnoreCase)).ToList();
+            input.IsSuggestionListOpen = values.Count > 0;
+        }
     }
 
     private void ShowMode(bool advanced)
     {
+        if (!advanced && !_guidedButton.IsEnabled) return;
         _advancedMode = advanced;
         _guidedButton.Style = (Style)Application.Current.Resources[advanced ? "OutlineButtonStyle" : "AccentButtonStyle"];
         _advancedButton.Style = (Style)Application.Current.Resources[advanced ? "AccentButtonStyle" : "OutlineButtonStyle"];
@@ -75,12 +103,20 @@ public sealed class QueryFilterEditor : UserControl
         _advanced.Visibility = advanced ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    private void UpdateGuidedAvailability()
+    {
+        var available = GuidedQuerySupport.CanEdit(Query, _scope);
+        _guidedButton.IsEnabled = available;
+        _guidedUnavailable.Visibility = available ? Visibility.Collapsed : Visibility.Visible;
+        if (!available) ShowMode(true);
+    }
+
     private void BuildGuided()
     {
         _guidedRows.Clear();
         _guidedNumbers.Clear();
         _guided.Children.Clear();
-        if (Query.Match != "all" || Query.Groups.Count(group => group.Match == "all") > 1 || Query.Groups.Any(group => group.Match != "all" && !(group.Match == "any" && group.Rules.All(rule => rule.Field == "original_language" && rule.Op == "is"))))
+        if (!GuidedQuerySupport.CanEdit(Query, _scope))
         {
             _guided.Children.Add(new TextBlock { Text = "This query uses rule groups. Open Advanced to edit them; switching modes keeps every rule.", TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
             return;
@@ -138,7 +174,7 @@ public sealed class QueryFilterEditor : UserControl
         AddChoice(progressLabel, new[] { "Any", completed, unstarted, "In Progress" }, progress, value =>
         {
             SetRule("watched", "is", value == completed ? true : value == unstarted ? false : null);
-            SetRule("in_progress", "is", value == "In Progress" ? true : null);
+            SetRule("in_progress", "is", value == "In Progress" ? true : value == unstarted ? false : null);
         });
         GroupLastFields(2, 2);
         if (!book)
@@ -149,7 +185,7 @@ public sealed class QueryFilterEditor : UserControl
             foreach (var (label, field, value) in new (string, string, object)[] { ("4K", "resolution", "4k"), ("HDR", "hdr", true), ("DOVI", "dolby_vision", true) })
             {
                 var button = new ToggleButton { Content = label, Height = 32, MinHeight = 0, Padding = new(12, 0, 12, 0), IsChecked = field == "resolution" ? Current(field, "is") is "4k" or "2160p" : Current(field, "is") == "true" };
-                button.Click += (_, _) => SetRule(field, "is", button.IsChecked == true ? value : null); buttons.Children.Add(button);
+                button.Click += (_, _) => SetRule(field, "is", button.IsChecked == true ? field == "resolution" ? "2160p" : value : null); buttons.Children.Add(button);
             }
             _guided.Children.Add(quality);
         }
@@ -233,12 +269,25 @@ public sealed class QueryFilterEditor : UserControl
     {
         // WinUI includes the 14px header and its 8px bottom margin in the
         // control's height. Allocate the remaining 36px to the input body.
-        var input = new AutoSuggestBox { Height = 58, MinHeight = 0, Header = new TextBlock { Text = label, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight }, PlaceholderText = placeholder, Text = string.Join(", ", Query.Groups.SelectMany(group => group.Rules).Where(rule => rule.Field == field).Select(rule => QueryRuleValues.Format(rule.Value))) };
+        var input = new AutoSuggestBox { Tag = field, Height = 58, MinHeight = 0, Header = new TextBlock { Text = label, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.Medium, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight }, PlaceholderText = placeholder, Text = string.Join(", ", Query.Groups.SelectMany(group => group.Rules).Where(rule => rule.Field == field).Select(rule => QueryRuleValues.Format(rule.Value))) };
         StyleGuidedControl(input);
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(input, label);
         var scope = _scope; var libraryId = _libraryId;
         CancellationTokenSource? owner = null;
         string? selectedSuggestionText = null;
+        void OpenAvailableChoices()
+        {
+            if (_scope != scope || _libraryId != libraryId || !_options.TryGetValue(field, out var values)) return;
+            owner?.Cancel();
+            // Bind strings to WinUI's virtualized suggestion list. Do not build
+            // thousands of option controls or commit a rule just to open it.
+            input.ItemsSource = values;
+            input.IsSuggestionListOpen = values.Count > 0;
+        }
+        input.GotFocus += (_, args) =>
+        {
+            if (args.OriginalSource is TextBox && !input.IsSuggestionListOpen) OpenAvailableChoices();
+        };
         input.TextChanged += async (_, args) =>
         {
             if (args.Reason != AutoSuggestionBoxTextChangeReason.UserInput) return;
@@ -278,7 +327,14 @@ public sealed class QueryFilterEditor : UserControl
             if (field is "genre" or "original_language") SetMulti(field, args.QueryText.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
             else SetRule(field, "is", string.IsNullOrWhiteSpace(args.QueryText) ? null : args.QueryText.Trim());
         };
-        input.Unloaded += (_, _) => owner?.Cancel(); _guided.Children.Add(input);
+        input.Unloaded += (_, _) => owner?.Cancel();
+        var fieldHost = new Grid();
+        fieldHost.Children.Add(input);
+        var openChoices = new Button { Width = 32, Height = 36, MinWidth = 0, MinHeight = 0, Margin = new(0, 22, 0, 0), Padding = new(8), HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new(0), Content = new FontIcon { Glyph = "\uE70D", FontSize = 10, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] } };
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(openChoices, $"Show {label} choices");
+        openChoices.Click += (_, _) => { input.Focus(FocusState.Programmatic); OpenAvailableChoices(); };
+        fieldHost.Children.Add(openChoices);
+        _guided.Children.Add(fieldHost);
     }
     private void AddNumber(string label, string field, string op, string placeholder)
     {
@@ -321,7 +377,7 @@ public sealed class QueryFilterEditor : UserControl
         var target = field == "original_language" && values.Count > 1 ? new QueryGroup { Match = "any" } : Query.Groups.First(group => group.Match == "all");
         foreach (var value in values) target.Rules.Add(new() { Field = field, Op = "is", Value = value });
         if (!Query.Groups.Contains(target)) Query.Groups.Add(target);
-        Query.Groups.RemoveAll(group => group.Rules.Count == 0 && group.Match != "all");
+        Query.Groups.RemoveAll(group => group.Rules.Count == 0);
         _advanced.Load(Query); Changed?.Invoke();
     }
     private void SetRule(string field, string op, object? value)
@@ -338,6 +394,7 @@ public sealed class QueryFilterEditor : UserControl
         }
         rules.RemoveAll(rule => rule.Field == field && (field != "year" || rule.Op == op));
         if (value != null) rules.Add(new() { Field = field, Op = op, Value = value });
+        Query.Groups.RemoveAll(group => group.Rules.Count == 0);
         _advanced.Load(Query); Changed?.Invoke();
     }
 }

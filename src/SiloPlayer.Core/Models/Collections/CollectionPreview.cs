@@ -11,6 +11,7 @@ public class CollectionPreviewItem
     public string ContentId { get; set; } = "";
     public string Title { get; set; } = "";
     public string Type { get; set; } = "";
+    public string? PosterUrl { get; set; }
 }
 
 public class CollectionPreviewResponse

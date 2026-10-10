@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media.Animation;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Services;
+using SiloPlayer.Helpers;
 using Windows.System;
 
 namespace SiloPlayer.Controls;
@@ -224,6 +225,8 @@ public sealed partial class SectionRow : UserControl
         var compactStatusHeader = section.LoadFailed || (!hasItems && !section.LoadCompleted);
         SectionTitle.FontSize = compactStatusHeader ? 14 : 20;
         TitleLinkTitle.FontSize = compactStatusHeader ? 14 : 20;
+        SectionHeader.MinHeight = compactStatusHeader ? 20 : 28;
+        SectionTitle.LineHeight = TitleLinkTitle.LineHeight = compactStatusHeader ? 20 : 28;
         SectionHeader.Margin = new Thickness(
             SectionHeader.Margin.Left,
             SectionHeader.Margin.Top,
@@ -556,6 +559,7 @@ public sealed partial class SectionRow : UserControl
     private void ApplyResponsiveCardWidths(double width)
     {
         if (width <= 0) return;
+        width = WebUiViewport.Width(this, width);
 
         var gutter = width < 640 ? 16d
             : width < 1024 ? 24d

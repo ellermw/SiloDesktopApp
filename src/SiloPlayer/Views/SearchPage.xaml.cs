@@ -35,6 +35,7 @@ public sealed partial class SearchPage : Page
         ViewModel = App.Services.GetRequiredService<SearchViewModel>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
+        CatalogToolbarChoices.Apply(ResultTypeCombo, ResultSortCombo, ResultOrderCombo);
         _catalogApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
         _resultSortChoices = CatalogSortChoices.Capture(ResultSortCombo);
         UpdateResultSortChoices();
@@ -290,9 +291,7 @@ public sealed partial class SearchPage : Page
         RequestResultsEyebrow.Text = hasLibraryHits
             ? "Discover · Outside your library"
             : "Outside your library";
-        RequestResultsTitle.Text = hasLibraryHits
-            ? "Request to Add"
-            : "Not in your library, but you can request";
+        RequestResultsTitle.Text = "Request to add";
         var count = ViewModel.OutsideLibraryResults.Count;
         RequestResultsCount.Text = $"{count} {(count == 1 ? "result" : "results")}";
         RequestPageText.Text = ViewModel.OutsideTotalPages > 0 ? $"Page {ViewModel.OutsidePage} of {ViewModel.OutsideTotalPages}" : "";
@@ -709,6 +708,8 @@ public sealed partial class SearchPage : Page
 
     private async void OpenResultFilters_Click(object sender, RoutedEventArgs e)
     {
+        SearchQueryFilters.ConfigureSort();
+        ViewModel.AdvancedQuery.Sort = new() { Field = ViewModel.SortField, Order = ViewModel.SortOrder };
         if (ViewModel.AdvancedQuery.Groups.Count == 0)
         {
             var group = new SiloPlayer.Core.Models.Collections.QueryGroup();
@@ -725,6 +726,13 @@ public sealed partial class SearchPage : Page
     private async void CloseResultFilters_Click(object sender, RoutedEventArgs e)
     {
         if (!SearchQueryFilters.IsValid) return;
+        if (ViewModel.AdvancedQuery.Sort is {} sort)
+        {
+            ViewModel.SortField = sort.Field; ViewModel.SortOrder = sort.Order;
+            _filterInitializing = true;
+            try { SelectComboTag(ResultSortCombo, sort.Field); SelectComboTag(ResultOrderCombo, sort.Order); }
+            finally { _filterInitializing = false; }
+        }
         UpdateActiveResultFilters(); await ViewModel.SearchCommand.ExecuteAsync(null);
         ResultFiltersSheet.IsOpen = false;
     }
@@ -764,8 +772,9 @@ public sealed partial class SearchPage : Page
             ActiveResultFiltersPanel.Children.Add(chip);
         }
 
-        var count = ActiveResultFiltersPanel.Children.Count;
-        ActiveResultFiltersPanel.Visibility = count > 0
+        var count = new[] { ViewModel.Genre, ViewModel.ContentRating, ViewModel.Resolution, ViewModel.Country }.Count(value => !string.IsNullOrWhiteSpace(value))
+            + SiloPlayer.Core.Services.CatalogFilterBadges.ActiveCount(ViewModel.AdvancedQuery, ViewModel.MediaScope);
+        ActiveResultFiltersPanel.Visibility = ActiveResultFiltersPanel.Children.Count > 0
             ? Visibility.Visible
             : Visibility.Collapsed;
         ResultFiltersButtonCountBadge.Visibility = count > 0

@@ -16,13 +16,20 @@ namespace SiloPlayer.Views;
 public sealed partial class SettingsPage
 {
     private int _deviceDetailGeneration;
+    private int _deviceListGeneration;
+    private void DeactivateDevices() { ++_deviceListGeneration; ++_deviceDetailGeneration; }
     private async Task LoadDevicesAsync()
     {
+        var generation = ++_deviceListGeneration;
+        ++_deviceDetailGeneration;
+        var api = App.Services.GetRequiredService<SettingsApi>();
+        var context = api.CaptureContext();
+        bool Current() => generation == _deviceListGeneration && api.IsCurrentContext(context);
         DevicesLoadingRing.IsActive = true;
         DevicesContentHost.Children.Clear();
         try
         {
-            var api = App.Services.GetRequiredService<SettingsApi>();
+            DevicesContentHost.Children.Add(BuildProfileLaunchGroup());
             var scopeButtons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(scopeButtons, "Whose devices to show");
             var mine = new Button { Content = "Just mine", MinHeight = 42 };
@@ -69,6 +76,7 @@ public sealed partial class SettingsPage
             var reveal = new Button { Content = "Show inactive devices", HorizontalAlignment = HorizontalAlignment.Left };
             DevicesContentHost.Children.Add(reveal);
             var detailOpen = false;
+            var scopeRevision = 0;
             void AdaptBrowser()
             {
                 var narrow = browser.ActualWidth < 900;
@@ -84,6 +92,7 @@ public sealed partial class SettingsPage
 
             async Task RenderListAsync(bool chooseDefault)
             {
+                if (!Current()) return;
                 var query = search.Text?.Trim() ?? "";
                 var visible = devices.Where(device =>
                     (string.IsNullOrWhiteSpace(selectedProfileId)
@@ -106,6 +115,9 @@ public sealed partial class SettingsPage
                     detailHost.Children.Clear();
                     return;
                 }
+                var loadSelected = chooseDefault || selected == null || !visible.Any(device => DeviceSelection.Key(device) == DeviceSelection.Key(selected));
+                selected = DeviceSelection.Select(visible, chooseDefault ? null : selected == null ? null : DeviceSelection.Key(selected),
+                    App.Services.GetRequiredService<AuthService>().SelectedProfileId);
 
                 void AddGroup(string title, IEnumerable<UserDevice> group)
                 {
@@ -129,6 +141,9 @@ public sealed partial class SettingsPage
                             HorizontalAlignment = HorizontalAlignment.Stretch,
                             HorizontalContentAlignment = HorizontalAlignment.Left,
                             Padding = new Thickness(10),
+                            BorderBrush = DeviceSelection.Key(device) == DeviceSelection.Key(selected!)
+                                ? (Brush)Application.Current.Resources["AccentBrush"] : (Brush)Application.Current.Resources["BorderBrush"],
+                            BorderThickness = new Thickness(1),
                             Content = new StackPanel
                             {
                                 Spacing = 3,
@@ -144,6 +159,7 @@ public sealed partial class SettingsPage
                         {
                             selected = device;
                             await LoadDeviceDetailAsync(device, detailHost);
+                            await RenderListAsync(false);
                             detailOpen = true;
                             AdaptBrowser();
                         };
@@ -164,23 +180,27 @@ public sealed partial class SettingsPage
                 AddGroup("Earlier", visible.Where(device => !device.IsCurrentDevice && now - ParseTimestamp(device.LastSeenAt) > TimeSpan.FromDays(7)));
                 }
 
-                if (chooseDefault || selected is null || !visible.Any(device => device.DeviceId == selected.DeviceId && device.ProfileId == selected.ProfileId))
+                if (loadSelected)
                 {
-                    selected = visible.FirstOrDefault(device => device.IsCurrentDevice) ?? visible[0];
+                    if (selected == null) return;
                     await LoadDeviceDetailAsync(selected, detailHost);
                 }
             }
 
             async Task LoadScopeAsync(bool useHousehold)
             {
+                if (!Current()) return;
                 if (useHousehold && !_canManageProfiles)
                     return;
+                var revision = ++scopeRevision;
                 household = useHousehold;
                 mine.IsEnabled = useHousehold;
                 everyone.IsEnabled = !useHousehold;
                 try
                 {
-                    devices = (await api.GetUserDevicesAsync(useHousehold)).Devices
+                    var response = await api.GetUserDevicesAsync(useHousehold);
+                    if (!Current() || revision != scopeRevision) return;
+                    devices = response.Devices
                         .OrderByDescending(device => device.IsCurrentDevice)
                         .ThenByDescending(device => ParseTimestamp(device.LastSeenAt))
                         .ToList();
@@ -212,6 +232,7 @@ public sealed partial class SettingsPage
                 }
                 catch when (useHousehold)
                 {
+                    if (!Current() || revision != scopeRevision) return;
                     everyone.IsEnabled = false;
                     Toast("Household devices are not available for this account", error: true);
                 }
@@ -235,11 +256,12 @@ public sealed partial class SettingsPage
         }
         catch (Exception ex)
         {
+            if (!Current()) return;
             DevicesContentHost.Children.Add(ErrorText($"Devices could not be loaded: {ex.Message}"));
         }
         finally
         {
-            DevicesLoadingRing.IsActive = false;
+            if (generation == _deviceListGeneration) DevicesLoadingRing.IsActive = false;
         }
     }
 
@@ -326,16 +348,16 @@ public sealed partial class SettingsPage
             var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
             if (device.ChangedCount > 0)
             {
-                var clear = new Button { Content = "Clear all changes" };
+                var clear = new Button { Content = "Use profile settings" };
                 clear.Click += async (_, _) =>
                 {
-                    var noun = device.ChangedCount == 1 ? "change" : "changes";
-                    if (!await ConfirmAsync("Clear all changes?",
-                            $"Clear all {device.ChangedCount} {noun} on {device.DeviceName}?")) return;
+                    var noun = device.ChangedCount == 1 ? "setting" : "settings";
+                    if (!await ConfirmAsync("Use profile settings?",
+                            $"Use {ownerLabel} profile settings on {device.DeviceName}? This removes the {device.ChangedCount} {noun} changed on this device. Settings that only apply to devices go back to the app default.")) return;
                     try
                     {
                         await api.ClearUserDeviceSettingsAsync(device.DeviceId, device.ProfileId);
-                        Toast("Settings cleared on this device");
+                        Toast("Removed the changes on this device");
                         await LoadDevicesAsync();
                     }
                     catch (Exception ex)
@@ -410,6 +432,30 @@ public sealed partial class SettingsPage
             host.Children.Clear();
             host.Children.Add(ErrorText($"Device settings could not be loaded: {ex.Message}"));
         }
+    }
+
+    private Border BuildProfileLaunchGroup()
+    {
+        var settings = App.Services.GetRequiredService<SettingsService>();
+        var group = CreateSettingsGroup("This app", "Applies only to this app. Your other devices keep their own choice.");
+        var content = (StackPanel)group.Child;
+        content.Children.Add(new TextBlock { Text = "Profile at launch", FontWeight = Microsoft.UI.Text.FontWeights.Medium });
+        var choices = new WrapPanel { HorizontalSpacing = 8, VerticalSpacing = 8 };
+        var hint = SecondaryText("");
+        void Refresh()
+        {
+            var ask = settings.Load().ProfileLaunchMode == "ask";
+            hint.Text = ask ? "Each new launch starts at “Who's watching?”, and a PIN-protected profile needs its PIN again."
+                : "New launches open the profile last used here.";
+        }
+        foreach (var (mode, label) in new[] { ("remember", "Remember last profile"), ("ask", "Ask who's watching") })
+        {
+            var button = new RadioButton { Content = label, GroupName = "ProfileLaunch", IsChecked = settings.Load().ProfileLaunchMode == mode };
+            button.Checked += (_, _) => { var local = settings.Load(); local.ProfileLaunchMode = mode; settings.Save(local); Refresh(); };
+            choices.Children.Add(button);
+        }
+        content.Children.Add(choices); content.Children.Add(hint); Refresh();
+        return group;
     }
 
     private async Task LoadConnectAppsAsync()
@@ -649,6 +695,7 @@ public sealed partial class SettingsPage
     {
         var entry = values[definition.Key];
         var row = SettingsRow(definition.Label, definition.Description, out var controls);
+        row.Tag = definition.Control == "switch" ? "device-inline-row" : "device-value-row";
         var writable = DeviceSettingDisplay.CanWrite(entry);
         var profileWide = definition.ProfileFirst && entry.Source == "profile";
         var retainedHere = profileWide && retainedOnDevice.ContainsKey(definition.Key);
@@ -658,11 +705,17 @@ public sealed partial class SettingsPage
         if (row.Children[0] is StackPanel copy)
         {
             var changed = entry.Scope == "profile_device" || retainedHere;
-            var badge = new Border { CornerRadius = new CornerRadius(6), Padding = new Thickness(7, 3, 7, 3),
-                HorizontalAlignment = HorizontalAlignment.Left, Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-                Child = new TextBlock { Text = !writable ? "Locked by your household" : changed ? "Changed here" : "Using inherited setting", FontSize = 11,
-                    Foreground = (Brush)Application.Current.Resources[!writable ? "SecondaryTextBrush" : "AccentBrush"] } };
-            copy.Children.Add(badge);
+            var auth = App.Services.GetRequiredService<AuthService>();
+            var ownerLabel = device.ProfileId != auth.SelectedProfileId && !string.IsNullOrWhiteSpace(device.ProfileName)
+                ? $"{device.ProfileName}'s" : "your";
+            if (changed) copy.Children.Add(SecondaryText("Changed here"));
+            if (entry.Constrained)
+            {
+                copy.Children.Add(SecondaryText("Household limit"));
+                copy.Children.Add(SecondaryText(DeviceSettingDisplay.ConstraintExplanation(entry)));
+            }
+            else if (!changed && !profileWide && DeviceSettingDisplay.InheritedSource(entry, ownerLabel) is { } inherited)
+                copy.Children.Add(SecondaryText(inherited));
             if (profileWide)
             {
                 var choice = retainedHere ? DeviceSettingDefinition.Scalar(retainedOnDevice[definition.Key]) switch
@@ -915,7 +968,8 @@ public sealed partial class SettingsPage
             catch (Exception ex) { Toast($"Could not reset setting: {ex.Message}", error: true); }
             finally { reset.IsEnabled = true; }
         };
-        controls.Children.Add(reset);
+        if (row.Children[0] is StackPanel copy) copy.Children.Add(reset);
+        else controls.Children.Add(reset);
     }
 
     private static (string Value, string Label)[] DeviceLanguageOptions(string emptyLabel)
@@ -938,7 +992,8 @@ public sealed partial class SettingsPage
         row.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         row.SizeChanged += (_, args) =>
         {
-            var compact = args.NewSize.Width < 680;
+            var compact = row.Tag is "device-inline-row" ? false
+                : args.NewSize.Width < (row.Tag is "device-value-row" ? 512 : 680);
             row.ColumnDefinitions[1].Width = compact ? new GridLength(0) : GridLength.Auto;
             Grid.SetRow(controlHost, compact ? 1 : 0);
             Grid.SetColumn(controlHost, compact ? 0 : 1);

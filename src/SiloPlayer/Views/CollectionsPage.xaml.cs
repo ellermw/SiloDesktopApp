@@ -15,15 +15,7 @@ public sealed partial class CollectionsPage : Page
     private const string CollectionDragPrefix = "collection:";
     private const string GroupDragPrefix = "group:";
     public CollectionsViewModel ViewModel { get; }
-    private ContentDialog? _templateDialog;
-    private StackPanel? _templateCardsPanel;
-    private StackPanel? _templateCategoriesPanel;
-    private FrameworkElement? _templateGalleryDescription;
-    private FrameworkElement? _templateGallerySearchBox;
-    private FrameworkElement? _templateGalleryCategoryScroll;
-    private int _templateGalleryColumnCount = 3;
-    private string _templateCategoryFilter = "all";
-    private string _templateSearch = "";
+    private SiloPlayer.Controls.NewCollectionDialog? _creationDialog;
     private bool _openTemplatesOnLoad;
     private bool _returnAfterTemplates;
     private bool _collectionBuildQueued;
@@ -35,14 +27,10 @@ public sealed partial class CollectionsPage : Page
         ViewModel = App.Services.GetRequiredService<CollectionsViewModel>();
         this.InitializeComponent();
         NavigationCacheMode = Microsoft.UI.Xaml.Navigation.NavigationCacheMode.Required;
-        CollectionsLoadingRepeater.ItemsSource = Enumerable.Range(0, 6).ToArray();
-        var serverSkeletonItems = Enumerable.Range(0, 7).ToArray();
-        ServerCollectionsLoadingRowOne.ItemsSource = serverSkeletonItems;
-        ServerCollectionsLoadingRowTwo.ItemsSource = serverSkeletonItems;
-
         ViewModel.Collections.CollectionChanged += (_, _) => QueueCollectionBuild();
         ViewModel.Groups.CollectionChanged += (_, _) => QueueCollectionBuild();
         ViewModel.ServerLibraries.CollectionChanged += (_, _) => QueueCollectionBuild();
+        ViewModel.Profiles.CollectionChanged += (_, _) => QueueCollectionBuild();
 
         ViewModel.PropertyChanged += (_, args) =>
         {
@@ -50,6 +38,7 @@ public sealed partial class CollectionsPage : Page
                 DispatcherQueue.TryEnqueue(UpdateEmptyState);
             else if (args.PropertyName == nameof(ViewModel.IsLoadingServerCollections))
                 DispatcherQueue.TryEnqueue(BuildServerCollectionRows);
+            else if (args.PropertyName == nameof(ViewModel.Capabilities)) QueueCollectionBuild();
         };
         SizeChanged += CollectionsPage_SizeChanged;
     }
@@ -61,8 +50,8 @@ public sealed partial class CollectionsPage : Page
         if (_openTemplatesOnLoad)
         {
             _openTemplatesOnLoad = false;
-            await ShowCollectionTemplateGalleryAsync();
-            if (_returnAfterTemplates)
+            var opened = await OpenNewCollectionPickerAsync();
+            if (_returnAfterTemplates && !opened)
                 App.Services.GetRequiredService<NavigationService>().GoBack();
         }
     }
@@ -90,14 +79,27 @@ public sealed partial class CollectionsPage : Page
 
     private void UpdateEmptyState()
     {
-        EmptyState.Visibility = ViewModel.IsEmpty && !ViewModel.IsLoading
-            ? Visibility.Visible : Visibility.Collapsed;
+        EmptyState.Visibility = Visibility.Collapsed;
     }
 
-    private void CreateCollection_Click(object sender, RoutedEventArgs e)
+    private async void CreateCollection_Click(object sender, RoutedEventArgs e)
     {
+        await OpenNewCollectionPickerAsync();
+    }
+
+    private async Task<bool> OpenNewCollectionPickerAsync()
+    {
+        if (_creationDialog != null || XamlRoot == null) return false;
+        var dialog = new SiloPlayer.Controls.NewCollectionDialog(
+            App.Services.GetRequiredService<SiloPlayer.Core.Api.CollectionsApi>(), App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>()) { XamlRoot = XamlRoot };
+        _creationDialog = dialog;
+        try { await dialog.ShowAsync(); }
+        finally { _creationDialog = null; }
         var nav = App.Services.GetRequiredService<NavigationService>();
-        nav.Navigate<SmartCollectionWizardPage>(new SmartCollectionWizardNavigationArgs());
+        if (dialog.SelectedKind == "manual") nav.Navigate<CollectionEditorPage>();
+        else if (dialog.SelectedKind == "smart") nav.Navigate<CollectionEditorPage>(new CollectionEditorNavigationArgs("smart"));
+        else if (dialog.SelectedKind == "synced") nav.Navigate<CollectionEditorPage>(new CollectionEditorNavigationArgs("synced"));
+        return dialog.SelectedKind != null;
     }
 
     private void SmartWizard_Click(object sender, RoutedEventArgs e)
@@ -108,147 +110,22 @@ public sealed partial class CollectionsPage : Page
 
     private async void BrowseTemplates_Click(object sender, RoutedEventArgs e)
     {
-        await ShowCollectionTemplateGalleryAsync();
-    }
-
-    private async Task ShowCollectionTemplateGalleryAsync()
-    {
-        await ViewModel.LoadTemplateFlowAsync();
-
-        var dialog = BuildTemplateGalleryDialog();
-        await dialog.ShowAsync();
-
-        _templateDialog = null;
-        _templateCardsPanel = null;
-        _templateCategoriesPanel = null;
-        _templateGalleryDescription = null;
-        _templateGallerySearchBox = null;
-        _templateGalleryCategoryScroll = null;
-        _templateCategoryFilter = "all";
-        _templateSearch = "";
-    }
-
-    private ContentDialog BuildTemplateGalleryDialog()
-    {
-        var viewport = XamlRoot?.Size.Width ?? ActualWidth;
-        var compact = viewport < 640;
-        var dialogWidth = Math.Min(viewport - 32, viewport >= 1024 ? 896 : 768);
-        _templateGalleryColumnCount = compact ? 1 : viewport < 1024 ? 2 : 3;
-        var dialog = new ContentDialog
-        {
-            Title = "Browse Collection Templates",
-            CloseButtonText = "Close",
-            XamlRoot = this.XamlRoot,
-            DefaultButton = ContentDialogButton.Close,
-            MaxWidth = double.PositiveInfinity,
-            MinWidth = 0,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0)
-        };
-        // WinUI's ContentDialog template otherwise clamps custom content to its
-        // historical 548px maximum, regardless of the values above.
-        dialog.Resources["ContentDialogMaxWidth"] = dialogWidth;
-        dialog.Resources["ContentDialogMinWidth"] = dialogWidth;
-        EditorDialogPresentation.Configure(dialog, dialogWidth, new Thickness(24));
-        // The native sizing pass clears an explicit Width on narrow windows.
-        // Keep the visible shell constrained through the template's own minimum.
-        dialog.Resources["ContentDialogMinWidth"] = dialogWidth;
-        // The template's outer border takes two pixels in addition to the
-        // scoped BackgroundElement; the visible shell retains its exact width.
-        dialog.Resources["ContentDialogMaxWidth"] = dialogWidth + 2;
-        dialog.Opened += (_, _) =>
-        {
-            var shell = EditorDialogPresentation.Descendants<Border>(dialog).FirstOrDefault(b => b.Name == "BackgroundElement");
-            if (shell is not null) { shell.Width = dialogWidth; shell.MaxWidth = dialogWidth; shell.MaxHeight = Math.Max(160, (XamlRoot?.Size.Height ?? 900) - 64); }
-        };
-        _templateDialog = dialog;
-
-        var root = new Grid
-        {
-            RowSpacing = 16
-        };
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-        var description = new TextBlock
-        {
-            Text = "Pick a curated source — TMDB or MDBList — and we'll seed a synced collection.",
-            FontSize = 14,
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
-        };
-        _templateGalleryDescription = description;
-        Grid.SetRow(description, 0);
-        root.Children.Add(description);
-
-        var searchBox = new TextBox
-        {
-            PlaceholderText = "Search templates",
-            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
-            MinHeight = 36
-        };
-        _templateGallerySearchBox = searchBox;
-        searchBox.TextChanged += (_, _) =>
-        {
-            _templateSearch = searchBox.Text;
-            RenderTemplateCards();
-        };
-        Grid.SetRow(searchBox, 1);
-        root.Children.Add(searchBox);
-
-        var categoriesPanel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 8
-        };
-        _templateCategoriesPanel = categoriesPanel;
-        BuildTemplateCategoryButtons(categoriesPanel);
-        var categoryScroll = new ScrollViewer
-        {
-            Content = categoriesPanel,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Hidden,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            HorizontalScrollMode = ScrollMode.Enabled
-        };
-        _templateGalleryCategoryScroll = categoryScroll;
-        Grid.SetRow(categoryScroll, 2);
-        root.Children.Add(categoryScroll);
-
-        _templateCardsPanel = new StackPanel { Spacing = 16 };
-        if (!string.IsNullOrWhiteSpace(ViewModel.TemplateErrorMessage))
-        {
-            _templateCardsPanel.Children.Add(new TextBlock
-            {
-                Text = ViewModel.TemplateErrorMessage,
-                FontSize = 12,
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = (Brush)Application.Current.Resources["ErrorBrush"]
-            });
-        }
-        var scroll = new ScrollViewer
-        {
-            Content = _templateCardsPanel,
-            MaxHeight = Math.Max(160, (XamlRoot?.Size.Height ?? 900) - 260),
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
-        };
-        Grid.SetRow(scroll, 3);
-        root.Children.Add(scroll);
-
-        dialog.Content = root;
-        RenderTemplateCards();
-        return dialog;
+        await OpenNewCollectionPickerAsync();
     }
 
     private void CollectionsPage_SizeChanged(object sender, SizeChangedEventArgs e)
     {
-        var compact = e.NewSize.Width < 760;
+        var compact = e.NewSize.Width < 1024;
+        CollectionsHeaderActions.Visibility = compact ? Visibility.Collapsed : Visibility.Visible;
+        CreateCollectionDock.Visibility = compact ? Visibility.Visible : Visibility.Collapsed;
+        PersonalCollectionsHeading.FontSize = e.NewSize.Width < 640 ? 20 : 24;
         var gutter = e.NewSize.Width < 640 ? 16 : e.NewSize.Width < 1024 ? 24 : 40;
-        var top = e.NewSize.Width < 640 ? 16 : 24;
-        CollectionsPageShell.Padding = new Thickness(gutter, top, gutter, 40);
-        CollectionsLoadingShell.Padding = new Thickness(gutter, top, gutter, 40);
+        var top = e.NewSize.Width < 640 ? 32 : e.NewSize.Width < 1024 ? 40 : 56;
+        CollectionsPageShell.Padding = new Thickness(gutter, top, gutter, compact ? 110 : 40);
+        CollectionsPageShell.MaxWidth = 1000 + gutter * 2; CollectionsPageShell.Width = Math.Min(e.NewSize.Width, CollectionsPageShell.MaxWidth);
+        CollectionsTitle.FontSize = Math.Clamp(e.NewSize.Width * .04, 32, 48); CollectionsTitle.LineHeight = CollectionsTitle.FontSize * .95; CollectionsTitle.CharacterSpacing = -50;
+        CollectionsSubtitle.FontSize = e.NewSize.Width < 640 ? 14 : 16; CollectionsSubtitle.LineHeight = e.NewSize.Width < 640 ? 20 : 24; ServerCollectionsHeading.FontSize = e.NewSize.Width < 640 ? 20 : 24;
+        BuildCollectionSkeletons();
         CollectionsHeaderGrid.ColumnDefinitions[1].Width = compact
             ? new GridLength(0)
             : GridLength.Auto;
@@ -259,7 +136,7 @@ public sealed partial class CollectionsPage : Page
             ? HorizontalAlignment.Left
             : HorizontalAlignment.Right;
 
-        var columnCount = e.NewSize.Width >= 1280 ? 3 : e.NewSize.Width >= 640 ? 2 : 1;
+        var columnCount = e.NewSize.Width >= 1024 ? 7 : e.NewSize.Width >= 640 ? 5 : 3;
         var serverCardSizeClass = e.NewSize.Width >= 1024 ? 2 : e.NewSize.Width >= 640 ? 1 : 0;
         if (_collectionColumnCount != columnCount || _serverCardSizeClass != serverCardSizeClass)
         {
@@ -269,990 +146,56 @@ public sealed partial class CollectionsPage : Page
         }
     }
 
-    private void BuildTemplateCategoryButtons(StackPanel categoriesPanel)
-    {
-        categoriesPanel.Children.Clear();
-
-        AddCategoryButton("all", "All templates");
-        foreach (var group in ViewModel.TemplateGroups)
-            AddCategoryButton(group.Category, group.Label);
-
-        void AddCategoryButton(string category, string label)
-        {
-            var button = new Button
-            {
-                Content = category == "all" ? "All" : label,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                HorizontalContentAlignment = HorizontalAlignment.Center,
-                Padding = new Thickness(12, 6, 12, 6),
-                CornerRadius = new CornerRadius(14),
-                Background = category == _templateCategoryFilter
-                    ? (Brush)Application.Current.Resources["AccentBackgroundBrush"]
-                    : (Brush)Application.Current.Resources["SurfaceBrush"],
-                Foreground = category == _templateCategoryFilter
-                    ? (Brush)Application.Current.Resources["AccentBrush"]
-                    : (Brush)Application.Current.Resources["SecondaryTextBrush"]
-            };
-            button.Click += (_, _) =>
-            {
-                _templateCategoryFilter = category;
-                BuildTemplateCategoryButtons(categoriesPanel);
-                RenderTemplateCards();
-            };
-            categoriesPanel.Children.Add(button);
-        }
-    }
-
-    private void RenderTemplateCards()
-    {
-        if (_templateCardsPanel == null)
-            return;
-
-        if (_templateDialog != null)
-            _templateDialog.Title = "Browse Collection Templates";
-        if (_templateGalleryDescription != null)
-            _templateGalleryDescription.Visibility = Visibility.Visible;
-        if (_templateGallerySearchBox != null)
-            _templateGallerySearchBox.Visibility = Visibility.Visible;
-        if (_templateGalleryCategoryScroll != null)
-            _templateGalleryCategoryScroll.Visibility = Visibility.Visible;
-
-        _templateCardsPanel.Children.Clear();
-
-        var groups = ViewModel.TemplateGroups
-            .Where(group => _templateCategoryFilter == "all" || group.Category == _templateCategoryFilter)
-            .Select(group => new
-            {
-                group.Label,
-                Templates = group.Templates.Where(TemplateMatchesSearch).ToList()
-            })
-            .Where(group => group.Templates.Count > 0)
-            .ToList();
-
-        if (groups.Count == 0)
-        {
-            _templateCardsPanel.Children.Add(new TextBlock
-            {
-                Text = "No templates match your filters.",
-                FontSize = 14,
-                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 120, 0, 0)
-            });
-            return;
-        }
-
-        foreach (var group in groups)
-        {
-            _templateCardsPanel.Children.Add(new TextBlock
-            {
-                Text = group.Label.ToUpperInvariant(),
-                FontSize = 12,
-                FontWeight = FontWeights.SemiBold,
-                CharacterSpacing = 70,
-                Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
-            });
-
-            var row = TemplateRow();
-            for (var i = 0; i < group.Templates.Count; i++)
-            {
-                var card = BuildTemplateCard(group.Templates[i]); Grid.SetColumn(card, i % _templateGalleryColumnCount); row.Children.Add(card);
-                if ((i + 1) % _templateGalleryColumnCount == 0)
-                {
-                    _templateCardsPanel.Children.Add(row);
-                    row = TemplateRow();
-                }
-            }
-
-            if (row.Children.Count > 0)
-                _templateCardsPanel.Children.Add(row);
-        }
-
-        Grid TemplateRow()
-        {
-            var row = new Grid { ColumnSpacing = 12 };
-            for (var column = 0; column < _templateGalleryColumnCount; column++) row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-            return row;
-        }
-
-        bool TemplateMatchesSearch(CollectionTemplate template)
-        {
-            if (string.IsNullOrWhiteSpace(_templateSearch))
-                return true;
-
-            var query = _templateSearch.Trim();
-            return template.Title.Contains(query, StringComparison.OrdinalIgnoreCase)
-                || template.Description.Contains(query, StringComparison.OrdinalIgnoreCase)
-                || template.Source.Contains(query, StringComparison.OrdinalIgnoreCase)
-                || template.Tags.Any(tag => tag.Contains(query, StringComparison.OrdinalIgnoreCase));
-        }
-    }
-
-    private Button BuildTemplateCard(CollectionTemplate template)
-    {
-        Brush Brush(string key) => (Brush)Application.Current.Resources[key];
-        Border Badge(string text, bool secondary) => new()
-        {
-            Background = Brush(secondary ? "SecondaryBackgroundBrush" : "AppBackgroundBrush"),
-            BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(secondary ? 0 : 1),
-            CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 2, 8, 2),
-            Child = new TextBlock { Text = text, FontSize = 10, FontWeight = FontWeights.Medium, Foreground = Brush("PrimaryTextBrush") }
-        };
-        var badges = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top };
-        badges.Children.Add(Badge(FormatCollectionType(template.Source).ToUpperInvariant(), false));
-        if (template.RequiresProfile) badges.Children.Add(Badge("Profile", true));
-        var header = new Grid { ColumnSpacing = 12 };
-        header.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); header.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        header.Children.Add(new Border { Width = 40, Height = 40, CornerRadius = new(10), Background = Brush("AccentBackgroundBrush"),
-            Child = new TextBlock { Text = template.Icon, FontSize = 20, Foreground = Brush("AccentBrush"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } });
-        Grid.SetColumn(badges, 1); header.Children.Add(badges);
-        var copy = new StackPanel { Spacing = 4 };
-        copy.Children.Add(new TextBlock { Text = template.Title, FontSize = 14, FontWeight = FontWeights.Medium, LineHeight = 17.5,
-            LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = Brush("PrimaryTextBrush"), TextWrapping = TextWrapping.Wrap });
-        copy.Children.Add(new TextBlock { Text = template.Description, FontSize = 12, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
-            Foreground = Brush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap, MaxLines = 3 });
-        var media = template.MediaKind switch { "movie" => "Movies", "series" => "TV", _ => "Mixed" };
-        var cron = template.DefaultSyncSchedule?.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        var schedule = "on schedule";
-        if (cron?.Length == 5)
-        {
-            if (cron[1].StartsWith("*/")) schedule = $"every {cron[1][2..]} hours";
-            else if (cron[1] == "*") schedule = "hourly";
-            else if (cron[2] == "1" && cron[3] == "*") schedule = "monthly";
-            else if (cron[2] == "*" && cron[3] == "*" && cron[4] == "*") schedule = "daily";
-            else if (cron[2] == "*" && cron[3] == "*") schedule = "weekly";
-        }
-        var stack = new StackPanel { Spacing = 12, Children = { header, copy,
-            new TextBlock { Text = media + (string.IsNullOrWhiteSpace(template.DefaultSyncSchedule) ? "" : $"  •  syncs {schedule}"), FontSize = 11,
-                Foreground = Brush("SecondaryTextBrush"), TextTrimming = TextTrimming.CharacterEllipsis } } };
-        var surface = new Border { Background = Brush("CardBackgroundBrush"), BorderBrush = Brush("BorderBrush"), BorderThickness = new(1),
-            CornerRadius = new(10), Padding = new(16), Child = stack, Tag = template };
-        var card = new Button { Content = surface, Padding = new(0), Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent), BorderThickness = new(0),
-            HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalContentAlignment = VerticalAlignment.Stretch };
-        AutomationProperties.SetName(card, $"Use {template.Title} collection template");
-        card.PointerEntered += (_, _) => { surface.Background = Brush("SurfaceHoverBrush"); surface.BorderBrush = Brush("AccentBrush"); };
-        card.PointerExited += (_, _) => { surface.Background = Brush("CardBackgroundBrush"); surface.BorderBrush = Brush("BorderBrush"); };
-        card.Click += (_, _) => ShowTemplateConfigInGallery(template);
-        return card;
-    }
-    private void ShowTemplateConfigInGallery(CollectionTemplate template)
-    {
-        if (_templateCardsPanel == null || _templateDialog == null)
-            return;
-
-        _templateDialog.Title = null;
-        if (_templateGalleryDescription != null)
-            _templateGalleryDescription.Visibility = Visibility.Collapsed;
-        if (_templateGallerySearchBox != null)
-            _templateGallerySearchBox.Visibility = Visibility.Collapsed;
-        if (_templateGalleryCategoryScroll != null)
-            _templateGalleryCategoryScroll.Visibility = Visibility.Collapsed;
-
-        _templateCardsPanel.Children.Clear();
-        _templateCardsPanel.Children.Add(new Button
-        {
-            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            HorizontalAlignment = HorizontalAlignment.Left,
-            Content = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Spacing = 6,
-                Children =
-                {
-                    new FontIcon { Glyph = "\uE72B", FontSize = 12 },
-                    new TextBlock { Text = "Back to templates", FontSize = 13 }
-                }
-            }
-        });
-        if (_templateCardsPanel.Children[0] is Button backButton)
-            backButton.Click += (_, _) => RenderTemplateCards();
-
-        _templateCardsPanel.Children.Add(new TextBlock
-        {
-            Text = "Confirm details, then we'll create and sync the collection for you.",
-            FontSize = 13,
-            Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"]
-        });
-        _templateCardsPanel.Children.Add(BuildTemplateConfigPanel(template, _templateDialog));
-    }
-
-    private static void ClipTemplatePoster(Border frame)
-    {
-        var visual = Microsoft.UI.Xaml.Hosting.ElementCompositionPreview.GetElementVisual(frame);
-        var geometry = visual.Compositor.CreateRoundedRectangleGeometry();
-        geometry.Size = new((float)frame.ActualWidth, (float)frame.ActualHeight); geometry.CornerRadius = new(10, 10);
-        visual.Clip = visual.Compositor.CreateGeometricClip(geometry);
-    }
-
-    private UIElement BuildTemplateConfigPanel(CollectionTemplate template, ContentDialog dialog)
-    {
-        ViewModel.MdblistResults.Clear();
-        ViewModel.TemplateErrorMessage = null;
-
-        var titleBox = new TextBox
-        {
-            Text = template.Title,
-            PlaceholderText = "Collection title",
-            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"]
-        };
-        var descriptionBox = new TextBox
-        {
-            Text = template.Description,
-            PlaceholderText = "Optional summary",
-            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"]
-        };
-        var maxItemsBox = new TextBox
-        {
-            Text = template.DefaultLimit > 0 ? template.DefaultLimit.ToString() : "",
-            PlaceholderText = "No limit",
-            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"]
-        };
-        var scheduleBox = new ComboBox
-        {
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(10)
-        };
-        foreach (var item in new[]
-        {
-            ("none", "Manual only"),
-            ("daily", "Daily"),
-            ("weekly", "Weekly"),
-            ("monthly", "Monthly")
-        })
-        {
-            scheduleBox.Items.Add(new ComboBoxItem { Content = item.Item2, Tag = item.Item1 });
-        }
-        scheduleBox.SelectedIndex = GetScheduleIndex(template.DefaultSyncSchedule);
-
-        var sharedToggle = new ToggleSwitch
-        {
-            OnContent = "",
-            OffContent = "",
-            IsOn = false
-        };
-
-        var libraryChecks = new List<CheckBox>();
-        var libraryPanel = new StackPanel { Spacing = 4 };
-        foreach (var library in ViewModel.Libraries)
-        {
-            var check = new CheckBox
-            {
-                Content = library.Name,
-                Tag = library.Id,
-                IsChecked = false
-            };
-            libraryChecks.Add(check);
-            libraryPanel.Children.Add(check);
-        }
-
-        var watchFilterBox = BuildTaggedComboBox(new[]
-        {
-            ("all", "All"),
-            ("unwatched", "Unwatched"),
-            ("watched", "Watched")
-        });
-        var mediaFilterBox = BuildTaggedComboBox(new[]
-        {
-            ("all", "All"),
-            ("movie", "Movies"),
-            ("series", "Shows")
-        });
-        var defaultSortBox = BuildTaggedComboBox(CollectionDefaultSortOptions());
-
-        var posterModeBox = BuildTaggedComboBox(new[]
-        {
-            ("default", "Server default"),
-            ("custom", "Custom URL")
-        });
-        posterModeBox.SelectedIndex = string.IsNullOrWhiteSpace(template.PosterPath) ? 1 : 0;
-        var posterChoices = new Grid { ColumnSpacing = 8 };
-        posterChoices.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        posterChoices.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        posterChoices.RowDefinitions.Add(new() { Height = GridLength.Auto }); posterChoices.RowDefinitions.Add(new() { Height = GridLength.Auto });
-        var defaultChoice = new RadioButton { Content = "Server default", IsChecked = posterModeBox.SelectedIndex == 0, HorizontalAlignment = HorizontalAlignment.Stretch, MinHeight = 36 };
-        var customChoice = new RadioButton { Content = "Custom URL", IsChecked = posterModeBox.SelectedIndex == 1, HorizontalAlignment = HorizontalAlignment.Stretch, MinHeight = 36 };
-        var posterChoiceGroup = "template-poster-" + Guid.NewGuid().ToString("N");
-        defaultChoice.GroupName = posterChoiceGroup; customChoice.GroupName = posterChoiceGroup;
-        defaultChoice.Checked += (_, _) => posterModeBox.SelectedIndex = 0;
-        customChoice.Checked += (_, _) => posterModeBox.SelectedIndex = 1;
-        Grid.SetColumn(customChoice, 1); posterChoices.Children.Add(defaultChoice); posterChoices.Children.Add(customChoice);
-        posterChoices.SizeChanged += (_, args) =>
-        {
-            var narrow = args.NewSize.Width < 440;
-            Grid.SetRow(customChoice, narrow ? 1 : 0); Grid.SetColumn(customChoice, narrow ? 0 : 1);
-            Grid.SetColumnSpan(defaultChoice, narrow ? 2 : 1); Grid.SetColumnSpan(customChoice, narrow ? 2 : 1);
-        };
-        AutomationProperties.SetName(posterChoices, "Poster source");
-        var customPosterBox = new TextBox
-        {
-            PlaceholderText = "https://example.com/poster.jpg",
-            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"],
-            Visibility = posterModeBox.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed
-        };
-        var defaultPosterPanel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = 10,
-            Visibility = posterModeBox.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed,
-            Children =
-            {
-                new FontIcon { Glyph = "\uE91B", FontSize = 22 },
-                new StackPanel
-                {
-                    Children =
-                    {
-                        new TextBlock { Text = "Server default", FontSize = 13, FontWeight = FontWeights.SemiBold },
-                        new TextBlock
-                        {
-                            Text = template.PosterPath ?? "",
-                            FontSize = 11,
-                            Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
-                            TextTrimming = TextTrimming.CharacterEllipsis,
-                            MaxWidth = 680
-                        }
-                    }
-                }
-            }
-        };
-        var defaultPosterUrl = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>().ResolveServerUrl(template.PosterPath);
-        if (Uri.TryCreate(defaultPosterUrl, UriKind.Absolute, out var defaultPosterUri))
-        {
-            var posterFrame = new Border { Width = 56, Height = 80, CornerRadius = new CornerRadius(10), Child = new Image { Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(defaultPosterUri), Stretch = Stretch.UniformToFill } };
-            posterFrame.Loaded += (_, _) => ClipTemplatePoster(posterFrame);
-            posterFrame.SizeChanged += (_, _) => ClipTemplatePoster(posterFrame);
-            defaultPosterPanel.Children[0] = posterFrame;
-        }
-        posterModeBox.SelectionChanged += (_, _) =>
-        {
-            var custom = SelectedComboTag(posterModeBox) == "custom";
-            customPosterBox.Visibility = custom ? Visibility.Visible : Visibility.Collapsed;
-            defaultPosterPanel.Visibility = custom ? Visibility.Collapsed : Visibility.Visible;
-        };
-
-        TextBox? mdblistUrlBox = null;
-        var stack = new StackPanel { Spacing = 16, HorizontalAlignment = HorizontalAlignment.Stretch };
-        var summaryHeader = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        summaryHeader.Children.Add(new TextBlock { Text = template.Title, FontSize = 14, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
-        summaryHeader.Children.Add(BuildBadge(FormatCollectionType(template.Source).ToUpperInvariant()));
-        summaryHeader.Children.Add(BuildBadge(FormatMediaKind(template.MediaKind)));
-        var summaryCopy = new StackPanel { Spacing = 4, Children = { summaryHeader,
-            new TextBlock { Text = template.Description, FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] } } };
-        var summaryGrid = new Grid { ColumnSpacing = 12 };
-        summaryGrid.ColumnDefinitions.Add(new() { Width = GridLength.Auto }); summaryGrid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-        summaryGrid.Children.Add(new Border { Width = 40, Height = 40, CornerRadius = new(12), Background = (Brush)Application.Current.Resources["AppBackgroundBrush"],
-            Child = new TextBlock { Text = template.Icon, FontSize = 20, Foreground = (Brush)Application.Current.Resources["AccentBrush"], HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } });
-        Grid.SetColumn(summaryCopy, 1); summaryGrid.Children.Add(summaryCopy);
-        stack.Children.Add(new Border { Background = (Brush)Application.Current.Resources["SurfaceBrush"], BorderBrush = (Brush)Application.Current.Resources["BorderBrush"], BorderThickness = new(1),
-            CornerRadius = new(12), Padding = new(12), Child = summaryGrid });
-        stack.Children.Add(MakeLabeledControl("Collection Title", titleBox));
-        stack.Children.Add(MakeLabeledControl("Description", descriptionBox));
-
-        if (template.Source == "mdblist")
-        {
-            mdblistUrlBox = new TextBox
-            {
-                Text = template.Mdblist?.Url ?? "",
-                PlaceholderText = "https://mdblist.com/lists/.../json",
-                Style = (Style)Application.Current.Resources["DarkTextBoxStyle"]
-            };
-            stack.Children.Add(BuildMDBListBrowser(titleBox, mdblistUrlBox));
-            stack.Children.Add(MakeLabeledControl("MDBList URL", mdblistUrlBox));
-        }
-        else if (template.Source == "tmdb_list")
-        {
-            mdblistUrlBox = new TextBox { Text = template.TmdbList?.Url ?? "", PlaceholderText = "https://www.themoviedb.org/list/... or list ID", Style = (Style)Application.Current.Resources["DarkTextBoxStyle"] };
-            stack.Children.Add(MakeLabeledControl("Public TMDB list", mdblistUrlBox));
-        }
-
-        stack.Children.Add(MakeLabeledControl("Libraries", new ScrollViewer
-        {
-            MaxHeight = 132,
-            Content = libraryPanel,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto
-        }, "Leave empty to span every library you can see."));
-
-        var displayFilters = new Grid { ColumnSpacing = 16 };
-        displayFilters.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        displayFilters.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var watchPanel = MakeLabeledControl("Watch state", watchFilterBox);
-        var mediaPanel = MakeLabeledControl("Content", mediaFilterBox);
-        Grid.SetColumn(mediaPanel, 1);
-        displayFilters.Children.Add(watchPanel);
-        displayFilters.Children.Add(mediaPanel);
-        stack.Children.Add(displayFilters);
-        stack.Children.Add(new TextBlock
-        {
-            Text = "Uses the active profile's watched state. Shared profiles may see different results.",
-            FontSize = 12,
-            Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
-            TextWrapping = TextWrapping.Wrap
-        });
-        if (template.RequiresProfile) stack.Children.Add(new TextBlock { Text = "This template uses your active profile’s connected Trakt account.", FontSize = 12,
-            TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
-        stack.Children.Add(MakeLabeledControl(
-            "Default Sort",
-            defaultSortBox,
-            "The order viewers get when they open this collection. They can still sort it their own way, and that choice is remembered for them."));
-
-        var posterContent = new StackPanel { Spacing = 10 };
-        if (!string.IsNullOrWhiteSpace(template.PosterPath))
-            posterContent.Children.Add(posterChoices);
-        posterContent.Children.Add(defaultPosterPanel);
-        posterContent.Children.Add(customPosterBox);
-        stack.Children.Add(MakeLabeledControl("Poster", new Border
-        {
-            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(12),
-            Child = posterContent
-        }));
-
-        var twoColumn = new Grid { ColumnSpacing = 16 };
-        twoColumn.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        twoColumn.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        var maxPanel = MakeLabeledControl("Max Items", maxItemsBox);
-        var schedulePanel = MakeLabeledControl("Auto Refresh", scheduleBox);
-        Grid.SetColumn(schedulePanel, 1);
-        twoColumn.Children.Add(maxPanel);
-        twoColumn.Children.Add(schedulePanel);
-        stack.Children.Add(twoColumn);
-        var refreshSummary = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] };
-        void UpdateRefreshSummary() => refreshSummary.Text = $"Up to {(string.IsNullOrWhiteSpace(maxItemsBox.Text) ? "the provider's default number of" : maxItemsBox.Text)} items • {(SelectedComboTag(scheduleBox) is "manual" or null or "" ? "Refresh manually" : "Refresh " + SelectedComboTag(scheduleBox))}";
-        maxItemsBox.TextChanged += (_, _) => UpdateRefreshSummary(); scheduleBox.SelectionChanged += (_, _) => UpdateRefreshSummary(); UpdateRefreshSummary(); stack.Children.Add(refreshSummary);
-        stack.SizeChanged += (_, args) =>
-        {
-            var compact = args.NewSize.Width < 640;
-            foreach (var pair in new[] { (displayFilters, mediaPanel), (twoColumn, schedulePanel) })
-            {
-                if (pair.Item1.RowDefinitions.Count == 0) { pair.Item1.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); pair.Item1.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); pair.Item1.RowSpacing = 12; }
-                Grid.SetColumn(pair.Item2, compact ? 0 : 1); Grid.SetRow(pair.Item2, compact ? 1 : 0); Grid.SetColumnSpan(pair.Item2, compact ? 2 : 1);
-            }
-        };
-
-        stack.Children.Add(new Border
-        {
-            BorderBrush = (Brush)Application.Current.Resources["BorderBrush"],
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(12, 8, 12, 8),
-            Child = new Grid
-            {
-                ColumnDefinitions =
-                {
-                    new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) },
-                    new ColumnDefinition { Width = GridLength.Auto }
-                },
-                Children =
-                {
-                    new StackPanel
-                    {
-                        Spacing = 2,
-                        Children =
-                        {
-                            new TextBlock { Text = "Share with other profiles", FontSize = 13, FontWeight = FontWeights.SemiBold },
-                            new TextBlock
-                            {
-                                Text = "When on, profiles you choose can browse this collection too.",
-                                FontSize = 11,
-                                Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"]
-                            }
-                        }
-                    },
-                    sharedToggle
-                }
-            }
-        });
-        if (stack.Children[^1] is Border shareBorder && shareBorder.Child is Grid shareGrid)
-            Grid.SetColumn(sharedToggle, 1);
-
-        var statusText = new TextBlock
-        {
-            FontSize = 12,
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = (Brush)Application.Current.Resources["ErrorBrush"],
-            Visibility = Visibility.Collapsed
-        };
-        var importButton = new Button
-        {
-            Style = (Style)Application.Current.Resources["AccentButtonStyle"],
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Height = 36, FontSize = 14, Padding = new Thickness(16, 4, 16, 4),
-            Content = "Create Collection"
-        };
-        importButton.Click += async (_, _) =>
-        {
-            importButton.IsEnabled = false;
-            statusText.Visibility = Visibility.Collapsed;
-
-            try
-            {
-                var collection = await ImportTemplateAsync(
-                    template,
-                    titleBox,
-                    descriptionBox,
-                    maxItemsBox,
-                    scheduleBox,
-                    sharedToggle,
-                    mdblistUrlBox,
-                    libraryChecks,
-                    watchFilterBox,
-                    mediaFilterBox,
-                    defaultSortBox,
-                    posterModeBox,
-                    customPosterBox);
-
-                if (collection != null)
-                {
-                    dialog.Hide();
-                    BuildCollectionCards();
-                    return;
-                }
-
-                statusText.Text = ViewModel.TemplateErrorMessage ?? "The collection could not be created.";
-                statusText.Visibility = Visibility.Visible;
-            }
-            finally
-            {
-                importButton.IsEnabled = true;
-            }
-        };
-
-        stack.Children.Add(statusText);
-        var actions = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            Spacing = 8
-        };
-        var cancelButton = new Button
-        {
-            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            Content = "Cancel"
-        };
-        cancelButton.Click += (_, _) => RenderTemplateCards();
-        actions.Children.Add(cancelButton);
-        actions.Children.Add(importButton);
-        stack.Children.Add(actions);
-
-        return new ScrollViewer
-        {
-            Content = stack,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            MaxHeight = 620
-        };
-    }
-
-    private UIElement BuildMDBListBrowser(TextBox titleBox, TextBox urlBox)
-    {
-        var resultsPanel = new StackPanel { Spacing = 6 };
-        var searchBox = new TextBox
-        {
-            PlaceholderText = "Search MDBList",
-            Style = (Style)Application.Current.Resources["DarkTextBoxStyle"]
-        };
-        var searchButton = new Button
-        {
-            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            Content = "Search"
-        };
-        var topButton = new Button
-        {
-            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            Content = "Top lists"
-        };
-        var configuredText = new TextBlock
-        {
-            Text = "MDBList discovery needs an admin API key. You can still paste a list URL below.",
-            FontSize = 12,
-            TextWrapping = TextWrapping.Wrap,
-            Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
-            Visibility = ViewModel.IsMDBListConfigured ? Visibility.Collapsed : Visibility.Visible
-        };
-
-        async Task RefreshResultsAsync(Func<Task> loader)
-        {
-            await loader();
-            configuredText.Visibility = ViewModel.IsMDBListConfigured ? Visibility.Collapsed : Visibility.Visible;
-            resultsPanel.Children.Clear();
-
-            foreach (var list in ViewModel.MdblistResults.Take(8))
-            {
-                resultsPanel.Children.Add(BuildMDBListResultRow(list, titleBox, urlBox));
-            }
-
-            if (ViewModel.MdblistResults.Count == 0 && string.IsNullOrWhiteSpace(ViewModel.TemplateErrorMessage))
-            {
-                resultsPanel.Children.Add(new TextBlock
-                {
-                    Text = "No MDBList results yet.",
-                    FontSize = 12,
-                    Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"]
-                });
-            }
-        }
-
-        var searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
-        searchTimer.Tick += async (_, _) => { searchTimer.Stop(); if (searchBox.Text.Trim().Length >= 2) await RefreshResultsAsync(() => ViewModel.SearchMDBListAsync(searchBox.Text)); };
-        searchBox.TextChanged += (_, _) => { searchTimer.Stop(); if (searchBox.Text.Trim().Length >= 2) searchTimer.Start(); };
-        searchBox.Unloaded += (_, _) => searchTimer.Stop();
-        searchButton.Click += async (_, _) =>
-        {
-            if (!string.IsNullOrWhiteSpace(searchBox.Text))
-                await RefreshResultsAsync(() => ViewModel.SearchMDBListAsync(searchBox.Text));
-        };
-        topButton.Click += async (_, _) =>
-        {
-            searchTimer.Stop(); searchBox.Text = "";
-            await RefreshResultsAsync(ViewModel.LoadTopMDBListAsync);
-        };
-
-        var row = new Grid { ColumnSpacing = 8 };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        Grid.SetColumn(searchBox, 0);
-        Grid.SetColumn(searchButton, 1);
-        Grid.SetColumn(topButton, 2);
-        row.Children.Add(searchBox);
-        row.Children.Add(searchButton);
-        row.Children.Add(topButton);
-
-        return new Border
-        {
-            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(12),
-            Padding = new Thickness(14),
-            Child = new StackPanel
-            {
-                Spacing = 10,
-                Children =
-                {
-                    new TextBlock
-                    {
-                        Text = "MDBList browser",
-                        FontSize = 14,
-                        FontWeight = FontWeights.SemiBold,
-                        Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"]
-                    },
-                    configuredText,
-                    row,
-                    resultsPanel
-                }
-            }
-        };
-    }
-
-    private Border BuildMDBListResultRow(MDBListListSummary list, TextBox titleBox, TextBox urlBox)
-    {
-        var title = string.IsNullOrWhiteSpace(list.UserName)
-            ? list.Name
-            : $"{list.Name} by {list.UserName}";
-        var detail = $"{list.Mediatype} - {list.Items:N0} items - {list.Likes:N0} likes";
-
-        var button = new Button
-        {
-            Content = "Use",
-            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            Padding = new Thickness(12, 5, 12, 5)
-        };
-        button.Click += (_, _) =>
-        {
-            if (!string.IsNullOrWhiteSpace(list.Name))
-                titleBox.Text = list.Name;
-
-            if (!string.IsNullOrWhiteSpace(list.Url))
-                urlBox.Text = list.Url.EndsWith("/json", StringComparison.OrdinalIgnoreCase)
-                    ? list.Url
-                    : $"{list.Url.TrimEnd('/')}/json";
-        };
-
-        var grid = new Grid { ColumnSpacing = 10, Padding = new Thickness(8, 6, 8, 6) };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.Children.Add(new StackPanel
-        {
-            Spacing = 2,
-            Children =
-            {
-                new TextBlock
-                {
-                    Text = title,
-                    FontSize = 13,
-                    FontWeight = FontWeights.SemiBold,
-                    Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"],
-                    TextTrimming = TextTrimming.CharacterEllipsis
-                },
-                new TextBlock
-                {
-                    Text = detail,
-                    FontSize = 11,
-                    Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"],
-                    TextTrimming = TextTrimming.CharacterEllipsis
-                }
-            }
-        });
-        Grid.SetColumn(button, 1);
-        grid.Children.Add(button);
-
-        return new Border
-        {
-            Background = (Brush)Application.Current.Resources["CardBackgroundBrush"],
-            CornerRadius = new CornerRadius(8),
-            Child = grid
-        };
-    }
-
-    private async Task<Collection?> ImportTemplateAsync(
-        CollectionTemplate template,
-        TextBox titleBox,
-        TextBox descriptionBox,
-        TextBox maxItemsBox,
-        ComboBox scheduleBox,
-        ToggleSwitch sharedToggle,
-        TextBox? mdblistUrlBox,
-        IReadOnlyList<CheckBox> libraryChecks,
-        ComboBox watchFilterBox,
-        ComboBox mediaFilterBox,
-        ComboBox defaultSortBox,
-        ComboBox posterModeBox,
-        TextBox customPosterBox)
-    {
-        int? maxItems = null;
-        if (int.TryParse(maxItemsBox.Text, out var parsedMax) && parsedMax > 0)
-            maxItems = parsedMax;
-
-        var schedule = scheduleBox.SelectedItem is ComboBoxItem scheduleItem
-            ? scheduleItem.Tag?.ToString()
-            : "none";
-
-        var draft = new TemplateImportDraft
-        {
-            Template = template,
-            Title = titleBox.Text,
-            Description = descriptionBox.Text,
-            MaxItems = maxItems,
-            SyncSchedule = schedule,
-            IsShared = sharedToggle.IsOn,
-            MDBListUrl = mdblistUrlBox?.Text,
-            TMDBListUrl = template.Source == "tmdb_list" ? mdblistUrlBox?.Text : null,
-            PosterUrl = SelectedComboTag(posterModeBox) == "custom"
-                ? customPosterBox.Text
-                : template.PosterPath,
-            DisplayQueryDefinition = BuildDisplayQueryDefinition(
-                SelectedComboTag(watchFilterBox),
-                SelectedComboTag(mediaFilterBox)),
-            SortConfig = BuildCollectionSortConfig(SelectedComboTag(defaultSortBox)),
-        };
-
-        foreach (var check in libraryChecks)
-        {
-            if (check.IsChecked == true && check.Tag is int libraryId)
-                draft.LibraryIds.Add(libraryId);
-        }
-
-        return await ViewModel.ImportTemplateAsync(draft);
-    }
-
-    private static StackPanel MakeLabeledControl(string label, UIElement control, string? helpText = null)
-    {
-        var stack = new StackPanel { Spacing = 8 };
-        stack.Children.Add(new TextBlock
-        {
-            Text = label,
-            FontSize = 14, Height = 14, LineHeight = 14, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
-            FontWeight = FontWeights.Medium,
-            Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"]
-        });
-        stack.Children.Add(control);
-
-        if (!string.IsNullOrWhiteSpace(helpText))
-        {
-            stack.Children.Add(new TextBlock
-            {
-                Text = helpText,
-                FontSize = 12,
-                TextWrapping = TextWrapping.Wrap,
-                Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"]
-            });
-        }
-
-        return stack;
-    }
-
-    private static ComboBox BuildTaggedComboBox(IEnumerable<(string Value, string Label)> options)
-    {
-        var combo = new ComboBox
-        {
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            Background = (Brush)Application.Current.Resources["SurfaceBrush"],
-            CornerRadius = new CornerRadius(10)
-        };
-        foreach (var option in options)
-            combo.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Value });
-        combo.SelectedIndex = 0;
-        return combo;
-    }
-
-    private static string SelectedComboTag(ComboBox combo)
-        => (combo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "all";
-
-    private static IEnumerable<(string Value, string Label)> CollectionDefaultSortOptions()
-    {
-        yield return ("__source_order", "Collection order (default)");
-        yield return ("title:asc", "Title");
-        yield return ("added_at:desc", "Date Added");
-        yield return ("release_date:desc", "Release Date");
-        yield return ("last_air_date:desc", "Latest Episode Air Date");
-        yield return ("latest_episode_added:desc", "Latest Episode Added");
-        yield return ("year:desc", "Year");
-        yield return ("content_rating:asc", "Content Rating");
-        yield return ("runtime:desc", "Duration");
-        yield return ("rating_imdb:desc", "IMDb Rating");
-        yield return ("rating_tmdb:desc", "TMDB Rating");
-        yield return ("rating_rt_critic:desc", "RT Critic Rating");
-        yield return ("rating_rt_audience:desc", "RT Audience Rating");
-        yield return ("resolution:desc", "Resolution");
-        yield return ("bitrate:desc", "Bitrate");
-        yield return ("progress:desc", "Progress");
-        yield return ("last_watched_at:desc", "Date Viewed");
-        yield return ("play_count:desc", "Plays");
-        yield return ("author:asc", "Author");
-        yield return ("narrator:asc", "Narrator");
-        yield return ("series:asc", "Series");
-    }
-
-    private static Dictionary<string, object> BuildCollectionSortConfig(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value) || value == "__source_order") return [];
-        var parts = value.Split(':', 2, StringSplitOptions.TrimEntries);
-        if (parts.Length == 0 || string.IsNullOrWhiteSpace(parts[0])) return [];
-        var order = parts.Length > 1 && parts[1] is "asc" or "desc"
-            ? parts[1]
-            : parts[0] is "title" or "content_rating" or "author" or "narrator" or "series" ? "asc" : "desc";
-        return new Dictionary<string, object>
-        {
-            ["field"] = parts[0],
-            ["order"] = order,
-        };
-    }
-
-    private static Border BuildBadge(string text)
-        => new()
-        {
-            Background = (Brush)Application.Current.Resources["AccentBackgroundBrush"],
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(7, 2, 7, 2),
-            Child = new TextBlock
-            {
-                Text = text,
-                FontSize = 10,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = (Brush)Application.Current.Resources["AccentBrush"]
-            }
-        };
-
-    private static string FormatMediaKind(string? mediaKind)
-        => mediaKind?.Trim().ToLowerInvariant() switch
-        {
-            "movie" or "movies" => "Movies",
-            "tv" or "series" or "show" or "shows" => "TV",
-            _ => "Movies + TV"
-        };
-
-    private static DisplayQueryDefinition? BuildDisplayQueryDefinition(string watch, string media)
-    {
-        var rules = new List<QueryRule>();
-        if (watch == "watched")
-            rules.Add(new QueryRule { Field = "watched", Op = "is", Value = true });
-        else if (watch == "unwatched")
-            rules.Add(new QueryRule { Field = "watched", Op = "is", Value = false });
-
-        if (media == "movie")
-            rules.Add(new QueryRule { Field = "type", Op = "is", Value = "movie" });
-        else if (media == "series")
-            rules.Add(new QueryRule { Field = "type", Op = "is", Value = "series" });
-
-        return rules.Count == 0
-            ? null
-            : new DisplayQueryDefinition
-            {
-                Match = "all",
-                Groups = [new QueryGroup { Match = "all", Rules = rules }]
-            };
-    }
-
-    private static int GetScheduleIndex(string? schedule)
-    {
-        return MapTemplateSchedule(schedule) switch
-        {
-            "daily" => 1,
-            "weekly" => 2,
-            "monthly" => 3,
-            _ => 0
-        };
-    }
-
-    private static string MapTemplateSchedule(string? schedule)
-    {
-        if (string.IsNullOrWhiteSpace(schedule))
-            return "none";
-
-        var trimmed = schedule.Trim();
-        if (trimmed is "daily" or "weekly" or "monthly" or "none")
-            return trimmed;
-
-        var parts = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != 5)
-            return "daily";
-
-        var dayOfMonth = parts[2];
-        var month = parts[3];
-        var dayOfWeek = parts[4];
-
-        if (dayOfMonth == "1" && month == "*")
-            return "monthly";
-
-        if (dayOfMonth == "*" && month == "*" && dayOfWeek != "*")
-            return "weekly";
-
-        return "daily";
-    }
-
     private void BuildCollectionCards()
     {
         CollectionsGrid.Children.Clear();
-        UpdateEmptyState();
-        AddGroupButton.Visibility = AddGroupEditor.Visibility != Visibility.Visible &&
-            ViewModel.Collections.Count > 0
-            ? Visibility.Visible
-            : Visibility.Collapsed;
-
-        if (ViewModel.Collections.Count > 0)
+        EmptyState.Visibility = AddGroupButton.Visibility = AddGroupEditor.Visibility = Visibility.Collapsed;
+        var profileId = App.Services.GetRequiredService<SiloPlayer.Core.Services.AuthService>().SelectedProfileId;
+        var partition = SiloPlayer.Core.Services.PersonalCollectionOwnership.Split(ViewModel.Collections, profileId, ViewModel.Profiles.ToArray());
+        PersonalCollectionsCount.Text = partition.Own.Count.ToString();
+        PersonalCollectionsNote.Visibility = partition.Own.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        var own = BuildPosterBoard(partition.Own.Select(BuildCollectionCard).Cast<FrameworkElement>().ToArray());
+        if (partition.Own.Count == 0) own.Children.Add(NewCollectionCard());
+        CollectionsGrid.Children.Add(own);
+        SharedCollectionsPanel.Children.Clear();
+        var multiple = ViewModel.Profiles.Count > 1;
+        CollectionsSubtitle.Text = multiple ? "Yours, the ones other profiles share with you, and the server's." : "Yours and the server's.";
+        SharedCollectionsPanel.Visibility = multiple && partition.Shared.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (multiple && partition.Shared.Count > 0)
         {
-            var ungrouped = ViewModel.Collections
-                .Where(item => string.IsNullOrWhiteSpace(item.GroupId))
-                .OrderBy(item => item.SortOrder)
-                .ToList();
-            if (ungrouped.Count > 0)
-                CollectionsGrid.Children.Add(BuildCollectionGroupSection(null, "Ungrouped", ungrouped));
-
-            foreach (var group in ViewModel.Groups.OrderBy(item => item.SortOrder))
+            var sharedHeader = new SiloPlayer.Controls.WrapPanel { HorizontalSpacing = 16, VerticalSpacing = 4 };
+            var sharedTitle = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            sharedTitle.Children.Add(new TextBlock { Text = "Shared with me", FontSize = ActualWidth < 640 ? 20 : 24, FontWeight = FontWeights.SemiBold });
+            sharedTitle.Children.Add(new TextBlock { Text = partition.Shared.Sum(group => group.Collections.Count).ToString(), FontSize = 14, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], VerticalAlignment = VerticalAlignment.Bottom, Margin = new(0, 0, 0, 3) });
+            sharedHeader.Children.Add(sharedTitle);
+            sharedHeader.Children.Add(new TextBlock { Text = "Read-only. Other profiles on this account made these.", FontSize = 13, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], VerticalAlignment = VerticalAlignment.Bottom, Margin = new(0, 0, 0, 3) });
+            SharedCollectionsPanel.Children.Add(sharedHeader);
+            var owners = new SiloPlayer.Controls.WrapPanel { HorizontalSpacing = 14, VerticalSpacing = 20 };
+            foreach (var group in partition.Shared)
             {
-                var items = ViewModel.Collections
-                    .Where(item => string.Equals(item.GroupId, group.Id, StringComparison.Ordinal))
-                    .OrderBy(item => item.SortOrder)
-                    .ToList();
-                CollectionsGrid.Children.Add(BuildCollectionGroupSection(group, group.Name, items));
+                var count = Math.Min(PosterColumnCount, group.Collections.Count);
+                var body = new StackPanel { Spacing = 12, Width = count * PosterWidth + (count - 1) * 14 };
+                var heading = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                heading.Children.Add(new Border { Width = 20, Height = 20, CornerRadius = new(999), Background = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["AccentBrush"]).Color) { Opacity = .2 }, Child = new TextBlock { Text = string.IsNullOrEmpty(group.Name) ? "?" : group.Name[..1].ToUpperInvariant(), FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["AccentBrush"], HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } });
+                var by = new TextBlock { FontSize = 14, VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] };
+                by.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "by " }); by.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = group.Name, FontWeight = FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"] }); heading.Children.Add(by);
+                body.Children.Add(heading);
+                var cards = new SiloPlayer.Controls.WrapPanel { HorizontalSpacing = 14, VerticalSpacing = 20 };
+                foreach (var collection in group.Collections) { var card = BuildCollectionCard(collection); card.Width = PosterWidth; cards.Children.Add(card); }
+                body.Children.Add(cards); owners.Children.Add(body);
             }
+            SharedCollectionsPanel.Children.Add(owners);
         }
-
+        if (ViewModel.Capabilities?.ItemReorder == true && partition.Own.Count > 1)
+            CollectionsGrid.Children.Add(new TextBlock { Text = "Drag a poster to change the order, or focus its handle and press Space, then the arrow keys.", FontSize = 13, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"], TextWrapping = TextWrapping.Wrap, Margin = new(0, 12, 0, 0) });
         BuildServerCollectionRows();
     }
 
-    private Border BuildCollectionCard(Collection collection)
+    private Border BuildLegacyCollectionCard(Collection collection)
     {
+        var currentProfileId = App.Services.GetRequiredService<SiloPlayer.Core.Services.AuthService>().SelectedProfileId;
+        var canManage = !string.IsNullOrWhiteSpace(currentProfileId) &&
+            string.Equals(collection.CreatorProfileId, currentProfileId, StringComparison.Ordinal);
         var badges = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 7 };
         badges.Children.Add(BuildCollectionBadge(FormatCollectionType(collection.CollectionType), true));
         if (collection.IsShared) badges.Children.Add(BuildCollectionBadge("Shared"));
@@ -1286,15 +229,15 @@ public sealed partial class CollectionsPage : Page
             VerticalAlignment = VerticalAlignment.Center,
             Opacity = 0
         };
-        if (CanSyncCollection(collection))
+        if (canManage && CanSyncCollection(collection))
             actions.Children.Add(BuildCollectionActionButton("\uE895", "Sync collection", async () =>
                 await ViewModel.SyncCollectionCommand.ExecuteAsync(collection.Id)));
-        actions.Children.Add(BuildCollectionActionButton("\uE70F", "Edit collection", () =>
+        if (canManage) actions.Children.Add(BuildCollectionActionButton("\uE70F", "Edit collection", () =>
         {
             NavigateToCollectionEditor(collection);
             return Task.CompletedTask;
         }));
-        actions.Children.Add(BuildCollectionActionButton("\uE74D", "Delete collection", async () =>
+        if (canManage) actions.Children.Add(BuildCollectionActionButton("\uE74D", "Delete collection", async () =>
             await ShowDeleteConfirmationAsync(collection)));
 
         var content = new Grid { ColumnSpacing = 12 };
@@ -1383,11 +326,7 @@ public sealed partial class CollectionsPage : Page
 
         // Right-click context menu
         var menuFlyout = new MenuFlyout();
-        var currentProfileId = App.Services
-            .GetRequiredService<SiloPlayer.Core.Services.AuthService>()
-            .SelectedProfileId;
-        var canManage = string.IsNullOrWhiteSpace(currentProfileId) ||
-            string.Equals(collection.CreatorProfileId, currentProfileId, StringComparison.Ordinal);
+        if (!canManage) { card.ContextFlyout = menuFlyout; return card; }
 
         if (canManage && CanSyncCollection(collection))
         {
@@ -1454,8 +393,9 @@ public sealed partial class CollectionsPage : Page
     {
         card.CanDrag = true;
         card.AllowDrop = true;
-        card.DragStarting += (_, args) =>
+        card.DragStarting += (sender, args) =>
         {
+            _ = ViewModel.BeginCollectionDragAsync();
             args.Data.RequestedOperation = DataPackageOperation.Move;
             args.Data.SetText($"{CollectionDragPrefix}{collection.Id}");
         };
@@ -1475,14 +415,7 @@ public sealed partial class CollectionsPage : Page
     private static void NavigateToCollectionEditor(Collection collection)
     {
         var nav = App.Services.GetRequiredService<NavigationService>();
-        if (string.Equals(collection.CollectionType, "smart", StringComparison.OrdinalIgnoreCase))
-        {
-            nav.Navigate<SmartCollectionWizardPage>(new SmartCollectionWizardNavigationArgs(
-                CollectionId: collection.Id));
-            return;
-        }
-
-        nav.Navigate<CollectionEditorPage>(collection.Id);
+        nav.Navigate<CollectionEditorPage>(new CollectionEditorNavigationArgs { CollectionId = collection.Id, PosterUrl = collection.PosterUrl, PosterIsCollage = collection.PosterIsCollage });
     }
 
     private UIElement BuildCollectionGroupSection(CollectionGroup? group, string title, IReadOnlyList<Collection> items)
@@ -1699,7 +632,7 @@ public sealed partial class CollectionsPage : Page
         return button;
     }
 
-    private void BuildServerCollectionRows()
+    private void BuildLegacyServerCollectionRows()
     {
         ServerCollectionsRows.Children.Clear();
         ServerCollectionsSection.Visibility = ViewModel.IsLoadingServerCollections || ViewModel.ServerLibraries.Count > 0
@@ -1771,7 +704,7 @@ public sealed partial class CollectionsPage : Page
             .Navigate<LibraryPage>(new LibraryPage.NavigationArgs(libraryModel, "Collections"));
     }
 
-    private Border BuildServerCollectionCard(ServerCollectionsLibrary library, ServerCollectionSummary collection)
+    private Border BuildLegacyServerCollectionCard(ServerCollectionsLibrary library, ServerCollectionSummary collection)
     {
         var cardWidth = _serverCardSizeClass switch
         {
@@ -2089,7 +1022,7 @@ public sealed partial class CollectionsPage : Page
     }
 
     private static bool CanSyncCollection(Collection collection)
-        => collection.CollectionType is "mdblist" or "tmdb" or "trakt";
+        => collection.CollectionType is "mdblist" or "tmdb" or "tmdb_list" or "trakt";
 
     private static string FormatCollectionType(string type) => type switch
     {
@@ -2117,7 +1050,7 @@ public sealed partial class CollectionsPage : Page
         var content = new StackPanel { Spacing = 10 };
         content.Children.Add(new TextBlock
         {
-            Text = $"Delete collection \"{collection.Name}\"? This action cannot be undone.",
+            Text = collection.IsShared ? "It's removed for you and every profile you share it with. This can't be undone." : "This can't be undone.",
             TextWrapping = TextWrapping.Wrap
         });
         var error = new TextBlock
@@ -2129,7 +1062,7 @@ public sealed partial class CollectionsPage : Page
         content.Children.Add(error);
         var dialog = new ContentDialog
         {
-            Title = "Delete collection",
+            Title = $"Delete \"{collection.Name}\"?",
             Content = content,
             PrimaryButtonText = "Delete",
             PrimaryButtonStyle = (Style)Application.Current.Resources["DestructiveButtonStyle"],

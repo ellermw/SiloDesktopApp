@@ -11,6 +11,29 @@ namespace SiloPlayer.Tests;
 public sealed class ManualCollectionMutationBehaviorTests
 {
     [Fact]
+    public async Task NewManualDraftReordersLocallyAndRetainsThatOrderForRemovalUndo()
+    {
+        using var wire = new Wire(); var client = wire.Client();
+        using var auth = new AuthService(client, new AuthApi(client));
+        var vm = new CollectionEditorViewModel(new CollectionsApi(client), new CatalogApi(client), new SettingsApi(client), auth) { CollectionType = "manual" };
+        await vm.AddManualItemCommand.ExecuteAsync(new MediaItem { ContentId = "first", Title = "First", Type = "movie" });
+        Assert.False(vm.CanReorderManualItems);
+        await vm.AddManualItemCommand.ExecuteAsync(new MediaItem { ContentId = "second", Title = "Second", Type = "series" });
+        Assert.True(vm.CanReorderManualItems);
+        await vm.MoveManualItemAsync(1, 0);
+        Assert.Equal(new[] { "second", "first" }, vm.ManualItems.Select(item => item.MediaItemId));
+        await vm.RemoveManualItemCommand.ExecuteAsync(vm.ManualItems[0]);
+        Assert.False(vm.CanReorderManualItems);
+        await vm.UndoRemoveManualItemCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { "second", "first" }, vm.ManualItems.Select(item => item.MediaItemId));
+        Assert.True(vm.CanReorderManualItems);
+        Assert.Empty(wire.Mutations);
+        vm.IsReadOnly = true;
+        await vm.MoveManualItemAsync(0, 1);
+        Assert.Equal("second", vm.ManualItems[0].MediaItemId);
+    }
+
+    [Fact]
     public async Task ExistingManualAddPersistsImmediatelyAndFailedRemoveKeepsDisplayedItem()
     {
         using var wire = new Wire(); var client = wire.Client();

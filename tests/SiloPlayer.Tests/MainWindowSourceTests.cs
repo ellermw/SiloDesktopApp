@@ -116,7 +116,7 @@ public sealed class MainWindowSourceTests
         Assert.Contains("Text=\"Ctrl K\"", xaml);
         Assert.Contains("FontSize=\"13\"", xaml);
         Assert.Contains("<Setter Property=\"FontSize\" Value=\"18\" />", xaml);
-        Assert.Contains("<Setter Property=\"MinHeight\" Value=\"42\" />", xaml);
+        Assert.Contains("<Setter Property=\"MinHeight\" Value=\"43.5\" />", xaml);
         Assert.Contains("x:Name=\"SidebarBrandHost\" Height=\"96\"", xaml);
         Assert.Contains("Tapped=\"SidebarBrandHost_Tapped\"", xaml);
         Assert.Contains("KeyDown=\"SidebarBrandHost_KeyDown\"", xaml);
@@ -179,7 +179,7 @@ public sealed class MainWindowSourceTests
         Assert.Contains("NavigationView.IsPaneOpenProperty", code);
         Assert.Contains("OnNavViewIsPaneOpenChanged", code);
         Assert.Contains("SynchronizeDesktopPaneState", code);
-        Assert.Contains("if (NavView.IsPaneOpen != _desktopSidebarOpen)", code);
+        Assert.Contains("if (NavView.IsPaneOpen != DesktopSidebarIsOpen)", code);
         Assert.DoesNotContain("_routeWantsCompactPane", code);
         Assert.Contains("ApplyResponsiveShellLayout", code);
         Assert.Contains("_currentWindowWidth < 1024", code);
@@ -188,14 +188,15 @@ public sealed class MainWindowSourceTests
         Assert.Contains("PaneDisplayMode=\"LeftCompact\"", xaml);
         Assert.Contains("var shouldShowDesktopToggle = !isNarrow", code);
         Assert.Contains("NavView.IsPaneToggleButtonVisible = shouldShowDesktopToggle", code);
-        Assert.Contains("private bool _desktopSidebarOpen = true", code);
+        Assert.Contains("private readonly SidebarPresentationState _sidebarPresentation = new()", code);
         Assert.Contains("_settingsService.Load().DesktopSidebarOpen", code);
         Assert.Contains("RememberDesktopSidebarState(!NavView.IsPaneOpen)", code);
         Assert.Contains("settings.DesktopSidebarOpen = isOpen", code);
-        Assert.Contains("if (NavView.IsPaneOpen != _desktopSidebarOpen)", code);
-        Assert.Contains("NavView.IsPaneOpen = _desktopSidebarOpen", code);
+        Assert.Contains("if (NavView.IsPaneOpen != DesktopSidebarIsOpen)", code);
+        Assert.Contains("NavView.IsPaneOpen = DesktopSidebarIsOpen", code);
         Assert.Contains("before revealing it so the wrong state cannot render for a frame", code);
-        Assert.Contains("_desktopSidebarOpen = true", code);
+        Assert.Contains("_sidebarPresentation.Navigate(e.SourcePageType == typeof(ItemDetailPage)", code);
+        Assert.Contains("if (!_sidebarPresentation.Toggle(isOpen)) return", code);
         Assert.Contains("RememberDesktopSidebarState(!NavView.IsPaneOpen)", code);
         Assert.Contains("NavView.PaneOpening += NavView_PaneOpening", code);
         Assert.Contains("private void NavView_PaneOpening", code);

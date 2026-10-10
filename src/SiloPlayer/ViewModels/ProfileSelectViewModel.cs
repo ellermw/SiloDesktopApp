@@ -16,6 +16,7 @@ public partial class ProfileSelectViewModel : ObservableObject
     private readonly SettingsService _settingsService;
     private CancellationTokenSource? _profilesCts;
     private CancellationTokenSource? _activationCts;
+    private int _pinRevision;
 
     public ProfileSelectViewModel(AuthApi authApi, SettingsApi settingsApi, CatalogApi catalogApi, AuthService authService, SettingsService settingsService)
     {
@@ -90,6 +91,7 @@ public partial class ProfileSelectViewModel : ObservableObject
     [RelayCommand]
     private async Task SelectProfileAsync(Profile profile)
     {
+        ++_pinRevision;
         SelectedProfile = profile;
         ErrorMessage = null;
 
@@ -117,36 +119,50 @@ public partial class ProfileSelectViewModel : ObservableObject
 
         IsLoading = true;
         PinErrorMessage = null;
+        var profile = SelectedProfile;
+        var revision = ++_pinRevision;
+        var context = _settingsApi.CaptureContext();
+        bool IsCurrent() => revision == _pinRevision && ReferenceEquals(SelectedProfile, profile)
+            && _settingsApi.IsCurrentContext(context);
 
         try
         {
-            var response = await _authApi.VerifyPinAsync(SelectedProfile.Id, Pin);
-            if (response.Valid)
+            var response = await _authApi.VerifyPinAsync(profile.Id, Pin);
+            if (!IsCurrent()) return;
+            if (response.Valid && !string.IsNullOrWhiteSpace(response.ProfileToken))
             {
-                await ActivateProfileAsync(SelectedProfile, response.ProfileToken);
+                IsPinRequired = false;
+                Pin = "";
+                await ActivateProfileAsync(profile, response.ProfileToken);
             }
             else
             {
                 PinErrorMessage = "Incorrect PIN";
+                Pin = "";
             }
         }
-        catch (ApiException)
+        catch (ApiException ex)
         {
-            PinErrorMessage = "Verification failed";
+            if (!IsCurrent()) return;
+            PinErrorMessage = ProfilePinFeedback.Lockout(ex) ?? "Verification failed";
+            if (ex.StatusCode == 429) Pin = "";
         }
         catch (Exception)
         {
+            if (!IsCurrent()) return;
             PinErrorMessage = "Verification failed";
         }
         finally
         {
-            IsLoading = false;
+            if (revision == _pinRevision) IsLoading = false;
         }
     }
 
     [RelayCommand]
     private void CancelPin()
     {
+        ++_pinRevision;
+        IsLoading = false;
         IsPinRequired = false;
         Pin = "";
         PinErrorMessage = null;
@@ -158,11 +174,14 @@ public partial class ProfileSelectViewModel : ObservableObject
     {
         IsLoading = true;
         ErrorMessage = null;
+        var context = _settingsApi.CaptureContext(); var revision = ++_pinRevision;
+        bool Current() => revision == _pinRevision && _settingsApi.IsCurrentContext(context);
 
         try
         {
             var wasEmpty = Profiles.Count == 0;
             var profile = await _authApi.CreateProfileAsync(request.Name, request.Pin, request.IsChild);
+            if (!Current()) return;
             Profiles.Add(profile);
             if (wasEmpty)
             {
@@ -172,25 +191,35 @@ public partial class ProfileSelectViewModel : ObservableObject
                 }
                 else
                 {
-                    var verification = await _authApi.VerifyPinAsync(profile.Id, request.Pin);
-                    if (verification.Valid)
-                        await ActivateProfileAsync(profile, verification.ProfileToken);
-                    else
-                        ErrorMessage = "Profile created, but PIN verification failed.";
+                    try
+                    {
+                        var verification = await _authApi.VerifyPinAsync(profile.Id, request.Pin);
+                        if (!Current()) return;
+                        if (verification.Valid && !string.IsNullOrWhiteSpace(verification.ProfileToken))
+                            await ActivateProfileAsync(profile, verification.ProfileToken);
+                        else
+                            ErrorMessage = "Profile created, but PIN verification failed.";
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!Current()) return;
+                        ErrorMessage = ProfilePinFeedback.Lockout(ex) is { } lockout
+                            ? $"Profile created. {lockout}" : "Profile created, but PIN verification failed.";
+                    }
                 }
             }
         }
         catch (ApiException ex)
         {
-            ErrorMessage = $"Failed to create profile: {ex.Message}";
+            if (Current()) ErrorMessage = $"Failed to create profile: {ex.Message}";
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Failed to create profile: {ex.Message}";
+            if (Current()) ErrorMessage = $"Failed to create profile: {ex.Message}";
         }
         finally
         {
-            IsLoading = false;
+            if (revision == _pinRevision) IsLoading = false;
         }
     }
 
@@ -307,6 +336,7 @@ public partial class ProfileSelectViewModel : ObservableObject
 
     public void CancelProfileLoad()
     {
+        ++_pinRevision;
         var cts = Interlocked.Exchange(ref _profilesCts, null);
         cts?.Cancel();
         cts?.Dispose();

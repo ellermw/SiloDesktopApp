@@ -5,14 +5,19 @@ public sealed class CollectionsInteractionParitySourceTests
     [Fact]
     public void CollectionAndTemplateCardsUseFocusableOpenActions()
     {
-        var source = Read("src", "SiloPlayer", "Views", "CollectionsPage.xaml.cs")
-            .ReplaceLineEndings("\n");
-
-        Assert.Contains("private Button BuildTemplateCard", source);
-        Assert.Contains("AutomationProperties.SetName(card, $\"Use {template.Title} collection template\")", source);
-        Assert.Contains("AutomationProperties.SetName(openButton, $\"Open {collection.Name}\")", source);
-        Assert.Contains("AutomationProperties.SetName(openButton, $\"Open {collection.Title}\")", source);
-        Assert.DoesNotContain("card.Tapped += (_, _) =>\n        {\n            ShowTemplateConfigInGallery", source);
+        var personal = Read("src", "SiloPlayer", "Views", "CollectionsPage.Posters.cs");
+        var server = Read("src", "SiloPlayer", "Views", "CollectionsPage.Server.cs");
+        var chooser = Read("src", "SiloPlayer", "Controls", "NewCollectionDialog.cs");
+        var pick = Read("src", "SiloPlayer", "Controls", "CollectionPickRow.cs");
+        Assert.Contains("AutomationProperties.SetName(open, \"Open \" + collection.Name)", personal);
+        Assert.Contains("AutomationProperties.SetName(open, \"Open \" + collection.Title)", server);
+        Assert.Contains("AutomationProperties.SetName(more, \"More for \" + collection.Name)", personal);
+        Assert.Contains("more.Click += (_, _) => menu.ShowAt(more)", personal);
+        Assert.DoesNotContain("ConfigurePosterHover(card, more)", personal);
+        Assert.Contains("SelectedKind = kind; Hide();", chooser);
+        Assert.Contains("AutomationProperties.SetName(button, label)", chooser);
+        Assert.Contains("new RadioButton", pick);
+        Assert.DoesNotContain("BuildTemplateCard", personal);
     }
 
     private static string Read(params string[] parts)

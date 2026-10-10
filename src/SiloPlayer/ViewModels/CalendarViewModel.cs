@@ -18,11 +18,14 @@ public partial class CalendarViewModel : ObservableObject
     private readonly CatalogApi _catalogApi;
     private readonly SettingsService _settingsService;
     private CancellationTokenSource? _loadCts;
+    private CancellationTokenSource? _librariesCts;
+    private ApiRequestContext _context;
 
     public CalendarViewModel(CatalogApi catalogApi, SettingsService settingsService)
     {
         _catalogApi = catalogApi;
         _settingsService = settingsService;
+        _context = catalogApi.CaptureContext();
         WeekStart = GetWeekStart(DateTime.Today);
         var stored = settingsService.Load().CalendarPreset;
         Filter = stored == "all" ? "everything" : stored is "following" or "trending" or "everything" ? stored : "following";
@@ -63,9 +66,18 @@ public partial class CalendarViewModel : ObservableObject
     [ObservableProperty]
     private bool _hasLoaded;
 
+    public bool HasCurrentContext => _context == _catalogApi.CaptureContext();
+
     [RelayCommand]
     private async Task LoadAsync()
     {
+        var context = _catalogApi.CaptureContext();
+        if (_context != context)
+        {
+            Interlocked.Exchange(ref _librariesCts, null)?.Cancel();
+            _context = context;
+            Libraries.Clear(); Days.Clear(); HasLoaded = false; IsEmpty = false; LibraryId = null;
+        }
         var owner = new CancellationTokenSource();
         var previous = Interlocked.Exchange(ref _loadCts, owner);
         previous?.Cancel();
@@ -79,24 +91,13 @@ public partial class CalendarViewModel : ObservableObject
         var requestedLibraryId = LibraryId;
 
         IsLoading = true;
+        HasLoaded = false;
         ErrorMessage = null;
         try
         {
-            // Populate libraries once (used to decide whether to show the library filter).
-            if (Libraries.Count == 0)
-            {
-                try
-                {
-                    var libs = await _catalogApi.GetLibrariesAsync(ct);
-                    ct.ThrowIfCancellationRequested();
-                    foreach (var l in libs)
-                        Libraries.Add(l);
-                }
-                catch
-                {
-                    // Non-fatal: the calendar still works without the library filter.
-                }
-            }
+            // The optional filter lookup must not delay the independently
+            // usable week. It owns its own cancellation and context lifetime.
+            if (Libraries.Count == 0 && _librariesCts == null) _ = LoadLibrariesAsync(context);
 
             var requestedWeekRangeLabel = FormatWeekRangeLabel(requestedWeekStart);
             var end = AddDays(requestedWeekStart, 6);
@@ -109,7 +110,7 @@ public partial class CalendarViewModel : ObservableObject
                 GetViewerTimezone(),
                 ct);
             ct.ThrowIfCancellationRequested();
-            if (!ReferenceEquals(Volatile.Read(ref _loadCts), owner)) return;
+            if (!ReferenceEquals(Volatile.Read(ref _loadCts), owner) || context != _catalogApi.CaptureContext()) return;
 
             WeekRangeLabel = requestedWeekRangeLabel;
             Days.Clear();
@@ -125,6 +126,7 @@ public partial class CalendarViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            if (!ReferenceEquals(Volatile.Read(ref _loadCts), owner) || context != _catalogApi.CaptureContext()) return;
             ErrorMessage = $"Failed to load calendar: {ex.Message}";
             IsEmpty = false;
         }
@@ -139,7 +141,25 @@ public partial class CalendarViewModel : ObservableObject
     public void CancelLoad()
     {
         Interlocked.Exchange(ref _loadCts, null)?.Cancel();
+        Interlocked.Exchange(ref _librariesCts, null)?.Cancel();
         IsLoading = false;
+    }
+
+    private async Task LoadLibrariesAsync(ApiRequestContext context)
+    {
+        var owner = new CancellationTokenSource(); _librariesCts = owner;
+        try
+        {
+            var libraries = await _catalogApi.GetLibrariesAsync(owner.Token);
+            if (owner.IsCancellationRequested || !ReferenceEquals(_librariesCts, owner) || context != _catalogApi.CaptureContext()) return;
+            foreach (var library in libraries) Libraries.Add(library);
+        }
+        catch (Exception) { /* Optional lookup; the week remains usable. */ }
+        finally
+        {
+            Interlocked.CompareExchange(ref _librariesCts, null, owner);
+            owner.Dispose();
+        }
     }
 
     [RelayCommand]

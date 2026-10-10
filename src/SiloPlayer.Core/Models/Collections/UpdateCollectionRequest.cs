@@ -11,6 +11,7 @@ public class UpdateCollectionRequest
     public DisplayQueryDefinition? DisplayQueryDefinition { get; set; }
     public Dictionary<string, object>? SortConfig { get; set; }
     public string? SourceUrl { get; set; }
+    public string? SyncSchedule { get; set; }
     public int? MaxItems { get; set; }
     public bool? IncludeInServerCollections { get; set; }
     public string? PosterSourceUrl { get; set; }

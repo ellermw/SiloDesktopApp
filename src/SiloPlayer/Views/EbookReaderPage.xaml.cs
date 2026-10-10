@@ -34,6 +34,7 @@ public sealed partial class EbookReaderPage : Page
     private byte[]? _sourceBytes;
     private MangaChapter? _nextMangaChapter;
     private string _contentId = "";
+    private int? _libraryId;
     private int _fileId;
     private int _chapterIndex;
     private double _chapterFraction;
@@ -141,6 +142,7 @@ public sealed partial class EbookReaderPage : Page
             _ => ""
         };
         var requestedFileId = e.Parameter is EbookReaderNavigation nav ? nav.FileId : null;
+        _libraryId = e.Parameter is EbookReaderNavigation scoped ? scoped.LibraryId : null;
         if (string.IsNullOrWhiteSpace(_contentId))
         {
             ShowFailure("Ebook not found.");
@@ -149,7 +151,7 @@ public sealed partial class EbookReaderPage : Page
 
         try
         {
-            _item = await _catalogApi.GetItemDetailAsync(_contentId, _lifetime.Token);
+            _item = await _catalogApi.GetItemDetailAsync(_contentId, _libraryId, _lifetime.Token);
             if (!string.Equals(_item.Type, "ebook", StringComparison.OrdinalIgnoreCase))
             {
                 ShowFailure("Ebook not found.");
@@ -347,7 +349,7 @@ public sealed partial class EbookReaderPage : Page
         if (string.IsNullOrWhiteSpace(_item?.SeriesId)) return;
         try
         {
-            var series = await _catalogApi.GetItemDetailAsync(_item.SeriesId, _lifetime.Token);
+            var series = await _catalogApi.GetItemDetailAsync(_item.SeriesId, _libraryId, _lifetime.Token);
             var chapters = series.Manga?.Chapters
                 .OrderBy(chapter => MangaVolumeSort(chapter.Volume))
                 .ThenBy(chapter => chapter.ChapterIndex ?? double.MaxValue)
@@ -947,7 +949,7 @@ public sealed partial class EbookReaderPage : Page
     {
         var navigation = App.Services.GetRequiredService<NavigationService>();
         if (!string.IsNullOrWhiteSpace(_item?.SeriesId))
-            navigation.Navigate<ItemDetailPage>(_item.SeriesId);
+            navigation.Navigate<ItemDetailPage>(new ItemDetailNavigationArgs(_item.SeriesId, _libraryId));
         else
             navigation.GoBack();
     }
@@ -1255,7 +1257,7 @@ public sealed partial class EbookReaderPage : Page
         await ReadScrollFractionAsync();
         await SaveProgressAsync();
         App.Services.GetRequiredService<NavigationService>()
-            .Navigate<EbookReaderPage>(new EbookReaderNavigation(_nextMangaChapter.ContentId));
+            .Navigate<EbookReaderPage>(new EbookReaderNavigation(_nextMangaChapter.ContentId, LibraryId: _libraryId));
     }
 
     private async void Download_Click(object sender, RoutedEventArgs e)
@@ -1392,7 +1394,7 @@ public sealed partial class EbookReaderPage : Page
     }
 }
 
-public sealed record EbookReaderNavigation(string ContentId, int? FileId = null);
+public sealed record EbookReaderNavigation(string ContentId, int? FileId = null, int? LibraryId = null);
 internal sealed record ReaderSelection(string Text, string? Cfi = null);
 internal sealed record BookSearchResult(int ChapterIndex, string ChapterTitle, string Snippet, string Query, string? Cfi = null);
 internal sealed record ReaderVoice(string Name, string Uri);

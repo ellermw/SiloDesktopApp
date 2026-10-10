@@ -14,7 +14,7 @@ public sealed partial class PosterCard : UserControl
 {
     private readonly UICustomizationService _uiCustomizationService;
     private bool _observingUICustomization;
-    private CardOverlayGeometry _overlayGeometry = CardOverlayGeometry.ForPoster(178);
+    private CardOverlayGeometry _overlayGeometry = CardOverlayGeometry.ForPoster(176);
 
     public void SetCatalogGridLayout(double width)
     {
@@ -29,10 +29,9 @@ public sealed partial class PosterCard : UserControl
         RootGrid.Width = safeWidth;
         RootGrid.Height = totalHeight;
         PosterRow.Height = new GridLength(posterHeight);
-        FallbackTitle.MaxWidth = Math.Max(72, safeWidth - 32);
 
-        var geometry = CardOverlayGeometry.ForPoster(safeWidth);
-        if (Math.Abs(geometry.Scale - _overlayGeometry.Scale) >= 0.001)
+        var geometry = CardOverlayGeometry.ForPoster(safeWidth - 2, App.Services.GetRequiredService<CardOverlayService>().Preset);
+        if (geometry != _overlayGeometry)
         {
             _overlayGeometry = geometry;
             ApplyOverlayGeometry();
@@ -46,11 +45,12 @@ public sealed partial class PosterCard : UserControl
         foreach (var host in new[] { OverlayTopLeft, OverlayTopRight, OverlayBottomLeft, OverlayBottomRight })
             host.Spacing = _overlayGeometry.StackGap;
 
-        var edge = _overlayGeometry.EdgeInset;
+        // The XAML poster border is a sibling, so include its 1px inner edge.
+        var edge = 1 + _overlayGeometry.EdgeInset;
         OverlayTopLeft.Margin = new Thickness(edge);
         OverlayTopRight.Margin = new Thickness(edge);
-        OverlayBottomLeft.Margin = new Thickness(edge, edge, edge, 40 + edge);
-        OverlayBottomRight.Margin = new Thickness(edge, edge, edge, 40 + edge);
+        OverlayBottomLeft.Margin = new Thickness(edge);
+        OverlayBottomRight.Margin = new Thickness(edge);
     }
 
     private void ApplyActionGeometry(MediaItem? item = null)
@@ -144,6 +144,8 @@ public sealed partial class PosterCard : UserControl
     public PosterCard()
     {
         this.InitializeComponent();
+        PosterImage.ImageOpened += (_, _) => ArtworkFallback.Visibility = Visibility.Collapsed;
+        PosterImage.ImageFailed += (_, _) => { PosterImage.Source = null; PosterImage.Opacity = 0; ArtworkFallback.Visibility = Visibility.Visible; _ = ArtworkFallback.ShowThumbhashAsync(); };
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         ApplyOverlayGeometry();
         ApplyActionGeometry();
@@ -191,6 +193,7 @@ public sealed partial class PosterCard : UserControl
             CancelPlaybackPrefetch();
             PosterImage.Source = null;
             ThumbhashImage.Source = null;
+            ArtworkFallback.Visibility = MediaItem == null ? Visibility.Collapsed : Visibility.Visible;
         };
         // Lazy context menu build — eager MediaItemMenu.Build() on every
         // UpdateContent was the single biggest per-recycle cost. Now we only
@@ -287,8 +290,8 @@ public sealed partial class PosterCard : UserControl
         EpisodeTitleText.Text = "";
         EpisodeTitleText.Visibility = Visibility.Collapsed;
         SubtitleText.Text = "";
-        FallbackTitle.Text = "";
-        FallbackTitle.Visibility = Visibility.Collapsed;
+        ArtworkFallback.Reset(null);
+        ArtworkFallback.Visibility = Visibility.Collapsed;
         PosterImage.Source = null;
         PosterImage.Opacity = 0;
         ThumbhashImage.Source = null;
@@ -343,20 +346,11 @@ public sealed partial class PosterCard : UserControl
         // Thumbhash decoding on UI thread for hundreds of cards causes jank.
         ThumbhashImage.Source = null;
 
-        // Fallback title: when no poster URL is available, show the item's
-        // title centered on the card background (webui: line-clamp-3).
         string? imageUrl = !string.IsNullOrEmpty(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
-        if (SuppressImageLoading || string.IsNullOrEmpty(imageUrl))
-        {
-            FallbackTitle.Text = MediaItemDisplayText.BuildTitle(item);
-            FallbackTitle.Visibility = Visibility.Visible;
-            if (SuppressImageLoading)
-                PosterImage.Source = null;
-        }
-        else
-        {
-            FallbackTitle.Visibility = Visibility.Collapsed;
-        }
+        PosterImage.Source = null;
+        ArtworkFallback.Reset(item.Type, !string.IsNullOrWhiteSpace(item.PosterUrl) ? item.PosterThumbhash : item.BackdropThumbhash);
+        ArtworkFallback.Visibility = SuppressImageLoading || string.IsNullOrEmpty(imageUrl) ? Visibility.Visible : Visibility.Collapsed;
+        if (string.IsNullOrEmpty(imageUrl)) _ = ArtworkFallback.ShowThumbhashAsync();
 
         if (DeferOverlayLoading)
         {
@@ -472,6 +466,8 @@ public sealed partial class PosterCard : UserControl
         OverlayBottomRight.Children.Clear();
 
         var service = App.Services.GetRequiredService<Services.CardOverlayService>();
+        _overlayGeometry = CardOverlayGeometry.ForPoster(Width - 2, service.Preset);
+        ApplyOverlayGeometry();
         if (item.Status is "pending" or "unmatched" or "ambiguous")
         {
             var label = item.Status switch
@@ -585,9 +581,8 @@ public sealed partial class PosterCard : UserControl
         var background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardOverlayBackgroundBrush"];
         var borderBrush = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["CardOverlayBorderBrush"];
         var foreground = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White);
-        var height = 18d;
-        var radius = 9d;
-        var padding = new Thickness(8, 0, 8, 0);
+        var radius = 9999d;
+        var padding = new Thickness(8, 2, 8, 2);
         var fontSize = 10d;
         var borderThickness = new Thickness(1);
 
@@ -597,9 +592,8 @@ public sealed partial class PosterCard : UserControl
                 background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
                 borderBrush = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Transparent);
                 foreground = accent ?? new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(217, 255, 255, 255));
-                height = 14;
-                radius = 2;
-                padding = new Thickness(2, 0, 2, 0);
+                radius = 8;
+                padding = new Thickness(4, 0, 4, 0);
                 fontSize = 9;
                 borderThickness = new Thickness(0);
                 break;
@@ -609,30 +603,27 @@ public sealed partial class PosterCard : UserControl
                 foreground = accent is null
                     ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.Black)
                     : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.Colors.White);
-                radius = 4;
+                radius = 10;
                 borderThickness = new Thickness(0);
                 break;
             case "pill":
                 background = accent is null
                     ? new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(179, 20, 20, 30))
-                    : new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(115, accent.Color.R, accent.Color.G, accent.Color.B));
-                height = 22;
-                radius = 11;
-                padding = new Thickness(10, 0, 10, 0);
+                      : MixOverlayAccent(accent.Color, Microsoft.UI.ColorHelper.FromArgb(179, 20, 20, 30), .20);
+                padding = new Thickness(10, 4, 10, 4);
                 break;
             case "square":
                 background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(204, 0, 0, 0));
                 foreground = accent ?? foreground;
-                radius = 2;
-                padding = new Thickness(6, 0, 6, 0);
+                radius = 8;
+                padding = new Thickness(6, 2, 6, 2);
                 fontSize = 9;
                 borderBrush = accent ?? borderBrush;
                 borderThickness = accent is null ? new Thickness(0) : new Thickness(2, 0, 0, 0);
                 break;
             default:
                 if (accent is not null)
-                    background = new Microsoft.UI.Xaml.Media.SolidColorBrush(
-                        Microsoft.UI.ColorHelper.FromArgb(110, accent.Color.R, accent.Color.G, accent.Color.B));
+                      background = MixOverlayAccent(accent.Color, Microsoft.UI.ColorHelper.FromArgb(153, 0, 0, 0), .28);
                 break;
         }
 
@@ -648,7 +639,9 @@ public sealed partial class PosterCard : UserControl
             content.Children.Add(new FontIcon
             {
                 Glyph = glyph,
-                FontSize = (fontSize + 1) * scale,
+                  FontSize = (preset is "vibrant" or "pill" ? 12 : fontSize + 1) * scale,
+                  Width = (preset is "vibrant" or "pill" ? 12 : fontSize + 1) * scale,
+                  Height = (preset is "vibrant" or "pill" ? 12 : fontSize + 1) * scale,
                 Foreground = foreground,
                 VerticalAlignment = VerticalAlignment.Center,
             });
@@ -657,15 +650,17 @@ public sealed partial class PosterCard : UserControl
         {
             Text = text.ToUpperInvariant(),
             FontSize = fontSize * scale,
-            FontWeight = preset == "vibrant" ? Microsoft.UI.Text.FontWeights.Bold : Microsoft.UI.Text.FontWeights.SemiBold,
-            CharacterSpacing = preset is "minimal" or "square" ? 100 : 60,
+            FontWeight = preset is "vibrant" or "square" ? Microsoft.UI.Text.FontWeights.Bold : Microsoft.UI.Text.FontWeights.SemiBold,
+            CharacterSpacing = preset is "minimal" or "square" ? 100 : 25,
+            LineHeight = fontSize * scale,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+            TextTrimming = TextTrimming.CharacterEllipsis,
             Foreground = foreground,
             VerticalAlignment = VerticalAlignment.Center,
         });
 
         return new Border
         {
-            Height = height * scale,
             Background = background,
             BorderBrush = borderBrush,
             BorderThickness = new Thickness(
@@ -682,6 +677,16 @@ public sealed partial class PosterCard : UserControl
             VerticalAlignment = VerticalAlignment.Center,
             Child = content,
         };
+    }
+
+    private static Microsoft.UI.Xaml.Media.SolidColorBrush MixOverlayAccent(Windows.UI.Color accent, Windows.UI.Color basis, double accentWeight)
+    {
+        var baseWeight = 1 - accentWeight;
+        var alpha = accent.A * accentWeight + basis.A * baseWeight;
+        byte Channel(byte first, byte second) => (byte)Math.Round(
+            (first * accent.A * accentWeight + second * basis.A * baseWeight) / alpha);
+        return new Microsoft.UI.Xaml.Media.SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb((byte)Math.Round(alpha),
+            Channel(accent.R, basis.R), Channel(accent.G, basis.G), Channel(accent.B, basis.B)));
     }
 
     private static Microsoft.UI.Xaml.Media.SolidColorBrush? ParseOverlayColor(string? value)
@@ -758,7 +763,8 @@ public sealed partial class PosterCard : UserControl
                 s_imageLoadLock.Release();
             }
 
-            if (ct.IsCancellationRequested || string.IsNullOrEmpty(diskPath)) return;
+            if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem)) return;
+            if (string.IsNullOrEmpty(diskPath)) { await ArtworkFallback.ShowThumbhashAsync(); return; }
 
             await s_bitmapCreateLock.WaitAsync(ct);
             try
@@ -776,7 +782,7 @@ public sealed partial class PosterCard : UserControl
             finally { s_bitmapCreateLock.Release(); }
         }
         catch (OperationCanceledException) { }
-        catch { }
+        catch { if (!ct.IsCancellationRequested && ReferenceEquals(item, MediaItem)) await ArtworkFallback.ShowThumbhashAsync(); }
     }
 
     private void OnCardTapped(object sender, TappedRoutedEventArgs e)
@@ -805,11 +811,11 @@ public sealed partial class PosterCard : UserControl
             return true;
         }
 
-        App.Services.GetRequiredService<ItemDetailPrefetchCache>()
-            .Prefetch(MediaItem.ContentId);
+        var libraryId = MediaNavigationContext.LibraryId(this);
+        if (!libraryId.HasValue) App.Services.GetRequiredService<ItemDetailPrefetchCache>().Prefetch(MediaItem.ContentId);
 
         App.Services.GetRequiredService<NavigationService>()
-            .Navigate<ItemDetailPage>(MediaItem.ContentId);
+            .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, libraryId));
         return true;
     }
 
@@ -881,7 +887,7 @@ public sealed partial class PosterCard : UserControl
                 if (item.Type is not ("movie" or "episode" or "audiobook"))
                     return;
                 App.Services.GetRequiredService<PlayerService>()
-                    .PrefetchWatchDetail(item.ContentId);
+                    .PrefetchWatchDetail(item.ContentId, MediaNavigationContext.LibraryId(this));
             }
         }
         catch (OperationCanceledException) { }

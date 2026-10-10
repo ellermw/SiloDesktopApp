@@ -2,13 +2,13 @@
 
 Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/silo-server), built with WinUI 3 and libmpv. The project aims to reproduce the Silo WebUI visually and functionally while providing broad native direct-play support for high-bitrate HEVC, HDR, Dolby Vision, lossless audio, and other formats browsers commonly transcode.
 
-> **Project status:** active pre-release development. The application is usable, but WebUI parity and playback hardening are not yet complete. Silo Server is also evolving toward 1.0, so parity is continuously re-audited against its current `main` branch.
+> **Project status:** active pre-release development. Version 1.2.241 completes the current 14-area implementation and specified verification pass, including the owner's final installer check. Ongoing playback and hardware testing continues; Silo Server changes are re-audited against its official public `main` branch.
 
 ## Download
 
-[**Download Silo Desktop Player 1.2.94**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.94/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.2.241**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.241/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `CBC93218ED20CE0B9330897D615BCAA84485D2B3BDDD31A84BE8AE9C6F1789C7`
+SHA-256: `B778381FEAB926E325F041FA62060805E89588A611ED9F05D1213480BE4943F0`
 
 The installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 
@@ -22,31 +22,39 @@ The reader includes Foliate and PDF.js; pinned sources, local adaptations and li
 
 ## Current parity
 
-**1.2.94 includes 94 distinct verified corrections tracked since the October 1 implementation pass.** The patch number follows the [correction ledger](docs/parity/2026-10-01-parity-implementation-ledger.md); it is not a claim that all parity work is complete. This release corrects detail ratings overlapping the description at fractional display scaling and restores the TMDB logo's visible gradient. It includes the earlier 1.2.0 feature batch and the OSD, detail-loading and notification-reconnect playback repairs.
+**1.2.241 includes 241 distinct verified correction groups tracked since the October 1 implementation pass.** The patch number follows the [correction ledger](docs/parity/2026-10-01-parity-implementation-ledger.md). Seventy-six groups were newly reconciled during the final implementation and verification cycle; overlapping refinements count once.
 
-The [14-package plan](docs/parity/2026-10-01-parity-implementation-plan.md) remains the objective. All packages still have final visual/end-to-end acceptance open. The table summarizes released implementation and specific remaining work, rather than treating implementation as completed parity.
+The current [14-area checklist](docs/parity/2026-10-07-easiest-first.md) has completed its specified implementation and finite acceptance pass. The owner installed and approved the final candidate. The [combined verification report](docs/parity/2026-10-09-combined-verification.md) records rendered comparisons, physical interactions, original failures, isolated API checks and deliberate native differences.
 
-| Area | Included in 1.2.94 | Remaining acceptance / known gaps |
+| Area | Included and verified in 1.2.241 | Continuing coverage / native differences |
 |---|---|---|
-| Login, profiles and navigation | Required password change, recovery, native OAuth, pairing, profile/PIN controls, branded navigation and Back | Provider routing, pairing cancellation/stale approval, session restoration, final layout/focus/DPI comparisons |
-| Home, library, search and personal lists | Current sections/cards, scoped library state, typed filters, paging, quick-search keyboard behavior, external Watchlist, notifications and calendar | Latest rating/capability/paging checks and final rendered page/menu comparisons |
-| Requests | Current hub/discovery/Yours, retained poster hover, corrected Back, season choices, request/watchlist actions and download polling | Final hub/detail/season visual comparisons and combined workflow sign-off |
-| Media details, audiobooks and manga | Authoritative series Play targets, theme audio, logos/ratings, repaired first detail navigation/single-season loading, audio controls and manga resume | Populated long-series layout, latest logo/rating pairs and remaining responsive page comparisons |
-| Video controls and native playback | Repaired episode-transition OSD, shared playback preferences, native direct/remux/HLS, session progress and reconnect recovery | Sustained playback confirmation; fullscreen/OSD/seek/resume and HDR/lossless audio on real hardware; historical buffering is not declared fully resolved |
-| Ebook reader | Bundled EPUB/PDF renderers, CFI/page progress, bookmarks, annotations, settings and nested contents | Known reader toolbar/File button sizing mismatch; neighboring controls and final rendered comparisons |
-| Collections and wizard | Typed grouped queries, templates/imports, retained error drafts, preview continuation, conditional writes and artwork retry baseline | Remaining wizard artwork actions and final gallery/editor/wizard comparisons |
-| Settings and integrations | Device manifest/effective values, account sign-in identities, title-art scopes, Home editor/transfer, provider forms, subtitle appearance and theme settings | Complete title-art write/event/stale-authority checks, override/capability states and combined settings acceptance |
-| Watch Party | Room permissions, sync/readiness, reconnect handling, staged selection, invitations, suggestions and member/activity surfaces | Latest responsive sizing/member views, paired visuals and real multi-client acceptance |
-| Conditional dialogs | Metadata/person editing, matching/refresh, images, request seasons and file dialogs | Remaining field/permission/error-state and rendered dialog comparisons |
-| Server administration | Opens the Silo WebUI for server management | Outside the user-only desktop scope; the newly identified admin Seek Previews dialog is tracked separately |
+| Search, personal lists, Notifications, Person and Calendar | Responsive layout, paging, focus/hover, current captions, filters, read-state and recovery behavior | Native focus and raster rounding; Calendar keeps focused headings readable |
+| Typed filters and conditional dialogs | Current scopes/operators/suggestions, lossless rules, measured drawers, metadata/image/match and permission/retry flows | Native virtualized choices and file picker; metadata mutations tested on isolated APIs |
+| Requests | Current hub/status/detail/season presentation, artwork retention, Back and exact season submission | Production requests were not submitted during verification |
+| Collections | Current boards/chooser/manual/Smart/Synced forms, source/artwork/draft preservation, preview and actual mouse/keyboard ordering | Production create/share/delete/sync/reorder writes were exercised through isolated APIs |
+| Home and Library | Current heroes/cards/loading states, refresh ownership, scoped browsing, responsive geometry and bounded grids | Saved poster sizing remains a user preference |
+| Media details, audiobooks and manga | Initial episode captions, measured navigation, recommendations, media actions/tools and native audio/reader workflows | Native playback and reader surfaces; no production metadata jobs submitted |
+| Shared controls and shell | Theme/icon/typography/artwork rules, menus, dialog action order, hover and responsive layout | Windows titlebar, native compositor effects and raster rounding |
+| Authentication, profiles and Settings | Login/PIN/network/provider lifecycle, devices/sessions, responsive settings, Home rows and guarded saves | Native pairing differs from browser fallback; no production account changes |
+| Watch Party | Selection/resume/risk/permission states, bounded picker and two real local WebSocket clients | Two physical remote viewers remain a separate live test |
+| Playback, Shuffle, multipart, reader and subtitles | Published direct/remux/recovery checks, scoped sequencing and subtitle ownership; live 1080p/direct 4K, natural autoplay, successor OSD/fullscreen/Escape/Exit | Broader HDR/audio/display hardware and real provider-job coverage continue; historical midstream buffering is not declared eliminated |
+| Server administration | Opens the Silo WebUI for management | Outside the user-only desktop scope |
 
-Release verification: **1,399 Release tests**, **15 checks against the actual published playback assembly**, **32 native rating-layout scenarios at 100%/150% scaling**, and native detail navigation/Back, delayed single-season loading and title-art/ordered-rating checks passed for 1.2.94. These checks cover the reproduced failures without certifying every page or every live playback condition. See the [release verification record](docs/releases/1.2.94.md).
+Release verification: **1,605 unit tests**, **51 unique exact-payload native cases** and **15 published playback-service checks** passed. The initial native Requests fixture failure and its stronger natural-navigation rerun remain documented. The application Release publish completed with no warnings/errors; the installer contains the frozen verified payload. See the [release record](docs/releases/1.2.241.md).
 
-The official public Silo Server reference last fetched for this checkpoint on October 3 is `478afa5257332df52f10650cd00b88596562d4c9`. Original October 1 visual acceptance is tied to `8e2e840474a085c6df6571a5a2850f7eb996810c`; the [account](docs/parity/2026-10-03-account-finalization.md), [browse](docs/parity/2026-10-03-browse-finalization.md) and [media](docs/parity/2026-10-03-media-finalization.md) reports distinguish later obligations and remaining evidence. These references do not establish the production server revision.
+The official public Silo Server reference fetched for the final pass is [1a7a3970a9928efb0157460c10888832a8a74eb1](https://github.com/Silo-Server/silo-server/commit/1a7a3970a9928efb0157460c10888832a8a74eb1). This identifies the source comparison, not the production server revision. Future upstream changes and broader hardware testing remain ongoing.
 
-The [October 1 audit](docs/parity/2026-10-01-user-visual-functional-audit.md), [implementation ledger](docs/parity/2026-10-01-parity-implementation-ledger.md), and [September 30 queue record](docs/parity/2026-09-30-queue-progress.md) retain detailed scope and verification. Playback stability is the immediate priority while the reconnect repair is being tested.
 
 ## Latest release
+
+### 1.2.241 — completed checklist verification and episode-end repair
+
+- Finalize the current 14-area parity pass across search, personal lists, Calendar, filters, Requests, Collections, Home/Library, media details, shared controls, authentication, Settings, Watch Party and playback/reader behavior.
+- Correct initial episode caption visibility, empty navigation space, responsive grids, clipped toolbar labels, recommendation carousels, notification presentation, filter choices and Settings icons.
+- Preserve Collection drafts, source configuration and artwork; verify actual keyboard and mouse reordering. Add current permission-gated media tools with paged, virtualized file selection.
+- Accept healthy episode endings despite rounded catalog durations, avoiding the reproduced backward-seek recovery loop. Display next-episode runtime in the correct units. Live natural autoplay retained OSD, pause, fullscreen, Escape and Exit.
+- Verify 1,605 unit tests, 51 unique native cases and 15 published playback checks. The owner installed and approved this exact installer on October 10. See the [release record](docs/releases/1.2.241.md) and [combined verification](docs/parity/2026-10-09-combined-verification.md).
+- Broad hardware/HDR coverage and the separate intermittent midstream-buffering investigation remain ongoing.
 
 ### 1.2.94 — detail rating alignment and visible TMDB mark
 

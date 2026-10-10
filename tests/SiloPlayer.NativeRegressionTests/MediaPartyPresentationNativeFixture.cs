@@ -73,6 +73,14 @@ internal static class MediaPartyPresentationNativeFixture
                         hub.UpdateLayout();
                         var raster = new Microsoft.UI.Xaml.Media.Imaging.RenderTargetBitmap();
                         await raster.RenderAsync(glow);
+                        // The first offscreen window can finish layout before the
+                        // compositor exposes a surface. Wait only for that surface;
+                        // a sized but transparent render remains an actual failure.
+                        for (var attempt = 0; attempt < 10 && (raster.PixelWidth == 0 || raster.PixelHeight == 0); attempt++)
+                        {
+                            await Task.Delay(100);
+                            await raster.RenderAsync(glow);
+                        }
                         var pixels = System.Runtime.InteropServices.WindowsRuntime.WindowsRuntimeBufferExtensions.ToArray(await raster.GetPixelsAsync());
                         var painted = 0; for (var index = 3; index < pixels.Length; index += 4) if (pixels[index] > 0) painted++;
                         Program.Log($"TRACE: actual glow painted alpha pixels {width}: {raster.PixelWidth}x{raster.PixelHeight}; nonzero={painted}.");

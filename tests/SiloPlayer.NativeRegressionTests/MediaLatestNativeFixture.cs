@@ -35,6 +35,34 @@ internal static class MediaLatestNativeFixture
                 var scale = owner.XamlRoot.RasterizationScale;
                 window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)(1280 * scale), (int)(720 * scale)));
                 var page = new ItemDetailPage { Width = 1280, Height = 720 }; owner.Children.Add(page); await Task.Delay(100);
+                if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") == "similar-layout")
+                {
+                    page.ViewModel.Item = new() { ContentId = "similar-source", Type = "movie", Title = "Recommendation source" };
+                    page.GetType().GetField("_currentContentId", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(page, "similar-source");
+                    await (Task)Call(page, "LoadSimilarItemsAsync")!;
+                    var panel = page.FindName("SimilarPanel") as StackPanel;
+                    var scroll = page.FindName("SimilarScroller") as ScrollViewer;
+                    if (panel == null || scroll == null) throw new InvalidOperationException("More Like This must use one horizontal carousel rather than a wrapping poster grid.");
+                    if (panel.Children.Count != 12) differences.Add("Recommendation rail must retain exactly twelve cards.");
+                    foreach (var width in new[] { 460d, 900d, 1280d, 2566d, 3440d, 3840d })
+                    {
+                        window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)(width * scale), (int)(720 * scale)));
+                        page.Width = width; Call(page, "UpdateResponsiveLayout", width); await Task.Delay(100); page.UpdateLayout();
+                        var first = (FrameworkElement)panel.Children[0];
+                        var last = (FrameworkElement)panel.Children[^1];
+                        var firstBounds = Bounds(first, panel); var lastBounds = Bounds(last, panel);
+                        Program.Log($"TRACE: similar/{width}: first={firstBounds}, last={lastBounds}, scrollable={scroll.ScrollableWidth}.");
+                        if (Math.Abs(firstBounds.Y - lastBounds.Y) > 1 || first.ActualWidth < 120 || first.ActualWidth > 220 || panel.Spacing != 20)
+                            differences.Add($"Recommendation rail at {width} must retain bounded cards and a single horizontal row with twenty-pixel gaps.");
+                        if (Descendants(first).OfType<TextBlock>().Any(text => text.Text is "2026" or "SERIES" or "1080p"))
+                            differences.Add("Recommendation card must not inherit catalog metadata or overlay badges.");
+                        if (width == 460 && scroll.ScrollableWidth <= 0) differences.Add("Narrow recommendation rail must remain horizontally scrollable.");
+                        await MediaParityNativeFixture.CaptureAsync(owner, $"similar-carousel-{width}.png");
+                    }
+                    if (differences.Count > 0) throw new InvalidOperationException(string.Join("\n", differences));
+                    Program.Log("PASS: SIMILAR_CAROUSEL_COMPLETED bounded twelve-card horizontal recommendation rail at six widths.");
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") == "ratings-layout")
                 {
                     await CheckRatingsLayoutAsync(window, owner, page, differences);
@@ -57,6 +85,8 @@ internal static class MediaLatestNativeFixture
                 if (((Image)page.FindName("HeroLogoImage")).Source is not BitmapImage || ((TextBlock)page.FindName("TitleText")).Visibility != Visibility.Collapsed
                     || Microsoft.UI.Xaml.Automation.AutomationProperties.GetName((Image)page.FindName("HeroLogoImage")) != "Logo title")
                     differences.Add("Latest true title-art must decode the actual logo and hide plain text.");
+                page.UpdateLayout();
+                await MediaParityNativeFixture.CaptureAsync(owner, "media-latest-decoded-logo-1280.png");
                 handler.Missing = true;
                 page.ViewModel.Item = new MediaItemDetail { Type = "movie", ContentId = "missing-art", Title = "Default title", LogoUrl = "https://media-latest-fixture.invalid/logo-default" };
                 Call(page, "UpdateUI"); await WaitAsync(() => ((Image)page.FindName("HeroLogoImage")).Source != null);
@@ -98,6 +128,7 @@ internal static class MediaLatestNativeFixture
                 var eyebrow = page.FindName("HeroEyebrow") as FrameworkElement;
                 if (eyebrow == null || ((TextBlock)page.FindName("HeroContextText")).Text != "MOVIE" || ((FrameworkElement)page.FindName("HeroEyebrowDot")).Visibility != Visibility.Visible)
                     differences.Add("Latest plain type/studio must share uppercase eyebrow with a conditional3px dot.");
+                await MediaParityNativeFixture.CaptureAsync(owner, "media-latest-ordered-ratings-1280.png");
                 page.ViewModel.Item = new MediaItemDetail { Type = "movie", ContentId = "empty-ratings", Title = "No ratings", RatingImdb = 9, RatingRtCritic = 95 };
                 Call(page, "UpdateUI");
                 if (scores.Visibility != Visibility.Collapsed) differences.Add("Latest absent ordered ratings must hide scores even when old scalar fields are populated.");
@@ -204,18 +235,28 @@ internal static class MediaLatestNativeFixture
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32((int)Math.Round(width * scale), (int)Math.Round(height * scale))); await Task.Delay(100);
             if (Math.Abs(owner.XamlRoot.Size.Width - width) > 2 || Math.Abs(owner.XamlRoot.Size.Height - height) > 2) throw new InvalidOperationException("Latest rail requires the true requested native client bounds.");
             var page = new ItemDetailPage { Width = width, Height = height }; owner.Children.Add(page); await Task.Delay(75);
-            page.ViewModel.Item = new MediaItemDetail { Type = "series", ContentId = "rail", Title = "Rail fixture", Overview = string.Concat(Enumerable.Repeat("Long natural hero copy. ", 50)) };
+            page.ViewModel.Seasons.Clear(); page.ViewModel.Episodes.Clear();
+            page.ViewModel.Item = new MediaItemDetail { Type = "series", ContentId = "rail", Title = "Rail fixture", Overview = string.Concat(Enumerable.Repeat("Long natural hero copy. ", 200)) };
             page.ViewModel.IsSeries = true;
             for (var index=1; index <= (single ? 1 : 5); index++) page.ViewModel.Seasons.Add(new Season { ContentId=$"season-{index}", SeasonNumber=index, Title=$"Season {index}" });
-            Call(page, "UpdateUI"); Call(page, "BuildSeasonCards"); Call(page, "UpdateResponsiveLayout", width);
+            if (single) for (var number = 1; number <= 3; number++) page.ViewModel.Episodes.Add(new Episode { ContentId = $"episode-{number}", EpisodeNumber = number, Title = $"Episode {number}" });
+            Call(page, "UpdateUI"); Call(page, "BuildSeasonCards"); Call(page, "BuildEpisodeRows");
+            ((FrameworkElement)page.FindName("SeasonsSection")).Visibility = single ? Visibility.Collapsed : Visibility.Visible;
+            ((FrameworkElement)page.FindName("SeasonsLoadingSkeleton")).Visibility = Visibility.Collapsed;
+            ((FrameworkElement)page.FindName("SeasonsScrollViewer")).Visibility = Visibility.Visible;
+            Call(page.FindName("OverviewText"), "Toggle");
+            Call(page, "UpdateResponsiveLayout", width);
             page.UpdateLayout(); await Task.Delay(100);
             var viewport = Field<Grid>(page,"_tvViewport"); var navigation = Field<ScrollViewer>(page,"_tvNavigation"); var poster = (FrameworkElement)page.FindName("HeroPosterContainer");
-            var natural = !single && height >= 651;
+            var natural = height >= 651;
             Program.Log($"TRACE: latest rail {width}x{height}/single={single}: declared={viewport.Height}; min={viewport.MinHeight}; actual={viewport.ActualHeight}; nav={navigation.ActualHeight}; scroll={navigation.VerticalScrollMode}; poster={poster.ActualHeight}.");
             if (natural ? !double.IsNaN(viewport.Height) || viewport.MinHeight != height || navigation.VerticalScrollMode != ScrollMode.Disabled || Math.Abs(poster.ActualHeight-330)>2
                 : double.IsNaN(viewport.Height) || navigation.VerticalScrollMode != ScrollMode.Enabled)
-                differences.Add($"{width}x{height}/single={single}: latest multi-season rail must grow naturally only above650px, while episode grid and short desktop remain bounded.");
+                differences.Add($"{width}x{height}/single={single}: current series and season navigation must grow naturally above650px; short desktop remains bounded.");
             if (natural && navigation.ActualHeight < navigation.DesiredSize.Height-2) differences.Add("Latest natural season rail cannot clip its measured content.");
+            var cards = single ? ((Grid)page.FindName("EpisodesPanel")).Children.Count : ((StackPanel)page.FindName("SeasonsPanel")).Children.Count;
+            if (cards != (single ? 3 : 5) || navigation.ActualHeight <= 24) differences.Add("Current natural-flow acceptance must expose the real populated navigation, not hidden24px padding.");
+            if (natural && viewport.ActualHeight <= height + 2) differences.Add("Expanded long copy plus populated navigation must actually grow past the tall desktop viewport.");
             await MediaParityNativeFixture.CaptureAsync(owner,$"media-latest-rail-{width}x{height}-{(single ? "single" : "multi")}.png"); owner.Children.Remove(page);
         }
     }
@@ -225,7 +266,7 @@ internal static class MediaLatestNativeFixture
     private static IEnumerable<DependencyObject> Descendants(DependencyObject root) { for(var i=0;i<VisualTreeHelper.GetChildrenCount(root);i++){ var child=VisualTreeHelper.GetChild(root,i); yield return child; foreach(var nested in Descendants(child))yield return nested; } }
     private sealed class LocalServices(IServiceProvider original,SiloApiClient client,HttpClient http,ImageService images):IServiceProvider
     {
-        public object? GetService(Type type) => type==typeof(SiloApiClient)?client:type==typeof(SettingsApi)?new SettingsApi(client):type==typeof(CatalogApi)?new CatalogApi(client):type==typeof(HttpClient)?http:type==typeof(ImageService)?images:type==typeof(WatchTogetherRoomViewModel)?new WatchTogetherRoomViewModel(new PlaybackApi(client),client):original.GetService(type);
+        public object? GetService(Type type) => type==typeof(ItemDetailViewModel)?new ItemDetailViewModel(new CatalogApi(client),new ItemDetailPrefetchCache((id,ct)=>new CatalogApi(client).GetItemDetailAsync(id,ct))):type==typeof(SiloApiClient)?client:type==typeof(SettingsApi)?new SettingsApi(client):type==typeof(CatalogApi)?new CatalogApi(client):type==typeof(HttpClient)?http:type==typeof(ImageService)?images:type==typeof(WatchTogetherRoomViewModel)?new WatchTogetherRoomViewModel(new PlaybackApi(client),client):original.GetService(type);
     }
     private sealed class Handler:HttpMessageHandler
     {
@@ -235,6 +276,8 @@ internal static class MediaLatestNativeFixture
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
             var path=request.RequestUri!.AbsolutePath;
+              if(path.StartsWith("/api/v2/recommendations/similar/")) return Json(JsonSerializer.Serialize(new { items=Enumerable.Range(0,15).Select(i=>new {content_id="recommendation-"+i,type="movie",title="Recommendation "+i,year=2026,poster_url="https://media-latest-fixture.invalid/logo-recommendation",play_content_id="play-"+i}) }));
+              if(path.StartsWith("/api/v2/catalog/items/recommendation-")) return Json(JsonSerializer.Serialize(new {content_id=path.Split('/')[^1],type="movie",title="Recommendation",year=2026,poster_url="https://media-latest-fixture.invalid/logo-recommendation",play_content_id="play-fixture"}));
             if(path.StartsWith("/logo-")){ Interlocked.Increment(ref LogoRequests); return new(HttpStatusCode.OK){Content=new ByteArrayContent(await File.ReadAllBytesAsync(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!,"audiobook-cover.png"),ct))}; }
             if(path=="/api/v2/settings/values/effective") { SettingRequests++; if(Fail) return new(HttpStatusCode.InternalServerError){ Content=new StringContent("{\"error\":\"fixture_failure\",\"message\":\"setting failed\"}",Encoding.UTF8,"application/json") }; var value=HoldSetting?await SettingRelease.Task:Value; return Json(Missing?"{\"items\":[]}":JsonSerializer.Serialize(new {items=new[]{new{key="ui.title_art",value,source="profile"}}})); }
             if(path=="/api/v2/catalog/items/ordered-detail") {DetailRequests++;return Json(DetailJson);}

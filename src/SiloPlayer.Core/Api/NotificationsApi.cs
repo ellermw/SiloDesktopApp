@@ -6,6 +6,7 @@ namespace SiloPlayer.Core.Api;
 
 public sealed class NotificationsApi(SiloApiClient client)
 {
+    public ApiRequestContext RequestContext => client.CaptureContext();
     private readonly ConcurrentDictionary<string, (ApiRequestContext Context, string ETag)> _webhookRevisions = new();
     private readonly ConcurrentDictionary<(ApiRequestContext Context, string Email), string> _emailIntents = new();
     private (ApiRequestContext Context, string Cutoff)? _readCutoff;
@@ -28,7 +29,10 @@ public sealed class NotificationsApi(SiloApiClient client)
             $"/api/v2/notifications?{string.Join("&", qs)}",
             ct);
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Notification context changed.", ct);
-        _readCutoff = string.IsNullOrEmpty(result.ReadCutoff) ? null : (context, result.ReadCutoff);
+        // Mark all applies through the first displayed page's cutoff. An older
+        // continuation must not replace it with an earlier boundary.
+        if (string.IsNullOrWhiteSpace(before))
+            _readCutoff = string.IsNullOrEmpty(result.ReadCutoff) ? null : (context, result.ReadCutoff);
         return result;
     }
 
@@ -41,10 +45,18 @@ public sealed class NotificationsApi(SiloApiClient client)
     }
 
     public async Task<int> GetUnreadCountAsync(CancellationToken ct = default)
-        => (await client.GetAsync<NotificationUnreadCountResponse>("/api/v2/notifications/unread-count", ct)).Count;
+        => (await GetCurrentAsync<NotificationUnreadCountResponse>("/api/v2/notifications/unread-count", ct)).Count;
 
     public Task<NotificationPreferences> GetPreferencesAsync(CancellationToken ct = default)
-        => client.GetAsync<NotificationPreferences>("/api/v2/notifications/preferences", ct);
+        => GetCurrentAsync<NotificationPreferences>("/api/v2/notifications/preferences", ct);
+
+    private async Task<T> GetCurrentAsync<T>(string path, CancellationToken ct)
+    {
+        var context = RequestContext;
+        var result = await client.GetAsync<T>(path, ct);
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Notification context changed.", ct);
+        return result;
+    }
 
     public Task<NotificationPreferences> UpdatePreferencesAsync(NotificationPreferences preferences, CancellationToken ct = default)
         => client.PutAsync<NotificationPreferences>("/api/v2/notifications/preferences", new Dictionary<string, object?>

@@ -259,19 +259,72 @@
                         </ItemsRepeater.ItemTemplate>
                     </ItemsRepeater>
 
-                    <StackPanel x:Name="DrillDownPanel" Spacing="12" Visibility="Collapsed">
+                    <Grid x:Name="DrillDownPanel" Visibility="Collapsed" Background="{StaticResource SurfaceBrush}" CornerRadius="12">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid x:Name="PickerSeriesHeader">
+                            <Image x:Name="PickerSeriesBackdrop" Stretch="UniformToFill" Opacity="0" ImageOpened="PickerImage_Opened" />
+                            <Grid IsHitTestVisible="False">
+                                <Grid.Background>
+                                    <LinearGradientBrush StartPoint="0,1" EndPoint="0,0">
+                                        <GradientStop Color="{StaticResource SurfaceColor}" Offset="0" />
+                                        <GradientStop Color="{StaticResource SurfaceColor}" Offset="0.35" />
+                                        <GradientStop Color="Transparent" Offset="1" />
+                                    </LinearGradientBrush>
+                                </Grid.Background>
+                            </Grid>
+                            <Grid x:Name="PickerSeriesHeaderContent" Padding="16,32,16,16" ColumnSpacing="16">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Border x:Name="PickerSeriesPosterBorder" Width="64" Height="96" CornerRadius="8" Background="{StaticResource SurfaceRaisedBrush}">
+                                    <Image x:Name="PickerSeriesPoster" Stretch="UniformToFill" Opacity="0" ImageOpened="PickerImage_Opened" />
+                                </Border>
+                                <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Bottom">
+                                    <TextBlock Text="CANDIDATE · SERIES" FontSize="11" FontWeight="SemiBold" CharacterSpacing="180" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBlock x:Name="PickerSeriesTitle" FontSize="16" FontWeight="SemiBold" MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock x:Name="PickerSeriesMeta" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                    <TextBlock x:Name="PickerSeriesOverview" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
+                                </StackPanel>
+                            </Grid>
+                            <Button Content="×" Click="CloseSeriesPicker_Click" Style="{StaticResource GhostButtonStyle}" Width="28" Height="28" Padding="0" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8" AutomationProperties.Name="Close series" />
+                        </Grid>
+                        <Grid x:Name="PickerSeriesBody" Grid.Row="1">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <ScrollViewer x:Name="PickerSeasonScroll" Grid.ColumnSpan="2" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Padding="12,8">
+                                <StackPanel x:Name="PickerSeasons" Orientation="Horizontal" Spacing="6" />
+                            </ScrollViewer>
+                            <Grid x:Name="PickerEpisodeArea" Grid.Row="1" Grid.ColumnSpan="2">
+                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                                <Grid Padding="16,8" ColumnSpacing="12" BorderThickness="0,1,0,1" BorderBrush="{StaticResource BorderBrush}">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock x:Name="DrillDownTitle" FontSize="11" FontWeight="SemiBold" CharacterSpacing="180" Foreground="{StaticResource SecondaryTextBrush}" />
+                                    <TextBlock x:Name="PickerDotsLegend" Grid.Column="1" Text="● Watched   ◐ In progress   ○ Unseen" FontSize="10" Foreground="{StaticResource SecondaryTextBrush}" />
+                                </Grid>
+                                <ScrollViewer x:Name="PickerEpisodeScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="8">
+                                    <StackPanel>
                         <Button x:Name="DrillDownBackBtn" Click="DrillDownBack_Click"
-                                Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left">
+                                Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Left" Visibility="Collapsed">
                             <StackPanel Orientation="Horizontal" Spacing="6">
                                 <FontIcon Glyph="&#xE76B;" FontSize="12" />
                                 <TextBlock x:Name="DrillDownBackText" Text="Back to results" FontSize="13" />
                             </StackPanel>
                         </Button>
                         <StackPanel Spacing="3">
-                            <TextBlock x:Name="DrillDownTitle" FontSize="18" FontWeight="SemiBold" />
                             <TextBlock x:Name="DrillDownSubtitle" FontSize="13"
                                        Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" />
                         </StackPanel>
+                        <StackPanel x:Name="DrillDownLoading" Visibility="Collapsed" Spacing="4">
+                            <Border Height="80" CornerRadius="8" Background="{StaticResource SurfaceBrush}" />
+                            <Border Height="80" CornerRadius="8" Background="{StaticResource SurfaceBrush}" />
+                            <Border Height="80" CornerRadius="8" Background="{StaticResource SurfaceBrush}" />
+                            <Border Height="80" CornerRadius="8" Background="{StaticResource SurfaceBrush}" />
+                            <Border Height="80" CornerRadius="8" Background="{StaticResource SurfaceBrush}" />
+                        </StackPanel>
+                        <TextBlock x:Name="DrillDownEmptyText" Visibility="Collapsed" Text="No playable episodes in this season."
+                                   Margin="8,32" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                         <ItemsRepeater x:Name="DrillDownItems">
                             <ItemsRepeater.Layout>
                                 <UniformGridLayout MinItemWidth="220" MinItemHeight="76"
@@ -279,27 +332,58 @@
                             </ItemsRepeater.Layout>
                             <ItemsRepeater.ItemTemplate>
                                 <DataTemplate x:DataType="models:MediaItem">
-                                    <Button Tag="{x:Bind}" Click="DrillDownResult_Click" Padding="16,12"
-                                            Style="{StaticResource OutlineButtonStyle}" HorizontalContentAlignment="Stretch">
+                                    <Border Tag="{x:Bind}" Loaded="EpisodeRow_Loaded" SizeChanged="EpisodeRow_SizeChanged" Padding="8" CornerRadius="8" BorderThickness="1" BorderBrush="Transparent">
                                         <Grid ColumnSpacing="12">
                                             <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
                                                 <ColumnDefinition Width="*" />
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
+                                            <Border Tag="{x:Bind}" Loaded="EpisodeStill_Loaded" Tapped="EpisodeStill_Tapped" Width="112" Height="63" Background="{StaticResource SurfaceRaisedBrush}" CornerRadius="8" Visibility="Collapsed">
+                                                <Image Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" Opacity="0" ImageOpened="PickerImage_Opened" />
+                                            </Border>
+                                            <Button Grid.Column="1" Tag="{x:Bind}" Click="DrillDownResult_Click" Padding="0" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch" HorizontalAlignment="Stretch" VerticalContentAlignment="Top">
                                             <StackPanel Spacing="3">
-                                                <TextBlock Text="{x:Bind Title}" FontSize="14" FontWeight="SemiBold"
-                                                           TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Text="{x:Bind Overview}" FontSize="11" MaxLines="2"
+                                                <TextBlock Tag="{x:Bind}" Loaded="EpisodeNextUp_Loaded" FontSize="10" FontWeight="SemiBold" CharacterSpacing="160" Foreground="{StaticResource SuccessBrush}" Visibility="Collapsed" />
+                                                <Grid ColumnSpacing="8">
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Tag="{x:Bind}" Loaded="EpisodeNumber_Loaded" FontSize="12" FontWeight="SemiBold"
+                                                               Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" />
+                                                    <TextBlock Grid.Column="1" Text="{x:Bind Title}" FontSize="14" FontWeight="Medium"
+                                                               TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Grid.Column="2" Tag="{x:Bind}" Loaded="EpisodeRuntime_Loaded" FontSize="12"
+                                                               Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" />
+                                                </Grid>
+                                                <TextBlock Text="{x:Bind Overview}" FontSize="12" MaxLines="2" TextWrapping="Wrap"
                                                            Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
                                                 <StackPanel Orientation="Horizontal" Spacing="5" Tag="{x:Bind ContentId}" Loaded="MemberDots_Loaded" />
                                             </StackPanel>
-                                            <FontIcon Grid.Column="1" Glyph="&#xE76C;" FontSize="12" VerticalAlignment="Center" />
+                                            </Button>
+                                            <Button Grid.Column="2" Tag="{x:Bind}" Click="DrillDownResult_Click" Loaded="EpisodeAction_Loaded" Style="{StaticResource OutlineButtonStyle}" FontSize="12" Padding="10,4" MinHeight="28" VerticalAlignment="Top" Margin="0,4,0,0" />
                                         </Grid>
-                                    </Button>
+                                    </Border>
                                 </DataTemplate>
                             </ItemsRepeater.ItemTemplate>
                         </ItemsRepeater>
-                    </StackPanel>
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </Grid>
+                        </Grid>
+                        <Grid x:Name="PickerConfirmation" Grid.Row="2" Visibility="Collapsed" Padding="16,12" ColumnSpacing="12" BorderThickness="0,1,0,0" BorderBrush="{StaticResource BorderBrush}">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="YOUR PICK" FontSize="11" FontWeight="SemiBold" CharacterSpacing="180" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock x:Name="PickerPickTitle" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                <TextBlock x:Name="PickerPickRisk" FontSize="12" Foreground="{StaticResource WarningBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Button Grid.Column="1" Content="Cancel" Click="CloseSeriesPicker_Click" Style="{StaticResource GhostButtonStyle}" IsEnabled="{Binding IsEnabled, ElementName=PickerConfirmButton}" FontSize="14" />
+                            <Button x:Name="PickerConfirmButton" Grid.Column="2" Content="Stage it" Click="SeriesConfirm_Click" Style="{StaticResource AccentButtonStyle}" FontSize="14" />
+                        </Grid>
+                    </Grid>
                 </StackPanel>
 
                 <!-- Guest waiting state. -->

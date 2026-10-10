@@ -9,7 +9,8 @@ public sealed class HomeHeroCurrentParityTests
         var source = File.ReadAllText(Path.Combine(
             root, "src", "SiloPlayer", "Controls", "HeroCarousel.xaml.cs"));
 
-        Assert.Contains("player.PlayAsync(item.ContentId)", source);
+        Assert.Contains("player.PlayAsync(item.ContentId, libraryId: LibraryId)", source);
+        Assert.Contains("MediaNavigationContext.Detail(item.ContentId, LibraryId)", source);
         Assert.Contains("Navigate<EbookReaderPage>", source);
         Assert.Contains("item.Type is not (\"movie\" or \"episode\" or \"audiobook\")", source);
         Assert.Contains("MoreInfoButton_Click", source);

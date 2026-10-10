@@ -137,7 +137,8 @@ public sealed partial class HomePage : Page
             : e.NewSize.Width >= 1024 ? 40d
             : e.NewSize.Width >= 640 ? 24d
             : 16d;
-        var sectionPadding = new Thickness(gutter, 0, gutter, 0);
+        var skeletonGutter = e.NewSize.Width >= 1024 ? 48d : e.NewSize.Width >= 640 ? 24d : 16d;
+        var sectionPadding = new Thickness(skeletonGutter, 0, skeletonGutter, 0);
         LoadingSectionOne.Padding = sectionPadding;
         LoadingSectionTwo.Padding = sectionPadding;
         LoadingSectionThree.Padding = sectionPadding;
@@ -164,14 +165,17 @@ public sealed partial class HomePage : Page
         TasteSeedTitle.FontSize = isCompact ? 14 : 16;
         TasteSeedDescription.FontSize = isCompact ? 12 : 14;
 
-        HeroErrorPanel.Padding = new Thickness(
-            e.NewSize.Width >= 1024 ? 48 : e.NewSize.Width >= 640 ? 24 : 16);
+        var errorGutter = e.NewSize.Width >= 1024 ? 48 : e.NewSize.Width >= 640 ? 24 : 16;
+        var errorBottom = e.NewSize.Width >= 1024 ? 64 : e.NewSize.Width >= 640 ? 48 : 40;
+        HeroErrorPanel.Padding = new Thickness(errorGutter, 0, errorGutter, errorBottom);
     }
 
     private static void ResizeSkeletonPosters(Panel panel, double width)
     {
         foreach (var poster in panel.Children.OfType<SkeletonPoster>())
             poster.SetResponsiveWidth(width);
+        foreach (var nested in panel.Children.OfType<Panel>())
+            ResizeSkeletonPosters(nested, width);
     }
 
     private void BuildContent()
@@ -234,8 +238,10 @@ public sealed partial class HomePage : Page
 
         try
         {
-            var favorites = await App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>()
-                .GetFavoritesAsync();
+            var catalog = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
+            var context = catalog.CaptureContext();
+            var favorites = await catalog.GetFavoritesAsync();
+            if (!IsLoaded || catalog.CaptureContext() != context || auth.SelectedProfileId != profileId) return;
             TasteSeedBanner.Visibility = favorites.Items.Count == 0
                 ? Visibility.Visible
                 : Visibility.Collapsed;
@@ -357,7 +363,7 @@ public sealed partial class HomePage : Page
         var hasRenderableHero = heroSection != null
             && (!heroSection.LoadCompleted || heroSection.LoadFailed || heroSection.Items.Count > 0);
         ContentPanel.Padding = hasRenderableHero
-            ? new Thickness(0, 8, 0, 8)
+            ? new Thickness(0, 0, 0, 8)
             : new Thickness(0, 24, 0, 8);
         if (heroSection == null) return;
 

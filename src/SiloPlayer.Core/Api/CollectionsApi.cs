@@ -36,14 +36,24 @@ public class CollectionsApi(SiloApiClient client)
 
     private sealed class CollectionList { public List<Collection> Items { get; set; } = []; public List<CollectionGroup> Groups { get; set; } = []; }
 
-    public Task<ServerCollectionsResponse> GetServerCollectionsAsync(CancellationToken ct = default)
-        => client.GetAsync<ServerCollectionsResponse>("/api/v2/collections/server", ct);
+    public async Task<ServerCollectionsResponse> GetServerCollectionsAsync(CancellationToken ct = default)
+    {
+        var context = client.CaptureContext();
+        var result = await client.GetAsync<ServerCollectionsResponse>("/api/v2/collections/server", ct);
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
+        return result;
+    }
 
     public Task<CollectionTemplateCatalog> GetCollectionTemplatesAsync(CancellationToken ct = default)
         => client.GetAsync<CollectionTemplateCatalog>("/api/v2/collections/templates", ct);
 
-    public Task<CollectionCapabilitiesResponse> GetCollectionCapabilitiesAsync(CancellationToken ct = default)
-        => client.GetAsync<CollectionCapabilitiesResponse>("/api/v2/collections/capabilities", ct);
+    public async Task<CollectionCapabilitiesResponse> GetCollectionCapabilitiesAsync(CancellationToken ct = default)
+    {
+        var context = client.CaptureContext();
+        var result = await client.GetAsync<CollectionCapabilitiesResponse>("/api/v2/collections/capabilities", ct);
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
+        return result;
+    }
 
     public Task SetCollectionSortPreferenceAsync(
         string collectionKind,
@@ -155,6 +165,26 @@ public class CollectionsApi(SiloApiClient client)
         await client.PutWithETagAsync<JsonElement>(path, V2Json.Body(new ReorderCollectionsRequest { OrderedIds = [.. orderedIds], GroupId = groupId }), tag, ct);
     }
 
+    public sealed record PersonalOrderSnapshot(ApiRequestContext Context, string ETag, IReadOnlyList<string> OrderedIds);
+    private sealed class OrderResponse { public List<string> OrderedIds { get; set; } = []; }
+    public async Task<PersonalOrderSnapshot> PreparePersonalOrderAsync(IReadOnlyList<string> displayedIds, CancellationToken ct = default)
+    {
+        var context = client.CaptureContext();
+        var response = await client.GetWithETagAsync<OrderResponse>("/api/v2/collections/order", ct);
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
+        if (!response.Body.OrderedIds.SequenceEqual(displayedIds, StringComparer.Ordinal))
+            throw new ApiException("precondition_failed", "Collection order changed. Reload before moving collections.", 412);
+        return new(context, response.ETag ?? throw new InvalidDataException("The server did not return the collection order revision."), response.Body.OrderedIds.ToArray());
+    }
+    public async Task ReorderPersonalCollectionsAsync(PersonalOrderSnapshot snapshot, IReadOnlyList<string> orderedIds, CancellationToken ct = default)
+    {
+        if (!client.IsCurrentContext(snapshot.Context)) throw new OperationCanceledException("Collection context changed.", ct);
+        if (orderedIds.Count != snapshot.OrderedIds.Count || orderedIds.Distinct(StringComparer.Ordinal).Count() != orderedIds.Count || !orderedIds.ToHashSet(StringComparer.Ordinal).SetEquals(snapshot.OrderedIds))
+            throw new InvalidOperationException("Only the complete own-collection order can be moved.");
+        await client.PutWithETagAsync<JsonElement>("/api/v2/collections/order", new { ordered_ids = orderedIds }, snapshot.ETag, ct);
+        if (!client.IsCurrentContext(snapshot.Context)) throw new OperationCanceledException("Collection context changed.", ct);
+    }
+
     public Task ReorderCollectionGroupsAsync(IReadOnlyList<string> orderedIds, CancellationToken ct = default)
         => PutAsync(
             "/api/v2/collections/groups/order",
@@ -197,6 +227,15 @@ public class CollectionsApi(SiloApiClient client)
         await client.DeleteAsync($"/api/v2/collections/{Uri.EscapeDataString(collectionId)}/items/{Uri.EscapeDataString(itemId)}", ct);
         if (baseline.Context == context && baseline.Fingerprint != null)
             RememberBaseline(orderPath, new { ordered_ids = JsonSerializer.Deserialize<string[]>(baseline.Fingerprint)!.Where(id => id != itemId).ToArray() }, context);
+    }
+
+    public async Task RestoreCollectionItemAsync(string collectionId, string itemId, int position, CancellationToken ct = default)
+    {
+        if (position < 0) throw new ArgumentOutOfRangeException(nameof(position));
+        var context = client.CaptureContext();
+        await client.PutNoContentAsync($"/api/v2/collections/{Uri.EscapeDataString(collectionId)}/items/{Uri.EscapeDataString(itemId)}", new { position }, ct);
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
+        await GetCollectionItemsAsync(collectionId, ct);
     }
 
     private static string OrderPath(string? groupId) => "/api/v2/collections/order" + (groupId == null ? "" : "?group_id=" + Uri.EscapeDataString(groupId));
@@ -274,7 +313,9 @@ public class CollectionsApi(SiloApiClient client)
     }
     private async Task<MDBListDiscoveryResponse> ReadDiscoveryAsync(string path, CancellationToken ct)
     {
+        var context = client.CaptureContext();
         var body = await client.GetAsync<JsonElement>(path, ct);
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Collection context changed.", ct);
         return new() { Configured = body.GetProperty("configured").GetBoolean(), Lists = body.GetProperty("items").Deserialize<List<MDBListListSummary>>(V2Json.Options) ?? [] };
     }
 }

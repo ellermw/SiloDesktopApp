@@ -28,6 +28,7 @@
     <Compile Include="..\..\src\SiloPlayer\ViewModels\ItemDetailViewModel.cs" Link="Production\ItemDetailViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\DownloadsViewModel.cs" Link="Production\DownloadsViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\PersonDetailViewModel.cs" Link="Production\PersonDetailViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\CalendarViewModel.cs" Link="Production\CalendarViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\AccountPasswordViewModel.cs" Link="Production\AccountPasswordViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\Messaging\MediaSurfaceMessages.cs" Link="Production\MediaSurfaceMessages.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\VirtualCatalogItems.cs" Link="Production\VirtualCatalogItems.cs" />
@@ -36,6 +37,7 @@
     <Compile Include="..\..\src\SiloPlayer\ViewModels\SearchViewModel.cs" Link="Production\SearchViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\SmartCollectionWizardViewModel.cs" Link="Production\SmartCollectionWizardViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\CollectionEditorViewModel.cs" Link="Production\CollectionEditorViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\CollectionEditorViewModel.Preview.cs" Link="Production\CollectionEditorViewModel.Preview.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\CollectionsViewModel.cs" Link="Production\CollectionsViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\WatchlistViewModel.cs" Link="Production\WatchlistViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\RequestsViewModel.cs" Link="Production\RequestsViewModel.cs" />

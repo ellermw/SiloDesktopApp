@@ -12,6 +12,7 @@ public partial class CatalogApi(SiloApiClient client)
     private readonly object _filterScopesGate = new();
     public int FilterCacheGeneration => Volatile.Read(ref _filterCacheGeneration);
     public ApiRequestContext CaptureContext() => client.CaptureContext();
+    public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
 
     public void InvalidateFilterCache()
     {
@@ -41,14 +42,15 @@ public partial class CatalogApi(SiloApiClient client)
     private ApiRequestContext? _librariesContext;
     private static readonly TimeSpan LibraryCacheDuration = TimeSpan.FromMinutes(5);
 
-    public async Task<List<Library>> GetLibrariesAsync(CancellationToken ct = default)
+    public async Task<List<Library>> GetLibrariesAsync(CancellationToken ct = default, bool includeHidden = false)
     {
         var context = client.CaptureContext();
-        if (_librariesCache != null && _librariesContext == context && DateTime.UtcNow - _librariesCachedAt < LibraryCacheDuration)
+        if (!includeHidden && _librariesCache != null && _librariesContext == context && DateTime.UtcNow - _librariesCachedAt < LibraryCacheDuration)
             return _librariesCache;
 
-        var libraries = (await client.GetAsync<BrowseCollection<Library>>("/api/v2/user/libraries", ct)).Items;
+        var libraries = (await client.GetAsync<BrowseCollection<Library>>("/api/v2/user/libraries" + (includeHidden ? "?include_hidden=true" : ""), ct)).Items;
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Library context changed.", ct);
+        if (includeHidden) return libraries;
         _librariesCache = libraries;
         _librariesContext = context;
         _librariesCachedAt = DateTime.UtcNow;
@@ -300,7 +302,7 @@ public partial class CatalogApi(SiloApiClient client)
     // ===== Recommendations =====
 
     public Task<SimilarResponse> GetSimilarAsync(string contentId, CancellationToken ct = default)
-        => client.GetAsync<SimilarResponse>($"/api/v2/recommendations/similar/{Uri.EscapeDataString(contentId)}", ct);
+        => client.GetAsync<SimilarResponse>($"/api/v2/recommendations/similar/{Uri.EscapeDataString(contentId)}?limit=12", ct);
 
     // ===== Item Versions =====
 

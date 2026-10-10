@@ -146,18 +146,23 @@ public sealed partial class RequestDetailPage : Page
     private void Render(RequestMediaDetail item)
     {
         TitleText.Text = item.Title;
-        ContextText.Text = item.MediaType == "series" ? "Series" : "Movie";
+        ContextText.Text = item.MediaType == "series" ? "SERIES" : "MOVIE";
         PosterFallback.Text = item.Title;
         TaglineText.Text = item.Tagline ?? "";
         TaglineText.Visibility = string.IsNullOrWhiteSpace(item.Tagline) ? Visibility.Collapsed : Visibility.Visible;
         OverviewText.Text = item.Overview ?? "";
-        StudioText.Text = item.MediaType == "series" ? item.Networks?.FirstOrDefault() ?? "" : item.ProductionCompanies?.FirstOrDefault() ?? "";
+        StudioText.Text = (item.MediaType == "series" ? item.Networks?.FirstOrDefault() ?? "" : item.ProductionCompanies?.FirstOrDefault() ?? "").ToUpperInvariant();
+        if (!string.IsNullOrWhiteSpace(StudioText.Text)) StudioText.Text = "·  " + StudioText.Text;
         StudioText.Visibility = string.IsNullOrWhiteSpace(StudioText.Text) ? Visibility.Collapsed : Visibility.Visible;
-        ScoreText.Text = item.VoteAverage is > 0
-            ? $"★ {item.VoteAverage:0.0} TMDB{(item.VoteCount is > 0 ? $"  ·  {FormatVoteCount(item.VoteCount.Value)} votes" : "")}"
-            : "";
+        ScorePanel.Children.Clear();
+        if (item.VoteAverage is > 0)
+        {
+            ScorePanel.Children.Add(DisplayRatingEntry.Create(new SiloPlayer.Core.Models.Catalog.DisplayRating
+                { Source = "tmdb", Name = "TMDB", Score = item.VoteAverage.Value, Display = item.VoteAverage.Value.ToString("0.0", System.Globalization.CultureInfo.InvariantCulture) }));
+            if (item.VoteCount is > 0) ScorePanel.Children.Add(new TextBlock { Text = $"{FormatVoteCount(item.VoteCount.Value)} votes", FontSize = 12, Foreground = Brush("SecondaryTextBrush"), VerticalAlignment = VerticalAlignment.Center });
+        }
         CrewText.Text = BuildCrew(item);
-        ScoreText.Visibility = string.IsNullOrWhiteSpace(ScoreText.Text) ? Visibility.Collapsed : Visibility.Visible;
+        ScorePanel.Visibility = ScorePanel.Children.Count == 0 ? Visibility.Collapsed : Visibility.Visible;
         CrewText.Visibility = string.IsNullOrWhiteSpace(CrewText.Text) ? Visibility.Collapsed : Visibility.Visible;
         SetImage(BackdropImage, Tmdb(item.BackdropPath, "original"));
         SetImage(PosterImage, Tmdb(item.PosterPath, "w500"));
@@ -178,25 +183,17 @@ public sealed partial class RequestDetailPage : Page
         if (!string.IsNullOrWhiteSpace(item.ContentRating)) values.Add(item.ContentRating);
         if (item.MediaType == "movie" && item.Runtime is > 0) values.Add(FormatDuration(item.Runtime.Value));
         if (item.MediaType == "series" && item.NumberOfSeasons is > 0) values.Add($"{item.NumberOfSeasons} season{(item.NumberOfSeasons == 1 ? "" : "s")}");
+        if (item.MediaType == "series" && item.NumberOfEpisodes is > 0) values.Add($"{item.NumberOfEpisodes} episode{(item.NumberOfEpisodes == 1 ? "" : "s")}");
         if (item.MediaType == "series" && !string.IsNullOrWhiteSpace(item.Status)) values.Add(item.Status);
         foreach (var value in values)
             MetadataPanel.Children.Add(new Border
             {
-                Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(102, 26, 27, 31)),
-                BorderBrush = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(96, 255, 255, 255)),
+                Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(20, 255, 255, 255)),
+                BorderBrush = Brush("BorderBrush"),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(5),
-                Padding = new Thickness(8, 3, 8, 3),
-                Child = new TextBlock { Text = value, FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.Medium },
-            });
-        foreach (var genre in (item.Genres ?? []).Take(4))
-            MetadataPanel.Children.Add(new TextBlock
-            {
-                Text = genre,
-                FontSize = 12,
-                Foreground = Brush("SecondaryTextBrush"),
-                Padding = new Thickness(4, 3, 4, 3),
-                VerticalAlignment = VerticalAlignment.Center,
+                CornerRadius = new CornerRadius(99),
+                Padding = new Thickness(9.6, 4, 9.6, 4),
+                Child = new TextBlock { Text = value.ToUpperInvariant(), FontSize = 11.2, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, CharacterSpacing = 40, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight },
             });
     }
 
@@ -260,6 +257,7 @@ public sealed partial class RequestDetailPage : Page
         DownloadText.Text = RequestViewerPolicy.DownloadLabel(item.Request.Download);
         DownloadText.Visibility = Visibility.Collapsed;
         if (item.Request.Download != null) DownloadProgressHost.Children.Add(RequestDownloadProgress.Build(item.Request.Download, 320));
+        DownloadProgressHost.Visibility = DownloadProgressHost.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         AutoRequestExplanation.Visibility = _features.WatchlistTitlesSupported && _features.WatchlistRequests && item.InWatchlist != true && item.Request.Requestable && item.Availability != "available" ? Visibility.Visible : Visibility.Collapsed;
 
         if (!string.IsNullOrWhiteSpace(item.ImdbId))
@@ -277,7 +275,9 @@ public sealed partial class RequestDetailPage : Page
     private static Button SecondaryAction(string id, string label, string icon, bool active = false)
     {
         var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-        content.Children.Add(WebUiIcon.Create(icon, 18));
+        var glyph = WebUiIcon.Create(icon, 18);
+        glyph.Tag = icon;
+        content.Children.Add(glyph);
         content.Children.Add(new TextBlock { Text = label, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
         var button = new Button { Tag = id, Content = content, Height = 44, MinWidth = 0, MinHeight = 0, Padding = new Thickness(12, 0, 12, 0), CornerRadius = new CornerRadius(22), Background = Brush(active ? "SurfaceRaisedBrush" : "SurfaceBrush"), BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1) };
         AutomationProperties.SetName(button, label); AutomationProperties.SetAutomationId(button, id); AutomationProperties.SetHelpText(button, active ? "On" : "Off"); ToolTipService.SetToolTip(button, label); return button;
@@ -290,6 +290,11 @@ public sealed partial class RequestDetailPage : Page
         if (button.Content is StackPanel content)
         {
             content.Spacing = 10;
+            if (content.Children[0] is FrameworkElement { Tag: string icon })
+            {
+                content.Children.RemoveAt(0);
+                content.Children.Insert(0, WebUiIcon.Create(icon, 18, Brush("AccentForegroundBrush")));
+            }
             foreach (var label in content.Children.OfType<TextBlock>())
             {
                 label.FontSize = 15;
@@ -373,6 +378,8 @@ public sealed partial class RequestDetailPage : Page
     private void BuildSeasons(RequestMediaDetail item)
     {
         SeasonsPanel.Children.Clear();
+        SeasonsCountText.Text = $"{item.Seasons?.Count ?? 0} total";
+        SeasonsPanel.Spacing = 16;
         foreach (var season in item.Seasons ?? [])
         {
             var state = RequestSeasonPickerState.Status(season, DateOnly.FromDateTime(DateTime.UtcNow));
@@ -527,20 +534,31 @@ public sealed partial class RequestDetailPage : Page
         button.Click += ExternalLink_Click;
         return button;
     }
-    private static string BuildCrew(RequestMediaDetail item) { var p = new List<string>(); if (!string.IsNullOrWhiteSpace(item.Director)) p.Add($"Director: {item.Director}"); if (item.Creators?.Count > 0) p.Add($"Created by: {string.Join(", ", item.Creators)}"); if (item.Networks?.Count > 0) p.Add($"Network: {string.Join(", ", item.Networks)}"); return string.Join("  ·  ", p); }
+    private static string BuildCrew(RequestMediaDetail item)
+    {
+        var parts = new List<string>();
+        if (item.MediaType == "series" && item.Creators?.Count > 0) parts.Add($"Created by {string.Join(", ", item.Creators)}");
+        else if (!string.IsNullOrWhiteSpace(item.Director)) parts.Add($"Directed by {item.Director}");
+        parts.AddRange((item.Genres ?? []).Take(4));
+        return string.Join("  ·  ", parts);
+    }
     private static string FormatDuration(int minutes) => minutes >= 60 ? $"{minutes / 60}h{(minutes % 60 == 0 ? "" : $" {minutes % 60}m")}" : $"{minutes}m";
     private static string FormatVoteCount(int count) => count >= 1000 ? $"{count / 1000d:0.0}k" : count.ToString();
     private static string Format(string value) => string.IsNullOrWhiteSpace(value) ? "Requested" : char.ToUpperInvariant(value[0]) + value[1..];
     private static string Reason(string value) => value switch { "already_requested" => "Already requested", "already_available" => "Available", "requests_disabled" => "Requests disabled", "quota_exceeded" => "Limit reached", "blocked" => "Blocked", _ => "Unavailable" };
     private static string? Tmdb(string? path, string size) => string.IsNullOrWhiteSpace(path) ? null : $"https://image.tmdb.org/t/p/{size}{path}";
-    private static void SetImage(Image image, string? url)
+    private static void SetImage(FrameworkElement image, string? url)
     {
         if (url != null)
-            image.Source = (ImageSource)RemoteImageConverter.Convert(
+        {
+            var source = (ImageSource)RemoteImageConverter.Convert(
                 url,
                 typeof(ImageSource),
                 null!,
                 string.Empty);
+            if (image is Image poster) poster.Source = source;
+            else if (image is BackdropImage backdrop) backdrop.Source = source;
+        }
     }
     private static Brush Brush(string key) => (Brush)Application.Current.Resources[key];
     private void ApplyHeroColors()
@@ -549,8 +567,10 @@ public sealed partial class RequestDetailPage : Page
         Windows.UI.Color Alpha(byte alpha) => Windows.UI.Color.FromArgb(alpha, background.R, background.G, background.B);
         HeroLeftSolid.Color = HeroBottomSolid.Color = background;
         HeroLeftTransparent.Color = HeroBottomTransparent.Color = Alpha(0);
-        HeroLeftStrong.Color = Alpha(0xCC); HeroLeftSoft.Color = Alpha(0x66);
-        HeroBottomSoft.Color = Alpha(0x33); HeroBottomMid.Color = Alpha(0x8C); HeroBottomStrong.Color = Alpha(0xEB);
+        HeroLeftSolid.Color = Alpha(0xEB); HeroLeftStrong.Color = Alpha(0x9E); HeroLeftSoft.Color = Alpha(0x3D);
+        HeroLeftStrong.Offset = .18; HeroLeftSoft.Offset = .36; HeroLeftTransparent.Offset = .52;
+        HeroBottomTransparent.Offset = .30; HeroBottomSoft.Offset = .46; HeroBottomMid.Offset = .66; HeroBottomStrong.Offset = .86;
+        HeroBottomSoft.Color = Alpha(0x1F); HeroBottomMid.Color = Alpha(0x75); HeroBottomStrong.Color = Alpha(0xDB);
     }
 
     private void Page_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -562,7 +582,9 @@ public sealed partial class RequestDetailPage : Page
 
         BackButton.Margin = new Thickness(8, width >= 640 ? 24 : 16, 0, 0);
         LoadingBackButton.Margin = BackButton.Margin;
-        LowerContent.Padding = new Thickness(gutter, 20, gutter, 50);
+        var supportingGutter = width < 640 ? 16d : width < 1024 ? 24d : 40d;
+        LowerContent.Padding = new Thickness(supportingGutter, 40, supportingGutter, 40);
+        LowerContent.Spacing = width < 640 ? 48 : 56;
         HeroContent.Margin = new Thickness(gutter, 112, gutter, 32);
         // Do not derive the hero from Page.ActualHeight: this page sits inside
         // a ScrollViewer, so its measured content height includes the hero
@@ -575,6 +597,7 @@ public sealed partial class RequestDetailPage : Page
         OverviewText.FontSize = width < 640 ? 14 : 15;
         TitleText.CharacterSpacing = -50; TitleText.LineHeight = TitleText.FontSize * .98;
         HeroContent.ColumnSpacing = 24; HeroContent.MaxWidth = 1520 - gutter * 2;
+        HeroContent.RowSpacing = compact ? 24 : 0;
         var posterWidth = width >= 640 ? 220 : 170;
 
         HeroContent.ColumnDefinitions[0].Width = compact

@@ -15,8 +15,7 @@
     Loaded="OnLoaded"
     Unloaded="OnUnloaded">
 
-    <!-- Height is set in code-behind from the current WebUI contract:
-         50vh below desktop, 60vh on desktop, clamped to 350-700px. -->
+    <!-- Home and library heights follow their separate WebUI viewport contracts. -->
     <Grid
         x:Name="RootGrid"
         PointerEntered="RootGrid_PointerEntered"
@@ -35,6 +34,13 @@
 
         <!-- Brightness overlay: web uses brightness(0.78), so ~22% darkening -->
         <Border Background="Black" Opacity="0.22" />
+        <Border x:Name="HeroTopScrim" Height="180" VerticalAlignment="Top" Visibility="Collapsed" IsHitTestVisible="False">
+            <Border.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                <GradientStop x:Name="HeroTopStrong" Offset="0" />
+                <GradientStop x:Name="HeroTopSoft" Offset="0.55" />
+                <GradientStop Color="Transparent" Offset="1" />
+            </LinearGradientBrush></Border.Background>
+        </Border>
 
         <!-- Bottom-to-top gradient (hero-gradient) -->
         <Border>
@@ -44,6 +50,7 @@
                     <GradientStop x:Name="HeroBottomSoft" Color="#33101722" Offset="0.25" />
                     <GradientStop x:Name="HeroBottomMid" Color="#8C101722" Offset="0.5" />
                     <GradientStop x:Name="HeroBottomStrong" Color="#EB101722" Offset="0.8" />
+                    <GradientStop x:Name="HeroBottomFull" Color="#101722" Offset="1.0" />
                     <GradientStop x:Name="HeroBottomSolid" Color="#101722" Offset="1.0" />
                 </LinearGradientBrush>
             </Border.Background>
@@ -64,21 +71,20 @@
             <Border.Background>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
                     <GradientStop x:Name="HeroLeftSolid" Color="#101722" Offset="0.0" />
-                    <GradientStop x:Name="HeroLeftStrong" Color="#CC101722" Offset="0.2" />
-                    <GradientStop x:Name="HeroLeftSoft" Color="#66101722" Offset="0.4" />
-                    <GradientStop x:Name="HeroLeftTransparent" Color="Transparent" Offset="0.6" />
+                    <GradientStop x:Name="HeroLeftStrong" Color="#CC101722" Offset="0.16" />
+                    <GradientStop x:Name="HeroLeftSoft" Color="#66101722" Offset="0.34" />
+                    <GradientStop x:Name="HeroLeftTransparent" Color="Transparent" Offset="0.5" />
                 </LinearGradientBrush>
             </Border.Background>
         </Border>
 
-        <!-- Vignette: combined left + bottom gradient -->
-        <Border>
+        <!-- Source vignette is soft black edge darkening, separate from the theme fades. -->
+        <Border x:Name="HeroVignetteBorder">
             <Border.Background>
-                <LinearGradientBrush StartPoint="0,1" EndPoint="1,0">
-                    <GradientStop x:Name="HeroVignetteStrong" Color="#66101722" Offset="0.0" />
-                    <GradientStop x:Name="HeroVignetteSoft" Color="#33101722" Offset="0.3" />
-                    <GradientStop x:Name="HeroVignetteTransparent" Color="Transparent" Offset="0.6" />
-                </LinearGradientBrush>
+                <RadialGradientBrush Center="0.6,0.45" GradientOrigin="0.6,0.45" RadiusX="1.2" RadiusY="1">
+                    <GradientStop Color="Transparent" Offset="0.55" />
+                    <GradientStop Color="#2E000000" Offset="1" />
+                </RadialGradientBrush>
             </Border.Background>
         </Border>
 
@@ -86,6 +92,7 @@
              stack item. Keep it as a 1px overlay so it survives backdrop
              crossfades without affecting hero layout height. -->
         <Border
+            x:Name="HeroBottomBorder"
             VerticalAlignment="Bottom"
             Height="1"
             Background="{StaticResource BorderBrush}"
@@ -141,7 +148,7 @@
             <!-- Metadata pills row: year · IMDb badge · first 3 genres.
                  Dark-glass pills matching webui .metadata-badge pattern.
                  Populated in code-behind ShowCurrentItem(). -->
-            <StackPanel x:Name="HeroMetaPillsRow" Orientation="Horizontal" Spacing="0" Margin="0,0,0,20" />
+            <controls:WrapPanel x:Name="HeroMetaPillsRow" HorizontalSpacing="1.6" VerticalSpacing="0" Margin="0,0,0,20" />
 
             <TextBlock x:Name="HeroOverview"
                 Style="{StaticResource SecondaryTextStyle}"
@@ -203,27 +210,34 @@
             <!-- Slide counter: "01 / 04" monospace -->
             <TextBlock
                 x:Name="SlideCounterText"
+                Visibility="Collapsed"
                 FontSize="11"
                 FontWeight="Medium"
                 FontFamily="Consolas"
                 CharacterSpacing="120"
                 Foreground="#AAFFFFFF"
                 VerticalAlignment="Center" />
+            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                <TextBlock x:Name="SlideCounterCurrent" FontSize="11.2" FontWeight="Medium" FontFamily="Consolas" CharacterSpacing="120" Foreground="White" />
+                <Border x:Name="SlideCounterSeparator" Width="40" Height="1" Background="#59FFFFFF" VerticalAlignment="Center" />
+                <TextBlock x:Name="SlideCounterSlash" Text="/" FontSize="11.2" FontFamily="Consolas" CharacterSpacing="120" Foreground="#ADFFFFFF" Visibility="Collapsed" />
+                <TextBlock x:Name="SlideCounterTotal" FontSize="11.2" FontWeight="Medium" FontFamily="Consolas" CharacterSpacing="120" Foreground="#ADFFFFFF" />
+            </StackPanel>
             <!-- Progress rail: animated fill bar (8s duration) -->
             <Border
                 x:Name="ProgressRailContainer"
-                Width="100"
-                Height="3"
+                Width="144"
+                Height="2"
                 CornerRadius="2"
-                Background="#33FFFFFF"
+                Background="#2EFFFFFF"
                 VerticalAlignment="Center">
                 <Border
                     x:Name="ProgressRailFill"
                     HorizontalAlignment="Left"
                     Width="0"
-                    Height="3"
+                    Height="2"
                     CornerRadius="2"
-                    Background="{StaticResource AccentBrush}" />
+                    Background="#E0FFFFFF" />
             </Border>
             <Button
                 x:Name="PauseCarouselButton"

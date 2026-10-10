@@ -151,7 +151,7 @@ public sealed class UpgradeAuthenticationRegressionTests
         var restoreNavigation = mainWindow[restoreStart..restoreEnd];
 
         Assert.Contains("NavView.IsPaneVisible = true;", showNavigation);
-        Assert.Contains("var desiredPaneOpen = !_isNarrowShell && _desktopSidebarOpen;", showNavigation);
+        Assert.Contains("var desiredPaneOpen = !_isNarrowShell && DesktopSidebarIsOpen;", showNavigation);
         Assert.Contains("if (NavView.IsPaneOpen != desiredPaneOpen)", showNavigation);
         Assert.Contains("NavView.IsPaneOpen = desiredPaneOpen;", showNavigation);
         Assert.True(

@@ -32,6 +32,10 @@ public sealed class UserOnlyClientArchitectureTests
                 segment.Contains("SetupWizard", StringComparison.OrdinalIgnoreCase) ||
                 segment.Contains("Impersonation", StringComparison.OrdinalIgnoreCase) ||
                 segment.Contains("MarkerEditor", StringComparison.OrdinalIgnoreCase)))
+            // This permission-gated item dialog now exists in the ordinary WebUI
+            // action bar. Standalone admin trees and the playback marker editor
+            // remain forbidden; allow only this exact item-scoped source file.
+            .Where(path => !path.Equals(Path.Combine(root, "src", "SiloPlayer", "Views", "Dialogs", "MarkerEditorDialog.cs"), StringComparison.OrdinalIgnoreCase))
             .ToArray();
         Assert.Empty(forbiddenNames);
     }

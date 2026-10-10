@@ -190,7 +190,10 @@ public sealed class MpvOscScriptTests
         Assert.Contains("Search Online…", script);
         Assert.Contains("Appearance…", script);
         Assert.Contains("Translate with AI…", script);
-        Assert.Contains("local action_count = state.subtitle_ai_available and 4 or 3", script);
+        Assert.Contains("local action_count = (state.subtitle_ai_available and 4 or 3) + sync_rows", script);
+        Assert.Contains("if selected_sync.sync then sync_rows = sync_rows + 1 end", script);
+        Assert.Contains("if selected_sync.reset then sync_rows = sync_rows + 1 end", script);
+        Assert.Contains("if selected_sync.reload then sync_rows = sync_rows + 1 end", script);
         Assert.Contains("\"DELAY\"", script);
         Assert.Contains("delta = -0.1", script);
         Assert.Contains("delta = 0.1", script);
