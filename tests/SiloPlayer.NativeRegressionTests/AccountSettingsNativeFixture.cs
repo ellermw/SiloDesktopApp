@@ -26,6 +26,7 @@ internal static class AccountSettingsNativeFixture
         var api = new SettingsApi(client);
         var theme = new ThemeService(settings, api);
         return services.AddSingleton(client)
+            .AddSingleton(auth)
             .AddTransient(_ => new SettingsViewModel(api, new CatalogApi(client), new AuthApi(client),
                 new HistoryImportApi(client), new WatchProvidersApi(client),
                 auth, theme, settings,
@@ -34,11 +35,14 @@ internal static class AccountSettingsNativeFixture
 
     internal static async Task RunAsync(StackPanel parent)
     {
-        // Construct the real settings XAML without navigating: the general settings
-        // loads do not run, and the fixture handler accepts only password routes.
+        // Construct the real settings XAML without the unrelated general-settings
+        // network load, then initialize the same primary-profile overview gate
+        // used by navigation before opening its permitted account detail.
         var page = new SettingsPage { Width = 900, Height = 650 };
         parent.Children.Add(page);
         await Task.Delay(100);
+        Invoke(page, "BuildSettingsOverview");
+        await SiloCastSettingsFixture.RunAsync(page);
         var vm = (AccountPasswordViewModel)typeof(SettingsPage)
             .GetField("_accountPassword", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(page)!;
         var accountTab = (Button)page.FindName("AccountPasswordTab");

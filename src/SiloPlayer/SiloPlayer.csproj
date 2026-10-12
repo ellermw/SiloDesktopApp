@@ -28,9 +28,9 @@
         <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
 
         <!-- Version -->
-    <Version>1.2.241</Version>
-    <FileVersion>1.2.241.0</FileVersion>
-    <AssemblyVersion>1.2.241.0</AssemblyVersion>
+    <Version>1.2.243</Version>
+    <FileVersion>1.2.243.0</FileVersion>
+    <AssemblyVersion>1.2.243.0</AssemblyVersion>
 
         <!-- App Options -->
         <ApplicationIcon>Assets\app.ico</ApplicationIcon>
@@ -82,6 +82,7 @@
 
     <ItemGroup>
         <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+        <PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" />
         <PackageReference Include="CommunityToolkit.WinUI.Controls.Primitives" Version="8.2.251219" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.5" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.5" />

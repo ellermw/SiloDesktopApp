@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Models.Settings;
 using SiloPlayer.Services;
 using Windows.UI;
@@ -26,6 +27,8 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
 {
     private readonly SettingsApi _settingsApi;
     private readonly PlayerService _playerService;
+    private readonly PlaybackAuthorityScope? _authority;
+    private bool CanApplyToPlayer => ApplyToLocalPlayer && (_authority == null || ReferenceEquals(_authority, _playerService.ActiveAuthority));
 
     private SubtitleAppearance _state = new();
     private bool _loading;
@@ -96,9 +99,12 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         ("#14532d", "Dark Green"),
     ];
 
-    public SubtitleAppearanceDialog()
+    public SubtitleAppearanceDialog() : this(null) { }
+
+    public SubtitleAppearanceDialog(PlaybackAuthorityScope? authority)
     {
-        _settingsApi = App.Services.GetRequiredService<SettingsApi>();
+        _authority = authority;
+        _settingsApi = authority?.SettingsApi ?? App.Services.GetRequiredService<SettingsApi>();
         _playerService = App.Services.GetRequiredService<PlayerService>();
         this.InitializeComponent();
 
@@ -158,7 +164,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
 
         // Apply live immediately — preview + mpv update without waiting.
         UpdatePreview();
-        if (ApplyToLocalPlayer)
+        if (CanApplyToPlayer)
             try { _playerService.ApplySubtitleAppearance(_state); } catch { /* mpv not ready */ }
 
         // Server save: debounce 400ms so slider drags don't produce a storm.
@@ -423,7 +429,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
                 await LoadAsync();
             }
             SyncAllFromState();
-            if (ApplyToLocalPlayer) _playerService.ApplySubtitleAppearance(_state);
+            if (CanApplyToPlayer) _playerService.ApplySubtitleAppearance(_state);
         }
         catch { }
     }

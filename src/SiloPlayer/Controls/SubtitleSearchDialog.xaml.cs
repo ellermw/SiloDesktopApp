@@ -3,6 +3,7 @@ using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Services;
 using System.Runtime.InteropServices.WindowsRuntime;
 
 namespace SiloPlayer.Controls;
@@ -54,9 +55,16 @@ public sealed partial class SubtitleSearchDialog : ContentDialog
         bool playerMode = true,
         string? title = null,
         string? versionLabel = null)
+        : this(mediaFileId, defaultLanguage, playerMode, title, versionLabel, null) { }
+
+    public SubtitleSearchDialog(PlaybackAuthorityScope authority, int mediaFileId, string? defaultLanguage = null)
+        : this(mediaFileId, defaultLanguage, true, null, null, authority) { }
+
+    private SubtitleSearchDialog(int mediaFileId, string? defaultLanguage, bool playerMode,
+        string? title, string? versionLabel, PlaybackAuthorityScope? authority)
     {
-        _playbackApi = App.Services.GetRequiredService<PlaybackApi>();
-        _apiClient = App.Services.GetRequiredService<SiloApiClient>();
+        _playbackApi = authority?.PlaybackApi ?? App.Services.GetRequiredService<PlaybackApi>();
+        _apiClient = authority?.ApiClient ?? App.Services.GetRequiredService<SiloApiClient>();
         _requestContext = _apiClient.CaptureContext();
         _mediaFileId = mediaFileId;
         _playerMode = playerMode;

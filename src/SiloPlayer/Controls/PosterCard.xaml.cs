@@ -659,7 +659,7 @@ public sealed partial class PosterCard : UserControl
             VerticalAlignment = VerticalAlignment.Center,
         });
 
-        return new Border
+        return RoundedBadge.Apply(new Border
         {
             Background = background,
             BorderBrush = borderBrush,
@@ -676,7 +676,7 @@ public sealed partial class PosterCard : UserControl
                 padding.Bottom * scale),
             VerticalAlignment = VerticalAlignment.Center,
             Child = content,
-        };
+        }, radius * scale);
     }
 
     private static Microsoft.UI.Xaml.Media.SolidColorBrush MixOverlayAccent(Windows.UI.Color accent, Windows.UI.Color basis, double accentWeight)

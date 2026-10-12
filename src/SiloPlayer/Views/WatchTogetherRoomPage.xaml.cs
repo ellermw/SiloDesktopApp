@@ -217,6 +217,8 @@ public sealed partial class WatchTogetherRoomPage : Page
             try
             {
                 var player = App.Services.GetRequiredService<SiloPlayer.Services.PlayerService>();
+                var coordinator = App.Services.GetRequiredService<WatchTogetherCoordinator>();
+                if (player.HasRemoteAuthority || !ReferenceEquals(coordinator.ActiveRoom, ViewModel)) return;
                 var room = ViewModel.Room;
                 if (room?.Phase != "playing" || room.SelectedContentId != contentId) return;
                 await player.PlayAsync(contentId, fileId: room.SelectedFileId,

@@ -9,6 +9,7 @@ using SiloPlayer.Services;
 // connecting to a server, or reading the user's settings.
 var results = Path.Combine(Path.GetTempPath(), "silo-playback-integration-" + Guid.NewGuid().ToString("N"));
 Environment.SetEnvironmentVariable(LocalLog.LogDirectoryEnvironmentVariable, results);
+await SiloCastScopeChecks.RunAsync(results);
 using var http = new HttpClient(new RejectNetworkHandler());
 var api = new SiloApiClient(http);
 api.SetBaseUrl("https://fixture.invalid");

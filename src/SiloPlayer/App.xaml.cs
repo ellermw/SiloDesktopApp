@@ -322,6 +322,7 @@ public partial class App : Application
 
         // Player service (owns mpv lifecycle, not tied to page navigation)
         services.AddSingleton<PlayerService>();
+        services.AddSingleton<SiloPlayer.Services.SiloCast.SiloCastReceiverService>();
         services.AddSingleton<AccessibilityService>();
 
         // Watch-Together coordinator — bridges room VM and PlayerService so

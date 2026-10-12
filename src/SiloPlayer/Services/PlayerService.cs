@@ -31,12 +31,20 @@ public partial class PlayerService : IDisposable
     private const string AutoSkipIntroSettingKey = "playback.auto_skip_intro";
     private const string AutoSkipCreditsSettingKey = "playback.auto_skip_credits";
     private const string AutoSkipRecapSettingKey = "playback.auto_skip_recap";
-    private readonly PlaybackApi _playbackApi;
-    private readonly CatalogApi _catalogApi;
-    private readonly AuthService _authService;
-    private readonly SiloApiClient _apiClient;
+    private readonly PlaybackAuthorityScope _localAuthority;
+    private PlaybackAuthorityScope _activeAuthority;
+    private readonly SemaphoreSlim _authoritySwitchGate = new(1, 1);
+    private CancellationTokenSource _authorityLifetimeCts = new();
+    private PlaybackApi _playbackApi => _activeAuthority.PlaybackApi;
+    private CatalogApi _catalogApi => _activeAuthority.CatalogApi;
+    private AuthService _authService => _activeAuthority.Auth;
+    private SiloApiClient _apiClient => _activeAuthority.ApiClient;
     private readonly SettingsService _settingsService;
-    private readonly SettingsApi _settingsApi;
+    private SettingsApi _settingsApi => _activeAuthority.SettingsApi;
+    public SettingsApi PlaybackSettingsApi => _settingsApi;
+    public bool HasRemoteAuthority => !ReferenceEquals(_activeAuthority, _localAuthority);
+    public PlaybackAuthorityScope ActiveAuthority => _activeAuthority;
+    public event Action<PlaybackAuthorityScope>? RemoteAuthorityEnded;
     private readonly WatchDetailPrefetchCache<WatchDetailResponse> _watchDetailPrefetches =
         new(capacity: 8, lifetime: TimeSpan.FromMinutes(2));
     private readonly SemaphoreSlim _subtitleAppearanceLoadGate = new(1, 1);
@@ -157,12 +165,9 @@ public partial class PlayerService : IDisposable
         SettingsService settingsService,
         SettingsApi settingsApi)
     {
-        _playbackApi = playbackApi;
-        _catalogApi = catalogApi;
-        _authService = authService;
-        _apiClient = apiClient;
+        _localAuthority = new PlaybackAuthorityScope(apiClient, authService, playbackApi, catalogApi, settingsApi);
+        _activeAuthority = _localAuthority;
         _settingsService = settingsService;
-        _settingsApi = settingsApi;
 
         // Restore persisted volume + mute so the player starts where the user
         // left it instead of at 100%. These are applied to mpv on
@@ -224,19 +229,22 @@ public partial class PlayerService : IDisposable
     /// playback preferences between profiles or grow during long browsing.
     /// </summary>
     public void PrefetchWatchDetail(string? contentId, int? libraryId = null, int? fileId = null)
+        => PrefetchWatchDetailCore(contentId, _localAuthority, libraryId, fileId);
+
+    private void PrefetchWatchDetailCore(string? contentId, PlaybackAuthorityScope authority, int? libraryId = null, int? fileId = null)
     {
         if (string.IsNullOrWhiteSpace(contentId) || _closing)
             return;
 
-        var profileId = _authService.SelectedProfileId;
+        var profileId = authority.Auth.SelectedProfileId;
         if (string.IsNullOrWhiteSpace(profileId))
             return;
 
         var cacheKey = WatchPreparationKey(contentId, libraryId, fileId);
         var task = _watchDetailPrefetches.GetOrAdd(
             cacheKey,
-            WatchPrefetchAuthorityKey(profileId),
-            () => _playbackApi.GetWatchDetailAsync(contentId, libraryId, fileId, CancellationToken.None),
+            WatchPrefetchAuthorityKey(authority, profileId),
+            () => authority.PlaybackApi.GetWatchDetailAsync(contentId, libraryId, fileId, CancellationToken.None),
             DateTimeOffset.UtcNow,
             out var added);
         if (added)
@@ -254,7 +262,7 @@ public partial class PlayerService : IDisposable
         CancellationToken ct = default,
         int? libraryId = null,
         int? fileId = null)
-        => await GetOrFetchWatchDetailCoreAsync(contentId, consumePrefetch: false, ct: ct, libraryId: libraryId, fileId: fileId)
+        => await GetOrFetchWatchDetailCoreAsync(contentId, consumePrefetch: false, ct: ct, libraryId: libraryId, fileId: fileId, authority: _localAuthority)
             .ConfigureAwait(false);
 
     private async Task<WatchDetailResponse> GetOrFetchWatchDetailCoreAsync(
@@ -262,16 +270,18 @@ public partial class PlayerService : IDisposable
         bool consumePrefetch,
         CancellationToken ct,
         int? libraryId = null,
-        int? fileId = null)
+        int? fileId = null,
+        PlaybackAuthorityScope? authority = null)
     {
+        authority ??= _activeAuthority;
         ArgumentException.ThrowIfNullOrWhiteSpace(contentId);
-        var authority = _apiClient.CaptureContext();
+        var context = authority.ApiClient.CaptureContext();
 
         // Starting through the cache also coalesces callers that arrive before
         // a hover prefetch has fired (for example, Item Detail and Play racing
         // immediately after navigation).
-        PrefetchWatchDetail(contentId, libraryId, fileId);
-        var prefetched = await TryGetPrefetchedWatchDetailAsync(contentId, consumePrefetch, ct, libraryId, fileId)
+        PrefetchWatchDetailCore(contentId, authority, libraryId, fileId);
+        var prefetched = await TryGetPrefetchedWatchDetailAsync(contentId, consumePrefetch, ct, authority, libraryId, fileId)
             .ConfigureAwait(false);
         EnsurePreparationAuthority();
         if (prefetched != null)
@@ -279,7 +289,7 @@ public partial class PlayerService : IDisposable
 
         try
         {
-            var detail = await _playbackApi.GetWatchDetailAsync(contentId, libraryId, fileId, ct).ConfigureAwait(false);
+            var detail = await authority.PlaybackApi.GetWatchDetailAsync(contentId, libraryId, fileId, ct).ConfigureAwait(false);
             EnsurePreparationAuthority();
             return detail;
         }
@@ -290,7 +300,7 @@ public partial class PlayerService : IDisposable
             // imposing this delay on successful requests.
             await Task.Delay(300, ct).ConfigureAwait(false);
             EnsurePreparationAuthority();
-            var detail = await _playbackApi.GetWatchDetailAsync(contentId, libraryId, fileId, ct).ConfigureAwait(false);
+            var detail = await authority.PlaybackApi.GetWatchDetailAsync(contentId, libraryId, fileId, ct).ConfigureAwait(false);
             EnsurePreparationAuthority();
             return detail;
         }
@@ -298,7 +308,7 @@ public partial class PlayerService : IDisposable
         void EnsurePreparationAuthority()
         {
             ct.ThrowIfCancellationRequested();
-            if (!_apiClient.IsCurrentContext(authority))
+            if (!authority.ApiClient.IsCurrentContext(context))
                 throw new OperationCanceledException("Watch preparation authority changed.", ct);
         }
     }
@@ -321,24 +331,25 @@ public partial class PlayerService : IDisposable
         string contentId,
         bool consume,
         CancellationToken ct,
+        PlaybackAuthorityScope authority,
         int? libraryId = null,
         int? fileId = null)
     {
-        var profileId = _authService.SelectedProfileId;
+        var profileId = authority.Auth.SelectedProfileId;
         if (string.IsNullOrWhiteSpace(profileId))
             return null;
 
         try
         {
-            var context = _apiClient.CaptureContext();
-            var authorityKey = WatchPrefetchAuthorityKey(profileId);
+            var context = authority.ApiClient.CaptureContext();
+            var authorityKey = WatchPrefetchAuthorityKey(authority, profileId);
             var cacheKey = WatchPreparationKey(contentId, libraryId, fileId);
             var watchDetail = consume
                 ? await _watchDetailPrefetches.TryTakeAsync(
                     cacheKey, authorityKey, DateTimeOffset.UtcNow, ct).ConfigureAwait(false)
                 : await _watchDetailPrefetches.TryGetAsync(
                     cacheKey, authorityKey, DateTimeOffset.UtcNow, ct).ConfigureAwait(false);
-            return _apiClient.IsCurrentContext(context) && watchDetail != null &&
+            return authority.ApiClient.IsCurrentContext(context) && watchDetail != null &&
                 string.Equals(watchDetail.ContentId, contentId, StringComparison.Ordinal)
                 ? watchDetail
                 : null;
@@ -353,10 +364,10 @@ public partial class PlayerService : IDisposable
         }
     }
 
-    private string WatchPrefetchAuthorityKey(string profileId)
+    private static string WatchPrefetchAuthorityKey(PlaybackAuthorityScope authority, string profileId)
     {
-        var context = _apiClient.CaptureContext();
-        return string.Join('\n', context.BaseUrl, context.AuthenticationGeneration,
+        var context = authority.ApiClient.CaptureContext();
+        return string.Join('\n', authority.ScopeId, context.BaseUrl, context.AuthenticationGeneration,
             context.RequestContextGeneration, profileId);
     }
 
@@ -540,7 +551,7 @@ public partial class PlayerService : IDisposable
                     ContentId,
                     fileId: targetPart.Value.Version.FileId,
                     startPositionOverride: mediaPosition,
-                    libraryId: ActiveLibraryId);
+                    libraryId: ActiveLibraryId, authority: _activeAuthority, cancellationToken: _authorityLifetimeCts.Token);
                 return;
             }
         }
@@ -899,6 +910,10 @@ public partial class PlayerService : IDisposable
     /// </summary>
     public async Task SetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)
     {
+        var authority = _activeAuthority;
+        var manager = _playbackManager;
+        var ownerToken = _authorityLifetimeCts.Token;
+        var key = GetPrefsKey();
         _activeSubtitleServerIndex = mpvTrackIndex <= 0 || track == null ? -1 : track.Index;
         var wasPaused = CaptureUserPausedState();
         var position = CurrentMediaPosition;
@@ -940,10 +955,11 @@ public partial class PlayerService : IDisposable
         // BeginMpvLoad deliberately pauses the outgoing stream and FileLoaded
         // restores the captured user state. Never race that authority by
         // issuing Play/Pause while a replacement transport is still loading.
+        if (_closing || ownerToken.IsCancellationRequested || !ReferenceEquals(authority, _activeAuthority) ||
+            !ReferenceEquals(manager, _playbackManager)) return;
         if (!transportReloadScheduled)
             RestorePlaybackStateAfterSubtitleChange(wasPaused, position, allowSeek: true);
 
-        var key = GetPrefsKey();
         if (string.IsNullOrEmpty(key)) return;
 
         try
@@ -967,7 +983,7 @@ public partial class PlayerService : IDisposable
                     HearingImpaired = track.HearingImpaired,
                 },
             };
-            await _playbackApi.SaveSubtitlePrefsAsync(key, req);
+            await authority.PlaybackApi.SaveSubtitlePrefsAsync(key, req, ownerToken);
         }
         catch (Exception ex) { LogToFile("state_trace.txt", $"SaveSubtitlePrefs error: {ex.Message}"); }
     }
@@ -1633,13 +1649,53 @@ public partial class PlayerService : IDisposable
         WatchDetailResponse? prefetchedWatchDetail = null,
         SubtitleTrackSignature? subtitleTrackSignature = null,
         int? libraryId = null,
-        string? shuffleId = null)
+        string? shuffleId = null,
+        PlaybackAuthorityScope? authority = null,
+        CancellationToken cancellationToken = default)
+    {
+        CancelPendingPlayRequest();
+        await _authoritySwitchGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (_closing)
+                await CloseAsync();
+            cancellationToken.ThrowIfCancellationRequested();
+            var nextAuthority = authority ?? _localAuthority;
+            if (!ReferenceEquals(_activeAuthority, nextAuthority))
+            {
+                await CloseAsync();
+                try { await PendingProgressSave; } catch { /* The outgoing manager reports final-write failures. */ }
+                cancellationToken.ThrowIfCancellationRequested();
+                _activeAuthority = nextAuthority;
+                _shuffleController = null;
+                _watchDetailPrefetches.Clear();
+                _subtitleAppearanceProfileId = null;
+                _subtitleAppearance = null;
+                _seekContext = null;
+                Interlocked.Increment(ref _seekGeneration);
+            }
+            if (_authorityLifetimeCts.IsCancellationRequested)
+            {
+                _authorityLifetimeCts.Dispose();
+                _authorityLifetimeCts = new();
+            }
+            await PlayRequestAsync(contentId, fromStart, fileId, audioTrackIndex,
+                subtitleSelection, startPositionOverride, HasRemoteAuthority ? null : prefetchedWatchDetail,
+                subtitleTrackSignature, libraryId, shuffleId, cancellationToken);
+        }
+        finally { _authoritySwitchGate.Release(); }
+    }
+
+    private async Task PlayRequestAsync(string contentId, bool fromStart, int? fileId,
+        int? audioTrackIndex, int? subtitleSelection, double? startPositionOverride,
+        WatchDetailResponse? prefetchedWatchDetail, SubtitleTrackSignature? subtitleTrackSignature,
+        int? libraryId, string? shuffleId, CancellationToken cancellationToken)
     {
         if (_closing)
             return;
 
         App.Services.GetService<ThemeMusicService>()?.Interrupt();
-        var ownerCts = new CancellationTokenSource();
+        var ownerCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _authorityLifetimeCts.Token);
         var previous = Interlocked.Exchange(ref _playRequestCts, ownerCts);
         try { previous?.Cancel(); }
         catch (ObjectDisposedException) { }
@@ -1709,6 +1765,7 @@ public partial class PlayerService : IDisposable
         var subtitleAppearanceTask = EnsureSubtitleAppearanceLoadedAsync(requestToken);
         _pendingSubtitleSelection = subtitleSelection;
         _pendingInitialServerSubtitleIndex = null;
+        _activeSubtitleServerIndex = -1;
         LogToFile("state_trace.txt", $"PlayAsync called: contentId={contentId} fromStart={fromStart} audioTrackIndex={audioTrackIndex?.ToString() ?? "auto"} subtitleSelection={FormatSubtitleSelection(subtitleSelection)} State={State} IsLoading={IsLoading}");
         // Take ownership before clearing the outgoing episode hint. The old
         // file can publish one final position event at the Playing Next
@@ -1814,7 +1871,7 @@ public partial class PlayerService : IDisposable
             {
                 // Prefetch owns and observes the network task. The shared core
                 // call below consumes it after libmpv initialization finishes.
-                PrefetchWatchDetail(contentId, libraryId, fileId);
+                PrefetchWatchDetailCore(contentId, _activeAuthority, libraryId, fileId);
                 EnsureMpvInitialized();
                 watchDetail = await GetOrFetchWatchDetailCoreAsync(
                     contentId,
@@ -2746,6 +2803,8 @@ public partial class PlayerService : IDisposable
             || State == PlayerState.Fullscreen
             || _videoWindow?.IsFullscreen == true;
         if (string.IsNullOrEmpty(nextId)) return;
+        var authority = _activeAuthority;
+        var ownerToken = _authorityLifetimeCts.Token;
 
         // PlayAsync handles old-session cleanup internally with
         // _switchingContent = true set BEFORE _mpv.Stop(), which suppresses
@@ -2754,8 +2813,8 @@ public partial class PlayerService : IDisposable
         // get torn down before the new session can start).
         try
         {
-            await PlayAsync(nextId, libraryId: ActiveLibraryId);
-            if (restoreFullscreen)
+            await PlayAsync(nextId, libraryId: ActiveLibraryId, authority: authority, cancellationToken: ownerToken);
+            if (restoreFullscreen && !ownerToken.IsCancellationRequested && ReferenceEquals(authority, _activeAuthority))
                 RestoreFullscreenAfterPostRollContinue();
         }
         finally
@@ -2770,7 +2829,7 @@ public partial class PlayerService : IDisposable
         var previousId = HasEpisodeNavigationForCurrentPlayback
             ? PreviousEpisodeContentId
             : null;
-        return string.IsNullOrEmpty(previousId) ? Task.CompletedTask : PlayAsync(previousId, libraryId: ActiveLibraryId);
+        return string.IsNullOrEmpty(previousId) ? Task.CompletedTask : PlayAsync(previousId, libraryId: ActiveLibraryId, authority: _activeAuthority, cancellationToken: _authorityLifetimeCts.Token);
     }
 
     /// <summary>
@@ -2850,7 +2909,7 @@ public partial class PlayerService : IDisposable
             string.IsNullOrWhiteSpace(NextEpisodeContentId))
             return;
 
-        PrefetchWatchDetail(NextEpisodeContentId, ActiveLibraryId);
+        PrefetchWatchDetailCore(NextEpisodeContentId, _activeAuthority, ActiveLibraryId);
         LogToFile(
             "state_trace.txt",
             $"Prefetching queued episode watch detail: {NextEpisodeContentId}");
@@ -3067,7 +3126,7 @@ public partial class PlayerService : IDisposable
             {
                 try
                 {
-                    var settings = App.Services.GetService<ViewModels.SettingsViewModel>();
+                    var settings = HasRemoteAuthority ? null : App.Services.GetService<ViewModels.SettingsViewModel>();
                     if (string.IsNullOrWhiteSpace(mode)) mode = settings?.SubtitleMode;
                     if (preferredLanguage == null) preferredLanguage = settings?.SubtitleLanguage;
                     if (showForced == null) showForced = settings?.ShowForcedSubtitles;
@@ -3559,7 +3618,8 @@ public partial class PlayerService : IDisposable
             return remoteStreamUrl;
         }
 
-        _directStreamProxy = new DirectStreamProxy(remoteStreamUrl, () => _apiClient.AccessToken, supportsRanges);
+        var streamingApi = _apiClient;
+        _directStreamProxy = new DirectStreamProxy(remoteStreamUrl, () => streamingApi.AccessToken, supportsRanges);
         var localUrl = _directStreamProxy.Start();
         LogToFile(
             "state_trace.txt",
@@ -3575,7 +3635,8 @@ public partial class PlayerService : IDisposable
 
         StopDirectStreamProxy();
         StopHlsProxy();
-        _hlsProxy = new HlsProxy(remoteManifestUrl, () => _apiClient.AccessToken);
+        var streamingApi = _apiClient;
+        _hlsProxy = new HlsProxy(remoteManifestUrl, () => streamingApi.AccessToken);
         var localUrl = _hlsProxy.Start();
         LogToFile("state_trace.txt", $"HLS stream via local proxy: local={PlaybackUrlRedactor.Redact(localUrl)}");
         return localUrl;
@@ -3714,24 +3775,29 @@ public partial class PlayerService : IDisposable
 
     private async Task EnsureSubtitleAppearanceLoadedAsync(CancellationToken ct)
     {
-        var profileId = _authService.SelectedProfileId;
+        var authority = _activeAuthority;
+        var context = authority.ApiClient.CaptureContext();
+        var profileId = authority.Auth.SelectedProfileId;
         if (_subtitleAppearance != null && string.Equals(_subtitleAppearanceProfileId, profileId, StringComparison.Ordinal))
             return;
 
         await _subtitleAppearanceLoadGate.WaitAsync(ct);
         try
         {
+            if (!ReferenceEquals(authority, _activeAuthority) || !authority.ApiClient.IsCurrentContext(context)) return;
             if (_subtitleAppearance != null && string.Equals(_subtitleAppearanceProfileId, profileId, StringComparison.Ordinal))
                 return;
 
             try
             {
-                var response = await _settingsApi.GetContractEffectiveSettingsAsync(["playback.subtitle_appearance"], ct: ct);
+                var response = await authority.SettingsApi.GetContractEffectiveSettingsAsync(["playback.subtitle_appearance"], ct: ct);
+                if (!ReferenceEquals(authority, _activeAuthority) || !authority.ApiClient.IsCurrentContext(context)) return;
                 _subtitleAppearance = Core.Models.Settings.SubtitleAppearance.Parse(
                     response.Settings.FirstOrDefault(setting => setting.Key == "playback.subtitle_appearance")?.Value.GetRawText());
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
+                if (!ReferenceEquals(authority, _activeAuthority) || !authority.ApiClient.IsCurrentContext(context)) return;
                 LogToFile("state_trace.txt", $"Subtitle appearance load failed: {ex.Message}");
                 _subtitleAppearance = new Core.Models.Settings.SubtitleAppearance();
             }
@@ -3907,8 +3973,12 @@ public partial class PlayerService : IDisposable
 
     private async Task ContinueAudiobookPartAsync(string contentId, int fileId, double absoluteStart)
     {
+        var authority = _activeAuthority;
+        var libraryId = ActiveLibraryId;
+        var ownerToken = _authorityLifetimeCts.Token;
         await ReportAudiobookProgressAsync(absoluteStart, force: true).ConfigureAwait(false);
-        await PlayAsync(contentId, fileId: fileId, startPositionOverride: absoluteStart, libraryId: ActiveLibraryId).ConfigureAwait(false);
+        if (_closing || ownerToken.IsCancellationRequested || !ReferenceEquals(_activeAuthority, authority)) return;
+        await PlayAsync(contentId, fileId: fileId, startPositionOverride: absoluteStart, libraryId: libraryId, authority: authority, cancellationToken: ownerToken).ConfigureAwait(false);
     }
 
     private static bool IsAtMediaEnd(double position, double duration)
@@ -4310,11 +4380,15 @@ public partial class PlayerService : IDisposable
 
     public async Task SwitchAudioTrackAsync(int trackIndex)
     {
-        if (_mpv == null || _playbackManager == null) return;
-        await CancelAndDrainTransportRestartsAsync();
-
+        var authority = _activeAuthority;
         var manager = _playbackManager;
-        var ct = _playbackCts?.Token ?? CancellationToken.None;
+        if (_mpv == null || manager == null) return;
+        using var switchCts = CancellationTokenSource.CreateLinkedTokenSource(_playbackCts?.Token ?? CancellationToken.None, _authorityLifetimeCts.Token);
+        var ct = switchCts.Token;
+        bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing &&
+            ReferenceEquals(authority, _activeAuthority) && ReferenceEquals(manager, _playbackManager);
+        await CancelAndDrainTransportRestartsAsync(ct);
+        if (!CurrentSwitch()) return;
         var wasPaused = CaptureUserPausedState();
         var currentPos = CurrentMediaPosition;
         if (manager.CurrentSession?.ProtocolVersion >= 3)
@@ -4324,6 +4398,7 @@ public partial class PlayerService : IDisposable
             try
             {
                 var session = await manager.ReplanAudioAsync(trackIndex, currentPos, ct).ConfigureAwait(false);
+                if (!CurrentSwitch()) return;
                 var version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
                     ?? throw new InvalidOperationException("No active version is available for the audio switch.");
                 var streamUrl = manager.StreamUrl
@@ -4335,13 +4410,14 @@ public partial class PlayerService : IDisposable
                     currentPos,
                     ct).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
-                if (_closing || !ReferenceEquals(_playbackManager, manager) ||
+                if (!CurrentSwitch() ||
                     !ReferenceEquals(manager.CurrentSession, session))
                     return;
                 PlayMethod = session.PlayMethod;
                 ApplyPreparedTransport(prepared);
                 BeginMpvLoad(prepared, restorePaused: wasPaused);
                 await PersistAudioPreferenceAsync(trackIndex);
+                if (!CurrentSwitch()) return;
                 SendAudioTrackListToOsc();
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -4350,6 +4426,7 @@ public partial class PlayerService : IDisposable
             }
             catch (Exception ex)
             {
+                if (!CurrentSwitch()) return;
                 _switchingContent = false;
                 IsLoading = false;
                 LogToFile("player_audio_switch_error.txt", ex.ToString());
@@ -4371,6 +4448,7 @@ public partial class PlayerService : IDisposable
             if (manager.CurrentSession != null)
                 manager.CurrentSession.AudioTrackIndex = trackIndex;
             await PersistAudioPreferenceAsync(trackIndex);
+            if (!CurrentSwitch()) return;
             SendAudioTrackListToOsc();
             return;
         }
@@ -4387,13 +4465,13 @@ public partial class PlayerService : IDisposable
         {
             var expectedSessionId = manager.SessionId
                 ?? throw new InvalidOperationException("The playback session is no longer active.");
-            var response = await _playbackApi.ChangeAudioTrackAsync(
+            var response = await authority.PlaybackApi.ChangeAudioTrackAsync(
                 expectedSessionId,
                 trackIndex,
                 currentPos,
                 ct);
             ct.ThrowIfCancellationRequested();
-            if (_closing || !ReferenceEquals(_playbackManager, manager) ||
+            if (!CurrentSwitch() ||
                 !string.Equals(manager.SessionId, expectedSessionId, StringComparison.Ordinal))
                 return;
             manager.ApplyAudioChange(response);
@@ -4480,13 +4558,14 @@ public partial class PlayerService : IDisposable
             }
 
             ct.ThrowIfCancellationRequested();
-            if (_closing || !ReferenceEquals(_playbackManager, manager) ||
+            if (!CurrentSwitch() ||
                 !ReferenceEquals(manager.CurrentSession, session))
                 return;
             ApplyPreparedTransport(prepared);
             BeginMpvLoad(prepared, restorePaused: wasPaused);
 
             await PersistAudioPreferenceAsync(trackIndex);
+            if (!CurrentSwitch()) return;
             SendAudioTrackListToOsc();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -4495,8 +4574,9 @@ public partial class PlayerService : IDisposable
         }
         catch (Exception ex)
         {
+            if (!CurrentSwitch()) return;
             LogToFile("player_audio_switch_error.txt", ex.ToString());
-            if (serverTransportChanged && !_closing && ReferenceEquals(_playbackManager, manager))
+            if (serverTransportChanged && CurrentSwitch())
             {
                 // The server accepted the track switch, so the previous remux
                 // or HLS URL may already be invalid. Rebuild a fresh session at
@@ -5690,13 +5770,17 @@ public partial class PlayerService : IDisposable
 
     private async Task SwitchQualityTierAsync(string tierId)
     {
+        var authority = _activeAuthority;
+        var manager = _playbackManager;
+        if (_mpv == null || manager == null) return;
+        using var switchCts = CancellationTokenSource.CreateLinkedTokenSource(_playbackCts?.Token ?? CancellationToken.None, _authorityLifetimeCts.Token);
+        var ct = switchCts.Token;
+        bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing &&
+            ReferenceEquals(authority, _activeAuthority) && ReferenceEquals(manager, _playbackManager);
+        await CancelAndDrainTransportRestartsAsync(ct);
+        if (!CurrentSwitch()) return;
         _offeredRoomQuality = _offeredFromQuality = null;
         _mpv?.SendScriptMessage("osc-room-quality-offer", "");
-        if (_mpv == null || _playbackManager == null) return;
-        await CancelAndDrainTransportRestartsAsync();
-
-        var manager = _playbackManager;
-        var ct = _playbackCts?.Token ?? CancellationToken.None;
         var wasPaused = CaptureUserPausedState();
         var currentPos = CurrentMediaPosition;
         var switchSucceeded = false;
@@ -5715,6 +5799,7 @@ public partial class PlayerService : IDisposable
                     _ => tierId,
                 };
                 var session = await manager.ReplanQualityAsync(quality, currentPos, ct).ConfigureAwait(false);
+                if (!CurrentSwitch()) return;
                 var version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
                     ?? throw new InvalidOperationException("No active version is available for the quality switch.");
                 var streamUrl = manager.StreamUrl
@@ -5726,7 +5811,7 @@ public partial class PlayerService : IDisposable
                     currentPos,
                     ct).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
-                if (_closing || !ReferenceEquals(_playbackManager, manager) ||
+                if (!CurrentSwitch() ||
                     !ReferenceEquals(manager.CurrentSession, session))
                     return;
                 PlayMethod = session.PlayMethod;
@@ -5744,6 +5829,7 @@ public partial class PlayerService : IDisposable
             }
             catch (Exception ex)
             {
+                if (!CurrentSwitch()) return;
                 _switchingContent = false;
                 _qualitySwitchActive = false;
                 IsLoading = false;
@@ -5791,6 +5877,7 @@ public partial class PlayerService : IDisposable
                         forceStartPosition: true,
                         previousFinalPosition: currentPos,
                         ct: ct);
+                    if (!CurrentSwitch()) return;
                     replacementAccepted = true;
                     InvokeSubscribersSafely(SessionStarted, session.SessionId, nameof(SessionStarted));
                     PlayMethod = session.PlayMethod;
@@ -5805,7 +5892,7 @@ public partial class PlayerService : IDisposable
                         ct);
 
                     ct.ThrowIfCancellationRequested();
-                    if (_closing || !ReferenceEquals(_playbackManager, manager) ||
+                    if (!CurrentSwitch() ||
                         !ReferenceEquals(manager.CurrentSession, session))
                         return;
 
@@ -5820,9 +5907,10 @@ public partial class PlayerService : IDisposable
                 }
                 catch (Exception ex)
                 {
+                    if (!CurrentSwitch()) return;
                     _qualitySwitchActive = false;
                     LogToFile("player_quality_switch_error.txt", ex.ToString());
-                    if (replacementAccepted && !_closing && ReferenceEquals(_playbackManager, manager))
+                    if (replacementAccepted && CurrentSwitch())
                     {
                         _prematureEofRecoveryActive = true;
                         _switchingContent = true;
@@ -5870,9 +5958,9 @@ public partial class PlayerService : IDisposable
                     SubtitleTrackIndex = -1,
                     SubtitleBurnIn = false
                 };
-                var transcodeResponse = await _playbackApi.StartTranscodeAsync(recipe, ct);
+                var transcodeResponse = await authority.PlaybackApi.StartTranscodeAsync(recipe, ct);
                 ct.ThrowIfCancellationRequested();
-                if (_closing || !ReferenceEquals(_playbackManager, manager) ||
+                if (!CurrentSwitch() ||
                     !string.Equals(manager.SessionId, expectedSessionId, StringComparison.Ordinal))
                     return;
 
@@ -5928,6 +6016,7 @@ public partial class PlayerService : IDisposable
             }
             catch (Exception ex)
             {
+                if (!CurrentSwitch()) return;
                 _switchingContent = false;
                 _qualitySwitchActive = false;
                 LogToFile("player_quality_switch_error.txt", ex.ToString());
@@ -5958,7 +6047,7 @@ public partial class PlayerService : IDisposable
         // Don't clear _switchingContent/_qualitySwitchActive here —
         // they're cleared in the FileLoaded handler when the new stream loads.
         // Clearing here races with END_FILE from the old stream being killed.
-        if (switchSucceeded)
+        if (switchSucceeded && CurrentSwitch())
         {
             _activeQualityTier = tierId;
             _mpv?.SendScriptMessage("osc-set-active-quality", tierId);
@@ -5978,7 +6067,7 @@ public partial class PlayerService : IDisposable
             .FirstOrDefault(language => !string.IsNullOrWhiteSpace(language));
         var changed = false;
         long? downloadedSubtitleId = null;
-        var dialog = new SiloPlayer.Controls.SubtitleSearchDialog(session.MediaFileId, preferredLanguage);
+        var dialog = new SiloPlayer.Controls.SubtitleSearchDialog(_activeAuthority, session.MediaFileId, preferredLanguage);
         dialog.SubtitleDownloaded += subtitleId =>
         {
             changed = true;
@@ -6024,7 +6113,7 @@ public partial class PlayerService : IDisposable
             return;
 
         var snapshot = CapturePlaybackUiSnapshot();
-        var dialog = new SiloPlayer.Controls.SubtitleAppearanceDialog();
+        var dialog = new SiloPlayer.Controls.SubtitleAppearanceDialog(_activeAuthority);
         if (!await _playbackDialogGate.WaitAsync(0))
             return;
         var restorePlayerInput = false;
@@ -6096,17 +6185,21 @@ public partial class PlayerService : IDisposable
         }
     }
 
-    private sealed record PlaybackUiSnapshot(bool WasFullscreen, bool WasPaused, double Position);
+    private sealed record PlaybackUiSnapshot(PlaybackAuthorityScope Authority, PlaybackManager? Manager,
+        bool WasFullscreen, bool WasPaused, double Position);
 
     private PlaybackUiSnapshot CapturePlaybackUiSnapshot()
         => new(
+            _activeAuthority,
+            _playbackManager,
             _videoWindow?.IsFullscreen == true,
             CaptureUserPausedState(),
             CurrentMediaPosition);
 
     private void RestorePlaybackUiSnapshot(PlaybackUiSnapshot snapshot, bool activatePlaybackSurface)
     {
-        if (State is PlayerState.Idle or PlayerState.Minimized)
+        if (_closing || !ReferenceEquals(snapshot.Authority, _activeAuthority) ||
+            !ReferenceEquals(snapshot.Manager, _playbackManager) || State is PlayerState.Idle or PlayerState.Minimized)
             return;
 
         try
@@ -6185,7 +6278,7 @@ public partial class PlayerService : IDisposable
             {
                 try
                 {
-                    var settingsVm = App.Services.GetService<SiloPlayer.ViewModels.SettingsViewModel>();
+                    var settingsVm = HasRemoteAuthority ? null : App.Services.GetService<SiloPlayer.ViewModels.SettingsViewModel>();
                     preferred = settingsVm?.SubtitleLanguage;
                 }
                 catch { }
@@ -6315,11 +6408,31 @@ public partial class PlayerService : IDisposable
     // ── Close / Dispose ──────────────────────────────────────────────────
 
     private bool _closing;
+    private readonly object _closeTaskGate = new();
+    private TaskCompletionSource? _closeCompletion;
 
-    public async Task CloseAsync()
+    public Task CloseAsync()
     {
-        if (_closing) return; // Prevent duplicate close from spammed exit clicks
-        _closing = true;
+        lock (_closeTaskGate)
+        {
+            if (_closeCompletion is { Task.IsCompleted: false }) return _closeCompletion.Task;
+            var completion = _closeCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            _closing = true;
+            _ = CompleteCloseAsync(completion);
+            return completion.Task;
+        }
+    }
+
+    private async Task CompleteCloseAsync(TaskCompletionSource completion)
+    {
+        try { await CloseCoreAsync(); _closing = false; completion.TrySetResult(); }
+        catch (Exception ex) { _closing = false; completion.TrySetException(ex); }
+    }
+
+    private async Task CloseCoreAsync()
+    {
+        var closingAuthority = _activeAuthority;
+        _authorityLifetimeCts.Cancel();
         _shuffleController?.Leave();
         ActiveLibraryId = null;
 
@@ -6350,7 +6463,7 @@ public partial class PlayerService : IDisposable
         // ItemDetail view models reflect the new position without waiting
         // for a full refetch. "Completed" = watched past 90% of duration,
         // matching the webui `isCompleted` heuristic.
-        if (!string.IsNullOrEmpty(closedContentId) && closedPosition > 0)
+        if (!HasRemoteAuthority && !string.IsNullOrEmpty(closedContentId) && closedPosition > 0)
         {
             bool completed = closedDuration > 0 && closedPosition >= closedDuration * 0.9;
             try
@@ -6442,6 +6555,7 @@ public partial class PlayerService : IDisposable
         _pendingSubtitleSelection = null;
         _pendingInitialServerSubtitleIndex = null;
         _autoSkipMarkerIdentity.Clear();
+        _activeSubtitleServerIndex = -1;
         ClearChapterThumbnailOverlayCache();
         StopDirectStreamProxy();
         StopHlsProxy();
@@ -6459,7 +6573,18 @@ public partial class PlayerService : IDisposable
         App.MainWindowInstance?.HideLoadingOverlay();
         _videoWindow?.Hide();
         SetState(PlayerState.Idle);
-        _closing = false;
+        if (!ReferenceEquals(closingAuthority, _localAuthority))
+        {
+            try { await PendingProgressSave; } catch { /* Final writes are best effort. */ }
+            _activeAuthority = _localAuthority;
+            _shuffleController = null;
+            _watchDetailPrefetches.Clear();
+            _subtitleAppearanceProfileId = null;
+            _subtitleAppearance = null;
+            _seekContext = null;
+            Interlocked.Increment(ref _seekGeneration);
+            RemoteAuthorityEnded?.Invoke(closingAuthority);
+        }
         LogToFile("state_trace.txt", "CloseAsync completed");
     }
 
@@ -6482,6 +6607,7 @@ public partial class PlayerService : IDisposable
     public void Dispose()
     {
         _closing = true;
+        _authorityLifetimeCts.Cancel();
         CancelPendingPlayRequest();
         CancelPendingTransportRestarts();
         CancelPendingFileLoadTimeout();

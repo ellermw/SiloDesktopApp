@@ -64,6 +64,8 @@ public sealed partial class MainWindow : Window
     private CancellationTokenSource? _shellHydrationCts;
     private string? _pendingActivationArgument;
     private bool _navigationHostLoaded;
+    private bool _receiverShutdownStarted;
+    private bool _receiverShutdownComplete;
     private Style? _profileFlyoutBaseStyle;
     private Controls.GlobalSearchDialog? _activeGlobalSearch;
     private string _globalSearchQuery = "";
@@ -199,6 +201,8 @@ public sealed partial class MainWindow : Window
 
         // Clean up event subscriptions when window closes
         this.Closed += OnWindowClosed;
+        if (AppWindow != null) AppWindow.Closing += OnWindowClosing;
+        App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().Initialize(DispatcherQueue);
     }
 
     private void OnWindowSizeChanged(object sender, WindowSizeChangedEventArgs e)
@@ -427,6 +431,17 @@ public sealed partial class MainWindow : Window
         }
     }
 
+    private async void OnWindowClosing(Microsoft.UI.Windowing.AppWindow sender, Microsoft.UI.Windowing.AppWindowClosingEventArgs args)
+    {
+        if (_receiverShutdownComplete) return;
+        args.Cancel = true;
+        if (_receiverShutdownStarted) return;
+        _receiverShutdownStarted = true;
+        try { await App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().ShutdownAsync(); }
+        catch (Exception ex) { LocalLog.AppendLine("silocast.txt", $"shutdown_failed | {ex.GetType().Name}"); }
+        finally { _receiverShutdownComplete = true; Close(); }
+    }
+
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
         CancelShellHydration();
@@ -446,7 +461,11 @@ public sealed partial class MainWindow : Window
         _playerService.ShuffleFailed -= OnShuffleFailed;
         this.SizeChanged -= OnWindowSizeChanged;
         this.Activated -= OnWindowActivated;
-        if (AppWindow != null) AppWindow.Changed -= OnAppWindowChanged;
+        if (AppWindow != null)
+        {
+            AppWindow.Changed -= OnAppWindowChanged;
+            AppWindow.Closing -= OnWindowClosing;
+        }
         _navigationService.Navigated -= OnNavigated_UpdateWindowTitle;
         _navigationService.Navigated -= OnNavigated_ConsumePendingActivation;
         _navigationService.Navigated -= OnNavigated_ApplyAccessibility;
@@ -633,7 +652,7 @@ public sealed partial class MainWindow : Window
     {
         try
         {
-            var response = await _settingsApi.GetEffectiveSettingsAsync([AutoPlayNextSettingKey]);
+            var response = await _playerService.PlaybackSettingsApi.GetEffectiveSettingsAsync([AutoPlayNextSettingKey]);
             var entry = response.Settings.FirstOrDefault(setting => setting.Key == AutoPlayNextSettingKey);
             return !string.Equals(entry?.EffectiveValue, "false", StringComparison.OrdinalIgnoreCase);
         }
@@ -681,7 +700,7 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            await _settingsApi.PutDeviceSettingAsync(AutoPlayNextSettingKey, _playingNextAutoPlay ? "true" : "false");
+            await _playerService.PlaybackSettingsApi.PutDeviceSettingAsync(AutoPlayNextSettingKey, _playingNextAutoPlay ? "true" : "false");
         }
         catch (Exception ex)
         {

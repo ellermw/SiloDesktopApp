@@ -3,7 +3,7 @@
 
 #define MyAppName "Silo Desktop Player"
 #ifndef MyAppVersion
-  #define MyAppVersion "1.2.241"
+  #define MyAppVersion "1.2.243"
 #endif
 #define MyAppPublisher "Silo"
 #define MyAppExeName "SiloPlayer.exe"
@@ -41,6 +41,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional options:"; Flags: checkedonce
+Name: "silocastfirewall"; Description: "Allow SiloCast phone control on Private local networks"; GroupDescription: "Optional local-network access:"; Flags: unchecked
 
 [InstallDelete]
 ; Upgrades must start from a clean application payload. Earlier QA builds
@@ -74,8 +75,13 @@ Root: HKA; Subkey: "Software\Classes\org.siloserver.silo\DefaultIcon"; ValueType
 Root: HKA; Subkey: "Software\Classes\org.siloserver.silo\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 [Run]
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Silo Desktop SiloCast (Private LAN)"""; Flags: runhidden waituntilterminated; Tasks: silocastfirewall
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""Silo Desktop SiloCast (Private LAN)"" dir=in action=allow program=""{app}\{#MyAppExeName}"" enable=yes profile=private remoteip=localsubnet"; Flags: runhidden waituntilterminated; Tasks: silocastfirewall
 ; Launch app after install
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Silo Desktop SiloCast (Private LAN)"""; Flags: runhidden waituntilterminated; RunOnceId: "SiloCastPrivateLanFirewall"
 
 [Code]
 procedure InstallWindowsAppRuntime;

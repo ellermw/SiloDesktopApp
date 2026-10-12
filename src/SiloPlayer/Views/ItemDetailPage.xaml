@@ -7,6 +7,7 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:controls="using:SiloPlayer.Controls"
     xmlns:converters="using:SiloPlayer.Converters"
+    xmlns:helpers="using:SiloPlayer.Helpers"
     mc:Ignorable="d"
     Background="{StaticResource AppBackgroundBrush}"
     SizeChanged="ItemDetailPage_SizeChanged">
@@ -369,7 +370,7 @@
                     <!-- Metadata row: year · content rating pill · runtime · TMDB score + quality badges -->
                     <controls:WrapPanel x:Name="HeroMetadataRow" HorizontalSpacing="8" VerticalSpacing="8">
                         <StackPanel x:Name="MetaPanel" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-                            <Border x:Name="YearBadge" CornerRadius="999" Padding="10,4"
+                            <Border x:Name="YearBadge" CornerRadius="999" helpers:RoundedBadge.Radius="999" Padding="10,4"
                                     Background="{StaticResource SurfaceBrush}"
                                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                                     Visibility="Collapsed">
@@ -378,7 +379,7 @@
                             </Border>
                             <TextBlock x:Name="MetaDot1" Text=" · " Foreground="{StaticResource TertiaryTextBrush}" FontSize="15" VerticalAlignment="Center" Visibility="Collapsed" />
                             <!-- Content rating in a pill badge -->
-                            <Border x:Name="ContentRatingBadge" CornerRadius="999" Padding="10,4"
+                            <Border x:Name="ContentRatingBadge" CornerRadius="999" helpers:RoundedBadge.Radius="999" Padding="10,4"
                                     Background="{StaticResource SurfaceBrush}"
                                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                                     VerticalAlignment="Center" Visibility="Collapsed">
@@ -386,25 +387,25 @@
                                            Foreground="{StaticResource SecondaryTextBrush}" />
                             </Border>
                             <TextBlock x:Name="MetaDot2" Text=" · " Foreground="{StaticResource TertiaryTextBrush}" FontSize="15" VerticalAlignment="Center" Visibility="Collapsed" />
-                            <Border x:Name="AdvisoryAgeBadge" CornerRadius="999" Padding="10,4" Background="{StaticResource SurfaceBrush}"
+                            <Border x:Name="AdvisoryAgeBadge" CornerRadius="999" helpers:RoundedBadge.Radius="999" Padding="10,4" Background="{StaticResource SurfaceBrush}"
                                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Visibility="Collapsed">
                                 <TextBlock x:Name="AdvisoryAgeText" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" />
                             </Border>
-                            <Border x:Name="RuntimeBadge" CornerRadius="999" Padding="10,4"
+                            <Border x:Name="RuntimeBadge" CornerRadius="999" helpers:RoundedBadge.Radius="999" Padding="10,4"
                                     Background="{StaticResource SurfaceBrush}"
                                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                                     Visibility="Collapsed">
                                 <TextBlock x:Name="RuntimeText" Foreground="{StaticResource SecondaryTextBrush}"
                                            FontSize="11" FontWeight="SemiBold" CharacterSpacing="40" />
                             </Border>
-                            <Border x:Name="SeasonCountBadge" CornerRadius="999" Padding="10,4"
+                            <Border x:Name="SeasonCountBadge" CornerRadius="999" helpers:RoundedBadge.Radius="999" Padding="10,4"
                                     Background="{StaticResource SurfaceBrush}"
                                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                                     Visibility="Collapsed">
                                 <TextBlock x:Name="SeasonCountText" Foreground="{StaticResource SecondaryTextBrush}"
                                            FontSize="11" FontWeight="SemiBold" CharacterSpacing="40" />
                             </Border>
-                            <Border x:Name="EpisodeCountBadge" CornerRadius="999" Padding="10,4"
+                            <Border x:Name="EpisodeCountBadge" CornerRadius="999" helpers:RoundedBadge.Radius="999" Padding="10,4"
                                     Background="{StaticResource SurfaceBrush}"
                                     BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
                                     Visibility="Collapsed">

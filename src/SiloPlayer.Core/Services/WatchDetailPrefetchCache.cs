@@ -89,6 +89,11 @@ public sealed class WatchDetailPrefetchCache<T> where T : class
             _entries.Remove(contentId);
     }
 
+    public void Clear()
+    {
+        lock (_gate) _entries.Clear();
+    }
+
     public void Remove(string contentId, Task<T> task)
     {
         ArgumentNullException.ThrowIfNull(task);

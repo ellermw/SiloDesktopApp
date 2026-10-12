@@ -3,6 +3,23 @@ namespace SiloPlayer.Tests;
 public sealed class PlayerServiceSourceTests
 {
     [Fact]
+    public void AudioAndQualityControlsCaptureTheirOwnerBeforeDrainingTransportWork()
+    {
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        foreach (var signature in new[] { "public async Task SwitchAudioTrackAsync(int trackIndex)", "private async Task SwitchQualityTierAsync(string tierId)" })
+        {
+            var start = source.IndexOf(signature, StringComparison.Ordinal);
+            var drain = source.IndexOf("await CancelAndDrainTransportRestartsAsync(ct);", start, StringComparison.Ordinal);
+            var capturedScope = source.IndexOf("var authority = _activeAuthority;", start, StringComparison.Ordinal);
+            var capturedManager = source.IndexOf("var manager = _playbackManager;", start, StringComparison.Ordinal);
+            Assert.True(capturedScope > start && capturedManager > start && capturedScope < drain && capturedManager < drain);
+            Assert.Contains("ReferenceEquals(authority, _activeAuthority)", source[capturedScope..drain]);
+            Assert.Contains("ReferenceEquals(manager, _playbackManager)", source[capturedScope..drain]);
+            Assert.StartsWith("\n        if (!CurrentSwitch()) return;", source[(drain + "await CancelAndDrainTransportRestartsAsync(ct);".Length)..].Replace("\r", ""));
+        }
+    }
+
+    [Fact]
     public void NativeOscReceivesTheActiveApplicationAccent()
     {
         var root = FindRepositoryRoot();
@@ -65,7 +82,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("public async Task<WatchDetailResponse> GetOrFetchWatchDetailAsync", service, StringComparison.Ordinal);
         Assert.Contains("await GetOrFetchWatchDetailCoreAsync(", service, StringComparison.Ordinal);
         Assert.Contains("consumePrefetch: true", service, StringComparison.Ordinal);
-        Assert.Contains("PrefetchWatchDetail(contentId, libraryId, fileId);", service, StringComparison.Ordinal);
+        Assert.Contains("PrefetchWatchDetailCore(contentId, _activeAuthority, libraryId, fileId);", service, StringComparison.Ordinal);
         Assert.Contains("_playbackManager.UseWatchDetail(watchDetail);", service, StringComparison.Ordinal);
         Assert.Contains("public WatchDetailResponse UseWatchDetail", manager, StringComparison.Ordinal);
         Assert.Contains("QueuePlaybackPrefetch();", card, StringComparison.Ordinal);
@@ -280,7 +297,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("CurrentMediaDuration - mediaPosition <= 30", playerEvents);
         Assert.Contains("InvokeSubscribersSafely(ShowPlayingNextRequested, false", playerEvents);
         Assert.Contains("PrefetchQueuedEpisodeWatchDetail();", playerEvents);
-        Assert.Contains("PrefetchWatchDetail(NextEpisodeContentId, ActiveLibraryId);", source);
+        Assert.Contains("PrefetchWatchDetailCore(NextEpisodeContentId, _activeAuthority, ActiveLibraryId);", source);
         Assert.Contains("SendScriptMessage(\"osc-set-post-roll\", \"true\")", source);
         Assert.Contains("SendScriptMessage(\"osc-set-post-roll\", \"false\")", source);
     }
@@ -734,7 +751,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("manager.ApplyAudioChange(response);", method, StringComparison.Ordinal);
         Assert.Contains("serverTransportChanged = true;", method, StringComparison.Ordinal);
         Assert.Contains("RecoverInterruptedStreamAsync(currentPos, \"audio-switch-failed\")", method, StringComparison.Ordinal);
-        Assert.Contains("if (serverTransportChanged && !_closing", method, StringComparison.Ordinal);
+        Assert.Contains("if (serverTransportChanged && CurrentSwitch())", method, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1031,7 +1048,9 @@ public sealed class PlayerServiceSourceTests
             "Services",
             "PlayerService.cs"));
 
-        Assert.Contains("private sealed record PlaybackUiSnapshot(bool WasFullscreen, bool WasPaused, double Position);", source, StringComparison.Ordinal);
+        Assert.Contains("private sealed record PlaybackUiSnapshot(PlaybackAuthorityScope Authority, PlaybackManager? Manager,", source, StringComparison.Ordinal);
+        Assert.Contains("!ReferenceEquals(snapshot.Authority, _activeAuthority)", source, StringComparison.Ordinal);
+        Assert.Contains("!ReferenceEquals(snapshot.Manager, _playbackManager)", source, StringComparison.Ordinal);
         Assert.Contains("private PlaybackUiSnapshot CapturePlaybackUiSnapshot()", source, StringComparison.Ordinal);
         Assert.Contains("private void RestorePlaybackUiSnapshot(PlaybackUiSnapshot snapshot, bool activatePlaybackSurface)", source, StringComparison.Ordinal);
 

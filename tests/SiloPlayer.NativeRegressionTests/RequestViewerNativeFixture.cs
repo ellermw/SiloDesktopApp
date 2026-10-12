@@ -18,10 +18,14 @@ internal static class RequestViewerNativeFixture
     {
         using var handler = new Handler();
         using var http = new HttpClient(handler);
-        var client = new SiloApiClient(http); client.SetBaseUrl("https://request-fixture.invalid"); client.SetProfile("fixture-profile");
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://request-fixture.invalid");
+        using var auth = new AuthService(client, new AuthApi(client), credentialStore: null);
+        auth.SetTokens("request-fixture-access", "request-fixture-refresh", 86400);
+        auth.SetCurrentUser(new() { Id = "fixture", Role = "user" });
+        auth.SelectProfile("fixture-profile", profile: new() { Id = "fixture-profile", Name = "Fixture" });
         var api = new RequestsApi(client);
         var overlays = new CardOverlayService(new SettingsApi(client));
-        using var services = new ServiceCollection().AddSingleton(api).AddSingleton(client)
+        using var services = new ServiceCollection().AddSingleton(api).AddSingleton(client).AddSingleton(auth)
             .AddSingleton(new PeopleApi(client)).AddSingleton(new SettingsApi(client)).AddSingleton<SearchViewModel>()
             .AddSingleton(new CatalogApi(client)).AddSingleton(new ToastService()).AddSingleton(overlays)
             .AddSingleton(new UICustomizationService(new SettingsApi(client)))
@@ -58,11 +62,16 @@ internal static class RequestViewerNativeFixture
             if (!dialog.IsPrimaryButtonEnabled) throw new InvalidOperationException("Native season picker cannot select an upcoming season.");
             handler.LibraryContentId = "inaccessible:copy";
             await (Task)page.GetType().GetMethod("LoadAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [new RequestDetailNavigation("series", 42)])!;
-            if (actions.Children.OfType<Button>().Any(b => (string?)b.Content == "Open in library"))
+            if (actions.Children.OfType<Button>().Any(b => b.Content is string label && label == "Open in library"))
                 throw new InvalidOperationException("Native external title offers an inaccessible library copy.");
-            var watchlist = actions.Children.OfType<Button>().Single(b => Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(b) == "Add to watchlist");
+            var watchlist = actions.Children.OfType<Button>().Single(b =>
+                Microsoft.UI.Xaml.Automation.AutomationProperties.GetAutomationId(b) == "watchlist" &&
+                Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(b) == "Add to Watchlist");
             Invoke(page, "Watchlist_Click", watchlist, new RoutedEventArgs());
-            await UntilAsync(() => handler.Paths.Contains("PUT /api/v2/watchlist/titles/series/42") && actions.Children.OfType<Button>().Any(b => (string?)b.Content == "Remove from watchlist"));
+            await UntilAsync(() => handler.Paths.Contains("PUT /api/v2/watchlist/titles/series/42") && actions.Children.OfType<Button>().Any(b =>
+                Microsoft.UI.Xaml.Automation.AutomationProperties.GetAutomationId(b) == "watchlist" &&
+                Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(b) == "On Watchlist" &&
+                Microsoft.UI.Xaml.Automation.AutomationProperties.GetHelpText(b) == "On"));
             parent.Children.Remove(page);
 
             var watchlistPage = new WatchlistPage { Width = 900, Height = 700 };
@@ -89,6 +98,7 @@ internal static class RequestViewerNativeFixture
     private static async Task SearchAndRulesAsync(StackPanel parent)
     {
         var dialog = new SiloPlayer.Controls.GlobalSearchDialog();
+        await (Task)dialog.GetType().GetField("_scopeLoadTask", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!;
         var box = (TextBox)dialog.FindName("SearchBox"); box.Text = "Fixture";
         ((List<SiloPlayer.Core.Models.Home.MediaItem>)dialog.GetType().GetField("_results", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!).Add(new() { ContentId = "title", Title = "Fixture title" });
         ((List<RequestMediaResult>)dialog.GetType().GetField("_requestResults", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!).Add(new() { MediaType = "series", TmdbId = 42, Title = "Fixture request" });
@@ -97,12 +107,12 @@ internal static class RequestViewerNativeFixture
         selection.Move(1); selection.Move(1);
         ((List<Person>)dialog.GetType().GetField("_peopleResults", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!).Add(new() { Id = "person", Name = "Fixture Person" });
         Invoke(dialog, "Render");
-        var rows = ((StackPanel)dialog.FindName("ResultsPanel")).Children.OfType<Button>().ToArray();
+        var rows = Descendants((StackPanel)dialog.FindName("ResultsPanel")).OfType<Button>().Where(row => row.Tag is int).ToArray();
         if (!rows.Select(row => (int)row.Tag).SequenceEqual(new[] { 0, 1, 2 }) || selection.Index != 2)
             throw new InvalidOperationException("Native quick search skips optional keyboard rows or loses selected identity.");
         box.Text = "Fixture Person";
         Invoke(dialog, "Render");
-        rows = ((StackPanel)dialog.FindName("ResultsPanel")).Children.OfType<Button>().ToArray();
+        rows = Descendants((StackPanel)dialog.FindName("ResultsPanel")).OfType<Button>().Where(row => row.Tag is int).ToArray();
         var firstTitle = ((Grid)((Border)rows[0].Content).Child).Children.OfType<StackPanel>().Single().Children.OfType<TextBlock>().First().Text;
         if (firstTitle != "Fixture Person" ||
             !rows.Select(row => (int)row.Tag).SequenceEqual(new[] { 0, 1, 2 }))
@@ -110,9 +120,10 @@ internal static class RequestViewerNativeFixture
         ((List<SiloPlayer.Core.Models.Home.MediaItem>)dialog.GetType().GetField("_results", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!).Clear();
         ((List<Person>)dialog.GetType().GetField("_peopleResults", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!).Clear();
         ((List<RequestMediaResult>)dialog.GetType().GetField("_requestResults", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!).Clear();
-        Field(dialog, "_optionalSearchFailed", true);
+        Field(dialog, "_peopleSearchFailed", true);
         Invoke(dialog, "Render");
-        if (!((TextBlock)dialog.FindName("EmptyText")).Text.Contains("could not be loaded"))
+        if (((TextBlock)dialog.FindName("EmptyText")).Visibility != Visibility.Visible ||
+            !((TextBlock)dialog.FindName("EmptyText")).Text.Contains("Could not load results", StringComparison.Ordinal))
             throw new InvalidOperationException("An unavailable optional search source is reported as no matches.");
         var timer = dialog.GetType().GetField("_debounceTimer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog) as DispatcherTimer; timer?.Stop();
 
@@ -121,12 +132,15 @@ internal static class RequestViewerNativeFixture
           new() { Match = "any", Rules = [new() { Field = "hdr", Op = "is", Value = false }] } ] };
         var editor = new SiloPlayer.Controls.QueryRulesEditor { Width = 480 }; editor.Load(query); parent.Children.Add(editor);
         editor.UpdateLayout(); await Task.Delay(50);
-        var range = Descendants(editor).OfType<TextBox>().Single(box => box.Text == "2020, 2026");
-        if (range.Text != "2020, 2026" || query.Groups[1].Rules[0].Value is not false) throw new InvalidOperationException("Native rule load changed typed values.");
-        range.Text = "bad, range"; await UntilAsync(() => !editor.IsValid);
-        range.Text = "2010, 2019";
+        var from = Descendants(editor).OfType<TextBox>().Single(box => box.PlaceholderText == "From" && box.Text == "2020");
+        var to = Descendants(editor).OfType<TextBox>().Single(box => box.PlaceholderText == "To" && box.Text == "2026");
+        if (from.Text != "2020" || to.Text != "2026" ||
+            query.Groups[0].Rules[0].Value is not int[] savedRange || !savedRange.SequenceEqual(new[] { 2020, 2026 }) ||
+            query.Groups[1].Rules[0].Value is not false) throw new InvalidOperationException("Native rule load changed typed values.");
+        from.Text = "bad"; await UntilAsync(() => !editor.IsValid);
+        from.Text = "2010"; to.Text = "2019";
         await UntilAsync(() => editor.IsValid && query.Groups[0].Rules[0].Value is double[]);
-        if (!editor.IsValid || query.Groups[0].Rules[0].Value is not double[] values || values[0] != 2010 || query.Match != "any" || query.Groups[0].Match != "all")
+        if (!editor.IsValid || query.Groups[0].Rules[0].Value is not double[] values || !values.SequenceEqual(new[] { 2010d, 2019d }) || query.Match != "any" || query.Groups[0].Match != "all")
             throw new InvalidOperationException("Native rule edit lost range types or mixed group structure.");
         parent.Children.Remove(editor);
         var page = new SearchPage { Width = 900, Height = 700 }; parent.Children.Add(page);

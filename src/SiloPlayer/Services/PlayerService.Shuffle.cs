@@ -27,14 +27,17 @@ public partial class PlayerService
     private bool ShuffleAwaitsLaterPart => IsShufflePlayback && PlaybackPartSequence.NextFileId(WatchDetail, ActiveMediaFileId) != null;
 
     private Task ContinueVideoPartAsync(string contentId, int fileId)
-        => PlayAsync(contentId, fromStart: true, fileId: fileId, libraryId: ActiveLibraryId, shuffleId: ActiveShuffleId);
+        => PlayAsync(contentId, fromStart: true, fileId: fileId, libraryId: ActiveLibraryId, shuffleId: ActiveShuffleId, authority: _activeAuthority, cancellationToken: _authorityLifetimeCts.Token);
 
     public async Task StartShuffleAsync(ShuffleScopeRequest scope, CancellationToken ct = default)
     {
         if (IsWatchTogetherPlayback || _closing) return;
+        if (HasRemoteAuthority) await CloseAsync();
+        ct.ThrowIfCancellationRequested();
+        var owner = _localAuthority;
         var generation = Volatile.Read(ref _playRequestGeneration);
-        var authority = _apiClient.CaptureContext();
-        bool Current() => generation == Volatile.Read(ref _playRequestGeneration) && !_closing && _apiClient.IsCurrentContext(authority) && !ct.IsCancellationRequested;
+        var authority = owner.ApiClient.CaptureContext();
+        bool Current() => ReferenceEquals(owner, _activeAuthority) && generation == Volatile.Read(ref _playRequestGeneration) && !_closing && owner.ApiClient.IsCurrentContext(authority) && !ct.IsCancellationRequested;
         try
         {
             var shuffle = await ShuffleController.StartAsync(scope, ct);
@@ -44,7 +47,7 @@ public partial class PlayerService
                 return;
             }
             int? libraryId = scope.Kind == "library" && int.TryParse(scope.Id, NumberStyles.None, CultureInfo.InvariantCulture, out var library) ? library : null;
-            await PlayAsync(shuffle.Current.ContentId, fromStart: true, libraryId: libraryId, shuffleId: shuffle.Id);
+            await PlayAsync(shuffle.Current.ContentId, fromStart: true, libraryId: libraryId, shuffleId: shuffle.Id, authority: owner, cancellationToken: ct);
         }
         catch (OperationCanceledException) { }
         catch (ApiException error) when (error.StatusCode == 409) { if (Current()) ReportShuffleFailure("Nothing here can be played."); }
@@ -83,18 +86,20 @@ public partial class PlayerService
     {
         if (ContentId == null || !IsShufflePlayback) return;
         var contentId = ContentId; var shuffleId = ActiveShuffleId;
+        var owner = _activeAuthority;
+        var ownerToken = _authorityLifetimeCts.Token;
         var generation = Volatile.Read(ref _playRequestGeneration);
-        var authority = _apiClient.CaptureContext();
+        var authority = owner.ApiClient.CaptureContext();
         var libraryId = ActiveLibraryId;
         bool Current() => ContentId == contentId && generation == Volatile.Read(ref _playRequestGeneration)
-            && ActiveShuffleId == shuffleId && !_closing && _apiClient.IsCurrentContext(authority);
+            && ActiveShuffleId == shuffleId && !_closing && !ownerToken.IsCancellationRequested && ReferenceEquals(owner, _activeAuthority) && owner.ApiClient.IsCurrentContext(authority);
         var restoreFullscreen = _restoreFullscreenAfterPostRollContinue || State == PlayerState.Fullscreen || _videoWindow?.IsFullscreen == true;
         try
         {
             var shuffle = await ShuffleController.AdvanceAsync(contentId);
             if (shuffle == null || !Current()) return;
-            await PlayAsync(shuffle.Current.ContentId, fromStart: true, libraryId: libraryId, shuffleId: shuffle.Id);
-            if (restoreFullscreen) RestoreFullscreenAfterPostRollContinue();
+            await PlayAsync(shuffle.Current.ContentId, fromStart: true, libraryId: libraryId, shuffleId: shuffle.Id, authority: owner, cancellationToken: ownerToken);
+            if (restoreFullscreen && !ownerToken.IsCancellationRequested && ReferenceEquals(owner, _activeAuthority)) RestoreFullscreenAfterPostRollContinue();
         }
         catch (OperationCanceledException) { }
         catch { if (Current()) ReportShuffleFailure("Couldn't continue the shuffle."); }

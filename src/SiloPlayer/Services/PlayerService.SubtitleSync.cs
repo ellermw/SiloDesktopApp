@@ -22,6 +22,7 @@ public partial class PlayerService
     private readonly Dictionary<string, SyncEntry> _subtitleSyncEntries = new(StringComparer.Ordinal);
     private CancellationTokenSource? _subtitleSyncCts;
     private ApiRequestContext? _subtitleSyncAuthority;
+    private PlaybackAuthorityScope? _subtitleSyncOwner;
     private string? _subtitleSyncSession;
     private int _subtitleSyncFile;
     private SubtitleSyncCapability? _subtitleSyncCapability;
@@ -31,7 +32,8 @@ public partial class PlayerService
     private static readonly HttpClient SubtitleSyncDownloadClient = new() { Timeout = TimeSpan.FromSeconds(8) };
 
     private bool SyncCurrent(CancellationToken ct) => !ct.IsCancellationRequested && !_closing &&
-        _subtitleSyncAuthority is { } authority && _apiClient.IsCurrentContext(authority) &&
+        _subtitleSyncOwner is { } owner && ReferenceEquals(owner, _activeAuthority) &&
+        _subtitleSyncAuthority is { } authority && owner.ApiClient.IsCurrentContext(authority) &&
         _playbackManager?.SessionId == _subtitleSyncSession && ActiveMediaFileId == _subtitleSyncFile;
 
     private void StopSubtitleSync()
@@ -39,7 +41,7 @@ public partial class PlayerService
         lock (_subtitleSyncGate)
         {
             _subtitleSyncCts?.Cancel(); _subtitleSyncCts?.Dispose(); _subtitleSyncCts = null;
-            _subtitleSyncSession = null; _subtitleSyncAuthority = null; _subtitleSyncCapability = null;
+            _subtitleSyncSession = null; _subtitleSyncAuthority = null; _subtitleSyncOwner = null; _subtitleSyncCapability = null;
             _subtitleSyncInventoryError = false;
             _subtitleSyncApplyingKey = _subtitleSyncApplyingJob = null;
             _subtitleSyncEntries.Clear();
@@ -64,7 +66,8 @@ public partial class PlayerService
             }
             StopSubtitleSync();
             _subtitleSyncSession = session; _subtitleSyncFile = ActiveMediaFileId.Value;
-            _subtitleSyncAuthority = _apiClient.CaptureContext();
+            _subtitleSyncOwner = _activeAuthority;
+            _subtitleSyncAuthority = _subtitleSyncOwner.ApiClient.CaptureContext();
             _subtitleSyncCts = new();
             _ = RunSubtitleSyncAsync(_subtitleSyncCts.Token);
         }
@@ -102,8 +105,9 @@ public partial class PlayerService
 
     private async Task ReloadSubtitleSyncInventoryAsync(CancellationToken ct)
     {
-        if (!SyncCurrent(ct) || _subtitleSyncAuthority is not { } authority) return;
-        var api = new SubtitleSyncApi(_apiClient);
+        var scope = _subtitleSyncOwner;
+        if (scope == null || !SyncCurrent(ct) || _subtitleSyncAuthority is not { } authority) return;
+        var api = new SubtitleSyncApi(scope.ApiClient);
         Dictionary<string, long> revisions;
         lock (_subtitleSyncGate) revisions = _subtitleSyncEntries.ToDictionary(pair => pair.Key, pair => pair.Value.Revision);
         try
@@ -151,7 +155,8 @@ public partial class PlayerService
 
     private async Task ReadSubtitleSyncAsync(string key, CancellationToken ct, bool watch = false)
     {
-        if (!SyncCurrent(ct) || _subtitleSyncAuthority is not { } authority) return;
+        var scope = _subtitleSyncOwner;
+        if (scope == null || !SyncCurrent(ct) || _subtitleSyncAuthority is not { } authority) return;
         SyncEntry entry;
         long sentRevision = 0;
         lock (_subtitleSyncGate)
@@ -168,7 +173,7 @@ public partial class PlayerService
             {
                 long revision;
                 lock (_subtitleSyncGate) { entry.ReadAgain = false; sentRevision = revision = entry.Revision; }
-                var result = await new SubtitleSyncApi(_apiClient).GetAsync(authority, _subtitleSyncFile, key, ct);
+                var result = await new SubtitleSyncApi(scope.ApiClient).GetAsync(authority, _subtitleSyncFile, key, ct);
                 lock (_subtitleSyncGate)
                 {
                     if (!SyncCurrent(ct)) return;
@@ -249,7 +254,8 @@ public partial class PlayerService
     private async Task SubtitleSyncActionAsync(string key, string action)
     {
         EnsureSubtitleSync();
-        if (_subtitleSyncCts is not { } owner || _subtitleSyncAuthority is not { } authority) return;
+        var scope = _subtitleSyncOwner;
+        if (scope == null || _subtitleSyncCts is not { } owner || _subtitleSyncAuthority is not { } authority) return;
         var ct = owner.Token;
         if (action is "reload" or "refresh")
         {
@@ -275,7 +281,7 @@ public partial class PlayerService
         }
         try
         {
-            var api = new SubtitleSyncApi(_apiClient);
+            var api = new SubtitleSyncApi(scope.ApiClient);
             SubtitleSyncState state;
             if (action == "reset")
             {
@@ -350,7 +356,8 @@ public partial class PlayerService
     {
         var state = entry.State;
         var timing = state.Timing;
-        if (!SyncCurrent(ct) || _subtitleSyncAuthority is not { } authority) return;
+        var scope = _subtitleSyncOwner;
+        if (scope == null || !SyncCurrent(ct) || _subtitleSyncAuthority is not { } authority) return;
         // Result + timing-change events often arrive together. Re-reading a job
         // must not repeatedly attach the same corrected cues.
         if (entry.LastReloadTiming == timing && DateTimeOffset.UtcNow - entry.LastReload < TimeSpan.FromSeconds(5))
@@ -368,8 +375,8 @@ public partial class PlayerService
             if (pair == null || string.IsNullOrWhiteSpace(pair.Value.FullUrl)) return;
             using var bounded = CancellationTokenSource.CreateLinkedTokenSource(ct);
             bounded.CancelAfter(TimeSpan.FromSeconds(8));
-            using var request = _apiClient.CreateAuthenticatedRequest(HttpMethod.Get, pair.Value.FullUrl);
-            if (!SyncCurrent(ct) || !_apiClient.IsCurrentContext(authority)) return;
+            using var request = scope.ApiClient.CreateAuthenticatedRequest(HttpMethod.Get, pair.Value.FullUrl);
+            if (!SyncCurrent(ct) || !scope.ApiClient.IsCurrentContext(authority)) return;
             request.Headers.CacheControl = new() { NoCache = true, NoStore = true };
             using var response = await SubtitleSyncDownloadClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, bounded.Token);
             response.EnsureSuccessStatusCode();

@@ -32,12 +32,17 @@ public sealed class WatchTogetherCoordinator
         _sync = new(new NativePlayback(playerService), SendRoomMessage);
         _sync.Notice += message =>
         {
+            if (!EnsureCurrentAuthority()) return;
             if (_activeRoom != null) _activeRoom.NoticeMessage = message;
             playerService.ShowWatchPartyNotice(message);
         };
-        _sync.LowerQualityRequested += playerService.OfferWatchPartyLowerQuality;
+        _sync.LowerQualityRequested += () =>
+        {
+            if (EnsureCurrentAuthority()) playerService.OfferWatchPartyLowerQuality();
+        };
         _sync.ClosePlaybackRequested += session =>
         {
+            if (!EnsureCurrentAuthority()) return;
             if (session != _attachedSessionId || playerService.Manager?.SessionId != session) return;
             NotifyPlaybackEnded();
             _ = playerService.CloseAsync(); // Close captures final progress before releasing the matching session.
@@ -71,6 +76,11 @@ public sealed class WatchTogetherCoordinator
 
     private bool EnsureCurrentAuthority()
     {
+        if (_playerService.HasRemoteAuthority)
+        {
+            if (_activeRoom != null) ClearActiveRoom();
+            return false;
+        }
         if (_activeRoom == null) return false;
         if (_roomAuthority == (_auth.SessionGeneration, _auth.SelectedProfileId)) return true;
         ClearActiveRoom();
@@ -79,6 +89,11 @@ public sealed class WatchTogetherCoordinator
 
     public void SetActiveRoom(WatchTogetherRoomViewModel room)
     {
+        if (_playerService.HasRemoteAuthority)
+        {
+            if (_activeRoom != null) ClearActiveRoom();
+            return;
+        }
         if (ReferenceEquals(_activeRoom, room)) return;
         ClearActiveRoom();
         _activeRoom = room;
@@ -131,6 +146,11 @@ public sealed class WatchTogetherCoordinator
 
     public void NotifyPlaybackEnded()
     {
+        if (_playerService.HasRemoteAuthority)
+        {
+            if (_activeRoom != null) ClearActiveRoom();
+            return;
+        }
         _activeRoom?.DetachSession();
         _attachedSessionId = null;
         _sync.SetSession(null);
@@ -174,7 +194,10 @@ public sealed class WatchTogetherCoordinator
     }
 
     private void PushWatchTogetherOverlay()
-        => _playerService.SetWatchTogetherOverlay(_activeRoom?.Room, _activeRoom?.ConnectionState ?? "disconnected");
+    {
+        if (!EnsureCurrentAuthority()) return;
+        _playerService.SetWatchTogetherOverlay(_activeRoom?.Room, _activeRoom?.ConnectionState ?? "disconnected");
+    }
 
     private void SendRoomMessage(WatchPartyMessage message)
     {
@@ -230,13 +253,17 @@ public sealed class WatchTogetherCoordinator
         public bool Paused => service.IsPaused;
         public bool Buffering => service.IsBufferingForCache;
         public bool Busy => service.IsLoading || service.IsSwitchingContent || service.IsNativeSeeking;
-        public bool Loaded => service.Mpv != null && service.Duration > 0;
-        public double Rate { get => service.NativePlaybackRate; set => service.NativePlaybackRate = value; }
+        public bool Loaded => !service.HasRemoteAuthority && service.Mpv != null && service.Duration > 0;
+        public double Rate
+        {
+            get => service.NativePlaybackRate;
+            set { if (!service.HasRemoteAuthority) service.NativePlaybackRate = value; }
+        }
         public string Quality => service.ActiveQualityTier;
-        public bool CanSeekLocally(double target) => service.CanSeekRoomTargetLocally(target);
-        public bool IsTargetBuffered(double target) => service.IsRoomTargetBuffered(target);
-        public void Seek(double target) => service.SeekRoomTarget(target);
-        public void SetPaused(bool paused) => service.SetPaused(paused);
+        public bool CanSeekLocally(double target) => !service.HasRemoteAuthority && service.CanSeekRoomTargetLocally(target);
+        public bool IsTargetBuffered(double target) => !service.HasRemoteAuthority && service.IsRoomTargetBuffered(target);
+        public void Seek(double target) { if (!service.HasRemoteAuthority) service.SeekRoomTarget(target); }
+        public void SetPaused(bool paused) { if (!service.HasRemoteAuthority) service.SetPaused(paused); }
     }
     private static void CopyInvite(WatchTogetherRoomSnapshot room)
     {

@@ -49,6 +49,8 @@ public class AppSettings
     /// <summary>Opt-in HDMI/S/PDIF compressed-audio passthrough. Disabled by
     /// default because unsupported speakers and Bluetooth endpoints can be silent.</summary>
     public bool AudioBitstreamPassthrough { get; set; }
+    /// <summary>Opt-in phone control on the private local network.</summary>
+    public bool SiloCastEnabled { get; set; }
     public string CalendarPreset { get; set; } = "following";
     public List<string> TasteSeedDismissedProfileIds { get; set; } = [];
     public List<string> TasteSeedBannerDismissedProfileIds { get; set; } = [];

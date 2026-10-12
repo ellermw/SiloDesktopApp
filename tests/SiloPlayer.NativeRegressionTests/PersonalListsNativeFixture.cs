@@ -240,7 +240,7 @@ internal static class PersonalListsNativeFixture
                     || text.FontWeight.Weight != (preset is "vibrant" or "square" ? 700 : 600))
                     geometryFailures.Add($"Rendered {preset} badge differs from measured public WebUI geometry.");
                 if (preset is "minimal" or "square" or "vibrant"
-                    && Math.Abs(badge.CornerRadius.TopLeft - (preset == "vibrant" ? 10 : 8) * scale) > .1)
+                    && Math.Abs(badge.CornerRadius.TopLeft - Math.Min((preset == "vibrant" ? 10 : 8) * scale, Math.Min(badge.ActualWidth, badge.ActualHeight) / 2)) > .1)
                     geometryFailures.Add($"Rendered {preset} corner radius differs from measured public WebUI.");
                 if (preset is "classic" or "pill")
                 {

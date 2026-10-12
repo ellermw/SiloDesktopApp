@@ -1,14 +1,18 @@
 # Silo Desktop Player
 
+> **Current release: 1.2.243.** Includes the complete 1.2.242 badge fix and opt-in Windows SiloCast receiver. See [the release record](docs/releases/1.2.243.md) and [SiloCast setup](docs/silocast-testing.md). Local development starts in `D:\SiloPlayer`; read [the current handoff](docs/current-development.md) before editing or building.
+
 Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/silo-server), built with WinUI 3 and libmpv. The project aims to reproduce the Silo WebUI visually and functionally while providing broad native direct-play support for high-bitrate HEVC, HDR, Dolby Vision, lossless audio, and other formats browsers commonly transcode.
 
-> **Project status:** active pre-release development. Version 1.2.241 completes the current 14-area implementation and specified verification pass, including the owner's final installer check. Ongoing playback and hardware testing continues; Silo Server changes are re-audited against its official public `main` branch.
+> **Project status:** active pre-release development. Version 1.2.243 adds SiloCast receiver support and preserves the prior parity work. Phone interoperability and broader hardware testing continue; the documented incomplete native regression run is not a complete parity certification. Silo Server changes are re-audited against its official public `main` branch.
 
 ## Download
 
-[**Download Silo Desktop Player 1.2.241**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.241/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.2.243**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.243/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `B778381FEAB926E325F041FA62060805E89588A611ED9F05D1213480BE4943F0`
+SHA-256: `16D2841FA4E65B31847715EC835F0CB9C8A2DFB9C66E6D4D338C701015D88C7B`
+
+To enable phone control, select **Allow SiloCast phone control on private local networks** in the installer, then turn on **Settings → Playback → Desktop playback → Allow SiloCast control**. Keep the PC and phone on the same private local network and the desktop app running. The feature is off by default; see [the testing guide](docs/silocast-testing.md) for permissions and troubleshooting. Actual iPhone/Android interoperability remains under testing.
 
 The installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 
@@ -46,6 +50,13 @@ The official public Silo Server reference fetched for the final pass is [1a7a397
 
 
 ## Latest release
+
+### 1.2.243 — Windows SiloCast receiver and badge fixes
+
+- Add opt-in private-LAN discovery, server-approved phone handoff, native fullscreen playback, remote controls, status and disconnect actions.
+- Keep temporary phone playback identity separate from the saved desktop account; guard local takeover, progress and cleanup with captured playback ownership.
+- Include the complete 1.2.242 poster and media-detail badge repair, preserving straight pill edges with circular ends.
+- Publish the same installer the owner installed. Verification includes 1,687 unit/receiver/discovery tests, 23 published playback groups, settings rendering and 42 badge cases. Real-phone interoperability remains unverified; the broader default native suite stops on a preexisting series-button assertion. See [the release record](docs/releases/1.2.243.md).
 
 ### 1.2.241 — completed checklist verification and episode-end repair
 

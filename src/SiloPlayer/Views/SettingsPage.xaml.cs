@@ -412,6 +412,13 @@ public sealed partial class SettingsPage : Page
     {
         _layoutTransferActive = true;
         base.OnNavigatedTo(e);
+        var receiver = App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>();
+        receiver.StatusChanged -= OnSiloCastStatusChanged;
+        receiver.StatusChanged += OnSiloCastStatusChanged;
+        _initializingSiloCast = true;
+        SiloCastToggle.IsOn = App.Services.GetRequiredService<SettingsService>().Load().SiloCastEnabled;
+        _initializingSiloCast = false;
+        OnSiloCastStatusChanged();
 
         var stale = !_pageInitialized || DateTime.UtcNow - _loadedAtUtc > TimeSpan.FromMinutes(2);
         if (stale)
@@ -472,6 +479,7 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().StatusChanged -= OnSiloCastStatusChanged;
         DeactivateDevices();
         DeactivateLoginSessions();
         DeactivateLayoutTransfer();
@@ -602,6 +610,35 @@ _webhookPlexAuthCts?.Cancel();
     }
 
     private bool _initializingRtxUpscaling = true;
+    private bool _initializingSiloCast = true;
+
+    private void OnSiloCastStatusChanged()
+    {
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            var receiver = App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>();
+            var status = receiver.Status;
+            SiloCastStatusText.Text = status;
+            SiloCastDisconnectButton.Visibility = receiver.CanDisconnect
+                ? Visibility.Visible : Visibility.Collapsed;
+        });
+    }
+
+    private async void SiloCastToggle_Toggled(object sender, RoutedEventArgs e)
+    {
+        if (_initializingSiloCast) return;
+        var store = App.Services.GetRequiredService<SettingsService>();
+        var config = store.Load();
+        config.SiloCastEnabled = SiloCastToggle.IsOn;
+        store.Save(config);
+        try { await App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().RefreshAsync(); }
+        catch { OnSiloCastStatusChanged(); }
+    }
+
+    private async void SiloCastDisconnect_Click(object sender, RoutedEventArgs e)
+    {
+        await App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().DisconnectAsync();
+    }
 
     private async Task InitializeRtxUpscalingSettingAsync()
     {

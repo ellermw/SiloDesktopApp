@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Xml.Linq;
 using SiloPlayer.Core.Models.Catalog;
 
 namespace SiloPlayer.Tests;
@@ -590,7 +591,11 @@ public sealed class ItemDetailCurrentParityTests
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
         var xaml = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml");
 
-        Assert.Contains("CornerRadius=\"999\" Padding=\"10,4\"", xaml);
+        // Attribute order is immaterial; painted shape is checked by the native fixture.
+        var metadata = XDocument.Parse(xaml).Descendants()
+            .Single(element => element.Attributes().Any(attribute => attribute.Name.LocalName == "Name" && attribute.Value == "YearBadge"));
+        Assert.Equal("10,4", metadata.Attribute("Padding")?.Value);
+        Assert.Equal("999", metadata.Attribute(XName.Get("RoundedBadge.Radius", "using:SiloPlayer.Helpers"))?.Value);
         // Native ratings-layout coverage checks reserved height and wrapping;
         // requiring a horizontal outer stack here preserved the overlap bug.
         Assert.Contains("x:Name=\"ImdbScoreText\" FontSize=\"15\" FontWeight=\"Bold\"", xaml);

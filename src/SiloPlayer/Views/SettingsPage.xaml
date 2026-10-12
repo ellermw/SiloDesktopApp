@@ -907,6 +907,17 @@
                     <StackPanel Spacing="16">
                         <TextBlock Text="Desktop playback" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
+                        <Grid ColumnSpacing="20">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="4">
+                                <TextBlock Text="Allow SiloCast control" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Use Silo on your phone to play and control videos on this PC. Keep both devices on the same local network." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" MaxWidth="680" />
+                                <TextBlock x:Name="SiloCastStatusText" Text="Off" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                <Button x:Name="SiloCastDisconnectButton" Content="Disconnect phone" Click="SiloCastDisconnect_Click" HorizontalAlignment="Left" Visibility="Collapsed" />
+                            </StackPanel>
+                            <ToggleSwitch x:Name="SiloCastToggle" Grid.Column="1" VerticalAlignment="Center" OnContent="" OffContent="" Toggled="SiloCastToggle_Toggled" AutomationProperties.Name="Allow SiloCast control" />
+                        </Grid>
+                        <Border Style="{StaticResource SettingsSeparator}" />
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="2">

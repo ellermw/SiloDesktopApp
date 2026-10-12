@@ -14,8 +14,8 @@ namespace SiloPlayer.Controls;
 public sealed partial class PlayerOverlay : UserControl
 {
     private readonly PlayerService _playerService;
-    private readonly SettingsApi _settingsApi;
-    private readonly AuthService _authService;
+    private SettingsApi _settingsApi => _playerService.ActiveAuthority.SettingsApi;
+    private AuthService _authService => _playerService.ActiveAuthority.Auth;
 
     private bool _statsVisible;
     private bool _isMuted;
@@ -54,8 +54,6 @@ public sealed partial class PlayerOverlay : UserControl
     public PlayerOverlay()
     {
         _playerService = App.Services.GetRequiredService<PlayerService>();
-        _settingsApi = App.Services.GetRequiredService<SettingsApi>();
-        _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
         SeekBar.SeekRequested += (seconds) =>
         {
@@ -1354,7 +1352,7 @@ public sealed partial class PlayerOverlay : UserControl
                 var session = _playerService.Manager?.CurrentSession;
                 if (session == null) return;
                 SubtitleFlyout.Hide();
-                var dialog = new SubtitleSearchDialog(session.MediaFileId, subtitleUrls.FirstOrDefault().Track?.Language)
+                var dialog = new SubtitleSearchDialog(_playerService.ActiveAuthority, session.MediaFileId, subtitleUrls.FirstOrDefault().Track?.Language)
                 {
                     XamlRoot = XamlRoot
                 };
@@ -1387,7 +1385,7 @@ public sealed partial class PlayerOverlay : UserControl
             try
             {
                 SubtitleFlyout.Hide();
-                var dlg = new SubtitleAppearanceDialog { XamlRoot = this.XamlRoot };
+                var dlg = new SubtitleAppearanceDialog(_playerService.ActiveAuthority) { XamlRoot = this.XamlRoot };
                 await dlg.ShowAsync();
                 SubtitleButton.Focus(FocusState.Programmatic);
             }
@@ -1443,7 +1441,7 @@ public sealed partial class PlayerOverlay : UserControl
     {
         try
         {
-            _subtitleAiStatus = await App.Services.GetRequiredService<PlaybackApi>().GetSubtitleAiStatusAsync();
+            _subtitleAiStatus = await _playerService.ActiveAuthority.PlaybackApi.GetSubtitleAiStatusAsync();
         }
         catch
         {
@@ -1458,7 +1456,7 @@ public sealed partial class PlayerOverlay : UserControl
     {
         try
         {
-            _subtitleProviderStatus = await App.Services.GetRequiredService<PlaybackApi>()
+            _subtitleProviderStatus = await _playerService.ActiveAuthority.PlaybackApi
                 .GetSubtitleProviderStatusAsync();
         }
         catch (ApiException ex) when (ex.StatusCode == 404)
@@ -1496,7 +1494,8 @@ public sealed partial class PlayerOverlay : UserControl
         var activeXamlRoot = dialogXamlRoot ?? XamlRoot;
         var session = _playerService.Manager?.CurrentSession;
         if (session == null) return;
-        var api = App.Services.GetRequiredService<PlaybackApi>();
+        var authority = _playerService.ActiveAuthority;
+        var api = authority.PlaybackApi;
         SubtitleAiStatus capability;
         try { capability = await api.GetSubtitleAiStatusAsync(); }
         catch (Exception ex) { await ShowPlayerDialogAsync("AI subtitles unavailable", ex.Message, activeXamlRoot); return; }
@@ -1536,7 +1535,7 @@ public sealed partial class PlayerOverlay : UserControl
             quota,
             async selection =>
             {
-                if (!ReferenceEquals(session, _playerService.Manager?.CurrentSession))
+                if (!ReferenceEquals(authority, _playerService.ActiveAuthority) || !ReferenceEquals(session, _playerService.Manager?.CurrentSession))
                     throw new InvalidOperationException(
                         "Playback changed while the subtitle tool was open. Open it again for the current item.");
 

@@ -103,6 +103,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 .AddSingleton(new AuthService(api, new AuthApi(api)))
                 .AddSingleton(new ToastService())
                 .AddSingleton<WatchTogetherCoordinator>()
+                .AddSingleton<SiloPlayer.Services.SiloCast.SiloCastReceiverService>()
                 .AddSingleton(new UICustomizationService(new SettingsApi(api)))
                 .AddSingleton(new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException("Unexpected detail fetch")))
                 .AddTransient<ItemDetailViewModel>()
@@ -125,6 +126,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             _window.AppWindow.Show(false);
             await Task.Delay(150); // Allow the hidden native tree to acquire its XamlRoot.
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "overlay-pill")
+            {
+                await OverlayPillNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ACCESS_NAVIGATION") == "1")
             {
                 await AccessNavigationNativeFixture.RunAsync(parent);

@@ -21,33 +21,39 @@ public partial class PlayerService
     }
     private SeekPreferences _seekIntervals = new();
     private SiloPlayer.Core.Api.ApiRequestContext? _seekContext;
+    private PlaybackAuthorityScope? _seekAuthority;
     private long _seekGeneration;
-    public SeekPreferences SeekIntervals => _seekContext is { } context && _settingsApi.IsCurrentContext(context) ? _seekIntervals : new();
+    public SeekPreferences SeekIntervals => _seekAuthority is { } authority && ReferenceEquals(authority, _activeAuthority) &&
+        _seekContext is { } context && authority.SettingsApi.IsCurrentContext(context) ? _seekIntervals : new();
     public event Action? SeekPreferencesChanged;
     public async Task RefreshSeekPreferencesAsync(CancellationToken ct = default)
     {
-        var context = _settingsApi.CaptureContext();
+        var authority = _activeAuthority;
+        var api = authority.SettingsApi;
+        var context = api.CaptureContext();
         var generation = Interlocked.Increment(ref _seekGeneration);
-        _seekIntervals = new(); _seekContext = context; // No unscoped local values migrate between profiles.
+        _seekIntervals = new(); _seekContext = context; _seekAuthority = authority; // No unscoped local values migrate between profiles.
         try
         {
-            var result = await _settingsApi.GetContractEffectiveSettingsAsync(SeekPreferences.Keys, ct: ct);
-            if (!_settingsApi.IsCurrentContext(context) || generation != _seekGeneration) return;
+            var result = await api.GetContractEffectiveSettingsAsync(SeekPreferences.Keys, ct: ct);
+            if (!ReferenceEquals(authority, _activeAuthority) || !api.IsCurrentContext(context) || generation != _seekGeneration) return;
             _seekIntervals = SeekPreferences.Read(result);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
         catch { } // Older servers use the documented defaults.
-        if (!_settingsApi.IsCurrentContext(context) || generation != _seekGeneration) return;
+        if (!ReferenceEquals(authority, _activeAuthority) || !api.IsCurrentContext(context) || generation != _seekGeneration) return;
         PublishSeekPreferences();
     }
     public async Task SaveSeekIntervalAsync(bool audiobook, bool backward, int seconds)
     {
         if (!SeekPreferences.Choices.Contains(seconds)) return;
-        var context = _settingsApi.CaptureContext();
+        var authority = _activeAuthority;
+        var api = authority.SettingsApi;
+        var context = api.CaptureContext();
         try
         {
-            await _settingsApi.SetContractSettingValueAsync(SeekPreferences.Keys[(audiobook ? 2 : 0) + (backward ? 0 : 1)], "profile", seconds);
-            if (_settingsApi.IsCurrentContext(context)) await RefreshSeekPreferencesAsync();
+            await api.SetContractSettingValueAsync(SeekPreferences.Keys[(audiobook ? 2 : 0) + (backward ? 0 : 1)], "profile", seconds);
+            if (ReferenceEquals(authority, _activeAuthority) && api.IsCurrentContext(context)) await RefreshSeekPreferencesAsync();
         }
         catch { ShowNotice("Seek interval", "Could not save this profile's seek interval. Try again.", "error"); }
     }
