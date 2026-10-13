@@ -309,6 +309,8 @@
     <SolidColorBrush x:Key="ToggleSwitchStrokeOff" Color="{StaticResource BorderColor}" />
     <SolidColorBrush x:Key="ToggleSwitchStrokeOffPointerOver" Color="{StaticResource BorderColor}" />
     <SolidColorBrush x:Key="ToggleSwitchKnobFillOn" Color="{StaticResource AccentForegroundColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPointerOver" Color="{StaticResource AccentForegroundColor}" />
+    <SolidColorBrush x:Key="ToggleSwitchKnobFillOnPressed" Color="{StaticResource AccentForegroundColor}" />
     <SolidColorBrush x:Key="ToggleSwitchKnobFillOff" Color="{StaticResource PrimaryTextColor}" />
     <SolidColorBrush x:Key="ToggleSwitchKnobFillOffPointerOver" Color="{StaticResource PrimaryTextColor}" />
 

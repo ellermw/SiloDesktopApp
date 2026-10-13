@@ -63,44 +63,19 @@ public partial class App : Application
         this.UnhandledException += (sender, args) =>
         {
             args.Handled = true;
-            var crashLog = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "SiloPlayer", "crash.txt");
-            Directory.CreateDirectory(Path.GetDirectoryName(crashLog)!);
-
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"{DateTime.Now}");
-            sb.AppendLine($"args.Message: {args.Message}");
-            sb.AppendLine($"Version: {typeof(App).Assembly.GetName().Version}");
-            sb.AppendLine($"Last UI operation: {PerfBreadcrumb}");
-            sb.AppendLine("Recent Home collection/layout events:");
-            lock (UiDiagnosticEvents)
-                foreach (var entry in UiDiagnosticEvents)
-                    sb.AppendLine(entry);
-            sb.AppendLine();
-
-            var ex = args.Exception;
-            int depth = 0;
-            while (ex != null)
+            LocalLog.AppendLines("crash.txt", new[]
             {
-                sb.AppendLine($"--- Exception depth {depth} ---");
-                sb.AppendLine($"Type: {ex.GetType().FullName}");
-                sb.AppendLine($"HResult: 0x{ex.HResult:X8}");
-                sb.AppendLine($"Message: {ex.Message}");
-                if (ex.Data.Count > 0)
-                {
-                    foreach (System.Collections.DictionaryEntry entry in ex.Data)
-                        sb.AppendLine($"  Data[{entry.Key}] = {entry.Value}");
-                }
-                sb.AppendLine($"StackTrace: {ex.StackTrace}");
-                sb.AppendLine();
-                ex = ex.InnerException;
-                depth++;
-                if (depth > 10) break;
-            }
-
-            File.WriteAllText(crashLog, LocalLog.RedactSensitiveData(sb.ToString()));
+                $"utc={DateTime.UtcNow:O} version={typeof(App).Assembly.GetName().Version}",
+                "message=" + LocalLog.RedactDiagnosticText(args.Message),
+                "last UI operation=" + LocalLog.RedactDiagnosticText(PerfBreadcrumb),
+            });
+            LocalLog.AppendLines("crash.txt", GetUiDiagnosticSnapshot());
+            if (args.Exception != null)
+                LocalLog.AppendException("crash.txt", args.Exception, "App.UnhandledException");
         };
+
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+            LocalLog.AppendException("errors.txt", args.Exception, "TaskScheduler.UnobservedTaskException");
 
         _window = new MainWindow();
         MainWindowInstance = (MainWindow)_window;
@@ -180,6 +155,12 @@ public partial class App : Application
     // Kept in memory and written only on an unhandled exception. Record counts,
     // indices and lifecycle events rather than media titles or credentials.
     private static readonly Queue<string> UiDiagnosticEvents = new();
+
+    public static string[] GetUiDiagnosticSnapshot()
+    {
+        lock (UiDiagnosticEvents)
+            return UiDiagnosticEvents.Select(LocalLog.RedactDiagnosticText).ToArray();
+    }
 
     public static void RecordUiDiagnostic(string value)
     {

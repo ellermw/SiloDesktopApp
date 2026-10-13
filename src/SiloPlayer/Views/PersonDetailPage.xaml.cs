@@ -212,7 +212,7 @@ public sealed partial class PersonDetailPage : Page
                 App.Services.GetRequiredService<ToastService>().Success(isAdmin ? "Person metadata refreshed" : "Person refresh queued");
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
         finally { RefreshPersonButton.IsEnabled = true; UpdateUI(); }
     }
 

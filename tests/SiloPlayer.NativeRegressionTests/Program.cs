@@ -68,6 +68,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
 
     public RegressionApp()
     {
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "settings-visual-regressions") RequestedTheme = ApplicationTheme.Dark;
         UnhandledException += (_, e) =>
         {
             Program.Log(e.Exception.ToString());
@@ -94,7 +95,7 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             // requests. This is an isolated fixture service, not user state.
             typeof(CardOverlayService).GetField("_initialized", BindingFlags.NonPublic | BindingFlags.Instance)!
                 .SetValue(overlays, true);
-            using var services = new ServiceCollection()
+            await using var services = new ServiceCollection()
                 .AddSingleton(new SettingsService(Program.ResultDirectory))
                 .AddSingleton(imageService)
                 .AddSingleton(http)
@@ -126,6 +127,36 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             _window.AppWindow.Show(false);
             await Task.Delay(150); // Allow the hidden native tree to acquire its XamlRoot.
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "library-cursor")
+            {
+                await LibraryCursorNativeFixture.RunAsync(parent, _window);
+                parent.Children.Clear(); await Task.Delay(100);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "server-favicon")
+            {
+                await ServerFaviconNativeFixture.RunAsync(_window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "settings-visual-regressions")
+            {
+                await SettingsVisualRegressionFixture.RunAsync(parent, _window);
+                parent.Children.Clear();
+                await Task.Delay(100);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "toast-diagnostics")
+            {
+                await ToastDiagnosticsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-dismissal")
+            {
+                await HomeDismissalNativeFixture.RunAsync(parent);
+                parent.Children.Clear();
+                await Task.Delay(100);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "overlay-pill")
             {
                 await OverlayPillNativeFixture.RunAsync(parent);

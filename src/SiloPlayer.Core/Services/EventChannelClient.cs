@@ -54,6 +54,8 @@ public sealed class EventChannelClient : IDisposable
     /// connection indicators.</summary>
     public event Action<WebSocketState>? StateChanged;
     public event Action<ApiRequestContext>? AccessChanged;
+    /// <summary>Transport recovery retires stale reads without implying a permission change.</summary>
+    public event Action<ApiRequestContext>? ReadCatchUpRequested;
 
     /// <summary>Current transport state for controls that subscribe after the
     /// shared channel has already connected.</summary>
@@ -396,7 +398,7 @@ public sealed class EventChannelClient : IDisposable
                 if (!ReferenceEquals(_ws, ws) || !_apiClient.IsCurrentContext(context))
                     throw new OperationCanceledException("Event authority changed.", ct);
                 reconnect = _hasConnected && catchUp;
-                if (reconnect && !PublishAccessInvalidation(context, out context))
+                if (reconnect && !PublishAccessInvalidation(context, out context, transportCatchUp: true))
                     throw new OperationCanceledException("Event authority changed.", ct);
                 _activeSocketContext = context;
                 _hasConnected = true;
@@ -595,12 +597,12 @@ public sealed class EventChannelClient : IDisposable
         _ = RefreshAccountSafelyAsync(_cts?.Token ?? CancellationToken.None);
     }
 
-    private bool PublishAccessInvalidation(ApiRequestContext expected, out ApiRequestContext context)
+    private bool PublishAccessInvalidation(ApiRequestContext expected, out ApiRequestContext context, bool transportCatchUp = false)
     {
         if (!_apiClient.TryInvalidateAccessContext(expected, out context)) return false;
-        Log($"Access reads invalidated: readGeneration={context.RequestContextGeneration}; playbackIdentityGeneration={_apiClient.CaptureIdentityContext().IdentityGeneration}");
+        Log($"{(transportCatchUp ? "Transport catch-up" : "Access reads invalidated")}: readGeneration={context.RequestContextGeneration}; playbackIdentityGeneration={_apiClient.CaptureIdentityContext().IdentityGeneration}");
         lock (_snapshotLock) _latestSnapshots.Clear();
-        foreach (var subscriber in AccessChanged?.GetInvocationList() ?? [])
+        foreach (var subscriber in (transportCatchUp ? ReadCatchUpRequested : AccessChanged)?.GetInvocationList() ?? [])
         {
             try { ((Action<ApiRequestContext>)subscriber)(context); }
             catch (Exception ex) { Log($"Access refresh subscriber failed: {ex.GetType().Name}"); }

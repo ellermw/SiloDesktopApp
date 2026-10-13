@@ -286,7 +286,7 @@ public sealed partial class CollectionBrowsePage : Page
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<ToastService>().Error($"Could not remember collection sort: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not remember collection sort: {ex.Message}");
         }
         finally
         {
@@ -352,7 +352,7 @@ public sealed partial class CollectionBrowsePage : Page
             if (_currentArgs == args) CollectionQueryFilters.Load(_browseQuery, _mediaScope, args.LibraryId, filters);
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
     }
 
     private async void ApplyFilters_Click(object sender, RoutedEventArgs e)

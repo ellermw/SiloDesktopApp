@@ -49,14 +49,19 @@ public sealed class EventAccessTransportTests
         using var subscription = fixture.Events.Subscribe("notifications");
         var first = await fixture.NextAsync();
         var invalidations = 0;
+        var catchUps = 0;
+        typeof(EventChannelClient).GetEvent("ReadCatchUpRequested")?.AddEventHandler(fixture.Events,
+            (Action<ApiRequestContext>)(_ => Interlocked.Increment(ref catchUps)));
         fixture.Events.AccessChanged += _ => Interlocked.Increment(ref invalidations);
         await first.CloseOutputAsync(WebSocketCloseStatus.EndpointUnavailable, "fixture transport restart", CancellationToken.None);
         await fixture.NextAsync();
         await Until(() => fixture.AccountReads == 1);
-        Assert.Equal(1, invalidations);
+        Assert.Equal(0, invalidations);
+        Assert.Equal(1, catchUps);
         using var extra = fixture.Events.Subscribe("history_import");
         await fixture.NextAsync();
-        Assert.Equal(1, invalidations);
+        Assert.Equal(0, invalidations);
+        Assert.Equal(1, catchUps);
         Assert.Equal(1, fixture.AccountReads);
     }
 

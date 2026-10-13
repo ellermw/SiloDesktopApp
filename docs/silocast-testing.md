@@ -1,11 +1,13 @@
-# SiloCast testing — Windows 1.2.243
+# SiloCast testing — Windows 1.2.247
+
+Version 1.2.247 includes the 1.2.245 default/setup changes and all existing SiloCast receiver behavior. The installer adds the Private-LAN rule automatically. Fresh/missing preferences enable the receiver; a saved opt-out remains respected. See [1.2.247](releases/1.2.247.md) for the current build's verification and limits.
 
 This local test build adds a SiloCast receiver to Silo for Windows. It implements the current official Silo phone protocol and uses native libmpv playback. Actual iPhone/Android interoperability still needs device testing.
 
 ## Set up
 
-1. Install `SiloInstaller-1.2.243-SiloCast-Test-Setup.exe`. Select **Allow SiloCast phone control on private local networks** in the installer.
-2. Sign into the desktop app. Under **Settings > Playback > Desktop playback**, enable **Allow SiloCast control**. Its status should say **Ready**.
+1. Install [Silo Desktop Player 1.2.247](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.247/SiloInstaller-Windows-x64.exe). No SiloCast installer checkbox is needed.
+2. Sign into the desktop app. Under **Settings > Playback > Desktop playback**, confirm **Allow SiloCast control** is enabled; enable it if you previously saved an opt-out. Its status should say **Ready**.
 3. Keep the desktop app running, including when minimized. Windows must mark your Ethernet/Wi-Fi network **Private**. Keep the phone and PC on the same local network.
 4. In the current Silo iPhone or Android app, open its Remote/cast controls and select this PC by its Windows machine name. On iPhone, allow Silo local-network access if prompted.
 5. Choose a movie or episode on the phone and launch it on this PC. The phone approves a temporary playback profile through the Silo server. The desktop opens playback in fullscreen after the video surface is ready.
@@ -20,11 +22,11 @@ This local test build adds a SiloCast receiver to Silo for Windows. It implement
 - Stop remote playback, use **Disconnect phone** in desktop settings, disable SiloCast, and close the desktop app. Confirm the server session stops and saved desktop login/profile stay intact.
 - Change phone profiles while preparing playback; canceled/denied handoffs should leave existing playback untouched.
 
-If the PC is missing, check Windows network category, installer firewall option, iPhone local-network permission, VPNs, and guest Wi-Fi/client isolation. The receiver excludes Public/VPN/virtual interfaces. It cannot wake the PC or start a closed app.
+If the PC is missing, check Windows network category, the Private-LAN firewall rule, iPhone local-network permission, VPNs, and guest Wi-Fi/client isolation. The receiver excludes Public/VPN/virtual interfaces. It cannot wake the PC or start a closed app.
 
 Report the phone model/app version, Windows version, server version, chosen profiles, and the first step that fails. Receiver diagnostics are in `%LOCALAPPDATA%\SiloPlayer\silocast.txt`; playback diagnostics include `state_trace.txt` and `progress_error.txt`. Do not share `settings.json`, credentials, or tokens.
 
-## Source baseline and verification
+## Historical 1.2.243 source baseline and verification
 
 This build uses desktop commit `d5de162a9669418d072db99aa12e3fb66fe2bd1a` (published 1.2.241) plus every tracked and new source change from the local 1.2.242 badge-fix candidate. The official desktop GitHub main was fetched directly on October 12 and matched that commit. SiloCast is adapted to its playback context fences and library/file selection APIs.
 

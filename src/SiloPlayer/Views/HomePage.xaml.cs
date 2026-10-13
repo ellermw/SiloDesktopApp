@@ -71,6 +71,12 @@ public sealed partial class HomePage : Page
         }
     }
 
+    public async Task CatchUpAfterReconnectAsync(SiloPlayer.Core.Api.ApiRequestContext context)
+    {
+        try { await ViewModel.CatchUpAfterReconnectAsync(context); }
+        catch (Exception ex) { LocalLog.AppendException("home_error.txt", ex, "transport_catchup"); }
+    }
+
     private void AttachViewModelEvents()
     {
         if (_eventsAttached) return;

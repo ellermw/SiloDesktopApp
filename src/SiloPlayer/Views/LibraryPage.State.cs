@@ -26,7 +26,7 @@ public sealed partial class LibraryPage
             return ParseLibrarySearch(search);
         }
         catch (OperationCanceledException) { return new(); }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error($"Could not restore library view: {ex.Message}"); return new(); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not restore library view: {ex.Message}"); return new(); }
     }
 
     private void ScheduleLibraryStateSave(int id, LibraryViewState state)
@@ -49,7 +49,7 @@ public sealed partial class LibraryPage
         if (pending == null || _pageStateContext != _stateSettings.CaptureContext()) return;
         try { await new LibraryPageStateStore(_stateSettings).WriteAsync(pending.Value.Id, pending.Value.Search); }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error($"Could not remember library view: {ex.Message}"); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not remember library view: {ex.Message}"); }
     }
 
     private static string FormatLibrarySearch(LibraryViewState state)

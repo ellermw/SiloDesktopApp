@@ -362,7 +362,7 @@ public sealed partial class SettingsPage
                     }
                     catch (Exception ex)
                     {
-                        App.Services.GetRequiredService<ToastService>().Error(ex.Message);
+                        App.Services.GetRequiredService<ToastService>().Error(ex);
                     }
                 };
                 actions.Children.Add(clear);
@@ -382,7 +382,7 @@ public sealed partial class SettingsPage
                     }
                     catch (Exception ex)
                     {
-                        App.Services.GetRequiredService<ToastService>().Error(ex.Message);
+                        App.Services.GetRequiredService<ToastService>().Error(ex);
                     }
                 };
                 actions.Children.Add(forget);

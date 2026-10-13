@@ -102,7 +102,7 @@ public class LibraryWindowLoadingTests
         }
         Assert.Equal("335", vm.GetWindowItem(335)?.ContentId);
         Assert.All(Enumerable.Range(120, 216), index => Assert.NotNull(vm.GetWindowItem(index)));
-        Assert.Equal(5, handler.Requests); // 3 original pages, then 2 for the missing tail.
+        Assert.Equal(4, handler.Requests); // 3 full pages, then one page for the latest missing tail.
         Assert.Equal(0, handler.Cancellations);
     }
 
@@ -113,7 +113,7 @@ public class LibraryWindowLoadingTests
         await vm.EnsureRangeLoadedAsync(0, 215);
         var original = vm.GetWindowItem(100);
         await vm.EnsureRangeLoadedAsync(24, 239);
-        Assert.Equal(4, handler.Requests);
+        Assert.Equal(3, handler.Requests); // The full final wire page already contains the extension.
         Assert.Same(original, vm.GetWindowItem(100));
         Assert.Equal("239", vm.GetWindowItem(239)?.ContentId);
     }

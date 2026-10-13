@@ -18,7 +18,7 @@ public sealed class CodeRabbitPr5RegressionTests
     {
         var source = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
 
-        Assert.Contains("catch (Exception ex)\n            {\n                App.Services.GetRequiredService<Services.ToastService>().Error(ex.Message);", Normalize(source));
+        Assert.Contains("catch (Exception ex)\n            {\n                App.Services.GetRequiredService<Services.ToastService>().Error(ex);", Normalize(source));
         Assert.Contains("finally\n            {\n                quickWatchedButton.IsEnabled = true;", Normalize(source));
     }
 
@@ -104,7 +104,7 @@ public sealed class CodeRabbitPr5RegressionTests
         Assert.Contains("Button { Tag: MangaChapter chapter } button", method);
         Assert.Contains("button.IsEnabled = false;", method);
         Assert.Contains("catch (Exception ex)", method);
-        Assert.Contains("ToastService>().Error(ex.Message)", method);
+        Assert.Contains("ToastService>().Error(ex)", method);
         Assert.Contains("finally", method);
         Assert.Contains("button.IsEnabled = true;", method);
     }

@@ -1,4 +1,10 @@
-# Current development and release — 1.2.243
+# Current development and release — 1.2.247
+
+Current source/main and release are **1.2.247**. The owner authorized committing, pushing to main and publishing the verified installer on October 13, 2026. This includes the complete 1.2.244 diagnostic/removal, 1.2.245 settings/Home/SiloCast-default, 1.2.246 server-favicon and 1.2.247 Library cursor changes. See [1.2.247](releases/1.2.247.md), [the cursor investigation](audit-gaps/2026-10-13-library-cursor-scope.md), [the settings/Home investigation](audit-gaps/2026-10-12-settings-home-refresh.md) and [the Home removal investigation](audit-gaps/2026-10-12-home-removal-diagnostics.md). The latter's intermittent root cause remains unresolved; preserved logging/wording changes do not establish that it is fixed.
+
+Frozen earlier local candidate: `D:\SiloPlayer\installer\output\SiloInstaller-1.2.244-Setup.exe`. Its scope and verification are recorded in [1.2.244](releases/1.2.244.md), with machine-readable receipt `installer\output\SiloInstaller-1.2.244-verification.json`. Preserve earlier evidence and any subsequent user changes.
+
+Current installer: `D:\SiloPlayer\installer\output\SiloInstaller-1.2.247-Setup.exe`; payload `installer\publish-1.2.247-final`. See [1.2.247](releases/1.2.247.md) and receipt `installer\output\SiloInstaller-1.2.247-verification.json`. Source/app version is **1.2.247**. Preserve the frozen 1.2.243/244/245 installers and payloads. Start future work from current main/release and preserve subsequent local changes. The installed app was not closed or replaced during verification/publication.
 
 Use **D:\SiloPlayer** for future development sessions. On October 12, 2026 this primary checkout was fast-forwarded to desktop commit `d5de162a9669418d072db99aa12e3fb66fe2bd1a`, then the complete verified local 1.2.243 source was promoted from the SiloCast worktree. All 1,502 promoted tracked/new source and documentation files matched that worktree byte-for-byte before the handoff documentation was updated. No feature source was changed during cleanup.
 
@@ -6,15 +12,15 @@ Version 1.2.243 includes every 1.2.242 change plus SiloCast. The owner installed
 
 ## Current artifacts
 
-- Installer: `D:\SiloPlayer\installer\output\SiloInstaller-1.2.243-SiloCast-Test-Setup.exe`.
-- SHA256: `16D2841FA4E65B31847715EC835F0CB9C8A2DFB9C66E6D4D338C701015D88C7B`.
-- GitHub release: [v1.2.243](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.243).
-- Public installer: [Windows x64](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.243/SiloInstaller-Windows-x64.exe), the same bytes as the installed local candidate.
-- Installer verification: `D:\SiloPlayer\installer\output\SiloInstaller-1.2.243-SiloCast-Test-verification.json`.
-- Published payload: `D:\SiloPlayer\installer\publish`, file version 1.2.243.0.
-- Launchable test copy: `D:\SiloPlayer\publish-test\SiloPlayer.exe`, file version 1.2.243.0.
+- Installer: `D:\SiloPlayer\installer\output\SiloInstaller-1.2.247-Setup.exe`.
+- SHA256: `3284F696C29C75F14F41F7631CB1C9199E9CE00B014199BD4404FAA20C7338FE`.
+- GitHub release: [v1.2.247](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.247).
+- Public installer: [Windows x64](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.247/SiloInstaller-Windows-x64.exe), the same verified bytes without rebuilding.
+- Installer verification: `D:\SiloPlayer\installer\output\SiloInstaller-1.2.247-verification.json` (frozen pre-publication record).
+- Published payload: `D:\SiloPlayer\installer\publish-1.2.247-final`, file version 1.2.247.0.
+- Native fixture copy: `D:\SiloPlayer\.codex-tmp\library-cursor-oct13\native-payload\SiloPlayer.exe`, file version 1.2.247.0; all 561 packaged files match, with additional source assets for the host.
 - Testing instructions: [SiloCast testing](silocast-testing.md).
-- Scope and verification limits: [1.2.243 release record](releases/1.2.243.md).
+- Scope and verification limits: [1.2.247 release record](releases/1.2.247.md).
 
 Use the existing `installer/build.ps1` workflow for a new installer. It validates native dependencies and the established local QA signing policy. Preserve the current source, dependency pins and playback authority fences.
 

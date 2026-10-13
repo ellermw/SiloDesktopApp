@@ -88,7 +88,7 @@ public sealed class EditPersonDialog : ContentDialog
         if (changes.Count == 0) { Hide(); return; }
         _pending = true; IsPrimaryButtonEnabled = false; PrimaryButtonText = "Saving...";
         try { await App.Services.GetRequiredService<PeopleApi>().UpdatePersonAsync(_person.Id, changes); HasSaved = true; Hide(); }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
         finally { _pending = false; IsPrimaryButtonEnabled = true; PrimaryButtonText = "Save"; }
     }
 }

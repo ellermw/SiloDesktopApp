@@ -73,7 +73,7 @@ public sealed class RecommendationPosterCard : Grid
             play.Click += async (_, _) =>
             {
                 try { await App.Services.GetRequiredService<PlayerService>().PlayAsync(playId, libraryId: MediaNavigationContext.LibraryId(this)); }
-                catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+                catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
             };
         }
     }

@@ -1,18 +1,18 @@
 # Silo Desktop Player
 
-> **Current release: 1.2.243.** Includes the complete 1.2.242 badge fix and opt-in Windows SiloCast receiver. See [the release record](docs/releases/1.2.243.md) and [SiloCast setup](docs/silocast-testing.md). Local development starts in `D:\SiloPlayer`; read [the current handoff](docs/current-development.md) before editing or building.
+> **Current release: 1.2.247.** Repairs Library cursor paging, Settings presentation and Home reconnect refreshes; adds each server's favicon and enables SiloCast by default for fresh preferences. See [the release record](docs/releases/1.2.247.md) and [SiloCast setup](docs/silocast-testing.md). Local development starts in `D:\SiloPlayer`; read [the current handoff](docs/current-development.md) before editing or building.
 
 Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/silo-server), built with WinUI 3 and libmpv. The project aims to reproduce the Silo WebUI visually and functionally while providing broad native direct-play support for high-bitrate HEVC, HDR, Dolby Vision, lossless audio, and other formats browsers commonly transcode.
 
-> **Project status:** active pre-release development. Version 1.2.243 adds SiloCast receiver support and preserves the prior parity work. Phone interoperability and broader hardware testing continue; the documented incomplete native regression run is not a complete parity certification. Silo Server changes are re-audited against its official public `main` branch.
+> **Project status:** active pre-release development. Version 1.2.247 preserves the prior parity work and SiloCast receiver. Phone interoperability, broader hardware testing and the separate intermittent Next Up removal investigation continue. Targeted verification does not certify complete visual/functional parity. Silo Server changes are re-audited against its official public `main` branch.
 
 ## Download
 
-[**Download Silo Desktop Player 1.2.243**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.243/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.2.247**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.247/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `16D2841FA4E65B31847715EC835F0CB9C8A2DFB9C66E6D4D338C701015D88C7B`
+SHA-256: `3284F696C29C75F14F41F7631CB1C9199E9CE00B014199BD4404FAA20C7338FE`
 
-To enable phone control, select **Allow SiloCast phone control on private local networks** in the installer, then turn on **Settings → Playback → Desktop playback → Allow SiloCast control**. Keep the PC and phone on the same private local network and the desktop app running. The feature is off by default; see [the testing guide](docs/silocast-testing.md) for permissions and troubleshooting. Actual iPhone/Android interoperability remains under testing.
+SiloCast is built in and enabled for fresh/missing preferences. The installer automatically adds its Private-network/local-subnet firewall rule, with no extra SiloCast checkbox. A saved opt-out remains respected; enable or disable it under **Settings → Playback → Desktop playback → Allow SiloCast control**. Keep the PC and phone on the same private local network and the desktop app running. See [the testing guide](docs/silocast-testing.md) for setup and troubleshooting. Actual iPhone/Android interoperability remains under testing.
 
 The installer is intentionally unsigned. Runtime Code Integrity testing found that the former self-signed local certificate caused Smart App Control to block files that launch successfully when unsigned. Windows may still display an unknown-publisher warning on other machines. The installer includes the .NET runtime, Windows App Runtime bootstrapper, and validated native libmpv runtime.
 
@@ -28,7 +28,7 @@ The reader includes Foliate and PDF.js; pinned sources, local adaptations and li
 
 **1.2.241 includes 241 distinct verified correction groups tracked since the October 1 implementation pass.** The patch number follows the [correction ledger](docs/parity/2026-10-01-parity-implementation-ledger.md). Seventy-six groups were newly reconciled during the final implementation and verification cycle; overlapping refinements count once.
 
-The current [14-area checklist](docs/parity/2026-10-07-easiest-first.md) has completed its specified implementation and finite acceptance pass. The owner installed and approved the final candidate. The [combined verification report](docs/parity/2026-10-09-combined-verification.md) records rendered comparisons, physical interactions, original failures, isolated API checks and deliberate native differences.
+Version 1.2.241 completed the recorded [14-area checklist](docs/parity/2026-10-07-easiest-first.md) implementation and finite acceptance pass. Subsequent reports found additional defects; that historical pass is not a claim of complete current parity. The [combined verification report](docs/parity/2026-10-09-combined-verification.md) records its rendered comparisons, physical interactions, original failures, isolated API checks and deliberate native differences.
 
 | Area | Included and verified in 1.2.241 | Continuing coverage / native differences |
 |---|---|---|
@@ -50,6 +50,16 @@ The official public Silo Server reference fetched for the final pass is [1a7a397
 
 
 ## Latest release
+
+### 1.2.247 — Library paging, server branding and refresh repairs
+
+- Keep the signed catalog page size stable across Library scrolling, prefetch, count reads and large-filter POST requests. Fix the reproduced malformed/different-query cursor error.
+- Use each connected server's favicon for the window icon, separately from its sidebar logo, with a bundled Silo fallback.
+- Present Settings' proper layout immediately and preserve a tab selected during loading. Keep enabled toggle thumbs contrasting in normal, hover and pressed states.
+- Refresh Home data after notification reconnection while retaining unchanged mounted poster cards; preserve strict permission/profile changes and playback ownership.
+- Enable SiloCast for fresh preferences and install its existing Private-LAN rule automatically. Preserve saved opt-outs and the Settings toggle.
+- Retain complete redacted exception, HTTP and UI-action diagnostics. Use current removal labels; the separate intermittent Next Up removal exception remains under investigation.
+- Publish the verified 1.2.247 installer without rebuilding it. Verification includes **1,669 main tests**, **23 packaged playback checks**, actual Library-tab scrolling at 1080p/ultrawide/4K sizes and native favicon format/color checks. See [the release record](docs/releases/1.2.247.md).
 
 ### 1.2.243 — Windows SiloCast receiver and badge fixes
 

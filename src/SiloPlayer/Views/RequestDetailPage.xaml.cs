@@ -341,7 +341,7 @@ public sealed partial class RequestDetailPage : Page
             BuildActions(_item); BuildSeasons(_item);
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
         finally
         {
             _pendingActions.Remove(actionId); button.IsEnabled = true; button.Content = original;
@@ -421,7 +421,7 @@ public sealed partial class RequestDetailPage : Page
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<ToastService>().Error($"Request failed: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Request failed: {ex.Message}");
         }
         finally
         {
@@ -497,7 +497,7 @@ public sealed partial class RequestDetailPage : Page
         {
             button.IsEnabled = true;
             button.Content = "Request";
-            App.Services.GetRequiredService<ToastService>().Error($"Request failed: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Request failed: {ex.Message}");
         }
     }
     private void OpenLibrary_Click(object sender, RoutedEventArgs e) { if (sender is Button { Tag: string id }) App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(id); }

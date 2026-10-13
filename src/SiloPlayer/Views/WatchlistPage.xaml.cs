@@ -105,7 +105,7 @@ public sealed partial class WatchlistPage : Page
         {
             remove.IsEnabled = false;
             try { await ViewModel.RemoveExternalTitleAsync(title); UpdateCounts(); }
-            catch (Exception ex) { remove.IsEnabled = true; App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+            catch (Exception ex) { remove.IsEnabled = true; App.Services.GetRequiredService<ToastService>().Error(ex); }
         };
         panel.Children.Add(remove);
     }

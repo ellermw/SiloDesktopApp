@@ -65,7 +65,7 @@ public static class MediaItemMenu
                         await App.Services.GetRequiredService<PlayerService>()
                             .PlayAsync(item.ContentId, fromStart: true);
                     }
-                    catch (Exception ex) { toast.Error(ex.Message); }
+                    catch (Exception ex) { toast.Error(ex); }
                 }));
         }
 
@@ -86,7 +86,7 @@ public static class MediaItemMenu
                         watchedAction.Icon = new FontIcon { Glyph = nowWatched ? "\uE711" : "\uE73E" };
                         AutomationProperties.SetName(watchedAction, watchedAction.Text);
                     }
-                    catch (Exception ex) { toast.Error(ex.Message); }
+                    catch (Exception ex) { toast.Error(ex); }
                 });
             flyout.Items.Add(watchedAction);
 
@@ -107,7 +107,7 @@ public static class MediaItemMenu
                                 : "Add to Favorites";
                             AutomationProperties.SetName(favoriteAction, favoriteAction.Text);
                         }
-                        catch (Exception ex) { toast.Error(ex.Message); }
+                        catch (Exception ex) { toast.Error(ex); }
                     });
                 flyout.Items.Add(favoriteAction);
 
@@ -145,7 +145,7 @@ public static class MediaItemMenu
                             watchlistAction.Icon = new FontIcon { Glyph = nowInWatchlist ? "\uE73E" : "\uE710" };
                             AutomationProperties.SetName(watchlistAction, watchlistAction.Text);
                         }
-                        catch (Exception ex) { toast.Error(ex.Message); }
+                        catch (Exception ex) { toast.Error(ex); }
                     });
                 flyout.Items.Add(watchlistAction);
             }
@@ -195,7 +195,7 @@ public static class MediaItemMenu
                     stateChanged?.Invoke();
                     // The editor publishes each successful mutation itself.
                 }
-                catch (Exception ex) { toast.Error(ex.Message); }
+                catch (Exception ex) { toast.Error(ex); }
             }));
         if (AuthorizationPolicy.IsActingAdmin(authService))
             flyout.Items.Add(BuildItem("Play History", "\uE81C", async () =>
@@ -213,8 +213,8 @@ public static class MediaItemMenu
                 flyout.Items.Add(new MenuFlyoutSeparator());
 
             string surfaceKey = surface == Surface.ContinueWatching ? "continue_watching" : "next_up";
-            var dropsShow = item.Type is "episode" or "series" || !string.IsNullOrWhiteSpace(item.SeriesId);
-            string label = dropsShow ? "Drop show" : surface == Surface.ContinueWatching
+            var dropsShow = item.Type is "episode" or "series";
+            string label = surface == Surface.ContinueWatching
                 ? item.Type == "audiobook"
                     ? "Remove from Continue Listening"
                     : item.Type == "ebook"
@@ -223,6 +223,11 @@ public static class MediaItemMenu
                 : "Remove from Next Up";
             flyout.Items.Add(BuildItem(label, "\uE711", async () =>
             {
+                var actionId = Guid.NewGuid().ToString("N");
+                using var operation = LocalLog.BeginOperation(actionId);
+                var elapsed = System.Diagnostics.Stopwatch.StartNew();
+                var stage = "api_request";
+                var serverAccepted = false;
                 try
                 {
                     var homeApi = App.Services.GetRequiredService<HomeApi>();
@@ -231,13 +236,30 @@ public static class MediaItemMenu
                         ? new { progress_updated_at = item.ProgressUpdatedAt }
                         : (object)new { series_id = item.SeriesId! };
                     await homeApi.DismissItemAsync(surfaceKey, item.ContentId, body);
-                    if (!homeApi.IsCurrentContext(context)) return;
+                    serverAccepted = true;
+                    stage = "context_check";
+                    if (!homeApi.IsCurrentContext(context))
+                    {
+                        LocalLog.AppendLine("home_actions.txt", $"dismissal action={actionId} surface={surfaceKey} stage=context_retired serverAccepted=true elapsedMs={elapsed.ElapsedMilliseconds}");
+                        return;
+                    }
+                    stage = "undo_snapshot";
                     WeakReferenceMessenger.Default.Send(new HomeDismissalApplied(surfaceKey, item, context));
+                    stage = "surface_update";
                     WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                         MediaSurfaceChangeKind.HomeDismissed, item.ContentId, item.SeriesId));
-                    toast.Info(dropsShow ? "Show dropped" : "Dismissed");
+                    stage = "success_toast";
+                    toast.Success(dropsShow ? "Removed from Continue Watching and Next Up" : label);
+                    LocalLog.AppendLine("home_actions.txt",
+                        $"dismissal action={actionId} surface={surfaceKey} stage=complete serverAccepted=true elapsedMs={elapsed.ElapsedMilliseconds}");
                 }
-                catch (Exception ex) { toast.Error(ex.Message); }
+                catch (Exception ex)
+                {
+                    LocalLog.AppendLine("home_actions.txt",
+                        $"dismissal action={actionId} surface={surfaceKey} stage={stage} serverAccepted={serverAccepted} elapsedMs={elapsed.ElapsedMilliseconds}");
+                    LocalLog.AppendException("home_actions.txt", ex, $"home.dismissal stage={stage}", actionId);
+                    toast.Error(ex);
+                }
             }));
         }
 
@@ -305,7 +327,7 @@ public static class MediaItemMenu
         }
         catch (Exception ex)
         {
-            toast.Error(ex.Message);
+            toast.Error(ex);
         }
     }
 

@@ -60,7 +60,7 @@ public sealed partial class ItemDetailPage
                 action.IsEnabled = false;
                 try { await execute(); }
                 catch (OperationCanceledException) { }
-                catch (Exception error) { App.Services.GetRequiredService<ToastService>().Error(error.Message); }
+                catch (Exception error) { App.Services.GetRequiredService<ToastService>().Error(error); }
                 finally { action.IsEnabled = true; }
             };
             actions.Add(action);

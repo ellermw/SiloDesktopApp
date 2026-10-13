@@ -1159,7 +1159,7 @@ public sealed partial class WatchTonightDialog : ContentDialog
         catch (Exception ex)
         {
             App.Services.GetRequiredService<Services.ToastService>()
-                .Error($"Could not start playback: {ex.Message}");
+                .Error(ex, $"Could not start playback: {ex.Message}");
         }
     }
 

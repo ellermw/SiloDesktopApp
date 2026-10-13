@@ -36,7 +36,7 @@ public static class MediaItemCardActions
         }
         catch (Exception ex)
         {
-            toast.Error(ex.Message);
+            toast.Error(ex);
         }
     }
 
@@ -62,7 +62,7 @@ public static class MediaItemCardActions
         }
         catch (Exception ex)
         {
-            toast.Error(ex.Message);
+            toast.Error(ex);
         }
     }
 

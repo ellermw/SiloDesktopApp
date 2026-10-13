@@ -36,11 +36,13 @@ public partial class CatalogApi
         }.Where(pair => pair.Value != null).ToDictionary(pair => pair.Key, pair => pair.Value);
         var context = client.CaptureContext(); var result = new CatalogResponse();
         limit = Math.Clamp(limit, 1, 200); offset = Math.Max(0, offset);
+        // The server signs this value into every cursor. Do not shrink it for
+        // a partial page or the final portion of a multi-page request.
+        var requested = Math.Min(100, limit);
         while (result.Items.Count < limit)
         {
             ct.ThrowIfCancellationRequested();
             if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Catalog query context changed.", ct);
-            var requested = Math.Min(100, limit - result.Items.Count);
             body["limit"] = requested;
             if (string.IsNullOrWhiteSpace(nextCursor)) body["seek"] = offset + result.Items.Count;
             else body.Remove("seek");
@@ -55,6 +57,14 @@ public partial class CatalogApi
             nextCursor = page.Items.Count == requested && page.HasMore && page.Snapshot == snapshot
                 ? page.Page?.NextCursor : null;
             if (!page.HasMore || page.Items.Count == 0) break;
+        }
+        if (result.Items.Count > limit)
+        {
+            result.Items.RemoveRange(limit, result.Items.Count - limit);
+            // The last page's continuation points past discarded rows. Use the
+            // root window seed plus an explicit seek for the next request.
+            if (result.Page is not null) { result.Page.NextCursor = null; result.Page.HasMore = true; }
+            result.HasMore = true;
         }
         return result;
     }

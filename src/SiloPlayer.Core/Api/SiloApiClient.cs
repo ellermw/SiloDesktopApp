@@ -865,10 +865,8 @@ public class SiloApiClient
             out var requestContextGeneration)
                 ? requestContextGeneration
                 : GetRequestContextSnapshot().RequestContextGeneration;
-        var response = await _http.SendAsync(
-            request,
-            HttpCompletionOption.ResponseHeadersRead,
-            ct).ConfigureAwait(false);
+        var diagnosticId = Services.LocalLog.CurrentOperationId ?? Guid.NewGuid().ToString("N");
+        var response = await SendHttpAttemptAsync(request, diagnosticId, 1, ct).ConfigureAwait(false);
 
         // On 401, try refreshing the token and retry once
         if (allowTokenRefresh &&
@@ -926,14 +924,42 @@ public class SiloApiClient
                     retry.Content.Headers.ContentType = contentType;
                 }
                 response.Dispose();
-                response = await _http.SendAsync(
-                    retry,
-                    HttpCompletionOption.ResponseHeadersRead,
-                    ct).ConfigureAwait(false);
+                response = await SendHttpAttemptAsync(retry, diagnosticId, 2, ct).ConfigureAwait(false);
             }
         }
 
         return response;
+    }
+
+    private async Task<HttpResponseMessage> SendHttpAttemptAsync(
+        HttpRequestMessage request, string actionId, int attempt, CancellationToken ct)
+    {
+        // Only fixed route categories are persisted: never hosts, item/profile
+        // identifiers, query strings, headers or request/response bodies.
+        var path = request.RequestUri?.AbsolutePath ?? "";
+        var route = path.StartsWith("/api/v2/home/dismissals/next_up/", StringComparison.Ordinal)
+            ? "home.dismissals.next_up"
+            : path.StartsWith("/api/v2/home/dismissals/continue_watching/", StringComparison.Ordinal)
+                ? "home.dismissals.continue_watching" : "api.request";
+        var isDismissal = route != "api.request";
+        var elapsed = System.Diagnostics.Stopwatch.StartNew();
+        var context = GetRequestContextSnapshot();
+        var summary = $"utc={DateTime.UtcNow:O} action={actionId} route={route} method={request.Method} attempt={attempt} authGeneration={context.AuthenticationGeneration} contextGeneration={context.RequestContextGeneration}";
+        if (isDismissal) Services.LocalLog.AppendLine("api_diagnostics.txt", summary + " stage=request");
+        try
+        {
+            var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            if (isDismissal || !response.IsSuccessStatusCode)
+                Services.LocalLog.AppendLine("api_diagnostics.txt", summary + $" stage=response status={(int)response.StatusCode} elapsedMs={elapsed.ElapsedMilliseconds}");
+            return response;
+        }
+        catch (Exception ex)
+        {
+            if (ex is not OperationCanceledException || !ct.IsCancellationRequested || isDismissal)
+                Services.LocalLog.AppendException("api_diagnostics.txt", ex,
+                    summary + $" stage=transport elapsedMs={elapsed.ElapsedMilliseconds}", actionId);
+            throw;
+        }
     }
 
     private (long AuthenticationGeneration, long RequestContextGeneration, string? AccessToken)

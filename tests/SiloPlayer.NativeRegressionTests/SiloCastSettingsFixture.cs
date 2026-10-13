@@ -17,8 +17,8 @@ internal static class SiloCastSettingsFixture
         var toggle = (ToggleSwitch)page.FindName("SiloCastToggle");
         var status = (TextBlock)page.FindName("SiloCastStatusText");
         var disconnect = (Button)page.FindName("SiloCastDisconnectButton");
-        if (toggle.IsOn || status.Text != "Off" || disconnect.Visibility != Visibility.Collapsed)
-            throw new InvalidOperationException("SiloCast settings are not off by default.");
+        if (!toggle.IsOn || disconnect.Visibility != Visibility.Collapsed)
+            throw new InvalidOperationException("SiloCast is not enabled by default, or an inactive receiver exposes a disconnect action.");
         DependencyObject card = toggle;
         while (card is not Border) card = VisualTreeHelper.GetParent(card);
         var border = (Border)card;
@@ -48,6 +48,6 @@ internal static class SiloCastSettingsFixture
             File.WriteAllBytes(Path.Combine(Program.ResultDirectory, $"silocast-settings-{width}.png"), bytes);
         }
         page.Width = 900;
-        Program.Log("PASS: SiloCast controls are off by default and fit narrow/desktop settings layouts; PNG previews captured.");
+        Program.Log("PASS: SiloCast controls are enabled by default and fit narrow/desktop settings layouts; PNG previews captured.");
     }
 }

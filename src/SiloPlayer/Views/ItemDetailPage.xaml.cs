@@ -2586,7 +2586,7 @@ public sealed partial class ItemDetailPage : Page
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<Services.ToastService>().Error(ex.Message);
+            App.Services.GetRequiredService<Services.ToastService>().Error(ex);
         }
         finally
         {
@@ -2612,7 +2612,7 @@ public sealed partial class ItemDetailPage : Page
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<Services.ToastService>().Error(ex.Message);
+            App.Services.GetRequiredService<Services.ToastService>().Error(ex);
         }
         finally
         {
@@ -2749,7 +2749,7 @@ public sealed partial class ItemDetailPage : Page
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<Services.ToastService>().Error(ex.Message);
+            App.Services.GetRequiredService<Services.ToastService>().Error(ex);
         }
         finally
         {
@@ -3108,7 +3108,7 @@ public sealed partial class ItemDetailPage : Page
             else await api.CreateWatchTogetherSuggestionAsync(room.RoomId, room.RoomToken, contentId, ViewModel.Item.Type == "movie" ? "movie" : "episode", ViewModel.Item.Title, posterUrl: ViewModel.Item.PosterUrl);
             App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs { RoomId = room.RoomId, RoomAccessToken = room.RoomToken });
         }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error($"Could not queue this title: {ex.Message}"); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not queue this title: {ex.Message}"); }
     }
     private async Task ShowStartPartyAsync()
     {
@@ -3170,7 +3170,7 @@ public sealed partial class ItemDetailPage : Page
             };
             await dialog.ShowAsync();
         }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
     }
 
     private void BuildMoreFlyout()
@@ -3437,7 +3437,7 @@ public sealed partial class ItemDetailPage : Page
             await LoadSeriesRequestActionAsync(item, token);
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error($"Season request failed: {ex.Message}"); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, $"Season request failed: {ex.Message}"); }
     }
 
     private async Task ShowAddToCollectionDialogAsync()
@@ -3978,7 +3978,7 @@ public sealed partial class ItemDetailPage : Page
         }
         catch (Exception ex)
         {
-            toast.Error(ex.Message);
+            toast.Error(ex);
             return false;
         }
     }
@@ -8159,7 +8159,7 @@ public sealed partial class ItemDetailPage : Page
             }
             catch (Exception ex)
             {
-                App.Services.GetRequiredService<Services.ToastService>().Error(ex.Message);
+                App.Services.GetRequiredService<Services.ToastService>().Error(ex);
             }
             finally
             {

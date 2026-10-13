@@ -192,7 +192,7 @@ public static class ExternalTitleCard
                 AutomationProperties.SetName(button, $"Sending request for {item.Title}");
                 button.Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { new ProgressRing { IsActive = true, Width = 14, Height = 14 }, new TextBlock { Text = "Sending", FontSize = 12, FontWeight = FontWeights.SemiBold } } }; UpdateReveal();
                 try { await request(); }
-                catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+                catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
                 finally { pending = false; button.IsEnabled = true; button.Content = NormalContent(); AutomationProperties.SetName(button, $"Request {item.Title}"); UpdateReveal(); } };
             actions.Add((button, () => pending)); card.Children.Add(button);
         }
@@ -214,7 +214,7 @@ public static class ExternalTitleCard
             card.Loaded += (_, _) => { if (observedRoot != null) observedRoot.Changed -= RootChanged; observedRoot = card.XamlRoot; if (observedRoot != null) observedRoot.Changed += RootChanged; UpdateBookmark(); };
             card.Unloaded += (_, _) => { if (observedRoot != null) observedRoot.Changed -= RootChanged; observedRoot = null; };
             button.Click += async (_, _) => { if (pending) return; pending = true; button.IsEnabled = false; UpdateReveal();
-                try { await watchlist(); UpdateBookmark(); } catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+                try { await watchlist(); UpdateBookmark(); } catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
                 finally { pending = false; button.IsEnabled = true; UpdateReveal(); } };
             actions.Add((button, () => pending)); card.Children.Add(button);
         }

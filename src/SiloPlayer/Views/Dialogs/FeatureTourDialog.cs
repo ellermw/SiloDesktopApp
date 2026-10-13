@@ -241,7 +241,7 @@ public sealed class FeatureTourDialog : ContentDialog
                 {
                     _selectedSettingValue = prior;
                     RenderStep();
-                    App.Services.GetRequiredService<ToastService>().Error(ex.Message);
+                    App.Services.GetRequiredService<ToastService>().Error(ex);
                 }
                 finally
                 {

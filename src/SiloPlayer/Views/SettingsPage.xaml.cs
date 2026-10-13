@@ -142,6 +142,11 @@ public sealed partial class SettingsPage : Page
         var searchShortcut = new Microsoft.UI.Xaml.Input.KeyboardAccelerator { Key = Windows.System.VirtualKey.K, Modifiers = Windows.System.VirtualKeyModifiers.Control };
         searchShortcut.Invoked += (_, args) => { ShowSettingsOverview(); SettingsSearchBox.Focus(FocusState.Keyboard); SettingsSearchBox.SelectAll(); args.Handled = true; };
         KeyboardAccelerators.Add(searchShortcut);
+        _initializingSiloCast = true;
+        SiloCastToggle.IsOn = App.Services.GetRequiredService<SettingsService>().Load().SiloCastEnabled;
+        _initializingSiloCast = false;
+        BuildSettingsOverview();
+        ShowSettingsOverview();
     }
 
     private void SettingsPage_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -420,6 +425,14 @@ public sealed partial class SettingsPage : Page
         _initializingSiloCast = false;
         OnSiloCastStatusChanged();
 
+        // Pick the visible route before awaiting network data. A late response
+        // must not reset a tab the user selected while settings was loading.
+        BuildSettingsOverview();
+        if (e.Parameter is string requestedTab && ResolveSettingsTabButton(requestedTab) is { } button)
+            ShowSettingsDetail(button);
+        else
+            ShowSettingsOverview();
+
         var stale = !_pageInitialized || DateTime.UtcNow - _loadedAtUtc > TimeSpan.FromMinutes(2);
         if (stale)
         {
@@ -441,16 +454,6 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
         try { _requestsAvailable = (await App.Services.GetRequiredService<RequestsApi>().GetStatusAsync()).RequestsEnabled; }
         catch { _requestsAvailable = false; }
         BuildSettingsOverview();
-        if (e.Parameter is string requestedTab)
-        {
-            var button = ResolveSettingsTabButton(requestedTab);
-            if (button is not null)
-                ShowSettingsDetail(button);
-        }
-        else
-        {
-            ShowSettingsOverview();
-        }
     }
 
     private Button? ResolveSettingsTabButton(string requestedTab) => requestedTab switch
@@ -725,7 +728,7 @@ _webhookPlexAuthCts?.Cancel();
             _suppressEvents = true;
             RememberLibraryPagesToggle.IsOn = !RememberLibraryPagesToggle.IsOn;
             _suppressEvents = false;
-            App.Services.GetRequiredService<ToastService>().Error($"Failed to save library page preference: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Failed to save library page preference: {ex.Message}");
         }
         finally
         {
@@ -1404,7 +1407,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<ToastService>().Error($"Could not save card layout: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not save card layout: {ex.Message}");
         }
         finally
         {
@@ -1422,7 +1425,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<ToastService>().Error($"Could not reset card layout: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not reset card layout: {ex.Message}");
         }
     }
 
@@ -1451,7 +1454,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<ToastService>().Error($"Could not clear {label.ToLowerInvariant()}: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not clear {label.ToLowerInvariant()}: {ex.Message}");
         }
     }
 
@@ -1654,7 +1657,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<ToastService>().Error($"Could not save navigation: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not save navigation: {ex.Message}");
         }
     }
 
@@ -1671,7 +1674,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<ToastService>().Error($"Could not reset navigation: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not reset navigation: {ex.Message}");
         }
     }
 
@@ -1780,7 +1783,7 @@ _webhookPlexAuthCts?.Cancel();
         catch (Exception ex)
         {
             App.Services.GetRequiredService<ToastService>()
-                .Error($"Couldn’t start the feature tour: {ex.Message}");
+                .Error(ex, $"Couldn’t start the feature tour: {ex.Message}");
         }
         finally
         {
@@ -3269,7 +3272,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<ToastService>().Error($"Could not load section recipes: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not load section recipes: {ex.Message}");
             return;
         }
 
@@ -3309,7 +3312,7 @@ _webhookPlexAuthCts?.Cancel();
         }
         catch (Exception ex)
         {
-            App.Services.GetRequiredService<ToastService>().Error($"Could not load section editor: {ex.Message}");
+            App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not load section editor: {ex.Message}");
             return;
         }
         var configured = await RecipeGalleryDialog.ShowEditorAsync(XamlRoot, catalog, section, CurrentHomePageLabel());
@@ -4651,7 +4654,7 @@ _webhookPlexAuthCts?.Cancel();
             }
             catch (Exception ex)
             {
-                toast.Error($"Could not open the activation page: {ex.Message}");
+                toast.Error(ex, $"Could not open the activation page: {ex.Message}");
             }
         };
         actionRow.Children.Add(open);

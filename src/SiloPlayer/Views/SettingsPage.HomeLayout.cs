@@ -187,7 +187,7 @@ public sealed partial class SettingsPage
             App.Services.GetRequiredService<ToastService>().Success("Layout exported");
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error($"Could not export layout: {ex.Message}"); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not export layout: {ex.Message}"); }
         finally { TransferBusy(false); }
     }
     private async void HomeImport_Click(object sender, RoutedEventArgs e)
@@ -279,7 +279,7 @@ public sealed partial class SettingsPage
             await preview.ShowAsync();
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error($"Applied {transfer.AppliedPages} layout pages. Import stopped: {ex.Message}"); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex, $"Applied {transfer.AppliedPages} layout pages. Import stopped: {ex.Message}"); }
         finally { _layoutTransferPreview = null; TransferBusy(false); }
     }
 }

@@ -131,7 +131,7 @@ public sealed class EditMetadataDialog : ContentDialog
         var flyout = new Flyout { Content = confirmation }; reset.Flyout = flyout; confirmation.Children.Add(confirm);
         confirm.Click += async (_, _) => { if (_pending) return; _pending = true; confirm.IsEnabled = false;
             try { await _api.RefreshMetadataAsync(_item.ContentId); HasSaved = true; Changed(); flyout.Hide(); Hide(); }
-            catch (Exception ex) { Toast().Error(ex.Message); } finally { _pending = false; confirm.IsEnabled = true; } };
+            catch (Exception ex) { Toast().Error(ex); } finally { _pending = false; confirm.IsEnabled = true; } };
         Content = _root;
         ShowSection("general"); PrimaryButtonClick += Save;
         Opened += async (_, _) => { Reflow(); await BuildTranslation(); };
@@ -290,7 +290,7 @@ public sealed class EditMetadataDialog : ContentDialog
         if (changes.Count == 0) { Hide(); return; }
         _pending = true; IsPrimaryButtonEnabled = false; PrimaryButtonText = "Saving...";
         try { await _api.UpdateMetadataAsync(_item.ContentId, changes); HasSaved = true; Changed(); Toast().Success("Metadata saved"); Hide(); }
-        catch (Exception ex) { Toast().Error(ex.Message); }
+        catch (Exception ex) { Toast().Error(ex); }
         finally { _pending = false; IsPrimaryButtonEnabled = !_imagePending; PrimaryButtonText = "Save Changes"; }
     }
     private void CaptureVisibleValue(string key, object? value)
@@ -357,12 +357,12 @@ public sealed class EditMetadataDialog : ContentDialog
                     }
                 }
                 catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-                catch (Exception ex) { Toast().Error(ex.Message); }
+                catch (Exception ex) { Toast().Error(ex); }
                 finally { button.IsEnabled = true; languages.IsEnabled = true; force.IsEnabled = true; button.Content = "Translate"; }
             };
         }
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-        catch (Exception ex) { Toast().Error(ex.Message); }
+        catch (Exception ex) { Toast().Error(ex); }
     }
     private void BuildImages(StackPanel panel)
     {
@@ -467,7 +467,7 @@ public sealed class EditMetadataDialog : ContentDialog
             try { await _api.ApplyImageAsync(_item.ContentId, String(selected, "original_url"), selectedType, String(selected, "provider_id"));
                 applied[selectedType] = String(selected, "original_url"); _state.SetLock(10, true); HasSaved = true; Changed();
                 _item = await App.Services.GetRequiredService<CatalogApi>().GetItemDetailAsync(_item.ContentId); RefreshLocks(); Render(); Toast().Success("Image applied successfully"); }
-            catch (Exception ex) { Toast().Error(ex.Message); }
+            catch (Exception ex) { Toast().Error(ex); }
             finally { _imagePending = false; IsPrimaryButtonEnabled = !_pending; SelectionPresentation(); }
         };
         Opened += async (_, _) =>

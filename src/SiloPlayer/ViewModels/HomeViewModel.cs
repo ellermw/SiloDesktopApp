@@ -55,7 +55,12 @@ public partial class HomeViewModel : ObservableObject,
             _dismissContext = message.Context;
             _dismissSnapshot = HomeDismissalSnapshot.Capture(FeaturedSections.Concat(Sections), message.Item.ContentId,
                 message.Item.SeriesId ?? (message.Item.Type == "series" ? message.Item.ContentId : null));
-            UndoMessage = message.Item.Type is "episode" or "series" ? "Show dropped" : $"\"{message.Item.Title}\" dismissed";
+            UndoMessage = message.Item.Type is "episode" or "series"
+                ? "Removed from Continue Watching and Next Up"
+                : message.Surface == "next_up" ? "Removed from Next Up"
+                : message.Item.Type == "audiobook" ? "Removed from Continue Listening"
+                : message.Item.Type == "ebook" ? "Removed from Continue Reading"
+                : "Removed from Continue Watching";
             ShowUndoBanner = true;
             _ = AutoHideUndoBannerAsync();
         });
@@ -148,6 +153,7 @@ public partial class HomeViewModel : ObservableObject,
     private int _sectionLoadGeneration;
     private string? _loadedProfileId;
     private ApiRequestContext? _loadedContext;
+    private ApiIdentityContext? _loadedIdentityContext;
     private CancellationTokenSource? _realtimeRefreshCts;
     private bool _realtimeRefreshInProgress;
     private bool _realtimeRefreshRequested;
@@ -286,6 +292,22 @@ public partial class HomeViewModel : ObservableObject,
         }
     }
 
+    public async Task CatchUpAfterReconnectAsync(ApiRequestContext context)
+    {
+        if (!_homeApi.IsCurrentContext(context)) return;
+        // Only transport recovery for the same owner may keep mounted content.
+        // Explicit permission changes still use the ordinary route retirement.
+        if (_loadedIdentityContext is { } identity && _homeApi.IsCurrentIdentityContext(identity))
+        {
+            _sectionLoadCts?.Cancel();
+            ++_sectionLoadGeneration;
+            _loadedContext = context;
+            InvalidateCache();
+            LocalLog.AppendLine("home_refresh.txt", $"transport_catchup | readGeneration={context.RequestContextGeneration} | retainedRows={Sections.Count}");
+        }
+        await LoadAsync();
+    }
+
     [RelayCommand]
     private async Task LoadAsync()
     {
@@ -306,6 +328,7 @@ public partial class HomeViewModel : ObservableObject,
             _lastLoadedAt = DateTime.MinValue;
             _loadedProfileId = profileId;
             _loadedContext = context;
+            _loadedIdentityContext = _homeApi.CaptureIdentityContext();
         }
 
         // Skip API call if data was loaded recently and we already have content
@@ -587,8 +610,9 @@ public partial class HomeViewModel : ObservableObject,
         string.Equals(_loadedProfileId, profileId, StringComparison.Ordinal)
         && IsCurrentSectionLoad(generation, ct, sectionId);
 
-    private static Task RunOnUiThreadAsync(Action action)
+    private static Task RunOnUiThreadAsync(Action action, [System.Runtime.CompilerServices.CallerMemberName] string operation = "")
     {
+        var actionId = LocalLog.CurrentOperationId;
         var dispatcher = App.MainWindowInstance?.DispatcherQueue;
         if (dispatcher == null || dispatcher.HasThreadAccess)
         {
@@ -606,6 +630,7 @@ public partial class HomeViewModel : ObservableObject,
             }
             catch (Exception ex)
             {
+                LocalLog.AppendException("errors.txt", ex, $"HomeViewModel.RunOnUiThreadAsync caller={operation}", actionId);
                 tcs.SetException(ex);
             }
         }))
@@ -732,9 +757,10 @@ public partial class HomeViewModel : ObservableObject,
 
             await _homeApi.DismissItemAsync(surface, request.Item.ContentId, body);
         }
-        catch
+        catch (Exception ex)
         {
             // Restore on failure
+            LocalLog.AppendException("errors.txt", ex, "HomeViewModel.DismissItemAsync");
             RestoreDismissedItem();
             ShowUndoBanner = false;
             ClearDismissState();
@@ -760,8 +786,9 @@ public partial class HomeViewModel : ObservableObject,
             if (generation != _undoGeneration || (_dismissContext.HasValue && !_homeApi.IsCurrentContext(_dismissContext.Value))) return;
             RestoreDismissedItem();
         }
-        catch
+        catch (Exception ex)
         {
+            LocalLog.AppendException("errors.txt", ex, "HomeViewModel.UndoDismissalAsync");
             if (generation == _undoGeneration) { ErrorMessage = "Could not undo the dismissal. Try again."; ShowUndoBanner = true; }
             return;
         }

@@ -91,7 +91,7 @@ public sealed class RefreshMetadataDialog : ContentDialog
         if (_pending) return;
         _pending = true; SetPending(true);
         try { await _onConfirm(mode); if (!_dismissed) Hide(); }
-        catch (Exception ex) { App.Services.GetService<ToastService>()?.Error(ex.Message); }
+        catch (Exception ex) { App.Services.GetService<ToastService>()?.Error(ex); }
         finally { _pending = false; SetPending(false); }
     }
     private void SetPending(bool pending)

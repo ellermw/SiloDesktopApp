@@ -850,7 +850,7 @@ public sealed partial class EbookReaderPage : Page
         OpenPanel("annotations");
         }
         catch (OperationCanceledException) { }
-        catch (ApiException ex) { if (!_leaving) App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+        catch (ApiException ex) { if (!_leaving) App.Services.GetRequiredService<ToastService>().Error(ex); }
     }
 
     private void NavigateToAnnotation(EbookReaderAnnotation annotation)
@@ -1032,7 +1032,7 @@ public sealed partial class EbookReaderPage : Page
         await LoadAnnotationsAsync();
         }
         catch (OperationCanceledException) { }
-        catch (ApiException ex) { if (!_leaving) App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+        catch (ApiException ex) { if (!_leaving) App.Services.GetRequiredService<ToastService>().Error(ex); }
     }
 
     private Border CreateAnnotationRow(EbookReaderAnnotation annotation)

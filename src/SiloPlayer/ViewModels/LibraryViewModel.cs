@@ -19,6 +19,9 @@ public sealed class EditableQueryGroup
 public partial class LibraryViewModel : ObservableObject
 {
     private const int PageSize = 60;
+    // Both window and continuation cursors are signed over the wire limit.
+    // Viewport size, count-only reads and prefetch must not change that scope.
+    private const int CatalogWindowPageSize = 100;
     private const int MaxInFlightCatalogPages = 3;
     private readonly CatalogApi _catalogApi;
     private readonly HashSet<int> _loadingPages = [];
@@ -522,8 +525,7 @@ public partial class LibraryViewModel : ObservableObject
                 token.ThrowIfCancellationRequested();
                 if (GetWindowItem(index) != null) continue;
                 var fetchStart = first + (index - first) / 100 * 100;
-                var fetchEnd = Math.Min(last, fetchStart + 99);
-                var response = await FetchWindowPageAsync(fetchStart, fetchEnd - fetchStart + 1,
+                var response = await FetchWindowPageAsync(fetchStart,
                     false, _snapshot, token);
                 if (token.IsCancellationRequested || version != _queryVersion) return [];
                 RememberWindow(fetchStart, response, false);
@@ -916,45 +918,36 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
-    private Task<CatalogResponse> FetchPageAsync(int pageIndex, bool includeTotal, string? snapshot = null, CancellationToken ct = default)
-        => _catalogApi.GetCatalogAsync(
-            libraryId: Library!.Id,
-            sort: SelectedSort,
-            order: SelectedOrder,
-            genre: UseAdvancedRules ? null : SelectedGenre,
-            studio: UseAdvancedRules ? null : SelectedStudio,
-            contentRating: UseAdvancedRules ? null : SelectedContentRating,
-            country: UseAdvancedRules ? null : SelectedCountry,
-            resolution: UseAdvancedRules ? null : SelectedResolution,
-            audioLanguage: UseAdvancedRules ? null : SelectedAudioLanguage,
-            yearMin: UseAdvancedRules ? null : SelectedYearMin,
-            yearMax: UseAdvancedRules ? null : SelectedYearMax,
-            type: SelectedType,
-            extraRules: BuildExtraRules(),
-            extraRulesMatch: AdvancedRulesMatch,
-            queryGroups: BuildAdvancedGroups(),
-            queryGroupsMatch: AdvancedRulesMatch,
-            limit: PageSize,
-            offset: pageIndex * PageSize,
-            includeTotal: includeTotal,
-            snapshot: snapshot,
-            ct: ct);
+    private async Task<CatalogResponse> FetchPageAsync(int pageIndex, bool includeTotal, string? snapshot = null, CancellationToken ct = default)
+    {
+        var response = await FetchWindowPageAsync(pageIndex * PageSize, includeTotal, snapshot, ct);
+        if (response.Items.Count > PageSize)
+        {
+            // The legacy sparse list still uses 60-slot UI pages. Its network
+            // requests share the same 100-item cursor scope as the window view.
+            response.Items = response.Items.Take(PageSize).ToList();
+            if (response.Page is not null) response.Page.HasMore = true;
+            response.HasMore = true;
+        }
+        return response;
+    }
 
     private async Task FetchWindowAsync(int startIndex, int itemCount, bool includeTotal,
         Action<CatalogResponse> publishPage, string? snapshot = null, CancellationToken ct = default)
     {
         using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure(
             includeTotal ? "catalog-request-with-total" : "catalog-request-window");
-        var response = await FetchWindowPageAsync(startIndex, Math.Min(100, itemCount), includeTotal, snapshot, ct);
+        var response = await FetchWindowPageAsync(startIndex, includeTotal, snapshot, ct);
         ct.ThrowIfCancellationRequested();
         publishPage(response);
         while (response.Items.Count < itemCount && response.HasMore)
         {
             ct.ThrowIfCancellationRequested();
             var next = await FetchWindowPageAsync(startIndex + response.Items.Count,
-                Math.Min(100, itemCount - response.Items.Count), false, response.Snapshot ?? snapshot, ct);
+                false, response.Snapshot ?? snapshot, ct);
             ct.ThrowIfCancellationRequested();
             response.HasMore = next.HasMore;
+            if (response.Page is not null) response.Page.HasMore = next.HasMore;
             if (next.Items.Count == 0) break;
             response.Items.AddRange(next.Items);
             publishPage(response);
@@ -974,7 +967,7 @@ public partial class LibraryViewModel : ObservableObject
         using var timing = SiloPlayer.Core.Services.LibraryPerformanceTrace.Measure("catalog-exact-count");
         try
         {
-            var result = await FetchWindowPageAsync(0, 1, true, snapshot, ct);
+            var result = await FetchWindowPageAsync(0, true, snapshot, ct);
             if (ct.IsCancellationRequested || version != _queryVersion || !result.TotalExact) return;
             _hasExactTotal = true;
             _estimatedTotalItems = Math.Max(0, result.Total);
@@ -991,7 +984,7 @@ public partial class LibraryViewModel : ObservableObject
         }
     }
 
-    private async Task<CatalogResponse> FetchWindowPageAsync(int startIndex, int itemCount, bool includeTotal, string? snapshot, CancellationToken ct)
+    private async Task<CatalogResponse> FetchWindowPageAsync(int startIndex, bool includeTotal, string? snapshot, CancellationToken ct)
     {
         var context = _catalogApi.CaptureContext();
         var version = _queryVersion;
@@ -1009,7 +1002,10 @@ public partial class LibraryViewModel : ObservableObject
         // failed or canceled replacements cannot leave an older cursor usable.
         foreach (var end in _completedBoundaries.Where(pair => pair.Value.Start == startIndex).Select(pair => pair.Key).ToArray())
             _completedBoundaries.Remove(end);
-        var response = await _catalogApi.GetCatalogAsync(
+        CatalogResponse response;
+        try
+        {
+        response = await _catalogApi.GetCatalogAsync(
             libraryId: Library!.Id,
             sort: SelectedSort,
             order: SelectedOrder,
@@ -1026,19 +1022,27 @@ public partial class LibraryViewModel : ObservableObject
             extraRulesMatch: AdvancedRulesMatch,
             queryGroups: BuildAdvancedGroups(),
             queryGroupsMatch: AdvancedRulesMatch,
-            limit: itemCount,
+            limit: CatalogWindowPageSize,
             offset: startIndex,
             includeTotal: includeTotal,
             snapshot: snapshot,
             ct: ct,
             nextCursor: nextCursor);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            SiloPlayer.Core.Services.LocalLog.AppendException("catalog_errors.txt", ex,
+                $"catalog_window start={startIndex} limit={CatalogWindowPageSize} totals={includeTotal} cursor_kind={(nextCursor is not null ? "next" : snapshot is not null ? "window" : "none")} query_version={version} read_generation={context.RequestContextGeneration}");
+            throw;
+        }
         ct.ThrowIfCancellationRequested();
         if (version != _queryVersion || context != _catalogApi.CaptureContext())
             throw new OperationCanceledException("Catalog continuation authority changed.", ct);
-        if (response.Items.Count == itemCount && response.HasMore
+        if (response.Items.Count == CatalogWindowPageSize && response.HasMore
             && !string.IsNullOrWhiteSpace(response.Snapshot) && !string.IsNullOrWhiteSpace(response.Page?.NextCursor))
         {
-            _completedBoundaries[startIndex + itemCount] = new(startIndex, version, context, queryKey, response.Snapshot, response.Page.NextCursor);
+            _completedBoundaries[startIndex + CatalogWindowPageSize] = new(startIndex, version, context, queryKey, response.Snapshot, response.Page.NextCursor);
             while (_completedBoundaries.Count > 16) _completedBoundaries.Remove(_completedBoundaries.Keys.First());
         }
         return response;

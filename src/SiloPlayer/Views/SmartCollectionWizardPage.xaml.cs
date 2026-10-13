@@ -307,7 +307,7 @@ public sealed partial class SmartCollectionWizardPage : Page
                 editor.Load(ViewModel.RuleDefinition, scope, libraryId, filters);
         }
         catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
-        catch (Exception ex) { if (_filterOptionsCts == owner) App.Services.GetRequiredService<ToastService>().Error($"Could not load filter options: {ex.Message}"); }
+        catch (Exception ex) { if (_filterOptionsCts == owner) App.Services.GetRequiredService<ToastService>().Error(ex, $"Could not load filter options: {ex.Message}"); }
         finally { Interlocked.CompareExchange(ref _filterOptionsCts, null, owner); owner.Dispose(); }
     }
 
@@ -564,7 +564,7 @@ public sealed partial class SmartCollectionWizardPage : Page
         if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
         WizardDeleteButton.IsEnabled = false;
         try { await App.Services.GetRequiredService<CollectionsApi>().DeleteCollectionAsync(_args.CollectionId); OnSaved(); }
-        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex.Message); }
+        catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
         finally { WizardDeleteButton.IsEnabled = true; }
     }
 

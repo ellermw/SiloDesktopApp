@@ -365,7 +365,8 @@ public class ThemeService
             "SliderTrackValueFill", "SliderTrackValueFillPointerOver", "SliderTrackValueFillPressed",
             "SliderThumbBorderBrush", "SliderThumbBorderBrushPointerOver", "SliderThumbBorderBrushPressed");
         CopyBrushColor(resources, "RingBrush", "FocusVisualPrimaryBrush");
-        CopyBrushColor(resources, "AccentForegroundBrush", "ToggleSwitchKnobFillOn");
+        CopyBrushColor(resources, "AccentForegroundBrush", "ToggleSwitchKnobFillOn",
+            "ToggleSwitchKnobFillOnPointerOver", "ToggleSwitchKnobFillOnPressed");
         CopyBrushColor(resources, "AccentBrush", "WebUiPrimaryHoverBrush");
         CopyBrushColor(resources, "SecondaryBackgroundBrush", "WebUiSecondaryHoverBrush");
         CopyBrushColor(resources, "ErrorBrush", "WebUiDestructiveHoverBrush");

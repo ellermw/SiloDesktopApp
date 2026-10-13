@@ -9,6 +9,31 @@ namespace SiloPlayer.Tests;
 public sealed class SiloApiClientTests
 {
     [Fact]
+    public async Task DismissalHttpDiagnostics_CorrelateStatusWithoutLoggingIdentityOrCredentials()
+    {
+        var action = Guid.NewGuid().ToString("N");
+        var directory = Path.Combine(Path.GetTempPath(), "SiloPlayer.Tests", action);
+        using var scope = SiloPlayer.Core.Services.LocalLog.BeginOperation(action, directory);
+        var client = CreateClient(new DelegateHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent))));
+        client.SetAccessToken("diagnostic-secret-token");
+        await new HomeApi(client).DismissItemAsync("next_up", "diagnostic-private-item", new { series_id = "diagnostic-private-series" });
+        var path = Path.Combine(directory, "api_diagnostics.txt");
+        Assert.True(File.Exists(path), "Dismissal HTTP result was not persisted.");
+        var lines = File.ReadAllLines(path).Where(line => line.Contains(action)).ToArray();
+        Assert.Contains(lines, line => line.Contains("status=204") && line.Contains("attempt=1") && line.Contains("elapsedMs="));
+        Assert.Contains(lines, line => line.Contains("route=home.dismissals.next_up"));
+        Assert.All(lines, line =>
+        {
+            Assert.DoesNotContain("diagnostic-secret-token", line);
+            Assert.DoesNotContain("diagnostic-private-item", line);
+            Assert.DoesNotContain("diagnostic-private-series", line);
+        });
+        foreach (var file in Directory.GetFiles(directory)) File.Delete(file);
+        Directory.Delete(directory);
+    }
+
+    [Fact]
     public async Task SimilarCardsUseTheCurrentTwelveItemContract()
     {
         string? path = null;
