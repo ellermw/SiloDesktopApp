@@ -9,7 +9,11 @@ public sealed record EpisodeNavigationTarget(
     string? AirDate,
     int RuntimeSeconds,
     int? SeasonNumber = null,
-    int? EpisodeNumber = null);
+    int? EpisodeNumber = null,
+    bool? Played = null,
+    bool? IsInProgress = null,
+    double? PositionSeconds = null,
+    bool? PosterIsEpisodeStill = null);
 
 public sealed record EpisodeNavigationSnapshot(
     string? OwnerContentId,

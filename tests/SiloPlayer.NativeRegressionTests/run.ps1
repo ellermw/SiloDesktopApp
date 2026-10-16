@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)][string] $AppDirectory,
-    [ValidateSet('request-interactions', 'conditional-dialogs', 'media-parity', 'account-parity', 'account-coverage', 'account-latest', 'browse-parity', 'browse-acceptance', 'request-detail-parity', 'shared-controls', 'personal-lists')][string] $Only
+    [ValidateSet('request-interactions', 'conditional-dialogs', 'media-parity', 'account-parity', 'account-coverage', 'account-latest', 'browse-parity', 'browse-acceptance', 'request-detail-parity', 'shared-controls', 'personal-lists', 'upstream-shell', 'shared-appearance', 'settings-visual-regressions', 'library-cursor', 'server-favicon')][string] $Only
 )
 
 $ErrorActionPreference = 'Stop'

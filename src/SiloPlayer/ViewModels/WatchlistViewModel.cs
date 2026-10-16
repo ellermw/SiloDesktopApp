@@ -24,6 +24,11 @@ public partial class WatchlistViewModel : ObservableObject, IRecipient<MediaSurf
         _requestsApi = requestsApi;
         // F4: react to watchlist add/remove events from anywhere in the app.
         WeakReferenceMessenger.Default.Register(this);
+        WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, change) =>
+        {
+            if (!_catalogApi.IsCurrentContext(change.Context) || !change.Marked.HasValue) return;
+            foreach (var item in Items.Where(item => item.ContentId == change.ItemId)) MediaItemStateUpdater.SetNotInterested(item, change.Marked.Value);
+        });
     }
 
     public ObservableCollection<MediaItem> Items { get; } = [];

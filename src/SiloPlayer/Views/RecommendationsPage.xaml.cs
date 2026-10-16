@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.ViewModels;
 
@@ -91,11 +92,6 @@ public sealed partial class RecommendationsPage : Page
 
         TasteProfilePanel.Visibility = Visibility.Visible;
 
-        var totalSignals = profile.SignalCounts.Values.Sum();
-        TasteSignalCountText.Text = totalSignals > 0
-            ? $"{totalSignals} signal{(totalSignals == 1 ? "" : "s")}"
-            : "";
-
         // Top genres pills
         TopGenresList.Children.Clear();
         if (hasGenres)
@@ -163,7 +159,8 @@ public sealed partial class RecommendationsPage : Page
 
     private void BuildRows()
     {
-        RowsPanel.Children.Clear();
+        foreach (var stale in RowsPanel.Children.OfType<SectionRow>().Where(section => section.Tag is not RecommendationRowDisplay row || !ViewModel.Rows.Contains(row)).ToArray())
+            RowsPanel.Children.Remove(stale);
 
         if (ViewModel.Rows.Count == 0)
         {
@@ -171,18 +168,25 @@ public sealed partial class RecommendationsPage : Page
             return;
         }
 
+        var rowIndex = 0;
         foreach (var row in ViewModel.Rows)
         {
-            if (row.Items.Count == 0) continue;
+            var existing = RowsPanel.Children.OfType<SectionRow>().FirstOrDefault(section => ReferenceEquals(section.Tag, row));
+            if (existing != null)
+            {
+                if (RowsPanel.Children.IndexOf(existing) != rowIndex) { RowsPanel.Children.Remove(existing); RowsPanel.Children.Insert(rowIndex, existing); }
+                rowIndex++;
+                continue;
+            }
 
             var section = new HomeSectionWithItems
             {
                 Title = row.Label,
                 SectionType = row.Type,
-                Items = new ObservableCollection<MediaItem>(row.Items)
+                Items = row.Items
             };
 
-            var sectionRow = new SectionRow();
+            var sectionRow = new SectionRow { Tag = row };
             if (!string.IsNullOrWhiteSpace(row.SectionKind))
             {
                 sectionRow.UseTitleViewLink = true;
@@ -195,7 +199,7 @@ public sealed partial class RecommendationsPage : Page
             }
 
             sectionRow.Section = section;
-            RowsPanel.Children.Add(sectionRow);
+            RowsPanel.Children.Insert(rowIndex++, sectionRow);
         }
 
         UpdateEmptyState();
@@ -211,6 +215,9 @@ public sealed partial class RecommendationsPage : Page
         var loaded = !ViewModel.IsLoading;
         var hasError = loaded && !string.IsNullOrWhiteSpace(ViewModel.ErrorMessage);
         var hasContent = loaded && !hasError && ViewModel.Rows.Any(row => row.Items.Count > 0);
+
+        HeaderSubtitleText.Text = RecommendationPresentation.PageSubtitle(ViewModel.Rows.Select(row => row.Type));
+        HeaderSubtitleText.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;
 
         ErrorState.Visibility = hasError ? Visibility.Visible : Visibility.Collapsed;
         RowsPanel.Visibility = hasContent ? Visibility.Visible : Visibility.Collapsed;

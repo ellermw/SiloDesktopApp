@@ -21,7 +21,7 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Matches("AppearanceNavGroup[\\s\\S]+InterfaceTab[\\s\\S]+CardOverlaysTab[\\s\\S]+AccessibilityTab[\\s\\S]+HomeDiscoveryNavGroup[\\s\\S]+PersonalizeTab[\\s\\S]+ConnectionsNavGroup[\\s\\S]+WebhookSyncTab[\\s\\S]+ImportTab[\\s\\S]+AccountNavGroup", xaml);
         Assert.Contains("SettingsSearchBox_TextChanged", code);
         Assert.Contains("SettingsPage_SizeChanged", code);
-        Assert.Contains("e.NewSize.Width < 1024", code);
+        Assert.Contains("WebUiViewport.Width(this, e.NewSize.Width) < 1024", code);
         Assert.Contains("SettingsNavigationGroups.Orientation", code);
         Assert.Contains("SettingsContentPanel.MaxWidth", code);
         Assert.Contains("x:Name=\"DevicesTab\"", xaml);
@@ -38,7 +38,7 @@ public sealed class CurrentSettingsParitySourceTests
         Assert.Contains("Text=\"Skip intros\"", xaml);
         Assert.Contains("Text=\"Start next at preview\"", xaml);
         Assert.Contains("Text=\"Background &amp; Position\"", xaml);
-        Assert.Contains("This sample reflects the current subtitle appearance.", xaml);
+        Assert.Contains("How subtitles look for this profile on every device.", xaml);
         Assert.Matches("SubtitlePreviewBg2[\\s\\S]+Save Appearance[\\s\\S]+Text group", xaml);
     }
 
@@ -143,7 +143,7 @@ public sealed class CurrentSettingsParitySourceTests
     }
 
     [Fact]
-    public void SubtitleAppearanceUsesCurrentDeviceOverrideContract()
+    public void SubtitleAppearanceUsesSharedProfileDefaultWriter()
     {
         var model = ReadRepoFile("src", "SiloPlayer.Core", "Models", "Settings", "SubtitleAppearance.cs");
         var viewModel = ReadRepoFile("src", "SiloPlayer", "ViewModels", "SettingsViewModel.cs");
@@ -151,8 +151,8 @@ public sealed class CurrentSettingsParitySourceTests
 
         Assert.Contains("TextOutlineColor", model);
         Assert.Contains("xxlarge", model);
-        Assert.Contains("SetContractSettingValueAsync(\"playback.subtitle_appearance\", \"profile_device\"", viewModel);
-        Assert.Contains("DeleteContractSettingValueAsync(\"playback.subtitle_appearance\", \"profile_device\"", viewModel);
+        Assert.Contains("_settingsApi.Subtitles.SaveAppearanceAsync", viewModel);
+        Assert.Contains("_settingsApi.Subtitles.ResetAppearanceAsync", viewModel);
         Assert.Contains("DiscardSubtitleAppearance", viewModel);
         Assert.Contains("Lower Third", xaml);
         Assert.Contains("XX-Large", xaml);

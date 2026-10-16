@@ -1,4 +1,4 @@
-using System.Text.Json;
+using System.Globalization;
 using SiloPlayer.Core.Api;
 
 namespace SiloPlayer.Core.Services;
@@ -35,12 +35,12 @@ public sealed class SharedAppearanceState(SettingsApi api)
         if (string.IsNullOrWhiteSpace(context.BaseUrl)) return;
         try
         {
-            var document = await api.GetSharedAppearanceAsync(ct);
+            var document = await api.GetServerBrandingAsync(ct);
             ct.ThrowIfCancellationRequested();
             if (revision != _revision) return;
             if (!api.IsAppearanceContextCurrent(context)) { Reset(); return; }
             _lastRefresh = DateTimeOffset.UtcNow;
-            Colors = ParseColors(document.Vars);
+            Colors = AccentColors(document.AccentColor);
             Changed?.Invoke();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
@@ -59,36 +59,25 @@ public sealed class SharedAppearanceState(SettingsApi api)
             : _context != api.CaptureAppearanceContext() || _lastRefresh is null ||
            DateTimeOffset.UtcNow - _lastRefresh >= TimeSpan.FromMinutes(1)
             ? RefreshAsync(ct) : Task.CompletedTask;
-    private static readonly HashSet<string> ColorTokens = new(StringComparer.Ordinal)
-    {
-        "background", "foreground", "card", "card-foreground", "popover", "popover-foreground",
-        "primary", "primary-foreground", "secondary", "secondary-foreground", "muted", "muted-foreground",
-        "accent", "accent-foreground", "destructive", "destructive-foreground", "border", "input", "ring",
-        "chart-1", "chart-2", "chart-3", "chart-4", "chart-5", "sidebar", "sidebar-foreground",
-        "sidebar-primary", "sidebar-primary-foreground", "sidebar-accent", "sidebar-accent-foreground",
-        "sidebar-border", "sidebar-ring", "surface", "surface-hover", "surface-raised", "ambient"
-    };
-
-    private static IReadOnlyDictionary<string, string> ParseColors(string? json)
+    // Branding is the only public appearance override. CSS, font and arbitrary token overrides are retired.
+    private static IReadOnlyDictionary<string, string> AccentColors(string? accent)
     {
         var colors = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (string.IsNullOrWhiteSpace(json) || json.Length > 131072) return colors;
-        try
+        var value = accent?.Trim();
+        if (value == null || !value.StartsWith('#') || value.Length is not (4 or 7) || !value[1..].All(Uri.IsHexDigit)) return colors;
+        var hex = value[1..].ToUpperInvariant();
+        if (hex.Length == 3) hex = string.Concat(hex.Select(c => new string(c, 2)));
+        var normalized = "#" + hex;
+        colors["primary"] = colors["ring"] = colors["sidebar-primary"] = normalized;
+        static double Luminance(int rgb)
         {
-            using var document = JsonDocument.Parse(json);
-            if (document.RootElement.ValueKind != JsonValueKind.Object) return colors;
-            foreach (var token in document.RootElement.EnumerateObject())
-            {
-                if (!ColorTokens.Contains(token.Name) || token.Value.ValueKind != JsonValueKind.String) continue;
-                var value = token.Value.GetString()!.Trim();
-                if (!value.StartsWith('#') || value.Length is not (4 or 5 or 7 or 9) || !value[1..].All(Uri.IsHexDigit)) continue;
-                var hex = value[1..].ToUpperInvariant();
-                if (hex.Length is 3 or 4) hex = string.Concat(hex.Select(c => new string(c, 2)));
-                // CSS eight-digit hex is RRGGBBAA; native colors use AARRGGBB.
-                colors[token.Name] = "#" + (hex.Length == 8 ? hex[6..] + hex[..6] : hex);
-            }
+            static double Channel(int c) => c / 255d <= .04045 ? c / 255d / 12.92 : Math.Pow((c / 255d + .055) / 1.055, 2.4);
+            return .2126 * Channel((rgb >> 16) & 255) + .7152 * Channel((rgb >> 8) & 255) + .0722 * Channel(rgb & 255);
         }
-        catch (JsonException) { }
+        var luminance = Luminance(int.Parse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture));
+        var dark = Luminance(0x141417);
+        if (1.05 / (luminance + .05) > (luminance + .05) / (dark + .05))
+            colors["primary-foreground"] = colors["sidebar-primary-foreground"] = "#FFFFFF";
         return colors;
     }
 }

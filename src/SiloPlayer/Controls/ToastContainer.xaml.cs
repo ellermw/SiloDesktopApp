@@ -27,9 +27,9 @@ public sealed partial class ToastContainer : UserControl
     /// toast animates in, auto-dismisses after <paramref name="durationMs"/>,
     /// then fades out and is removed from the visual tree.
     /// </summary>
-    public void Show(string message, ToastKind kind, int durationMs = 4000)
+    public void Show(string message, ToastKind kind, int durationMs = 4000, string? actionLabel = null, Func<Task>? action = null)
     {
-        var toast = BuildToast(message, kind);
+        var toast = BuildToast(message, kind, actionLabel, action);
         ToastStack.Children.Insert(0, toast);
 
         // Slide-in from the right + fade-in.
@@ -89,7 +89,7 @@ public sealed partial class ToastContainer : UserControl
         sb.Begin();
     }
 
-    private Border BuildToast(string message, ToastKind kind)
+    private Border BuildToast(string message, ToastKind kind, string? actionLabel, Func<Task>? action)
     {
         var (iconGlyph, accent) = kind switch
         {
@@ -137,7 +137,24 @@ public sealed partial class ToastContainer : UserControl
             VerticalAlignment = VerticalAlignment.Center,
         };
         Grid.SetColumn(text, 1);
-        grid.Children.Add(text);
+        var content = new StackPanel { Spacing = 6 };
+        content.Children.Add(text);
+        if (actionLabel != null && action != null)
+        {
+            var button = new Button { Content = actionLabel, Padding = new Thickness(10, 4, 10, 4), HorizontalAlignment = HorizontalAlignment.Left };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, actionLabel);
+            button.Click += async (_, _) =>
+            {
+                if (!button.IsEnabled) return;
+                button.IsEnabled = false;
+                try { await action(); }
+                catch (Exception ex) { Core.Services.LocalLog.AppendException("errors.txt", ex, "toast_action"); }
+                finally { DismissToast(root); }
+            };
+            content.Children.Add(button);
+        }
+        Grid.SetColumn(content, 1);
+        grid.Children.Add(content);
 
         // Dismiss button.
         var dismissBtn = new Button

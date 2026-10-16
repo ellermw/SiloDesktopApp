@@ -1,3 +1,4 @@
+using SiloPlayer.Helpers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Navigation;
@@ -70,6 +71,8 @@ public sealed partial class WatchTogetherRoomPage : Page
     {
         ViewModel = App.Services.GetRequiredService<WatchTogetherCoordinator>().ActiveRoom ?? App.Services.GetRequiredService<WatchTogetherRoomViewModel>();
         this.InitializeComponent();
+        Loaded += (_, _) => ObservePickerSpoilers();
+        Unloaded += (_, _) => { if (!IsLoaded && _pickerSpoilers != null) _pickerSpoilers.Changed -= PickerSpoilersChanged; };
         InitializeSeriesPicker();
         var stageCode = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         stageCode.Children.Add(SiloPlayer.Controls.WebUiIcon.Create("copy", 14));
@@ -509,8 +512,8 @@ public sealed partial class WatchTogetherRoomPage : Page
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
         row.Children.Add(new TextBlock { Text = "People", FontSize = 14, LineHeight = 20, LineStackingStrategy = LineStackingStrategy.BlockLineHeight });
-        row.Children.Add(new Border { Name = "PeopleCountBadge", Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"], CornerRadius = new CornerRadius(999), Padding = new Thickness(6, 2, 6, 2), VerticalAlignment = VerticalAlignment.Center,
-            Child = new TextBlock { Text = count.ToString(), FontSize = 10, LineHeight = 15, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold } });
+        row.Children.Add(RoundedBadge.Apply(new Border { Name = "PeopleCountBadge", Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"], Padding = new Thickness(6, 2, 6, 2), VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock { Text = count.ToString(), FontSize = 10, LineHeight = 15, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold } }, 999));
         return row;
     }
 
@@ -1091,6 +1094,8 @@ public sealed partial class WatchTogetherRoomPage : Page
             var items = _drillDownEpisodes.Select(ep => new SiloPlayer.Core.Models.Home.MediaItem
             {
                 ContentId = ep.ContentId, Title = ep.Title, Type = "episode", Overview = ep.Overview ?? "", PosterUrl = ep.StillUrl, PosterThumbhash = ep.StillThumbhash,
+                PosterIsEpisodeStill = ep.StillIsEpisodeStill, BackdropIsEpisodeStill = ep.StillIsEpisodeStill,
+                UserState = new() { Played = ep.UserData?.Played == true, IsInProgress = ep.UserData?.IsInProgress == true }, PositionSeconds = ep.UserData?.PositionSeconds,
                 BackdropUrl = ep.StillUrl, BackdropThumbhash = ep.StillThumbhash, SeriesId = _drillDownSeriesId, SeriesTitle = _drillDownSeries?.Title,
                 SeasonNumber = seasonNumber, EpisodeNumber = ep.EpisodeNumber, Runtime = ep.Runtime,
                 Year = DateTime.TryParse(ep.AirDate, out var airDate) ? airDate.Year : 0
@@ -1167,12 +1172,12 @@ public sealed partial class WatchTogetherRoomPage : Page
             if (revision != _candidateDetailRevision || !client.IsCurrentContext(authority) || !ReferenceEquals(CandidatePlayBtn.Tag, item)
                 || CandidateSpotlight.Visibility != Visibility.Visible || !IsLoaded) return;
             foreach (var rating in detail.Ratings ?? [])
-                CandidateRatings.Children.Add(new Border
+                CandidateRatings.Children.Add(RoundedBadge.Apply(new Border
                 {
                     Background = (Brush)Application.Current.Resources["SurfaceRaisedBrush"],
-                    CornerRadius = new CornerRadius(999), Padding = new Thickness(8, 2, 8, 2),
+                    Padding = new Thickness(8, 2, 8, 2),
                     Child = SiloPlayer.Controls.DisplayRatingEntry.Create(rating, small: true, foreground: (Brush)Application.Current.Resources["SecondaryTextBrush"]),
-                });
+                }, 999));
             CandidateRatings.Visibility = CandidateRatings.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         }
         catch { /* Ratings are optional; preserve the real selection and readiness flow. */ }

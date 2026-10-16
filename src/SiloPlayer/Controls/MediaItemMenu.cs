@@ -105,11 +105,13 @@ public static class MediaItemMenu
                         favoriteAction.Text = item.UserState?.IsFavorite == true
                                 ? "Remove from Favorites"
                                 : "Add to Favorites";
+                            favoriteAction.Visibility = MediaItemActionPolicy.CanAddToPersonalLists(item.Type) || item.UserState?.IsFavorite == true ? Visibility.Visible : Visibility.Collapsed;
                             AutomationProperties.SetName(favoriteAction, favoriteAction.Text);
                         }
                         catch (Exception ex) { toast.Error(ex); }
                     });
-                flyout.Items.Add(favoriteAction);
+                if (MediaItemActionPolicy.CanAddToPersonalLists(item.Type) || isFavorite)
+                    flyout.Items.Add(favoriteAction);
 
                 MenuFlyoutItem watchlistAction = null!;
                 watchlistAction = BuildItem(
@@ -143,12 +145,46 @@ public static class MediaItemMenu
                                 ? "Remove from Watchlist"
                                 : "Add to Watchlist";
                             watchlistAction.Icon = new FontIcon { Glyph = nowInWatchlist ? "\uE73E" : "\uE710" };
+                            watchlistAction.Visibility = MediaItemActionPolicy.CanAddToPersonalLists(item.Type) || nowInWatchlist ? Visibility.Visible : Visibility.Collapsed;
                             AutomationProperties.SetName(watchlistAction, watchlistAction.Text);
                         }
                         catch (Exception ex) { toast.Error(ex); }
                     });
-                flyout.Items.Add(watchlistAction);
+                if (MediaItemActionPolicy.CanAddToPersonalLists(item.Type) || inWatchlist)
+                    flyout.Items.Add(watchlistAction);
             }
+        }
+
+        if (item.Type is "movie" or "series" && item.UserState != null)
+        {
+            var interestContext = catalog.CaptureContext();
+            var interest = NotInterestedActions.CreateMenuItem(item, stateChanged);
+            flyout.Items.Add(interest);
+            flyout.Opening += async (_, _) => await NotInterestedActions.RefreshMenuItemAsync(interest, item, interestContext);
+        }
+
+        if (MediaItemActionPolicy.CanResetProgress(item.Type, item.PositionSeconds, true))
+        {
+            var context = catalog.CaptureContext();
+            var reset = BuildItem("Reset Progress", "\uE777", async () =>
+            {
+                if (!catalog.IsCurrentContext(context)) return;
+                await MediaItemCardActions.ResetProgressAsync(item);
+                stateChanged?.Invoke();
+            });
+            reset.Visibility = Visibility.Collapsed;
+            flyout.Items.Insert(Math.Min(2, flyout.Items.Count), reset);
+            flyout.Opening += async (_, _) =>
+            {
+                try
+                {
+                    var capabilities = await catalog.GetProgressCapabilitiesAsync();
+                    if (!catalog.IsCurrentContext(context)) return;
+                    reset.Visibility = MediaItemActionPolicy.CanResetProgress(item.Type, item.PositionSeconds, capabilities.ClearResumePosition)
+                        ? Visibility.Visible : Visibility.Collapsed;
+                }
+                catch { reset.Visibility = Visibility.Collapsed; }
+            };
         }
 
         if (item.Type == "manga")

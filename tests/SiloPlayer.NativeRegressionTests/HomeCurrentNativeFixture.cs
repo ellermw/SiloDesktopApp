@@ -16,6 +16,7 @@ internal static class HomeCurrentNativeFixture
     {
         await RetiredLayoutAsync();
         await RetiredSectionAsync();
+        await RecipeProjectionAsync(parent);
         await ListeningCaptionsAsync(parent);
         await LateHeroSlidesAsync(parent);
         await HeroPresentationAsync(parent);
@@ -117,6 +118,75 @@ internal static class HomeCurrentNativeFixture
             await WaitUntil(() => vm.Sections.FirstOrDefault()?.Items.Count == 1);
         }
         finally { vm.SetActive(false); CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger.Default.UnregisterAll(vm); }
+    }
+
+    private static async Task RecipeProjectionAsync(StackPanel parent)
+    {
+        using var wire = new RecipeWire();
+        using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://home-recipes.invalid");
+        using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("fixture-profile");
+        var vm = new HomeViewModel(new HomeApi(client), auth, new SettingsApi(client));
+        SectionRow? row = null;
+        try
+        {
+            await vm.LoadCommand.ExecuteAsync(null);
+            await WaitUntil(() => vm.Sections.Count == 2 && vm.Sections[1].Items.Count == 2);
+            var mounted = vm.Sections[1]; var items = mounted.Items; var unique = items[1];
+            row = new SectionRow { Section = mounted, Width = 900 }; parent.Children.Add(row);
+            wire.EarlyRelease.TrySetResult();
+            await WaitUntil(() => items.Count == 1 && items[0].ContentId == "unique");
+            if (!ReferenceEquals(vm.Sections[1], mounted) || !ReferenceEquals(mounted.Items, items)
+                || !ReferenceEquals(items[0], unique) || mounted.TotalCount != 9)
+                throw new InvalidOperationException("Recipe suppression replaced mounted Home references or used the wrong count.");
+            var raw = (Dictionary<string, HomeSectionWithItems>)typeof(HomeViewModel)
+                .GetField("_rawSections", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(vm)!;
+            if (raw["late"].Items.Count != 2)
+                throw new InvalidOperationException("Recipe suppression erased raw cards needed for a later projection.");
+            wire.EarlyHasShared = false;
+            vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
+            await WaitUntil(() => items.Count == 2);
+            if (!ReferenceEquals(mounted, vm.Sections[1]) || !ReferenceEquals(items[1], unique))
+                throw new InvalidOperationException("Restoring a previously suppressed card rebuilt a healthy Home row.");
+            await Task.Delay(120);
+            if (wire.SectionReads != 4)
+                throw new InvalidOperationException("Recipe projection triggered an unexpected section refresh loop.");
+            Program.Log("PASS: Home recipe layout-order suppression, late earlier row, raw restoration, mounted identity and no refresh loop.");
+        }
+        finally
+        {
+            if (row != null) parent.Children.Remove(row);
+            vm.SetActive(false); CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger.Default.UnregisterAll(vm);
+        }
+    }
+
+    private sealed class RecipeWire : HttpMessageHandler
+    {
+        internal readonly TaskCompletionSource EarlyRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal bool EarlyHasShared = true;
+        internal int SectionReads;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (request.RequestUri!.Host != "home-recipes.invalid") throw new InvalidOperationException("Recipe fixture attempted external network.");
+            var path = request.RequestUri.AbsolutePath;
+            string body;
+            if (path.EndsWith("/recipes"))
+                body = """{"categories":[{"category":"profile","recipes":[{"type":"recipe","avoid_duplicates":true}]}]}""";
+            else if (path.EndsWith("/layout"))
+                body = """{"sections":[{"id":"early","title":"First","section_type":"recently_added"},{"id":"late","title":"Later","section_type":"recipe"}]}""";
+            else if (path.EndsWith("/early/items"))
+            {
+                Interlocked.Increment(ref SectionReads); await EarlyRelease.Task.WaitAsync(ct);
+                body = $$"""{"id":"early","title":"First","section_type":"recently_added","items":[{"content_id":"{{(EarlyHasShared ? "shared" : "other")}}","type":"movie","title":"First"}]}""";
+            }
+            else if (path.EndsWith("/late/items"))
+            {
+                Interlocked.Increment(ref SectionReads);
+                body = """{"id":"late","title":"Later","section_type":"recipe","total_count":10,"items":[{"content_id":"shared","type":"movie","title":"Shared"},{"content_id":"unique","type":"movie","title":"Unique"}]}""";
+            }
+            else throw new InvalidOperationException("Unexpected recipe fixture request " + path);
+            return new(HttpStatusCode.OK) { Content = new StringContent(body) };
+        }
     }
 
     private static async Task ListeningCaptionsAsync(StackPanel parent)

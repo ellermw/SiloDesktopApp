@@ -26,6 +26,8 @@
     <ProjectReference Include="..\..\src\SiloPlayer.Player\SiloPlayer.Player.csproj" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.cs" Link="Production\LibraryViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\ItemDetailViewModel.cs" Link="Production\ItemDetailViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\RecommendationsViewModel.cs" Link="Production\RecommendationsViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\RecommendationSectionViewModel.cs" Link="Production\RecommendationSectionViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\DownloadsViewModel.cs" Link="Production\DownloadsViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\PersonDetailViewModel.cs" Link="Production\PersonDetailViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\CalendarViewModel.cs" Link="Production\CalendarViewModel.cs" />
@@ -42,6 +44,7 @@
     <Compile Include="..\..\src\SiloPlayer\ViewModels\WatchlistViewModel.cs" Link="Production\WatchlistViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\RequestsViewModel.cs" Link="Production\RequestsViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\NotificationsViewModel.cs" Link="Production\NotificationsViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\ProfileSelectViewModel.cs" Link="Production\ProfileSelectViewModel.cs" />
   </ItemGroup>
 
 </Project>

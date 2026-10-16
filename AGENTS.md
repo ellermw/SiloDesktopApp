@@ -2,11 +2,11 @@
 
 ## Start here
 
-The canonical local development checkout is `D:\SiloPlayer`. Current source and GitHub release are **1.2.247**, including the 1.2.242 badge repair, SiloCast receiver/default setup, detailed error diagnostics, Settings/Home refresh repairs, server favicon and Library cursor repair. Release tag: `v1.2.247`.
+The canonical local development checkout is `D:\SiloPlayer`. Current source and GitHub release are **1.2.268**, including all thirteen 1.2.260 correction groups, seven 1.2.267 server updates and the shared rounded-background repair. Release tag: `v1.2.268`. The owner installed and approved this exact installer on October 16, 2026.
 
-Before editing or building, read `docs/current-development.md` and verify `<Version>` in `src/SiloPlayer/SiloPlayer.csproj` is 1.2.247 or a deliberately newer version. The 1.2.244–247 changes are included on GitHub main. When creating an isolated checkout, use the current main/release or deliberately selected newer source; preserve any subsequent local changes and verify the resulting source before building. Never choose a baseline from a historical handoff without checking it against current source.
+Before editing or building, read `docs/current-development.md` and verify `<Version>` in `src/SiloPlayer/SiloPlayer.csproj` is 1.2.268 or a deliberately newer version. All changes through 1.2.268 are included on GitHub main. When creating an isolated checkout, use the current main/release or deliberately selected newer source; preserve any subsequent local changes and verify the resulting source before building. Never choose a baseline from a historical handoff without checking it against current source.
 
-Current installer: `D:\SiloPlayer\installer\output\SiloInstaller-1.2.247-Setup.exe`. Current published payload: `D:\SiloPlayer\installer\publish-1.2.247-final`. Native fixture copy: `D:\SiloPlayer\.codex-tmp\library-cursor-oct13\native-payload\SiloPlayer.exe`. Verify versions and receipt before running these paths. Preserve frozen 1.2.243/244/245 artifacts and their original evidence; they are historical baselines, not current build inputs.
+Current installer: `D:\SiloPlayer\installer\output\SiloInstaller-1.2.268-Setup.exe`. Current published payload: `D:\SiloPlayer\installer\publish-1.2.268-final`. Native fixture copy: `D:\SiloPlayer\.codex-tmp\oval-audit-oct16\native-payload\SiloPlayer.exe`. Verify versions and receipt before running these paths. Preserve frozen earlier artifacts and their original evidence; they are historical baselines, not current build inputs.
 
 ## Product and architecture
 
@@ -30,9 +30,9 @@ Use the current source/API contracts. The old Continuum/API v1 primer is histori
 
 ## Current feature verification
 
-Read `docs/silocast-testing.md` before SiloCast testing and `docs/releases/1.2.247.md` for scope. Receiver is enabled for fresh/missing preferences; saved opt-outs remain respected. It uses private physical LAN discovery and server-approved temporary playback identity without overwriting the desktop account. The installer automatically adds its Private-network/local-subnet firewall rule without a SiloCast checkbox. TV Mode/directional browsing are separate features.
+Read `docs/silocast-testing.md` before SiloCast testing and `docs/releases/1.2.268.md` for scope. Receiver is enabled for fresh/missing preferences; saved opt-outs remain respected. It uses private physical LAN discovery and server-approved temporary playback identity without overwriting the desktop account. The installer automatically adds its Private-network/local-subnet firewall rule without a SiloCast checkbox. TV Mode/directional browsing are separate features.
 
-Passed for 1.2.247: 1,669 main tests, 23 exact-payload playback groups, actual Library-tab scrolling at 1080p/ultrawide/4K sizes against a cursor validator, and native PNG/SVG/ICO/WebP favicon loading/color checks. Earlier receiver/discovery, Settings/Home and badge checks retain their original versioned evidence. Actual phone interoperability remains unverified. The intermittent Next Up removal root cause remains unresolved; added diagnostics do not establish a repair. Full default native regression verification has the preexisting `DetailPresentationNativeFixture.cs:55` hidden-versus-disabled assertion limitation. See release records and receipts for precise scope; these checks do not certify complete visual parity.
+Exact 1.2.268 payload passed five targeted native groups, including Add Row at400/1080/1920/3440/3840 widths and36 quality/HDR variants plus six media badges. All565 packaged files and1,379 build inputs were checked. The preceding 1.2.267 candidate passed1,910 main tests,58 native runs and24 packaged playback groups; publication separately reruns the full main suite. Earlier receiver/discovery, Library cursor, favicon and Settings/Home checks retain their original versioned evidence. Actual phone interoperability remains unverified. The intermittent Next Up removal root cause remains unresolved; added diagnostics do not establish a repair. Full default native regression verification has the preexisting `DetailPresentationNativeFixture.cs:55` hidden-versus-disabled assertion limitation. See release records and receipts for precise scope; these checks do not certify complete visual parity.
 
 ## Historical and production references
 

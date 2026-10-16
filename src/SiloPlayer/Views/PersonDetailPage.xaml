@@ -3,6 +3,7 @@
     x:Class="SiloPlayer.Views.PersonDetailPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:helpers="using:SiloPlayer.Helpers"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:controls="using:SiloPlayer.Controls"
@@ -139,16 +140,16 @@
                         <!-- Current WebUI renders person facts as independent
                              metadata badges below the name/actions row. -->
                         <controls:WrapPanel x:Name="PersonMetadataBadges" HorizontalSpacing="8" VerticalSpacing="8" Margin="0,0,0,16">
-                            <Border x:Name="BirthDateBadge" CornerRadius="1000" Padding="9.6,4" BorderThickness="1">
+                            <Border x:Name="BirthDateBadge" CornerRadius="1000" helpers:RoundedBadge.Radius="1000" Padding="9.6,4" BorderThickness="1">
                                 <TextBlock x:Name="BirthDateText" FontSize="11.2" FontWeight="SemiBold" CharacterSpacing="40" LineHeight="16" LineStackingStrategy="BlockLineHeight" />
                             </Border>
-                            <Border x:Name="AgeBadge" CornerRadius="1000" Padding="9.6,4" BorderThickness="1">
+                            <Border x:Name="AgeBadge" CornerRadius="1000" helpers:RoundedBadge.Radius="1000" Padding="9.6,4" BorderThickness="1">
                                 <TextBlock x:Name="AgeText" FontSize="11.2" FontWeight="SemiBold" CharacterSpacing="40" LineHeight="16" LineStackingStrategy="BlockLineHeight" />
                             </Border>
-                            <Border x:Name="DeathDateBadge" CornerRadius="1000" Padding="9.6,4" BorderThickness="1">
+                            <Border x:Name="DeathDateBadge" CornerRadius="1000" helpers:RoundedBadge.Radius="1000" Padding="9.6,4" BorderThickness="1">
                                 <TextBlock x:Name="DeathDateText" FontSize="11.2" FontWeight="SemiBold" CharacterSpacing="40" LineHeight="16" LineStackingStrategy="BlockLineHeight" />
                             </Border>
-                            <Border x:Name="BirthplaceBadge" CornerRadius="1000" Padding="9.6,4" BorderThickness="1">
+                            <Border x:Name="BirthplaceBadge" CornerRadius="1000" helpers:RoundedBadge.Radius="1000" Padding="9.6,4" BorderThickness="1">
                                 <TextBlock x:Name="BirthplaceText" FontSize="11.2" FontWeight="SemiBold" CharacterSpacing="40" LineHeight="16" LineStackingStrategy="BlockLineHeight" />
                             </Border>
                         </controls:WrapPanel>

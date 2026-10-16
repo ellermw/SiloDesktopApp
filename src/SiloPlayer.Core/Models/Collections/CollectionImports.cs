@@ -29,7 +29,6 @@ public sealed class CollectionTemplate
     public bool Featured { get; set; }
     public List<string> Tags { get; set; } = [];
     public CollectionTemplateTmdbSpec? Tmdb { get; set; }
-    public CollectionTemplateTraktSpec? Trakt { get; set; }
     public CollectionTemplateMdblistSpec? Mdblist { get; set; }
     public CollectionTemplateTmdbListSpec? TmdbList { get; set; }
     public CollectionTemplateTmdbCollectionSpec? TmdbCollection { get; set; }
@@ -41,12 +40,6 @@ public sealed class CollectionTemplateTmdbSpec
     public string Preset { get; set; } = "";
     public string MediaType { get; set; } = "";
     public string? TimeWindow { get; set; }
-}
-
-public sealed class CollectionTemplateTraktSpec
-{
-    public string Preset { get; set; } = "";
-    public string MediaType { get; set; } = "";
 }
 
 public sealed class CollectionTemplateMdblistSpec
@@ -199,12 +192,6 @@ public sealed class ImportUserTMDBCollectionRequest : ImportUserCollectionReques
     public string Preset { get; set; } = "";
     public string MediaType { get; set; } = "";
     public string? TimeWindow { get; set; }
-}
-
-public sealed class ImportUserTraktCollectionRequest : ImportUserCollectionRequest
-{
-    public string Preset { get; set; } = "";
-    public string MediaType { get; set; } = "";
 }
 
 public sealed class MDBListDiscoveryResponse

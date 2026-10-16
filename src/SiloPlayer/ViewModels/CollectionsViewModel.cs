@@ -590,29 +590,6 @@ public partial class CollectionsViewModel : ObservableObject
                     });
                     break;
 
-                case "trakt":
-                    if (template.Trakt == null)
-                    {
-                        TemplateErrorMessage = "Trakt template metadata is missing.";
-                        return null;
-                    }
-
-                    response = await _collectionsApi.ImportUserTraktCollectionAsync(new ImportUserTraktCollectionRequest
-                    {
-                        Title = request.Title,
-                        Description = request.Description,
-                        Limit = request.Limit,
-                        SyncSchedule = request.SyncSchedule,
-                        IsShared = request.IsShared,
-                        LibraryIds = request.LibraryIds,
-                        PosterUrl = request.PosterUrl,
-                        DisplayQueryDefinition = request.DisplayQueryDefinition,
-                        SortConfig = request.SortConfig,
-                        Preset = template.Trakt.Preset,
-                        MediaType = template.Trakt.MediaType
-                    });
-                    break;
-
                 default:
                     TemplateErrorMessage = $"Unsupported template source: {template.Source}.";
                     return null;

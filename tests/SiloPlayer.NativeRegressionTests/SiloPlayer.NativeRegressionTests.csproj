@@ -8,6 +8,7 @@
     <ApplicationManifest>../../src/SiloPlayer/app.manifest</ApplicationManifest>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <DefineConstants Condition="'$(PickerRed)' == 'true'">$(DefineConstants);PICKER_RED</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260317003" />

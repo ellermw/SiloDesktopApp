@@ -14,6 +14,8 @@ public sealed partial class PosterCard : UserControl
 {
     private readonly UICustomizationService _uiCustomizationService;
     private bool _observingUICustomization;
+    private EpisodeSpoilerPreferences? _spoilerPreferences;
+    private bool? _spoilerArtworkHidden;
     private CardOverlayGeometry _overlayGeometry = CardOverlayGeometry.ForPoster(176);
 
     public void SetCatalogGridLayout(double width)
@@ -152,6 +154,9 @@ public sealed partial class PosterCard : UserControl
         SizeChanged += (_, _) => ApplyActionGeometry();
         this.Loaded += (_, _) =>
         {
+            _spoilerPreferences = App.Services.GetService<EpisodeSpoilerPreferences>();
+            if (_spoilerPreferences != null) { _spoilerPreferences.Changed -= SpoilersChanged; _spoilerPreferences.Changed += SpoilersChanged; }
+
             ObserveArtwork(MediaItem);
             if (!_observingOverlayPreferences) { _observingOverlayPreferences = true; App.Services.GetRequiredService<CardOverlayService>().Changed += OverlayPreferences_Changed; }
             if (!_observingUICustomization)
@@ -180,6 +185,8 @@ public sealed partial class PosterCard : UserControl
         this.Unloaded += (_, _) =>
         {
             if (IsLoaded) return;
+            if (_spoilerPreferences != null) _spoilerPreferences.Changed -= SpoilersChanged;
+            _spoilerArtworkHidden = null;
             ObserveArtwork(null);
             if (_observingOverlayPreferences) { _observingOverlayPreferences = false; App.Services.GetRequiredService<CardOverlayService>().Changed -= OverlayPreferences_Changed; }
             if (_observingUICustomization)
@@ -430,6 +437,7 @@ public sealed partial class PosterCard : UserControl
     /// <summary>Refreshes mutable profile state without reloading the poster.</summary>
     public void RefreshState()
     {
+        RefreshSpoilerArtwork();
         if (MediaItem is not { } item) return;
         SubtitleText.Text = item.UpcomingEvent is { } upcoming
             ? MediaItemDisplayText.FormatUpcomingSchedule(upcoming)
@@ -735,6 +743,25 @@ public sealed partial class PosterCard : UserControl
     private static readonly SemaphoreSlim s_bitmapCreateLock = new(1);
     private static readonly SemaphoreSlim s_imageLoadLock = new(10);
 
+    private bool HideEpisodeArtwork(MediaItem item)
+    {
+        var selectedPoster = !string.IsNullOrEmpty(item.PosterUrl);
+        return EpisodeSpoilerPolicy.HideImage(item.Type, selectedPoster ? item.PosterIsEpisodeStill : item.BackdropIsEpisodeStill,
+            item.UserState?.Played, item.UserState?.IsInProgress, item.PositionSeconds, _spoilerPreferences?.HideImages == true);
+    }
+
+    private void SpoilersChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(RefreshSpoilerArtwork);
+    private void RefreshSpoilerArtwork()
+    {
+        if (!IsLoaded || MediaItem is not { Type: "episode" } item) return;
+        var hidden = HideEpisodeArtwork(item);
+        if (_spoilerArtworkHidden == hidden) return;
+        _spoilerArtworkHidden = hidden;
+        PosterImage.Source = null;
+        _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = new();
+        _ = LoadPosterAsync(item, _loadCts.Token);
+    }
+
     private async Task LoadPosterAsync(MediaItem item, CancellationToken ct)
     {
         var imageUrl = !string.IsNullOrEmpty(item.PosterUrl) ? item.PosterUrl : item.BackdropUrl;
@@ -770,12 +797,12 @@ public sealed partial class PosterCard : UserControl
             try
             {
                 if (ct.IsCancellationRequested) return;
-                var bitmapImage = new BitmapImage
-                {
-                    DecodePixelWidth = 200,
-                    DecodePixelType = DecodePixelType.Logical,
-                    UriSource = new Uri(diskPath),
-                };
+                _spoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
+                if (item.Type == "episode" && _spoilerPreferences != null) await _spoilerPreferences.EnsureLoadedAsync(ct);
+                var hidden = HideEpisodeArtwork(item);
+                var bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(diskPath, 200, hidden, ct);
+                if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem)) return;
+                _spoilerArtworkHidden = hidden;
                 PosterImage.Source = bitmapImage;
                 PosterImage.Opacity = 1;
             }
@@ -983,7 +1010,8 @@ public sealed partial class PosterCard : UserControl
         var preferences = App.Services.GetRequiredService<CardOverlayService>();
         var hasState = item.UserState != null && !SelectionMode && preferences.QuickActionsEnabled && preferences.QuickActionMode != "none";
         var showWatched = hasState && (preferences.QuickActionMode is "both" or "watched") && (item.Type is "movie" or "series");
-        var showFavorite = hasState && (preferences.QuickActionMode is "both" or "favorites");
+        var showFavorite = hasState && MediaItemActionPolicy.CanAddToPersonalLists(item.Type) && (preferences.QuickActionMode is "both" or "favorites");
+        RefreshSpoilerArtwork();
         var isWatched = item.UserState?.Played == true;
         var isFavorite = item.UserState?.IsFavorite == true;
 

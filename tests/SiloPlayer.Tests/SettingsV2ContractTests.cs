@@ -9,6 +9,63 @@ namespace SiloPlayer.Tests;
 public sealed class SettingsV2ContractTests
 {
     [Fact]
+    public async Task RetiredDeviceOwnerCannotDispatchRenameOrClearNewProfileOverride()
+    {
+        using var handler = new RecordingHandler("{}");
+        using var http = new HttpClient(handler);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://silo.example.test"); client.SetProfile("first");
+        var api = new SettingsApi(client); var retired = api.CaptureContext(); client.SetProfile("second");
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => api.RenameUserDeviceAsync(retired, "tv", "Office", "first"));
+        Assert.Empty(handler.Requests);
+        var context = api.CaptureContext(); handler.AfterRequest = () => client.SetProfile("third");
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => api.SaveProfileDefaultAsync(context, "ui.next_up_mode", "separate", hasDeviceOverride: true));
+        Assert.Single(handler.Requests);
+        Assert.StartsWith("PUT ", handler.Requests[0]);
+    }
+
+    [Fact]
+    public async Task ProfileDefaultWritesBeforeClearingShadowAndResetClearsBothScopes()
+    {
+        var (api, handler) = Create("{}");
+        await api.SaveProfileDefaultAsync(api.CaptureContext(), "ui.next_up_mode", "separate", hasDeviceOverride: true);
+        Assert.Equal(new[] { "PUT /api/v2/settings/values/ui.next_up_mode?scope=profile", "DELETE /api/v2/settings/values/ui.next_up_mode?scope=profile_device" }, handler.Requests);
+        handler.Requests.Clear();
+        await api.ResetProfileDefaultAsync(api.CaptureContext(), "ui.next_up_mode");
+        Assert.Equal(new[] { "DELETE /api/v2/settings/values/ui.next_up_mode?scope=profile", "DELETE /api/v2/settings/values/ui.next_up_mode?scope=profile_device" }, handler.Requests);
+        handler.Requests.Clear();
+        await api.SaveProfileDefaultAsync(api.CaptureContext(), "ui.next_up_mode", "combined", hasDeviceOverride: false);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task DeviceNamesPreserveHardwareNameAndCapabilityAbsenceIsSafe()
+    {
+        var (api, _) = Create("""{"items":[{"device_id":"tv","device_name":"Windows PC","custom_name":"Living Room","profile_id":"p1"}]}""");
+        var device = (await api.GetUserDevicesAsync()).Devices.Single();
+        Assert.Equal("Living Room", device.DisplayName);
+        Assert.Equal("Windows PC", device.DeviceName);
+        var (old, _) = Create("{}");
+        Assert.False((await old.GetContractCapabilitiesAsync()).SupportsDeviceRename);
+        var (current, _) = Create("""{"supports_device_rename":true}""");
+        Assert.True((await current.GetContractCapabilitiesAsync()).SupportsDeviceRename);
+    }
+
+    [Fact]
+    public async Task RenameAndResetTargetDeviceOwnerAndPreserveExplicitNull()
+    {
+        var (api, handler) = Create("{}");
+        await api.RenameUserDeviceAsync(api.CaptureContext(), "tv/id", "Living Room", "owner");
+        Assert.Equal("PATCH /api/v2/devices/tv%2Fid?profile_id=owner", handler.Requests.Last());
+        Assert.Equal("Living Room", JsonDocument.Parse(handler.Body).RootElement.GetProperty("custom_name").GetString());
+        await api.RenameUserDeviceAsync(api.CaptureContext(), "tv/id", null, "owner");
+        Assert.Equal(JsonValueKind.Null, JsonDocument.Parse(handler.Body).RootElement.GetProperty("custom_name").ValueKind);
+        var count = handler.Requests.Count;
+        await Assert.ThrowsAsync<ArgumentException>(() => api.RenameUserDeviceAsync(api.CaptureContext(), "tv", "   ", "owner"));
+        await Assert.ThrowsAsync<ArgumentException>(() => api.RenameUserDeviceAsync(api.CaptureContext(), "tv", new string('x', 121), "owner"));
+        Assert.Equal(count, handler.Requests.Count);
+    }
+
+    [Fact]
     public async Task OfficialTypedSettingAndCapabilitiesFixturesReadWithoutHashRevisionConfusion()
     {
         var (api, _) = Create(Fixture("get_setting_value_ok"));

@@ -89,7 +89,7 @@ public sealed partial class CollectionEditorPage
 
     private void CommitSyncedLimit()
     {
-        if (ViewModel.IsReadOnly || ViewModel.IsSaving || ViewModel.CollectionType == "trakt") return;
+        if (ViewModel.IsReadOnly || ViewModel.IsSaving) return;
         var input = _titleLimit.Text.Trim();
         if (input.Length == 0) ViewModel.MaxItemsText = null;
         else if (input.All(char.IsAsciiDigit) && int.TryParse(input, out var limit) && limit > 0) ViewModel.MaxItemsText = limit.ToString(System.Globalization.CultureInfo.InvariantCulture);

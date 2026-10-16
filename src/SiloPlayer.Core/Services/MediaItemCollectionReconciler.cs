@@ -107,6 +107,10 @@ public static class MediaItemCollectionReconciler
             && left.Status == right.Status
             && left.ShowStatus == right.ShowStatus
             && left.Overview == right.Overview
+            && left.PendingTranslationLanguage == right.PendingTranslationLanguage
+            && (left.MachineTranslatedFields ?? []).SequenceEqual(right.MachineTranslatedFields ?? [])
+            && left.PosterIsEpisodeStill == right.PosterIsEpisodeStill
+            && left.BackdropIsEpisodeStill == right.BackdropIsEpisodeStill
             && SameArtwork(left.PosterUrl, right.PosterUrl)
             && left.PosterThumbhash == right.PosterThumbhash
             && SameArtwork(left.BackdropUrl, right.BackdropUrl)
@@ -146,8 +150,10 @@ public static class MediaItemCollectionReconciler
         ReferenceEquals(left, right)
         || (left is not null && right is not null
             && left.Played == right.Played
+            && left.IsInProgress == right.IsInProgress
             && left.IsFavorite == right.IsFavorite
-            && left.InWatchlist == right.InWatchlist);
+            && left.InWatchlist == right.InWatchlist
+            && left.NotInterested == right.NotInterested);
 
     private static bool SameOverlay(OverlaySummary? left, OverlaySummary? right) =>
         ReferenceEquals(left, right)

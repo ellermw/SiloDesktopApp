@@ -3,6 +3,7 @@ using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Models.Plugins;
 using SiloPlayer.Core.Models.Settings;
+using SiloPlayer.Core.Services;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Nodes;
@@ -304,6 +305,7 @@ public sealed class SettingsContractCapabilities
     [JsonPropertyName("supports_batched_effective")] public bool SupportsBatchedEffective { get; set; }
     [JsonPropertyName("supports_idempotent_writes")] public bool SupportsIdempotentWrites { get; set; }
     [JsonPropertyName("supports_atomic_shortcuts")] public bool SupportsAtomicShortcuts { get; set; }
+    [JsonPropertyName("supports_device_rename")] public bool SupportsDeviceRename { get; set; }
 
     public bool SupportsRevision5Customization =>
         ApiVersion == 1 && Revision >= 5 &&
@@ -321,6 +323,9 @@ public sealed class UserDevice
 {
     [JsonPropertyName("device_id")] public string DeviceId { get; set; } = "";
     [JsonPropertyName("device_name")] public string DeviceName { get; set; } = "";
+    [JsonPropertyName("custom_name")] public string? CustomName { get; set; }
+    [JsonIgnore] public string DisplayName => string.IsNullOrWhiteSpace(CustomName)
+        ? string.IsNullOrWhiteSpace(DeviceName) ? "Unknown device" : DeviceName : CustomName;
     [JsonPropertyName("device_platform")] public string DevicePlatform { get; set; } = "";
     [JsonPropertyName("last_seen_at")] public string LastSeenAt { get; set; } = "";
     [JsonPropertyName("profile_id")] public string ProfileId { get; set; } = "";
@@ -394,10 +399,11 @@ public class ThemeFileResponse
     [JsonPropertyName("customCss")] public string CustomCss { get; set; } = "";
 }
 
-public sealed class SharedAppearanceDocument { public string? Vars { get; set; } }
 
 public class SettingsApi(SiloApiClient client)
 {
+    private SubtitlePreferences? _subtitles;
+    public SubtitlePreferences Subtitles => _subtitles ??= new(this);
     private readonly SemaphoreSlim _sectionWrites = new(1, 1);
     private readonly AsyncLocal<bool> _ownsSectionWrite = new();
     public async Task RunSectionMutationAsync(Func<Task> action, CancellationToken ct = default)
@@ -413,10 +419,16 @@ public class SettingsApi(SiloApiClient client)
         }
         finally { _ownsSectionWrite.Value = false; _sectionWrites.Release(); }
     }
+    public event Action<string>? LocalProfileSettingChanged;
+    public void NotifyLocalizedSettingChanged(string key)
+    {
+        client.LocalizedReads.NotifySettingChanged(key);
+        LocalProfileSettingChanged?.Invoke(key);
+    }
+
     internal ApiRequestContext CaptureAppearanceContext() => client.CaptureContext();
     internal bool IsAppearanceContextCurrent(ApiRequestContext context) => client.IsCurrentContext(context);
-    public Task<SharedAppearanceDocument> GetSharedAppearanceAsync(CancellationToken ct = default)
-        => client.GetUnauthenticatedAsync<SharedAppearanceDocument>("/api/v2/theme/admin-css", ct);
+
 
     private readonly SemaphoreSlim _onboardingGuard = new(1, 1);
     private static readonly JsonSerializerOptions WireOptions = new()
@@ -427,6 +439,9 @@ public class SettingsApi(SiloApiClient client)
 
     public Task<SettingsContractCapabilities> GetContractCapabilitiesAsync(CancellationToken ct = default)
         => client.GetAsync<SettingsContractCapabilities>("/api/v2/settings/contract/capabilities", ct);
+
+    public Task<SettingsContractCapabilities> GetContractCapabilitiesAsync(ApiRequestContext context, CancellationToken ct = default)
+        => client.SendRequestAsync<SettingsContractCapabilities>(context, HttpMethod.Get, "/api/v2/settings/contract/capabilities", null, ct);
 
     public Task<ServerBrandingResponse> GetServerBrandingAsync(CancellationToken ct = default)
         => client.GetUnauthenticatedAsync<ServerBrandingResponse>("/api/v2/theme/branding", ct);
@@ -462,6 +477,25 @@ public class SettingsApi(SiloApiClient client)
         };
     }
 
+    public async Task SaveProfileDefaultAsync(ApiRequestContext context, string key, object? value,
+        bool hasDeviceOverride, CancellationToken ct = default)
+    {
+        await SetContractSettingValueAsync(context, key, "profile", value, ct: ct);
+        if (hasDeviceOverride) await ClearMissingSettingAsync(context, key, "profile_device", ct);
+    }
+
+    public async Task ResetProfileDefaultAsync(ApiRequestContext context, string key, CancellationToken ct = default)
+    {
+        await ClearMissingSettingAsync(context, key, "profile", ct);
+        await ClearMissingSettingAsync(context, key, "profile_device", ct);
+    }
+
+    private async Task ClearMissingSettingAsync(ApiRequestContext context, string key, string scope, CancellationToken ct)
+    {
+        try { await DeleteContractSettingValueAsync(context, key, scope, ct: ct); }
+        catch (ApiException ex) when (ex.StatusCode == 404) { }
+    }
+
     public Task PutDeviceSettingAsync(string key, string value, CancellationToken ct = default)
         => SetContractSettingValueAsync(SettingsV2Values.CanonicalKey(key), "profile_device", SettingsV2Values.Parse(key, value), ct: ct);
 
@@ -473,6 +507,11 @@ public class SettingsApi(SiloApiClient client)
         string? deviceId = null,
         string? profileId = null,
         CancellationToken ct = default)
+        => GetContractEffectiveSettingsAsync(client.CaptureContext(), keys, deviceId, profileId, ct);
+
+    public Task<ContractEffectiveSettingsResponse> GetContractEffectiveSettingsAsync(
+        ApiRequestContext context, IEnumerable<string> keys, string? deviceId = null,
+        string? profileId = null, CancellationToken ct = default)
     {
         var query = new List<string>();
         query.AddRange(keys.Where(key => !string.IsNullOrWhiteSpace(key)).Distinct().Select(key => $"keys={Uri.EscapeDataString(key)}"));
@@ -481,7 +520,8 @@ public class SettingsApi(SiloApiClient client)
         if (!string.IsNullOrWhiteSpace(profileId))
             query.Add($"profile_id={Uri.EscapeDataString(profileId)}");
         var suffix = query.Count == 0 ? "" : "?" + string.Join("&", query);
-        return client.GetAsync<ContractEffectiveSettingsResponse>($"/api/v2/settings/values/effective{suffix}", ct);
+        return client.SendRequestAsync<ContractEffectiveSettingsResponse>(context, HttpMethod.Get,
+            $"/api/v2/settings/values/effective{suffix}", null, ct);
     }
 
     public Task SetContractSettingValueAsync(
@@ -521,6 +561,17 @@ public class SettingsApi(SiloApiClient client)
     public async Task<UserDeviceListResponse> GetUserDevicesAsync(bool household = false, CancellationToken ct = default)
         => new() { Devices = await client.GetAllItemsAsync<UserDevice>(
             household ? "/api/v2/devices?scope=household&limit=100" : "/api/v2/devices?limit=100", ct) };
+
+    public Task<UserDevice> RenameUserDeviceAsync(ApiRequestContext context, string deviceId,
+        string? customName, string? profileId = null, CancellationToken ct = default)
+    {
+        if (customName != null && (string.IsNullOrWhiteSpace(customName) || customName.EnumerateRunes().Count() > 120
+            || customName.Any(char.IsControl)))
+            throw new ArgumentException("Use a visible device name of at most 120 characters, without control characters.", nameof(customName));
+        return client.SendRequestAsync<UserDevice>(context, HttpMethod.Patch,
+            BuildDevicePath(deviceId, "", profileId ?? context.ProfileId),
+            new Dictionary<string, object?> { ["custom_name"] = customName?.Trim() }, ct);
+    }
 
     public Task ClearUserDeviceSettingsAsync(string deviceId, string? profileId = null, CancellationToken ct = default)
         => client.DeleteAsync(BuildDevicePath(deviceId, "/settings", profileId), ct);

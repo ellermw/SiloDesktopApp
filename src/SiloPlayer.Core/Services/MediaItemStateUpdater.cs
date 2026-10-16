@@ -9,6 +9,14 @@ namespace SiloPlayer.Core.Services;
 /// </summary>
 public static class MediaItemStateUpdater
 {
+    public static bool SetNotInterested(MediaItem item, bool value)
+    {
+        var state = EnsureUserState(item);
+        if (state.NotInterested == value) return false;
+        state.NotInterested = value;
+        return true;
+    }
+
     public static bool SetFavorite(MediaItem item, bool value)
     {
         var state = EnsureUserState(item);

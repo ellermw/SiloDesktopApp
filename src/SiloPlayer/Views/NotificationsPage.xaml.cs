@@ -22,6 +22,9 @@ public sealed partial class NotificationsPage : Page
     private readonly SiloApiClient? _client;
     private IDisposable? _realtimeSubscription;
     private long _realtimeRevision;
+    private bool _showSeries, _seriesAvailable;
+    private CancellationTokenSource? _pageLoad;
+    private ScrollViewer? _scroll;
     private static readonly JsonSerializerOptions NotificationJson = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
     public NotificationsPage()
@@ -35,11 +38,15 @@ public sealed partial class NotificationsPage : Page
         ((StackPanel)MarkAllButton.Content).Children[0] = WebUiIcon.Create("check-check", 16);
         ((StackPanel)PreferencesButton.Content).Children[0] = WebUiIcon.Create("settings-2", 16);
         NavigationCacheMode = NavigationCacheMode.Required;
+        SeriesView.OpenPreferences += () => PreferencesButton.Flyout.ShowAt(PreferencesButton);
         Loaded += NotificationsPage_Loaded;
         Unloaded += (_, _) =>
         {
             ViewModel.PropertyChanged -= OnViewModelChanged;
             DetachRealtime();
+            _pageLoad?.Cancel(); SeriesView.Close(); ViewModel.CancelPendingLoad();
+            if (_scroll != null) _scroll.ViewChanged -= Scroll_ViewChanged;
+            _scroll = null;
         };
     }
 
@@ -48,8 +55,19 @@ public sealed partial class NotificationsPage : Page
         ViewModel.PropertyChanged -= OnViewModelChanged;
         ViewModel.PropertyChanged += OnViewModelChanged;
         AttachRealtime();
-        var load = ViewModel.LoadCommand.ExecuteAsync(null);
+        _pageLoad?.Cancel(); _pageLoad?.Dispose(); _pageLoad = new(); var ct = _pageLoad.Token;
+        var api = App.Services.GetRequiredService<NotificationsApi>(); var context = api.RequestContext;
+        _seriesAvailable = false;
+        try { _seriesAvailable = (await api.GetCapabilityAsync(context, ct)).Series?.Available == true; }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested || !api.IsCurrentContext(context)) { return; }
+        catch { }
+        if (ct.IsCancellationRequested || !api.IsCurrentContext(context)) return;
+        if (!_seriesAvailable) _showSeries = false;
+        var load = _showSeries ? ViewModel.LoadPreferencesForSeriesAsync() : ViewModel.LoadCommand.ExecuteAsync(null);
+        if (_showSeries) await SeriesView.OpenAsync();
         UpdateVisuals();
+        _scroll = FindScroll(NotificationsList);
+        if (_scroll != null) _scroll.ViewChanged += Scroll_ViewChanged;
         await load;
         SyncPreferenceControls();
         UpdatePreferenceError();
@@ -136,14 +154,43 @@ public sealed partial class NotificationsPage : Page
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        _pageLoad?.Cancel(); SeriesView.Close();
         ViewModel.CancelPendingLoad();
         DetachRealtime();
         base.OnNavigatedFrom(e);
     }
 
+    protected override void OnNavigatedTo(NavigationEventArgs e)
+    {
+        if (e.Parameter is string mode && mode == "series") _showSeries = true;
+        base.OnNavigatedTo(e);
+    }
+
+    private async void Series_Click(object sender, RoutedEventArgs e)
+    {
+        if (!_seriesAvailable) return;
+        PreferencesButton.Flyout.Hide(); _showSeries = true; UpdateVisuals();
+        await SeriesView.OpenAsync(); UpdateVisuals();
+    }
+
+    private async void Scroll_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
+    {
+        if (_showSeries && _scroll != null && _scroll.ScrollableHeight > 0 && _scroll.VerticalOffset >= _scroll.ScrollableHeight - 160)
+            await SeriesView.LoadMoreAutomaticallyAsync();
+    }
+
+    private static ScrollViewer? FindScroll(DependencyObject root)
+    {
+        if (root is ScrollViewer scroll) return scroll;
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+            if (FindScroll(VisualTreeHelper.GetChild(root, index)) is { } found) return found;
+        return null;
+    }
+
     private async void Filter_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button { Tag: string filter }) return;
+        _showSeries = false; SeriesView.Close();
         var load = ViewModel.SetFilterCommand.ExecuteAsync(filter);
         UpdateVisuals();
         await load;
@@ -200,6 +247,7 @@ public sealed partial class NotificationsPage : Page
         preferences.NotifyNextUp = NextUpToggle.IsOn;
         UpdatePreferenceEnabledState();
         await ViewModel.SavePreferencesCommand.ExecuteAsync(null);
+        if (_showSeries) await SeriesView.PreferencesChangedAsync();
         SyncPreferenceControls();
         UpdatePreferenceError();
     }
@@ -260,30 +308,33 @@ public sealed partial class NotificationsPage : Page
 
     private void UpdateVisuals()
     {
-        LoadingSkeleton.Visibility = ViewModel.IsLoading ? Visibility.Visible : Visibility.Collapsed;
+        LoadingSkeleton.Visibility = !_showSeries && ViewModel.IsLoading ? Visibility.Visible : Visibility.Collapsed;
         // Header/footer share the list's scroll surface; only rows are hidden
         // while loading, so the page header and states keep their natural flow.
-        var rowSource = ViewModel.IsLoading ? null : ViewModel.Notifications;
+        var rowSource = _showSeries || ViewModel.IsLoading ? null : ViewModel.Notifications;
         if (!ReferenceEquals(NotificationsList.ItemsSource, rowSource))
             NotificationsList.ItemsSource = rowSource;
-        EmptyState.Visibility = !ViewModel.IsLoading && ViewModel.IsEmpty && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
+        EmptyState.Visibility = !_showSeries && !ViewModel.IsLoading && ViewModel.IsEmpty && string.IsNullOrWhiteSpace(ViewModel.ErrorMessage)
             ? Visibility.Visible : Visibility.Collapsed;
         EmptyTitleText.Text = ViewModel.StatusFilter == "unread" ? "No unread notifications" : "No notifications yet";
         InboxStateHost.Visibility = LoadingSkeleton.Visibility == Visibility.Visible || EmptyState.Visibility == Visibility.Visible
             ? Visibility.Visible : Visibility.Collapsed;
-        InboxErrorPanel.Visibility = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage) ? Visibility.Collapsed : Visibility.Visible;
-        LoadMoreButton.Visibility = ViewModel.HasMore ? Visibility.Visible : Visibility.Collapsed;
+        InboxErrorPanel.Visibility = _showSeries || string.IsNullOrWhiteSpace(ViewModel.ErrorMessage) ? Visibility.Collapsed : Visibility.Visible;
+        LoadMoreButton.Visibility = !_showSeries && ViewModel.HasMore ? Visibility.Visible : Visibility.Collapsed;
         LoadMoreButton.IsEnabled = !ViewModel.IsLoading && !ViewModel.IsLoadingMore;
         LoadMoreBusy.IsActive = ViewModel.IsLoadingMore;
         LoadMoreBusy.Visibility = ViewModel.IsLoadingMore ? Visibility.Visible : Visibility.Collapsed;
-        MarkAllButton.Visibility = ViewModel.UnreadCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+        MarkAllButton.Visibility = !_showSeries && ViewModel.UnreadCount > 0 ? Visibility.Visible : Visibility.Collapsed;
         UnreadButtonText.Text = ViewModel.UnreadCount > 0 ? $"Unread ({ViewModel.UnreadCount})" : "Unread";
         MarkAllButton.IsEnabled = ViewModel.CanMarkAllRead;
         ErrorText.Text = ViewModel.ErrorMessage ?? "";
         ReloadButton.Visibility = string.IsNullOrWhiteSpace(ViewModel.ErrorMessage) ? Visibility.Collapsed : Visibility.Visible;
         ReloadButton.IsEnabled = !ViewModel.IsLoading && !ViewModel.IsMarkingAllRead;
-        AllButton.Style = (Style)Application.Current.Resources[ViewModel.StatusFilter == "all" ? "SecondaryButtonStyle" : "GhostButtonStyle"];
-        UnreadButton.Style = (Style)Application.Current.Resources[ViewModel.StatusFilter == "unread" ? "SecondaryButtonStyle" : "GhostButtonStyle"];
+        AllButton.Style = (Style)Application.Current.Resources[!_showSeries && ViewModel.StatusFilter == "all" ? "SecondaryButtonStyle" : "GhostButtonStyle"];
+        UnreadButton.Style = (Style)Application.Current.Resources[!_showSeries && ViewModel.StatusFilter == "unread" ? "SecondaryButtonStyle" : "GhostButtonStyle"];
+        SeriesButton.Visibility = SeeSeriesButton.Visibility = _seriesAvailable ? Visibility.Visible : Visibility.Collapsed;
+        SeriesButton.Style = (Style)Application.Current.Resources[_showSeries ? "SecondaryButtonStyle" : "GhostButtonStyle"];
+        SeriesView.Visibility = _showSeries ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private static Brush GetTabBrush(bool active)

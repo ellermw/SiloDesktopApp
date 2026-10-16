@@ -143,7 +143,7 @@ public static class HomeLayoutTransfer
                 if (row.Removed == true) continue;
                 var type = row.UserSectionType ?? row.SectionType ?? "";
                 var filter = type is "custom_filter" or "filter";
-                string? reason = HomeSectionWritePolicy.IsTrakt(config) ? "Trakt-backed sections cannot be added again" : null;
+                string? reason = null;
                 if (!target.RecipeAdminOnly.TryGetValue(type, out var adminOnly) && !filter && !same) reason ??= "unknown recipe";
                 if ((adminOnly || filter) && !target.AllowAdminOnly) reason ??= "custom sections disabled";
                 if (same) reason ??= ReferenceProblem(config, target, map);

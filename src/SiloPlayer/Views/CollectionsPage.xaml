@@ -144,7 +144,7 @@
                             Foreground="{StaticResource PrimaryTextBrush}"
                             HorizontalAlignment="Center" />
                         <TextBlock
-                            Text="Start from a curated TMDB, Trakt, or MDBList template — or build your own from scratch."
+                            Text="Start from a curated TMDB or MDBList template — or build your own from scratch."
                             FontSize="12"
                             Foreground="{StaticResource SecondaryTextBrush}"
                             HorizontalAlignment="Center"

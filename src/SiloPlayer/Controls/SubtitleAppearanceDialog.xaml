@@ -96,7 +96,7 @@
         </Border>
 
         <!-- Scrollable body — Text / Background / Position -->
-        <ScrollViewer
+        <ScrollViewer x:Name="AppearanceBody"
             Grid.Row="2"
             MaxHeight="380"
             VerticalScrollBarVisibility="Auto"
@@ -256,16 +256,13 @@
                     Padding="10,6">
                 <StackPanel Orientation="Horizontal" Spacing="6">
                     <FontIcon Glyph="&#xE72C;" FontSize="12" Foreground="#B3FFFFFF" />
-                    <TextBlock Text="Use fallback style" FontSize="13" Foreground="#B3FFFFFF" />
+                    <TextBlock Text="Reset appearance" FontSize="13" Foreground="#B3FFFFFF" />
                 </StackPanel>
             </Button>
-            <TextBlock Grid.Column="1"
-                       Text="CHANGES SAVED AUTOMATICALLY"
-                       FontSize="10"
-                       CharacterSpacing="200"
-                       Foreground="{StaticResource PanelFooterText}"
-                       VerticalAlignment="Center"
-                       HorizontalAlignment="Right" />
+            <StackPanel Grid.Column="1" HorizontalAlignment="Right" MaxWidth="260" Spacing="4">
+                <TextBlock x:Name="SaveStatusText" Text="Loading…" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource PanelFooterText}" />
+                <Button x:Name="RetryButton" Content="Retry" Click="Retry_Click" Visibility="Collapsed" />
+            </StackPanel>
         </Grid>
     </Grid>
 </ContentDialog>

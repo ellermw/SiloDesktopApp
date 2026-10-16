@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace SiloPlayer.Core.Api;
 
-public sealed class NotificationsApi(SiloApiClient client)
+public sealed partial class NotificationsApi(SiloApiClient client)
 {
     public ApiRequestContext RequestContext => client.CaptureContext();
     private readonly ConcurrentDictionary<string, (ApiRequestContext Context, string ETag)> _webhookRevisions = new();

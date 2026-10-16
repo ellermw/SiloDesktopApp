@@ -58,6 +58,16 @@ public partial class NotificationsViewModel : ObservableObject
     [ObservableProperty] private bool _isMarkingAllRead;
     public bool CanMarkAllRead => IsCurrentContext && !IsLoading && !IsMarkingAllRead && string.IsNullOrWhiteSpace(ErrorMessage) && _notificationsApi.CanMarkAllRead;
     public Task ReloadAsync() { _lastLoadedAt = DateTime.MinValue; return LoadPageAsync(reset: true); }
+    public Task LoadPreferencesForSeriesAsync()
+    {
+        if (!IsCurrentContext)
+        {
+            CancelPendingLoad(); _inboxContext = _notificationsApi.RequestContext;
+            Notifications.Clear(); HasLoadedPreferences = false; Preferences = new();
+        }
+        _loadCts ??= new();
+        return LoadOptionalAsync(_loadGeneration, _loadCts.Token);
+    }
     private string? _nextCursor;
     private readonly HashSet<string> _pageCursors = new(StringComparer.Ordinal);
     private readonly HashSet<string> _readNotificationIds = new(StringComparer.Ordinal);

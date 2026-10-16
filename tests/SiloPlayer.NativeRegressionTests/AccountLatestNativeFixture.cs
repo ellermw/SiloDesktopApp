@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Media;
 using SiloPlayer;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
+using SiloPlayer.Core.Models.WatchProviders;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
@@ -42,7 +43,7 @@ internal static class AccountLatestNativeFixture
             .AddSingleton(new RequestsApi(client)).AddSingleton(new RecommendationsApi(client)).AddSingleton(new CollectionsApi(client))
             .AddSingleton(new CardOverlayService(settingsApi)).AddSingleton(new UICustomizationService(settingsApi)).AddSingleton(new ToastService()).BuildServiceProvider();
         var frame = new Frame { Width = 1400, Height = ClientHeight }; navigation.Frame = frame;
-        var window = new Window { Content = frame }; frame.Tag = window; serviceField.SetValue(null, services);
+        var window = new Window { Content = frame }; frame.Tag = window; serviceField.SetValue(null, new FixtureServices(services, (IServiceProvider)previous!));
         try
         {
             window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
@@ -108,7 +109,7 @@ internal static class AccountLatestNativeFixture
         overview.Invoke(page, null); await Task.Delay(80);
         var sections = (StackPanel)page.FindName("SettingsOverviewGroups");
         Check(Buttons(sections).Any(button => Equals(button.Tag, "Sessions")), "Current sessions directory entry is absent");
-        foreach (var (width, columns) in new[] { (1400, 2), (1700, 4), (460, 1) })
+        foreach (var (width, columns) in new[] { (1400, 1), (1700, 1), (460, 1) })
         {
             frame.Width = width; window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, ClientHeight)); await Task.Delay(100); frame.UpdateLayout();
             var grid = All<Grid>(sections).First(row => Equals(row.Tag, "settings-directory"));
@@ -128,6 +129,9 @@ internal static class AccountLatestNativeFixture
         Check(local.Load().ProfileLaunchMode == "ask", "Ask-at-launch choice was not persisted locally");
         choices.Single(button => Equals(button.Content, "Remember last profile")).IsChecked = true;
         Check(local.Load().ProfileLaunchMode == "remember", "Remember-at-launch choice was not persisted locally");
+
+        await DeviceRename(page, wire);
+        await ProviderExpansion(page, wire);
 
         wire.SessionsAvailable = false;
         Click((Button)page.FindName("SessionsTab")); await Until(() => !(bool)Read(page, "_loginSessionLoading")!);
@@ -159,8 +163,64 @@ internal static class AccountLatestNativeFixture
         Program.Log("PASS actual current Settings directory/launch preference/session capability/metadata/current session/pagination/pending rejection retry");
     }
 
+    private static async Task ProviderExpansion(SettingsPage page, Wire wire)
+    {
+        var api = App.Services.GetRequiredService<WatchProvidersApi>();
+        var provider = new WatchProviderCardViewModel(new() { Key = "fixture", DisplayName = "Fixture provider" })
+        { Connection = await api.GetConnectionAsync("fixture") };
+        var build = typeof(SettingsPage).GetMethod("BuildWatchProviderCard", BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var host = (StackPanel)page.FindName("DevicesContentHost");
+        Border Card() => (Border)build.Invoke(page, [provider])!;
+        var card = Card(); host.Children.Add(card); await Task.Delay(60); card.UpdateLayout();
+        Check(!All<Expander>(card).Single().IsExpanded, "Provider settings did not start collapsed");
+        wire.ProviderConflict = true;
+        await page.ViewModel.UpdateWatchProviderConnectionAsync(provider, "import_watched_enabled", true);
+        Check(provider.SettingsExpanded && provider.SettingsError is not null && wire.ProviderWrites == 1, "Provider conflict did not open settings with its error");
+        host.Children.Remove(card); card = Card(); host.Children.Add(card); await Task.Delay(60); card.UpdateLayout();
+        Check(All<Expander>(card).Single().IsExpanded && All<TextBlock>(card).Any(text => text.Text.Contains("Changed elsewhere")), "Provider conflict expansion/error not rendered");
+        host.Children.Remove(card);
+        wire.ProviderConflict = false;
+        await page.ViewModel.UpdateWatchProviderConnectionAsync(provider, "import_watched_enabled", true);
+        Check(provider.SettingsError == null && wire.ProviderWrites == 2, "Provider retry did not clear the conflict error");
+        Program.Log("PASS native provider settings collapsed by default;412 opens expansion with visible error;retry clears error");
+    }
+
+    private static async Task DeviceRename(SettingsPage page, Wire wire)
+    {
+        var host = (StackPanel)page.FindName("DevicesContentHost");
+        await Until(() => Buttons(host).Any(button => Equals(button.Content, "Rename")));
+        Check(All<TextBlock>(host).Any(text => text.Text == "Living Room"), "Custom device name not displayed");
+        Check(All<TextBlock>(host).Any(text => text.Text == "Windows PC"), "Reported hardware name hidden by custom name");
+        void Rename() => Click(Buttons(host).Single(button => Equals(button.Content, "Rename")));
+        TextBox Input() => All<TextBox>(host).Single(box => Equals(box.Header, "Device name"));
+        Rename(); Input().Text = "Unsubmitted";
+        Click(Buttons(host).Single(button => Equals(button.Content, "Cancel")));
+        Check(wire.RenameWrites == 0 && !All<TextBox>(host).Any(box => Equals(box.Header, "Device name")), "Cancel persisted a device name");
+        Rename(); Input().Text = " "; Click(Buttons(host).Single(button => Equals(button.Content, "Save")));
+        await Until(() => All<TextBlock>(host).Any(text => text.Text.Contains("visible device name")));
+        Check(wire.RenameWrites == 0, "Blank device name was sent");
+        Input().Text = "Office";
+        wire.RenamePending = NewGate(); Click(Buttons(host).Single(button => Equals(button.Content, "Save")));
+        await Until(() => wire.RenameWrites == 1);
+        Check(!Input().IsEnabled && !Buttons(host).Single(button => Equals(button.Content, "Cancel")).IsEnabled, "Pending rename editor stayed enabled");
+        wire.RenamePending.SetResult(Reply(new { detail = "Name rejected" }, HttpStatusCode.UnprocessableEntity));
+        await Until(() => Input().IsEnabled);
+        Check(All<TextBlock>(host).Any(text => text.Text.Contains("Name rejected")), "Rejected rename did not show its error");
+        wire.RenamePending = null; Click(Buttons(host).Single(button => Equals(button.Content, "Save")));
+        await Until(() => wire.RenameWrites == 2 && All<TextBlock>(host).Any(text => text.Text == "Office") && Buttons(host).Any(button => Equals(button.Content, "Rename")));
+        Check(wire.RenameProfile == "fixture", "Device rename lost the owning profile");
+        Rename(); Click(Buttons(host).Single(button => Equals(button.Content, "Use reported name")));
+        await Until(() => wire.RenameWrites == 3 && wire.DeviceCustomName == null && Buttons(host).Any(button => Equals(button.Content, "Rename")));
+        Check(All<TextBlock>(host).Any(text => text.Text == "Windows PC"), "Reset did not restore reported name");
+        wire.RenameSupported = false; await Call(page, "LoadDevicesAsync");
+        Check(!Buttons(host).Any(button => Equals(button.Content, "Rename")), "Rename offered without server capability");
+        wire.RenameSupported = true;
+        Program.Log("PASS native device custom/reported name, capability gate, cancel, invalid/pending/rejected/retry save and null reset");
+    }
+
     private static async Task TitleArt(SettingsPage page, SettingsViewModel vm, Wire wire, Frame frame, Window window)
     {
+        page.SelectSettingsSection("TitlePages");
         await vm.LoadTitleArtAsync(); await Task.Delay(40);
         var toggle = (ToggleSwitch)page.FindName("TitleArtToggle"); var all = (ToggleSwitch)page.FindName("TitleArtAllDevicesToggle");
         Check(vm.TitleArtSupported && !toggle.IsOn && !all.IsOn, "Effective false/device title-art source not represented");
@@ -369,10 +429,20 @@ internal static class AccountLatestNativeFixture
     private static Task Capture(Frame frame, string name) => (Task)typeof(AccountCoverageNativeFixture).GetMethod("CaptureAsync", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null, [frame, name])!;
     private static async Task Pairs(Frame frame, Window window, string name, FrameworkElement target) { foreach (var width in new[] { 1400, 460 }) { frame.Width = width; frame.Height = ClientHeight; window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(width, ClientHeight)); await Task.Delay(120); frame.UpdateLayout(); target.StartBringIntoView(); await Task.Delay(100); await Capture(frame, $"{name}-{width}.png"); } }
 
+    private sealed class FixtureServices(IServiceProvider primary, IServiceProvider fallback) : IServiceProvider
+    {
+        public object? GetService(Type type) => primary.GetService(type) ?? fallback.GetService(type);
+    }
+
     private sealed class Wire : HttpMessageHandler
     {
         private readonly HttpMessageInvoker _fallback;
         private readonly Dictionary<string, JsonElement> _defaults;
+        internal bool ProviderConflict; internal int ProviderWrites;
+        internal bool RenameSupported = true;
+        internal int RenameWrites;
+        internal string? DeviceCustomName = "Living Room", RenameProfile;
+        internal TaskCompletionSource<HttpResponseMessage>? RenamePending;
         internal bool Batched = true, CanUnlink = true;
         internal bool? DeviceTitle = false, ProfileTitle;
         internal string[] ShownRatings = ["imdb", "tmdb", "rt_critic", "rt_audience"];
@@ -407,6 +477,26 @@ internal static class AccountLatestNativeFixture
                 ++PinChecks;
                 return PinPending is { } pinGate ? await pinGate.Task.WaitAsync(ct) : PinResponse ?? Reply(new { valid = false });
             }
+            if (path == "/api/v2/watch-providers/fixture/connection")
+            {
+                if (method == "PATCH") { ++ProviderWrites; if (ProviderConflict) return Reply(new { code = "precondition_failed", detail = "Changed elsewhere" }, HttpStatusCode.PreconditionFailed); }
+                return Reply(new { provider = "fixture", display_name = "Fixture provider", connected = true, credentials_configured = true });
+            }
+            if (path == "/api/v2/watch-providers/fixture/connection/settings")
+            {
+                var response = Reply(new { import_watched_enabled = false }); response.Headers.ETag = new("\"fixture-settings\""); return response;
+            }
+            if (path == "/api/v2/watch-providers/fixture/sync-runs") return Reply(new { items = Array.Empty<object>() });
+            if (path == "/api/v2/devices") return Reply(new { items = new[] { new { device_id = "native-pc", device_name = "Windows PC", custom_name = DeviceCustomName, profile_id = "fixture", profile_name = "Primary", device_platform = "Windows", is_current_device = true, last_seen_at = DateTimeOffset.UtcNow.ToString("O"), changed_count = 0 } } });
+            if (path == "/api/v2/devices/native-pc" && method == "PATCH")
+            {
+                ++RenameWrites; RenameProfile = Query(request.RequestUri, "profile_id");
+                using var document = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+                var proposed = document.RootElement.GetProperty("custom_name").GetString();
+                var response = RenamePending is { } renameGate ? await renameGate.Task.WaitAsync(ct) : Reply(new { device_id = "native-pc", custom_name = proposed });
+                if (response.IsSuccessStatusCode) DeviceCustomName = proposed;
+                return response;
+            }
             if (path == "/api/v2/auth/sessions/capabilities") return Reply(new { available = SessionsAvailable });
             if (path == "/api/v2/auth/sessions")
             {
@@ -426,7 +516,7 @@ internal static class AccountLatestNativeFixture
                 return response;
             }
             if (path == "/api/v2/auth/refresh") ++RefreshRequests;
-            if (path == "/api/v2/settings/contract/capabilities") return Reply(new { api_version = 1, manifest_revision = 16, supports_batched_effective = Batched, supports_idempotent_writes = true, supports_atomic_shortcuts = true, client_families = new[] { "web", "desktop" } });
+            if (path == "/api/v2/settings/contract/capabilities") return Reply(new { api_version = 1, manifest_revision = 16, supports_batched_effective = Batched, supports_idempotent_writes = true, supports_atomic_shortcuts = true, supports_device_rename = RenameSupported, client_families = new[] { "web", "desktop" } });
             if (path == "/api/v2/settings/values/effective")
             {
                 var keys = request.RequestUri.Query.TrimStart('?').Split('&').Where(part => part.StartsWith("keys=")).Select(part => Uri.UnescapeDataString(part[5..]));

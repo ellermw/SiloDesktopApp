@@ -17,6 +17,90 @@ public partial class ProfileSelectViewModel : ObservableObject
     private CancellationTokenSource? _profilesCts;
     private CancellationTokenSource? _activationCts;
     private int _pinRevision;
+    private CancellationTokenSource? _managementCts;
+    private ApiRequestContext _managementOwner;
+    private Profile? _managementPrimary;
+    private bool _managementAdding;
+    private ProfilesResponse _capabilities = new();
+    public ProfileAddSession? AddSession { get; private set; }
+    public Profile? PinProfile => _managementPrimary ?? SelectedProfile;
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(CanUseProfileCards))]
+    private bool _isManagementBusy;
+    public bool CanUseProfileCards => !IsManagementBusy;
+    public event Action? ManageProfilesSelected;
+
+    public async Task BeginManagementAsync(bool adding)
+    {
+        CancelManagement();
+        ++_pinRevision;
+        ErrorMessage = null; PinErrorMessage = null; Pin = "";
+        var primary = Profiles.FirstOrDefault(profile => profile.IsPrimary);
+        if (primary == null)
+        { ErrorMessage = "Couldn't find the primary profile needed to manage profiles."; return; }
+        _managementOwner = _authApi.CaptureContext();
+        _managementCts = new(); _managementPrimary = primary; _managementAdding = adding;
+        IsManagementBusy = true;
+        if (primary.HasPin) { IsPinRequired = true; return; }
+        await ContinueManagementAsync(null);
+    }
+
+    private async Task ContinueManagementAsync(string? proof)
+    {
+        var cts = _managementCts; var primary = _managementPrimary;
+        if (cts == null || primary == null) return;
+        bool Current() => ReferenceEquals(cts, _managementCts) && !cts.IsCancellationRequested
+            && _authApi.IsCurrentContext(_managementOwner);
+        try
+        {
+            if (!Current()) return;
+            var authority = _authApi.CapturePrimaryAuthority(_managementOwner, primary, proof);
+            if (!_managementAdding)
+            {
+                // Management deliberately changes the browsing identity and uses a
+                // dedicated destination: no Home/favorites-onboarding transition.
+                IsPinRequired = false; Pin = "";
+                _authService.SelectProfile(primary.Id, proof, primary);
+                _catalogApi.InvalidateLibraryCache();
+                PersistProfile(primary);
+                CancelManagement();
+                ManageProfilesSelected?.Invoke();
+                return;
+            }
+            var libraries = await _catalogApi.GetLibrariesAsync(authority, cts.Token);
+            if (!Current()) return;
+            AddSession = new(_authApi, authority, libraries, _capabilities, cts.Token);
+        }
+        catch (OperationCanceledException) when (!Current()) { }
+        catch (Exception)
+        {
+            if (Current()) ErrorMessage = "Couldn't open the new profile form. Try again.";
+            if (Current()) CancelManagement();
+        }
+        finally
+        {
+            if (ReferenceEquals(cts, _managementCts) && AddSession == null && !IsPinRequired) IsManagementBusy = false;
+        }
+    }
+
+    public async Task FinishAddAsync(ProfileAddSession session, bool saved)
+    {
+        if (!ReferenceEquals(AddSession, session)) return;
+        // Closing after an upload failure keeps the already accepted profile.
+        // Refresh only while this editor still belongs to the mounted picker and
+        // original account; page departure retires AddSession before this point.
+        if (saved && session.IsCurrent || session.CreatedProfile != null && session.IsOwnerCurrent)
+            await LoadProfilesAsync();
+        if (ReferenceEquals(AddSession, session)) CancelManagement();
+    }
+
+    public void CancelManagement()
+    {
+        var cts = Interlocked.Exchange(ref _managementCts, null);
+        cts?.Cancel(); cts?.Dispose();
+        AddSession = null; _managementPrimary = null;
+        IsManagementBusy = false; IsPinRequired = false; Pin = ""; PinErrorMessage = null;
+    }
 
     public ProfileSelectViewModel(AuthApi authApi, SettingsApi settingsApi, CatalogApi catalogApi, AuthService authService, SettingsService settingsService)
     {
@@ -25,9 +109,16 @@ public partial class ProfileSelectViewModel : ObservableObject
         _catalogApi = catalogApi;
         _authService = authService;
         _settingsService = settingsService;
+        Profiles.CollectionChanged += (_, _) =>
+        {
+            PickerCards.Clear();
+            foreach (var profile in Profiles) PickerCards.Add(new(profile));
+            PickerCards.Add(new(null));
+        };
     }
 
     public ObservableCollection<Profile> Profiles { get; } = [];
+    public ObservableCollection<ProfilePickerCard> PickerCards { get; } = [];
 
     [ObservableProperty]
     private Profile? _selectedProfile;
@@ -64,11 +155,13 @@ public partial class ProfileSelectViewModel : ObservableObject
         previous?.Dispose();
         IsLoading = true;
         ErrorMessage = null;
+        var owner = _authApi.CaptureContext();
 
         try
         {
             var response = await _authApi.GetProfilesAsync(cts.Token);
-            if (!ReferenceEquals(_profilesCts, cts)) return;
+            if (!ReferenceEquals(_profilesCts, cts) || cts.IsCancellationRequested || !_authApi.IsCurrentContext(owner)) return;
+            _capabilities = response;
             Profiles.Clear();
             foreach (var profile in response.Profiles)
             {
@@ -78,7 +171,7 @@ public partial class ProfileSelectViewModel : ObservableObject
         catch (OperationCanceledException) when (cts.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            if (ReferenceEquals(_profilesCts, cts)) ErrorMessage = $"Failed to load profiles: {ex.Message}";
+            if (ReferenceEquals(_profilesCts, cts) && _authApi.IsCurrentContext(owner)) ErrorMessage = $"Failed to load profiles: {ex.Message}";
         }
         finally
         {
@@ -91,6 +184,7 @@ public partial class ProfileSelectViewModel : ObservableObject
     [RelayCommand]
     private async Task SelectProfileAsync(Profile profile)
     {
+        CancelManagement();
         ++_pinRevision;
         SelectedProfile = profile;
         ErrorMessage = null;
@@ -109,6 +203,8 @@ public partial class ProfileSelectViewModel : ObservableObject
     [RelayCommand]
     private async Task VerifyPinAsync()
     {
+        if (_managementPrimary != null)
+        { await VerifyManagementPinAsync(); return; }
         if (SelectedProfile == null) return;
 
         if (string.IsNullOrWhiteSpace(Pin))
@@ -161,6 +257,7 @@ public partial class ProfileSelectViewModel : ObservableObject
     [RelayCommand]
     private void CancelPin()
     {
+        CancelManagement();
         ++_pinRevision;
         IsLoading = false;
         IsPinRequired = false;
@@ -297,15 +394,8 @@ public partial class ProfileSelectViewModel : ObservableObject
         _authService.SelectProfile(profile.Id, profileToken, profile);
         _catalogApi.InvalidateLibraryCache();
 
-        // Save last profile and user info
+        PersistProfile(profile);
         var settings = _settingsService.Load();
-        settings.LastProfileId = profile.Id;
-        if (_authService.CurrentUser != null)
-        {
-            settings.LastUserRole = _authService.CurrentUser.Role;
-            settings.LastUsername = _authService.CurrentUser.Username;
-        }
-        _settingsService.Save(settings);
 
         // Enter Home immediately while the optional favorites gate resolves.
         // This mirrors the WebUI, which renders Home while that query is pending.
@@ -336,10 +426,53 @@ public partial class ProfileSelectViewModel : ObservableObject
 
     public void CancelProfileLoad()
     {
+        CancelManagement();
         ++_pinRevision;
         var cts = Interlocked.Exchange(ref _profilesCts, null);
         cts?.Cancel();
         cts?.Dispose();
         IsLoading = false;
     }
+
+    private void PersistProfile(Profile profile)
+    {
+        var settings = _settingsService.Load(); settings.LastProfileId = profile.Id;
+        if (_authService.CurrentUser != null)
+        { settings.LastUserRole = _authService.CurrentUser.Role; settings.LastUsername = _authService.CurrentUser.Username; }
+        _settingsService.Save(settings);
+    }
+
+    private async Task VerifyManagementPinAsync()
+    {
+        if (string.IsNullOrWhiteSpace(Pin)) { PinErrorMessage = "PIN is required."; return; }
+        var cts = _managementCts; var profile = _managementPrimary; var owner = _managementOwner;
+        if (cts == null || profile == null) return;
+        var revision = ++_pinRevision;
+        bool Current() => ReferenceEquals(cts, _managementCts) && !cts.IsCancellationRequested
+            && revision == _pinRevision && _authApi.IsCurrentContext(owner);
+        PinErrorMessage = null;
+        try
+        {
+            var result = await _authApi.VerifyPinAsync(owner, profile.Id, Pin, cts.Token);
+            if (!Current()) return;
+            Pin = "";
+            if (!result.Valid || string.IsNullOrWhiteSpace(result.ProfileToken))
+            { PinErrorMessage = "Incorrect PIN"; return; }
+            IsPinRequired = false;
+            await ContinueManagementAsync(result.ProfileToken);
+        }
+        catch (OperationCanceledException) when (!Current()) { }
+        catch (Exception ex)
+        {
+            if (!Current()) return;
+            Pin = ""; PinErrorMessage = ProfilePinFeedback.Lockout(ex) ?? "Verification failed. Try again.";
+        }
+    }
+}
+
+public sealed class ProfilePickerCard(Profile? profile)
+{
+    public Profile? Profile { get; } = profile;
+    public bool IsAdd => Profile == null;
+    public bool IsProfile => Profile != null;
 }

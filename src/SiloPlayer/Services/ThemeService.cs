@@ -258,6 +258,8 @@ public class ThemeService
             UpdateBrush(res, "SecondaryTextBrush", "#D1D5DB");
             UpdateBrush(res, "TertiaryTextBrush", "#B6C0CE");
             UpdateBrush(res, "BorderBrush", "#8091A7");
+            UpdateBrush(res, "RingBrush", "#FFFFFF");
+            UpdateColor(res, "RingColor", "#FFFFFF");
             UpdateColor(res, "PrimaryTextColor", "#FFFFFF");
             UpdateColor(res, "SecondaryTextColor", "#D1D5DB");
             UpdateColor(res, "TertiaryTextColor", "#B6C0CE");

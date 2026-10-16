@@ -3,7 +3,7 @@ using Microsoft.UI.Xaml.Controls;
 
 namespace SiloPlayer.Helpers;
 
-/// <summary>Normalizes uniform CSS corner radii before WinUI paints a badge.</summary>
+/// <summary>Normalizes uniform CSS corner radii before WinUI paints a badge or button.</summary>
 public static class RoundedBadge
 {
     public static readonly DependencyProperty RadiusProperty = DependencyProperty.RegisterAttached(
@@ -20,24 +20,25 @@ public static class RoundedBadge
 
     private static void RadiusChanged(DependencyObject target, DependencyPropertyChangedEventArgs args)
     {
-        if (target is not Border border) return;
-        border.SizeChanged -= SizeChanged;
+        if (target is not FrameworkElement element || target is not (Border or Control)) return;
+        element.SizeChanged -= SizeChanged;
         if ((double)args.NewValue > 0)
         {
-            border.SizeChanged += SizeChanged;
-            UpdateRadius(border);
+            element.SizeChanged += SizeChanged;
+            UpdateRadius(element);
         }
     }
 
-    private static void SizeChanged(object sender, SizeChangedEventArgs args) => UpdateRadius((Border)sender);
+    private static void SizeChanged(object sender, SizeChangedEventArgs args) => UpdateRadius((FrameworkElement)sender);
 
-    private static void UpdateRadius(Border border)
+    private static void UpdateRadius(FrameworkElement element)
     {
-        if (border.ActualWidth <= 0 || border.ActualHeight <= 0) return;
+        if (element.ActualWidth <= 0 || element.ActualHeight <= 0) return;
         // CSS reduces an oversized uniform radius equally in both axes.
         // Passing 999/9999 directly lets WinUI produce elliptical corners.
-        var radius = Math.Min(GetRadius(border), Math.Min(border.ActualWidth, border.ActualHeight) / 2);
+        var radius = Math.Min(GetRadius(element), Math.Min(element.ActualWidth, element.ActualHeight) / 2);
         var corners = new CornerRadius(radius);
-        if (border.CornerRadius != corners) border.CornerRadius = corners;
+        if (element is Border border && border.CornerRadius != corners) border.CornerRadius = corners;
+        else if (element is Control control && control.CornerRadius != corners) control.CornerRadius = corners;
     }
 }

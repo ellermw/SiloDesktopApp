@@ -9,6 +9,7 @@ public class NavigationService
     private Type? _currentPageType;
     private object? _currentParameter;
     private Replacement? _replacement;
+    private readonly List<WeakReference<Page>> _localizedPages = [];
     private sealed record Replacement(Frame Frame, Type? Origin, object? OriginParameter, Type Target, object? TargetParameter);
 
     /// <summary>
@@ -38,6 +39,15 @@ public class NavigationService
     public event EventHandler<NavigationEventArgs>? Navigated;
 
     public bool CanGoBack => Frame?.CanGoBack ?? false;
+
+    public void InvalidateLocalizedPageCaches()
+    {
+        _localizedPages.RemoveAll(reference => !reference.TryGetTarget(out _));
+        foreach (var reference in _localizedPages)
+            if (reference.TryGetTarget(out var page) && !ReferenceEquals(page, Frame?.Content)
+                && page is not SiloPlayer.Views.SettingsPage)
+                page.NavigationCacheMode = NavigationCacheMode.Disabled;
+    }
     public bool IsCurrentEntry(Type pageType, object? parameter) =>
         _currentPageType == pageType && ReferenceEquals(_currentParameter, parameter);
 
@@ -135,7 +145,13 @@ public class NavigationService
     {
         // WinUI implicit Page styles do not apply to application-derived Pages.
         // Navigation is the shared attachment seam; the helper protects auth/custom backgrounds.
-        if (e.Content is Page page) PageBackdrop.SetEnabled(page, true);
+        if (e.Content is Page page)
+        {
+            PageBackdrop.SetEnabled(page, true);
+            _localizedPages.RemoveAll(reference => !reference.TryGetTarget(out _));
+            if (!_localizedPages.Any(reference => reference.TryGetTarget(out var tracked) && ReferenceEquals(tracked, page)))
+                _localizedPages.Add(new(page));
+        }
         var replacement = _replacement;
         _replacement = null;
         if (replacement != null && ReferenceEquals(Frame, replacement.Frame) && e.NavigationMode == NavigationMode.New &&

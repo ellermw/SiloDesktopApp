@@ -92,7 +92,7 @@ public sealed partial class CollectionsPage
             var shared = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
             shared.Children.Add(WebUiIcon.Create("users", 12, new SolidColorBrush(Windows.UI.Color.FromArgb(255, 125, 211, 252))));
             shared.Children.Add(new TextBlock { Text = "Shared", FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 125, 211, 252)) });
-            stack.Children.Add(new Border { Child = shared, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left, Margin = new(2, 6, 2, 0), Padding = new(8, 2, 8, 2), CornerRadius = new(999), BorderThickness = new(1), BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(102, 14, 165, 233)), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(38, 14, 165, 233)) });
+            stack.Children.Add(RoundedBadge.Apply(new Border { Child = shared, IsHitTestVisible = false, HorizontalAlignment = HorizontalAlignment.Left, Margin = new(2, 6, 2, 0), Padding = new(8, 2, 8, 2), BorderThickness = new(1), BorderBrush = new SolidColorBrush(Windows.UI.Color.FromArgb(102, 14, 165, 233)), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(38, 14, 165, 233)) }, 999));
         }
         card.SizeChanged += (_, _) => { if (card.ActualWidth > 0 && Math.Abs(poster.Width - card.ActualWidth) > .5) { poster.Width = card.ActualWidth; poster.Height = card.ActualWidth * 1.5; } };
         var profile = App.Services.GetRequiredService<AuthService>().SelectedProfileId;

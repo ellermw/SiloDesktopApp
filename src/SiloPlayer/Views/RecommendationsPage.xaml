@@ -44,7 +44,9 @@
                     FontWeight="Bold"
                     Foreground="{StaticResource PrimaryTextBrush}" />
                 <TextBlock
-                    Text="Personalized picks based on your viewing history and ratings."
+                    x:Name="HeaderSubtitleText"
+                    Visibility="Collapsed"
+                    TextWrapping="Wrap"
                     FontSize="14"
                     Foreground="{StaticResource SecondaryTextBrush}" />
             </StackPanel>
@@ -78,23 +80,11 @@
                 VerticalAlignment="Top"
                 Visibility="Collapsed">
                 <StackPanel Spacing="12">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
                         <TextBlock
-                            Grid.Column="0"
                             Text="Your Taste Profile"
                             FontSize="16"
                             FontWeight="SemiBold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock
-                            x:Name="TasteSignalCountText"
-                            Grid.Column="1"
-                            FontSize="12"
-                            Foreground="{StaticResource SecondaryTextBrush}" />
-                    </Grid>
 
                     <!-- Top Genres -->
                     <StackPanel x:Name="TopGenresPanel" Spacing="6" Visibility="Collapsed">
@@ -226,13 +216,13 @@
                 Foreground="{StaticResource SecondaryTextBrush}"
                 HorizontalAlignment="Center" />
             <TextBlock
-                Text="Not enough data yet"
+                Text="Nothing to show yet"
                 FontSize="14"
                 FontWeight="SemiBold"
                 Foreground="{StaticResource PrimaryTextBrush}"
                 HorizontalAlignment="Center" />
             <TextBlock
-                Text="Watch and rate more content to unlock personalized recommendations."
+                Text="Movies and series appear here once your libraries have titles you can watch."
                 FontSize="12"
                 Foreground="{StaticResource SecondaryTextBrush}"
                 HorizontalAlignment="Center"

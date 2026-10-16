@@ -4,6 +4,99 @@ namespace SiloPlayer.Tests;
 
 public sealed class MpvOscRuntimeTests
 {
+    [Fact]
+    public void SubtitleDelayKeysSendBoundedExplicitIntentOnlyAfterPreferencesLoad()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            keys['silo-sub-delay-fwd']()
+            local unloaded = #intents == 0
+            if handlers['osc-subtitle-preferences'] then handlers['osc-subtitle-preferences']('true', '') end
+            mp.set_property_number('sub-delay', 9.95)
+            keys['silo-sub-delay-fwd']()
+            mp.set_property('user-data/probe-result', tostring(unloaded)..':'..table.concat(intents, ','))
+            """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
+            handlers, keys, intents = {}, {}, {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local add = mp.add_key_binding
+            mp.add_key_binding = function(key, name, fn, flags) keys[name] = fn; return add(key, name, fn, flags) end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-offset' then table.insert(intents, args[3]); return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("true:10000", output);
+    }
+
+    [Fact]
+    public void SubtitleDelayMouseAndKeyboardRailsShareTheExplicitPreferenceIntent()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            osc_test_layout()
+            state.subtitle_menu_visible = true
+            state.active_subtitle = 0
+            state.subtitle_tracks = {{index=0, language='en', source='external', codec='srt'}}
+            mp.set_property_number('sub-delay', .5)
+            handlers['osc-subtitle-preferences']('true', '')
+            state.keyboard_menu_kind = 'subtitles'
+            for i, item in ipairs(osc_test_menu_items('subtitles', state.subtitle_menu_items)) do
+                if item.action == 'delay' and item.delta < 0 then state.keyboard_menu_index = i; break end
+            end
+            osc_test_menu_activate()
+            state.keyboard_menu_kind = nil
+            for _, item in ipairs(state.subtitle_menu_items) do
+                if item.action == 'delay' and item.delta > 0 then state.mouse_x = item.x + item.w/2; state.mouse_y = item.y + item.h/2; break end
+            end
+            osc_test_mouse_down()
+            for _, item in ipairs(state.subtitle_menu_items) do
+                if item.action == 'delay_reset' then state.mouse_x = item.x + item.w/2; state.mouse_y = item.y + item.h/2; break end
+            end
+            osc_test_mouse_down()
+            mp.set_property('user-data/probe-result', table.concat(intents, ','))
+            """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
+            handlers, intents = {}, {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and args[2] == 'silo-subtitle-offset' then table.insert(intents, args[3]); return end
+                return command(...)
+            end
+            """);
+        Assert.Equal("400,500,0", output);
+    }
+
+    [Fact]
+    public void RoomHeldSeekChangesDisplayedTimelineWhileMediaAndMarkersRemainActual()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.watch_party = {visible=true}
+            state.time_pos = 100
+            state.duration = 300
+            state.visible = true
+            state.current_alpha = 1
+            handlers['osc-room-seek-position']('130')
+            osc_test_layout()
+            osc_test_tick()
+            local shown = state.osc_overlay.data:find('2:10', 1, true) ~= nil
+            local actual = state.time_pos == 100
+            handlers['osc-room-seek-position']('')
+            osc_test_tick()
+            local released = state.osc_overlay.data:find('1:40', 1, true) ~= nil
+            mp.set_property('user-data/room-seek-display', tostring(shown)..':'..tostring(actual)..':'..tostring(released))
+            """, rawAss: true, resultProperty: "user-data/room-seek-display", beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """);
+        Assert.Equal("true:true:true", output);
+    }
+
     [Theory]
     [InlineData(360)]
     [InlineData(500)]
@@ -393,7 +486,7 @@ public sealed class MpvOscRuntimeTests
             {{beforeScript}}
             local source = assert(io.open([[{{script}}]], 'r'))
             local code = source:read('*a'); source:close()
-            assert(loadstring(code .. '\nosc_test_state = state; osc_test_check = check_skip_markers; osc_test_quality = quality_choices_available; osc_test_activate = activate_controller_focus; osc_test_layout = compute_layout; osc_test_tick = tick'))()
+            assert(loadstring(code .. '\nosc_test_state = state; osc_test_check = check_skip_markers; osc_test_quality = quality_choices_available; osc_test_activate = activate_controller_focus; osc_test_layout = compute_layout; osc_test_tick = tick; osc_test_menu_activate = activate_keyboard_menu_item; osc_test_menu_items = keyboard_menu_items; osc_test_mouse_down = handle_mouse_down'))()
             mp.add_timeout(0.05, function()
                 local ok, err = pcall(function()
                     {{setup}}

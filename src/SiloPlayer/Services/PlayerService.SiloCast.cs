@@ -66,9 +66,11 @@ public partial class PlayerService
         }
         switch (name)
         {
-            case "play": _mpv.Play(); break;
-            case "pause": _mpv.Pause(); break;
-            case "play_pause": _mpv.TogglePause(); break;
+            case "play": SetPaused(false); break;
+            case "pause": SetPaused(true); break;
+            case "play_pause":
+                SetPaused(_idleRemuxResume.IsReopening ? !_idleRemuxResume.DesiredPaused : !_mpv.IsPaused);
+                break;
             case "seek": SeekFastTo(Math.Clamp(Number(command, "seconds"), 0, Math.Max(0, CurrentMediaDuration))); break;
             case "select_audio_track":
                 var aid = command["trackId"]?.GetValue<int>() ?? throw new ArgumentException("Missing audio track.");
@@ -97,7 +99,12 @@ public partial class PlayerService
                 _mpv.SetProperty("panscan", gravity == "fill" ? "1" : "0");
                 break;
             case "set_subtitle_sync_ms":
+                _subtitleOffsetSessionOverride = true;
+                _subtitleOffsetDelay?.Cancel(); _subtitleOffsetDraft = null;
+                Interlocked.Increment(ref _subtitleOffsetEdit);
                 _castSubtitleSyncMs = (int)Math.Clamp(Number(command, "milliseconds"), -600000, 600000);
+                _subtitleOffsetMs = _castSubtitleSyncMs;
+                PublishSubtitlePreferenceStatus();
                 _mpv.SetProperty("sub-delay", (_castSubtitleSyncMs / 1000d).ToString(CultureInfo.InvariantCulture)); break;
             case "set_subtitle_position":
                 var position = command["value"]?.GetValue<string>();

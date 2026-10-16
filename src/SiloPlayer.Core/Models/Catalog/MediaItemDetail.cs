@@ -19,6 +19,7 @@ public class MediaItemDetail
     public string Type { get; set; } = "";
     public string Status { get; set; } = "";
     public string Title { get; set; } = "";
+    public List<string>? MachineTranslatedFields { get; set; }
     public string? SortTitle { get; set; }
     public string? OriginalTitle { get; set; }
     public int Year { get; set; }
@@ -39,6 +40,8 @@ public class MediaItemDetail
     public string? ImdbId { get; set; }
     public string? TmdbId { get; set; }
     public string? TvdbId { get; set; }
+    public bool? PosterIsEpisodeStill { get; set; }
+    public bool? BackdropIsEpisodeStill { get; set; }
     public string? PosterUrl { get; set; }
     public string? PosterThumbhash { get; set; }
     public string? BackdropUrl { get; set; }
@@ -177,6 +180,7 @@ public class MediaItemUserState
     public bool IsFavorite { get; set; }
     [JsonPropertyName("in_watchlist")]
     public bool InWatchlist { get; set; }
+    public bool NotInterested { get; set; }
 }
 
 public class ItemDetailUserData

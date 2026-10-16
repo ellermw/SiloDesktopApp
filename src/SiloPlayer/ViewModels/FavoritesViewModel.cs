@@ -22,6 +22,12 @@ public partial class FavoritesViewModel : ObservableObject, IRecipient<MediaSurf
         // so this page reflects mutations made on ItemDetailPage or context
         // menus without needing a full reload.
         WeakReferenceMessenger.Default.Register(this);
+        WeakReferenceMessenger.Default.Register<SiloPlayer.Core.Services.NotInterestedChange>(this, (_, change) =>
+        {
+            if (!_catalogApi.IsCurrentContext(change.Context) || !change.Marked.HasValue) return;
+            foreach (var item in Items.Where(item => item.ContentId == change.ItemId))
+                SiloPlayer.Core.Services.MediaItemStateUpdater.SetNotInterested(item, change.Marked.Value);
+        });
     }
 
     public ObservableCollection<MediaItem> Items { get; } = [];

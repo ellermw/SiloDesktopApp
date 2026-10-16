@@ -27,7 +27,7 @@ public sealed class CodeRabbitPr5RegressionTests
     {
         var source = Read("src", "SiloPlayer", "Views", "LibraryPage.xaml.cs");
 
-        Assert.Contains("results.Where(result => !ReferenceEquals(result.Layout, heroLayout))", source);
+        Assert.Contains("_recommendedLayoutOrder.Where(layout => layout.Id != heroLayout?.Id)", source);
         Assert.DoesNotContain("results.Where(result => !result.Layout.Featured)", source);
     }
 

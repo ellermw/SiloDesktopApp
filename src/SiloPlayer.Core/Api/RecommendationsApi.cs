@@ -5,6 +5,8 @@ namespace SiloPlayer.Core.Api;
 
 public class RecommendationsApi(SiloApiClient client)
 {
+    public ApiRequestContext CaptureContext() => client.CaptureContext();
+    public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
     public async Task<RecommendationsResponse> GetForYouMainAsync(CancellationToken ct = default)
         => new() { Rows = [await client.GetAsync<RecommendationRow>("/api/v2/recommendations/for-you/main", ct)] };
 

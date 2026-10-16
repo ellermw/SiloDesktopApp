@@ -40,9 +40,9 @@ internal static class SharedAppearanceNativeFixture
         await theme.SyncFromServerAsync();
         ColorIs("AccentBrush", "#FF4F46E5");
         ColorIs("HyperlinkButtonForeground", "#FF4F46E5");
-        ColorIs("RingBrush", "#FF112233");
-        ColorIs("FocusVisualPrimaryBrush", "#FF112233");
-        ColorIs("SidebarPrimaryBrush", "#FFABCDEF");
+        ColorIs("RingBrush", "#FF4F46E5");
+        ColorIs("FocusVisualPrimaryBrush", "#FF4F46E5");
+        ColorIs("SidebarPrimaryBrush", "#FF4F46E5");
         ColorIs("PrimaryTextBrush", "#FFE8E8EC");
         if (!ReferenceEquals(originalBrush, Application.Current.Resources["AccentBrush"]))
             throw new InvalidOperationException("Shared appearance replaced a live brush instead of updating it.");
@@ -57,6 +57,8 @@ internal static class SharedAppearanceNativeFixture
         ColorIs("PrimaryTextBrush", "#FFFFFFFF");
         ColorIs("BorderBrush", "#FF8091A7");
         ColorIs("AccentBrush", "#FF4F46E5");
+        ColorIs("FocusVisualPrimaryBrush", "#FFFFFFFF");
+        ColorIs("AccentForegroundBrush", "#FFFFFFFF");
         if (settings.Load().UiDateFormat != "YYYY-MM-DD" || settings.Load().UiTimeFormat != "24h")
             throw new InvalidOperationException("Shared theme refresh changed the date/time preferences.");
 
@@ -151,6 +153,7 @@ internal static class SharedAppearanceNativeFixture
         accessibility.Apply("x-large", "strong", true, text);
         await CaptureAsync(page, "appearance-narrow-highcontrast.png");
         parent.Children.Remove(page);
+        await Task.Delay(100); // Deliver Unloaded before disposing the isolated service provider.
 
         handler.Vars.Clear();
         await theme.SyncFromServerAsync();
@@ -236,9 +239,9 @@ internal static class SharedAppearanceNativeFixture
             else if (path == "/api/v2/settings/values/effective" && request.RequestUri.Query.Contains("requests.watchlist_auto_request"))
                 reply = new { items = new[] { new { key = "requests.watchlist_auto_request", value = !RequestOptOut } } };
             if (reply != null) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(reply)) });
-            if (request.RequestUri.AbsolutePath == "/api/v2/theme/admin-css")
+            if (request.RequestUri.AbsolutePath == "/api/v2/theme/branding")
                 return Task.FromResult(new HttpResponseMessage(Fail ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK)
-                { Content = new StringContent(JsonSerializer.Serialize(new { vars = JsonSerializer.Serialize(Vars), raw_css = "body { color: red; }" })) });
+                { Content = new StringContent(JsonSerializer.Serialize(new { accent_color = Vars.GetValueOrDefault("primary") })) });
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") });
         }
     }

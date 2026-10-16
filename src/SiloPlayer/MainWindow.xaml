@@ -3,6 +3,7 @@
     x:Class="SiloPlayer.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:helpers="using:SiloPlayer.Helpers"
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:controls="using:SiloPlayer.Controls"
@@ -72,6 +73,7 @@
             </NavigationView.Resources>
 
             <NavigationView.PaneHeader>
+                <StackPanel>
                 <Grid x:Name="SidebarBrandHost" Height="96"
                       Tapped="SidebarBrandHost_Tapped"
                       IsTabStop="True"
@@ -108,6 +110,17 @@
                         </Image.OpacityTransition>
                     </Image>
                 </Grid>
+                <StackPanel x:Name="SettingsSidebarHeader" Visibility="Collapsed" Spacing="12" Margin="16,20,16,12" MaxWidth="220" HorizontalAlignment="Stretch">
+                    <Button Click="SettingsSidebarBack_Click" Background="Transparent" BorderThickness="0" Padding="0,4" AutomationProperties.Name="Back to App">
+                        <StackPanel Orientation="Horizontal" Spacing="8"><Image Source="ms-appx:///Assets/Icons/arrow-left.svg" Width="16" Height="16"/><TextBlock Text="Back to App"/></StackPanel>
+                    </Button>
+                    <TextBlock Text="Settings" FontSize="22" FontWeight="SemiBold" />
+                    <TextBox x:Name="SettingsSidebarSearch" PlaceholderText="Search settings" TextChanged="SettingsSidebarSearch_TextChanged" AutomationProperties.Name="Search settings" />
+                    <Button x:Name="SettingsSidebarProfile" Click="SwitchProfile_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent">
+                        <StackPanel Spacing="2"><TextBlock Text="Current profile" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}"/><TextBlock Text="{Binding Text, ElementName=ProfileNameText}" FontSize="13" FontWeight="SemiBold"/></StackPanel>
+                    </Button>
+                </StackPanel>
+                </StackPanel>
             </NavigationView.PaneHeader>
 
             <NavigationView.MenuItems>
@@ -718,7 +731,7 @@
                                 Padding="24,11" Margin="0,10,0,0" CornerRadius="22" />
                     </StackPanel>
                     <StackPanel x:Name="PlayingNextShuffleActions" Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center" Visibility="Collapsed">
-                        <Button x:Name="PlayingNextPickAnother" Content="Pick Another" Click="PlayingNextPickAnother_Click" Style="{StaticResource OutlineButtonStyle}" CornerRadius="999" />
+                        <Button x:Name="PlayingNextPickAnother" Content="Pick Another" Click="PlayingNextPickAnother_Click" Style="{StaticResource OutlineButtonStyle}" CornerRadius="999" helpers:RoundedBadge.Radius="999" />
                         <Button x:Name="PlayingNextStopShuffle" Content="Stop shuffling" Click="PlayingNextStopShuffle_Click" Style="{StaticResource GhostButtonStyle}" />
                     </StackPanel>
                 </StackPanel>
@@ -760,7 +773,7 @@
                                         <Grid Height="107">
                                             <Border CornerRadius="8" Background="#14FFFFFF"
                                                     BorderBrush="#10FFFFFF" BorderThickness="1">
-                                                <Image Source="{Binding ThumbnailUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" />
+                                                <Image Source="{Binding ThumbnailSource}" Stretch="UniformToFill" />
                                             </Border>
                                             <ProgressBar Value="{x:Bind ProgressPercent}" Maximum="100"
                                                          Height="3" VerticalAlignment="Bottom"

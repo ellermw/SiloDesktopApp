@@ -49,6 +49,9 @@ internal static class AccountCoverageNativeFixture
             .AddSingleton(local).AddSingleton(theme).AddSingleton(accessibility).AddSingleton(vm).AddSingleton(navigation)
             .AddSingleton(new RequestsApi(client)).AddSingleton(new RecommendationsApi(client))
             .AddSingleton(new CollectionsApi(client))
+            // Status-only Settings dependency from the enclosing isolated host;
+            // the receiver is never initialized, so this fixture opens no listener.
+            .AddSingleton(((IServiceProvider)previous!).GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>())
             .AddSingleton(new CardOverlayService(settingsApi)).AddSingleton(new UICustomizationService(settingsApi))
             .AddSingleton(new ToastService()).AddSingleton<ProfileSelectViewModel>().AddSingleton<TasteSeedViewModel>()
             .BuildServiceProvider();

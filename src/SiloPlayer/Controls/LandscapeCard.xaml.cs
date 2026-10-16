@@ -12,6 +12,8 @@ namespace SiloPlayer.Controls;
 public sealed partial class LandscapeCard : UserControl
 {
     private double _cardWidth = 315;
+    private EpisodeSpoilerPreferences? _spoilerPreferences;
+    private bool? _spoilerArtworkHidden;
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _playbackPrefetchCts;
     private bool _isPointerOver;
@@ -51,6 +53,9 @@ public sealed partial class LandscapeCard : UserControl
         BackdropImage.ImageFailed += (_, _) => { BackdropImage.Source = null; BackdropImage.Opacity = 0; ArtworkFallback.Visibility = Visibility.Visible; _ = ArtworkFallback.ShowThumbhashAsync(); };
         this.Loaded += (_, _) =>
         {
+            _spoilerPreferences = App.Services.GetService<EpisodeSpoilerPreferences>();
+            if (_spoilerPreferences != null) { _spoilerPreferences.Changed -= SpoilersChanged; _spoilerPreferences.Changed += SpoilersChanged; }
+
             ObserveArtwork(MediaItem);
             // HomePage is navigation-cached. Unloaded releases decoded artwork,
             // but the existing card and its MediaItem are reused when Home is
@@ -67,6 +72,8 @@ public sealed partial class LandscapeCard : UserControl
             // been reattached and received Loaded (detail-section reordering).
             // That stale event must not cancel the current artwork load.
             if (IsLoaded) return;
+            if (_spoilerPreferences != null) _spoilerPreferences.Changed -= SpoilersChanged;
+            _spoilerArtworkHidden = null;
             ObserveArtwork(null);
 
             try { _loadCts?.Cancel(); } catch { }
@@ -308,6 +315,7 @@ public sealed partial class LandscapeCard : UserControl
 
     private void RefreshMenuState(MediaItem item)
     {
+        RefreshSpoilerArtwork();
         if (!ReferenceEquals(MediaItem, item)) return;
         var surface = item.ItemSource switch
         {
@@ -404,6 +412,24 @@ public sealed partial class LandscapeCard : UserControl
         }
     }
 
+    private bool HideEpisodeArtwork(MediaItem item)
+    {
+        var usesBackdrop = !UsePosterAspect && !string.IsNullOrEmpty(item.BackdropUrl) || string.IsNullOrEmpty(item.PosterUrl);
+        return EpisodeSpoilerPolicy.HideImage(item.Type, usesBackdrop ? item.BackdropIsEpisodeStill : item.PosterIsEpisodeStill,
+            item.UserState?.Played, item.UserState?.IsInProgress, item.PositionSeconds, _spoilerPreferences?.HideImages == true);
+    }
+    private void SpoilersChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(RefreshSpoilerArtwork);
+    private void RefreshSpoilerArtwork()
+    {
+        if (!IsLoaded || MediaItem is not { Type: "episode" } item) return;
+        var hidden = HideEpisodeArtwork(item);
+        if (_spoilerArtworkHidden == hidden) return;
+        _spoilerArtworkHidden = hidden;
+        BackdropImage.Source = null;
+        _loadCts?.Cancel(); _loadCts?.Dispose(); _loadCts = new();
+        _ = LoadImageAsync(item, _loadCts.Token);
+    }
+
     private async Task LoadImageAsync(MediaItem item, CancellationToken ct)
     {
         // Current WebUI wide cards use backdrop_url first. Section episode
@@ -445,12 +471,12 @@ public sealed partial class LandscapeCard : UserControl
             // by RasterizationScale, so 560 logical → 1120 physical at 2× DPI.
             // Any smaller (e.g. 280) and source detail is thrown away before
             // the rendering pipeline ever scales it up.
-            var bitmapImage = new BitmapImage
-            {
-                DecodePixelWidth = (int)Math.Ceiling(_cardWidth * 2),
-                DecodePixelType = DecodePixelType.Logical,
-                UriSource = new Uri(diskPath),
-            };
+            _spoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
+            if (item.Type == "episode" && _spoilerPreferences != null) await _spoilerPreferences.EnsureLoadedAsync(ct);
+            var hidden = HideEpisodeArtwork(item);
+            var bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(diskPath, (int)Math.Ceiling(_cardWidth * 2), hidden, ct);
+            if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem)) return;
+            _spoilerArtworkHidden = hidden;
             BackdropImage.Source = bitmapImage;
             // Smooth fade-in matching webui transition-opacity duration-300
             var fadeIn = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation

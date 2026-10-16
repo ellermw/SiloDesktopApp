@@ -9,7 +9,6 @@ public sealed class HomeLayoutTransferService(SettingsApi settings, CatalogApi c
     private ApiRequestContext? _previewContext;
     private HomeLayoutPlan? _previewPlan;
     public int AppliedPages { get; private set; }
-    public bool KeptSavedChanges { get; private set; }
     private void Check(ApiRequestContext context, CancellationToken ct)
     { ct.ThrowIfCancellationRequested(); if (!settings.IsCurrentContext(context)) throw new OperationCanceledException("The selected server or profile changed."); }
     public async Task<HomeLayoutFile> ExportAsync(CancellationToken ct = default)
@@ -52,7 +51,6 @@ public sealed class HomeLayoutTransferService(SettingsApi settings, CatalogApi c
         if (!ReferenceEquals(plan, _previewPlan)) throw new InvalidOperationException("Apply the previewed layout only.");
         var context = _previewContext ?? throw new InvalidOperationException("Preview the layout before applying it."); Check(context, ct);
         AppliedPages = 0;
-        KeptSavedChanges = false;
         foreach (var page in plan.Pages)
         {
             await settings.RunSectionMutationAsync(async () =>
@@ -60,27 +58,10 @@ public sealed class HomeLayoutTransferService(SettingsApi settings, CatalogApi c
             Check(context, ct);
             var libraryId = page.LibraryId?.ToString(CultureInfo.InvariantCulture);
             var existing = await settings.GetProfileSectionsAsync(page.Scope, libraryId, ct); Check(context, ct);
-            var keep = existing.Overrides.Where(row => !string.IsNullOrEmpty(row.SectionId)
-                && HomeSectionWritePolicy.IsTrakt(HomeSectionWritePolicy.FromRaw(row).Config)).Select(row => row.SectionId).ToHashSet();
-            if (plan.SameServer)
-            {
-                var view = await settings.GetProfileSectionSettingsAsync(page.Scope, libraryId, ct); Check(context, ct);
-                foreach (var row in view.Sections) if (!row.IsCustom && HomeSectionWritePolicy.IsTrakt(row.Config)) keep.Add(row.Id);
-            }
-            async Task SaveAsync()
-            {
-                var overrides = HomeLayoutMerge.Build(page, existing.Overrides, plan.SameServer, keep);
-                if (overrides.Count > 500) throw new InvalidDataException("This page would have more than 500 saved section changes.");
-                Check(context, ct);
-                await settings.UpdateProfileSectionsAsync(new() { Scope = page.Scope, LibraryId = libraryId, Overrides = overrides }, ct);
-            }
-            try { await SaveAsync(); }
-            catch (ApiException ex) when (ex.StatusCode == 422 && plan.SameServer && existing.Overrides.Any(row => !string.IsNullOrEmpty(row.SectionId)))
-            {
-                Check(context, ct);
-                foreach (var row in existing.Overrides) if (!string.IsNullOrEmpty(row.SectionId)) keep.Add(row.SectionId);
-                await SaveAsync(); KeptSavedChanges = true;
-            }
+            var overrides = HomeLayoutMerge.Build(page, existing.Overrides, plan.SameServer);
+            if (overrides.Count > 500) throw new InvalidDataException("This page would have more than 500 saved section changes.");
+            Check(context, ct);
+            await settings.UpdateProfileSectionsAsync(new() { Scope = page.Scope, LibraryId = libraryId, Overrides = overrides }, ct);
             Check(context, ct); AppliedPages++;
             }, ct);
         }

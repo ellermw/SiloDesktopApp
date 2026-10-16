@@ -99,7 +99,7 @@ public partial class CollectionEditorViewModel : ObservableObject
     private string? _sourceUrl;
     public string SourceKind { get; private set; } = "";
     public bool HasEditableSourceUrl => SourceKind is "mdblist" or "tmdb_list";
-    public bool CanEditSavedSyncSchedule => Capabilities?.SyncScheduleEditable == true && (CollectionType != "trakt" || !string.IsNullOrWhiteSpace(_initialSyncSchedule));
+    public bool CanEditSavedSyncSchedule => IsImportedCollection && Capabilities?.SyncScheduleEditable == true;
 
     [ObservableProperty]
     private string? _maxItemsText;
@@ -272,7 +272,7 @@ public partial class CollectionEditorViewModel : ObservableObject
             CurrentPosterUrl = collection.PosterUrl;
             CurrentPosterIsCollage = collection.PosterIsCollage;
             LastSyncSummary = BuildLastSyncSummary(collection);
-            SourceProviderLabel = SourceKind switch { "tmdb_list" => "TMDB List", "tmdb" => "TMDB", "trakt" => "Trakt", "mdblist" => "MDBList", _ => SourceKind };
+            SourceProviderLabel = SourceKind switch { "tmdb_list" => "TMDB List", "tmdb" => "TMDB", "mdblist" => "MDBList", _ => SourceKind };
             SourceLastNote = collection.LastSyncMessage;
             SourcePresetSummary = BuildSourcePresetSummary(collection);
             SourceItemCountText = collection.ItemCount.ToString("N0");
@@ -365,7 +365,7 @@ public partial class CollectionEditorViewModel : ObservableObject
 
                 if (IsImportedCollection)
                 {
-                    if (CollectionType != "trakt" && !string.IsNullOrWhiteSpace(MaxItemsText) && (!int.TryParse(MaxItemsText, out var itemLimit) || itemLimit < 1))
+                    if (!string.IsNullOrWhiteSpace(MaxItemsText) && (!int.TryParse(MaxItemsText, out var itemLimit) || itemLimit < 1))
                     {
                         ErrorMessage = "Title limit must be a positive whole number.";
                         return;
@@ -380,11 +380,8 @@ public partial class CollectionEditorViewModel : ObservableObject
                     if (CanEditSavedSyncSchedule && SyncSchedule != _initialSyncSchedule && SyncSchedule is "" or "daily" or "weekly" or "monthly")
                         request.SyncSchedule = SyncSchedule;
 
-                    if (CollectionType != "trakt")
-                    {
-                        request.MaxItems = int.TryParse(MaxItemsText, out var maxItems) && maxItems > 0 ? maxItems : 0;
-                        request.LibraryIds = [.. SelectedLibraryIds];
-                    }
+                    request.MaxItems = int.TryParse(MaxItemsText, out var maxItems) && maxItems > 0 ? maxItems : 0;
+                    request.LibraryIds = [.. SelectedLibraryIds];
                     request.IncludeInServerCollections = IncludeInServerCollections;
                     if (WatchFilter != _initialWatchFilter || MediaFilter != _initialMediaFilter)
                         request.DisplayQueryDefinition = BuildDisplayQueryDefinition();
@@ -779,7 +776,7 @@ public partial class CollectionEditorViewModel : ObservableObject
     }
 
     public bool IsImportedCollection
-        => CollectionType is "mdblist" or "tmdb" or "tmdb_list" or "trakt";
+        => CollectionType is "mdblist" or "tmdb" or "tmdb_list";
 
     private static string? ReadSourceConfigValue(Dictionary<string, object>? sourceConfig, string key)
     {
@@ -843,7 +840,7 @@ public partial class CollectionEditorViewModel : ObservableObject
             parts.Add(mediaType switch { "all" => "Movies + TV", "movie" => "Movies", "tv" or "series" => "TV", _ => mediaType });
         if (!string.IsNullOrWhiteSpace(timeWindow))
             parts.Add(timeWindow switch { "day" => "this day", "week" => "this week", _ => timeWindow });
-        return parts.Count > 0 ? string.Join(" · ", parts) : collection.CollectionType switch { "tmdb" => "TMDB", "trakt" => "Trakt", "mdblist" => "MDBList", _ => collection.Name };
+        return parts.Count > 0 ? string.Join(" · ", parts) : collection.CollectionType switch { "tmdb" => "TMDB", "mdblist" => "MDBList", _ => collection.Name };
     }
 
     private static string FormatCreatedAt(string? value)

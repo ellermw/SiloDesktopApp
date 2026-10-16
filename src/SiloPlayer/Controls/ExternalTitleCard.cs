@@ -102,8 +102,9 @@ public static class ExternalTitleCard
         {
             var chip = new Button { Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4,
                 Children = { WebUiIcon.Create("library", 12, strokeThickness: 2.4), new TextBlock { Text = "LIBRARY", FontSize = 10, FontWeight = FontWeights.SemiBold, CharacterSpacing = 140 } } },
-                Margin = new Thickness(8), Padding = new Thickness(10, 4, 10, 4), CornerRadius = new CornerRadius(999),
+                Margin = new Thickness(8), Padding = new Thickness(10, 4, 10, 4),
                 HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+            RoundedBadge.SetRadius(chip, 999);
             AutomationProperties.SetName(chip, $"Open {item.Title} in library");
             chip.Click += (_, _) => navigation.Navigate<ItemDetailPage>(libraryId); card.Children.Add(chip);
         }
@@ -183,8 +184,9 @@ public static class ExternalTitleCard
         if (request != null && item.Request.Requestable)
         {
             var pending = false;
-            var button = new Button { Height = 36, MinHeight = 0, CornerRadius = new CornerRadius(999), Padding = new Thickness(14, 0, 14, 0),
+            var button = new Button { Height = 36, MinHeight = 0, Padding = new Thickness(14, 0, 14, 0),
                 Style = (Style)Application.Current.Resources["AccentButtonStyle"], HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Opacity = 0 };
+            RoundedBadge.SetRadius(button, 999);
             object NormalContent() => new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6,
                 Children = { WebUiIcon.Create("plus", 14, Brush("AccentForegroundBrush"), 2.5), new TextBlock { Text = "Request", FontSize = 12, FontWeight = FontWeights.SemiBold } } };
             button.Content = NormalContent(); AutomationProperties.SetName(button, $"Request {item.Title}");

@@ -31,6 +31,7 @@ public sealed partial class ProfileSelectPage : Page
 
         ViewModel.ProfileSelected += OnProfileSelected;
         ViewModel.TasteSeedRequired += OnTasteSeedRequired;
+        ViewModel.ManageProfilesSelected += OnManageProfilesSelected;
         ViewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(ViewModel.IsLoading))
@@ -51,6 +52,7 @@ public sealed partial class ProfileSelectPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         ViewModel.CancelProfileLoad();
+        _activePinDialog?.Hide();
         base.OnNavigatedFrom(e);
     }
 
@@ -120,13 +122,16 @@ public sealed partial class ProfileSelectPage : Page
     }
 
     private async Task ShowPinDialogAsync(Profile profile)
+        => await ShowPinDialogAsync(profile, null);
+
+    private async Task ShowPinDialogAsync(Profile profile, string? purpose)
     {
         var pinBox = new PasswordBox
         {
             PlaceholderText = "Enter 4-digit PIN",
             MaxLength = 4,
             PasswordRevealMode = PasswordRevealMode.Hidden,
-            InputScope = new InputScope { Names = { new InputScopeName(InputScopeNameValue.Number) } },
+            InputScope = new InputScope { Names = { new InputScopeName(InputScopeNameValue.NumericPin) } },
         };
         var error = new TextBlock
         {
@@ -135,6 +140,8 @@ public sealed partial class ProfileSelectPage : Page
             Visibility = Visibility.Collapsed,
         };
         var content = new StackPanel { Spacing = 8 };
+        if (purpose != null) content.Children.Add(new TextBlock
+        { Text = purpose == "add" ? "Adding a profile needs the primary profile's PIN." : "Managing profiles needs the primary profile's PIN.", TextWrapping = TextWrapping.Wrap });
         content.Children.Add(new TextBlock { Text = "PIN", FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
         content.Children.Add(pinBox);
         content.Children.Add(error);
@@ -148,12 +155,17 @@ public sealed partial class ProfileSelectPage : Page
             IsPrimaryButtonEnabled = false,
             XamlRoot = XamlRoot,
         };
-        pinBox.PasswordChanged += (_, _) => dialog.IsPrimaryButtonEnabled = pinBox.Password.Length > 0;
+        var verificationPending = false;
+        pinBox.PasswordChanged += (_, _) => dialog.IsPrimaryButtonEnabled = !verificationPending && pinBox.Password.Length > 0;
         dialog.Opened += (_, _) => pinBox.Focus(FocusState.Programmatic);
+        // Return the canceled primary-click event without a WinUI deferral so
+        // Cancel remains usable while verification is pending.
+        dialog.CloseButtonClick += (_, _) => ViewModel.CancelPinCommand.Execute(null);
         dialog.PrimaryButtonClick += async (sender, args) =>
         {
             args.Cancel = true;
-            var deferral = args.GetDeferral();
+            if (verificationPending) return;
+            verificationPending = true;
             try
             {
                 sender.IsPrimaryButtonEnabled = false;
@@ -176,13 +188,15 @@ public sealed partial class ProfileSelectPage : Page
             }
             finally
             {
+                verificationPending = false;
                 sender.PrimaryButtonText = "Confirm";
                 sender.IsPrimaryButtonEnabled = pinBox.Password.Length > 0;
-                deferral.Complete();
             }
         };
 
+        _activePinDialog = dialog;
         var result = await dialog.ShowAsync();
+        if (ReferenceEquals(_activePinDialog, dialog)) _activePinDialog = null;
         if (ViewModel.IsPinRequired && result != ContentDialogResult.Primary)
             ViewModel.CancelPinCommand.Execute(null);
     }
@@ -192,7 +206,7 @@ public sealed partial class ProfileSelectPage : Page
         if (sender is Button button)
         {
             button.RenderTransform = new TranslateTransform { Y = -4 };
-            var cardBorder = FindDescendant<Border>(button, "ProfileCardBorder");
+            var cardBorder = FindDescendant<Border>(button, "ProfileCardBorder") ?? FindDescendant<Border>(button, "AddProfileCardBorder");
             if (cardBorder != null) cardBorder.BorderBrush = (Brush)Application.Current.Resources["AccentBrush"];
         }
     }
@@ -202,13 +216,14 @@ public sealed partial class ProfileSelectPage : Page
         if (sender is Button button)
         {
             button.RenderTransform = new TranslateTransform { Y = 0 };
-            var cardBorder = FindDescendant<Border>(button, "ProfileCardBorder");
+            var cardBorder = FindDescendant<Border>(button, "ProfileCardBorder") ?? FindDescendant<Border>(button, "AddProfileCardBorder");
             if (cardBorder != null) cardBorder.BorderBrush = (Brush)Application.Current.Resources["BorderBrush"];
         }
     }
 
     private async void AddProfileButton_Click(object sender, RoutedEventArgs e)
     {
+        if (ViewModel.Profiles.Count > 0) { await StartManagementAsync(true); return; }
         var result = await Dialogs.ProfileEditorDialog.ShowWithContextAsync(XamlRoot, profile: null);
         if (result.Profile == null) return;
 
@@ -303,8 +318,46 @@ public sealed partial class ProfileSelectPage : Page
 
     private async void SignOutButton_Click(object sender, RoutedEventArgs e)
     {
+        ViewModel.CancelProfileLoad(); _activePinDialog?.Hide();
         var authService = App.Services.GetRequiredService<AuthService>();
         await authService.LogoutAsync();
+    }
+
+    private ContentDialog? _activePinDialog;
+
+    private async void ManageProfilesButton_Click(object sender, RoutedEventArgs e) => await StartManagementAsync(false);
+
+    private async Task StartManagementAsync(bool adding)
+    {
+        if (ViewModel.IsManagementBusy) return;
+        await ViewModel.BeginManagementAsync(adding);
+        if (ViewModel.IsPinRequired && ViewModel.PinProfile is { } primary)
+            await ShowPinDialogAsync(primary, adding ? "add" : "manage");
+        if (adding && ViewModel.AddSession is { } session && session.IsCurrent)
+        {
+            try
+            {
+                var result = await Dialogs.ProfileEditorDialog.ShowForPickerAsync(XamlRoot, session);
+                await ViewModel.FinishAddAsync(session, result.Profile != null);
+            }
+            catch (OperationCanceledException) when (!session.IsCurrent) { }
+            catch (Exception)
+            {
+                if (session.IsCurrent) ViewModel.ErrorMessage = "Couldn't open the new profile form. Try again.";
+            }
+            finally
+            {
+                if (ReferenceEquals(ViewModel.AddSession, session)) ViewModel.CancelManagement();
+            }
+        }
+    }
+
+    private async void OnManageProfilesSelected()
+    {
+        var mainWindow = App.MainWindowInstance;
+        Exception? failure = null;
+        if (mainWindow == null || !mainWindow.TryEnterAuthenticatedPage(typeof(SettingsPage), "Profiles", out failure))
+            await ShowNavigationFailureAsync(failure ?? new InvalidOperationException("The application window is not available."));
     }
 
 

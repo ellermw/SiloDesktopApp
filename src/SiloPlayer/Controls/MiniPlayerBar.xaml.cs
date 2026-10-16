@@ -142,7 +142,7 @@ public sealed partial class MiniPlayerBar : UserControl
     private void UiTimer_Tick(object? sender, object e)
     {
         if (!_active) return;
-        var pos = _playerService.Position;
+        var pos = _playerService.UserSeekPosition;
         var dur = _playerService.Duration;
         _suppressSeek = true;
         if (_playerService.IsAudiobook)
@@ -358,13 +358,13 @@ public sealed partial class MiniPlayerBar : UserControl
     private void AudiobookSkipBack_Click(object sender, RoutedEventArgs e)
     {
         var seconds = Math.Clamp(_playerService.SeekIntervals.AudiobookBack, 5, 120);
-        _playerService.RequestUserSeek(Math.Max(0, _playerService.Position - seconds));
+        _playerService.RequestUserRelativeSeek(-seconds);
     }
 
     private void AudiobookSkipForward_Click(object sender, RoutedEventArgs e)
     {
         var seconds = Math.Clamp(_playerService.SeekIntervals.AudiobookForward, 5, 120);
-        _playerService.RequestUserSeek(Math.Min(_playerService.Duration, _playerService.Position + seconds));
+        _playerService.RequestUserRelativeSeek(seconds);
     }
 
     private void SeekSlider_ValueChanged(object sender, Microsoft.UI.Xaml.Controls.Primitives.RangeBaseValueChangedEventArgs e)

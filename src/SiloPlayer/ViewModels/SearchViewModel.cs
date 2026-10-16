@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
@@ -91,6 +92,11 @@ public partial class SearchViewModel : ObservableObject
         _peopleApi = peopleApi;
         _requestsApi = requestsApi;
         _settingsApi = settingsApi;
+        WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, change) =>
+        {
+            if (!_catalogApi.IsCurrentContext(change.Context) || !change.Marked.HasValue) return;
+            foreach (var item in Results.Where(item => item.ContentId == change.ItemId)) MediaItemStateUpdater.SetNotInterested(item, change.Marked.Value);
+        });
     }
 
     public BulkObservableCollection<MediaItem> Results { get; } = [];

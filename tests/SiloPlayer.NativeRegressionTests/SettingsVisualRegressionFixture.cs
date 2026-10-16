@@ -7,6 +7,8 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
 using SiloPlayer.Views;
+using SiloPlayer.ViewModels;
+using System.Text.Json;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
@@ -24,7 +26,8 @@ internal static class SettingsVisualRegressionFixture
             using var wire = new SlowRequests();
             using var settingsHttp = new HttpClient(wire);
             var client = new SiloApiClient(settingsHttp); client.SetBaseUrl("https://fixture.invalid");
-            servicesField.SetValue(null, new Services(previous, new RequestsApi(client)));
+            using var fixtureServices = new Services(previous, new RequestsApi(client));
+            servicesField.SetValue(null, fixtureServices);
             SettingsPage? page = null;
             Frame? frame = null;
             try
@@ -39,19 +42,28 @@ internal static class SettingsVisualRegressionFixture
                 parent.Children.Add(page);
                 await SiloCastSettingsFixture.RunAsync(page);
                 parent.Children.Remove(page); await Task.Delay(60);
-                foreach (var width in new[] { 600, 1920, 3440, 3840 })
+                foreach (var width in new[] { 600, 1080, 1920, 3440, 3840 })
                 {
                     window.AppWindow.ResizeClient(new(width, 800));
                     wire.Pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
                     var prior = wire.Reads;
                     frame = new Frame { Width = width, Height = 800 };
                     parent.Children.Add(frame);
-                    if (!frame.Navigate(typeof(SettingsPage), "Playback")) throw new InvalidOperationException("Settings route failed.");
+                    if (!frame.Navigate(typeof(SettingsPage))) throw new InvalidOperationException("Settings route failed.");
                     await Until(() => wire.Reads > prior);
                     page = (SettingsPage)frame.Content;
-                    if (((FrameworkElement)page.FindName("PlaybackPanel")).Visibility != Visibility.Visible ||
-                        ((FrameworkElement)page.FindName("SettingsOverviewPanel")).Visibility != Visibility.Collapsed)
-                        throw new InvalidOperationException("Requested Playback tab must appear before the slow requests status finishes.");
+                    if (width >= 1024 && page.ActiveSettingsSection != "Playback" || width < 1024 && ((FrameworkElement)page.FindName("SettingsOverviewPanel")).Visibility != Visibility.Visible)
+                        throw new InvalidOperationException("Wide settings must default to Playback and narrow settings to the grouped index.");
+                    VerifyGrouping(page);
+                    page.SetShellSidebarHosted(true);
+                    if (((FrameworkElement)page.FindName("SettingsNavigationScroller")).Visibility != Visibility.Collapsed || ((Grid)page.FindName("SettingsLayoutGrid")).ColumnDefinitions[0].Width.Value != 0)
+                        throw new InvalidOperationException("Shell hosted Settings retained the nested navigation rail.");
+                    if (width >= 1024 && (((FrameworkElement)page.FindName("SettingsHeaderGrid")).Visibility != Visibility.Collapsed || ((FrameworkElement)page.FindName("SettingsBackButton")).Visibility != Visibility.Collapsed || ((Grid)page.FindName("SettingsLayoutGrid")).BorderThickness != new Thickness(0) || ((Grid)page.FindName("SettingsLayoutGrid")).Margin.Top != 0))
+                        throw new InvalidOperationException("Hosted desktop settings retained the duplicated header, back button, or outer card.");
+                    page.SelectSettingsSection("TitlePages");
+                    if (((FrameworkElement)page.FindName("TitlePagesPanel")).Visibility != Visibility.Visible || page.ActiveSettingsSection != "TitlePages")
+                        throw new InvalidOperationException("Title Pages sidebar route did not open.");
+                    page.SetShellSidebarHosted(false);
                     typeof(SettingsPage).GetMethod("ShowSettingsDetail", BindingFlags.NonPublic | BindingFlags.Instance)!
                         .Invoke(page, [page.FindName("SubtitlesTab")]);
                     wire.Pending.SetResult(new(HttpStatusCode.OK) { Content = new StringContent("{\"requests_enabled\":true}", System.Text.Encoding.UTF8, "application/json") });
@@ -59,7 +71,14 @@ internal static class SettingsVisualRegressionFixture
                     if (((FrameworkElement)page.FindName("SubtitlesPanel")).Visibility != Visibility.Visible ||
                         ((FrameworkElement)page.FindName("SettingsOverviewPanel")).Visibility != Visibility.Collapsed)
                         throw new InvalidOperationException("Late settings load reset the user's selected tab.");
-                    Program.Log($"PASS: settings route stable during slow load and subsequent tab selection at {width}px.");
+                    if (((ComboBox)page.FindName("SubtitleModeComboBox")).SelectedItem is not ComboBoxItem { Tag: "auto" } || !page.ViewModel.ShowForcedSubtitles)
+                        throw new InvalidOperationException("Resolved subtitle defaults must show Auto and enabled forced subtitles when profile DTO omits legacy fields.");
+                    page.SetShellSidebarHosted(width >= 1024);
+                    await CaptureSettings(frame, $"settings-language-{width}.png");
+                    page.SelectSettingsSection("TitlePages");
+                    await Task.Delay(100);
+                    await CaptureSettings(frame, $"settings-title-pages-{width}.png");
+                    Program.Log($"PASS: settings grouping, hosted shell, default/slow-load navigation at {width}px; native PNGs captured.");
                     parent.Children.Remove(frame); frame.Content = null; frame = null; page = null;
                     await Task.Delay(60); // Deliver Unloaded while fixture services are still alive.
                 }
@@ -70,6 +89,7 @@ internal static class SettingsVisualRegressionFixture
                 wire.Pending?.TrySetCanceled();
                 if (frame is not null) { parent.Children.Remove(frame); frame.Content = null; }
                 if (page is not null) parent.Children.Remove(page);
+                await Task.Delay(100);
                 servicesField.SetValue(null, previous);
             }
         }
@@ -97,7 +117,7 @@ internal static class SettingsVisualRegressionFixture
             Program.Log($"Toggle {state}: thumb={((SolidColorBrush)knob.Background).Color}, track={((SolidColorBrush)track!.Fill).Color}, opacity={knob.Opacity}");
             var raster = new RenderTargetBitmap(); await raster.RenderAsync(toggle);
             var pixels = (await raster.GetPixelsAsync()).ToArray();
-            var file = await (await StorageFolder.GetFolderFromPathAsync(Program.ResultDirectory)).CreateFileAsync("toggle-" + state + ".png", CreationCollisionOption.ReplaceExisting);
+            var file = await (await StorageFolder.GetFolderFromPathAsync(Path.GetFullPath(Program.ResultDirectory))).CreateFileAsync("toggle-" + state + ".png", CreationCollisionOption.ReplaceExisting);
             using (var stream = await file.OpenAsync(FileAccessMode.ReadWrite))
             {
                 var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
@@ -115,15 +135,76 @@ internal static class SettingsVisualRegressionFixture
         parent.Children.Remove(toggle);
         Program.Log("PASS: enabled toggle thumb remains visible in normal, hover and pressed states.");
     }
-    private sealed class Services(IServiceProvider fallback, RequestsApi requests) : IServiceProvider
+    private static async Task CaptureSettings(FrameworkElement element, string name)
     {
-        private readonly ThemeService _theme = new((SettingsService)fallback.GetService(typeof(SettingsService))!, new SettingsApi((SiloApiClient)fallback.GetService(typeof(SiloApiClient))!));
-        public object? GetService(Type type) => type == typeof(AuthApi)
-            ? new AuthApi((SiloApiClient)fallback.GetService(typeof(SiloApiClient))!)
-            : type == typeof(RequestsApi) ? requests
-            : type == typeof(ThemeService) ? _theme
-            : type == typeof(AccessibilityService) ? new AccessibilityService((SettingsService)fallback.GetService(typeof(SettingsService))!, _theme)
-            : fallback.GetService(type);
+        element.UpdateLayout();
+        var raster = new RenderTargetBitmap(); await raster.RenderAsync(element);
+        if (raster.PixelWidth == 0 || raster.PixelHeight == 0) throw new InvalidOperationException("Settings capture has no pixels.");
+        var pixels = (await raster.GetPixelsAsync()).ToArray();
+        var file = await (await StorageFolder.GetFolderFromPathAsync(Program.ResultDirectory)).CreateFileAsync(name, CreationCollisionOption.ReplaceExisting);
+        using var stream = await file.OpenAsync(FileAccessMode.ReadWrite);
+        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+        encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied, (uint)raster.PixelWidth, (uint)raster.PixelHeight, 96, 96, pixels);
+        await encoder.FlushAsync();
+    }
+
+    private static void VerifyGrouping(SettingsPage page)
+    {
+        static bool Within(FrameworkElement child, FrameworkElement target)
+        {
+            if (ReferenceEquals(child, target)) return true;
+            return target switch
+            {
+                Panel panel => panel.Children.OfType<FrameworkElement>().Any(element => Within(child, element)),
+                Border border when border.Child is FrameworkElement element => Within(child, element),
+                ContentControl content when content.Content is FrameworkElement element => Within(child, element),
+                _ => false,
+            };
+        }
+        foreach (var (control, panel) in new[] { ("TitleArtSettingsGroup", "TitlePagesPanel"), ("SpokenLanguageComboBox", "SubtitlesPanel"), ("MetadataLanguageComboBox", "SubtitlesPanel"), ("NextUpModeComboBox", "HomeScreenPanel"), ("CardOverlaysPanel", "InterfacePanel") })
+            if (!Within((FrameworkElement)page.FindName(control), (FrameworkElement)page.FindName(panel)))
+                throw new InvalidOperationException(control + " is not grouped under " + panel);
+        if (!page.SidebarEntries.Any(entry => entry.Section == "TitlePages") || page.SidebarEntries.Any(entry => entry.Section == "CardOverlays"))
+            throw new InvalidOperationException("Settings shell entries retained the old appearance routes.");
+    }
+
+    private sealed class Services : IServiceProvider, IDisposable
+    {
+        private readonly IServiceProvider _fallback;
+        private readonly HttpClient _http;
+        private readonly Dictionary<Type, object> _services;
+        public Services(IServiceProvider fallback, RequestsApi requests)
+        {
+            _fallback = fallback;
+            _http = new HttpClient(new SettingsDataHandler());
+            var apiClient = new SiloApiClient(_http); apiClient.SetBaseUrl("https://settings-visual-fixture.invalid");
+            var auth = (AuthService)fallback.GetService(typeof(AuthService))!; apiClient.SetProfile(auth.SelectedProfileId);
+            var local = (SettingsService)fallback.GetService(typeof(SettingsService))!;
+            var api = new SettingsApi(apiClient); var catalog = new CatalogApi(apiClient); var authApi = new AuthApi(apiClient);
+            var theme = new ThemeService(local, api); var accessibility = new AccessibilityService(local, theme);
+            var history = new HistoryImportApi(apiClient); var providers = new WatchProvidersApi(apiClient);
+            _services = new()
+            {
+                [typeof(SiloApiClient)] = apiClient, [typeof(SettingsApi)] = api, [typeof(CatalogApi)] = catalog,
+                [typeof(AuthApi)] = authApi, [typeof(RequestsApi)] = requests, [typeof(ThemeService)] = theme,
+                [typeof(AccessibilityService)] = accessibility,
+                [typeof(SettingsViewModel)] = new SettingsViewModel(api, catalog, authApi, history, providers, auth, theme, local, accessibility),
+                [typeof(CardOverlayService)] = new CardOverlayService(api), [typeof(UICustomizationService)] = new UICustomizationService(api),
+            };
+        }
+        public object? GetService(Type type) => _services.GetValueOrDefault(type) ?? _fallback.GetService(type);
+        public void Dispose() => _http.Dispose();
+    }
+    private sealed class SettingsDataHandler : HttpMessageHandler
+    {
+        private readonly HttpMessageInvoker _fallback = new((HttpMessageHandler)Activator.CreateInstance(typeof(AccountCoverageNativeFixture).GetNestedType("Wire", BindingFlags.NonPublic)!, nonPublic: true)!);
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (request.RequestUri!.AbsolutePath == "/api/v2/settings/contract/capabilities")
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { api_version = 1, manifest_revision = 17, supports_batched_effective = true, supports_idempotent_writes = true, supports_device_rename = true, client_families = new[] { "desktop", "web" } })) });
+            return _fallback.SendAsync(request, ct);
+        }
+        protected override void Dispose(bool disposing) { if (disposing) _fallback.Dispose(); base.Dispose(disposing); }
     }
     private sealed class SlowRequests : HttpMessageHandler
     {

@@ -26,6 +26,17 @@ public static class MediaItemActionExecutor
             MediaItemStateUpdater.SetFavorite,
             persistAsync);
 
+    public static async Task ResetProgressAsync(MediaItem item, Func<Task> persistAsync)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        ArgumentNullException.ThrowIfNull(persistAsync);
+        await persistAsync();
+        item.PositionSeconds = 0;
+        item.ProgressUpdatedAt = null;
+        if (item.UserState != null) item.UserState.IsInProgress = false;
+        if (item.SortMetrics != null) item.SortMetrics.ProgressRatio = 0;
+    }
+
     private static async Task<bool> ToggleAsync(
         MediaItem item,
         bool previousValue,

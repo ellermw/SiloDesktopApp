@@ -163,6 +163,7 @@ public sealed class NotificationAccountChannelCapability
 
 public sealed class NotificationCapability
 {
+    public NotificationSeriesCapability Series { get; set; } = new();
     public NotificationInAppCapability InApp { get; set; } = new();
     public NotificationPushCapability ApplePush { get; set; } = new();
     public NotificationPushCapability AndroidPush { get; set; } = new();
@@ -170,6 +171,12 @@ public sealed class NotificationCapability
     public NotificationWebhookCapability Webhooks { get; set; } = new();
     public NotificationAccountChannelCapability Email { get; set; } = new();
     public NotificationAccountChannelCapability Discord { get; set; } = new();
+}
+
+public sealed class NotificationSeriesCapability
+{
+    public bool Available { get; set; }
+    public bool Mute { get; set; }
 }
 
 public sealed class NotificationInAppCapability

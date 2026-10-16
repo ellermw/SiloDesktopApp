@@ -11,9 +11,13 @@ public class Episode
     public int SeasonNumber { get; set; }
     public int EpisodeNumber { get; set; }
     public string Title { get; set; } = "";
+    public List<DisplayRating> Ratings { get; set; } = [];
+    public string? PendingTranslationLanguage { get; set; }
+    public List<string>? MachineTranslatedFields { get; set; }
     public string? Overview { get; set; }
     public string? AirDate { get; set; }
     public int Runtime { get; set; }
+    public bool? StillIsEpisodeStill { get; set; }
     public string? StillUrl { get; set; }
     public string? StillThumbhash { get; set; }
     public EpisodeUserData? UserData { get; set; }
@@ -26,6 +30,7 @@ public class EpisodeUserData
     public double PositionSeconds { get; set; }
     public double DurationSeconds { get; set; }
     public bool Played { get; set; }
+    public bool IsInProgress { get; set; }
 }
 
 public class EpisodeFile

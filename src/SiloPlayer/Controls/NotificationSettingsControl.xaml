@@ -37,6 +37,7 @@
                 <Grid><TextBlock Text="Watchlist" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyWatchlist, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
                 <Grid><TextBlock Text="Continue Watching" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyContinueWatching, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
                 <Grid><TextBlock Text="Next Up" /><ToggleSwitch HorizontalAlignment="Right" IsOn="{Binding NotifyNextUp, Mode=TwoWay}" IsEnabled="{Binding NotificationsEnabled}" Toggled="NotificationPreference_Toggled" /></Grid>
+                <Button x:Name="NotificationSeriesLink" Content="See which series notify you" HorizontalAlignment="Left" Click="SeeSeries_Click" Style="{StaticResource GhostButtonStyle}" Visibility="Collapsed" />
             </StackPanel>
         </Border>
 

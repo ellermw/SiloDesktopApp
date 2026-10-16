@@ -1,16 +1,16 @@
 # Silo Desktop Player
 
-> **Current release: 1.2.247.** Repairs Library cursor paging, Settings presentation and Home reconnect refreshes; adds each server's favicon and enables SiloCast by default for fresh preferences. See [the release record](docs/releases/1.2.247.md) and [SiloCast setup](docs/silocast-testing.md). Local development starts in `D:\SiloPlayer`; read [the current handoff](docs/current-development.md) before editing or building.
+> **Current release: 1.2.268.** Includes the October 15–16 server alignment, profile subtitle preferences, Not Interested controls, notification-series management, Watch Together timing, profile-picker improvements and the rounded-background repair. See [the release record](docs/releases/1.2.268.md) and [SiloCast setup](docs/silocast-testing.md). Local development starts in `D:\SiloPlayer`; read [the current handoff](docs/current-development.md) before editing or building.
 
 Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/silo-server), built with WinUI 3 and libmpv. The project aims to reproduce the Silo WebUI visually and functionally while providing broad native direct-play support for high-bitrate HEVC, HDR, Dolby Vision, lossless audio, and other formats browsers commonly transcode.
 
-> **Project status:** active pre-release development. Version 1.2.247 preserves the prior parity work and SiloCast receiver. Phone interoperability, broader hardware testing and the separate intermittent Next Up removal investigation continue. Targeted verification does not certify complete visual/functional parity. Silo Server changes are re-audited against its official public `main` branch.
+> **Project status:** active pre-release development. Version 1.2.268 preserves the prior parity work and SiloCast receiver. Phone interoperability, broader hardware testing and the separate intermittent Next Up removal investigation continue. Targeted verification does not certify complete visual/functional parity. Silo Server changes are re-audited against its official public `main` branch.
 
 ## Download
 
-[**Download Silo Desktop Player 1.2.247**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.247/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.2.268**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.268/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `3284F696C29C75F14F41F7631CB1C9199E9CE00B014199BD4404FAA20C7338FE`
+SHA-256: `FB7246AF2E77E30BB8EA60DD38ADF9128190367EDE1D2BACAB7EF529B88C84AF`
 
 SiloCast is built in and enabled for fresh/missing preferences. The installer automatically adds its Private-network/local-subnet firewall rule, with no extra SiloCast checkbox. A saved opt-out remains respected; enable or disable it under **Settings → Playback → Desktop playback → Allow SiloCast control**. Keep the PC and phone on the same private local network and the desktop app running. See [the testing guide](docs/silocast-testing.md) for setup and troubleshooting. Actual iPhone/Android interoperability remains under testing.
 
@@ -50,6 +50,16 @@ The official public Silo Server reference fetched for the final pass is [1a7a397
 
 
 ## Latest release
+
+### 1.2.268 — server alignment, playback preferences and rounded backgrounds
+
+- Match the October 15–16 server contracts: current branding/Settings navigation, metadata-language refreshes, translation provenance, episode spoilers, Home row deduplication, Cast & Crew, Atmos labels and recommendation presentation.
+- Add supported Reset Progress and device names. Retire obsolete built-in Trakt routes while preserving existing content and supported imports.
+- Add profile subtitle appearance/timing, Not Interested actions and list management, notification-series mute controls, and Show new episodes first.
+- Improve Watch Together clock/command synchronization and guard profile-picker Add/Manage with the primary PIN when required.
+- Reanchor an idle, forward-only progressive remux on resume after a long pause; preserve direct play and playback ownership.
+- Correct oversized oval backgrounds at 18 badge/button sites across Add Row, Requests, Collections, person details, subtitle options, Watch Together and the player shell.
+- Publish the exact installer the owner installed and approved. Fresh publication verification passed **1,910 main tests**; the exact 1.2.268 payload passed **five targeted native groups**, including responsive Add Row states and existing poster/detail badge checks. The preceding 1.2.267 candidate passed **58 native scenario runs** and **24 packaged playback groups**; those earlier results are identified separately in [the release record](docs/releases/1.2.268.md).
 
 ### 1.2.247 — Library paging, server branding and refresh repairs
 

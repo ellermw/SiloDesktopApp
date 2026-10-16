@@ -1,3 +1,4 @@
+using SiloPlayer.Helpers;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
@@ -28,7 +29,16 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
     private readonly SettingsApi _settingsApi;
     private readonly PlayerService _playerService;
     private readonly PlaybackAuthorityScope? _authority;
-    private bool CanApplyToPlayer => ApplyToLocalPlayer && (_authority == null || ReferenceEquals(_authority, _playerService.ActiveAuthority));
+    private readonly ApiRequestContext _context;
+    private SubtitlePreferenceSnapshot? _preferences;
+    private readonly SemaphoreSlim _writes = new(1, 1);
+    private bool _loaded, _saving, _closed;
+    private long _editVersion;
+    private bool IsOwnerCurrent => !_closed && _settingsApi.IsCurrentContext(_context)
+        && (_authority == null || ReferenceEquals(_authority, _playerService.ActiveAuthority));
+    private bool CanApplyToPlayer => ApplyToLocalPlayer && IsOwnerCurrent
+        && (_authority != null || !_playerService.HasRemoteAuthority);
+
 
     private SubtitleAppearance _state = new();
     private bool _loading;
@@ -44,6 +54,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
     // Debounce server writes so dragging the opacity slider doesn't hammer the API.
     private DispatcherTimer? _saveDebounce;
     private bool _savePending;
+    private bool _resetPending;
 
     // Option metadata — mirrors web's FONT_SIZE_OPTIONS / FONT_FAMILY_OPTIONS etc.
     private static readonly (string Value, string Label)[] FontSizeOptions =
@@ -105,6 +116,7 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
     {
         _authority = authority;
         _settingsApi = authority?.SettingsApi ?? App.Services.GetRequiredService<SettingsApi>();
+        _context = _settingsApi.CaptureContext();
         _playerService = App.Services.GetRequiredService<PlayerService>();
         this.InitializeComponent();
 
@@ -125,9 +137,32 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         {
             var deferral = args.GetDeferral();
             _saveDebounce?.Stop();
-            try { await SaveNowAsync(); }
+            try { if (!await SaveNowAsync() && IsOwnerCurrent) args.Cancel = true; }
             finally { deferral.Complete(); }
         };
+        Closed += (_, _) => { _closed = true; _saveDebounce?.Stop(); _settingsApi.LocalProfileSettingChanged -= OnPreferenceChanged; };
+        _settingsApi.LocalProfileSettingChanged += OnPreferenceChanged;
+    }
+
+    private void OnPreferenceChanged(string key)
+    {
+        if (key != SubtitlePreferences.AppearanceKey || _saving || _savePending) return;
+        DispatcherQueue.TryEnqueue(async () => { if (IsOwnerCurrent) { await LoadAsync(); SyncAllFromState(); } });
+    }
+
+    private void UpdateSaveStatus(string text)
+    {
+        SaveStatusText.Text = text;
+        AppearanceBody.IsEnabled = _loaded && !_saving && IsOwnerCurrent;
+        ResetButton.IsEnabled = _loaded && !_saving && IsOwnerCurrent;
+        RetryButton.Visibility = text.StartsWith("Failed") ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private async void Retry_Click(object sender, RoutedEventArgs args)
+    {
+        if (!_loaded) { await LoadAsync(); SyncAllFromState(); }
+        else if (_resetPending) await ResetAsync();
+        else await SaveNowAsync();
     }
 
     // ── Load / Save ──────────────────────────────────────────────────────
@@ -137,66 +172,63 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         _loading = true;
         try
         {
-            if (LoadOverrideAsync is not null)
-                _state = SubtitleAppearance.Parse(await LoadOverrideAsync());
-            else if (InitialValue is not null)
-                _state = SubtitleAppearance.Parse(InitialValue);
+            if (!IsOwnerCurrent) return;
+            if (LoadOverrideAsync is not null) _state = SubtitleAppearance.Parse(await LoadOverrideAsync());
+            else if (InitialValue is not null) _state = SubtitleAppearance.Parse(InitialValue);
             else
             {
-                var response = await _settingsApi.GetContractEffectiveSettingsAsync(["playback.subtitle_appearance"]);
-                _state = SubtitleAppearance.Parse(response.Settings.FirstOrDefault()?.Value.GetRawText());
+                _preferences = await _settingsApi.Subtitles.LoadAsync(_context);
+                if (!IsOwnerCurrent) return;
+                _state = _preferences.Appearance.Clone();
+                CanReset = _preferences.IsAppearanceCustomized;
             }
+            if (!IsOwnerCurrent) return;
+            _loaded = true;
+            ResetButton.Visibility = CanReset ? Visibility.Visible : Visibility.Collapsed;
+            UpdateSaveStatus(SaveOverrideAsync != null ? "Changes save to this device" : "Changes save to this profile");
         }
-        catch
-        {
-            // Setting may not exist yet — defaults are fine.
-            _state = new SubtitleAppearance();
-        }
-        finally
-        {
-            _loading = false;
-        }
+        catch (OperationCanceledException) when (!IsOwnerCurrent) { }
+        catch { if (IsOwnerCurrent) { _loaded = false; UpdateSaveStatus("Failed to load. Retry to edit."); } }
+        finally { _loading = false; }
     }
 
     private void ScheduleSave()
     {
-        if (_loading) return;
-
-        // Apply live immediately — preview + mpv update without waiting.
+        if (_loading || !_loaded || !IsOwnerCurrent) return;
         UpdatePreview();
-        if (CanApplyToPlayer)
-            try { _playerService.ApplySubtitleAppearance(_state); } catch { /* mpv not ready */ }
-
-        // Server save: debounce 400ms so slider drags don't produce a storm.
+        if (CanApplyToPlayer) _playerService.ApplySubtitleAppearance(_state, _authority ?? _playerService.ActiveAuthority, _context);
+        _editVersion++;
+        _resetPending = false;
+        _savePending = true;
         if (_saveDebounce == null)
         {
             _saveDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
-            _saveDebounce.Tick += async (_, _) =>
-            {
-                _saveDebounce!.Stop();
-                await SaveNowAsync();
-            };
+            _saveDebounce.Tick += async (_, _) => { _saveDebounce.Stop(); await SaveNowAsync(); };
         }
-        _savePending = true;
-        _saveDebounce.Stop();
-        _saveDebounce.Start();
+        _saveDebounce.Stop(); _saveDebounce.Start();
     }
 
-    private async Task SaveNowAsync()
+    private async Task<bool> SaveNowAsync()
     {
-        if (!_savePending) return;
-        _savePending = false;
+        await _writes.WaitAsync();
         try
         {
-            if (SaveOverrideAsync is not null) await SaveOverrideAsync(_state.ToJson());
-            else
-            {
-                using var document = JsonDocument.Parse(_state.ToJson());
-                await _settingsApi.SetContractSettingValueAsync("playback.subtitle_appearance", "profile_device",
-                    document.RootElement.Clone());
-            }
+            if (_resetPending && IsOwnerCurrent) return false;
+            if (!_savePending || !IsOwnerCurrent) return true;
+            var version = _editVersion;
+            var value = _state.Clone();
+            _saving = true; UpdateSaveStatus("Saving…");
+            if (SaveOverrideAsync is not null) await SaveOverrideAsync(value.ToJson());
+            else if (_preferences is { } preferences) await _settingsApi.Subtitles.SaveAppearanceAsync(preferences, value);
+            if (!IsOwnerCurrent) return true;
+            if (version == _editVersion) _savePending = false;
+            CanReset = true; ResetButton.Visibility = Visibility.Visible;
+            UpdateSaveStatus("Saved");
+            return true;
         }
-        catch { /* surface later if needed; silent write-retry pattern */ }
+        catch (OperationCanceledException) when (!IsOwnerCurrent) { return true; }
+        catch { if (IsOwnerCurrent) UpdateSaveStatus("Failed to save. Retry or close to retry."); return false; }
+        finally { _saving = false; AppearanceBody.IsEnabled = _loaded && IsOwnerCurrent; ResetButton.IsEnabled = _loaded && IsOwnerCurrent; _writes.Release(); }
     }
 
     // ── Pills / swatches ─────────────────────────────────────────────────
@@ -212,10 +244,10 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
                 FontSize = 12.5,
                 FontWeight = FontWeights.Medium,
                 Padding = new Thickness(12, 5, 12, 5),
-                CornerRadius = new CornerRadius(999),
                 BorderThickness = new Thickness(0),
                 Tag = opt.Value,
             };
+            RoundedBadge.SetRadius(btn, 999);
             btn.Click += (_, _) =>
             {
                 setter(opt.Value);
@@ -302,20 +334,26 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
 
     private void SyncAllFromState()
     {
-        SyncPillGroup(SizePillsHost, () => _state.FontSize);
-        SyncPillGroup(FontPillsHost, () => _state.FontFamily);
-        SyncPillGroup(BgStylePillsHost, () => _state.BackgroundStyle);
-        SyncPillGroup(PositionPillsHost, () => _state.Position);
-        SyncSwatches(FontColorSwatchHost, () => _state.FontColor);
-        SyncSwatches(BgColorSwatchHost, () => _state.BackgroundColor);
+        var wasLoading = _loading;
+        _loading = true;
+        try
+        {
+            SyncPillGroup(SizePillsHost, () => _state.FontSize);
+            SyncPillGroup(FontPillsHost, () => _state.FontFamily);
+            SyncPillGroup(BgStylePillsHost, () => _state.BackgroundStyle);
+            SyncPillGroup(PositionPillsHost, () => _state.Position);
+            SyncSwatches(FontColorSwatchHost, () => _state.FontColor);
+            SyncSwatches(BgColorSwatchHost, () => _state.BackgroundColor);
 
-        OutlineToggle.IsOn = _state.TextOutline;
-        OpacitySlider.Value = _state.BackgroundOpacity;
-        TextOpacitySlider.Value = _state.TextOpacity;
-        OpacityValueLabel.Text = $"{_state.BackgroundOpacity}%";
+            OutlineToggle.IsOn = _state.TextOutline;
+            OpacitySlider.Value = _state.BackgroundOpacity;
+            TextOpacitySlider.Value = _state.TextOpacity;
+            OpacityValueLabel.Text = $"{_state.BackgroundOpacity}%";
 
-        UpdateBgRowsVisibility();
-        UpdatePreview();
+            UpdateBgRowsVisibility();
+            UpdatePreview();
+        }
+        finally { _loading = wasLoading; }
     }
 
     private void UpdateBgRowsVisibility()
@@ -412,26 +450,32 @@ public sealed partial class SubtitleAppearanceDialog : ContentDialog
         ScheduleSave();
     }
 
-    private async void Reset_Click(object sender, RoutedEventArgs e)
+    private async void Reset_Click(object sender, RoutedEventArgs e) => await ResetAsync();
+
+    private async Task ResetAsync()
     {
+        if (!_loaded || !IsOwnerCurrent) return;
         _saveDebounce?.Stop();
+        // Explicit Reset supersedes an unsaved edit. Retry and close must never
+        // turn that old draft into a PUT after a failed DELETE.
+        _resetPending = true;
         _savePending = false;
+        await _writes.WaitAsync();
+        _saving = true; UpdateSaveStatus("Resetting…");
         try
         {
-            if (ResetOverrideAsync is not null)
-            {
-                await ResetOverrideAsync();
-                await LoadAsync();
-            }
-            else
-            {
-                await _settingsApi.DeleteContractSettingValueAsync("playback.subtitle_appearance", "profile_device");
-                await LoadAsync();
-            }
-            SyncAllFromState();
-            if (CanApplyToPlayer) _playerService.ApplySubtitleAppearance(_state);
+            if (!IsOwnerCurrent) return;
+            if (ResetOverrideAsync is not null) await ResetOverrideAsync();
+            else if (_preferences is { } state) await _settingsApi.Subtitles.ResetAppearanceAsync(state);
+            if (!IsOwnerCurrent) return;
+            _resetPending = false;
+            _savePending = false;
+            await LoadAsync(); SyncAllFromState();
+            if (CanApplyToPlayer) _playerService.ApplySubtitleAppearance(_state, _authority ?? _playerService.ActiveAuthority, _context);
         }
-        catch { }
+        catch (OperationCanceledException) when (!IsOwnerCurrent) { }
+        catch { if (IsOwnerCurrent) UpdateSaveStatus("Failed to reset. Retry or try Reset again."); }
+        finally { _saving = false; AppearanceBody.IsEnabled = _loaded && IsOwnerCurrent; ResetButton.IsEnabled = _loaded && IsOwnerCurrent; _writes.Release(); }
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Hide();

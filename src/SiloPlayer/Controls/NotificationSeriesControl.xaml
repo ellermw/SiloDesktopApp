@@ -1,0 +1,39 @@
+<UserControl x:Class="SiloPlayer.Controls.NotificationSeriesControl"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" SizeChanged="Control_SizeChanged">
+    <StackPanel Spacing="12">
+        <TextBlock TextWrapping="Wrap" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}">
+            <Run Text="New episodes of these series notify this profile. Change which reasons count in " /><Hyperlink Click="Preferences_Click">Preferences</Hyperlink><Run x:Name="MuteIntro" Text=", or mute one series." />
+        </TextBlock>
+        <Grid x:Name="Toolbar" ColumnSpacing="8" RowSpacing="8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+            <TextBox x:Name="SearchBox" PlaceholderText="Search series" AutomationProperties.Name="Search series" TextChanged="Search_Changed" MaxLength="200" MinHeight="36" />
+            <Grid x:Name="FilterControls" Grid.Column="1" ColumnSpacing="8">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                <ComboBox x:Name="ReasonCombo" AutomationProperties.Name="Filter by reason" SelectionChanged="Options_Changed" MinWidth="150" HorizontalAlignment="Stretch" SelectedIndex="0">
+                    <ComboBoxItem Content="All reasons" Tag="all" /><ComboBoxItem Content="Favorites" Tag="favorite" /><ComboBoxItem Content="Watchlist" Tag="watchlist" /><ComboBoxItem Content="Continue Watching" Tag="continue_watching" /><ComboBoxItem Content="Next Up" Tag="next_up" />
+                </ComboBox>
+                <ComboBox x:Name="SortCombo" Grid.Column="1" AutomationProperties.Name="Sort" SelectionChanged="Options_Changed" MinWidth="150" HorizontalAlignment="Stretch" SelectedIndex="0">
+                    <ComboBoxItem Content="Title (A–Z)" Tag="title" /><ComboBoxItem Content="Title (Z–A)" Tag="-title" /><ComboBoxItem Content="Latest episode" Tag="-latest_episode_added" /><ComboBoxItem Content="Recently added" Tag="-added_at" /><ComboBoxItem Content="Release year" Tag="-year" />
+                </ComboBox>
+            </Grid>
+        </Grid>
+        <ProgressRing x:Name="SeriesBusy" Width="28" Height="28" HorizontalAlignment="Center" Visibility="Collapsed" />
+        <StackPanel x:Name="SeriesErrorPanel" Spacing="8" Visibility="Collapsed">
+            <TextBlock x:Name="SeriesError" FontSize="14" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+            <Button x:Name="SeriesRetry" Content="Retry" HorizontalAlignment="Left" Click="Retry_Click" Style="{StaticResource OutlineButtonStyle}" />
+        </StackPanel>
+        <TextBlock x:Name="MutationErrorText" TextWrapping="Wrap" Foreground="{StaticResource ErrorBrush}" AutomationProperties.LiveSetting="Polite" Visibility="Collapsed" />
+        <StackPanel x:Name="ActiveRows" Spacing="4" />
+        <StackPanel x:Name="InactiveSection" Spacing="8" Margin="0,16,0,0" Visibility="Collapsed">
+            <Grid ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><TextBlock Text="Won’t notify" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource SecondaryTextBrush}" /><Border Grid.Column="1" Height="1" VerticalAlignment="Center" Background="{StaticResource BorderBrush}" /></Grid>
+            <StackPanel x:Name="InactiveRows" Spacing="4" />
+        </StackPanel>
+        <StackPanel x:Name="SeriesEmpty" Spacing="12" Margin="0,64" HorizontalAlignment="Center" Visibility="Collapsed">
+            <TextBlock x:Name="SeriesEmptyTitle" Text="No series notify you yet" FontSize="14" TextWrapping="Wrap" TextAlignment="Center" />
+            <TextBlock x:Name="SeriesEmptyCaption" Text="Series you favorite, add to your watchlist, or start watching show up here." MaxWidth="384" FontSize="12" TextWrapping="Wrap" TextAlignment="Center" Foreground="{StaticResource SecondaryTextBrush}" />
+        </StackPanel>
+        <Button x:Name="SeriesLoadMore" Content="Load more" HorizontalAlignment="Center" Click="More_Click" Style="{StaticResource OutlineButtonStyle}" Visibility="Collapsed" />
+    </StackPanel>
+</UserControl>

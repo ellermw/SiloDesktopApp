@@ -29,6 +29,30 @@ namespace SiloPlayer.Views;
 
 public sealed partial class SettingsPage : Page
 {
+    public sealed record SettingsNavigationEntry(string Group, string Section, string Label, string SearchText = "");
+    public IReadOnlyList<SettingsNavigationEntry> SidebarEntries { get; private set; } = [];
+    public event Action? SidebarEntriesChanged;
+    public event Action<string>? SettingsSectionChanged;
+    public string? ActiveSettingsSection { get; private set; }
+    private bool _shellSidebarHosted;
+    private double SettingsViewportWidth => WebUiViewport.Width(this, ActualWidth > 0 ? ActualWidth : Frame?.Width ?? 0);
+    public void SelectSettingsSection(string section)
+    {
+        if (ResolveSettingsTabButton(section) is { } button) ShowSettingsDetail(button);
+    }
+    public void SetShellSidebarHosted(bool hosted)
+    {
+        _shellSidebarHosted = hosted;
+        // Frame navigation may run before this page acquires a XamlRoot or a
+        // measured width. The shell already established the desktop breakpoint.
+        if (hosted && ActiveSettingsSection is null) ShowSettingsDetail(PlaybackTab);
+        SettingsNavigationScroller.Visibility = hosted || SettingsViewportWidth < 1024 ? Visibility.Collapsed : Visibility.Visible;
+        SettingsLayoutGrid.ColumnDefinitions[0].Width = hosted || SettingsViewportWidth < 1024 ? new GridLength(0) : new GridLength(240);
+        Grid.SetColumn(SettingsContentPanel, hosted || SettingsViewportWidth < 1024 ? 0 : 1);
+        Grid.SetColumnSpan(SettingsContentPanel, hosted || SettingsViewportWidth < 1024 ? 2 : 1);
+        ReflowSettingsShell();
+    }
+
     public SettingsViewModel ViewModel { get; }
     private readonly CardOverlayService _cardOverlayService;
     private readonly UICustomizationService _uiCustomizationService;
@@ -133,14 +157,24 @@ public sealed partial class SettingsPage : Page
         ViewModel.WatchProviderCards.CollectionChanged += WatchProviderCards_CollectionChanged;
         ViewModel.PropertyChanged += (_, args) =>
         {
+            if (args.PropertyName is nameof(SettingsViewModel.SubtitleOffsetMs) or nameof(SettingsViewModel.SubtitlePreferencesLoaded)
+                or nameof(SettingsViewModel.IsSavingSubtitlePreferences) or nameof(SettingsViewModel.HasSubtitleAppearanceDeviceOverride)
+                or nameof(SettingsViewModel.SupportsProfileSubtitleTiming)) DispatcherQueue.TryEnqueue(SyncSubtitlePreferenceStatus);
             if (args.PropertyName == nameof(SettingsViewModel.VisibleLibraryCount))
                 DispatcherQueue.TryEnqueue(() => App.MainWindowInstance?.UpdateLibraryNavItems());
         };
 
+        Loaded += (_, _) => ViewModel.SubtitleSettingsApi.LocalProfileSettingChanged += OnSubtitlePreferenceChanged;
+        Unloaded += (_, _) =>
+        {
+            ViewModel.SubtitleSettingsApi.LocalProfileSettingChanged -= OnSubtitlePreferenceChanged;
+            ViewModel.CloseNewEpisodesPreference();
+        };
         BuildSubtitleColorSwatches();
+        InitializeNotInterested();
         SizeChanged += SettingsPage_SizeChanged;
         var searchShortcut = new Microsoft.UI.Xaml.Input.KeyboardAccelerator { Key = Windows.System.VirtualKey.K, Modifiers = Windows.System.VirtualKeyModifiers.Control };
-        searchShortcut.Invoked += (_, args) => { ShowSettingsOverview(); SettingsSearchBox.Focus(FocusState.Keyboard); SettingsSearchBox.SelectAll(); args.Handled = true; };
+        searchShortcut.Invoked += (_, args) => { if (App.MainWindowInstance?.FocusSettingsSidebarSearch() == true) { args.Handled = true; return; } ShowSettingsOverview(); SettingsSearchBox.Focus(FocusState.Keyboard); SettingsSearchBox.SelectAll(); args.Handled = true; };
         KeyboardAccelerators.Add(searchShortcut);
         _initializingSiloCast = true;
         SiloCastToggle.IsOn = App.Services.GetRequiredService<SettingsService>().Load().SiloCastEnabled;
@@ -154,7 +188,7 @@ public sealed partial class SettingsPage : Page
         // SettingsLayout.tsx switches from the grouped 220 px rail to a horizontal
         // pill strip at Tailwind's `lg` breakpoint. Keep the native page on the same
         // responsive geometry instead of squeezing the desktop rail into narrow windows.
-        var isCompact = e.NewSize.Width < 1024;
+        var isCompact = WebUiViewport.Width(this, e.NewSize.Width) < 1024;
         var isPhoneWidth = e.NewSize.Width < 640;
         foreach (var choices in new[] { DateFormatButtons, TimeFormatButtons, TextSizeButtons, TextWeightButtons, ContrastButtons })
             choices.Orientation = e.NewSize.Width < 760 ? Orientation.Vertical : Orientation.Horizontal;
@@ -178,7 +212,7 @@ public sealed partial class SettingsPage : Page
             ? HorizontalAlignment.Stretch
             : HorizontalAlignment.Right;
 
-        SettingsLayoutGrid.ColumnDefinitions[0].Width = isCompact
+        SettingsLayoutGrid.ColumnDefinitions[0].Width = isCompact || _shellSidebarHosted
             ? new GridLength(0)
             : new GridLength(240);
         SettingsLayoutGrid.ColumnDefinitions[1].Width = new GridLength(1, GridUnitType.Star);
@@ -187,10 +221,10 @@ public sealed partial class SettingsPage : Page
         Grid.SetColumn(SettingsNavigationScroller, 0);
         Grid.SetColumnSpan(SettingsNavigationScroller, 1);
         Grid.SetRow(SettingsContentPanel, 0);
-        Grid.SetColumn(SettingsContentPanel, isCompact ? 0 : 1);
-        Grid.SetColumnSpan(SettingsContentPanel, isCompact ? 2 : 1);
+        Grid.SetColumn(SettingsContentPanel, isCompact || _shellSidebarHosted ? 0 : 1);
+        Grid.SetColumnSpan(SettingsContentPanel, isCompact || _shellSidebarHosted ? 2 : 1);
 
-        SettingsNavigationScroller.Visibility = isCompact ? Visibility.Collapsed : Visibility.Visible;
+        SettingsNavigationScroller.Visibility = isCompact || _shellSidebarHosted ? Visibility.Collapsed : Visibility.Visible;
         SettingsAllSettingsButton.Visibility = isCompact && !_showingSettingsOverview
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -230,7 +264,7 @@ public sealed partial class SettingsPage : Page
 
     private void ReflowSettingsShell()
     {
-        var gutter = ActualWidth < 640 ? 16 : ActualWidth < 1024 ? 24 : ActualWidth < 1280 ? 40 : 48;
+        var gutter = ActualWidth < 640 ? 16 : SettingsViewportWidth < 1024 ? 24 : ActualWidth < 1280 ? 40 : 48;
         SettingsPageShell.MaxWidth = 1520 - gutter * 2;
         if (SettingsHeaderGrid.Children.OfType<StackPanel>().FirstOrDefault() is { } heading && heading.Children.OfType<TextBlock>().FirstOrDefault() is { } headerTitle)
         {
@@ -247,13 +281,23 @@ public sealed partial class SettingsPage : Page
         SettingsCurrentProfileButton.Background = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["SurfaceBrush"]).Color) { Opacity = .72 };
         SettingsCurrentProfileButton.BorderBrush = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["BorderBrush"]).Color) { Opacity = .62 };
         SettingsCurrentProfileButton.BorderThickness = new Thickness(1);
-        var compactDetail = ActualWidth < 1024 && !_showingSettingsOverview;
-        SettingsBackButton.Visibility = compactDetail ? Visibility.Collapsed : Visibility.Visible;
-        SettingsLayoutGrid.Margin = new Thickness(0, compactDetail ? 12 : 40, 0, 0);
-        SettingsLayoutGrid.Background = compactDetail ? new SolidColorBrush(Colors.Transparent) : (Brush)Resources["SettingsPanelBrush"];
-        SettingsLayoutGrid.BorderThickness = compactDetail ? new Thickness(0) : new Thickness(1);
-        SettingsLayoutGrid.CornerRadius = compactDetail ? new CornerRadius(0) : new CornerRadius(27.2);
-        foreach (var title in new[] { InterfaceTitleText, PlaybackTitleText, SubtitlesTitleText, CardOverlaysTitleText, ConnectAppsTitleText, AccessibilityTitleText })
+        var hostedDesktop = _shellSidebarHosted && SettingsViewportWidth >= 1024;
+        var compactDetail = SettingsViewportWidth < 1024 && !_showingSettingsOverview;
+        var plainDetail = hostedDesktop || compactDetail;
+        SettingsHeaderGrid.Visibility = plainDetail ? Visibility.Collapsed : Visibility.Visible;
+        SettingsBackButton.Visibility = plainDetail ? Visibility.Collapsed : Visibility.Visible;
+        SettingsAllSettingsButton.Visibility = compactDetail ? Visibility.Visible : Visibility.Collapsed;
+        SettingsLayoutGrid.Margin = new Thickness(0, hostedDesktop ? 0 : compactDetail ? 12 : 40, 0, 0);
+        SettingsLayoutGrid.Background = plainDetail ? new SolidColorBrush(Colors.Transparent) : (Brush)Resources["SettingsPanelBrush"];
+        SettingsLayoutGrid.BorderThickness = plainDetail ? new Thickness(0) : new Thickness(1);
+        SettingsLayoutGrid.CornerRadius = plainDetail ? new CornerRadius(0) : new CornerRadius(27.2);
+        if (hostedDesktop)
+        {
+            SettingsPageShell.Margin = new Thickness(32, 32, 32, 48);
+            SettingsPageShell.MaxWidth = double.PositiveInfinity;
+            SettingsContentPanel.Padding = new Thickness(0);
+        }
+        foreach (var title in new[] { InterfaceTitleText, TitlePagesTitleText, PlaybackTitleText, SubtitlesTitleText, ConnectAppsTitleText, AccessibilityTitleText })
         {
             title.FontSize = ActualWidth < 640 ? 24 : 30;
             title.LineHeight = ActualWidth < 640 ? 32 : 36;
@@ -430,9 +474,12 @@ public sealed partial class SettingsPage : Page
         BuildSettingsOverview();
         if (e.Parameter is string requestedTab && ResolveSettingsTabButton(requestedTab) is { } button)
             ShowSettingsDetail(button);
+        else if (SettingsViewportWidth >= 1024)
+            ShowSettingsDetail(PlaybackTab);
         else
             ShowSettingsOverview();
 
+        var homePreferenceTask = ViewModel.ReloadNewEpisodesPreferenceCommand.ExecuteAsync(null);
         var stale = !_pageInitialized || DateTime.UtcNow - _loadedAtUtc > TimeSpan.FromMinutes(2);
         if (stale)
         {
@@ -451,6 +498,7 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
             _loadedAtUtc = DateTime.UtcNow;
         }
 
+        await homePreferenceTask;
         try { _requestsAvailable = (await App.Services.GetRequiredService<RequestsApi>().GetStatusAsync()).RequestsEnabled; }
         catch { _requestsAvailable = false; }
         BuildSettingsOverview();
@@ -464,7 +512,8 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
         "Interface" or "NavigationCards" => InterfaceTab,
         "Accessibility" => AccessibilityTab,
         "HomeScreen" => HomeScreenTab,
-        "CardOverlays" => CardOverlaysTab,
+        "CardOverlays" => InterfaceTab,
+        "TitlePages" => TitlePagesTab,
         "Personalize" => PersonalizeTab,
         "Requests" => RequestsTab,
         "Libraries" => LibrariesTab,
@@ -486,6 +535,7 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
         DeactivateDevices();
         DeactivateLoginSessions();
         DeactivateLayoutTransfer();
+        ViewModel.CloseNewEpisodesPreference();
         ViewModel.DeactivateTitleArt();
         DeactivateAccountSignIn();
         ++_overlayLoadGeneration;
@@ -776,8 +826,39 @@ _webhookPlexAuthCts?.Cancel();
         }
     }
 
+    private void OnSubtitlePreferenceChanged(string key)
+    {
+        if (key is not (SubtitlePreferences.AppearanceKey or SubtitlePreferences.OffsetKey)) return;
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            if (ViewModel.IsSavingSubtitlePreferences) return;
+            await ViewModel.ReloadSubtitlePreferencesAsync();
+            SyncSubtitleAppearanceControls();
+        });
+    }
+
+    private void SyncSubtitlePreferenceStatus()
+    {
+        var enabled = ViewModel.SubtitlePreferencesLoaded && !ViewModel.IsSavingSubtitlePreferences;
+        SubtitleSaveButton.IsEnabled = SubtitleDiscardButton.IsEnabled = SubtitleResetButton.IsEnabled = enabled;
+        SubtitleEarlierButton.IsEnabled = enabled && ViewModel.SubtitleOffsetMs > -10000;
+        SubtitleLaterButton.IsEnabled = enabled && ViewModel.SubtitleOffsetMs < 10000;
+        SubtitleOffsetResetButton.IsEnabled = enabled && ViewModel.SubtitleOffsetMs != 0;
+        SubtitleReloadButton.IsEnabled = !ViewModel.IsSavingSubtitlePreferences;
+        SubtitleReloadButton.Visibility = ViewModel.SubtitlePreferencesLoaded ? Visibility.Collapsed : Visibility.Visible;
+        SubtitleOffsetLabel.Text = ViewModel.SubtitleOffsetMs == 0 ? "0 ms" : $"{ViewModel.SubtitleOffsetMs:+#;-#} ms";
+        SubtitleTimingDescription.Text = ViewModel.SubtitleTimingDescription;
+        SubtitleResetButton.Visibility = ViewModel.HasSubtitleAppearanceDeviceOverride ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private async void SubtitleEarlier_Click(object sender, RoutedEventArgs e) => await ViewModel.SetSubtitleOffsetAsync(ViewModel.SubtitleOffsetMs - 100);
+    private async void SubtitleLater_Click(object sender, RoutedEventArgs e) => await ViewModel.SetSubtitleOffsetAsync(ViewModel.SubtitleOffsetMs + 100);
+    private async void SubtitleOffsetReset_Click(object sender, RoutedEventArgs e) => await ViewModel.SetSubtitleOffsetAsync(0, reset: true);
+    private async void SubtitleReload_Click(object sender, RoutedEventArgs e) { await ViewModel.ReloadSubtitlePreferencesAsync(); SyncSubtitleAppearanceControls(); }
+
     private void SyncSubtitleAppearanceControls()
     {
+        SyncSubtitlePreferenceStatus();
         _suppressEvents = true;
         SelectComboBoxByTag(SubtitleFontSizeComboBox, ViewModel.SubFontSize);
         SelectComboBoxByTag(SubtitleFontFamilyComboBox, ViewModel.SubFontFamily);
@@ -887,39 +968,43 @@ _webhookPlexAuthCts?.Cancel();
         {
             ("Playback",
             [
-                ("Playback", "Playback", "Quality, languages, skipping, and what plays next.", "\uE768", "video quality bitrate bandwidth spoken metadata language auto skip intros credits recaps preview auto play next up seek rewind fast forward fast-forward skip interval audiobook controls"),
-                ("Subtitles", "Subtitles", "Subtitle language, when they appear, and how they look.", "\uED1E", "subtitle forced captions font size color background position"),
+                ("Playback", "Playback", "Quality, skipping, and what plays next.", "\uE768", "video quality bitrate bandwidth auto skip intros credits recaps preview auto play seek rewind fast forward fast-forward skip interval audiobook controls"),
+                ("Subtitles", "Language & Subtitles", "Spoken and metadata languages, subtitles, and their appearance.", "\uED1E", "spoken audio track metadata language translation add exception subtitle behavior forced captions font size family color text opacity outline background style opacity position preview save appearance discard changes"),
                 ("Devices", "Your Devices", "Per-device quality, HDR, sync, and the profile this app opens.", "\uE7F4", "devices tv phone tablet browser hdr dolby vision sound delay lip sync who's watching profile picker remember profile launch"),
             ]),
             ("Appearance",
             [
-                ("Interface", "Navigation & Cards", "Your primary menu, poster size, card captions, and title art.", "\uE7F8", "navigation menu poster size card captions title year artwork preset title art logo clearlogo"),
-                ("CardOverlays", "Card Overlays", "Badges drawn on poster cards, and where they sit.", "\uE81E", "poster badges overlay accent color preset icon position quick actions enabled default inheritance"),
+                ("Interface", "Navigation & Cards", "Poster size, captions, shortcuts and badges on posters, and your menu.", "\uE7F8", "navigation menu poster size card captions title year artwork preset badges overlay accent color corner position quick actions favorite watched server defaults add link reset"),
+                ("TitlePages", "Title Pages", "Title art, theme music, spoilers, and age guidance.", "\uE8B2", "title art logo clearlogo theme music loop spoilers blur unwatched descriptions advisory age"),
                 ("Accessibility", "Accessibility", "Text size, weight, contrast, and date and time formats.", "\uE7F3", "contrast readability motion transparency text size weight date time clock"),
             ]),
             ("Home & Discovery",
             [
-                ("HomeScreen", "Home Screen", "Which rows appear on Home, and in what order.", "\uECA5", "sections rows continue watching next up recently added library order"),
+                ("HomeScreen", "Home Screen", "Which rows appear on Home, and in what order.", "\uECA5", "sections rows continue watching next up episodes hide watched items recently added library pages export import layout reset home"),
+                ("Libraries", "Libraries", "Which libraries you see, their order, and per-library audio.", "\uE8F1", "library visibility access disabled order playback spoken subtitle"),
                 ("Personalize", "Personalize", "Re-tune the taste profile behind your recommendations.", "\uE735", "taste profile recommendations ratings likes dislikes"),
                 ("Requests", "Requests", "Choose whether watchlist additions also request titles.", "\uE710", "watchlist automatic request preference"),
-                ("Libraries", "Libraries", "Which libraries you see, their order, and per-library audio.", "\uE8F1", "library visibility access disabled order playback spoken subtitle"),
             ]),
             ("Connections",
             [
                 ("ConnectApps", "Connect Apps", "Sign-in details for Silo and Jellyfin-compatible apps.", "\uE839", "jellyfin infuse swiftfin jellycon findroid sign in login server username password pin"),
-                ("WatchProviders", "Watch Providers", "Trakt watch history, favorites, and scrobbling.", "\uE823", "trakt import export scrobble favorites watch history"),
+                ("WatchProviders", "Watch Providers", "Sync watch history, ratings, and watchlists with services like Simkl.", "\uE823", "simkl import export scrobble favorites watch history"),
                 ("WebhookSync", "Webhook Sync", "Take progress from Plex, Emby, and Jellyfin webhooks.", "\uE968", "plex emby jellyfin webhook progress watched"),
                 ("HistoryImport", "History Import", "Bring an existing Emby watch history into Silo.", "\uE8B5", "emby watched history import mapping sync"),
             ]),
             ("Account",
             [
-                ("Sessions", "Signed-in sessions", "See active sign-ins and sign out a browser or app.", "\uE7F4", "sessions active client device last seen sign out revoke security"),
-                ("Account", "Account", "Manage the shared account password.", "\uE72E", "account password credential sign in security"),
-                ("Profiles", "Profiles", "Household profile names, PINs, and library access.", "\uE77B", "profile name pin access primary household library create delete"),
                 ("NotificationsSettings", "Notifications", "New-episode alerts by email, Discord, push, or webhook.", "\uEA8F", "new episodes email discord browser push webhooks alerts digest url"),
+                ("Profiles", "Profiles", "Household profile names, PINs, and library access.", "\uE77B", "profile name pin access primary household library create delete"),
+                ("Account", "Account", "Manage the shared account password.", "\uE72E", "account password credential sign in security"),
+                ("Sessions", "Signed-in sessions", "See active sign-ins and sign out a browser or app.", "\uE7F4", "sessions active client device last seen sign out revoke security"),
             ]),
         };
 
+        SidebarEntries = groups.SelectMany(group => group.Items
+            .Where(entry => !((entry.Tag is "Profiles" or "Account" or "Sessions") && !_canManageProfiles) && !(entry.Tag == "Requests" && !_requestsAvailable))
+            .Select(entry => new SettingsNavigationEntry(group.Label, entry.Tag, entry.Label, $"{entry.Label} {entry.Description} {entry.Search}"))).ToArray();
+        SidebarEntriesChanged?.Invoke();
         foreach (var group in groups)
         {
             var section = new StackPanel { Spacing = 12 };
@@ -952,7 +1037,7 @@ _webhookPlexAuthCts?.Cancel();
     {
         if (SettingsOverviewGroups == null) return;
         var desktop = ActualWidth >= 1024;
-        var columns = ActualWidth >= 1536 ? 4 : desktop ? 2 : 1;
+        var columns = 1;
         SettingsOverviewGroups.Spacing = desktop ? 40 : 24;
         foreach (var section in SettingsOverviewGroups.Children.OfType<StackPanel>())
         {
@@ -1012,7 +1097,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             Width = 40, Height = 40, CornerRadius = new CornerRadius(12), Background = (Brush)Application.Current.Resources["SurfaceBrush"],
             VerticalAlignment = VerticalAlignment.Center,
-            Child = tag == "Accessibility" ? WebUiIcon.Create("eye", 18) : WebUiIcon.Navigation(tag switch { "Playback" => "play", "Subtitles" => "subtitles", "Devices" or "Sessions" => "monitor-smartphone", "Interface" => "panel-top", "CardOverlays" => "layers", "HomeScreen" => "layout-dashboard", "Personalize" => "sparkles", "Requests" => "bookmark", "Libraries" => "library", "ConnectApps" => "cast", "WatchProviders" => "cloud", "WebhookSync" => "server", "Import" => "clock", "Account" => "key-round", "Profiles" => "users-round", "Notifications" => "bell", _ => "settings" }, 18),
+            Child = tag == "Accessibility" ? WebUiIcon.Create("eye", 18) : WebUiIcon.Navigation(tag switch { "Playback" => "play", "Subtitles" => "subtitles", "Devices" or "Sessions" => "monitor-smartphone", "Interface" => "panel-top", "CardOverlays" => "layers", "TitlePages" => "clapperboard", "HomeScreen" => "layout-dashboard", "Personalize" => "sparkles", "Requests" => "bookmark", "Libraries" => "library", "ConnectApps" => "cast", "WatchProviders" => "cloud", "WebhookSync" => "server", "Import" => "clock", "Account" => "key-round", "Profiles" => "users-round", "Notifications" => "bell", _ => "settings" }, 18),
         });
         Grid.SetColumn(text, 1);
         content.Children.Add(text);
@@ -1051,6 +1136,8 @@ _webhookPlexAuthCts?.Cancel();
         ++_overlayLoadGeneration;
         _accountPassword.Deactivate();
         _showingSettingsOverview = true;
+        ActiveSettingsSection = null;
+        SettingsSectionChanged?.Invoke("");
         SettingsHeaderSubtitle.Text = "Make Silo work the way you like.";
         SettingsOverviewPanel.Visibility = Visibility.Visible;
         SettingsLayoutGrid.Visibility = Visibility.Collapsed;
@@ -1067,13 +1154,13 @@ _webhookPlexAuthCts?.Cancel();
         SettingsHeaderSubtitle.Text = "Manage your playback preferences, libraries, and display options.";
         SettingsOverviewPanel.Visibility = Visibility.Collapsed;
         SettingsLayoutGrid.Visibility = Visibility.Visible;
-        SettingsAllSettingsButton.Visibility = ActualWidth < 1024
+        SettingsAllSettingsButton.Visibility = SettingsViewportWidth < 1024
             ? Visibility.Visible
             : Visibility.Collapsed;
         Tab_Click(button, new RoutedEventArgs());
-        SettingsHeaderGrid.Visibility = ActualWidth < 1024 ? Visibility.Collapsed : Visibility.Visible;
+        SettingsHeaderGrid.Visibility = SettingsViewportWidth < 1024 ? Visibility.Collapsed : Visibility.Visible;
         SettingsContentPanel.MaxWidth = button.Tag is "Devices" ? double.PositiveInfinity : 816;
-        ReflowSettingsRows(SettingsContentPanel, ActualWidth < 1024);
+        ReflowSettingsRows(SettingsContentPanel, SettingsViewportWidth < 1024);
         ReflowSettingsShell();
     }
 
@@ -1121,13 +1208,13 @@ _webhookPlexAuthCts?.Cancel();
             (InterfaceTab, "navigation cards menu poster size card captions title year artwork preset primary menu title art logo clearlogo apply all devices"),
             (AccessibilityTab, "accessibility readability contrast motion transparency text size weight high contrast preview date time format clock"),
             (HomeScreenTab, "home screen sections layout rows continue watching next up recently added library order scope reset"),
-            (CardOverlaysTab, "card overlays poster badges overlay accent color preset preview icon position styling quick actions mode enabled default inheritance"),
+            (TitlePagesTab, "title pages title art logo theme music loop spoilers blur unwatched episode descriptions advisory age"),
             (PersonalizeTab, "personalize taste profile recommendations ratings likes dislikes refine"),
             (RequestsTab, "requests watchlist automatic titles request preference"),
             (LibrariesTab, "libraries library visibility access disabled order playback preferences spoken subtitle forced remember"),
             (ImportTab, "history import emby jellyfin plex watched mapping sync fetched matched unmatched progress skipped"),
             (WebhookSyncTab, "webhook sync plex emby jellyfin intake progress watched connections deliveries server url token"),
-            (WatchProvidersTab, "watch providers trakt import export scrobble favorites history progress removals"),
+            (WatchProvidersTab, "watch providers simkl import export scrobble favorites history progress removals"),
             (DevicesTab, "your devices device tv phone tablet browser this device forget hdr dolby vision frame rate fill screen audio subtitle sync offset profile launch remember ask who's watching"),
             (NotificationsSettingsTab, "notifications new episodes email discord browser push webhooks per episode alerts digest url"),
             (ConnectAppsTab, "connect apps silo jellyfin compatible infuse swiftfin jellycon findroid sign in login server address username password pin"),
@@ -1153,7 +1240,7 @@ _webhookPlexAuthCts?.Cancel();
         PlaybackNavGroup.Visibility = new[] { PlaybackTab, SubtitlesTab, DevicesTab }
             .Any(button => button.Visibility == Visibility.Visible)
             ? Visibility.Visible : Visibility.Collapsed;
-        AppearanceNavGroup.Visibility = new[] { InterfaceTab, CardOverlaysTab, AccessibilityTab }
+        AppearanceNavGroup.Visibility = new[] { InterfaceTab, TitlePagesTab, AccessibilityTab }
             .Any(button => button.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
         HomeDiscoveryNavGroup.Visibility = new[] { HomeScreenTab, PersonalizeTab, LibrariesTab, RequestsTab }
             .Any(button => button.Visibility == Visibility.Visible) ? Visibility.Visible : Visibility.Collapsed;
@@ -1177,7 +1264,8 @@ _webhookPlexAuthCts?.Cancel();
         if (sender is not Button clickedButton || clickedButton.Tag is not string tag)
             return;
 
-        var tabs = new[] { InterfaceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, CardOverlaysTab, PersonalizeTab, RequestsTab, ImportTab, WebhookSyncTab, WatchProvidersTab, DevicesTab, NotificationsSettingsTab, ConnectAppsTab, ProfilesTab, AccountPasswordTab, AccessibilityTab, PluginsTab, SessionsTab };
+        if (tag == "CardOverlays") { SelectSettingsSection("Interface"); return; }
+        var tabs = new[] { InterfaceTab, PlaybackTab, LibrariesTab, SubtitlesTab, HomeScreenTab, TitlePagesTab, CardOverlaysTab, PersonalizeTab, RequestsTab, ImportTab, WebhookSyncTab, WatchProvidersTab, DevicesTab, NotificationsSettingsTab, ConnectAppsTab, ProfilesTab, AccountPasswordTab, AccessibilityTab, PluginsTab, SessionsTab };
         foreach (var tab in tabs)
         {
             tab.Style = (Style)Resources["InactiveTabStyle"];
@@ -1188,13 +1276,16 @@ _webhookPlexAuthCts?.Cancel();
         AccountPasswordPanel.Visibility = tag == "Account" ? Visibility.Visible : Visibility.Collapsed;
         if (tag == "Account") { _ = _accountPassword.LoadAsync(); _ = LoadAccountSignInAsync(); }
         else { _accountPassword.Deactivate(); DeactivateAccountSignIn(); }
-        if (tag != "CardOverlays") ++_overlayLoadGeneration;
+        if (tag != "Interface") ++_overlayLoadGeneration;
         InterfacePanel.Visibility = tag == "Interface" ? Visibility.Visible : Visibility.Collapsed;
         PlaybackPanel.Visibility = tag == "Playback" ? Visibility.Visible : Visibility.Collapsed;
         LibrariesPanel.Visibility = tag == "Libraries" ? Visibility.Visible : Visibility.Collapsed;
         SubtitlesPanel.Visibility = tag == "Subtitles" ? Visibility.Visible : Visibility.Collapsed;
         HomeScreenPanel.Visibility = tag == "HomeScreen" ? Visibility.Visible : Visibility.Collapsed;
-        CardOverlaysPanel.Visibility = tag == "CardOverlays" ? Visibility.Visible : Visibility.Collapsed;
+        CardOverlaysPanel.Visibility = tag == "Interface" ? Visibility.Visible : Visibility.Collapsed;
+        TitlePagesPanel.Visibility = tag == "TitlePages" ? Visibility.Visible : Visibility.Collapsed;
+        ActiveSettingsSection = tag;
+        SettingsSectionChanged?.Invoke(tag);
         PersonalizePanel.Visibility = tag == "Personalize" ? Visibility.Visible : Visibility.Collapsed;
         RequestsPanel.Visibility = tag == "Requests" ? Visibility.Visible : Visibility.Collapsed;
         ImportPanel.Visibility = tag == "Import" ? Visibility.Visible : Visibility.Collapsed;
@@ -1215,8 +1306,9 @@ _webhookPlexAuthCts?.Cancel();
         if (tag == "Interface")
         {
             _ = LoadInterfaceCustomizationAsync();
-            _ = ViewModel.LoadTitleArtAsync();
+            _ = LoadCardOverlaySettingsAsync();
         }
+        if (tag == "TitlePages") _ = ViewModel.LoadTitleArtAsync();
         else ViewModel.DeactivateTitleArt();
         if (tag == "Profiles")
         {
@@ -1478,50 +1570,11 @@ _webhookPlexAuthCts?.Cancel();
 
     private void BuildInterfaceCardPreview()
     {
-        InterfaceCardPreview.Children.Clear();
         var presentation = _uiCustomizationService.CardPresentation;
-        var widths = presentation.PosterSize switch
-        {
-            "compact" => new[] { 46d, 46d, 46d, 46d },
-            "large" => new[] { 72d, 72d },
-            _ => new[] { 58d, 58d, 58d },
-        };
-        foreach (var width in widths)
-        {
-            var stack = new StackPanel { Width = width, Spacing = 6 };
-            stack.Children.Add(new Border
-            {
-                Width = width,
-                Height = width * 1.5,
-                CornerRadius = new CornerRadius(7),
-                Background = (Brush)Application.Current.Resources["SidebarAccentBrush"],
-            });
-            if (presentation.Caption != "artwork")
-            {
-                stack.Children.Add(new Border
-                {
-                    Height = 6,
-                    Width = width * 0.8,
-                    HorizontalAlignment = HorizontalAlignment.Left,
-                    CornerRadius = new CornerRadius(3),
-                    Background = (Brush)Application.Current.Resources["PrimaryTextBrush"],
-                    Opacity = 0.7,
-                });
-                if (presentation.Caption == "title_metadata")
-                {
-                    stack.Children.Add(new Border
-                    {
-                        Height = 4,
-                        Width = width * 0.5,
-                        HorizontalAlignment = HorizontalAlignment.Left,
-                        CornerRadius = new CornerRadius(2),
-                        Background = (Brush)Application.Current.Resources["SecondaryTextBrush"],
-                        Opacity = 0.55,
-                    });
-                }
-            }
-            InterfaceCardPreview.Children.Add(stack);
-        }
+        NavigationPreviewPoster.Width = presentation.PosterSize switch { "compact" => 146, "large" => 218, _ => 178 };
+        NavigationPreviewPoster.Height = NavigationPreviewPoster.Width * 1.5;
+        NavigationPreviewCaption.Visibility = presentation.Caption == "artwork" ? Visibility.Collapsed : Visibility.Visible;
+        NavigationPreviewYear.Visibility = presentation.Caption == "title_metadata" ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void BuildInterfacePrimaryMenu()
@@ -1692,6 +1745,7 @@ _webhookPlexAuthCts?.Cancel();
 
     private async Task LoadPersonalizeSummaryAsync()
     {
+        _ = LoadNotInterestedAsync();
         try
         {
             var favorites = await App.Services.GetRequiredService<CatalogApi>().GetFavoritesAsync();
@@ -4528,7 +4582,11 @@ _webhookPlexAuthCts?.Cancel();
             if (connection.Capabilities.SyncDropped)
                 toggles.Children.Add(BuildWatchProviderToggle(vm, "sync_dropped_enabled", "Sync dropped shows", "Dropped shows leave Continue Watching and Next Up. Watching again restores them.", connection.SyncDroppedEnabled));
 
-            outer.Children.Add(toggles);
+            if (!string.IsNullOrWhiteSpace(vm.SettingsError)) toggles.Children.Insert(0, ErrorText(vm.SettingsError));
+            var expansion = new Expander { Header = "Sync settings", Content = toggles, IsExpanded = vm.SettingsExpanded, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+            expansion.Expanding += (_, _) => vm.SettingsExpanded = true;
+            expansion.Collapsed += (_, _) => vm.SettingsExpanded = false;
+            outer.Children.Add(expansion);
         }
 
         card.Child = outer;
@@ -6182,7 +6240,7 @@ _webhookPlexAuthCts?.Cancel();
                 PasswordRevealMode = PasswordRevealMode.Hidden,
                 InputScope = new InputScope
                 {
-                    Names = { new InputScopeName(InputScopeNameValue.Number) },
+                    Names = { new InputScopeName(InputScopeNameValue.NumericPin) },
                 },
             };
             var error = new TextBlock

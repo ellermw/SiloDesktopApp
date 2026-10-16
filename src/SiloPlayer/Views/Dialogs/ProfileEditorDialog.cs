@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Auth;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Converters;
 using SiloPlayer.Helpers;
 using System.Runtime.InteropServices.WindowsRuntime;
@@ -118,6 +119,7 @@ public sealed class ProfileEditorDialog
     private bool _applyingKidsPreset;
     private bool _contentRatingTouched;
     private bool _libraryAccessTouched;
+    private ProfileAddSession? _addSession;
 
     private ProfileEditorDialog(
         XamlRoot xamlRoot,
@@ -176,7 +178,12 @@ public sealed class ProfileEditorDialog
         InitializeValues();
         _dialog.Content = BuildContent();
         _dialog.PrimaryButtonClick += SaveButton_Click;
-        _dialog.Closing += (_, args) => args.Cancel = _saving;
+        _dialog.CloseButtonClick += (_, _) => _addSession?.Cancel();
+        _dialog.Closing += (_, args) =>
+        {
+            args.Cancel = _saving && _addSession == null;
+            if (_addSession != null && SavedProfile == null) _addSession.Cancel();
+        };
     }
 
     public Profile? SavedProfile { get; private set; }
@@ -202,6 +209,18 @@ public sealed class ProfileEditorDialog
             authApi, profileResponse.MaxAdvisoryAgeSupported, profileResponse.RequireAdvisoryAgeSupported);
         await editor._dialog.ShowAsync();
         return new ProfileEditorResult(editor.SavedProfile, editor.SubmittedPin);
+    }
+
+    public static async Task<ProfileEditorResult> ShowForPickerAsync(XamlRoot xamlRoot, ProfileAddSession session)
+    {
+        session.EnsureCurrent();
+        var capabilities = session.Capabilities;
+        var editor = new ProfileEditorDialog(xamlRoot, null, session.Libraries, capabilities.AvatarUploadEnabled,
+            App.Services.GetRequiredService<AuthApi>(), capabilities.MaxAdvisoryAgeSupported, capabilities.RequireAdvisoryAgeSupported)
+        { _addSession = session };
+        using var registration = session.CancellationToken.Register(() => editor._dialog.DispatcherQueue.TryEnqueue(() => editor._dialog.Hide()));
+        await editor._dialog.ShowAsync();
+        return session.IsCurrent ? new(editor.SavedProfile, editor.SubmittedPin) : new(null, "");
     }
 
     private void InitializeValues()
@@ -675,10 +694,12 @@ public sealed class ProfileEditorDialog
     {
         args.Cancel = true;
         if (_saving) return;
-        var deferral = args.GetDeferral();
+        // Captured picker saves use args.Cancel and manual pending state. A
+        // WinUI primary-click deferral blocks the Cancel button until it ends.
+        var deferral = _addSession == null ? args.GetDeferral() : null;
         try
         {
-            if (!Validate()) return;
+            if (_addSession?.CreatedProfile == null && !Validate()) return;
             _saving = true;
             sender.IsPrimaryButtonEnabled = false;
             sender.PrimaryButtonText = "Saving...";
@@ -701,6 +722,17 @@ public sealed class ProfileEditorDialog
                     ? _libraryChecks.Where(pair => pair.Value.IsOn).Select(pair => pair.Key).Order().ToList()
                     : [],
             };
+
+            if (_addSession != null)
+            {
+                var avatar = _avatarFileBytes != null && _avatarFileName != null
+                    ? new ProfileAvatarUpload(_avatarFileName, _avatarFileBytes, _avatarContentType ?? "application/octet-stream") : null;
+                var created = await _addSession.SaveAsync(request, avatar);
+                _addSession.EnsureCurrent();
+                SavedProfile = created; SubmittedPin = request.Pin ?? "";
+                App.Services.GetRequiredService<SiloPlayer.Services.ToastService>().Success("Profile created");
+                _saving = false; sender.Hide(); return;
+            }
 
             var saved = _profile == null
                 ? await _authApi.CreateProfileAsync(request)
@@ -744,6 +776,14 @@ public sealed class ProfileEditorDialog
         }
         catch (Exception ex)
         {
+            if (_addSession is { IsCurrent: false }) { sender.Hide(); return; }
+            if (_addSession?.CreatedProfile != null)
+            {
+                ShowValidation("Profile created, but the avatar could not be uploaded. Retry the avatar upload or cancel to keep the profile.");
+                sender.IsPrimaryButtonEnabled = true; sender.PrimaryButtonText = "Retry avatar";
+                if (sender.Content is Control content) content.IsEnabled = false;
+                return;
+            }
             ShowValidation(ex.Message);
             sender.IsPrimaryButtonEnabled = true;
             sender.PrimaryButtonText = "Save profile";
@@ -751,7 +791,7 @@ public sealed class ProfileEditorDialog
         finally
         {
             _saving = false;
-            deferral.Complete();
+            deferral?.Complete();
         }
     }
 

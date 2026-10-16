@@ -51,11 +51,11 @@ public sealed class CollectionEditorCurrentDraftTests
     }
 
     [Fact]
-    public async Task LegacyTraktLocalEditsOmitImmutableSourceFieldsAndReadNamedCadence()
+    public async Task ManualCollectionRenameOmitsSourceFields()
     {
-        using var wire = new Wire { Kind = "trakt" }; var client = wire.Client(); using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("mine");
+        using var wire = new Wire { Kind = "manual" }; var client = wire.Client(); using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("mine");
         var vm = new CollectionEditorViewModel(new CollectionsApi(client), new CatalogApi(client), new SettingsApi(client), auth);
-        await vm.LoadExistingCommand.ExecuteAsync("created"); Assert.Equal("daily", vm.SyncSchedule);
+        await vm.LoadExistingCommand.ExecuteAsync("created"); Assert.False(vm.IsImportedCollection); Assert.False(vm.CanEditSavedSyncSchedule);
         vm.Name = "Rename only"; await vm.SaveCommand.ExecuteAsync(null); Assert.Null(vm.ErrorMessage);
         Assert.False(wire.LastPatch!.Value.TryGetProperty("max_items", out _)); Assert.False(wire.LastPatch.Value.TryGetProperty("library_ids", out _));
         Assert.Equal("Rename only", wire.LastPatch.Value.GetProperty("name").GetString());

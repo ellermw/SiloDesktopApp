@@ -187,9 +187,9 @@ public sealed partial class CollectionEditorPage
         ManualItemsSection.Visibility = ViewModel.CollectionType == "manual" ? Visibility.Visible : Visibility.Collapsed;
         SmartRulesSection.Visibility = ViewModel.CollectionType == "smart" ? Visibility.Visible : Visibility.Collapsed;
         _smartPreviewPanel.Visibility = SmartRulesSection.Visibility; LayoutSmartPreview();
-        foreach (var control in ImportedLibrariesPanel.Children.OfType<Control>()) control.IsEnabled = ViewModel.CollectionType != "trakt";
-        MaxItemsTextBox.IsEnabled = ViewModel.CollectionType != "trakt";
-        _titleLimit.IsEnabled = _syncedMatchButton.IsEnabled = ViewModel.CollectionType != "trakt" && !ViewModel.IsSaving && !ViewModel.IsReadOnly;
+        foreach (var control in ImportedLibrariesPanel.Children.OfType<Control>()) control.IsEnabled = !ViewModel.IsSaving && !ViewModel.IsReadOnly;
+        MaxItemsTextBox.IsEnabled = !ViewModel.IsSaving && !ViewModel.IsReadOnly;
+        _titleLimit.IsEnabled = _syncedMatchButton.IsEnabled = !ViewModel.IsSaving && !ViewModel.IsReadOnly;
         ImportedSourceSection.Visibility = ViewModel.IsImportedCollection ? Visibility.Visible : Visibility.Collapsed;
         CollectionDirtyDock.Visibility = Visibility.Collapsed; EditorActions.Visibility = Visibility.Visible;
         SaveButtonText.Text = ViewModel.IsEditing ? "Save changes" : "Create collection";

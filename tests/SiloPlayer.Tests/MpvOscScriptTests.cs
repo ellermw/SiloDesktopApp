@@ -605,7 +605,7 @@ public sealed class MpvOscScriptTests
         Assert.Contains("silo-subtitle-search", activate);
         Assert.Contains("silo-subtitle-appearance", activate);
         Assert.Contains("silo-subtitle-ai", activate);
-        Assert.Contains("mp.set_property_number(\"sub-delay\"", activate);
+        Assert.Contains("set_subtitle_offset_ms", activate);
         Assert.Contains("state.subtitle_menu_visible = false", activate);
     }
 

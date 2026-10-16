@@ -284,6 +284,12 @@ local state = {
     playback_spinner_frame = -1,
 }
 
+-- A viewer's held request affects controls only. Media time remains authoritative
+-- for markers, completion and telemetry while the room/native seek catches up.
+local function display_time_pos()
+    return state.watch_party and state.room_seek_position or state.time_pos
+end
+
 local function update_media_timeline()
     local offset = math.max(tonumber(state.timeline_offset) or 0, 0)
     state.time_pos = math.max(tonumber(state.raw_time_pos) or 0, 0) + offset
@@ -1537,7 +1543,7 @@ local function render_osc()
         if state.dragging_seek then
             seek_ratio = state.seek_drag_pos
         else
-            seek_ratio = state.time_pos / state.duration
+            seek_ratio = display_time_pos() / state.duration
         end
     end
     seek_ratio = clamp(seek_ratio, 0, 1)
@@ -1749,7 +1755,7 @@ local function render_osc()
                 subtitle_font_size, config.dim_text_color, "30", ma, 4, nil, false)
         end
     end
-    local time_str = format_time(state.time_pos) .. "  /  " .. format_time(state.duration)
+    local time_str = format_time(display_time_pos()) .. "  /  " .. format_time(state.duration)
     if md.max_w > math.floor(72 * sc) then
         draw_text(ass, time_x, meta_y, time_str,
             math.floor(config.font_size_time * text_sc), config.text_color, "28", ma, 4, "Consolas", false)
@@ -2768,6 +2774,14 @@ capitalize = function(s)
     return s:sub(1,1):upper() .. s:sub(2)
 end
 
+-- Explicit manual preference intent; property observers/remote commands never persist.
+local function set_subtitle_offset_ms(milliseconds)
+    if not state.subtitle_preferences_loaded then return end
+    local bounded = clamp(math.floor(milliseconds + 0.5), -10000, 10000)
+    mp.set_property_number("sub-delay", bounded / 1000)
+    mp.commandv("script-message", "silo-subtitle-offset", tostring(bounded))
+end
+
 local function render_subtitle_menu()
     if not state.subtitle_menu_visible then
         state.subtitle_sync_menu_open = false
@@ -2987,8 +3001,8 @@ local function render_subtitle_menu()
 
     -- WebUI delay rail: label, minus, current value, plus, and reset in one row.
     local delay_ms = math.floor((mp.get_property_number("sub-delay") or 0) * 1000 + 0.5)
-    local delay_alpha = state.active_subtitle >= 0 and "38" or "A0"
-    draw_text(ass, menu_x + padding, cy + item_h / 2, "DELAY",
+    local delay_alpha = state.active_subtitle >= 0 and state.subtitle_preferences_loaded and "38" or "A0"
+    draw_text(ass, menu_x + padding, cy + item_h / 2, not state.subtitle_preferences_loaded and "LOADING" or state.subtitle_preferences_pending and "SAVING" or "DELAY",
         fs_small, config.dim_text_color, "58", 1.0, 4, nil, true)
     local minus_x = menu_x + menu_w - math.floor(196 * sc)
     local value_x = menu_x + menu_w - math.floor(139 * sc)
@@ -3000,7 +3014,7 @@ local function render_subtitle_menu()
     draw_text(ass, plus_x, cy + item_h / 2, "+", fs, config.text_color, delay_alpha, 1.0, 5)
     draw_text(ass, reset_x, cy + item_h / 2, "Reset", fs_small,
         config.dim_text_color, delay_ms ~= 0 and delay_alpha or "A0", 1.0, 5)
-    if state.active_subtitle >= 0 then
+    if state.active_subtitle >= 0 and state.subtitle_preferences_loaded then
         keyboard_row = keyboard_row + 1
         if state.keyboard_menu_kind == "subtitles"
             and state.keyboard_menu_index == keyboard_row then
@@ -4493,11 +4507,11 @@ local function activate_keyboard_menu_item()
             mp.commandv("script-message", "silo-subtitle-ai")
         elseif item.action == "delay" then
             local current = mp.get_property_number("sub-delay") or 0
-            mp.set_property_number("sub-delay", clamp(current + item.delta, -10, 10))
+            set_subtitle_offset_ms((current + item.delta) * 1000)
             render_subtitle_menu()
             return true
         elseif item.action == "delay_reset" then
-            mp.set_property_number("sub-delay", 0)
+            set_subtitle_offset_ms(0)
             render_subtitle_menu()
             return true
         end
@@ -4922,9 +4936,9 @@ local function handle_mouse_down()
                     mp.commandv("script-message", "silo-subtitle-ai")
                 elseif item.action == "delay" then
                     local current = mp.get_property_number("sub-delay") or 0
-                    mp.set_property_number("sub-delay", clamp(current + item.delta, -10, 10))
+                    set_subtitle_offset_ms((current + item.delta) * 1000)
                 elseif item.action == "delay_reset" then
-                    mp.set_property_number("sub-delay", 0)
+                    set_subtitle_offset_ms(0)
                 end
                 -- Delay controls in the WebUI are an interactive rail. Keep
                 -- the menu open so repeated +/-100 ms adjustments and Reset
@@ -5252,6 +5266,12 @@ local function observe_properties()
         end
     end)
 
+    mp.register_script_message("osc-subtitle-preferences", function(loaded, error_text, pending)
+        state.subtitle_preferences_loaded = loaded == "true"
+        state.subtitle_preferences_pending = pending == "true"
+        if error_text and error_text ~= "" then mp.osd_message(error_text, 4) end
+        render_subtitle_menu()
+    end)
     mp.register_script_message("osc-set-subtitle-ai-available", function(val)
         state.subtitle_ai_available = (val == "true" or val == "1")
     end)
@@ -5533,9 +5553,17 @@ local function observe_properties()
         request_tick()
     end)
 
+    mp.register_script_message("osc-room-seek-position", function(value)
+        local position = tonumber(value)
+        state.room_seek_position = position and position == position and math.abs(position) < math.huge
+            and math.max(0, position) or nil
+        request_tick()
+    end)
+
     mp.register_script_message("osc-set-watch-party", function(json_str)
         if not json_str or json_str == "" or json_str == "null" then
             state.watch_party = nil
+            state.room_seek_position = nil
             state.room_quality_offer = nil
             state.watch_party_actions = {}
             state.watch_party_end_confirm = false
@@ -5806,7 +5834,8 @@ local function setup_key_bindings()
     -- OSD shows the current absolute delay so the user can dial it in.
     local function nudge_sub_delay(delta)
         if state.playback_failure_visible then return end
-        mp.commandv("add", "sub-delay", tostring(delta))
+        if not state.subtitle_preferences_loaded then return end
+        set_subtitle_offset_ms(((mp.get_property_number("sub-delay") or 0) + delta) * 1000)
         local d = mp.get_property_number("sub-delay") or 0
         mp.osd_message(string.format("Subtitle delay: %+.0f ms", d * 1000), 1.5)
     end

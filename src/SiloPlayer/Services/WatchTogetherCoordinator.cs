@@ -48,7 +48,12 @@ public sealed class WatchTogetherCoordinator
             _ = playerService.CloseAsync(); // Close captures final progress before releasing the matching session.
         };
         _timer = new() { Interval = TimeSpan.FromMilliseconds(250) };
-        _timer.Tick += (_, _) => { if (EnsureCurrentAuthority()) _sync.Tick(Now); };
+        _timer.Tick += (_, _) =>
+        {
+            if (!EnsureCurrentAuthority()) return;
+            _sync.Tick(Now, DateTimeOffset.UtcNow);
+            _playerService.UpdateRoomSeekDisplay();
+        };
         var auth = App.Services.GetRequiredService<AuthService>();
         _auth = auth;
         auth.LoggedOut += ClearActiveRoom;
@@ -97,6 +102,7 @@ public sealed class WatchTogetherCoordinator
         if (ReferenceEquals(_activeRoom, room)) return;
         ClearActiveRoom();
         _activeRoom = room;
+        _playerService.RoomSeekPosition = () => EnsureCurrentAuthority() ? _sync.InputSeekPosition(Now) : null;
         _roomAuthority = (_auth.SessionGeneration, _auth.SelectedProfileId);
         room.TransportCommandReceived += OnTransportCommandReceived;
         room.PropertyChanged += OnRoomPropertyChanged;
@@ -123,6 +129,7 @@ public sealed class WatchTogetherCoordinator
             _activeRoom.Dispose();
         }
         _activeRoom = null;
+        _playerService.RoomSeekPosition = null;
         _roomAuthority = null;
         _attachedSessionId = null;
         _sync.SetSession(null);
@@ -159,7 +166,9 @@ public sealed class WatchTogetherCoordinator
 
     public void RequestTransport(string action, double positionSeconds, bool isPaused)
     {
-        if (EnsureCurrentAuthority()) _sync.RequestTransport(action, positionSeconds, isPaused);
+        if (!EnsureCurrentAuthority()) return;
+        _sync.RequestTransport(action, positionSeconds, isPaused, Now);
+        _playerService.UpdateRoomSeekDisplay();
     }
 
     private void OnRoomPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -210,18 +219,16 @@ public sealed class WatchTogetherCoordinator
             case "transport_request": room.RequestTransport(message.Action!, message.PositionSeconds, message.IsPaused); break;
             case "ready": room.ReportReady(message.PositionSeconds, message.IsPaused, message.CommandId); break;
             case "buffering": room.ReportBuffering(message.PositionSeconds, message.IsPaused); break;
-            case "state_report": room.ReportState(message.PositionSeconds, message.IsPaused); break;
+            case "state_report": room.ReportState(message.PositionSeconds, message.IsPaused, message.CommandId); break;
         }
     }
 
     private void OnTransportCommandReceived(WatchTogetherTransportCommand command)
     {
         if (!EnsureCurrentAuthority()) return;
-        var delay = 0d;
-        if (DateTimeOffset.TryParse(command.ExecuteAt, out var executeAt))
-            delay = (executeAt - DateTimeOffset.UtcNow).TotalMilliseconds - (_activeRoom?.ServerTimeOffsetMs ?? 0);
-        _sync.QueueCommand(command, Now + (long)Math.Clamp(delay, 0, 3000));
-        _sync.Tick(Now);
+        _sync.QueueCommand(command, _activeRoom!.RoomClock, DateTimeOffset.UtcNow, Now);
+        _sync.Tick(Now, DateTimeOffset.UtcNow);
+        _playerService.UpdateRoomSeekDisplay();
     }
 
     private void OnWatchTogetherActionRequested(string action)

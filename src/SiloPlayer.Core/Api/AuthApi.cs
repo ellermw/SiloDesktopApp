@@ -9,6 +9,17 @@ namespace SiloPlayer.Core.Api;
 
 public partial class AuthApi(SiloApiClient client)
 {
+    public ApiRequestContext CaptureContext() => client.CaptureContext();
+    public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
+    public CapturedProfileAuthority CapturePrimaryAuthority(ApiRequestContext owner, Profile primary, string? proof)
+        => client.CapturePrimaryAuthority(owner, primary, proof);
+    public Task<VerifyPinResponse> VerifyPinAsync(ApiRequestContext owner, string profileId, string pin, CancellationToken ct = default)
+        => client.VerifyProfilePinForManagementAsync(owner, profileId, pin, ct);
+    public Task<Profile> CreateProfileAsync(CapturedProfileAuthority authority, CreateProfileRequest request, CancellationToken ct = default)
+        => client.SendCapturedProfileAsync<Profile>(authority, HttpMethod.Post, "/api/v2/profiles", ProfileBody(request, false), ct);
+    public Task<Profile> UploadProfileAvatarAsync(CapturedProfileAuthority authority, string profileId,
+        string fileName, byte[] bytes, string contentType, CancellationToken ct = default)
+        => client.UploadCapturedProfileAsync<Profile>(authority, $"/api/v2/profiles/{Uri.EscapeDataString(profileId)}/avatar", fileName, bytes, contentType, ct);
     public Task<LoginResponse> LoginAsync(string username, string password, CancellationToken ct = default)
         => LoginAsync(username, password, provider: null, ct);
 

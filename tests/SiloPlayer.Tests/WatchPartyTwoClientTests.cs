@@ -8,6 +8,25 @@ namespace SiloPlayer.Tests;
 public sealed class WatchPartyTwoClientTests
 {
     [Fact]
+    public void LongLatencyGuestKeepsBarrierThenProjectsLatePlayWithoutEcho()
+    {
+        var relay = new Relay { GuestDeliveryDelayMs = 1500 };
+        relay.Start(100);
+        relay.Pump(0); relay.Pump(500);
+        Assert.True(relay.Host.Player.Paused);
+        Assert.True(relay.Guest.Player.Paused);
+        Assert.Equal(new[] { "host" }, relay.ReadyMembers.ToArray());
+        relay.Pump(1500); relay.Pump(2000);
+        Assert.False(relay.Host.Player.Paused);
+        Assert.True(relay.Guest.Player.Paused);
+        relay.Pump(3500);
+        Assert.False(relay.Guest.Player.Paused);
+        Assert.Equal(101.5, relay.Guest.Player.Position);
+        Assert.Equal(0, relay.TransportRequests);
+        Assert.Equal(2, relay.ReadyMembers.Count);
+    }
+
+    [Fact]
     public void HostAndGuestSeekTogetherGuestCannotSeekAndCommandsNeverEcho()
     {
         var relay = new Relay();
@@ -107,6 +126,8 @@ public sealed class WatchPartyTwoClientTests
         private string _state = "playing";
         private double _anchor;
         private bool _recovering;
+        private readonly List<(long DeliveryAt, Client Client, WatchTogetherTransportCommand Command, long ExecuteAt)> _delayed = [];
+        public int GuestDeliveryDelayMs { get; set; }
         public Client Host { get; }
         public Client Guest { get; }
         public List<string> Attachments { get; } = [];
@@ -141,11 +162,17 @@ public sealed class WatchPartyTwoClientTests
             foreach (var client in Clients) Send(client, action, target, id);
             return id;
         }
-        private void Send(Client client, string action, double target, string id) => client.Sync.QueueCommand(new()
+        private void Send(Client client, string action, double target, string id)
         {
-            CommandId = id, SessionId = client.Name + "-session", SelectionRevision = 1,
-            Action = action, PositionSeconds = target, PlaybackState = _state,
-        }, _now);
+            var command = new WatchTogetherTransportCommand
+            {
+                CommandId = id, SessionId = client.Name + "-session", SelectionRevision = 1,
+                Action = action, PositionSeconds = target, PlaybackState = _state,
+            };
+            if (!client.Host && GuestDeliveryDelayMs > 0)
+                _delayed.Add((_now + GuestDeliveryDelayMs, client, command, _now));
+            else client.Sync.QueueCommand(command, _now);
+        }
         private void Snapshots()
         {
             foreach (var client in Clients) client.Sync.SetSnapshot(new()
@@ -163,6 +190,11 @@ public sealed class WatchPartyTwoClientTests
         public void Pump(long now)
         {
             _now = now;
+            foreach (var delivery in _delayed.Where(item => item.DeliveryAt <= now).ToArray())
+            {
+                delivery.Client.Sync.QueueCommand(delivery.Command, delivery.ExecuteAt);
+                _delayed.Remove(delivery);
+            }
             for (var iteration = 0; iteration < 20; iteration++)
             {
                 foreach (var client in Clients) client.Sync.Tick(now);

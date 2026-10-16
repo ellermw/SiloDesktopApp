@@ -6,7 +6,7 @@ namespace SiloPlayer.Tests;
 public class HomeLayoutPolicyTests
 {
     [Fact]
-    public void UnchangedLegacyRowKeepsItsAdminPositionAndNewIdsStayStable()
+    public void OpaqueSourceUsesNormalContiguousPositionsAndStableIds()
     {
         var ids = new Dictionary<string, string>();
         var sections = new[] {
@@ -15,11 +15,25 @@ public class HomeLayoutPolicyTests
             new SettingsSectionEntry { Id = "last", Position = 2 } };
         var first = HomeSectionWritePolicy.Build(sections, [], [], ids);
         var second = HomeSectionWritePolicy.Build(sections, [], [], ids);
-        Assert.DoesNotContain(first, row => row.SectionId == "legacy");
-        Assert.Equal(new int?[] { 0, 2 }, first.Select(row => row.Position));
+        Assert.Contains(first, row => row.SectionId == "legacy");
+        Assert.Equal(new int?[] { 0, 1, 2 }, first.Select(row => row.Position));
         Assert.Equal(first.Select(row => row.Id), second.Select(row => row.Id));
         sections[1].Hidden = true;
         Assert.Contains(HomeSectionWritePolicy.Build(sections, [], [], ids), row => row.SectionId == "legacy" && row.Hidden == true && row.Id != null);
+    }
+
+    [Fact]
+    public void OfferedRecipeWithOpaqueLegacyConfigFollowsGenericReferenceRules()
+    {
+        var file = new HomeLayoutFile { ServerId = "same", Pages = [new() { Overrides = [
+            new() { UserSectionType = "recently_added", UserTitle = "Old file", UserConfig = new() { ["source"] = "trakt" } }] }] };
+        var parsed = HomeLayoutTransfer.Parse(HomeLayoutTransfer.Serialize(file));
+        var target = new HomeLayoutTarget("same", [], new Dictionary<string, bool> { ["recently_added"] = false }, false, new HashSet<string>(), new HashSet<string>());
+        var plan = HomeLayoutTransfer.Plan(parsed, target);
+        Assert.Empty(plan.Skipped);
+        var row = Assert.Single(Assert.Single(plan.Pages).Overrides);
+        Assert.Equal("Old file", row.UserTitle);
+        Assert.Equal("trakt", row.UserConfig!["source"].ToString());
     }
 
     [Fact]
@@ -42,9 +56,9 @@ public class HomeLayoutPolicyTests
     }
 
     [Fact]
-    public void PreviewSkipsRetiredSourcesAndUnpermittedRecipes()
+    public void CrossServerPreviewSkipsUnknownAndUnpermittedRecipes()
     {
-        var file = new HomeLayoutFile { ServerId = "same", Pages = [new() { Overrides = [
+        var file = new HomeLayoutFile { ServerId = "other", Pages = [new() { Overrides = [
             new() { UserSectionType = "custom_filter", UserTitle = "Custom" },
             new() { UserSectionType = "recently_added", UserConfig = new() { ["source"] = "trakt" } }] }] };
         var target = new HomeLayoutTarget("same", [], new Dictionary<string, bool> { ["custom_filter"] = true }, false, new HashSet<string>(), new HashSet<string>());

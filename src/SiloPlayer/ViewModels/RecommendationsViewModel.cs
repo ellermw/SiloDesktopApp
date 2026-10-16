@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.ViewModels;
 
@@ -13,12 +15,31 @@ public partial class RecommendationsViewModel : ObservableObject
     private readonly RecommendationsApi _recommendationsApi;
     private DateTime _lastLoadedAt = DateTime.MinValue;
     private bool _loadInProgress;
+    private bool _reloadRequested;
+    private bool _hasLoaded;
+    private long _loadGeneration;
+    private ApiRequestContext? _loadedContext;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
 
     public RecommendationsViewModel(CatalogApi catalogApi, RecommendationsApi recommendationsApi)
     {
         _catalogApi = catalogApi;
         _recommendationsApi = recommendationsApi;
+        WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, change) =>
+        {
+            if (!_catalogApi.IsCurrentContext(change.Context)) return;
+            _lastLoadedAt = DateTime.MinValue;
+            ++_loadGeneration;
+            foreach (var row in Rows)
+                for (var index = row.Items.Count - 1; index >= 0; index--)
+                    if (row.Items[index].ContentId == change.ItemId && change.Marked.HasValue)
+                    {
+                        MediaItemStateUpdater.SetNotInterested(row.Items[index], change.Marked.Value);
+                        if (change.Marked.Value) row.Items.RemoveAt(index);
+                    }
+            if (_loadInProgress) _reloadRequested = true;
+            else if (_hasLoaded) _ = LoadAsync();
+        });
     }
 
     // Rows displayed on the page (web: rows from /recommendations/discover)
@@ -41,7 +62,10 @@ public partial class RecommendationsViewModel : ObservableObject
     private async Task LoadAsync()
     {
         if (_loadInProgress) return;
-        if (Rows.Count > 0 && DateTime.UtcNow - _lastLoadedAt < CacheDuration) return;
+        var context = _catalogApi.CaptureContext();
+        if (_loadedContext == context && Rows.Count > 0 && DateTime.UtcNow - _lastLoadedAt < CacheDuration) return;
+        if (_loadedContext != context) { Rows.Clear(); TasteProfile = null; _hasLoaded = false; _loadedContext = context; }
+        var generation = ++_loadGeneration;
 
         _loadInProgress = true;
         var isInitialLoad = Rows.Count == 0;
@@ -55,12 +79,11 @@ public partial class RecommendationsViewModel : ObservableObject
             // The WebUI treats taste profile and discover rows as independent
             // queries. Publish the small header card as soon as it is ready;
             // it must not wait behind the much larger discover response.
-            var profileTask = LoadAndPublishTasteProfileAsync();
+            var profileTask = LoadAndPublishTasteProfileAsync(context, generation);
             var rows = await GetDiscoverRowsAsync();
-
-            Rows.Clear();
-            foreach (var row in rows)
-                Rows.Add(row);
+            if (!_catalogApi.IsCurrentContext(context) || generation != _loadGeneration) { await profileTask; return; }
+            ReconcileRows(rows);
+            _hasLoaded = true;
 
             ErrorMessage = null;
             _lastLoadedAt = DateTime.UtcNow;
@@ -70,6 +93,7 @@ public partial class RecommendationsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
+            if (!_catalogApi.IsCurrentContext(context) || generation != _loadGeneration) return;
             System.Diagnostics.Debug.WriteLine($"Recommendations load failed: {ex}");
             if (Rows.Count == 0)
                 ErrorMessage = "Failed to load recommendations.";
@@ -79,18 +103,39 @@ public partial class RecommendationsViewModel : ObservableObject
             _loadInProgress = false;
             IsLoading = false;
             IsTasteProfileLoading = false;
+            if (_reloadRequested) { _reloadRequested = false; _ = LoadAsync(); }
         }
     }
 
-    private async Task LoadAndPublishTasteProfileAsync()
+    private async Task LoadAndPublishTasteProfileAsync(ApiRequestContext context, long generation)
     {
         try
         {
-            TasteProfile = await GetTasteProfileAsync();
+            var profile = await GetTasteProfileAsync();
+            if (_catalogApi.IsCurrentContext(context) && generation == _loadGeneration) TasteProfile = profile;
         }
         finally
         {
             IsTasteProfileLoading = false;
+        }
+    }
+
+    private void ReconcileRows(IReadOnlyList<RecommendationRowDisplay> incoming)
+    {
+        static string Key(RecommendationRowDisplay row) => row.Type + "\n" + row.SectionKind + "\n" + row.SectionKey + "\n" + row.Label;
+        var desired = new List<RecommendationRowDisplay>();
+        foreach (var next in incoming)
+        {
+            var mounted = Rows.FirstOrDefault(row => Key(row) == Key(next));
+            if (mounted == null) desired.Add(next);
+            else { MediaItemCollectionReconciler.Apply(mounted.Items, next.Items.ToArray()); desired.Add(mounted); }
+        }
+        foreach (var stale in Rows.Where(row => !desired.Contains(row)).ToArray()) Rows.Remove(stale);
+        for (var index = 0; index < desired.Count; index++)
+        {
+            var existing = Rows.IndexOf(desired[index]);
+            if (existing < 0) Rows.Insert(index, desired[index]);
+            else if (existing != index) Rows.Move(existing, index);
         }
     }
 
@@ -124,7 +169,7 @@ public partial class RecommendationsViewModel : ObservableObject
                     SectionKey = row.SectionKey
                 };
 
-                foreach (var item in row.Items)
+                foreach (var item in row.Items.Where(item => item.UserState?.NotInterested != true))
                     displayRow.Items.Add(item);
 
                 if (displayRow.Items.Count > 0)
@@ -177,7 +222,9 @@ public partial class RecommendationsViewModel : ObservableObject
                         BackdropUrl = detail.BackdropUrl,
                         BackdropThumbhash = detail.BackdropThumbhash,
                         LogoUrl = detail.LogoUrl,
-                        UserState = detail.UserData != null ? new UserState { Played = detail.UserData.Played } : null
+                        UserState = detail.UserState != null ? new UserState { Played = detail.UserState.Played,
+                            IsFavorite = detail.UserState.IsFavorite, InWatchlist = detail.UserState.InWatchlist,
+                            NotInterested = detail.UserState.NotInterested } : detail.UserData != null ? new UserState { Played = detail.UserData.Played } : null
                     };
                 }
                 catch
@@ -189,7 +236,7 @@ public partial class RecommendationsViewModel : ObservableObject
             var items = await Task.WhenAll(tasks);
             foreach (var item in items)
             {
-                if (item != null)
+                if (item != null && item.UserState?.NotInterested != true)
                     displayRow.Items.Add(item);
             }
 

@@ -205,6 +205,8 @@ public partial class LibraryCardViewModel : ObservableObject
 public partial class WatchProviderCardViewModel : ObservableObject
 {
     private readonly WatchProviderSummary _summary;
+    [ObservableProperty] private bool _settingsExpanded;
+    [ObservableProperty] private string? _settingsError;
 
     public WatchProviderCardViewModel(WatchProviderSummary summary)
     {
@@ -263,12 +265,23 @@ public partial class SettingsViewModel : ObservableObject
 {
     // Published only after an authoritative ui.title_art write or override reset.
     public static event EventHandler? TitleArtPreferenceChanged;
+    [ObservableProperty] private bool _episodeSpoilersSupported;
+    [ObservableProperty] private bool _hideUnwatchedEpisodeImages;
+    [ObservableProperty] private bool _hideUnwatchedEpisodeOverviews;
+    partial void OnHideUnwatchedEpisodeImagesChanged(bool value)
+    { if (!_suppressSave && EpisodeSpoilersSupported) _ = SaveContractProfileSettingAsync("catalog.hide_unwatched_episode_images", value); }
+    partial void OnHideUnwatchedEpisodeOverviewsChanged(bool value)
+    { if (!_suppressSave && EpisodeSpoilersSupported) _ = SaveContractProfileSettingAsync("catalog.hide_unwatched_episode_overviews", value); }
+
     private const string PlaybackAudioLanguageSettingKey = "playback.audio_language";
     private static readonly string[] ContractPlaybackSettingKeys =
     [
         "playback.preferred_quality",
         "playback.max_bitrate_kbps",
         PlaybackAudioLanguageSettingKey,
+        "playback.subtitle_language",
+        "playback.subtitle_mode",
+        "playback.show_forced_subtitles",
         "catalog.metadata_language",
         "catalog.metadata_language_overrides",
         "catalog.show_advisory_age",
@@ -574,16 +587,6 @@ public partial class SettingsViewModel : ObservableObject
                 _accessibilityService.Apply(TextScale, TextWeight, HighContrast);
             }
 
-            async Task LoadNextUpAsync()
-            {
-                try
-                {
-                    var nextUp = await _settingsApi.GetSettingAsync("next_up_mode");
-                    NextUpMode = string.IsNullOrWhiteSpace(nextUp.Value) ? "combined" : nextUp.Value;
-                }
-                catch { NextUpMode = "combined"; }
-            }
-
             async Task LoadAutoPlayAsync()
             {
                 try
@@ -596,14 +599,19 @@ public partial class SettingsViewModel : ObservableObject
 
             async Task LoadContractPlaybackAsync()
             {
+                var context = _settingsApi.CaptureContext();
                 try
                 {
                     SeekSettingsAvailable = false;
                     SeekSettingsStatus = "Checking seek settings compatibility…";
                     var capability = await _settingsApi.GetContractCapabilitiesAsync();
+                    if (!_settingsApi.IsCurrentContext(context)) return;
                     var supported = capability.ApiVersion == 1 && capability.Revision >= 9 && capability.SupportsBatchedEffective && capability.SupportsIdempotentWrites;
                     var keys = supported ? ContractPlaybackSettingKeys : ContractPlaybackSettingKeys.Except(SeekPreferences.Keys).ToArray();
+                    EpisodeSpoilersSupported = capability.ApiVersion == 1 && capability.Revision >= 17;
+                    if (EpisodeSpoilersSupported) keys = [.. keys, "catalog.hide_unwatched_episode_images", "catalog.hide_unwatched_episode_overviews"];
                     var response = await _settingsApi.GetContractEffectiveSettingsAsync(keys);
+                    if (!_settingsApi.IsCurrentContext(context)) return;
                     SeekSettingsAvailable = supported && SeekPreferences.Keys.All(key => response.Settings.Any(entry => entry.Key == key));
                     SeekSettingsStatus = SeekSettingsAvailable ? "" : "This server does not support profile seek intervals.";
                     var values = response.Settings.ToDictionary(setting => setting.Key, StringComparer.Ordinal);
@@ -611,6 +619,9 @@ public partial class SettingsViewModel : ObservableObject
                     QualityPreference = ReadString(values, "playback.preferred_quality", "auto");
                     MaxBitrateKbps = ReadNullableNumber(values, "playback.max_bitrate_kbps");
                     AudioLanguage = ReadNullableString(values, PlaybackAudioLanguageSettingKey);
+                    SubtitleLanguage = ReadNullableString(values, "playback.subtitle_language");
+                    SubtitleMode = ReadString(values, "playback.subtitle_mode", "auto");
+                    ShowForcedSubtitles = ReadBool(values, "playback.show_forced_subtitles", true);
                     PreferredMetadataLanguage = ReadNullableString(values, "catalog.metadata_language");
                     _metadataLanguageOverrides = ReadStringMap(values, "catalog.metadata_language_overrides");
                     OnPropertyChanged(nameof(MetadataLanguageOverrides));
@@ -619,6 +630,8 @@ public partial class SettingsViewModel : ObservableObject
                     var seeks = SeekPreferences.Read(response);
                     VideoSkipBackSeconds = seeks.VideoBack; VideoSkipForwardSeconds = seeks.VideoForward;
                     AudiobookSkipBackSeconds = seeks.AudiobookBack; AudiobookSkipForwardSeconds = seeks.AudiobookForward;
+                    HideUnwatchedEpisodeImages = ReadBool(values, "catalog.hide_unwatched_episode_images", false);
+                    HideUnwatchedEpisodeOverviews = ReadBool(values, "catalog.hide_unwatched_episode_overviews", false);
                     ShowAdvisoryAge = ReadBool(values, "catalog.show_advisory_age", false);
                     HideWatchedItems = ReadBool(values, "home.hide_watched_items", false);
                     ThemeMusicEnabled = ReadBool(values, "ui.theme_music_enabled", false);
@@ -627,11 +640,13 @@ public partial class SettingsViewModel : ObservableObject
                     AutoSkipRecap = ReadBool(values, "playback.auto_skip_recap", AutoSkipRecap);
                     AutoPlayNextPreview = ReadBool(values, "playback.auto_play_next_preview", AutoPlayNextPreview);
                     AutoPlayNext = ReadBool(values, "playback.auto_play_next", AutoPlayNext);
+                    _nextUpDeviceOverride = values.TryGetValue("ui.next_up_mode", out var nextUpEntry) && nextUpEntry.Source == "profile_device";
                     NextUpMode = ReadString(values, "ui.next_up_mode",
                         string.IsNullOrWhiteSpace(NextUpMode) ? "combined" : NextUpMode);
                 }
                 catch
                 {
+                    if (!_settingsApi.IsCurrentContext(context)) return;
                     SeekSettingsAvailable = false;
                     SeekSettingsStatus = "Could not check seek settings compatibility. Reload settings to retry.";
                     // Servers predating the typed settings contract still use
@@ -651,7 +666,6 @@ public partial class SettingsViewModel : ObservableObject
                 LoadDateAsync(),
                 LoadTimeAsync(),
                 LoadAccessibilityAsync(),
-                LoadNextUpAsync(),
                 LoadAutoPlayAsync(),
                 LoadContractPlaybackAsync(),
                 LoadSubtitleAppearanceAsync(),
@@ -884,7 +898,7 @@ public partial class SettingsViewModel : ObservableObject
 
     partial void OnShowForcedSubtitlesChanged(bool value)
     {
-        if (!_suppressSave) _ = SaveProfileFieldAsync("show_forced_subtitles", value);
+        if (!_suppressSave) _ = SaveContractProfileSettingAsync("playback.show_forced_subtitles", value);
     }
 
     partial void OnLibraryRestrictionsEnabledChanged(bool value)
@@ -969,9 +983,10 @@ public partial class SettingsViewModel : ObservableObject
         var saved = false;
         try
         {
-            await _settingsApi.SetContractSettingValueAsync(key, "profile", value);
+            await _settingsApi.SetContractSettingValueAsync(context, key, "profile", value);
             saved = true;
             if (!_settingsApi.IsCurrentContext(context)) return true;
+            _settingsApi.NotifyLocalizedSettingChanged(key);
             await ClearSupportedDeviceOverrideAsync(key);
             if (!_settingsApi.IsCurrentContext(context)) return true;
             if (SeekPreferences.Keys.Contains(key))
@@ -993,7 +1008,8 @@ public partial class SettingsViewModel : ObservableObject
         var context = _settingsApi.CaptureContext();
         try
         {
-            await _settingsApi.DeleteContractSettingValueAsync(key, "profile");
+            await _settingsApi.DeleteContractSettingValueAsync(context, key, "profile");
+            if (_settingsApi.IsCurrentContext(context)) _settingsApi.NotifyLocalizedSettingChanged(key);
             if (!_settingsApi.IsCurrentContext(context)) return;
             await ClearSupportedDeviceOverrideAsync(key);
             if (!_settingsApi.IsCurrentContext(context)) return;
@@ -1059,26 +1075,30 @@ public partial class SettingsViewModel : ObservableObject
     private async Task SaveSubtitleLanguageAsync()
     {
         if (_suppressSave) return;
-        await SaveProfileFieldAsync("subtitle_language", SubtitleLanguage);
+        await SaveContractProfileSettingAsync("playback.subtitle_language", string.IsNullOrWhiteSpace(SubtitleLanguage) ? null : SubtitleLanguage);
     }
 
     [RelayCommand]
     private async Task SaveSubtitleModeAsync()
     {
         if (_suppressSave) return;
-        await SaveProfileFieldAsync("subtitle_mode", SubtitleMode);
+        await SaveContractProfileSettingAsync("playback.subtitle_mode", SubtitleMode);
     }
 
+    private bool _nextUpDeviceOverride;
     [RelayCommand]
     private async Task SaveNextUpModeAsync()
     {
         if (_suppressSave) return;
+        var context = _settingsApi.CaptureContext();
         try
         {
-            await _settingsApi.PutSettingAsync("next_up_mode", NextUpMode);
+            await _settingsApi.SaveProfileDefaultAsync(context, "ui.next_up_mode", NextUpMode, _nextUpDeviceOverride);
+            if (!_settingsApi.IsCurrentContext(context)) return;
+            _nextUpDeviceOverride = false;
             ShowStatus("Next up mode saved");
         }
-        catch (Exception ex) { ErrorMessage = $"Failed to save next up mode: {ex.Message}"; }
+        catch (Exception ex) { if (_settingsApi.IsCurrentContext(context)) ErrorMessage = $"Failed to save next up mode: {ex.Message}"; }
     }
 
     private async Task SaveProfileFieldAsync(string field, object value)
@@ -1185,15 +1205,20 @@ public partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task ResetNextUpModeAsync()
     {
+        var context = _settingsApi.CaptureContext();
         try
         {
-            await _settingsApi.DeleteSettingAsync("next_up_mode");
+            await _settingsApi.ResetProfileDefaultAsync(context, "ui.next_up_mode");
+            if (!_settingsApi.IsCurrentContext(context)) return;
+            _nextUpDeviceOverride = false;
+            var resolved = await _settingsApi.GetContractEffectiveSettingsAsync(["ui.next_up_mode"]);
+            if (!_settingsApi.IsCurrentContext(context)) return;
             _suppressSave = true;
-            NextUpMode = "combined";
-            _suppressSave = false;
+            try { NextUpMode = ReadString(resolved.Settings.ToDictionary(entry => entry.Key), "ui.next_up_mode", "combined"); }
+            finally { _suppressSave = false; }
             ShowStatus("Next up preference reset");
         }
-        catch (Exception ex) { ErrorMessage = $"Failed to reset next up preference: {ex.Message}"; }
+        catch (Exception ex) { if (_settingsApi.IsCurrentContext(context)) ErrorMessage = $"Failed to reset next up preference: {ex.Message}"; }
     }
 
     // ===== Watch Providers =====
@@ -1352,17 +1377,24 @@ public partial class SettingsViewModel : ObservableObject
     public async Task UpdateWatchProviderConnectionAsync(WatchProviderCardViewModel card, IDictionary<string, object?> updates)
     {
         if (card.IsBusy) return;
+        var context = _settingsApi.CaptureContext();
         card.IsBusy = true;
         ErrorMessage = null;
 
         try
         {
-            card.Connection = await _watchProvidersApi.UpdateConnectionAsync(card.ProviderKey, updates);
+            var connection = await _watchProvidersApi.UpdateConnectionAsync(card.ProviderKey, updates);
+            if (!_settingsApi.IsCurrentContext(context)) return;
+            card.Connection = connection;
+            card.SettingsError = null;
             ShowStatus($"{card.DisplayName} saved");
         }
         catch (Exception ex)
         {
+            if (!_settingsApi.IsCurrentContext(context)) return;
             ErrorMessage = $"Failed to save {card.DisplayName}: {ex.Message}";
+            card.SettingsExpanded = true;
+            card.SettingsError = ErrorMessage;
             await LoadWatchProviderCardStateAsync(card);
         }
         finally
@@ -1471,20 +1503,56 @@ public partial class SettingsViewModel : ObservableObject
 
     private Core.Models.Settings.SubtitleAppearance _savedSubtitleAppearance = new();
 
-    private async Task LoadSubtitleAppearanceAsync()
+    private SubtitlePreferenceSnapshot? _subtitlePreferences;
+    [ObservableProperty] private bool _isSavingSubtitlePreferences;
+    [ObservableProperty] private bool _subtitlePreferencesLoaded;
+    [ObservableProperty] private int _subtitleOffsetMs;
+    [ObservableProperty] private bool _supportsProfileSubtitleTiming;
+    public SettingsApi SubtitleSettingsApi => _settingsApi;
+    public string SubtitleTimingDescription => SupportsProfileSubtitleTiming
+        ? "Shift every subtitle earlier or later for this profile on every device."
+        : "This server saves subtitle timing for this device.";
+
+    private Task LoadSubtitleAppearanceAsync() => ReloadSubtitlePreferencesAsync();
+    public async Task ReloadSubtitlePreferencesAsync()
     {
+        var context = _settingsApi.CaptureContext();
         try
         {
-            var response = await _settingsApi.GetContractEffectiveSettingsAsync(["playback.subtitle_appearance"]);
-            var entry = response.Settings.FirstOrDefault(setting => setting.Key == "playback.subtitle_appearance");
-            HasSubtitleAppearanceDeviceOverride = string.Equals(entry?.Scope, "profile_device", StringComparison.OrdinalIgnoreCase);
-            ApplySubtitleAppearanceDraft(Core.Models.Settings.SubtitleAppearance.Parse(entry?.Value.GetRawText()), remember: true);
+            var state = await _settingsApi.Subtitles.LoadAsync(context);
+            if (!_settingsApi.IsCurrentContext(context)) return;
+            _subtitlePreferences = state;
+            HasSubtitleAppearanceDeviceOverride = state.IsAppearanceCustomized;
+            ApplySubtitleAppearanceDraft(state.Appearance, remember: true);
+            SubtitleOffsetMs = state.OffsetMs;
+            SupportsProfileSubtitleTiming = state.SupportsProfileTiming;
+            OnPropertyChanged(nameof(SubtitleTimingDescription));
+            SubtitlePreferencesLoaded = true;
         }
-        catch
+        catch (OperationCanceledException) when (!_settingsApi.IsCurrentContext(context)) { }
+        catch (Exception ex)
         {
-            HasSubtitleAppearanceDeviceOverride = false;
-            ApplySubtitleAppearanceDraft(new Core.Models.Settings.SubtitleAppearance(), remember: true);
+            if (!_settingsApi.IsCurrentContext(context)) return;
+            SubtitlePreferencesLoaded = false;
+            ErrorMessage = $"Could not load subtitle preferences: {ex.Message}";
         }
+    }
+
+    public async Task SetSubtitleOffsetAsync(int milliseconds, bool reset = false)
+    {
+        if (!SubtitlePreferencesLoaded || IsSavingSubtitlePreferences || _subtitlePreferences is not { } state) return;
+        IsSavingSubtitlePreferences = true;
+        try
+        {
+            if (reset) await _settingsApi.Subtitles.ResetOffsetAsync(state);
+            else await _settingsApi.Subtitles.SaveOffsetAsync(state, milliseconds);
+            if (!_settingsApi.IsCurrentContext(state.Context)) return;
+            await ReloadSubtitlePreferencesAsync();
+            if (_settingsApi.IsCurrentContext(state.Context)) ShowStatus("Subtitle offset saved");
+        }
+        catch (OperationCanceledException) when (!_settingsApi.IsCurrentContext(state.Context)) { }
+        catch (Exception ex) { if (_settingsApi.IsCurrentContext(state.Context)) ErrorMessage = $"Failed to save subtitle offset: {ex.Message}"; }
+        finally { IsSavingSubtitlePreferences = false; }
     }
 
     private Core.Models.Settings.SubtitleAppearance BuildSubtitleAppearanceDraft() => new()
@@ -1519,49 +1587,38 @@ public partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private async Task SaveSubtitleAppearanceAsync()
     {
+        if (IsSavingSubtitlePreferences || _subtitlePreferences is not { } state) return;
+        IsSavingSubtitlePreferences = true;
         try
         {
-            var appearance = BuildSubtitleAppearanceDraft();
-            using (var document = JsonDocument.Parse(appearance.ToJson()))
-            {
-                await _settingsApi.SetContractSettingValueAsync("playback.subtitle_appearance", "profile_device",
-                    document.RootElement.Clone());
-            }
-            _savedSubtitleAppearance = appearance.Clone();
-            HasSubtitleAppearanceDeviceOverride = true;
-
-            // B55 follow-up: push the saved values to mpv so they apply to
-            // the currently playing session AND the next one (PlayerService
-            // caches and replays on init).
-            try
-            {
-                var player = App.Services.GetRequiredService<PlayerService>();
-                player.ApplySubtitleAppearance(appearance);
-            }
-            catch { /* mpv not initialized yet — will be applied on first play */ }
-
-            ShowStatus("Subtitle appearance saved");
+            await _settingsApi.Subtitles.SaveAppearanceAsync(state, BuildSubtitleAppearanceDraft());
+            if (!_settingsApi.IsCurrentContext(state.Context)) return;
+            await ReloadSubtitlePreferencesAsync();
+            if (_settingsApi.IsCurrentContext(state.Context)) ShowStatus("Subtitle appearance saved for this profile");
         }
-        catch (Exception ex) { ErrorMessage = $"Failed to save subtitle appearance: {ex.Message}"; }
+        catch (OperationCanceledException) when (!_settingsApi.IsCurrentContext(state.Context)) { }
+        catch (Exception ex) { if (_settingsApi.IsCurrentContext(state.Context)) ErrorMessage = $"Failed to save subtitle appearance: {ex.Message}"; }
+        finally { IsSavingSubtitlePreferences = false; }
     }
 
     [RelayCommand]
-    private void DiscardSubtitleAppearance()
-    {
-        ApplySubtitleAppearanceDraft(_savedSubtitleAppearance, remember: false);
-    }
+    private void DiscardSubtitleAppearance() => ApplySubtitleAppearanceDraft(_savedSubtitleAppearance, remember: false);
 
     [RelayCommand]
     private async Task ResetSubtitleAppearanceAsync()
     {
+        if (IsSavingSubtitlePreferences || _subtitlePreferences is not { } state) return;
+        IsSavingSubtitlePreferences = true;
         try
         {
-            await _settingsApi.DeleteContractSettingValueAsync("playback.subtitle_appearance", "profile_device");
-            await LoadSubtitleAppearanceAsync();
-            try { App.Services.GetRequiredService<PlayerService>().ApplySubtitleAppearance(_savedSubtitleAppearance); } catch { }
-            ShowStatus("Subtitle appearance reset");
+            await _settingsApi.Subtitles.ResetAppearanceAsync(state);
+            if (!_settingsApi.IsCurrentContext(state.Context)) return;
+            await ReloadSubtitlePreferencesAsync();
+            if (_settingsApi.IsCurrentContext(state.Context)) ShowStatus("Subtitle appearance reset to the default");
         }
-        catch (Exception ex) { ErrorMessage = $"Failed to reset subtitle appearance: {ex.Message}"; }
+        catch (OperationCanceledException) when (!_settingsApi.IsCurrentContext(state.Context)) { }
+        catch (Exception ex) { if (_settingsApi.IsCurrentContext(state.Context)) ErrorMessage = $"Failed to reset subtitle appearance: {ex.Message}"; }
+        finally { IsSavingSubtitlePreferences = false; }
     }
 
     // ===== Home Screen Sections =====
@@ -1670,7 +1727,7 @@ public partial class SettingsViewModel : ObservableObject
                 var removed = _pendingHomeRemoved;
                 _pendingHomeRows = null;
                 var overrides = HomeSectionWritePolicy.Build(snapshot, _rawHomeOverrides, removed, _homeOverrideIds,
-                    baseline: _homeBaseline, changedSectionIds: _homeTouchedIds);
+                    baseline: _homeBaseline);
                 try
                 {
                     await _settingsApi.UpdateProfileSectionsAsync(new SaveOverridesRequest

@@ -158,6 +158,8 @@
                 LineStackingStrategy="BlockLineHeight"
                 Margin="0,0,0,28" />
 
+            <TextBlock x:Name="HeroTranslationLabel" Text="AI-translated overview" FontSize="11" Foreground="{StaticResource TertiaryTextBrush}" Visibility="Collapsed" Margin="0,0,0,8" />
+            <Button x:Name="HeroTranslateButton" Content="Translate description" Style="{StaticResource SecondaryButtonStyle}" Click="HeroTranslateButton_Click" Visibility="Collapsed" HorizontalAlignment="Left" Margin="0,0,0,12" />
             <StackPanel Orientation="Horizontal" Spacing="12">
                 <!-- Primary CTA: Play (pill-primary) -->
                 <Button x:Name="PlayButton" Style="{StaticResource AccentButtonStyle}" Padding="22.4,12.48" BorderThickness="0" UseLayoutRounding="False"

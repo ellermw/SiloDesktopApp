@@ -8,22 +8,22 @@ namespace SiloPlayer.Tests;
 public class HomeLayoutMergeTests
 {
     [Fact]
-    public void Cross_server_import_keeps_target_admin_overrides_and_unrecreatable_custom_rows()
+    public void Cross_server_import_keeps_target_admin_overrides_and_replaces_all_custom_rows()
     {
         var rows = new List<RawSectionOverride> { new() { Id = "admin-id", SectionId = "target-admin", Hidden = true },
             new() { Id = "legacy-id", UserConfig = "{\"source\":\"trakt\"}" }, new() { Id = "replaceable-custom" } };
-        var merged = HomeLayoutMerge.Build(new() { Overrides = [new() { Id = "imported" }] }, rows, false, new HashSet<string>());
-        Assert.Equal(new[] { "admin-id", "legacy-id", "imported" }, merged.Select(x => x.Id));
+        var merged = HomeLayoutMerge.Build(new() { Overrides = [new() { Id = "imported" }] }, rows, false);
+        Assert.Equal(new[] { "admin-id", "imported" }, merged.Select(x => x.Id));
         Assert.True(merged[0].Hidden);
     }
     [Fact]
-    public void Same_server_import_reuses_last_admin_id_and_keeps_saved_legacy_hide_unchanged()
+    public void Same_server_import_reuses_last_admin_id_and_applies_imported_hide()
     {
         var rows = new List<RawSectionOverride> { new() { Id = "old", SectionId = "a" }, new() { Id = "last", SectionId = "a" },
             new() { Id = "legacy-id", SectionId = "legacy", Hidden = true } };
         var merged = HomeLayoutMerge.Build(new() { Overrides = [new() { SectionId = "a" }, new() { SectionId = "a" },
-            new() { SectionId = "legacy", Hidden = false }] }, rows, true, new HashSet<string> { "legacy" });
-        Assert.Equal(new[] { "last", "legacy-id" }, merged.Select(x => x.Id)); Assert.True(merged[1].Hidden);
+            new() { SectionId = "legacy", Hidden = false }] }, rows, true);
+        Assert.Equal(new[] { "last", "legacy-id" }, merged.Select(x => x.Id)); Assert.False(merged[1].Hidden);
     }
     [Fact]
     public async Task Section_writes_are_ordered_and_nested_import_transaction_does_not_deadlock()

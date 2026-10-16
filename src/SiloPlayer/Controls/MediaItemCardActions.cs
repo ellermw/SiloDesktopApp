@@ -40,6 +40,28 @@ public static class MediaItemCardActions
         }
     }
 
+    public static async Task ResetProgressAsync(MediaItem item)
+    {
+        var catalog = App.Services.GetRequiredService<CatalogApi>();
+        var toast = App.Services.GetRequiredService<ToastService>();
+        var context = catalog.CaptureContext();
+        try
+        {
+            await MediaItemActionExecutor.ResetProgressAsync(item, async () =>
+            {
+                await catalog.ClearResumePositionAsync(item.ContentId);
+                if (!catalog.IsCurrentContext(context)) throw new OperationCanceledException();
+            });
+            App.Services.GetService<ItemDetailPrefetchCache>()?.Invalidate(item.ContentId);
+            WeakReferenceMessenger.Default.Send(new PlaybackProgressUpdated(item.ContentId, 0,
+                item.DurationSeconds ?? 0, item.UserState?.Played == true));
+            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.PlaybackProgress, item.ContentId, item.SeriesId));
+            toast.Success("Progress reset");
+        }
+        catch (OperationCanceledException) when (!catalog.IsCurrentContext(context)) { }
+        catch (Exception ex) { toast.Error(ex); }
+    }
+
     public static async Task ToggleFavoriteAsync(MediaItem item)
     {
         var catalog = App.Services.GetRequiredService<CatalogApi>();

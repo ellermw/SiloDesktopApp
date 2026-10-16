@@ -50,7 +50,6 @@ public partial class PlayerService : IDisposable
     private readonly SemaphoreSlim _subtitleAppearanceLoadGate = new(1, 1);
     private readonly SemaphoreSlim _playbackDialogGate = new(1, 1);
     private readonly AutoSkipMarkerIdentity _autoSkipMarkerIdentity = new();
-    private string? _subtitleAppearanceProfileId;
 
     private MpvPlayer? _mpv;
     private MpvVideoWindow? _videoWindow;
@@ -121,6 +120,7 @@ public partial class PlayerService : IDisposable
     private long _loadedMediaInitGeneration;
     private int _consecutiveFileLoadTimeouts;
     private bool? _restorePausedAfterLoad;
+    private readonly ProgressiveRemuxIdleResume _idleRemuxResume = new();
     private PlaybackWebSocket? _webSocket;
     private sealed record PlaybackTerminalState(
         double Position,
@@ -168,6 +168,7 @@ public partial class PlayerService : IDisposable
         _localAuthority = new PlaybackAuthorityScope(apiClient, authService, playbackApi, catalogApi, settingsApi);
         _activeAuthority = _localAuthority;
         _settingsService = settingsService;
+        ObserveSubtitlePreferences();
 
         // Restore persisted volume + mute so the player starts where the user
         // left it instead of at 100%. These are applied to mpv on
@@ -368,7 +369,7 @@ public partial class PlayerService : IDisposable
     {
         var context = authority.ApiClient.CaptureContext();
         return string.Join('\n', authority.ScopeId, context.BaseUrl, context.AuthenticationGeneration,
-            context.RequestContextGeneration, profileId);
+            context.RequestContextGeneration, authority.ApiClient.LocalizedReads.Generation, profileId);
     }
 
     /// <summary>
@@ -397,12 +398,15 @@ public partial class PlayerService : IDisposable
     private string? _offeredFromQuality;
     private MpvPlayer? _roomInputPlayer;
     private bool _roomPreviousDefaultBindings;
+    private string? _lastRoomSeekDisplay;
+    private MpvPlayer? _roomSeekDisplayPlayer;
 
     public void SetWatchTogetherPlayback(bool active)
     {
         IsWatchTogetherPlayback = active;
         if (!active) _offeredRoomQuality = _offeredFromQuality = null;
         UpdateRoomInputBindings();
+        UpdateRoomSeekDisplay();
     }
 
     private void UpdateRoomInputBindings()
@@ -441,6 +445,28 @@ public partial class PlayerService : IDisposable
         if (IsWatchTogetherPlayback)
             RoomTransportRequested?.Invoke("seek", seconds, IsPaused);
         else SeekFastTo(seconds, forceResume);
+    }
+
+    /// <summary>The newest accepted room seek is the origin of a burst of relative skips.
+    /// Native Position remains the actual media time used for progress and room reports.</summary>
+    public Func<double?>? RoomSeekPosition { private get; set; }
+    public double UserSeekPosition => IsWatchTogetherPlayback ? RoomSeekPosition?.Invoke() ?? Position : Position;
+
+    public void UpdateRoomSeekDisplay()
+    {
+        var target = IsWatchTogetherPlayback ? RoomSeekPosition?.Invoke() : null;
+        var value = target?.ToString("R", System.Globalization.CultureInfo.InvariantCulture) ?? "";
+        if (ReferenceEquals(_roomSeekDisplayPlayer, _mpv) && value == _lastRoomSeekDisplay) return;
+        _roomSeekDisplayPlayer = _mpv;
+        _lastRoomSeekDisplay = value;
+        _mpv?.SendScriptMessage("osc-room-seek-position", value);
+    }
+
+    public void RequestUserRelativeSeek(double seconds, bool forceResume = false)
+    {
+        if (!double.IsFinite(seconds)) return;
+        if (IsWatchTogetherPlayback) RoomTransportRequested?.Invoke("seek_relative", seconds, IsPaused);
+        else RequestUserSeek(Math.Clamp(CurrentMediaPosition + seconds, 0, Math.Max(Duration, CurrentMediaPosition)), forceResume);
     }
 
     public bool IsNativeSeeking => _mpv?.GetPropertyFlag("seeking") == true;
@@ -502,8 +528,40 @@ public partial class PlayerService : IDisposable
     public void SetPaused(bool paused)
     {
         if (_mpv == null) return;
+        if (_idleRemuxResume.IsReopening)
+        {
+            _idleRemuxResume.SetPauseIntent(paused);
+            _restorePausedAfterLoad = paused;
+            if (paused) _mpv.Pause();
+            return;
+        }
+        if (!paused && TryReopenIdleRemux()) return;
+        if (_idleRemuxResume.IsReopening)
+        {
+            // A native callback may have won the resume race above.
+            _idleRemuxResume.SetPauseIntent(paused);
+            _restorePausedAfterLoad = paused;
+            if (paused) _mpv.Pause();
+            return;
+        }
+        _idleRemuxResume.ObservePause(paused, _switchingContent || IsLoading, DateTimeOffset.UtcNow);
         if (paused) _mpv.Pause();
         else _mpv.Play();
+    }
+
+    private bool TryReopenIdleRemux()
+    {
+        if (_mpv == null || _activeTransportPlan == null || _playbackManager?.CurrentSession == null
+            || _closing || _switchingContent || IsLoading || State == PlayerState.Idle
+            || !_idleRemuxResume.TryBeginResume(_activeTransportPlan.TransportKind, _canSeekAnywhere,
+                IsWatchTogetherPlayback, DateTimeOffset.UtcNow)) return false;
+        var position = CurrentMediaPosition;
+        LogToFile("state_trace.txt", $"Idle progressive remux resume: reanchor mediaPos={position:F3}");
+        // Freeze the old forward-only response before its stale buffered tail
+        // can drain and libavformat reconnects at the old plan's origin.
+        _mpv.Pause();
+        QueueTransportRestartForSeek(position, forceResume: true);
+        return true;
     }
 
     /// <summary>Seek to an absolute position in media-time seconds.</summary>
@@ -683,7 +741,8 @@ public partial class PlayerService : IDisposable
                 return;
 
             ApplyPreparedTransport(prepared);
-            BeginMpvLoad(prepared, restorePaused: wasPaused && !forceResume);
+            BeginMpvLoad(prepared, restorePaused: _idleRemuxResume.IsReopening
+                ? _idleRemuxResume.DesiredPaused : wasPaused && !forceResume);
             LogToFile("state_trace.txt", $"Seek restart: mediaPos={mediaPosition:F3} transport={prepared.Plan.TransportKind}");
         }
         catch (OperationCanceledException)
@@ -702,6 +761,11 @@ public partial class PlayerService : IDisposable
                     App.MainWindowInstance?.HideLoadingOverlay();
                     _mpv?.ShowOsdText("Seek failed", 2500);
                 });
+                if (_idleRemuxResume.IsReopening)
+                {
+                    _recoveryPauseIntentOverride = _idleRemuxResume.DesiredPaused;
+                    _ = RecoverInterruptedStreamAsync(mediaPosition, "idle-remux-resume");
+                }
             }
         }
         finally
@@ -734,6 +798,7 @@ public partial class PlayerService : IDisposable
 
     private void CancelPendingTransportRestarts()
     {
+        _idleRemuxResume.Reset();
         Interlocked.Increment(ref _seekRestartGeneration);
         var cts = Interlocked.Exchange(ref _seekRestartCts, null);
         if (cts == null)
@@ -785,9 +850,16 @@ public partial class PlayerService : IDisposable
     /// </summary>
     public void ApplySubtitleAppearance(Core.Models.Settings.SubtitleAppearance appearance)
     {
-        _subtitleAppearance = appearance;
-        if (_mpv == null) return;
-        PushSubtitleAppearanceToMpv(appearance);
+        if (HasRemoteAuthority) return;
+        ApplySubtitleAppearance(appearance, _localAuthority, _localAuthority.ApiClient.CaptureContext());
+    }
+
+    public void ApplySubtitleAppearance(Core.Models.Settings.SubtitleAppearance appearance,
+        PlaybackAuthorityScope authority, ApiRequestContext context)
+    {
+        if (!ReferenceEquals(authority, _activeAuthority) || !authority.ApiClient.IsCurrentContext(context)) return;
+        _subtitleAppearance = appearance.Clone();
+        if (_mpv != null) PushSubtitleAppearanceToMpv(_subtitleAppearance);
     }
 
     private void PushSubtitleAppearanceToMpv(Core.Models.Settings.SubtitleAppearance a)
@@ -1196,6 +1268,10 @@ public partial class PlayerService : IDisposable
     public string? NextEpisodeOverview => IsShufflePlayback ? ShuffleNext?.Overview : EpisodeNavigation.Next?.Overview;
     public string? NextEpisodeAirDate => IsShufflePlayback ? ShuffleNext?.ReleaseDate : EpisodeNavigation.Next?.AirDate;
     public int NextEpisodeRuntime => IsShufflePlayback ? Math.Clamp(ShuffleNext?.Runtime ?? 0, 0, int.MaxValue / 60) * 60 : EpisodeNavigation.Next?.RuntimeSeconds ?? 0;
+    public bool? NextEpisodePlayed => IsShufflePlayback ? ShuffleNext?.UserState?.Played : EpisodeNavigation.Next?.Played;
+    public bool? NextEpisodeIsInProgress => IsShufflePlayback ? ShuffleNext?.UserState?.IsInProgress : EpisodeNavigation.Next?.IsInProgress;
+    public double? NextEpisodePositionSeconds => IsShufflePlayback ? ShuffleNext?.PositionSeconds : EpisodeNavigation.Next?.PositionSeconds;
+    public bool? NextEpisodePosterIsEpisodeStill => IsShufflePlayback ? ShuffleNext?.PosterIsEpisodeStill : EpisodeNavigation.Next?.PosterIsEpisodeStill;
     public string? PreviousEpisodeContentId => EpisodeNavigation.PreviousContentId;
 
     public bool HasEpisodeNavigationForCurrentPlayback =>
@@ -1224,7 +1300,11 @@ public partial class PlayerService : IDisposable
         string? airDate = null,
         int runtimeSeconds = 0,
         int? seasonNumber = null,
-        int? episodeNumber = null)
+        int? episodeNumber = null,
+        bool? played = null,
+        bool? isInProgress = null,
+        double? positionSeconds = null,
+        bool? posterIsEpisodeStill = null)
     {
         _episodeNavigation.SetHint(
             ownerContentId,
@@ -1237,7 +1317,8 @@ public partial class PlayerService : IDisposable
                 airDate,
                 runtimeSeconds,
                 seasonNumber,
-                episodeNumber));
+                episodeNumber,
+                played, isInProgress, positionSeconds, posterIsEpisodeStill));
     }
 
     // ── State transitions ────────────────────────────────────────────────
@@ -1653,6 +1734,7 @@ public partial class PlayerService : IDisposable
         PlaybackAuthorityScope? authority = null,
         CancellationToken cancellationToken = default)
     {
+        _ = FlushSubtitleOffsetAsync();
         CancelPendingPlayRequest();
         await _authoritySwitchGate.WaitAsync(cancellationToken);
         try
@@ -1669,7 +1751,7 @@ public partial class PlayerService : IDisposable
                 _activeAuthority = nextAuthority;
                 _shuffleController = null;
                 _watchDetailPrefetches.Clear();
-                _subtitleAppearanceProfileId = null;
+                _subtitlePreferences = null;
                 _subtitleAppearance = null;
                 _seekContext = null;
                 Interlocked.Increment(ref _seekGeneration);
@@ -1762,6 +1844,7 @@ public partial class PlayerService : IDisposable
         // Fetch the effective device/profile style in parallel with playback
         // preparation so fresh launches render the first subtitle correctly
         // without adding another serial request to startup time.
+        ResetSubtitlePreferenceSession();
         var subtitleAppearanceTask = EnsureSubtitleAppearanceLoadedAsync(requestToken);
         _pendingSubtitleSelection = subtitleSelection;
         _pendingInitialServerSubtitleIndex = null;
@@ -1997,11 +2080,11 @@ public partial class PlayerService : IDisposable
                     .ToString(System.Globalization.CultureInfo.InvariantCulture));
             if (subtitleAppearanceTask.IsCompletedSuccessfully)
             {
-                if (_subtitleAppearance != null) PushSubtitleAppearanceToMpv(_subtitleAppearance);
+                PushResolvedSubtitlePreferences();
             }
             else
             {
-                _ = ApplySubtitleAppearanceWhenLoadedAsync(subtitleAppearanceTask);
+                _ = ApplySubtitleAppearanceWhenLoadedAsync(subtitleAppearanceTask, _activeAuthority, _apiClient.CaptureContext(), Volatile.Read(ref _playRequestGeneration));
             }
 
             SetState(IsAudiobook ? PlayerState.Minimized : PlayerState.Expanded);
@@ -2137,6 +2220,7 @@ public partial class PlayerService : IDisposable
 
     private void BeginMpvLoad(PreparedPlaybackTransport prepared, bool restorePaused)
     {
+        _idleRemuxResume.ResetPauseClock();
         var mpv = _mpv ?? throw new InvalidOperationException("The native player is unavailable.");
         var manager = _playbackManager ?? throw new InvalidOperationException("The playback session is unavailable.");
         var sessionId = manager.SessionId
@@ -2714,6 +2798,8 @@ public partial class PlayerService : IDisposable
         string trigger,
         bool wasPaused)
     {
+        if (_idleRemuxResume.IsReopening) wasPaused = _idleRemuxResume.DesiredPaused;
+        _idleRemuxResume.Reset();
         CancelPendingFileLoadTimeout();
         StopPlaybackStallWatchdog();
         _prematureEofRecoveryActive = false;
@@ -2996,7 +3082,11 @@ public partial class PlayerService : IDisposable
                     next.AirDate,
                     Math.Clamp(next.Runtime, 0, int.MaxValue / 60) * 60,
                     next.SeasonNumber,
-                    next.EpisodeNumber);
+                    next.EpisodeNumber,
+                    next.UserData?.Played,
+                    next.UserData?.IsInProgress,
+                    next.UserData?.PositionSeconds,
+                    next.StillIsEpisodeStill);
 
             if (!IsEpisodeNavigationLookupCurrent(ownerManager, ownerContentId, ct) ||
                 !_episodeNavigation.TrySetResolved(ownerContentId, previousContentId, nextTarget))
@@ -3711,8 +3801,7 @@ public partial class PlayerService : IDisposable
         // first track starts with the user's saved sub styling instead of
         // mpv's defaults. If nothing has been cached yet, mpv uses defaults
         // and gets updated on the next SettingsPage save.
-        if (_subtitleAppearance != null)
-            PushSubtitleAppearanceToMpv(_subtitleAppearance);
+        PushResolvedSubtitlePreferences();
     }
 
     private void SendThemeToOsc()
@@ -3777,45 +3866,42 @@ public partial class PlayerService : IDisposable
     {
         var authority = _activeAuthority;
         var context = authority.ApiClient.CaptureContext();
-        var profileId = authority.Auth.SelectedProfileId;
-        if (_subtitleAppearance != null && string.Equals(_subtitleAppearanceProfileId, profileId, StringComparison.Ordinal))
-            return;
-
+        var generation = Volatile.Read(ref _playRequestGeneration);
         await _subtitleAppearanceLoadGate.WaitAsync(ct);
         try
         {
-            if (!ReferenceEquals(authority, _activeAuthority) || !authority.ApiClient.IsCurrentContext(context)) return;
-            if (_subtitleAppearance != null && string.Equals(_subtitleAppearanceProfileId, profileId, StringComparison.Ordinal))
-                return;
-
-            try
-            {
-                var response = await authority.SettingsApi.GetContractEffectiveSettingsAsync(["playback.subtitle_appearance"], ct: ct);
-                if (!ReferenceEquals(authority, _activeAuthority) || !authority.ApiClient.IsCurrentContext(context)) return;
-                _subtitleAppearance = Core.Models.Settings.SubtitleAppearance.Parse(
-                    response.Settings.FirstOrDefault(setting => setting.Key == "playback.subtitle_appearance")?.Value.GetRawText());
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                if (!ReferenceEquals(authority, _activeAuthority) || !authority.ApiClient.IsCurrentContext(context)) return;
-                LogToFile("state_trace.txt", $"Subtitle appearance load failed: {ex.Message}");
-                _subtitleAppearance = new Core.Models.Settings.SubtitleAppearance();
-            }
-            _subtitleAppearanceProfileId = profileId;
+            if (!ReferenceEquals(authority, _activeAuthority) || !authority.ApiClient.IsCurrentContext(context)
+                || generation != Volatile.Read(ref _playRequestGeneration)) return;
+            ObserveSubtitlePreferences();
+            var state = await authority.SettingsApi.Subtitles.LoadAsync(context, ct);
+            if (!ReferenceEquals(authority, _activeAuthority) || !authority.ApiClient.IsCurrentContext(context)
+                || generation != Volatile.Read(ref _playRequestGeneration)) return;
+            _subtitlePreferences = state;
+            _subtitlePreferenceAuthority = authority;
+            _subtitleAppearance = state.Appearance.Clone();
+            if (_subtitleOffsetDraft == null && !_subtitleOffsetSessionOverride) _subtitleOffsetMs = state.OffsetMs;
+            if (_subtitleOffsetDraft == null) SubtitlePreferenceError = null;
+            PublishSubtitlePreferenceStatus();
         }
-        finally
+        catch (OperationCanceledException) when (ct.IsCancellationRequested || !ReferenceEquals(authority, _activeAuthority)
+            || !authority.ApiClient.IsCurrentContext(context) || generation != Volatile.Read(ref _playRequestGeneration)) { }
+        catch (Exception)
         {
-            _subtitleAppearanceLoadGate.Release();
+            if (ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context)
+                && generation == Volatile.Read(ref _playRequestGeneration))
+            { SubtitlePreferenceError = "Subtitle preferences could not load. Reopen playback to retry."; PublishSubtitlePreferenceStatus(); }
         }
+        finally { _subtitleAppearanceLoadGate.Release(); }
     }
 
-    private async Task ApplySubtitleAppearanceWhenLoadedAsync(Task loadTask)
+    private async Task ApplySubtitleAppearanceWhenLoadedAsync(Task loadTask, PlaybackAuthorityScope authority,
+        ApiRequestContext context, long generation)
     {
         try
         {
             await loadTask;
-            if (_subtitleAppearance != null && _mpv != null)
-                PushSubtitleAppearanceToMpv(_subtitleAppearance);
+            if (ReferenceEquals(authority, _activeAuthority) && authority.ApiClient.IsCurrentContext(context)
+                && generation == Volatile.Read(ref _playRequestGeneration) && !_closing) PushResolvedSubtitlePreferences();
         }
         catch (OperationCanceledException) { }
     }
@@ -4059,6 +4145,8 @@ public partial class PlayerService : IDisposable
 
         _mpvPauseHandler = (paused) =>
         {
+            if (!_idleRemuxResume.IsReopening && !paused && TryReopenIdleRemux()) return;
+            _idleRemuxResume.ObservePause(paused, _switchingContent || IsLoading, DateTimeOffset.UtcNow);
             IsPaused = paused;
             UpdateDisplayWakeLock(!paused && !_closing && State != PlayerState.Idle);
             if (IsAudiobook)
@@ -4136,10 +4224,15 @@ public partial class PlayerService : IDisposable
                 LogToFile("state_trace.txt", "No resume position (starting from beginning)");
             }
 
+            restorePaused = _idleRemuxResume.Complete() ?? restorePaused;
             if (restorePaused)
                 _mpv?.Pause();
             else
                 _mpv?.Play();
+
+            // Also seed ordinary seek/quality reloads which intentionally
+            // finish paused, even when mpv emits no pause transition.
+            _idleRemuxResume.ObservePause(restorePaused, false, DateTimeOffset.UtcNow);
 
             IsPaused = restorePaused;
             UpdateDisplayWakeLock(!restorePaused && !_closing && State != PlayerState.Idle);
@@ -5641,6 +5734,10 @@ public partial class PlayerService : IDisposable
             case "silo-subtitle-search":
                 dispatch.TryEnqueue(() => _ = ShowSubtitleSearchDialogAsync());
                 break;
+            case "silo-subtitle-offset":
+                if (args.Length > 1 && int.TryParse(args[1], out var subtitleOffset))
+                    _subtitleDispatcher?.TryEnqueue(() => _ = SetSubtitleOffsetAsync(subtitleOffset));
+                break;
             case "silo-subtitle-appearance":
                 dispatch.TryEnqueue(() => _ = ShowSubtitleAppearanceDialogAsync());
                 break;
@@ -5706,7 +5803,7 @@ public partial class PlayerService : IDisposable
                     var relativeForceResume = args.Length > 2 &&
                         bool.TryParse(args[2], out var relativeParsedResume) &&
                         relativeParsedResume;
-                    dispatch.TryEnqueue(() => RequestUserSeek(CurrentMediaPosition + seekDelta, relativeForceResume));
+                    dispatch.TryEnqueue(() => RequestUserRelativeSeek(seekDelta, relativeForceResume));
                 }
                 break;
             case "silo-pause-toggle":
@@ -6432,6 +6529,8 @@ public partial class PlayerService : IDisposable
     private async Task CloseCoreAsync()
     {
         var closingAuthority = _activeAuthority;
+        await Task.WhenAny(FlushSubtitleOffsetAsync(), Task.Delay(2000));
+        ResetSubtitlePreferenceSession();
         _authorityLifetimeCts.Cancel();
         _shuffleController?.Leave();
         ActiveLibraryId = null;
@@ -6579,7 +6678,7 @@ public partial class PlayerService : IDisposable
             _activeAuthority = _localAuthority;
             _shuffleController = null;
             _watchDetailPrefetches.Clear();
-            _subtitleAppearanceProfileId = null;
+            _subtitlePreferences = null;
             _subtitleAppearance = null;
             _seekContext = null;
             Interlocked.Increment(ref _seekGeneration);
@@ -6606,6 +6705,8 @@ public partial class PlayerService : IDisposable
 
     public void Dispose()
     {
+        if (_subtitlePreferenceEvents != null) _subtitlePreferenceEvents.LocalProfileSettingChanged -= OnSubtitlePreferenceChanged;
+        _subtitleOffsetDelay?.Cancel();
         _closing = true;
         _authorityLifetimeCts.Cancel();
         CancelPendingPlayRequest();
@@ -7179,15 +7280,15 @@ public partial class PlayerService : IDisposable
         switch (cmd.Name)
         {
             case "pause":
-                _mpv?.Pause();
+                SetPaused(true);
                 return Complete(new CommandResult());
 
             case "unpause":
-                _mpv?.Play();
+                SetPaused(false);
                 return Complete(new CommandResult());
 
             case "play_pause":
-                _mpv?.TogglePause();
+                SetPaused(_idleRemuxResume.IsReopening ? !_idleRemuxResume.DesiredPaused : _mpv?.IsPaused != true);
                 return Complete(new CommandResult());
 
             case "seek":

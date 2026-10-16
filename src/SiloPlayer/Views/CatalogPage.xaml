@@ -2,6 +2,7 @@
     x:Class="SiloPlayer.Views.CatalogPage"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:helpers="using:SiloPlayer.Helpers"
     xmlns:controls="using:SiloPlayer.Controls"
     xmlns:models="using:SiloPlayer.Core.Models.Home"
     Background="{StaticResource AppBackgroundBrush}"
@@ -39,7 +40,7 @@
                 <Button x:Name="ExternalWatchlistTab" Style="{StaticResource WebUiLineTabStyle}" Click="ExternalWatchlistTab_Click" KeyDown="WatchlistTab_KeyDown">
                     <StackPanel Orientation="Horizontal" Spacing="6">
                         <TextBlock x:Name="ExternalWatchlistTabLabel" Text="Not in your library yet" />
-                        <Border x:Name="ExternalTitleCountBadge" Background="{StaticResource SurfaceBrush}" CornerRadius="999" MinWidth="20" Height="20" Padding="6,0" Visibility="Collapsed">
+                        <Border x:Name="ExternalTitleCountBadge" Background="{StaticResource SurfaceBrush}" CornerRadius="999" helpers:RoundedBadge.Radius="999" MinWidth="20" Height="20" Padding="6,0" Visibility="Collapsed">
                             <TextBlock x:Name="ExternalTitleCountText" FontSize="10" FontWeight="SemiBold" VerticalAlignment="Center" HorizontalAlignment="Center" />
                         </Border>
                         <Ellipse x:Name="ExternalTitleAttention" Width="8" Height="8" Fill="{StaticResource WarningBrush}" Visibility="Collapsed" VerticalAlignment="Center" />

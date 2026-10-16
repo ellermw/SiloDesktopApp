@@ -230,7 +230,7 @@ public sealed partial class SettingsPage
             if (await input.ShowAsync() != ContentDialogResult.Primary || plan == null || !api.IsCurrentContext(context) || !_layoutTransferActive) return;
             var descriptions = plan.Pages.Select(page => $"{(page.Scope == "home" ? "Home" : $"Library {page.LibraryId}")}: replace saved overrides with {page.Overrides.Count} sections").ToList();
             if (plan.HideWatchedItems.HasValue) descriptions.Add($"Hide watched items: {(plan.HideWatchedItems.Value ? "On" : "Off")}");
-            descriptions.Add("Saved legacy Trakt rows are preserved. Imports from another server also preserve this server's section hides and ordering.");
+            descriptions.Add("Imports from another server preserve this server's section hides and ordering.");
             if (plan.Skipped.Count > 0) descriptions.Add("Skipped:\n" + string.Join("\n", plan.Skipped));
             var preview = new ContentDialog { Title = "Import layout preview", PrimaryButtonText = "Apply layout", CloseButtonText = "Cancel",
                 XamlRoot = XamlRoot, DefaultButton = ContentDialogButton.Close,
@@ -256,8 +256,7 @@ public sealed partial class SettingsPage
                     await ViewModel.LoadHomeSectionsCommand.ExecuteAsync(null);
                     if (!api.IsCurrentContext(context) || !_layoutTransferActive) return;
                     WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.HomeLayoutChanged, ""));
-                    App.Services.GetRequiredService<ToastService>().Success(transfer.KeptSavedChanges
-                        ? "Layout imported; saved server-section changes were preserved" : "Layout imported");
+                    App.Services.GetRequiredService<ToastService>().Success("Layout imported");
                     saved = true;
                 }
                 catch (OperationCanceledException) { }

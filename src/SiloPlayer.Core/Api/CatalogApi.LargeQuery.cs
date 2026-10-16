@@ -35,6 +35,9 @@ public partial class CatalogApi
             ["skip_total"] = !includeTotal,
         }.Where(pair => pair.Value != null).ToDictionary(pair => pair.Key, pair => pair.Value);
         var context = client.CaptureContext(); var result = new CatalogResponse();
+        using var queryOwner = new HttpRequestMessage(HttpMethod.Post, client.BaseUrl.TrimEnd('/') + "/api/v2/catalog/query");
+        using var localizedRead = client.LocalizedReads.Begin(queryOwner, ct);
+        ct = localizedRead?.Token ?? ct;
         limit = Math.Clamp(limit, 1, 200); offset = Math.Max(0, offset);
         // The server signs this value into every cursor. Do not shrink it for
         // a partial page or the final portion of a multi-page request.
@@ -50,6 +53,7 @@ public partial class CatalogApi
             if (!string.IsNullOrWhiteSpace(cursor)) body["cursor"] = cursor;
             else body.Remove("cursor");
             var page = await client.SendRequestAsync<CatalogResponse>(context, HttpMethod.Post, "/api/v2/catalog/query", body, ct);
+            localizedRead?.EnsureCurrent();
             if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Catalog query context changed.", ct);
             result.Items.AddRange(page.Items); result.Total = page.Total; result.TotalExact = page.TotalExact;
             result.Page = page.Page; result.HasMore = page.HasMore; result.EffectiveSort ??= page.EffectiveSort;

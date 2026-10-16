@@ -27,7 +27,8 @@ public sealed class ItemDetailPrefetchCache
                 authService.ConfiguredServerUrl,
                 authService.CurrentUser?.Id,
                 authService.SelectedProfileId,
-                catalogApi.CaptureContext().RequestContextGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+                catalogApi.CaptureContext().RequestContextGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                catalogApi.LocalizedReadGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture)))
     {
     }
 

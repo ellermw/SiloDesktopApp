@@ -30,7 +30,7 @@ public sealed partial class PlayerOverlay : UserControl
     private DateTimeOffset? _sleepDeadline;
     private double? _sleepAtPosition;
     private double _playbackSpeed = 1;
-    private int _subtitleDelayMs;
+    private int _subtitleDelayMs => _playerService.SubtitleOffsetMs;
     private SubtitleAiStatus? _subtitleAiStatus;
     // Treat pre-capability-probe servers as enabled for backwards
     // compatibility. A current server can explicitly disable the entry point.
@@ -70,6 +70,7 @@ public sealed partial class PlayerOverlay : UserControl
         _isActive = true;
 
         // Subscribe to content/playback events (video renders via native GPU window)
+        _playerService.SubtitlePreferencesChanged += OnSubtitlePreferencesChanged;
         _playerService.ContentLoaded += OnContentLoaded;
         _playerService.PlaybackEnded += OnPlaybackEnded;
         _playerService.StateChanged += OnPlayerStateChanged;
@@ -148,6 +149,7 @@ public sealed partial class PlayerOverlay : UserControl
         _isActive = false;
 
         // Unsubscribe from events
+        _playerService.SubtitlePreferencesChanged -= OnSubtitlePreferencesChanged;
         _playerService.ContentLoaded -= OnContentLoaded;
         _playerService.PlaybackEnded -= OnPlaybackEnded;
         _playerService.StateChanged -= OnPlayerStateChanged;
@@ -404,7 +406,7 @@ public sealed partial class PlayerOverlay : UserControl
     {
         if (!_isActive || _playerService.Mpv == null) return;
 
-        var pos = _playerService.Position;
+        var pos = _playerService.UserSeekPosition;
         var dur = _playerService.Duration;
 
         // Push current position + duration to the custom seek bar; it
@@ -707,7 +709,7 @@ public sealed partial class PlayerOverlay : UserControl
     {
         if (_playerService.Mpv == null) return;
 
-        var newPos = _playerService.Position + seconds;
+        var newPos = _playerService.UserSeekPosition + seconds;
         newPos = Math.Max(0, Math.Min(newPos, _playerService.Duration));
         SeekInteractive(newPos);
     }
@@ -1304,7 +1306,7 @@ public sealed partial class PlayerOverlay : UserControl
             VerticalAlignment = VerticalAlignment.Center,
         };
         var earlier = CreateSubtitleDelayButton("−", "Subtitle delay 100ms earlier");
-        earlier.IsEnabled = activeSubtitleIndex >= 0 && _subtitleDelayMs > -10_000;
+        earlier.IsEnabled = _playerService.SubtitlePreferencesLoaded && activeSubtitleIndex >= 0 && _subtitleDelayMs > -10_000;
         earlier.Click += (_, _) => SetSubtitleDelay(Math.Max(-10_000, _subtitleDelayMs - 100));
         var delayValue = new TextBlock
         {
@@ -1316,7 +1318,7 @@ public sealed partial class PlayerOverlay : UserControl
             VerticalAlignment = VerticalAlignment.Center,
         };
         var later = CreateSubtitleDelayButton("+", "Subtitle delay 100ms later");
-        later.IsEnabled = activeSubtitleIndex >= 0 && _subtitleDelayMs < 10_000;
+        later.IsEnabled = _playerService.SubtitlePreferencesLoaded && activeSubtitleIndex >= 0 && _subtitleDelayMs < 10_000;
         later.Click += (_, _) => SetSubtitleDelay(Math.Min(10_000, _subtitleDelayMs + 100));
         var resetDelay = new Button
         {
@@ -1328,7 +1330,7 @@ public sealed partial class PlayerOverlay : UserControl
             BorderThickness = new Thickness(0),
             Foreground = PlayerMenuMutedBrush,
         };
-        resetDelay.IsEnabled = activeSubtitleIndex >= 0 && _subtitleDelayMs != 0;
+        resetDelay.IsEnabled = _playerService.SubtitlePreferencesLoaded && activeSubtitleIndex >= 0 && _subtitleDelayMs != 0;
         AutomationProperties.SetName(resetDelay, "Reset subtitle delay");
         resetDelay.Click += (_, _) => SetSubtitleDelay(0);
         Grid.SetColumn(delayLabel, 0);
@@ -1342,6 +1344,9 @@ public sealed partial class PlayerOverlay : UserControl
         delayRow.Children.Add(later);
         delayRow.Children.Add(resetDelay);
         SubtitleListPanel.Children.Add(delayRow);
+        if (_playerService.SubtitlePreferenceError is { } preferenceError)
+            SubtitleListPanel.Children.Add(new TextBlock { Text = preferenceError, TextWrapping = TextWrapping.Wrap,
+                MaxWidth = 320, Margin = new Thickness(12, 4, 12, 8), Foreground = PlayerMenuMutedBrush, FontSize = 12 });
 
         SubtitleListPanel.Children.Add(CreatePlayerMenuDivider());
         if (_subtitleProviderStatus.Enabled)
@@ -1482,12 +1487,8 @@ public sealed partial class PlayerOverlay : UserControl
 
     private void SleepFlyout_Opening(object sender, object e) => PopulateSleepFlyout();
 
-    private void SetSubtitleDelay(int milliseconds)
-    {
-        _subtitleDelayMs = milliseconds;
-        _playerService.Mpv?.SetProperty("sub-delay", (milliseconds / 1000.0).ToString("0.###", CultureInfo.InvariantCulture));
-        PopulateSubtitleFlyout();
-    }
+    private void OnSubtitlePreferencesChanged() => DispatcherQueue?.TryEnqueue(() => { if (_isActive) PopulateSubtitleFlyout(); });
+    private void SetSubtitleDelay(int milliseconds) => _ = _playerService.SetSubtitleOffsetAsync(milliseconds);
 
     public async Task ShowSubtitleAiDialogAsync(XamlRoot? dialogXamlRoot = null)
     {

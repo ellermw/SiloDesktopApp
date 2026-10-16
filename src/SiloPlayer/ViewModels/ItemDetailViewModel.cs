@@ -12,6 +12,7 @@ namespace SiloPlayer.ViewModels;
 
 public partial class ItemDetailViewModel : ObservableObject,
     IRecipient<MediaSurfaceChanged>,
+    IRecipient<NotInterestedChange>,
     IRecipient<PlaybackProgressUpdated>
 {
     private readonly CatalogApi _catalogApi;
@@ -40,6 +41,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         // favorited / watchlisted / watched from another surface (context
         // menu on a poster card, etc.), this VM reflects it immediately.
         WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this);
+        WeakReferenceMessenger.Default.Register<NotInterestedChange>(this);
         WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this);
     }
 
@@ -50,6 +52,22 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         WeakReferenceMessenger.Default.Send(
             new MediaSurfaceChanged(kind, contentId, seriesId, rating));
+    }
+
+    public void Receive(NotInterestedChange message)
+    {
+        if (!_catalogApi.IsCurrentContext(message.Context)) return;
+        _detailPrefetchCache.Invalidate(message.ItemId);
+        if (Item == null) return;
+        if (Item.ContentId == message.ItemId && message.Marked.HasValue)
+        {
+            (Item.UserState ??= new()).NotInterested = message.Marked.Value;
+            OnPropertyChanged(nameof(Item));
+        }
+        if (message.Marked == true)
+            for (var index = SimilarItems.Count - 1; index >= 0; index--)
+                if (SimilarItems[index].ContentId == message.ItemId) SimilarItems.RemoveAt(index);
+        if (_similarLoaded) _ = LoadSimilarAsync();
     }
 
     public void Receive(MediaSurfaceChanged message)
@@ -88,19 +106,36 @@ public partial class ItemDetailViewModel : ObservableObject,
     public void Receive(PlaybackProgressUpdated message)
     {
         _detailPrefetchCache.Invalidate(message.ContentId);
+        var episodeSpoilersChanged = false;
+        foreach (var episode in Episodes.Where(episode => episode.ContentId == message.ContentId))
+        {
+            episode.UserData ??= new EpisodeUserData();
+            var data = episode.UserData;
+            var wasUnwatched = EpisodeSpoilerPolicy.IsUnwatched(data.Played, data.IsInProgress, data.PositionSeconds);
+            data.PositionSeconds = message.PositionSeconds;
+            if (message.DurationSeconds > 0) data.DurationSeconds = message.DurationSeconds;
+            data.IsInProgress = message.PositionSeconds > 0 && !message.Completed;
+            if (message.Completed) data.Played = true;
+            episodeSpoilersChanged |= wasUnwatched != EpisodeSpoilerPolicy.IsUnwatched(data.Played, data.IsInProgress, data.PositionSeconds);
+        }
+        if (episodeSpoilersChanged) OnPropertyChanged(nameof(Episodes));
         // Progress update for the item we're currently displaying → refresh
         // the resume position so the "Resume at X:XX" label reflects the
         // latest watch state. We don't refetch the whole detail — just patch
         // the user_data on Item in place.
         if (Item == null || message.ContentId != Item.ContentId) return;
         Item.UserData ??= new ItemDetailUserData();
+        var detailWasUnwatched = EpisodeSpoilerPolicy.IsUnwatched(Item.UserData.Played, Item.UserData.IsInProgress, Item.UserData.PositionSeconds);
         Item.UserData.PositionSeconds = message.PositionSeconds;
-        Item.UserData.DurationSeconds = message.DurationSeconds;
+        if (message.DurationSeconds > 0) Item.UserData.DurationSeconds = message.DurationSeconds;
+        Item.UserData.IsInProgress = message.PositionSeconds > 0 && !message.Completed;
         if (message.Completed)
         {
             Item.UserData.Played = true;
             IsWatched = true;
         }
+        if (detailWasUnwatched != EpisodeSpoilerPolicy.IsUnwatched(Item.UserData.Played, Item.UserData.IsInProgress, Item.UserData.PositionSeconds))
+            OnPropertyChanged(nameof(Item));
     }
 
     /// <summary>
@@ -182,6 +217,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     public ObservableCollection<Season> Seasons { get; } = [];
     public ObservableCollection<Episode> Episodes { get; } = [];
     public ObservableCollection<MediaItem> SimilarItems { get; } = [];
+    private bool _similarLoaded;
 
     public string RuntimeDisplay => Item?.Runtime > 0
         ? Item.Runtime >= 60
@@ -225,6 +261,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         Seasons.Clear();
         Episodes.Clear();
         SimilarItems.Clear();
+        _similarLoaded = false;
         SeasonsLoadFailed = false;
         EpisodesLoadFailed = false;
         SimilarLoadFailed = false;
@@ -403,15 +440,16 @@ public partial class ItemDetailViewModel : ObservableObject,
         var generation = Interlocked.Increment(ref _similarLoadGeneration);
         var context = _catalogApi.CaptureContext();
         SimilarLoadFailed = false;
+        _similarLoaded = true;
         try
         {
             var response = await _catalogApi.GetSimilarAsync(contentId);
             if (generation != Volatile.Read(ref _similarLoadGeneration)
                 || Item?.ContentId != contentId || !_catalogApi.IsCurrentContext(context)) return;
 
-            SimilarItems.Clear();
-            foreach (var item in response.Items.Take(12))
-                SimilarItems.Add(item);
+            _similarLoaded = true;
+            MediaItemCollectionReconciler.Apply(SimilarItems,
+                response.Items.Where(item => item.UserState?.NotInterested != true).Take(12).ToArray());
         }
         catch (Exception ex)
         {

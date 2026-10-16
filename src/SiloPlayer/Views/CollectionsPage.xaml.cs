@@ -176,7 +176,7 @@ public sealed partial class CollectionsPage : Page
                 var count = Math.Min(PosterColumnCount, group.Collections.Count);
                 var body = new StackPanel { Spacing = 12, Width = count * PosterWidth + (count - 1) * 14 };
                 var heading = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-                heading.Children.Add(new Border { Width = 20, Height = 20, CornerRadius = new(999), Background = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["AccentBrush"]).Color) { Opacity = .2 }, Child = new TextBlock { Text = string.IsNullOrEmpty(group.Name) ? "?" : group.Name[..1].ToUpperInvariant(), FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["AccentBrush"], HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } });
+                heading.Children.Add(RoundedBadge.Apply(new Border { Width = 20, Height = 20, Background = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["AccentBrush"]).Color) { Opacity = .2 }, Child = new TextBlock { Text = string.IsNullOrEmpty(group.Name) ? "?" : group.Name[..1].ToUpperInvariant(), FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["AccentBrush"], HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center } }, 999));
                 var by = new TextBlock { FontSize = 14, VerticalAlignment = VerticalAlignment.Center, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] };
                 by.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = "by " }); by.Inlines.Add(new Microsoft.UI.Xaml.Documents.Run { Text = group.Name, FontWeight = FontWeights.SemiBold, Foreground = (Brush)Application.Current.Resources["PrimaryTextBrush"] }); heading.Children.Add(by);
                 body.Children.Add(heading);
@@ -1022,7 +1022,7 @@ public sealed partial class CollectionsPage : Page
     }
 
     private static bool CanSyncCollection(Collection collection)
-        => collection.CollectionType is "mdblist" or "tmdb" or "tmdb_list" or "trakt";
+        => collection.CollectionType is "mdblist" or "tmdb" or "tmdb_list";
 
     private static string FormatCollectionType(string type) => type switch
     {
@@ -1030,7 +1030,6 @@ public sealed partial class CollectionsPage : Page
         "smart" => "Smart",
         "mdblist" => "MDBList",
         "tmdb" => "TMDB",
-        "trakt" => "Trakt",
         _ => "Manual"
     };
 

@@ -8,11 +8,70 @@ using Microsoft.UI.Xaml.Automation;
 using Windows.UI;
 using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
+using SiloPlayer.Helpers;
+using System.Runtime.InteropServices.WindowsRuntime;
 
 namespace SiloPlayer.Views;
 
 public sealed partial class WatchTogetherRoomPage
 {
+    private EpisodeSpoilerPreferences? _pickerSpoilers;
+    private int _pickerSpoilerRenderRevision;
+    private readonly Dictionary<string, TextBlock> _pickerOverviews = [];
+    private void ObservePickerSpoilers()
+    {
+        _pickerSpoilers = App.Services.GetService<EpisodeSpoilerPreferences>();
+        if (_pickerSpoilers != null) { _pickerSpoilers.Changed -= PickerSpoilersChanged; _pickerSpoilers.Changed += PickerSpoilersChanged; _ = _pickerSpoilers.EnsureLoadedAsync(); }
+    }
+    private void PickerSpoilersChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (!IsLoaded) return;
+        ++_pickerSpoilerRenderRevision;
+        foreach (var text in _pickerOverviews.Values.ToList()) ApplyPickerOverview(text);
+        foreach (var border in _pickerStills.Values.ToList())
+            if (border.Child is Image image && image.Tag is MediaItem item) { image.Source = null; _ = LoadPickerEpisodeStillAsync(image, item); }
+    });
+    private void ApplyPickerOverview(TextBlock text)
+    {
+        if (text.Tag is not MediaItem item) return;
+        text.Visibility = _pickerSpoilers?.HideOverviews == true && EpisodeSpoilerPolicy.IsUnwatched(item.UserState?.Played, item.UserState?.IsInProgress, item.PositionSeconds)
+            ? Visibility.Collapsed : Visibility.Visible;
+    }
+    private async void EpisodeOverview_Loaded(object sender, RoutedEventArgs e)
+    {
+        if (sender is not TextBlock { Tag: MediaItem item } text) return;
+        _pickerOverviews[item.ContentId] = text;
+        _pickerSpoilers ??= App.Services.GetService<EpisodeSpoilerPreferences>();
+        try { if (_pickerSpoilers != null) await _pickerSpoilers.EnsureLoadedAsync(_browseCts?.Token ?? default); if (text.IsLoaded) ApplyPickerOverview(text); }
+        catch (OperationCanceledException) { }
+    }
+    private async void EpisodeStillImage_Loaded(object sender, RoutedEventArgs e)
+    { if (sender is Image { Tag: MediaItem item } image) await LoadPickerEpisodeStillAsync(image, item); }
+    private async Task LoadPickerEpisodeStillAsync(Image image, MediaItem item)
+    {
+        var revision = _browseRevision;
+        var spoilerRevision = _pickerSpoilerRenderRevision;
+        var api = App.Services.GetRequiredService<SiloApiClient>();
+        var context = api.CaptureContext();
+        var ct = _browseCts?.Token ?? default;
+        try
+        {
+            _pickerSpoilers ??= App.Services.GetService<EpisodeSpoilerPreferences>();
+            if (_pickerSpoilers != null) await _pickerSpoilers.EnsureLoadedAsync(ct);
+            if (string.IsNullOrWhiteSpace(item.PosterUrl)) return;
+            var bytes = await App.Services.GetRequiredService<ImageService>().GetImageAsync(item.ContentId, "still", item.PosterUrl, App.Services.GetRequiredService<HttpClient>(), ct);
+            if (bytes == null) return;
+            if (EpisodeSpoilerPolicy.HideImage(item.Type, item.PosterIsEpisodeStill, item.UserState?.Played, item.UserState?.IsInProgress, item.PositionSeconds, _pickerSpoilers?.HideImages == true))
+                bytes = await ArtworkEffects.BlurEpisodeStillAsync(bytes, ct);
+            var bitmap = new BitmapImage { DecodePixelWidth = 336 };
+            using var stream = new MemoryStream(bytes);
+            await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
+            if (!ct.IsCancellationRequested && api.IsCurrentContext(context) && revision == _browseRevision && spoilerRevision == _pickerSpoilerRenderRevision && image.IsLoaded && ReferenceEquals(image.Tag, item)) image.Source = bitmap;
+        }
+        catch (OperationCanceledException) { }
+        catch { }
+    }
+
     private long _candidateStateRevision;
     private Task _drillDownMemberStateTask = Task.CompletedTask;
     private MediaItem? _seriesPicked;

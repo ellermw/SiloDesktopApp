@@ -12,11 +12,13 @@ using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Collections;
+using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
+using SiloPlayer.Views.Dialogs;
 using Windows.Graphics.Imaging;
 using Windows.Storage;
 
@@ -53,6 +55,14 @@ internal static class CollectionsAcceptanceNativeFixture
         {
             window.AppWindow.Move(new(-20000, -20000)); window.AppWindow.ResizeClient(new(1280, 900)); window.AppWindow.Show(false);
             await Task.Delay(160);
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_COLLECTIONS_RETIREMENT") == "1")
+            {
+                await LockedSourcesAsync(frame, window);
+                await ConvertedManualAsync(frame, window, wire);
+                await RetiredHomeRecipeAsync(frame, window);
+                Program.Log("PASS: Trakt retirement native manual/editor/recipe checks.");
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_COLLECTIONS_QUEUED_ARTWORK") == "1")
             {
                 var queued = new TaskCompletionSource<ImageSource>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -155,7 +165,8 @@ internal static class CollectionsAcceptanceNativeFixture
             await Case("smart current rules and live preview", () => SmartDraftAsync(frame, window, wire));
             await Case("manual actual failed add/remove retention", () => ManualAsync(frame, window, wire));
             await Case("imported successful Save stays clean", () => ImportedSaveAsync(frame, window, wire, navigation));
-            await Case("locked Discover and Trakt presentation", () => LockedSourcesAsync(frame, window));
+            await Case("locked Discover presentation", () => LockedSourcesAsync(frame, window));
+            await Case("converted manual collection retains title and items", () => ConvertedManualAsync(frame, window, wire));
             await Case("artwork draft preview and Delete Cancel", () => ArtworkAsync(frame, window, wire));
             if (Failures.Count != 0) throw new InvalidOperationException(string.Join("; ", Failures));
             Program.Log("PASS: finite collection template, discovery, mutation, imported Save and artwork acceptance.");
@@ -552,21 +563,66 @@ internal static class CollectionsAcceptanceNativeFixture
 
     private static async Task LockedSourcesAsync(Frame frame, Window window)
     {
-        foreach (var id in new[] { "discover", "trakt", "stopped-trakt" })
+        foreach (var id in new[] { "discover" })
         foreach (var width in new[] { 460, 1280 })
         {
             var page = await Editor(frame, window, id); await Viewport(frame, window, width); await Layout();
             var source = (Border)page.FindName("ImportedSourceSection");
             var texts = All<TextBlock>(source).Select(t => t.Text).ToArray();
-            Check(texts.Contains(id == "discover" ? "Made by a starter pack. Its rules can't be changed here." : "New Trakt lists aren't supported. This one keeps its source and libraries.") && !texts.Contains("The list decides"),
+            Check(texts.Contains("Made by a starter pack. Its rules can't be changed here.") && !texts.Contains("The list decides"),
                 "locked source must show its retained configuration instead of an ordinary chart's ownership cards");
-            Check(texts.Contains(id == "discover" ? "Movies, most popular first" : "Trending movies"), "locked source summary lost source criteria");
+            Check(texts.Contains("Movies, most popular first"), "locked source summary lost source criteria");
             Program.Log($"TRACE locked source {id}: match={((Button)Read(page, "_syncedMatchButton")!).IsEnabled}, limit={((TextBox)Read(page, "_titleLimit")!).IsEnabled}, schedule={((ComboBox)Read(page, "_savedSchedule")!).IsEnabled}.");
-            Check(((Button)Read(page, "_syncedMatchButton")!).IsEnabled == (id == "discover") && ((TextBox)Read(page, "_titleLimit")!).IsEnabled == (id == "discover"),
-                "legacy Trakt source libraries and title limit must stay locked");
-            Check(((ComboBox)Read(page, "_savedSchedule")!).IsEnabled == (id != "stopped-trakt"), "legacy schedule editable state is incorrect");
+            Check(((Button)Read(page, "_syncedMatchButton")!).IsEnabled && ((TextBox)Read(page, "_titleLimit")!).IsEnabled,
+                "Discover libraries and title limit must remain editable");
+            Check(((ComboBox)Read(page, "_savedSchedule")!).IsEnabled, "capability-enabled Discover schedule is incorrectly locked");
             await Capture(frame, $"collections-locked-{id}-{width}.png"); frame.Content = null;
         }
+    }
+    private static async Task ConvertedManualAsync(Frame frame, Window window, Wire wire)
+    {
+        foreach (var width in new[] { 460, 1280 })
+        {
+            wire.ImportedName = "My imported favorites";
+            var page = await Editor(frame, window, "converted"); await Viewport(frame, window, width); await Layout();
+            Check(page.ViewModel.Name == "My imported favorites" && !page.ViewModel.IsImportedCollection,
+                "server-converted collection lost its title or was classified as synced");
+            Check(((Border)page.FindName("ImportedSourceSection")).Visibility == Visibility.Collapsed,
+                "server-converted manual collection still exposes a source/sync panel");
+            Check(page.ViewModel.ManualItems.Single().MediaItemId == "one", "converted collection lost retained members");
+            var title = (TextBox)page.FindName("NameTextBox");
+            Check(title.IsEnabled, "converted manual collection name cannot be edited");
+            title.Text = "My renamed favorites"; await Layout();
+            var saves = wire.SaveCalls; var mutations = Wire.MutationCalls;
+            await page.ViewModel.SaveCommand.ExecuteAsync(null); await page.ViewModel.SyncNowCommand.ExecuteAsync(null); await Layout();
+            Check(page.ViewModel.ErrorMessage == null && wire.SaveCalls == saves + 1 && wire.ImportedName == "My renamed favorites"
+                && Wire.MutationCalls == mutations + 1 && page.ViewModel.ManualItems.Single().MediaItemId == "one",
+                "manual rename altered membership, submitted sync, or failed to retain the renamed title");
+            await Capture(frame, $"collections-converted-manual-{width}.png"); frame.Content = null;
+        }
+    }
+    private static async Task RetiredHomeRecipeAsync(Frame frame, Window window)
+    {
+        await Viewport(frame, window, 460);
+        frame.Content = new Grid(); await Layout();
+        var config = new Dictionary<string, object> { ["source_provider"] = "trakt", ["source_preset"] = "trending" };
+        var host = new StackPanel();
+        await (Task)typeof(RecipeGalleryDialog).GetMethod("AddCollectionFieldAsync", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, [config, host])!;
+        var picker = All<ComboBox>(host).Single();
+        Check(picker.Items.Count >= 3, "opaque legacy marker incorrectly filtered manual/personal collection options");
+        var validate = typeof(RecipeGalleryDialog).GetMethod("Validate", BindingFlags.NonPublic | BindingFlags.Static)!;
+        Check(validate.Invoke(null, [new RecipeDefinition { Type = "collection" }, config]) is string,
+            "retired auto-backed recipe bypasses required collection selection");
+        var row = new SettingsSectionEntry { IsCustom = true, SectionType = "collection", Title = "Old file", Config = config };
+        var showing = RecipeGalleryDialog.ShowEditorAsync(frame.XamlRoot, new RecipeCatalogResponse(), row);
+        await Until(() => VisualTreeHelper.GetOpenPopupsForXamlRoot(frame.XamlRoot).Any(p => All<Grid>(p.Child).Any(g => g.Name == "HomeRowForm")));
+        var root = VisualTreeHelper.GetOpenPopupsForXamlRoot(frame.XamlRoot).Select(p => p.Child).Single(p => All<Grid>(p).Any(g => g.Name == "HomeRowForm"));
+        await Layout();
+        Program.Log("TRACE legacy row combos " + string.Join(", ", All<ComboBox>(root).Select(box => $"{box.Header}/{box.IsEnabled}")));
+        Check(All<ComboBox>(root).Any(b => Equals(b.Header, "Section Type") && b.IsEnabled), "opaque legacy marker incorrectly locked custom row kind");
+        await Capture((FrameworkElement)root, "collections-legacy-home-recipe-460.png");
+        Click(All<Button>(root).Single(b => Equals(b.Content, "Cancel"))); await showing;
+        frame.Content = null;
     }
     private static async Task ArtworkAsync(Frame frame, Window window, Wire wire)
     {
@@ -683,7 +739,9 @@ internal static class CollectionsAcceptanceNativeFixture
         internal TaskCompletionSource<HttpResponseMessage>? PreviewGate;
         internal TaskCompletionSource<HttpResponseMessage>? SearchGate, PosterGate, TitleSearchGate; internal int SearchCalls, TopCalls, AddCalls, RemoveCalls, SaveCalls, Deletes, PosterCalls; internal string? SearchQuery; internal bool RejectManual, SearchSecond, RejectTitleSearch, EmptyTitleSearch; internal string ImportedName = "Imported fixture";
         internal static object List(string id, string name) => new { id = id == "top" ? 2 : 1, name, user_name = "Fixture", mediatype = "movie", items = 12, likes = 3, url = "https://mdblist.com/lists/fixture/" + id };
-        private object Collection(string id) => new { id, name = id == "manual" ? "Manual fixture" : ImportedName, collection_type = id == "manual" ? "manual" : id == "discover" ? "tmdb" : id.Contains("trakt") ? "trakt" : "mdblist", creator_profile_id = "fixture", source_url = "https://mdblist.com/lists/fixture/top/", source_config = new { limit = 100, mode = id == "discover" ? "tmdb_discover" : "trakt_preset", media_type = "movie", preset = "trending", discover = new { sort_by = "popularity.desc" } }, sync_cadence = id == "stopped-trakt" ? "" : "daily", updated_at = "2026-10-01T00:00:00Z" };
+        private object Collection(string id) => id == "converted"
+            ? new { id, name = ImportedName, collection_type = "manual", creator_profile_id = "fixture", source_url = "", source_config = new { }, sync_schedule = (string?)null }
+            : new { id, name = id == "manual" ? "Manual fixture" : ImportedName, collection_type = id == "manual" ? "manual" : id == "discover" ? "tmdb" : "mdblist", creator_profile_id = "fixture", source_url = "https://mdblist.com/lists/fixture/top/", source_config = new { limit = 100, mode = id == "discover" ? "tmdb_discover" : "mdblist", media_type = "movie", preset = "trending", discover = new { sort_by = "popularity.desc" } }, sync_cadence = "daily", updated_at = "2026-10-01T00:00:00Z" };
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.Method != HttpMethod.Get && request.RequestUri?.AbsolutePath != "/api/v2/collections/preview") MutationCalls++;
@@ -702,9 +760,9 @@ internal static class CollectionsAcceptanceNativeFixture
             if (path == "/api/v2/collections/capabilities") return RejectCapabilities ? Reply(new { message = "Fixture capabilities rejected" }, HttpStatusCode.ServiceUnavailable) : Reply(new { item_reorder = false, imports = true, import_sources = ImportSources, mdblist_search = true, artwork = true, sync_schedule_editable = true });
             if (path == "/api/v2/collections/templates") return Reply(new { categories = new[] { new { category = "featured", label = "Featured", templates = new[] { new { id = Template.Id, title = Template.Title, description = Template.Description, source = "tmdb", media_kind = "movie", icon = Template.Icon, requires_profile = true, default_sync_schedule = Template.DefaultSyncSchedule, default_limit = 100, poster_path = PosterUrl, mdblist = new { url = "" } }, new { id = "popular", title = "Popular pick", description = "Source pick", source = "mdblist", media_kind = "movie", icon = Template.Icon, requires_profile = false, default_sync_schedule = "0 0 * * *", default_limit = 100, poster_path = PosterUrl, mdblist = new { url = "https://mdblist.com/lists/fixture/popular/" } } } } } });
             if (path == "/api/v2/collections") return Reply(new { items = new[] { Collection("manual"), Collection("imported") }, groups = Array.Empty<object>() });
-            if (path == "/api/v2/collections/manual/items") return Reply(new { items = new[] { new { media_item_id = "one", content_id = "one", title = "Retained title", type = "movie", position = 0 } }, page = new { has_more = false } });
+            if (path is "/api/v2/collections/manual/items" or "/api/v2/collections/converted/items") return Reply(new { items = new[] { new { media_item_id = "one", content_id = "one", title = "Retained title", type = "movie", position = 0 } }, page = new { has_more = false } });
             if (path.StartsWith("/api/v2/collections/manual/items/")) { if (request.Method == HttpMethod.Put) AddCalls++; else if (request.Method == HttpMethod.Delete) RemoveCalls++; return Reply(new { message = "Fixture manual write rejected" }, RejectManual ? HttpStatusCode.UnprocessableEntity : HttpStatusCode.OK); }
-            if (path is "/api/v2/collections/manual" or "/api/v2/collections/imported" or "/api/v2/collections/discover" or "/api/v2/collections/trakt" or "/api/v2/collections/stopped-trakt")
+            if (path is "/api/v2/collections/manual" or "/api/v2/collections/imported" or "/api/v2/collections/discover" or "/api/v2/collections/converted")
             {
                 if (request.Method == HttpMethod.Delete) Deletes++;
                 if (request.Method == HttpMethod.Patch) { SaveCalls++; using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); if (body.RootElement.TryGetProperty("name", out var name)) ImportedName = name.GetString()!; }

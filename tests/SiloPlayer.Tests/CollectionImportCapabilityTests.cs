@@ -22,7 +22,7 @@ public sealed class CollectionImportCapabilityTests
     {
         using var wire = new Wire(); var client = new SiloApiClient(new HttpClient(wire)); client.SetBaseUrl("https://collection-fixture.invalid");
         var vm = new CollectionsViewModel(new CollectionsApi(client), new CatalogApi(client));
-        Assert.Null(await vm.ImportTemplateAsync(new() { Title = "Fixture", Template = new() { Source = "trakt", Trakt = new() { Preset = "trending", MediaType = "movie" } } }));
+        Assert.Null(await vm.ImportTemplateAsync(new() { Title = "Fixture", Template = new() { Source = "trakt" } }));
         Assert.Contains("no longer", vm.TemplateErrorMessage); Assert.Empty(wire.Posts);
         var created = await vm.ImportTemplateAsync(new() { Title = "Fixture", TMDBListUrl = "https://www.themoviedb.org/list/310-fixture", Template = new() { Source = "tmdb_list" } });
         Assert.NotNull(created); Assert.Equal("/api/v2/collections/import/tmdb-list", wire.Posts.Single());

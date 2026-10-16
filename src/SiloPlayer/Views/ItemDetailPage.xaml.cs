@@ -28,6 +28,12 @@ public sealed partial class ItemDetailPage : Page
     private CancellationTokenSource? _imageCts;
     private CancellationTokenSource? _navigationCts;
     private CancellationTokenSource? _translationCts;
+    private CancellationTokenSource? _episodesTranslationCts;
+    private string? _episodesTranslationKey;
+    private bool _isTranslatingEpisodes;
+    private EpisodeSpoilerPreferences? _episodeSpoilerPreferences;
+    private string? _revealedEpisodeOverviewId;
+    private int _episodeSpoilerRevision;
     private bool _isTranslatingOverview;
     private bool _translateButtonMode;
     private WatchDetailResponse? _watchDetail;
@@ -92,6 +98,15 @@ public sealed partial class ItemDetailPage : Page
         UpdateThemeGradientColors();
 
         this.Loaded += OnPageLoaded;
+        Loaded += (_, _) => ViewModel.SimilarItems.CollectionChanged += OnSimilarItemsChanged;
+        Unloaded += (_, _) => ViewModel.SimilarItems.CollectionChanged -= OnSimilarItemsChanged;
+        Loaded += (_, _) =>
+        {
+            _episodeSpoilerPreferences = App.Services.GetService<EpisodeSpoilerPreferences>();
+            if (_episodeSpoilerPreferences != null) { _episodeSpoilerPreferences.Changed -= EpisodeSpoilersChanged; _episodeSpoilerPreferences.Changed += EpisodeSpoilersChanged; }
+            _ = EnsureEpisodeSpoilersAsync();
+        };
+        Unloaded += (_, _) => { if (!IsLoaded && _episodeSpoilerPreferences != null) _episodeSpoilerPreferences.Changed -= EpisodeSpoilersChanged; };
         Unloaded += (_, _) => { SettingsViewModel.TitleArtPreferenceChanged -= OnTitleArtPreferenceChanged; ++_titleArtRevision; };
         ContentScroll.ViewChanged += (_, _) => UpdateMangaStickyHeader();
         MangaStickyHeader.SizeChanged += (_, _) => UpdateMangaStickyHeader();
@@ -811,6 +826,8 @@ public sealed partial class ItemDetailPage : Page
             DispatcherQueue.TryEnqueue(UpdateStarRating);
         else if (args.PropertyName == nameof(ViewModel.IsWatched))
             DispatcherQueue.TryEnqueue(UpdateWatchedButton);
+        else if (args.PropertyName is nameof(ViewModel.Item) or nameof(ViewModel.Episodes))
+            DispatcherQueue.TryEnqueue(() => { ApplyEpisodeSpoilers(); if (args.PropertyName == nameof(ViewModel.Item)) BuildMoreFlyout(); });
     }
 
     private void OnPageLoaded(object sender, RoutedEventArgs e)
@@ -891,6 +908,11 @@ public sealed partial class ItemDetailPage : Page
         _translationCts?.Cancel();
         _translationCts?.Dispose();
         _translationCts = null;
+        _episodesTranslationCts?.Cancel();
+        _episodesTranslationCts?.Dispose();
+        _episodesTranslationCts = null;
+        _episodesTranslationKey = null;
+        _isTranslatingEpisodes = false;
         _imageCts?.Cancel();
         _imageCts?.Dispose();
         _imageCts = null;
@@ -1608,6 +1630,12 @@ public sealed partial class ItemDetailPage : Page
         MetaDot2.Visibility = Visibility.Collapsed;
 
         OverviewText.Text = item.Overview ?? "";
+        OverviewTranslationLabel.Visibility = !string.IsNullOrWhiteSpace(item.Overview) && MachineTranslationPresentation.HasField(item.MachineTranslatedFields)
+            ? Visibility.Visible : Visibility.Collapsed;
+        TaglineTranslationLabel.Visibility = (item.Type is "movie" or "series") && TaglineText.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(item.Tagline) && MachineTranslationPresentation.HasField(item.MachineTranslatedFields, "tagline")
+            ? Visibility.Visible : Visibility.Collapsed;
+        ApplyEpisodeSpoilers();
+        _ = EnsureEpisodeSpoilersAsync();
         if (string.IsNullOrWhiteSpace(item.PendingTranslationLanguage))
             TranslateOverviewButton.Visibility = Visibility.Collapsed;
 
@@ -2025,10 +2053,10 @@ public sealed partial class ItemDetailPage : Page
                 Content = genre,
                 Style = (Style)Application.Current.Resources["GhostButtonStyle"],
                 Padding = new Thickness(10, 4, 10, 4),
-                CornerRadius = new CornerRadius(999),
                 FontSize = 12,
                 Tag = genre,
             };
+            RoundedBadge.SetRadius(button, 999);
             button.Click += (_, _) =>
             {
                 var navigation = App.Services.GetRequiredService<NavigationService>();
@@ -2659,9 +2687,53 @@ public sealed partial class ItemDetailPage : Page
 
     // ===== Scores Row =====
 
+    private async Task EnsureEpisodeSpoilersAsync()
+    {
+        _episodeSpoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
+        if (_episodeSpoilerPreferences == null || ViewModel.Item?.Type is not ("series" or "season" or "episode")) return;
+        try { await _episodeSpoilerPreferences.EnsureLoadedAsync(_navigationCts?.Token ?? default); ApplyEpisodeSpoilers(); }
+        catch (OperationCanceledException) { }
+    }
+    private void EpisodeSpoilersChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(ApplyEpisodeSpoilers);
+    private void ApplyEpisodeSpoilers()
+    {
+        if (!IsLoaded || ViewModel.Item is not { } item) return;
+        ++_episodeSpoilerRevision;
+        var hidden = item.Type == "episode" && _episodeSpoilerPreferences?.HideOverviews == true
+            && EpisodeSpoilerPolicy.IsUnwatched(item.UserData?.Played, item.UserData?.IsInProgress, item.UserData?.PositionSeconds)
+            && _revealedEpisodeOverviewId != item.ContentId;
+        OverviewText.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
+        RevealEpisodeOverviewButton.Visibility = hidden && !string.IsNullOrWhiteSpace(item.Overview) ? Visibility.Visible : Visibility.Collapsed;
+        OverviewTranslationLabel.Visibility = !hidden && !string.IsNullOrWhiteSpace(item.Overview) && MachineTranslationPresentation.HasField(item.MachineTranslatedFields) ? Visibility.Visible : Visibility.Collapsed;
+        if (hidden) TranslateOverviewButton.Visibility = Visibility.Collapsed;
+        if (ViewModel.Episodes.Count > 0 && item.Type is "series" or "season") LayoutEpisodeGrid();
+    }
+    private void RevealEpisodeOverviewButton_Click(object sender, RoutedEventArgs e)
+    {
+        _revealedEpisodeOverviewId = ViewModel.Item?.ContentId;
+        ApplyEpisodeSpoilers();
+        _ = ConfigureOnViewTranslationAsync(ViewModel.Item);
+    }
+
+    private async Task ConfigureResetProgressAsync(MediaItemDetail item, MenuFlyoutItem action)
+    {
+        var api = App.Services.GetRequiredService<CatalogApi>();
+        var context = api.CaptureContext();
+        try
+        {
+            var capability = await api.GetProgressCapabilitiesAsync(_navigationCts?.Token ?? default);
+            if (api.IsCurrentContext(context) && IsCurrentDetail(item.ContentId) && MoreFlyout.Items.Contains(action))
+                action.Visibility = MediaItemActionPolicy.CanResetProgress(item.Type, item.UserData?.PositionSeconds, capability.ClearResumePosition) ? Visibility.Visible : Visibility.Collapsed;
+        }
+        catch { action.Visibility = Visibility.Collapsed; }
+    }
+
     private async Task ConfigureOnViewTranslationAsync(MediaItemDetail? item)
     {
-        if (item == null || string.IsNullOrWhiteSpace(item.PendingTranslationLanguage))
+        if (item == null || string.IsNullOrWhiteSpace(item.PendingTranslationLanguage)
+            || item.Type == "episode" && _episodeSpoilerPreferences?.HideOverviews == true
+                && EpisodeSpoilerPolicy.IsUnwatched(item.UserData?.Played, item.UserData?.IsInProgress, item.UserData?.PositionSeconds)
+                && _revealedEpisodeOverviewId != item.ContentId)
         {
             TranslateOverviewButton.Visibility = Visibility.Collapsed;
             return;
@@ -2669,7 +2741,10 @@ public sealed partial class ItemDetailPage : Page
 
         try
         {
-            var status = await App.Services.GetRequiredService<CatalogApi>().GetMetadataAiStatusAsync();
+            var api = App.Services.GetRequiredService<CatalogApi>();
+            var context = api.CaptureContext();
+            var status = await api.GetMetadataAiStatusAsync(_navigationCts?.Token ?? default);
+            if (!api.IsCurrentContext(context) || !IsCurrentDetail(item.ContentId)) return;
             if (!status.Enabled)
             {
                 TranslateOverviewButton.Visibility = Visibility.Collapsed;
@@ -2715,7 +2790,8 @@ public sealed partial class ItemDetailPage : Page
         _isTranslatingOverview = true;
         _translationCts?.Cancel();
         _translationCts?.Dispose();
-        _translationCts = new CancellationTokenSource(TimeSpan.FromSeconds(45));
+        _translationCts = CancellationTokenSource.CreateLinkedTokenSource(_navigationCts?.Token ?? default);
+        _translationCts.CancelAfter(TimeSpan.FromSeconds(45));
         var ct = _translationCts.Token;
         TranslateOverviewButton.Visibility = Visibility.Visible;
         TranslateOverviewButton.IsEnabled = false;
@@ -2725,13 +2801,15 @@ public sealed partial class ItemDetailPage : Page
         try
         {
             var api = App.Services.GetRequiredService<CatalogApi>();
+            var context = api.CaptureContext();
             await api.TranslateItemDescriptionAsync(item.ContentId, item.PendingTranslationLanguage!, ct);
+            if (!api.IsCurrentContext(context)) return;
             while (!ct.IsCancellationRequested)
             {
                 await Task.Delay(TimeSpan.FromSeconds(2), ct);
-                if (!IsActiveDetail(item.ContentId, ct)) return;
+                if (!IsActiveDetail(item.ContentId, ct) || !api.IsCurrentContext(context)) return;
                 await ViewModel.ReloadAsync(item.ContentId);
-                if (!IsActiveDetail(item.ContentId, ct)) return;
+                if (!IsActiveDetail(item.ContentId, ct) || !api.IsCurrentContext(context)) return;
                 var refreshed = ViewModel.Item;
                 if (refreshed == null) continue;
                 OverviewText.Text = refreshed.Overview ?? "";
@@ -3292,7 +3370,39 @@ public sealed partial class ItemDetailPage : Page
             hasOverflowActions = true;
         }
 
-        if (item.Type is "movie" or "series")
+        if (MediaItemActionPolicy.CanResetProgress(item.Type, item.UserData?.PositionSeconds, true))
+        {
+            var reset = new MenuFlyoutItem { Text = "Reset Progress", Icon = new FontIcon { Glyph = "\uE777" }, Visibility = Visibility.Collapsed };
+            reset.Click += async (_, _) =>
+            {
+                if (!reset.IsEnabled) return;
+                reset.IsEnabled = false;
+                var api = App.Services.GetRequiredService<CatalogApi>();
+                var context = api.CaptureContext();
+                try
+                {
+                    await api.ClearResumePositionAsync(item.ContentId);
+                    if (!api.IsCurrentContext(context) || !IsCurrentDetail(item.ContentId)) return;
+                    App.Services.GetService<ItemDetailPrefetchCache>()?.Invalidate(item.ContentId);
+                    WeakReferenceMessenger.Default.Send(new PlaybackProgressUpdated(item.ContentId, 0, item.UserData?.DurationSeconds ?? 0, item.UserData?.Played == true));
+                    WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.PlaybackProgress, item.ContentId, item.SeriesId));
+                    await ViewModel.ReloadAsync(item.ContentId);
+                    if (api.IsCurrentContext(context) && IsCurrentDetail(item.ContentId)) UpdateUI();
+                }
+                catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); }
+                finally { reset.IsEnabled = true; }
+            };
+            MoreFlyout.Items.Add(reset);
+            _ = ConfigureResetProgressAsync(item, reset);
+        }
+        if (!MediaItemActionPolicy.CanAddToPersonalLists(item.Type) && ViewModel.IsFavorite)
+        {
+            var removeFavorite = new MenuFlyoutItem { Text = "Remove from Favorites", Icon = new FontIcon { Glyph = "\uEB52" } };
+            removeFavorite.Click += async (_, _) => { await ViewModel.ToggleFavoriteCommand.ExecuteAsync(null); BuildMoreFlyout(); };
+            MoreFlyout.Items.Add(removeFavorite);
+        }
+
+        if (MediaItemActionPolicy.CanAddToPersonalLists(item.Type) || ViewModel.InWatchlist)
         {
             var wlItem = new MenuFlyoutItem
             {
@@ -3306,6 +3416,18 @@ public sealed partial class ItemDetailPage : Page
             };
             MoreFlyout.Items.Add(wlItem);
             hasOverflowActions = true;
+        }
+
+        if (item.Type is "movie" or "series" && item.UserState != null)
+        {
+            var catalog = App.Services.GetRequiredService<CatalogApi>();
+            var context = catalog.CaptureContext();
+            var card = new MediaItem { ContentId = item.ContentId, Type = item.Type,
+                UserState = new() { NotInterested = item.UserState.NotInterested } };
+            var interest = NotInterestedActions.CreateMenuItem(card);
+            MoreFlyout.Items.Add(interest);
+            hasOverflowActions = true;
+            _ = NotInterestedActions.RefreshMenuItemAsync(interest, card, context);
         }
 
         if (item.Type == "series" && _requestSeasonsContentId == item.ContentId && int.TryParse(item.TmdbId, out var tmdbId))
@@ -4226,7 +4348,7 @@ public sealed partial class ItemDetailPage : Page
         if (!string.IsNullOrWhiteSpace(v.CodecVideo)) parts.Add(v.CodecVideo.ToUpperInvariant());
         var rangeLabel = MediaVideoRange.Label(v);
         if (!string.IsNullOrWhiteSpace(rangeLabel)) parts.Add(rangeLabel);
-        if (!string.IsNullOrWhiteSpace(v.CodecAudio)) parts.Add(VersionRanking.MapAudioLabel(v.CodecAudio));
+        if (!string.IsNullOrWhiteSpace(v.CodecAudio)) parts.Add(VersionRanking.VersionAudioLabel(v));
         if (parts.Count == 0 && !string.IsNullOrWhiteSpace(v.Container))
             parts.Add(v.Container.ToUpperInvariant());
         return parts.Count == 0 ? null : string.Join(" · ", parts);
@@ -5005,7 +5127,11 @@ public sealed partial class ItemDetailPage : Page
             next.AirDate,
             next.Runtime,
             next.SeasonNumber,
-            next.EpisodeNumber);
+            next.EpisodeNumber,
+            next.UserData?.Played,
+            next.UserData?.IsInProgress,
+            next.UserData?.PositionSeconds,
+            next.StillIsEpisodeStill);
     }
 
     // ===== Initial Play Button & Quality Badges from Catalog Item Data =====
@@ -5507,7 +5633,7 @@ public sealed partial class ItemDetailPage : Page
             if (track.SampleRate is > 0) descriptionParts.Add(FormatSampleRate(track.SampleRate.Value));
             if (track.BitDepth is > 0) descriptionParts.Add($"{track.BitDepth}-bit");
             var badges = new List<string>();
-            if (!string.IsNullOrWhiteSpace(track.Codec)) badges.Add(VersionRanking.MapAudioLabel(track.Codec));
+            if (!string.IsNullOrWhiteSpace(track.Codec)) badges.Add(VersionRanking.AudioTrackLabel(track));
             if (track.Channels.HasValue) badges.Add(FormatAudioChannels(track.Channels.Value));
             if (track.Default) badges.Add("DEFAULT");
             var item = CreateTrackSelectionRow(
@@ -6283,7 +6409,7 @@ public sealed partial class ItemDetailPage : Page
         else parts.Add("Unknown");
 
         if (!string.IsNullOrWhiteSpace(track.Codec))
-            parts.Add(VersionRanking.MapAudioLabel(track.Codec));
+            parts.Add(VersionRanking.AudioTrackLabel(track));
 
         if (track.Channels.HasValue)
         {
@@ -6549,7 +6675,7 @@ public sealed partial class ItemDetailPage : Page
             parts.Add(rangeLabel);
         var audio = string.IsNullOrWhiteSpace(version.CodecAudio)
             ? null
-            : VersionRanking.MapAudioLabel(version.CodecAudio);
+            : VersionRanking.VersionAudioLabel(version);
         if (!string.IsNullOrEmpty(audio))
             parts.Add(audio!);
         if (parts.Count == 0 && !string.IsNullOrWhiteSpace(version.Container))
@@ -6659,6 +6785,14 @@ public sealed partial class ItemDetailPage : Page
         if (!string.Equals(_currentContentId, requestedContentId, StringComparison.Ordinal))
             return;
 
+        RenderSimilarItems();
+    }
+
+    private void OnSimilarItemsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+        => DispatcherQueue.TryEnqueue(() => { if (IsLoaded) RenderSimilarItems(); });
+
+    private void RenderSimilarItems()
+    {
         SimilarLoadingSkeleton.Visibility = Visibility.Collapsed;
         SimilarLoadError.Visibility = Visibility.Collapsed;
         SimilarPanel.Visibility = ViewModel.SimilarLoadFailed
@@ -6678,12 +6812,15 @@ public sealed partial class ItemDetailPage : Page
         }
 
         SimilarSection.Visibility = Visibility.Visible;
-        SimilarPanel.Children.Clear();
-
-        foreach (var item in ViewModel.SimilarItems)
+        var wanted = ViewModel.SimilarItems.ToHashSet();
+        foreach (var child in SimilarPanel.Children.OfType<RecommendationPosterCard>().Where(child => child.Tag is not MediaItem item || !wanted.Contains(item)).ToArray())
+            SimilarPanel.Children.Remove(child);
+        for (var index = 0; index < ViewModel.SimilarItems.Count; index++)
         {
-            var posterCard = new RecommendationPosterCard(item);
-            SimilarPanel.Children.Add(posterCard);
+            var item = ViewModel.SimilarItems[index];
+            var card = SimilarPanel.Children.OfType<RecommendationPosterCard>().FirstOrDefault(card => ReferenceEquals(card.Tag, item));
+            if (card == null) { card = new RecommendationPosterCard(item) { Tag = item }; SimilarPanel.Children.Insert(index, card); }
+            else if (SimilarPanel.Children.IndexOf(card) != index) { SimilarPanel.Children.Remove(card); SimilarPanel.Children.Insert(index, card); }
         }
         UpdateResponsiveLayout(ActualWidth);
     }
@@ -6968,11 +7105,13 @@ public sealed partial class ItemDetailPage : Page
                     BackdropUrl = ep.StillUrl,
                     BackdropThumbhash = ep.StillThumbhash,
                     Overview = ep.Overview ?? "",
+                    BackdropIsEpisodeStill = ep.StillIsEpisodeStill,
+                    PosterIsEpisodeStill = ep.StillIsEpisodeStill,
                     EpisodeNumber = ep.EpisodeNumber,
                     SeasonNumber = ep.SeasonNumber,
                     Runtime = ep.Runtime,
                     Badges = isCurrentEpisode ? ["now_viewing"] : [],
-                    UserState = new UserState { Played = ep.UserData?.Played == true },
+                    UserState = new UserState { Played = ep.UserData?.Played == true, IsInProgress = ep.UserData?.IsInProgress == true },
                 };
                 if (ep.UserData != null)
                 {
@@ -7215,8 +7354,15 @@ public sealed partial class ItemDetailPage : Page
     private void BuildCast(List<CastMember> cast)
     {
         CastPanel.Children.Clear();
+        var detail = ViewModel.Item;
+        var combined = detail?.Type is "movie" or "series";
+        var groups = combined ? CastCrewPresentation.BuildGroups(detail!.Type, detail.Crew ?? [], cast)
+            : new List<CreditGroup> { new("Cast", cast.OrderBy(c => c.Order).Take(20).ToList()) };
+        CastHeader.Text = combined ? "Cast & Crew" : "Cast";
+        var cards = groups.SelectMany((group, index) => group.Members.Select((member, offset) =>
+            (Member: member, Divider: index > 0 && offset == 0 ? group.Label : null))).ToList();
 
-        if (cast.Count == 0)
+        if (cards.Count == 0)
         {
             CastSection.Visibility = Visibility.Collapsed;
             CastHeader.Visibility = Visibility.Collapsed;
@@ -7231,8 +7377,16 @@ public sealed partial class ItemDetailPage : Page
         // Sort by the server-provided order field (main cast first) then
         // take top 20. Previously unsorted with .Take(20) which could miss
         // prominent actors who appeared later in the list.
-        foreach (var member in cast.OrderBy(c => c.Order).Take(20))
+        foreach (var entry in cards)
         {
+            var member = entry.Member;
+            if (entry.Divider != null)
+            {
+                var divider = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Margin = new Thickness(8, 0, 8, 0), VerticalAlignment = VerticalAlignment.Stretch };
+                divider.Children.Add(new Border { Width = 1, Background = (Brush)Application.Current.Resources["BorderBrush"], Margin = new Thickness(0, 0, 0, 40) });
+                divider.Children.Add(new TextBlock { Text = entry.Divider, FontSize = 11, Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"], VerticalAlignment = VerticalAlignment.Top });
+                CastPanel.Children.Add(divider);
+            }
             // B34: Portrait cards 110x165 (aspect 2:3) instead of 64x64 circles —
             // matches WebUI CastCarousel aspect-[2/3] frames.
             var card = new StackPanel
@@ -7359,7 +7513,7 @@ public sealed partial class ItemDetailPage : Page
 
             if (bytes == null) return;
 
-            var bitmapImage = new BitmapImage();
+            var bitmapImage = new BitmapImage { DecodePixelWidth = 330 };
             using var stream = new MemoryStream(bytes);
             await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
 
@@ -7381,6 +7535,7 @@ public sealed partial class ItemDetailPage : Page
 
     private void BuildCrew(List<CrewMember> crew)
     {
+        if (ViewModel.Item?.Type is "movie" or "series") { CrewSection.Visibility = Visibility.Collapsed; return; }
         CreatorNamesPanel.Children.Clear();
         CreatorsPanel.Visibility = Visibility.Collapsed;
         DirectorNamesPanel.Children.Clear();
@@ -7732,6 +7887,7 @@ public sealed partial class ItemDetailPage : Page
 
     private void BuildEpisodeRows()
     {
+        _ = ConfigureEpisodesTranslationAsync();
         EpisodesPanel.Children.Clear();
         EpisodesPanel.RowDefinitions.Clear();
         EpisodesPanel.ColumnDefinitions.Clear();
@@ -7769,6 +7925,91 @@ public sealed partial class ItemDetailPage : Page
         }
 
         LayoutEpisodeGrid();
+    }
+
+    private (string? SeasonId, string? Language) EpisodeTranslationTarget()
+    {
+        var item = ViewModel.Item;
+        var seasonId = item?.Type == "season" ? item.ContentId
+            : item?.Type == "series" && ViewModel.Seasons.Count == 1 ? ViewModel.Seasons[0].ContentId : null;
+        return (seasonId, ViewModel.Episodes.FirstOrDefault(e => !string.IsNullOrWhiteSpace(e.PendingTranslationLanguage))?.PendingTranslationLanguage);
+    }
+
+    private async Task ConfigureEpisodesTranslationAsync()
+    {
+        var (seasonId, language) = EpisodeTranslationTarget();
+        var key = seasonId + ":" + language;
+        if (_episodesTranslationKey == key) return;
+        _episodesTranslationKey = key;
+        _episodesTranslationCts?.Cancel();
+        TranslateEpisodesButton.Visibility = Visibility.Collapsed;
+        if (string.IsNullOrWhiteSpace(seasonId) || string.IsNullOrWhiteSpace(language)) return;
+        var owner = _currentContentId;
+        var api = App.Services.GetRequiredService<CatalogApi>();
+        var context = api.CaptureContext();
+        try
+        {
+            var status = await api.GetMetadataAiStatusAsync(_navigationCts?.Token ?? default);
+            if (!api.IsCurrentContext(context) || owner == null || !IsCurrentDetail(owner) || key != _episodesTranslationKey || !status.Enabled) return;
+            if (status.OnView == "auto") await TranslateEpisodesAsync();
+            else if (status.OnView == "button")
+            {
+                TranslateEpisodesButton.Content = "Translate descriptions";
+                TranslateEpisodesButton.IsEnabled = true;
+                TranslateEpisodesButton.Visibility = Visibility.Visible;
+            }
+        }
+        catch { }
+    }
+
+    private async void TranslateEpisodesButton_Click(object sender, RoutedEventArgs e) => await TranslateEpisodesAsync();
+
+    private async Task TranslateEpisodesAsync()
+    {
+        var (seasonId, language) = EpisodeTranslationTarget();
+        if (_isTranslatingEpisodes || string.IsNullOrWhiteSpace(seasonId) || string.IsNullOrWhiteSpace(language)) return;
+        var owner = _currentContentId;
+        var api = App.Services.GetRequiredService<CatalogApi>();
+        var context = api.CaptureContext();
+        var libraryId = ViewModel.LibraryId;
+        _episodesTranslationCts?.Cancel();
+        _episodesTranslationCts?.Dispose();
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(_navigationCts?.Token ?? default);
+        _episodesTranslationCts = cts;
+        cts.CancelAfter(TimeSpan.FromSeconds(45));
+        var ct = cts.Token;
+        bool Current() => !ct.IsCancellationRequested && api.IsCurrentContext(context) && owner != null && IsCurrentDetail(owner) && ViewModel.LibraryId == libraryId && EpisodeTranslationTarget().SeasonId == seasonId;
+        _isTranslatingEpisodes = true;
+        TranslateEpisodesButton.Visibility = Visibility.Visible;
+        TranslateEpisodesButton.Content = "Translating descriptions\u2026";
+        TranslateEpisodesButton.IsEnabled = false;
+        try
+        {
+            await api.TranslateItemDescriptionAsync(seasonId, language, ct);
+            while (Current())
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                if (!Current()) return;
+                var response = await api.GetItemEpisodesAsync(seasonId, libraryId, ct);
+                if (!Current()) return;
+                ViewModel.Episodes.Clear();
+                foreach (var episode in response.Episodes) ViewModel.Episodes.Add(episode);
+                LayoutEpisodeGrid();
+                if (!response.Episodes.Any(e => !string.IsNullOrWhiteSpace(e.PendingTranslationLanguage)))
+                { TranslateEpisodesButton.Visibility = Visibility.Collapsed; break; }
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { if (Current()) App.Services.GetRequiredService<ToastService>().Error(ex); }
+        finally
+        {
+            if (ReferenceEquals(_episodesTranslationCts, cts))
+            {
+                _isTranslatingEpisodes = false;
+                if (owner != null && IsCurrentDetail(owner) && api.IsCurrentContext(context))
+                { TranslateEpisodesButton.IsEnabled = true; TranslateEpisodesButton.Content = "Translate descriptions"; }
+            }
+        }
     }
 
     private void LayoutEpisodeGrid()
@@ -7988,6 +8229,8 @@ public sealed partial class ItemDetailPage : Page
             FontSize = 11,
             Margin = new Thickness(0, 2, 0, 0),
         };
+        if (_episodeSpoilerPreferences?.HideOverviews == true && EpisodeSpoilerPolicy.IsUnwatched(episode.UserData?.Played, episode.UserData?.IsInProgress, episode.UserData?.PositionSeconds))
+            overviewText.Visibility = Visibility.Collapsed;
         if (_tvViewport != null && ActualWidth < 1024)
         {
             episodeMetaText.Visibility = Visibility.Collapsed;
@@ -8001,6 +8244,8 @@ public sealed partial class ItemDetailPage : Page
             Spacing = 0,
             Children = { stillAspect, episodeNumberRow, titleText, episodeMetaText, overviewText },
         };
+        if (overviewText.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(episode.Overview) && MachineTranslationPresentation.HasField(episode.MachineTranslatedFields))
+            content.Children.Add(new TextBlock { Text = "AI-translated overview", FontSize = 10, Foreground = (Brush)Application.Current.Resources["TertiaryTextBrush"], Margin = new Thickness(0, 2, 0, 0) });
 
         var defaultBg = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         var mediaItem = new MediaItem
@@ -8011,7 +8256,9 @@ public sealed partial class ItemDetailPage : Page
             SeasonNumber = episode.SeasonNumber,
             EpisodeNumber = episode.EpisodeNumber,
             BackdropUrl = episode.StillUrl,
-            UserState = new UserState { Played = isWatched },
+            UserState = new UserState { Played = isWatched, IsInProgress = episode.UserData?.IsInProgress == true },
+            PosterIsEpisodeStill = episode.StillIsEpisodeStill,
+            BackdropIsEpisodeStill = episode.StillIsEpisodeStill,
             PositionSeconds = episode.UserData?.PositionSeconds,
             DurationSeconds = episode.UserData?.DurationSeconds,
         };
@@ -8324,6 +8571,11 @@ public sealed partial class ItemDetailPage : Page
                 episode.ContentId, "still", episode.StillUrl!, httpClient, CancellationToken.None);
 
             if (bytes == null) return;
+            _episodeSpoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
+            if (_episodeSpoilerPreferences != null) await _episodeSpoilerPreferences.EnsureLoadedAsync(_navigationCts?.Token ?? default);
+            var revision = _episodeSpoilerRevision;
+            if (EpisodeSpoilerPolicy.HideImage("episode", episode.StillIsEpisodeStill, episode.UserData?.Played, episode.UserData?.IsInProgress, episode.UserData?.PositionSeconds, _episodeSpoilerPreferences?.HideImages == true))
+                bytes = await ArtworkEffects.BlurEpisodeStillAsync(bytes, _navigationCts?.Token ?? default);
 
             var bitmapImage = new BitmapImage
             {
@@ -8344,6 +8596,7 @@ public sealed partial class ItemDetailPage : Page
             // Replace the placeholder. The stillBorder may be nested inside a
             // progress-overlay Grid, but it is still the same object reference
             // so setting its Child updates the visual tree correctly.
+            if (revision != _episodeSpoilerRevision) return;
             stillBorder.Child = image;
             // Clear the placeholder background so the image shows through
             stillBorder.Background = null;

@@ -5,8 +5,10 @@ using SiloPlayer.ViewModels;
 
 namespace SiloPlayer.Tests;
 
-public sealed class DetailFailureTests
+public sealed class DetailFailureTests : IDisposable
 {
+    private readonly DetailViewModelTestScope _scope = new();
+    public void Dispose() => _scope.Dispose();
     [Theory]
     [InlineData(404, "not_found", DetailFailureKind.NotFound)]
     [InlineData(403, "forbidden", DetailFailureKind.AccessDenied)]
@@ -17,7 +19,7 @@ public sealed class DetailFailureTests
         var cache = new ItemDetailPrefetchCache((id, _) => ++calls == 1
             ? Task.FromException<MediaItemDetail>(new ApiException(code, "Sanitized fixture", status))
             : Task.FromResult(new MediaItemDetail { ContentId = id, Type = "movie", UserState = new(), UserData = new() }));
-        var vm = new ItemDetailViewModel(null!, cache);
+        var vm = _scope.Create(cache);
         await vm.LoadCommand.ExecuteAsync("fixture");
         Assert.Equal(expected, vm.FailureKind);
         Assert.Null(vm.Item);
@@ -34,7 +36,7 @@ public sealed class DetailFailureTests
     {
         var pending = new TaskCompletionSource<MediaItemDetail>(TaskCreationOptions.RunContinuationsAsynchronously);
         var cache = new ItemDetailPrefetchCache((id, _) => id == "old" ? pending.Task : Task.FromResult(new MediaItemDetail { ContentId = id, UserState = new() }));
-        var vm = new ItemDetailViewModel(null!, cache);
+        var vm = _scope.Create(cache);
         var oldLoad = vm.LoadCommand.ExecuteAsync("old");
         await vm.LoadCommand.ExecuteAsync("new");
         pending.SetException(new ApiException("unavailable", "Fixture", 503));

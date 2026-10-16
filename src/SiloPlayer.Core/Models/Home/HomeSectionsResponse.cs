@@ -51,6 +51,10 @@ public class MediaItem
     public string Status { get; set; } = "";
     public string? ShowStatus { get; set; }
     public string Overview { get; set; } = "";
+    public string? PendingTranslationLanguage { get; set; }
+    public List<string>? MachineTranslatedFields { get; set; }
+    public bool? PosterIsEpisodeStill { get; set; }
+    public bool? BackdropIsEpisodeStill { get; set; }
     public string? PosterUrl { get; set; }
     public string? PosterThumbhash { get; set; }
     public string? BackdropUrl { get; set; }
@@ -192,6 +196,8 @@ public class OverlaySummary
 public class UserState
 {
     public bool Played { get; set; }
+    public bool IsInProgress { get; set; }
     public bool IsFavorite { get; set; }
     public bool InWatchlist { get; set; }
+    public bool NotInterested { get; set; }
 }

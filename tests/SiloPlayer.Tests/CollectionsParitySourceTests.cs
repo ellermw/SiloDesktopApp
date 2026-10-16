@@ -111,7 +111,7 @@ public sealed class CollectionsParitySourceTests
         Assert.Contains("/api/v2/collections/import/mdblist/top", api);
         Assert.Contains("/api/v2/collections/import/mdblist", api);
         Assert.Contains("/api/v2/collections/import/tmdb", api);
-        Assert.Contains("/api/v2/collections/import/trakt", api);
+        Assert.DoesNotContain("/api/v2/collections/import/trakt", api);
         Assert.Contains("/sync", api);
         Assert.Contains("/image?type=poster", api);
         Assert.Contains("/collections/capabilities", api);

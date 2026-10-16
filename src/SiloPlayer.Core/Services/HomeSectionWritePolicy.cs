@@ -5,8 +5,6 @@ namespace SiloPlayer.Core.Services;
 
 public static class HomeSectionWritePolicy
 {
-    public static bool IsTrakt(Dictionary<string, object>? config)
-        => config != null && new[] { "source", "source_provider" }.Any(key => config.TryGetValue(key, out var value) && value?.ToString() == "trakt");
     public static SectionOverride FromRaw(RawSectionOverride row) => new()
     {
         Id = Empty(row.Id), SectionId = Empty(row.SectionId), Position = row.Position, Hidden = row.Hidden, Removed = row.Removed,
@@ -16,8 +14,8 @@ public static class HomeSectionWritePolicy
     private static string? Empty(string value) => string.IsNullOrEmpty(value) ? null : value;
     private static Dictionary<string, object>? Config(string json) => string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<Dictionary<string, object>>(json);
     public static List<SectionOverride> Build(IEnumerable<SettingsSectionEntry> source, IEnumerable<RawSectionOverride> stored,
-        IEnumerable<string> removedIds, Dictionary<string, string> stableIds, string? changedSectionId = null,
-        IEnumerable<SettingsSectionEntry>? baseline = null, IReadOnlySet<string>? changedSectionIds = null)
+        IEnumerable<string> removedIds, Dictionary<string, string> stableIds,
+        IEnumerable<SettingsSectionEntry>? baseline = null)
     {
         var sections = source.ToList(); var raw = stored.ToList();
         var savedRows = raw.Where(row => !string.IsNullOrEmpty(row.SectionId))
@@ -40,14 +38,9 @@ public static class HomeSectionWritePolicy
             if (!stableIds.TryGetValue(sectionId, out var created)) stableIds[sectionId] = created = Guid.NewGuid().ToString();
             return created;
         }
-        bool LeftOut(SettingsSectionEntry row) => !row.IsCustom && !row.Hidden && !saved.ContainsKey(row.Id) && row.Id != changedSectionId
-            && changedSectionIds?.Contains(row.Id) != true && IsTrakt(row.Config);
-        var held = sections.Where(LeftOut).Select(row => row.Position).ToHashSet();
         var result = new List<SectionOverride>(); var position = 0;
         foreach (var section in sections)
         {
-            if (LeftOut(section)) { position = Math.Max(position, section.Position + 1); continue; }
-            while (held.Contains(position)) position++;
             var original = raw.LastOrDefault(row => row.SectionId == section.Id || (string.IsNullOrEmpty(row.SectionId) && row.Id == section.Id));
             var row = original == null ? new SectionOverride() : FromRaw(original);
             row.Id = section.IsCustom ? section.Id : Id(section.Id); row.SectionId = section.IsCustom ? null : section.Id;

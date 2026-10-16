@@ -21,6 +21,8 @@ public sealed class PlayingNextOnDeckItem
     public string Subtitle { get; init; } = "";
     public string TimeLeft { get; init; } = "";
     public string? ThumbnailUrl { get; init; }
+    public Microsoft.UI.Xaml.Media.ImageSource? ThumbnailSource { get; set; }
+    public bool HideThumbnail { get; init; }
     public double ProgressPercent { get; init; }
 }
 
@@ -173,6 +175,8 @@ public sealed partial class MainWindow : Window
         _eventChannel.EventReceived += OnShellEvent;
         _eventChannel.AccessChanged += OnAccessChanged;
         _eventChannel.ReadCatchUpRequested += OnReadCatchUpRequested;
+        _apiClient.LocalizedReads.Invalidated += OnLocalizedReadsInvalidated;
+        App.Services.GetRequiredService<EpisodeSpoilerPreferences>().Changed += OnEpisodeSpoilerPreferencesChanged;
 
         // Playing Next cinematic overlay — enters during the final 30 seconds
         // of a series episode and marks true EOF separately. PlayerOverlay used to own this but its
@@ -203,6 +207,7 @@ public sealed partial class MainWindow : Window
         _currentWindowWidth = e.Size.Width;
         ApplyResponsiveShellLayout();
         _playerService.HandleWindowResize();
+        SynchronizeSettingsSidebar();
         UpdatePlayingNextLayout(e.Size.Width, e.Size.Height);
     }
 
@@ -444,6 +449,10 @@ public sealed partial class MainWindow : Window
         _eventChannel.EventReceived -= OnShellEvent;
         _eventChannel.AccessChanged -= OnAccessChanged;
         _eventChannel.ReadCatchUpRequested -= OnReadCatchUpRequested;
+        _apiClient.LocalizedReads.Invalidated -= OnLocalizedReadsInvalidated;
+        App.Services.GetRequiredService<EpisodeSpoilerPreferences>().Changed -= OnEpisodeSpoilerPreferencesChanged;
+        _localizedRefreshCts?.Cancel();
+        _localizedRefreshCts?.Dispose();
         _playerService.StateChanged -= OnPlayerStateChanged;
         _uiCustomizationService.Changed -= OnUICustomizationChanged;
         _authService.LoggedOut -= OnAuthLoggedOut;
@@ -532,8 +541,9 @@ public sealed partial class MainWindow : Window
             PlayingNextTitleText.Text = title;
             PlayingNextSeriesText.Text = series ?? "";
             PlayingNextSeriesText.Visibility = string.IsNullOrEmpty(series) ? Visibility.Collapsed : Visibility.Visible;
-            PlayingNextOverviewText.Text = overview;
-            PlayingNextOverviewText.Visibility = string.IsNullOrEmpty(overview) ? Visibility.Collapsed : Visibility.Visible;
+            PlayingNextOverviewText.Text = "";
+            PlayingNextOverviewText.Visibility = Visibility.Collapsed;
+            _ = UpdatePlayingNextOverviewAsync(presentationGeneration);
             PlayingNextMetaText.Text = FormatPlayingNextMeta(
                 _playerService.NextEpisodeAirDate,
                 _playerService.NextEpisodeRuntime);
@@ -773,25 +783,22 @@ public sealed partial class MainWindow : Window
 
     private async Task LoadPlayingNextPosterAsync()
     {
+        var imageOwner = Interlocked.Increment(ref _playingNextArtworkGeneration);
+        await Task.Yield();
         var url = _playerService.NextEpisodePosterUrl;
         var contentId = _playerService.NextEpisodeContentId;
+        var owner = _playingNextPresentationGeneration;
         if (string.IsNullOrEmpty(url)) return;
         try
         {
-            var imageService = App.Services.GetRequiredService<ImageService>();
-            var httpClient = App.Services.GetRequiredService<HttpClient>();
-            var path = await imageService.GetImageDiskPathAsync(
-                contentId ?? url,
-                "playing-next",
-                url,
-                httpClient);
-            if (string.IsNullOrWhiteSpace(path)) return;
-            var bitmap = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(path))
-            {
-                DecodePixelWidth = 640,
-            };
+            var preferences = App.Services.GetRequiredService<EpisodeSpoilerPreferences>();
+            await preferences.EnsureLoadedAsync();
+            var hide = EpisodeSpoilerPolicy.HideImage(_playerService.IsShufflePlayback ? _playerService.ShuffleNext?.Type ?? "episode" : "episode",
+                _playerService.NextEpisodePosterIsEpisodeStill, _playerService.NextEpisodePlayed,
+                _playerService.NextEpisodeIsInProgress, _playerService.NextEpisodePositionSeconds, preferences.HideImages);
+            var bitmap = await LoadEpisodePreviewImageAsync(contentId ?? url, url, hide);
             if (!string.Equals(contentId, _playerService.NextEpisodeContentId, StringComparison.Ordinal) ||
-                PlayingNextOverlay.Visibility != Visibility.Visible)
+                imageOwner != _playingNextArtworkGeneration || owner != _playingNextPresentationGeneration || PlayingNextOverlay.Visibility != Visibility.Visible)
             {
                 return;
             }
@@ -823,12 +830,16 @@ public sealed partial class MainWindow : Window
 
     private async Task LoadPlayingNextOnDeckAsync()
     {
+        var rowOwner = Interlocked.Increment(ref _playingNextOnDeckGeneration);
+        await Task.Yield();
         var nextContentId = _playerService.NextEpisodeContentId;
         var currentContentId = _playerService.WatchDetail?.ContentId;
 
         try
         {
             var currentSeriesId = _playerService.WatchDetail?.SeriesId;
+            var preferences = App.Services.GetRequiredService<EpisodeSpoilerPreferences>();
+            await preferences.EnsureLoadedAsync();
             var sections = await App.Services.GetRequiredService<HomeApi>().GetSectionsAsync();
             if (!string.Equals(_playerService.WatchDetail?.ContentId, currentContentId, StringComparison.Ordinal) ||
                 PlayingNextOverlay.Visibility != Visibility.Visible)
@@ -872,11 +883,20 @@ public sealed partial class MainWindow : Window
                         Subtitle = subtitle,
                         TimeLeft = minutesLeft > 0 ? $"{minutesLeft} min left" : "",
                         ThumbnailUrl = item.BackdropUrl ?? item.PosterUrl,
+                        HideThumbnail = EpisodeSpoilerPolicy.HideImage(item.Type,
+                            item.BackdropUrl != null ? item.BackdropIsEpisodeStill : item.PosterIsEpisodeStill,
+                            item.UserState?.Played, item.UserState?.IsInProgress, item.PositionSeconds, preferences.HideImages),
                         ProgressPercent = percent,
                     };
                 })
                 .ToList();
 
+            foreach (var card in cards)
+                if (card.ThumbnailUrl is { Length: > 0 } thumbnail)
+                    card.ThumbnailSource = card.HideThumbnail
+                        ? await LoadEpisodePreviewImageAsync(card.ContentId, thumbnail, true)
+                        : new Converters.UrlToImageSourceConverter().Convert(thumbnail, typeof(Microsoft.UI.Xaml.Media.ImageSource), null!, "") as Microsoft.UI.Xaml.Media.ImageSource;
+            if (rowOwner != _playingNextOnDeckGeneration || PlayingNextOverlay.Visibility != Visibility.Visible || currentContentId != _playerService.WatchDetail?.ContentId) return;
             PlayingNextOnDeckRepeater.ItemsSource = cards;
             PlayingNextOnDeckScroller.ChangeView(0, null, null, true);
             PlayingNextOnDeckPrev.IsEnabled = false;
@@ -969,6 +989,7 @@ public sealed partial class MainWindow : Window
             _activeGlobalSearch.CloseFromShortcut();
             return;
         }
+        if (FocusSettingsSidebarSearch()) return;
         try
         {
             var dlg = new Controls.GlobalSearchDialog { XamlRoot = this.Content.XamlRoot, InitialQuery = _globalSearchQuery };
@@ -1601,7 +1622,7 @@ public sealed partial class MainWindow : Window
 
         ReleaseNotificationSubscription();
         _notificationSubscriptionShellKey = shellKey;
-        _notificationSubscription = _eventChannel.Subscribe("notifications");
+        _notificationSubscription = _eventChannel.Subscribe("notifications", "user_settings", "user_state");
         if (_eventChannel.TryGetLatestSnapshot("notifications", out var cached))
             OnShellEventSnapshot("notifications", cached);
     }
@@ -1656,6 +1677,17 @@ public sealed partial class MainWindow : Window
         string eventName,
         System.Text.Json.JsonElement data)
     {
+        if (_notificationSubscription != null && CanExposeAuthenticatedNavigation)
+        {
+            _apiClient.LocalizedReads.NotifyRealtime(channel, eventName, data, _authService.SelectedProfileId);
+            App.Services.GetService<NotInterestedService>()?.ReceiveRealtime(channel, eventName, data);
+            NotifyEpisodeSpoilerSettingFromRealtime(channel, eventName, data);
+            if (channel == "user_settings" && eventName == "user_settings.changed"
+                && data.ValueKind == System.Text.Json.JsonValueKind.Object
+                && (!data.TryGetProperty("profile_id", out var changedProfile) || changedProfile.ValueKind == System.Text.Json.JsonValueKind.String && changedProfile.GetString() == _authService.SelectedProfileId)
+                && data.TryGetProperty("key", out var subtitleKey) && subtitleKey.ValueKind == System.Text.Json.JsonValueKind.String && subtitleKey.GetString() is "playback.subtitle_appearance" or "player.subtitle_sync_ms")
+                App.Services.GetRequiredService<SettingsApi>().NotifyLocalizedSettingChanged(subtitleKey.GetString()!);
+        }
         if (_notificationSubscription == null ||
             !string.Equals(channel, "notifications", StringComparison.OrdinalIgnoreCase) ||
             !NotificationBelongsToSelectedProfile(data, _authService.SelectedProfileId))
@@ -2065,6 +2097,7 @@ public sealed partial class MainWindow : Window
             NavView.IsPaneVisible = true;
         ApplyResponsiveShellLayout();
         SynchronizeSelectedNavigationItem(e.SourcePageType, e.Parameter);
+        SynchronizeSettingsSidebar();
     }
 
     private void ResynchronizeSelectedNavigationItem()
@@ -2304,6 +2337,7 @@ public sealed partial class MainWindow : Window
 
     public void HideMainNavigation()
     {
+        RestoreAppSidebar();
         // Hide the pane before closing it so the authenticated-pane guard does
         // not treat login/profile transitions as an accidental collapse.
         NavView.IsPaneVisible = false;
@@ -2480,6 +2514,7 @@ public sealed partial class MainWindow : Window
         switch (state)
         {
             case PlayerState.Idle:
+                if (_localizedRefreshPending) OnLocalizedReadsInvalidated(_apiClient.LocalizedReads.Generation);
                 StopPlayingNextCountdown();
                 PlayingNextOverlay.Visibility = Visibility.Collapsed;
                 PlayerOverlayControl.Visibility = Visibility.Collapsed;
@@ -3385,6 +3420,13 @@ public sealed partial class MainWindow : Window
     {
         try
         {
+            if (args.InvokedItemContainer is NavigationViewItem { Tag: SettingsSidebarTag settingsTag }
+                && ContentFrame.Content is SettingsPage settings)
+            {
+                settings.SelectSettingsSection(settingsTag.Section);
+                SynchronizeSettingsSidebarSelection();
+                return;
+            }
             if (args.InvokedItemContainer is NavigationViewItem item && item.Tag is string tag)
             {
                 switch (tag)

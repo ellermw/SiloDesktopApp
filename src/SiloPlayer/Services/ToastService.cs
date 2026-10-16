@@ -37,6 +37,8 @@ public class ToastService
     }
 
     public void Success(string message) => Show(message, ToastContainer.ToastKind.Success);
+    public void Success(string message, string actionLabel, Func<Task> action)
+        => Show(message, ToastContainer.ToastKind.Success, actionLabel, action);
     public void Error(string message, [CallerMemberName] string member = "",
         [CallerFilePath] string file = "", [CallerLineNumber] int line = 0)
     {
@@ -58,7 +60,7 @@ public class ToastService
     public void Info(string message) => Show(message, ToastContainer.ToastKind.Info);
     public void Warning(string message) => Show(message, ToastContainer.ToastKind.Warning);
 
-    private void Show(string message, ToastContainer.ToastKind kind)
+    private void Show(string message, ToastContainer.ToastKind kind, string? actionLabel = null, Func<Task>? action = null)
     {
         var container = _container;
         var dispatcher = _dispatcher;
@@ -69,7 +71,7 @@ public class ToastService
             // A queued callback must not dereference a service that was
             // unregistered or replaced after it was queued.
             if (!ReferenceEquals(_container, container)) return;
-            try { container.Show(message, kind); }
+            try { container.Show(message, kind, actionLabel: actionLabel, action: action); }
             catch (Exception ex) { LocalLog.AppendException("errors.txt", ex, "ToastService.Show", actionId); }
         });
     }

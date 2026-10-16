@@ -255,7 +255,9 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("HomeRealtimeRefreshGate.ClassifyCatalogEvent(eventName, data)", page);
         Assert.Contains("ViewModel.QueueRealtimeRefresh($\"user_state:{eventName}\")", page);
         Assert.Contains("profile_id", page);
-        Assert.Contains("public void QueueRealtimeRefresh(string reason)", viewModel);
+        Assert.Contains("public void QueueRealtimeRefresh(string reason, ApiRequestContext? context = null)", viewModel);
+        Assert.Contains("QueueRealtimeRefreshAsync(reason, delay, cts, context)", viewModel);
+        Assert.Contains("if (context.HasValue && (!_homeApi.IsCurrentContext(context.Value) || _loadedContext != context)) return", viewModel);
         Assert.Contains("await FetchSectionItemsInBatchesAsync(generation, _sectionLoadCts.Token)", viewModel);
         Assert.Contains("ApplyRefreshedSection(completed)", viewModel);
         Assert.Contains("QueueRealtimeRefresh(message.Completed ? \"playback_completed\" : \"playback_progress\")", viewModel);

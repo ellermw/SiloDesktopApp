@@ -23,6 +23,7 @@ internal static class MediaParityNativeFixture
         => services; // Compatibility for the shared runner; dependencies are scoped below.
     internal static async Task RunAsync(StackPanel parent)
     {
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") == "upstream-media") { await UpstreamMediaNativeFixture.RunAsync(parent); return; }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") == "more-current") { await MediaMoreActionsNativeFixture.RunAsync(parent); return; }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") == "tools-current") { await MediaToolsDialogsNativeFixture.RunAsync(parent); return; }
         if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_MEDIA_ACTION_CASE") is "party-picker") { await PartyPickerNativeFixture.RunAsync(parent); return; }

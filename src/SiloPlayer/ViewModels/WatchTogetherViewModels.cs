@@ -8,6 +8,7 @@ using Microsoft.UI.Dispatching;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Helpers;
 using SiloPlayer.Core.Models.Playback;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.ViewModels;
 
@@ -142,6 +143,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     private readonly SemaphoreSlim _wsLifecycleGate = new(1, 1);
     private readonly SemaphoreSlim _wsSendGate = new(1, 1);
     private bool _disposed;
+    private Microsoft.UI.Xaml.DispatcherTimer? _pingTimer;
 
     public WatchTogetherRoomViewModel(PlaybackApi playbackApi, SiloApiClient apiClient)
     {
@@ -214,6 +216,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     /// <summary>Initialize for a specific room and kick off the initial REST fetch + WS connect.</summary>
     public async Task InitializeAsync(string roomId, string roomToken)
     {
+        if (RoomId != roomId) RoomClock.Reset();
         RoomId = roomId;
         RoomToken = roomToken;
         ErrorMessage = null;
@@ -424,13 +427,14 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     /// server can track each client's playhead for drift detection and lagging-
     /// guest policy. Matches upstream <c>useWatchTogetherPlaybackSync</c>
     /// <c>state_report</c>.</summary>
-    public void ReportState(double positionSeconds, bool isPaused)
+    public void ReportState(double positionSeconds, bool isPaused, string? commandId = null)
     {
         if (string.IsNullOrEmpty(AttachedSessionId)) return;
         if (ConnectionState != "connected") return;
         _ = SendWsMessageAsync(new Dictionary<string, object?>
         {
             ["type"] = "state_report",
+            ["command_id"] = commandId,
             ["session_id"] = AttachedSessionId,
             ["position_seconds"] = positionSeconds,
             ["is_paused"] = isPaused,
@@ -469,35 +473,66 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>
-    /// Estimated offset (server_time - client_time in ms) derived from transport
-    /// command timestamps. Used to convert server-side <c>execute_at</c> into a
-    /// local DateTime so clients fire transport actions in sync. Zero until the
-    /// first command arrives.
+    /// Minimum-RTT room clock, retained across socket reconnects for this room.
     /// </summary>
-    public long ServerTimeOffsetMs { get; private set; }
+    public WatchPartyRoomClock RoomClock { get; } = new();
+    public double ServerTimeOffsetMs => RoomClock.OffsetMilliseconds;
 
-    private void UpdateServerTimeOffset(string? issuedAtIso)
+    private void StartClockPings(ClientWebSocket ws)
     {
-        if (string.IsNullOrEmpty(issuedAtIso)) return;
-        if (!DateTime.TryParse(issuedAtIso, null,
-            System.Globalization.DateTimeStyles.RoundtripKind, out var serverTime)) return;
-        var now = DateTime.UtcNow;
-        // Simple moving estimate — we don't have RTT measurement, so this is
-        // best-effort. Refine if a scheduled execute_at drifts more than ~100ms.
-        ServerTimeOffsetMs = (long)(serverTime.ToUniversalTime() - now).TotalMilliseconds;
+        _pingTimer?.Stop();
+        RoomClock.BeginConnection();
+        _pingTimer = new() { Interval = TimeSpan.FromMilliseconds(RoomClock.PingDelayMilliseconds) };
+        void Ping()
+        {
+            if (_disposed || !ReferenceEquals(ws, _ws) || ws.State != WebSocketState.Open) return;
+            _ = SendWsMessageAsync(new Dictionary<string, object?>
+            {
+                ["type"] = "ping", ["client_sent_at"] = DateTimeOffset.UtcNow.ToString("O"),
+            });
+        }
+        _pingTimer.Tick += (_, _) => Ping();
+        Ping();
+        _pingTimer.Start();
+    }
+
+    private void RecordClockPong(JsonElement frame, DateTimeOffset receivedAt)
+    {
+        static bool Timestamp(JsonElement root, string name, out DateTimeOffset value)
+        {
+            value = default;
+            return root.TryGetProperty(name, out var field) && field.ValueKind == JsonValueKind.String &&
+                DateTimeOffset.TryParse(field.GetString(), out value);
+        }
+        if (!Timestamp(frame, "client_sent_at", out var sent) ||
+            !Timestamp(frame, "server_received_at", out var received) ||
+            !Timestamp(frame, "server_sent_at", out var replied)) return;
+        var delay = RoomClock.PingDelayMilliseconds;
+        if (!RoomClock.RecordSample(sent.ToUnixTimeMilliseconds(), received.ToUnixTimeMilliseconds(),
+                replied.ToUnixTimeMilliseconds(), receivedAt.ToUnixTimeMilliseconds())) return;
+        if (_pingTimer != null && delay != RoomClock.PingDelayMilliseconds)
+        {
+            _pingTimer.Stop();
+            _pingTimer.Interval = TimeSpan.FromMilliseconds(RoomClock.PingDelayMilliseconds);
+            _pingTimer.Start();
+        }
     }
 
     private async Task SendWsMessageAsync(IDictionary<string, object?> body)
     {
         var ws = _ws;
         var ct = _wsCts?.Token ?? CancellationToken.None;
+        var authority = _apiClient.CaptureContext();
         if (ws == null || ws.State != WebSocketState.Open) return;
         var entered = false;
         try
         {
             await _wsSendGate.WaitAsync(ct);
             entered = true;
-            if (!ReferenceEquals(ws, _ws) || ws.State != WebSocketState.Open) return;
+            if (!ReferenceEquals(ws, _ws) || ws.State != WebSocketState.Open || _disposed ||
+                !_apiClient.IsCurrentContext(authority)) return;
+            if (body.TryGetValue("session_id", out var session) && session is string sessionId &&
+                sessionId != AttachedSessionId) return;
             var json = JsonSerializer.Serialize(body);
             var bytes = Encoding.UTF8.GetBytes(json);
             await ws.SendAsync(bytes, WebSocketMessageType.Text, true, ct);
@@ -548,6 +583,8 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         _wsCts = null;
         _wsRunTask = null;
         _ws = null;
+
+        await RunOnUiThreadAsync(() => { _pingTimer?.Stop(); _pingTimer = null; });
 
         try { cts?.Cancel(); } catch { }
         try { ws?.Abort(); } catch { }
@@ -611,8 +648,11 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         try
         {
             await ws.ConnectAsync(new Uri(wsUrl), ct);
+            if (_disposed || !_apiClient.IsCurrentContext(authority) || RoomId != roomId ||
+                RoomToken != roomToken || !ReferenceEquals(_ws, ws)) return;
             if (ws.SubProtocol != ticket.Protocol) throw new InvalidOperationException("Room socket protocol was not negotiated.");
             await RunOnUiThreadAsync(() => ConnectionState = "connected");
+            await RunOnUiThreadAsync(() => StartClockPings(ws));
 
             var buffer = new byte[16 * 1024];
             using var message = new MemoryStream();
@@ -631,6 +671,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
 
                 message.Write(buffer, 0, result.Count);
                 if (!result.EndOfMessage) continue;
+                var receivedAt = DateTimeOffset.UtcNow;
 
                 var json = Encoding.UTF8.GetString(message.GetBuffer(), 0, checked((int)message.Length));
                 message.SetLength(0);
@@ -638,7 +679,8 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
                 if (!_apiClient.IsCurrentContext(authority) || RoomId != roomId || RoomToken != roomToken) return;
                 await RunOnUiThreadAsync(() =>
                 {
-                    if (_apiClient.IsCurrentContext(authority) && RoomId == roomId && RoomToken == roomToken) HandleFrame(json);
+                    if (_apiClient.IsCurrentContext(authority) && RoomId == roomId && RoomToken == roomToken)
+                        HandleFrameAt(json, receivedAt);
                 });
             }
         }
@@ -646,6 +688,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         {
             if (ReferenceEquals(_ws, ws))
             {
+                await RunOnUiThreadAsync(() => { _pingTimer?.Stop(); _pingTimer = null; });
                 _ws = null;
                 SetConnectionState(ct.IsCancellationRequested ? "disconnected" : "reconnecting");
             }
@@ -694,6 +737,9 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     }
 
     private void HandleFrame(string json)
+        => HandleFrameAt(json, DateTimeOffset.UtcNow);
+
+    private void HandleFrameAt(string json, DateTimeOffset receivedAt)
     {
         try
         {
@@ -737,10 +783,9 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
                     try
                     {
                         var cmd = JsonSerializer.Deserialize<WatchTogetherTransportCommand>(
-                            root.GetRawText(), SnakeJsonOptions);
+                            (root.TryGetProperty("command", out var command) ? command : root).GetRawText(), SnakeJsonOptions);
                         if (cmd != null && !string.IsNullOrEmpty(cmd.Action))
                         {
-                            UpdateServerTimeOffset(cmd.IssuedAt);
                             TransportCommandReceived?.Invoke(cmd);
                         }
                     }
@@ -750,7 +795,9 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
                     ErrorMessage = root.TryGetProperty("message", out var error)
                         ? error.GetString() : "The room rejected the request.";
                     break;
-                // pong is received but not consumed (the client doesn't track RTT yet).
+                case "pong":
+                    RecordClockPong(root, receivedAt);
+                    break;
             }
         }
         catch { /* ignore malformed frames */ }
@@ -766,6 +813,8 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _pingTimer?.Stop();
+        _pingTimer = null;
 
         var cts = _wsCts;
         var runTask = _wsRunTask;

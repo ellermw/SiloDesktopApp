@@ -21,11 +21,14 @@ public static class VersionRanking
         ("dts", 3), ("flac", 2), ("eac3", 1), ("e-ac-3", 1), ("aac", 0),
     ];
 
-    public static string MapAudioLabel(string? codec)
+    public static string MapAudioLabel(string? codec, string? atmosEvidence = null)
     {
         if (string.IsNullOrWhiteSpace(codec)) return "";
         var lower = codec.ToLowerInvariant();
-        if (lower.Contains("atmos")) return "Atmos";
+        var canCarryAtmos = lower.Contains("truehd") || lower.Contains("eac3") || lower.Contains("e-ac-3")
+            || !new[] { "aac", "ac3", "ac-3", "dts", "flac", "mp3", "opus", "vorbis", "pcm", "alac" }.Any(lower.Contains);
+        if (lower.Contains("atmos") || canCarryAtmos && System.Text.RegularExpressions.Regex.IsMatch(atmosEvidence ?? "", @"\batmos\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase))
+            return lower.Contains("truehd") ? "TrueHD Atmos" : lower.Contains("eac3") || lower.Contains("e-ac-3") ? "DD+ Atmos" : "Atmos";
         if (lower.Contains("truehd")) return "TrueHD";
         if (lower.Contains("dts-hd") || lower.Contains("dts:x")) return "DTS-HD";
         if (lower.Contains("dts")) return "DTS";
@@ -34,6 +37,22 @@ public static class VersionRanking
         if (lower.Contains("flac")) return "FLAC";
         return codec.ToUpperInvariant();
     }
+
+    public static string AudioTrackAtmosEvidence(AudioTrackInfo track)
+        => string.Join(" ", new[] { track.Profile, track.Title, track.EmbeddedTitle }.Where(v => !string.IsNullOrWhiteSpace(v)));
+
+    public static string AudioTrackLabel(AudioTrackInfo track)
+        => MapAudioLabel(track.Codec, AudioTrackAtmosEvidence(track));
+
+    public static string? VersionAudioAtmosEvidence(FileVersion version)
+    {
+        var first = version.AudioTracks?.FirstOrDefault();
+        return !string.IsNullOrEmpty(first?.Codec) && string.Equals(first.Codec, version.CodecAudio, StringComparison.OrdinalIgnoreCase)
+            ? AudioTrackAtmosEvidence(first) : null;
+    }
+
+    public static string VersionAudioLabel(FileVersion version)
+        => MapAudioLabel(version.CodecAudio, VersionAudioAtmosEvidence(version));
 
     public static int ResolutionScore(string? res)
     {
@@ -46,11 +65,14 @@ public static class VersionRanking
         if (string.IsNullOrWhiteSpace(codec)) return -1;
         var lower = codec.ToLowerInvariant();
         foreach (var (key, score) in AudioRank)
-            if (lower.Contains(key)) return score;
+            if (lower.Contains(key) || key == "eac3" && lower.Contains("dd+")) return score;
         return -1;
     }
 
-    public record BestAttributes(string Resolution, bool Hdr, string AudioLabel);
+    public record BestAttributes(string Resolution, bool Hdr, string AudioLabel)
+    {
+        public string AudioCodec { get; init; } = "";
+    }
 
     /// <summary>
     /// Find the best resolution + HDR + audio-codec combo across a set of versions.
@@ -78,6 +100,15 @@ public static class VersionRanking
         var hdr = false;
         var bestAudioCodec = "";
         var bestAudioScore = -1;
+        string? bestAudioEvidence = null;
+        void Consider(string? codec, string? evidence)
+        {
+            var score = AudioScore(codec);
+            if (score > bestAudioScore || score >= 0 && score == bestAudioScore
+                && !MapAudioLabel(bestAudioCodec, bestAudioEvidence).Contains("Atmos")
+                && MapAudioLabel(codec, evidence).Contains("Atmos"))
+            { bestAudioScore = score; bestAudioCodec = codec ?? ""; bestAudioEvidence = evidence; }
+        }
 
         foreach (var v in candidates)
         {
@@ -85,21 +116,13 @@ public static class VersionRanking
             if (rs > bestResScore) { bestResScore = rs; bestRes = v.Resolution; }
             if (v.Hdr) hdr = true;
 
-            var aScore = AudioScore(v.CodecAudio);
-            if (aScore > bestAudioScore) { bestAudioScore = aScore; bestAudioCodec = v.CodecAudio; }
+            Consider(v.CodecAudio, VersionAudioAtmosEvidence(v));
+            foreach (var track in v.AudioTracks ?? [])
+                if (!string.IsNullOrEmpty(track.Codec)) Consider(track.Codec, AudioTrackAtmosEvidence(track));
 
-            if (v.AudioTracks != null)
-            {
-                foreach (var t in v.AudioTracks)
-                {
-                    if (string.IsNullOrEmpty(t.Codec)) continue;
-                    var ts = AudioScore(t.Codec);
-                    if (ts > bestAudioScore) { bestAudioScore = ts; bestAudioCodec = t.Codec; }
-                }
-            }
         }
 
-        return new BestAttributes(bestRes, hdr, MapAudioLabel(bestAudioCodec));
+        return new BestAttributes(bestRes, hdr, MapAudioLabel(bestAudioCodec, bestAudioEvidence)) { AudioCodec = bestAudioCodec };
     }
 
     /// <summary>
@@ -143,8 +166,8 @@ public static class VersionRanking
             var match = candidates.FirstOrDefault(v =>
                 string.Equals(v.Resolution, best.Resolution, StringComparison.OrdinalIgnoreCase) &&
                 v.Hdr == best.Hdr &&
-                (best.AudioLabel.Length == 0 ||
-                 MapAudioLabel(v.CodecAudio).Equals(best.AudioLabel, StringComparison.OrdinalIgnoreCase)));
+                (best.AudioCodec.Length == 0 ||
+                 MapAudioLabel(v.CodecAudio).Equals(MapAudioLabel(best.AudioCodec), StringComparison.OrdinalIgnoreCase)));
             if (match != null) return match;
         }
 

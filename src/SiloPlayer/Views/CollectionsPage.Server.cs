@@ -26,8 +26,9 @@ public sealed partial class CollectionsPage
             void Pill(int? id, string name)
             {
                 var active = id == selected?.LibraryId;
-                var button = new Button { Content = name, Height = 32, MinHeight = 0, CornerRadius = new CornerRadius(999), Padding = new Thickness(12, 0, 12, 0), FontSize = 13,
+                var button = new Button { Content = name, Height = 32, MinHeight = 0, Padding = new Thickness(12, 0, 12, 0), FontSize = 13,
                     Background = (Brush)Application.Current.Resources[active ? "PrimaryTextBrush" : "SurfaceBrush"], Foreground = (Brush)Application.Current.Resources[active ? "AppBackgroundBrush" : "SecondaryTextBrush"] };
+                RoundedBadge.SetRadius(button, 999);
                 AutomationProperties.SetName(button, name); button.Click += (_, _) => { _selectedServerLibrary = id; BuildServerCollectionRows(); }; choices.Children.Add(button);
             }
             Pill(null, "All"); foreach (var library in ViewModel.ServerLibraries) Pill(library.LibraryId, library.LibraryName);

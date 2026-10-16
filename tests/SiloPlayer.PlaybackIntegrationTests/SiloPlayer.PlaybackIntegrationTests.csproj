@@ -14,6 +14,7 @@
     <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.5" />
     <PackageReference Include="xunit" Version="2.5.3" />
     <Reference Include="SiloPlayer"><HintPath>$(SiloPlayerAssemblyDirectory)/SiloPlayer.dll</HintPath></Reference>
+    <None Include="$(SiloPlayerAssemblyDirectory)/libmpv-2.dll" Link="libmpv-2.dll" CopyToOutputDirectory="PreserveNewest" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Using Include="Xunit" />
     <!-- Execute the same socket/keepalive regression against the actual installer assembly. -->

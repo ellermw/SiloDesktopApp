@@ -340,7 +340,7 @@
                                                 <ColumnDefinition Width="Auto" />
                                             </Grid.ColumnDefinitions>
                                             <Border Tag="{x:Bind}" Loaded="EpisodeStill_Loaded" Tapped="EpisodeStill_Tapped" Width="112" Height="63" Background="{StaticResource SurfaceRaisedBrush}" CornerRadius="8" Visibility="Collapsed">
-                                                <Image Source="{x:Bind PosterUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" Opacity="0" ImageOpened="PickerImage_Opened" />
+                                                <Image Tag="{x:Bind}" Loaded="EpisodeStillImage_Loaded" Stretch="UniformToFill" Opacity="0" ImageOpened="PickerImage_Opened" />
                                             </Border>
                                             <Button Grid.Column="1" Tag="{x:Bind}" Click="DrillDownResult_Click" Padding="0" BorderThickness="0" Background="Transparent" HorizontalContentAlignment="Stretch" HorizontalAlignment="Stretch" VerticalContentAlignment="Top">
                                             <StackPanel Spacing="3">
@@ -358,7 +358,7 @@
                                                     <TextBlock Grid.Column="2" Tag="{x:Bind}" Loaded="EpisodeRuntime_Loaded" FontSize="12"
                                                                Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" />
                                                 </Grid>
-                                                <TextBlock Text="{x:Bind Overview}" FontSize="12" MaxLines="2" TextWrapping="Wrap"
+                                                <TextBlock Tag="{x:Bind}" Loaded="EpisodeOverview_Loaded" Text="{x:Bind Overview}" FontSize="12" MaxLines="2" TextWrapping="Wrap"
                                                            Foreground="{StaticResource SecondaryTextBrush}" TextTrimming="CharacterEllipsis" />
                                                 <StackPanel Orientation="Horizontal" Spacing="5" Tag="{x:Bind ContentId}" Loaded="MemberDots_Loaded" />
                                             </StackPanel>

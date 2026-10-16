@@ -202,7 +202,7 @@
                                     Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
                                     <FontIcon Glyph="&#xED1E;" FontSize="16" />
-                                    <TextBlock Text="Subtitles" VerticalAlignment="Center" />
+                                    <TextBlock Text="Language &amp; Subtitles" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
                             <Button x:Name="DevicesTab" Click="Tab_Click" Tag="Devices"
@@ -225,7 +225,8 @@
                                     <TextBlock Text="Navigation &amp; Cards" VerticalAlignment="Center" />
                                 </StackPanel>
                             </Button>
-                            <Button x:Name="CardOverlaysTab" Click="Tab_Click" Tag="CardOverlays"
+                            <Button x:Name="TitlePagesTab" Click="Tab_Click" Tag="TitlePages" Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"><TextBlock Text="Title Pages" /></Button>
+                            <Button Visibility="Collapsed" x:Name="CardOverlaysTab" Click="Tab_Click" Tag="CardOverlays"
                                     Style="{StaticResource InactiveTabStyle}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
                                 <StackPanel Orientation="Horizontal" Spacing="10">
                                     <FontIcon Glyph="&#xE81E;" FontSize="16" />
@@ -420,6 +421,7 @@
 
                 <StackPanel x:Name="InterfaceControls" Spacing="24">
 
+
                     <Border Style="{StaticResource SettingsGroupStyle}">
                         <StackPanel Spacing="14">
                             <StackPanel Spacing="4">
@@ -544,19 +546,78 @@
                                         </ComboBox>
                                     </StackPanel>
                                 </StackPanel>
-                                <Border Grid.Column="1" Background="{StaticResource CardBackgroundBrush}"
-                                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
-                                        CornerRadius="12" Padding="16" MinHeight="176">
-                                    <StackPanel x:Name="InterfaceCardPreview" Orientation="Horizontal" Spacing="10"
-                                                VerticalAlignment="Top" />
-                                </Border>
+
+<Border Grid.Column="1" Background="{StaticResource CardBackgroundBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="16">
+                        <StackPanel Spacing="14">
+                            <TextBlock Text="Preview" FontSize="14" FontWeight="SemiBold" />
+
+                            <Border x:Name="NavigationPreviewPoster" Width="178" Height="267" HorizontalAlignment="Center" CornerRadius="12" Background="#30394A" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                                <Grid Margin="8">
+                                    <StackPanel x:Name="OverlayPreviewTopLeft" HorizontalAlignment="Left" VerticalAlignment="Top" Spacing="4" />
+                                    <StackPanel x:Name="OverlayPreviewTopRight" HorizontalAlignment="Right" VerticalAlignment="Top" Spacing="4" />
+                                    <StackPanel x:Name="OverlayPreviewBottomLeft" HorizontalAlignment="Left" VerticalAlignment="Bottom" Spacing="4" />
+                                    <StackPanel x:Name="OverlayPreviewBottomRight" HorizontalAlignment="Right" VerticalAlignment="Bottom" Spacing="4" />
+                                </Grid>
+                            </Border>
+                            <TextBlock x:Name="NavigationPreviewCaption" Text="The Midnight Signal" HorizontalAlignment="Center" FontWeight="SemiBold" />
+<TextBlock x:Name="NavigationPreviewYear" Text="2026 · Movie" HorizontalAlignment="Center" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+<controls:WrapPanel HorizontalSpacing="6" VerticalSpacing="6" HorizontalAlignment="Center">
+                                <Button x:Name="OverlayMoviePreviewButton" Content="Movie" Tag="movie"
+                                        Style="{StaticResource ActiveTabStyle}" Padding="12,5"
+                                        Click="OverlayPreviewVariant_Click" />
+                                <Button x:Name="OverlayShowPreviewButton" Content="Show" Tag="show"
+                                        Style="{StaticResource InactiveTabStyle}" Padding="12,5"
+                                        Click="OverlayPreviewVariant_Click" />
+                                <Button x:Name="OverlayRequestedPreviewButton" Content="Requested title" Tag="requested" Visibility="Collapsed"
+                                        Style="{StaticResource InactiveTabStyle}" Padding="12,5" Click="OverlayPreviewVariant_Click" />
+                            </controls:WrapPanel>
+                        </StackPanel>
+                    </Border>
                             </Grid>
                             <Button x:Name="ResetDesktopCardLayoutButton" Content="Reset desktop-family card layout"
                                     HorizontalAlignment="Left" Click="ResetDesktopCardLayout_Click" />
                         </StackPanel>
                     </Border>
 
-                    <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel x:Name="CardOverlaysPanel" Spacing="24" Margin="0" Visibility="Visible">
+                <StackPanel Spacing="8">
+                    <TextBlock x:Name="CardOverlaysTitleText" Text="Badges" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="Choose which badges appear on posters, where they sit, and how they look." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                </StackPanel>
+                <Border x:Name="CardOverlaysDisabledBanner" Style="{StaticResource SettingsGroupStyle}" Visibility="Collapsed">
+                    <TextBlock Text="Card overlays have been disabled by your server administrator." TextWrapping="Wrap" />
+                </Border>
+                <StackPanel x:Name="CardOverlaysGeneralHost" Spacing="12" />
+                <StackPanel x:Name="CardOverlaysContentHost" Spacing="24">
+
+
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                        <Button x:Name="CardOverlayOverlaysTab" Content="Overlays" Tag="overlays"
+                                Style="{StaticResource ActiveTabStyle}" Click="CardOverlaySectionTab_Click" />
+                        <Button x:Name="CardOverlayStyleTab" Content="Style" Tag="style"
+                                Style="{StaticResource InactiveTabStyle}" Click="CardOverlaySectionTab_Click" />
+                    </StackPanel>
+                    <StackPanel x:Name="CardOverlayControlsContainer" Spacing="18" />
+                    <StackPanel x:Name="CardOverlayStylePanel" Spacing="18" Visibility="Collapsed">
+                        <Border Style="{StaticResource SettingsGroupStyle}">
+                            <StackPanel Spacing="12">
+                                <TextBlock Text="Preset" FontSize="14" FontWeight="SemiBold" />
+                                <TextBlock Text="A preset controls the base appearance of every badge. You can override the accent color of individual badges in the Overlays tab." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                                <controls:WrapPanel x:Name="CardOverlayPresetHost" HorizontalSpacing="8" VerticalSpacing="8" />
+                            </StackPanel>
+                        </Border>
+                        <Border Style="{StaticResource SettingsGroupStyle}">
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="How styling works" FontSize="14" FontWeight="SemiBold" />
+                                <TextBlock Text="Where to find what." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <TextBlock Text="• Preset sets the badge shape, background, font, and whether icons show by default.&#x0a;• Accent color (per overlay) tints that badge — gold for IMDb, red for RT, etc.&#x0a;• Icon toggle (per overlay) overrides the preset's icon default for a single overlay.&#x0a;• Position picks which corner the badge sits in. Multiple badges in the same corner stack vertically."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" LineHeight="22" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </StackPanel>
+            </StackPanel>
+<Border Style="{StaticResource SettingsGroupStyle}">
                         <StackPanel Spacing="14">
                             <StackPanel Spacing="4">
                                 <TextBlock Text="Primary menu" FontSize="14" FontWeight="SemiBold" />
@@ -591,7 +652,15 @@
                             </StackPanel>
                         </StackPanel>
                     </Border>
-                    <Border x:Name="TitleArtSettingsGroup" Style="{StaticResource SettingsGroupStyle}"
+
+                </StackPanel>
+            </StackPanel>
+
+            <!-- ===================================================================== -->
+            <StackPanel x:Name="TitlePagesPanel" Spacing="24" Visibility="Collapsed">
+    <StackPanel Spacing="8"><TextBlock x:Name="TitlePagesTitleText" Text="Title Pages" FontSize="24" FontWeight="SemiBold" />
+        <TextBlock Text="Title art, theme music, spoilers, and age guidance on movie and show pages." TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+    <Border x:Name="TitleArtSettingsGroup" Style="{StaticResource SettingsGroupStyle}"
                             Visibility="{x:Bind ViewModel.TitleArtSupported, Mode=OneWay, Converter={StaticResource BoolToVis}}">
                         <StackPanel Spacing="16">
                             <StackPanel Spacing="4">
@@ -613,11 +682,28 @@
                             <TextBlock Text="{x:Bind ViewModel.TitleArtExplanation, Mode=OneWay}" FontSize="13" LineHeight="21" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
                     </Border>
-                </StackPanel>
-            </StackPanel>
+    <Border Style="{StaticResource SettingsGroupStyle}"><StackPanel Spacing="16"><TextBlock Text="Sound" FontSize="18" FontWeight="SemiBold" /><StackPanel Spacing="8">
+                            <ToggleSwitch Header="Theme music" IsOn="{x:Bind ViewModel.ThemeMusicEnabled, Mode=TwoWay}" />
+                            <ToggleSwitch Header="Loop theme music" IsOn="{x:Bind ViewModel.ThemeMusicLoop, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.ThemeMusicEnabled, Mode=OneWay}" />
+                            <TextBlock Text="Optional background audio stops when you start playback, open a trailer or leave the details."
+                                       FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                        </StackPanel></StackPanel></Border>
+    <Border Style="{StaticResource SettingsGroupStyle}" Visibility="{x:Bind ViewModel.EpisodeSpoilersSupported, Mode=OneWay, Converter={StaticResource BoolToVis}}"><StackPanel Spacing="16">
+        <TextBlock Text="Spoilers" FontSize="18" FontWeight="SemiBold" />
+        <TextBlock Text="Applies to episodes you have not started, on every device that uses this profile." TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
+        <ToggleSwitch Header="Blur unwatched episode images" IsOn="{x:Bind ViewModel.HideUnwatchedEpisodeImages, Mode=TwoWay}" OnContent="" OffContent="" />
+        <ToggleSwitch Header="Hide unwatched episode descriptions" IsOn="{x:Bind ViewModel.HideUnwatchedEpisodeOverviews, Mode=TwoWay}" OnContent="" OffContent="" />
+    </StackPanel></Border>
+    <Border Style="{StaticResource SettingsGroupStyle}"><StackPanel Spacing="16"><TextBlock Text="Age guidance" FontSize="18" FontWeight="SemiBold" /><Grid ColumnSpacing="16">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <StackPanel Spacing="2"><TextBlock Text="Show advisory age" FontSize="14" FontWeight="Medium" />
+                                <TextBlock Text="Show recommended minimum viewer ages on item details. This does not change profile access limits."
+                                           TextWrapping="Wrap" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
+                            <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ViewModel.ShowAdvisoryAge, Mode=TwoWay}" OnContent="" OffContent="" />
+                        </Grid></StackPanel></Border>
+</StackPanel>
 
-            <!-- ===================================================================== -->
-            <!-- ===== Playback Panel ===== -->
+<!-- ===== Playback Panel ===== -->
             <!-- ===================================================================== -->
             <StackPanel x:Name="PlaybackPanel" Spacing="24" Margin="0">
 
@@ -699,45 +785,12 @@
                         <Border Style="{StaticResource SettingsSeparator}" />
 
                         <!-- Spoken language -->
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Spoken language" FontSize="14" FontWeight="Medium"
-                                            Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Prefer a spoken language for this profile when multiple tracks are available."
-                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
-                                           TextWrapping="Wrap" />
-                            </StackPanel>
-                            <ComboBox x:Name="SpokenLanguageComboBox" Grid.Column="1" Width="220"
-                                      VerticalAlignment="Center"
-                                      SelectionChanged="SpokenLanguageComboBox_SelectionChanged" />
-                        </Grid>
+
 
                         <Border Style="{StaticResource SettingsSeparator}" />
 
                         <!-- Metadata language -->
-                        <Grid ColumnSpacing="24">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="430" /></Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Top">
-                                <TextBlock Text="Metadata language" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Choose the fallback for titles and descriptions, then add exceptions based on each item's original language. Missing descriptions can be translated automatically when AI translation is enabled." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Spacing="12">
-                                <ComboBox x:Name="MetadataLanguageComboBox" HorizontalAlignment="Stretch" SelectionChanged="MetadataLanguageComboBox_SelectionChanged" />
-                                <StackPanel x:Name="MetadataLanguageExceptionsPanel" Spacing="0" />
-                                <Grid ColumnSpacing="8">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                    <ComboBox x:Name="MetadataExceptionSourceComboBox" Grid.Column="0" HorizontalAlignment="Stretch" PlaceholderText="Choose original language"
-                                              SelectionChanged="MetadataExceptionSourceComboBox_SelectionChanged" />
-                                    <Button x:Name="AddMetadataLanguageExceptionButton" Grid.Column="1" Content="Add exception"
-                                            Style="{StaticResource SecondaryButtonStyle}" IsEnabled="False"
-                                            Click="AddMetadataLanguageException_Click" />
-                                </Grid>
-                            </StackPanel>
-                        </Grid>
+
 
                         <Border Style="{StaticResource SettingsSeparator}" />
 
@@ -843,45 +896,8 @@
                         </Grid>
 
                         <Border Style="{StaticResource SettingsSeparator}" />
+<!-- Next up episodes -->
 
-                        <Grid ColumnSpacing="16">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <StackPanel Spacing="2"><TextBlock Text="Show advisory age" FontSize="14" FontWeight="Medium" />
-                                <TextBlock Text="Show recommended minimum viewer ages on item details. This does not change profile access limits."
-                                           TextWrapping="Wrap" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" /></StackPanel>
-                            <ToggleSwitch Grid.Column="1" IsOn="{x:Bind ViewModel.ShowAdvisoryAge, Mode=TwoWay}" OnContent="" OffContent="" />
-                        </Grid>
-                        <Border Style="{StaticResource SettingsSeparator}" />
-
-                        <StackPanel Spacing="8">
-                            <ToggleSwitch Header="Play theme music on detail pages" IsOn="{x:Bind ViewModel.ThemeMusicEnabled, Mode=TwoWay}" />
-                            <ToggleSwitch Header="Loop theme music" IsOn="{x:Bind ViewModel.ThemeMusicLoop, Mode=TwoWay}" IsEnabled="{x:Bind ViewModel.ThemeMusicEnabled, Mode=OneWay}" />
-                            <TextBlock Text="Optional background audio stops when you start playback, open a trailer or leave the details."
-                                       FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                        </StackPanel>
-                        <Border Style="{StaticResource SettingsSeparator}" />
-
-                        <!-- Next up episodes -->
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Next up episodes" FontSize="14" FontWeight="Medium"
-                                           Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Choose whether upcoming episodes stay with Continue Watching or get their own row."
-                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
-                                           TextWrapping="Wrap" />
-                            </StackPanel>
-                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6">
-                                <ComboBox x:Name="NextUpModeComboBox" Width="240" VerticalAlignment="Center" SelectionChanged="NextUpModeComboBox_SelectionChanged">
-                                    <ComboBoxItem Content="With Continue Watching" Tag="combined" />
-                                    <ComboBoxItem Content="Separate row" Tag="separate" />
-                                </ComboBox>
-                                <Button Content="Reset" Style="{StaticResource GhostButtonStyle}" Command="{x:Bind ViewModel.ResetNextUpModeCommand}" />
-                            </StackPanel>
-                        </Grid>
 
                     </StackPanel>
                 </Border>
@@ -1021,18 +1037,55 @@
             <StackPanel x:Name="SubtitlesPanel" Spacing="24" Margin="0" Visibility="Collapsed">
 
                 <StackPanel Spacing="12">
-                    <TextBlock x:Name="SubtitlesTitleText" Text="Subtitles" FontSize="24" FontWeight="SemiBold"
+                    <TextBlock x:Name="SubtitlesTitleText" Text="Language &amp; Subtitles" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock Text="Choose when subtitles appear and how they look during playback."
+                    <TextBlock Text="Preferred languages, when subtitles appear, and how they look for this profile."
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
                                TextWrapping="Wrap" />
                 </StackPanel>
 
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="0">
-                        <TextBlock Text="Behavior" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="These preferences decide which subtitles Silo chooses by default."
+                        <TextBlock Text="Languages &amp; subtitles" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="These preferences decide the spoken, metadata, and subtitle languages Silo chooses by default."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" Margin="0,4,0,16" />
+<Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Spoken language" FontSize="14" FontWeight="Medium"
+                                            Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Prefer a spoken language for this profile when multiple tracks are available."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ComboBox x:Name="SpokenLanguageComboBox" Grid.Column="1" Width="220"
+                                      VerticalAlignment="Center"
+                                      SelectionChanged="SpokenLanguageComboBox_SelectionChanged" />
+                        </Grid>
+<Border Style="{StaticResource SettingsSeparator}" />
+<Grid ColumnSpacing="24">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="430" /></Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2" VerticalAlignment="Top">
+                                <TextBlock Text="Metadata language" FontSize="14" FontWeight="Medium" Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Choose the fallback for titles and descriptions, then add exceptions based on each item's original language. Missing descriptions can be translated automatically when AI translation is enabled." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Spacing="12">
+                                <ComboBox x:Name="MetadataLanguageComboBox" HorizontalAlignment="Stretch" SelectionChanged="MetadataLanguageComboBox_SelectionChanged" />
+                                <StackPanel x:Name="MetadataLanguageExceptionsPanel" Spacing="0" />
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="MetadataExceptionSourceComboBox" Grid.Column="0" HorizontalAlignment="Stretch" PlaceholderText="Choose original language"
+                                              SelectionChanged="MetadataExceptionSourceComboBox_SelectionChanged" />
+                                    <Button x:Name="AddMetadataLanguageExceptionButton" Grid.Column="1" Content="Add exception"
+                                            Style="{StaticResource SecondaryButtonStyle}" IsEnabled="False"
+                                            Click="AddMetadataLanguageException_Click" />
+                                </Grid>
+                            </StackPanel>
+                        </Grid>
+<Border Style="{StaticResource SettingsSeparator}" />
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0" Spacing="2">
@@ -1069,7 +1122,7 @@
                     <StackPanel Spacing="8">
                         <TextBlock Text="Preview" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="This sample reflects the current subtitle appearance."
+                        <TextBlock Text="How subtitles look for this profile on every device."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                    TextWrapping="Wrap" />
                         <!-- 16:9 preview box -->
@@ -1101,13 +1154,29 @@
                             </Grid>
                         </Border>
                         <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,8,0,0">
-                            <Button Content="Save Appearance" Style="{StaticResource AccentButtonStyle}"
+                            <Button x:Name="SubtitleSaveButton" Content="Save Appearance" Style="{StaticResource AccentButtonStyle}"
                                     Padding="16,8" Click="SubtitleSave_Click" />
-                            <Button Content="Discard Changes" Style="{StaticResource SecondaryButtonStyle}"
+                            <Button x:Name="SubtitleDiscardButton" Content="Discard Changes" Style="{StaticResource SecondaryButtonStyle}"
                                     Padding="16,8" Click="SubtitleDiscard_Click" />
                             <Button x:Name="SubtitleResetButton" Content="Reset Appearance" Style="{StaticResource GhostButtonStyle}"
                                     Padding="16,8" Click="SubtitleReset_Click" />
                         </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Timing" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock x:Name="SubtitleTimingDescription" Text="Subtitle timing is loading…" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <TextBlock Text="Subtitle offset" FontSize="14" Foreground="{StaticResource PrimaryTextBrush}" />
+                        <TextBlock Text="Negative values show subtitles earlier, positive values later." TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="SubtitleEarlierButton" Content="−" AutomationProperties.Name="Show subtitles 100 ms earlier" Click="SubtitleEarlier_Click" />
+                            <TextBlock x:Name="SubtitleOffsetLabel" Text="0 ms" MinWidth="82" TextAlignment="Center" VerticalAlignment="Center" Foreground="{StaticResource PrimaryTextBrush}" />
+                            <Button x:Name="SubtitleLaterButton" Content="+" AutomationProperties.Name="Show subtitles 100 ms later" Click="SubtitleLater_Click" />
+                            <Button x:Name="SubtitleOffsetResetButton" Content="Reset" Click="SubtitleOffsetReset_Click" />
+                        </StackPanel>
+                        <Button x:Name="SubtitleReloadButton" Content="Reload subtitle preferences" Click="SubtitleReload_Click" />
                     </StackPanel>
                 </Border>
 
@@ -1317,13 +1386,48 @@
                                TextWrapping="Wrap" />
                 </StackPanel>
 
-                <Border Style="{StaticResource SettingsGroupStyle}"><StackPanel Spacing="12">
+                <Border x:Name="HomePreferencesGroup" Style="{StaticResource SettingsGroupStyle}">
+                  <StackPanel Spacing="16">
                     <TextBlock Text="Home preferences" FontSize="14" FontWeight="SemiBold" />
+                    <StackPanel Spacing="8">
+                      <TextBlock Text="Next up episodes" FontSize="14" FontWeight="Medium" />
+                      <TextBlock Text="Keep the next episode of a show you're watching in Continue Watching, or give them their own row."
+                                 FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                      <StackPanel Orientation="Horizontal" Spacing="6">
+                        <ComboBox x:Name="NextUpModeComboBox" Width="240" SelectionChanged="NextUpModeComboBox_SelectionChanged">
+                          <ComboBoxItem Content="With Continue Watching" Tag="combined" />
+                          <ComboBoxItem Content="Separate row" Tag="separate" />
+                        </ComboBox>
+                        <Button Content="Reset" Style="{StaticResource GhostButtonStyle}" Command="{x:Bind ViewModel.ResetNextUpModeCommand}" />
+                      </StackPanel>
+                    </StackPanel>
+                    <StackPanel x:Name="NewEpisodesFirstGroup" Spacing="8"
+                                Visibility="{x:Bind ViewModel.NewEpisodesPreferenceVisible, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                      <Border Style="{StaticResource SettingsSeparator}" />
+                      <TextBlock Text="Show new episodes first" FontSize="14" FontWeight="Medium" />
+                      <TextBlock x:Name="NewEpisodesFirstDescription" Text="Move a show you're caught up on to the front of Continue Watching and Next Up when a new episode or season arrives."
+                                 TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" />
+                      <ToggleSwitch x:Name="NewEpisodesFirstToggle" AutomationProperties.Name="Show new episodes first"
+                                    AutomationProperties.HelpText="Only this profile changes."
+                                    IsOn="{x:Bind ViewModel.ShowNewEpisodesFirst, Mode=TwoWay}"
+                                    IsEnabled="{x:Bind ViewModel.CanChangeNewEpisodesFirst, Mode=OneWay}" />
+                      <TextBlock Text="Only this profile changes, and it saves as you go." TextWrapping="Wrap"
+                                 Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" />
+                      <TextBlock Text="Saving Home preference…" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
+                                 Visibility="{x:Bind ViewModel.IsNewEpisodesPreferencePending, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
+                      <TextBlock x:Name="NewEpisodesFirstError" Text="{x:Bind ViewModel.NewEpisodesPreferenceError, Mode=OneWay}"
+                                 TextWrapping="Wrap" Foreground="{StaticResource ErrorBrush}" FontSize="13"
+                                 Visibility="{x:Bind ViewModel.NewEpisodesPreferenceError, Mode=OneWay, Converter={StaticResource NullToVis}}" />
+                      <Button x:Name="NewEpisodesFirstRetry" Content="Try again" Command="{x:Bind ViewModel.RetryNewEpisodesPreferenceCommand}"
+                              Visibility="{x:Bind ViewModel.NewEpisodesPreferenceError, Mode=OneWay, Converter={StaticResource NullToVis}}" />
+                    </StackPanel>
+                    <Border Style="{StaticResource SettingsSeparator}" />
                     <ToggleSwitch Header="Hide watched items" IsOn="{x:Bind ViewModel.HideWatchedItems, Mode=TwoWay}"
                                   IsEnabled="{x:Bind ViewModel.CanChangeHomePreference, Mode=OneWay}" />
-                    <TextBlock Text="Hide watched items from most Home sections. Featured and watch-history sections keep them." TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" />
-                </StackPanel></Border>
-
+                    <TextBlock Text="Remove titles you've finished from ordinary rows. Hero banners and watch-history rows keep them."
+                               TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" />
+                  </StackPanel>
+                </Border>
                 <!-- Scope group -->
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="0">
@@ -1353,7 +1457,7 @@
                     </StackPanel>
                 </Border>
 
-                <!-- Sections group -->
+<!-- Sections group -->
                 <Border x:Name="HomeRowsGroup" Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="8">
                         <TextBlock Text="Rows" FontSize="14" FontWeight="SemiBold"
@@ -1418,67 +1522,7 @@
             <!-- ===================================================================== -->
             <!-- ===== Card Overlays Panel ===== -->
             <!-- ===================================================================== -->
-            <StackPanel x:Name="CardOverlaysPanel" Spacing="24" Margin="0" Visibility="Collapsed">
-                <StackPanel Spacing="8">
-                    <TextBlock x:Name="CardOverlaysTitleText" Text="Card Overlays" FontSize="24" FontWeight="SemiBold" />
-                    <TextBlock Text="Choose which badges appear on poster cards, where they sit, and how they look. Inspired by Kometa." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                </StackPanel>
-                <Border x:Name="CardOverlaysDisabledBanner" Style="{StaticResource SettingsGroupStyle}" Visibility="Collapsed">
-                    <TextBlock Text="Card overlays have been disabled by your server administrator." TextWrapping="Wrap" />
-                </Border>
-                <StackPanel x:Name="CardOverlaysGeneralHost" Spacing="12" />
-                <StackPanel x:Name="CardOverlaysContentHost" Spacing="24">
-                    <Border Style="{StaticResource SettingsGroupStyle}">
-                        <StackPanel Spacing="14">
-                            <TextBlock Text="Preview" FontSize="14" FontWeight="SemiBold" />
-                            <TextBlock Text="Live preview of your current overlay configuration." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
-                            <Border Width="178" Height="267" HorizontalAlignment="Center" CornerRadius="12" Background="#30394A" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
-                                <Grid Margin="8">
-                                    <StackPanel x:Name="OverlayPreviewTopLeft" HorizontalAlignment="Left" VerticalAlignment="Top" Spacing="4" />
-                                    <StackPanel x:Name="OverlayPreviewTopRight" HorizontalAlignment="Right" VerticalAlignment="Top" Spacing="4" />
-                                    <StackPanel x:Name="OverlayPreviewBottomLeft" HorizontalAlignment="Left" VerticalAlignment="Bottom" Spacing="4" />
-                                    <StackPanel x:Name="OverlayPreviewBottomRight" HorizontalAlignment="Right" VerticalAlignment="Bottom" Spacing="4" />
-                                </Grid>
-                            </Border>
-                            <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
-                                <Button x:Name="OverlayMoviePreviewButton" Content="Movie" Tag="movie"
-                                        Style="{StaticResource ActiveTabStyle}" Padding="12,5"
-                                        Click="OverlayPreviewVariant_Click" />
-                                <Button x:Name="OverlayShowPreviewButton" Content="Show" Tag="show"
-                                        Style="{StaticResource InactiveTabStyle}" Padding="12,5"
-                                        Click="OverlayPreviewVariant_Click" />
-                                <Button x:Name="OverlayRequestedPreviewButton" Content="Requested title" Tag="requested" Visibility="Collapsed"
-                                        Style="{StaticResource InactiveTabStyle}" Padding="12,5" Click="OverlayPreviewVariant_Click" />
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
 
-                    <StackPanel Orientation="Horizontal" Spacing="4">
-                        <Button x:Name="CardOverlayOverlaysTab" Content="Overlays" Tag="overlays"
-                                Style="{StaticResource ActiveTabStyle}" Click="CardOverlaySectionTab_Click" />
-                        <Button x:Name="CardOverlayStyleTab" Content="Style" Tag="style"
-                                Style="{StaticResource InactiveTabStyle}" Click="CardOverlaySectionTab_Click" />
-                    </StackPanel>
-                    <StackPanel x:Name="CardOverlayControlsContainer" Spacing="18" />
-                    <StackPanel x:Name="CardOverlayStylePanel" Spacing="18" Visibility="Collapsed">
-                        <Border Style="{StaticResource SettingsGroupStyle}">
-                            <StackPanel Spacing="12">
-                                <TextBlock Text="Preset" FontSize="14" FontWeight="SemiBold" />
-                                <TextBlock Text="A preset controls the base appearance of every badge. You can override the accent color of individual badges in the Overlays tab." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                                <controls:WrapPanel x:Name="CardOverlayPresetHost" HorizontalSpacing="8" VerticalSpacing="8" />
-                            </StackPanel>
-                        </Border>
-                        <Border Style="{StaticResource SettingsGroupStyle}">
-                            <StackPanel Spacing="8">
-                                <TextBlock Text="How styling works" FontSize="14" FontWeight="SemiBold" />
-                                <TextBlock Text="Where to find what." FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
-                                <TextBlock Text="• Preset sets the badge shape, background, font, and whether icons show by default.&#x0a;• Accent color (per overlay) tints that badge — gold for IMDb, red for RT, etc.&#x0a;• Icon toggle (per overlay) overrides the preset's icon default for a single overlay.&#x0a;• Position picks which corner the badge sits in. Multiple badges in the same corner stack vertically."
-                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" LineHeight="22" />
-                            </StackPanel>
-                        </Border>
-                    </StackPanel>
-                </StackPanel>
-            </StackPanel>
 
             <!-- ===================================================================== -->
             <!-- ===== Personalize Panel ===== -->
@@ -1510,6 +1554,27 @@
                                 <TextBlock Text="Browse popular titles and pick the ones you love. Already-favorited titles will be marked, so you can add to (or trim) your picks any time." FontSize="14" LineHeight="20" LineStackingStrategy="BlockLineHeight" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                             </StackPanel>
                             <Button x:Name="PersonalizePickerButton" Content="Open the picker  →" Style="{StaticResource AccentButtonStyle}" Height="36" FontSize="14" FontWeight="Medium" Padding="16,8" HorizontalAlignment="Left" Click="OpenTasteSeed_Click" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+                <Border x:Name="NotInterestedPanel" Style="{StaticResource PersonalizeGroupStyle}" Visibility="Collapsed">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <Border Width="48" Height="48" CornerRadius="24" Background="{StaticResource AccentBackgroundBrush}" VerticalAlignment="Top">
+                            <SymbolIcon Symbol="Dislike" Foreground="{StaticResource AccentBrush}" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Spacing="12">
+                            <TextBlock Text="Not interested" FontSize="16" FontWeight="SemiBold" />
+                            <TextBlock Text="Titles you marked Not interested stay out of your recommendations, and similar titles rank lower. You can still find and play them anywhere else." FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                            <TextBlock x:Name="NotInterestedLoading" Text="Loading…" FontSize="14" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <StackPanel x:Name="NotInterestedErrorPanel" Spacing="8" Visibility="Collapsed">
+                                <TextBlock x:Name="NotInterestedError" FontSize="14" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
+                                <Button x:Name="NotInterestedRetry" Content="Retry" Click="NotInterestedRetry_Click" HorizontalAlignment="Left" Style="{StaticResource OutlineButtonStyle}" />
+                            </StackPanel>
+                            <StackPanel x:Name="NotInterestedRows" Spacing="0" />
+                            <TextBlock x:Name="NotInterestedEmpty" Text="Nothing yet. Choose Not Interested from a movie or show's menu." FontSize="14" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" />
+                            <Button x:Name="NotInterestedMore" Content="Show more" Click="NotInterestedMore_Click" HorizontalAlignment="Left" Style="{StaticResource OutlineButtonStyle}" Visibility="Collapsed" />
+                            <TextBlock x:Name="NotInterestedMoreError" FontSize="14" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" Visibility="Collapsed" />
                         </StackPanel>
                     </Grid>
                 </Border>

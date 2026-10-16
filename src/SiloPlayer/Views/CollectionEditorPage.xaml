@@ -387,7 +387,7 @@
                     </Grid>
                 </Border>
 
-                <!-- ===== Imported Source Section (visible for MDBList/TMDB/Trakt) ===== -->
+                <!-- ===== Imported Source Section (visible for MDBList/TMDB) ===== -->
                 <Border
                     x:Name="ImportedSourceSection"
                     Style="{StaticResource EditorGroupStyle}"

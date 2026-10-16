@@ -5,6 +5,35 @@ namespace SiloPlayer.Tests;
 
 public sealed class MediaItemActionExecutorTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ResetClearsResumeFlagsAfterPersistenceWithoutChangingWatchedOrPersonalLists(bool played)
+    {
+        var item = CreateItem(played, favorite: true); item.Type = "episode";
+        item.PositionSeconds = 42; item.DurationSeconds = 100; item.ProgressUpdatedAt = "original";
+        item.UserState!.IsInProgress = true; item.UserState.InWatchlist = true;
+        item.SortMetrics = new() { ProgressRatio = .42 };
+        var state = item.UserState;
+        var pending = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reset = MediaItemActionExecutor.ResetProgressAsync(item, () => pending.Task);
+        Assert.True(state.IsInProgress); Assert.Equal(42, item.PositionSeconds);
+        pending.SetResult(); await reset;
+        Assert.Same(state, item.UserState); Assert.False(state.IsInProgress);
+        Assert.Equal(played, state.Played); Assert.True(state.IsFavorite); Assert.True(state.InWatchlist);
+        Assert.Equal(100, item.DurationSeconds); Assert.Equal(0, item.PositionSeconds);
+        Assert.Null(item.ProgressUpdatedAt); Assert.Equal(0, item.SortMetrics.ProgressRatio);
+        Assert.Equal(!played, EpisodeSpoilerPolicy.IsUnwatched(state.Played, state.IsInProgress, item.PositionSeconds));
+    }
+
+    [Fact]
+    public async Task RejectedResetRetainsResumeFlagsAndPosition()
+    {
+        var item = CreateItem(false, true); item.PositionSeconds = 42; item.UserState!.IsInProgress = true;
+        await Assert.ThrowsAsync<IOException>(() => MediaItemActionExecutor.ResetProgressAsync(item, () => throw new IOException()));
+        Assert.True(item.UserState.IsInProgress); Assert.Equal(42, item.PositionSeconds);
+    }
+
     [Fact]
     public async Task ToggleWatchedUpdatesImmediatelyAndPersistsTheNewValue()
     {

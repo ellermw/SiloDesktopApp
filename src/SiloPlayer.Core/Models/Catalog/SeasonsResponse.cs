@@ -10,6 +10,7 @@ public class Season
     public string ContentId { get; set; } = "";
     public int SeasonNumber { get; set; }
     public string Title { get; set; } = "";
+    public List<string>? MachineTranslatedFields { get; set; }
     public string? AirDate { get; set; }
     public int EpisodeCount { get; set; }
     public string? PosterUrl { get; set; }

@@ -94,7 +94,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("_ => contentWidth >= 1280 ? 8", customization);
         Assert.Contains("card.SetLayout(cardWidth, showCaption)", code);
         Assert.Contains("x:Name=\"SimilarPanel\" Orientation=\"Horizontal\" Spacing=\"20\"", xaml);
-        Assert.Contains("response.Items.Take(12)", viewModel);
+        Assert.Contains("response.Items.Where(item => item.UserState?.NotInterested != true).Take(12)", viewModel);
         Assert.Contains("x:Name=\"SeasonsPrevButton\"", xaml);
         Assert.Contains("x:Name=\"SeasonsNextButton\"", xaml);
         Assert.Contains("Click=\"SeasonsPrev_Click\"", xaml);
@@ -258,8 +258,8 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("ShowMediaInfoDialogAsync(version.FileId)", page);
         Assert.Contains("profile?.IsPrimary == true", policy);
         Assert.Contains("user?.Permissions?.Contains(permission", policy);
-        Assert.Contains("VersionRanking.MapAudioLabel(v.CodecAudio)", page);
-        Assert.Contains("VersionRanking.MapAudioLabel(version.CodecAudio)", page);
+        Assert.Contains("VersionRanking.VersionAudioLabel(v)", page);
+        Assert.Contains("VersionRanking.VersionAudioLabel(version)", page);
     }
 
     [Fact]
@@ -278,7 +278,7 @@ public sealed class ItemDetailCurrentParityTests
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
 
         Assert.Contains("MediaLanguageCatalog.Label(track.Language)", page);
-        Assert.Contains("VersionRanking.MapAudioLabel(track.Codec)", page);
+        Assert.Contains("VersionRanking.AudioTrackLabel(track)", page);
         Assert.Contains("return string.Join(\" · \", parts)", page);
         Assert.Contains("2 => \"stereo\"", page);
         Assert.Contains("Auto, Off, optional candidate sections", page);

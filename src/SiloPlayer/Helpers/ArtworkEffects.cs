@@ -50,6 +50,31 @@ internal static class ArtworkEffects
         return output.ToArray();
     }
 
+    /// <summary>Episode spoiler blur, rendered from an untouched cached source.</summary>
+    public static async Task<byte[]> BlurEpisodeStillAsync(byte[] bytes, CancellationToken ct = default)
+    {
+        using var input = new MemoryStream(bytes);
+        var device = CanvasDevice.GetSharedDevice();
+        using var bitmap = await CanvasBitmap.LoadAsync(device, input.AsRandomAccessStream());
+        ct.ThrowIfCancellationRequested();
+        var width = (float)Math.Min(640, bitmap.Size.Width);
+        var height = (float)(width * bitmap.Size.Height / bitmap.Size.Width);
+        using var scaled = new CanvasRenderTarget(device, width, height, 96);
+        using (var drawing = scaled.CreateDrawingSession())
+        {
+            var cropWidth = bitmap.Size.Width / 1.1; var cropHeight = bitmap.Size.Height / 1.1;
+            drawing.DrawImage(bitmap, new Windows.Foundation.Rect(0, 0, width, height),
+                new Windows.Foundation.Rect((bitmap.Size.Width - cropWidth) / 2, (bitmap.Size.Height - cropHeight) / 2, cropWidth, cropHeight));
+        }
+        using var blur = new GaussianBlurEffect { Source = scaled, BlurAmount = width / 16, BorderMode = EffectBorderMode.Hard };
+        using var target = new CanvasRenderTarget(device, width, height, 96);
+        using (var drawing = target.CreateDrawingSession()) drawing.DrawImage(blur);
+        using var output = new MemoryStream();
+        await target.SaveAsync(output.AsRandomAccessStream(), CanvasBitmapFileFormat.Png);
+        ct.ThrowIfCancellationRequested();
+        return output.ToArray();
+    }
+
     public static async Task<byte[]> TransformAsync(byte[] bytes, bool blur, CancellationToken ct = default)
     {
         using var sourceStream = new MemoryStream(bytes);

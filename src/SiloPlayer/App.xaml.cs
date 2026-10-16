@@ -256,6 +256,7 @@ public partial class App : Application
         services.AddSingleton<AuthApi>(sp => new AuthApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<HomeApi>(sp => new HomeApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<CatalogApi>(sp => new CatalogApi(sp.GetRequiredService<SiloApiClient>()));
+        services.AddSingleton<NotInterestedService>(sp => Controls.NotInterestedActions.CreateService(sp.GetRequiredService<CatalogApi>()));
         services.AddSingleton<SettingsApi>(sp => new SettingsApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<WebhookSyncApi>(sp => new WebhookSyncApi(sp.GetRequiredService<SiloApiClient>()));
         services.AddSingleton<PlexBrowserAuthApi>();
@@ -300,6 +301,7 @@ public partial class App : Application
         services.AddSingleton<CardOverlayService>();
         services.AddSingleton<UICustomizationService>();
         services.AddSingleton<ItemDetailPrefetchCache>();
+        services.AddSingleton<EpisodeSpoilerPreferences>();
 
         // Player service (owns mpv lifecycle, not tied to page navigation)
         services.AddSingleton<PlayerService>();

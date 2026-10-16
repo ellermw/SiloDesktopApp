@@ -25,8 +25,9 @@ public readonly record struct ApiRequestContext(long AuthenticationGeneration, l
 public readonly record struct ApiIdentityContext(long AuthenticationGeneration, long IdentityGeneration, string BaseUrl, string? ProfileId);
 public sealed record ApiResponse<T>(T Body, string? ETag);
 
-public class SiloApiClient
+public partial class SiloApiClient
 {
+    public Services.LocalizedMediaReads LocalizedReads { get; } = new();
     public const string DefaultClientName = "Silo for Windows";
     public const string ClientFamily = "desktop";
 
@@ -189,9 +190,12 @@ public class SiloApiClient
     public async Task<ApiResponse<T>> GetWithETagAsync<T>(ApiRequestContext context, string path, CancellationToken ct = default)
     {
         using var request = CreateContextBoundRequest(context, HttpMethod.Get, path, null);
+        using var localizedRead = LocalizedReads.Begin(request, ct);
+        ct = localizedRead?.Token ?? ct;
         using var response = await SendWithRetryAsync(request, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode) await ThrowApiException(response, request, ct).ConfigureAwait(false);
         var value = await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct).ConfigureAwait(false);
+        localizedRead?.EnsureCurrent();
         if (!IsCurrentContext(context)) throw new OperationCanceledException("API context changed.", ct);
         return new(value ?? throw new InvalidDataException("Empty API response."), response.Headers.ETag?.ToString());
     }
@@ -228,6 +232,9 @@ public class SiloApiClient
     public async Task<List<T>> GetAllItemsAsync<T>(string path, CancellationToken ct = default)
     {
         var context = CaptureContext();
+        using var owner = new HttpRequestMessage(HttpMethod.Get, BuildUrl(path));
+        using var localizedRead = LocalizedReads.Begin(owner, ct);
+        ct = localizedRead?.Token ?? ct;
         var result = new List<T>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var pagePath = path;
@@ -236,6 +243,7 @@ public class SiloApiClient
             ct.ThrowIfCancellationRequested();
             if (!IsCurrentContext(context)) throw new OperationCanceledException("API context changed.", ct);
             var page = await GetAsync<ApiCollectionPage<T>>(pagePath, ct).ConfigureAwait(false);
+            localizedRead?.EnsureCurrent();
             if (!IsCurrentContext(context)) throw new OperationCanceledException("API context changed.", ct);
             result.AddRange(page.Items);
             if (page.Page?.HasMore != true) return result;
@@ -626,9 +634,12 @@ public class SiloApiClient
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, BuildUrl(path));
         AddHeaders(request);
+        using var localizedRead = LocalizedReads.Begin(request, ct);
+        ct = localizedRead?.Token ?? ct;
         using var response = await SendWithRetryAsync(request, ct).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode) await ThrowApiException(response, request, ct).ConfigureAwait(false);
         var body = (await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct).ConfigureAwait(false))!;
+        localizedRead?.EnsureCurrent();
         return new(body, response.Headers.ETag?.ToString());
     }
 
@@ -975,6 +986,8 @@ public class SiloApiClient
         bool allowTokenRefresh = true,
         bool allowNoContent = false)
     {
+        using var localizedRead = LocalizedReads.Begin(request, ct);
+        ct = localizedRead?.Token ?? ct;
         // ConfigureAwait(false) on both awaits so the HTTP and JSON work
         // doesn't capture the calling SynchronizationContext — on WinUI 3
         // the UI thread was the one doing deserialization, which caused
@@ -997,7 +1010,9 @@ public class SiloApiClient
         {
             if (!response.IsSuccessStatusCode) await ThrowApiException(response, request, ct).ConfigureAwait(false);
             if (allowNoContent && response.StatusCode == System.Net.HttpStatusCode.NoContent) return default!;
-            return (await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct).ConfigureAwait(false))!;
+            var value = (await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct).ConfigureAwait(false))!;
+            localizedRead?.EnsureCurrent();
+            return value;
         }
     }
 
@@ -1034,6 +1049,7 @@ public class SiloApiClient
         catch (JsonException) { }
         catch (NotSupportedException) { }
         if (response.StatusCode == System.Net.HttpStatusCode.Forbidden &&
+            !request.Options.TryGetValue(DetachedProfileOption, out _) &&
             string.Equals(code, "profile_unverified", StringComparison.Ordinal))
         {
             var context = CreateProfileVerificationContext(request);

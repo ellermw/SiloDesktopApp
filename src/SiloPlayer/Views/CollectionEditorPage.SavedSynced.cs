@@ -38,7 +38,7 @@ public sealed partial class CollectionEditorPage
         skippedLine.Children.Add(new TextBlock { Text = ViewModel.SyncSkippedTitles is { } count ? $"{count:N0} title{(count == 1 ? "" : "s")} skipped" : "Not counted yet", FontSize = 14, FontWeight = FontWeights.SemiBold });
         var libraryNames = ViewModel.AvailableLibraries.Where(l => ViewModel.SelectedLibraryIds.Count == 0 || ViewModel.SelectedLibraryIds.Contains(l.Id)).Select(l => l.Name).ToArray();
         var where = libraryNames.Length switch { 0 => "your libraries", 1 => libraryNames[0], _ => string.Join(", ", libraryNames[..^1]) + " and " + libraryNames[^1] };
-        var explanation = new Border { Visibility = Visibility.Collapsed, Background = CurrentBrush("SurfaceBrush"), CornerRadius = new(12), Padding = new(12, 10, 12, 10), Child = SavedSyncedCopy(ViewModel.SyncSkippedTitles is { } skippedCount ? $"{skippedCount:N0} title{(skippedCount == 1 ? "" : "s")} on the list {(skippedCount == 1 ? "isn't" : "aren't")} in {where}, so they're skipped. Add them to one of those libraries and they join at the next sync." : $"Titles on the list that aren't in {where} are skipped." + (ViewModel.SourceKind == "trakt" ? "" : " Sync now to count them."), 13) };
+        var explanation = new Border { Visibility = Visibility.Collapsed, Background = CurrentBrush("SurfaceBrush"), CornerRadius = new(12), Padding = new(12, 10, 12, 10), Child = SavedSyncedCopy(ViewModel.SyncSkippedTitles is { } skippedCount ? $"{skippedCount:N0} title{(skippedCount == 1 ? "" : "s")} on the list {(skippedCount == 1 ? "isn't" : "aren't")} in {where}, so they're skipped. Add them to one of those libraries and they join at the next sync." : $"Titles on the list that aren't in {where} are skipped." + " Sync now to count them.", 13) };
         var why = new Button { Content = WebUiIcon.Create("info", 16), MinHeight = 0, MinWidth = 0, Height = 24, Width = 24, Padding = new(0), Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
         why.Click += (_, _) => explanation.Visibility = explanation.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
         AutomationProperties.SetName(why, "Why titles are skipped"); skippedLine.Children.Add(why);
@@ -48,7 +48,7 @@ public sealed partial class CollectionEditorPage
         body.Children.Add(explanation);
         if (resetSource || _savedSourceEditorId != collection.Id) { _savedSourceChanging = false; _savedSourceEditorId = collection.Id; }
         body.Children.Add(BuildSavedSourceLine());
-        if (ViewModel.SourceKind is not ("trakt" or "tmdb_discover"))
+        if (ViewModel.SourceKind != "tmdb_discover")
         {
             _savedWhoDecides = new Grid { ColumnSpacing = 10, RowSpacing = 10 };
             _savedWhoDecides.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) }); _savedWhoDecides.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
@@ -63,9 +63,9 @@ public sealed partial class CollectionEditorPage
         _syncedPick = new() { MediaKind = media == "all" ? "mixed" : media ?? "mixed" };
         if (_syncedMatchButton.Flyout is Flyout { Content: ScrollViewer previousChoices }) previousChoices.Content = null;
         _syncedMatchButton.Flyout = new Flyout { Content = new ScrollViewer { Content = _syncedLibraryChoices, MaxHeight = 320, MinWidth = 200, HorizontalScrollMode = ScrollMode.Disabled } };
-        _syncedMatchButton.IsEnabled = ViewModel.CollectionType != "trakt"; RefreshSyncedLibraries();
+        _syncedMatchButton.IsEnabled = !ViewModel.IsSaving && !ViewModel.IsReadOnly; RefreshSyncedLibraries();
         body.Children.Add(SyncedDivider(_syncedMatchButton));
-        _titleLimit.Text = ViewModel.MaxItemsText ?? ""; _titleLimit.IsEnabled = ViewModel.CollectionType != "trakt";
+        _titleLimit.Text = ViewModel.MaxItemsText ?? ""; _titleLimit.IsEnabled = !ViewModel.IsSaving && !ViewModel.IsReadOnly;
         // The same input is reused after Create becomes a saved list.
         if (!_newSynced) { _titleLimit.LostFocus -= SavedLimit_LostFocus; _titleLimit.LostFocus += SavedLimit_LostFocus; _titleLimit.KeyDown -= SavedLimit_KeyDown; _titleLimit.KeyDown += SavedLimit_KeyDown; }
         body.Children.Add(BuildSyncedOrder());
@@ -74,7 +74,6 @@ public sealed partial class CollectionEditorPage
         AutomationProperties.SetName(_savedSchedule, "Sync schedule");
         var schedule = new StackPanel { Spacing = 12, Children = { Field("Sync", _savedSchedule) } };
         if (ViewModel.Capabilities?.SyncScheduleEditable != true) schedule.Children.Add(SavedSyncedCopy("This server doesn't let profiles change a list's schedule.", 13));
-        else if (!ViewModel.CanEditSavedSyncSchedule) schedule.Children.Add(SavedSyncedCopy("A stopped Trakt list can't be scheduled again.", 13));
         body.Children.Add(SyncedDivider(schedule));
         UpdateSyncedResponsive();
     }
@@ -84,7 +83,7 @@ public sealed partial class CollectionEditorPage
 
     private FrameworkElement BuildSavedSourceLine()
     {
-        if (ViewModel.SourceKind is "trakt" or "tmdb_discover") return BuildLockedSourceSummary();
+        if (ViewModel.SourceKind == "tmdb_discover") return BuildLockedSourceSummary();
         if (!ViewModel.HasEditableSourceUrl)
         {
             var source = new WrapPanel { HorizontalSpacing = 24, VerticalSpacing = 4 };
@@ -109,22 +108,16 @@ public sealed partial class CollectionEditorPage
     private TextBlock SavedSyncedCopy(string text, double size) => new() { Text = text, FontSize = size, LineHeight = size * 1.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = CurrentBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap };
     private FrameworkElement BuildLockedSourceSummary()
     {
-        var discover = ViewModel.SourceKind == "tmdb_discover";
         var config = ViewModel.LoadedCollection?.SourceConfig;
         string Value(string key) => config?.GetValueOrDefault(key)?.ToString() ?? "";
-        var media = Value("media_type") == "tv" ? "TV shows" : discover ? Value("media_type") == "movie" ? "Movies" : "Titles" : "movies";
+        var media = Value("media_type") == "tv" ? "TV shows" : Value("media_type") == "movie" ? "Movies" : "Titles";
         var finds = media;
-        if (discover && config?.GetValueOrDefault("discover") is { } raw)
+        if (config?.GetValueOrDefault("discover") is { } raw)
         {
             var element = System.Text.Json.JsonSerializer.SerializeToElement(raw);
             var sort = element.ValueKind == System.Text.Json.JsonValueKind.Object && element.TryGetProperty("sort_by", out var order) ? order.GetString() : null;
             var description = sort switch { "popularity.desc" => "most popular first", "vote_average.desc" => "highest rated first", "vote_count.desc" => "most voted first", "revenue.desc" => "highest grossing first", "primary_release_date.desc" or "release_date.desc" or "first_air_date.desc" => "newest first", _ => null };
             if (description != null) finds += ", " + description;
-        }
-        else if (!discover)
-        {
-            var preset = Value("preset"); if (string.IsNullOrWhiteSpace(preset)) preset = "trending";
-            finds = Value("mode") == "trakt_list" ? new[] { Value("list_url"), Value("url"), ViewModel.SourceUrl }.FirstOrDefault(s => !string.IsNullOrWhiteSpace(s)) ?? "" : char.ToUpperInvariant(preset[0]) + preset[1..] + " " + media;
         }
         var details = new Grid { ColumnSpacing = 12, RowSpacing = 6 };
         details.ColumnDefinitions.Add(new() { Width = new(72) }); details.ColumnDefinitions.Add(new() { Width = new(1, GridUnitType.Star) });
@@ -132,14 +125,14 @@ public sealed partial class CollectionEditorPage
         {
             details.RowDefinitions.Add(new() { Height = GridLength.Auto });
             var label = SavedSyncedCopy(n == 0 ? "Source" : "Finds", 13.5); Grid.SetRow(label, n); details.Children.Add(label);
-            var value = new TextBlock { Text = n == 0 ? discover ? "TMDB Discover" : "Trakt" : finds, FontSize = 13.5, TextWrapping = TextWrapping.Wrap }; Grid.SetRow(value, n); Grid.SetColumn(value, 1); details.Children.Add(value);
+            var value = new TextBlock { Text = n == 0 ? "TMDB Discover" : finds, FontSize = 13.5, TextWrapping = TextWrapping.Wrap }; Grid.SetRow(value, n); Grid.SetColumn(value, 1); details.Children.Add(value);
         }
         return new Border { CornerRadius = new(12), Padding = new(16, 14, 16, 14), Background = CurrentBrush("SurfaceBrush"), Child = new StackPanel { Spacing = 12, Children = {
-            new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { WebUiIcon.Create("lock", 16), new TextBlock { Text = discover ? "Made by a starter pack. Its rules can't be changed here." : "New Trakt lists aren't supported. This one keeps its source and libraries.", FontSize = 13.5, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap } } },
-            details, SavedSyncedCopy(discover ? "You can still change its name, artwork, max titles, schedule and where it shows." : "You can still change its name, artwork, order, schedule and where it shows.", 13)
+            new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, Children = { WebUiIcon.Create("lock", 16), new TextBlock { Text = "Made by a starter pack. Its rules can't be changed here.", FontSize = 13.5, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap } } },
+            details, SavedSyncedCopy("You can still change its name, artwork, max titles, schedule and where it shows.", 13)
         } } };
     }
-    private string SavedSourceLabel() => ViewModel.SourceKind switch { "tmdb" => "TMDB chart", "tmdb_list" => "TMDB list", "tmdb_discover" => "TMDB Discover", "mdblist" => "MDBList", "trakt" => "Trakt", _ => ViewModel.SourceProviderLabel };
+    private string SavedSourceLabel() => ViewModel.SourceKind switch { "tmdb" => "TMDB chart", "tmdb_list" => "TMDB list", "tmdb_discover" => "TMDB Discover", "mdblist" => "MDBList", _ => ViewModel.SourceProviderLabel };
     private string SavedChartSummary()
     {
         var config = ViewModel.LoadedCollection?.SourceConfig;

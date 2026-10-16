@@ -2,6 +2,15 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.268 (2026-10-16 — owner-approved server alignment and background repair)
+
+- Include all 13 correction groups from [1.2.260](docs/releases/1.2.260.md), all seven update groups from [1.2.267](docs/releases/1.2.267.md), and the shared rounded-background correction. The 21 groups advance the published version from 1.2.247 to 1.2.268; individual edits and test cases do not inflate the version.
+- Align current Settings/branding, metadata languages/translation, spoilers, Home deduplication, media actions, Cast & Crew, codec labels and recommendation presentation. Add Reset Progress and device names; preserve playback identity.
+- Add profile subtitle appearance/timing, Not Interested management, notification-series mute controls, new-episode ordering, Watch Together timing and primary-PIN profile-picker management. Remove retired built-in Trakt integration.
+- Repair long-pause progressive-remux resume and oversized corner geometry at 18 badge/button sites, including Add Row and other affected pages.
+- Publish the unchanged, owner-tested installer. SHA256: `FB7246AF2E77E30BB8EA60DD38ADF9128190367EDE1D2BACAB7EF529B88C84AF`. Fresh publication suite: 1,910 main tests passed. Exact 1.2.268 payload: five native groups passed. Earlier 1.2.267 results remain separately recorded: 58 native runs and 24 playback groups.
+- See [1.2.268 scope, evidence and limits](docs/releases/1.2.268.md). Historical recurring buffering and intermittent Next Up removal are not declared resolved by these changes.
+
 ## 1.2.241 (2026-10-10 — approved combined parity release)
 
 - Complete the current 14-area implementation and finite visual/functional acceptance pass against official Silo Server main `1a7a3970a9928efb0157460c10888832a8a74eb1`.

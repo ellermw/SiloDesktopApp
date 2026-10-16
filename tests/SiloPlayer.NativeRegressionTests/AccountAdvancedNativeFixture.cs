@@ -110,6 +110,7 @@ internal static class AccountAdvancedNativeFixture
     }
     private static async Task HomeImportAsync(Frame frame, SettingsPage page, SettingsViewModel vm, State wire)
     {
+        wire.SavedHomeOverrides = [JsonSerializer.SerializeToElement(new { id = "saved-admin", section_id = "old-admin", hidden = true, config = new { source = "trakt" } })];
         frame.Width = 900; await Layout(frame); Show(page, "HomeScreen");
         await Until(() => vm.CanEditHomeSections && !vm.IsLoadingHomeSections);
         var launch = (Button)page.FindName("HomeImportButton"); Invoke(page, "HomeImport_Click", launch, new RoutedEventArgs());
@@ -121,12 +122,13 @@ internal static class AccountAdvancedNativeFixture
         await Until(() => input.IsPrimaryButtonEnabled && All<TextBlock>(input).Any(text => text.Text.Contains("invalid") || text.Text.Contains("expected")));
         Check(ReferenceEquals(Read(page, "_layoutTransferPreview"), input) && source.Text == "{invalid-fixture" && wire.HomeWrites == 0,
             "Invalid pasted layout closed the dialog, lost text or wrote a section");
-        var pasted = HomeLayoutTransfer.Serialize(new HomeLayoutFile { ServerId = "fixture-server", Pages = [new HomeLayoutPage { Overrides = [new SectionOverride { IsUserAdded = true, UserSectionType = "recently_added", UserTitle = "Imported fixture", UserConfig = new() }] }] });
+        var pasted = HomeLayoutTransfer.Serialize(new HomeLayoutFile { ServerId = "fixture-server", Pages = [new HomeLayoutPage { Overrides = [new SectionOverride { IsUserAdded = true, UserSectionType = "recently_added", UserTitle = "Imported fixture", UserConfig = new() { ["source"] = "trakt" } }] }] });
         source.Text = pasted; Click(All<Button>(input).Single(button => button.Name == "PrimaryButton"));
         await Until(() => Read(page, "_layoutTransferPreview") is ContentDialog dialog && !ReferenceEquals(dialog, input));
         var preview = (ContentDialog)Read(page, "_layoutTransferPreview")!;
         await Until(() => All<Button>(preview).Any(button => button.Name == "PrimaryButton"));
         Check(All<TextBlock>(preview).Any(text => text.Text.Contains("Home: replace saved overrides with 1 sections")), "Import preview did not describe the mapped scope/section count");
+        Check(!All<TextBlock>(preview).Any(text => text.Text.Contains("legacy Trakt")), "Import preview still promises special legacy row preservation");
         await Capture(preview, "account-home-import-preview-wide.png"); frame.Width = 460; await Layout(frame);
         await Capture(preview, "account-home-import-preview-narrow.png");
         wire.HomeGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -135,6 +137,7 @@ internal static class AccountAdvancedNativeFixture
         wire.HomeGate.SetResult(Reply(new { error = "validation_failed", message = "Fixture import rejection" }, HttpStatusCode.UnprocessableEntity));
         await Until(() => !((bool)Read(page, "_layoutTransferBusy")!) || preview.IsPrimaryButtonEnabled && All<TextBlock>(preview).Any(text => text.Text.Contains("Fixture import rejection")));
         wire.HomeGate = null;
+        Check(wire.HomeWrites == 1, "Rejected Home import silently retried while preserving retired overrides");
         Check(pending, "Home import duplicate Apply remains available while pending");
         Check(ReferenceEquals(Read(page, "_layoutTransferPreview"), preview) && Popups(frame).SelectMany(All<ContentDialog>).Contains(preview),
             "Rejected Home import closed its preview instead of retaining the pasted draft for retry");
@@ -142,6 +145,7 @@ internal static class AccountAdvancedNativeFixture
         Click(All<Button>(preview).Single(button => button.Name == "PrimaryButton"));
         await Until(() => wire.HomeWrites == 2 && !((bool)Read(page, "_layoutTransferBusy")!));
         Check(wire.HomePayload!.Value.GetProperty("overrides").EnumerateArray().Any(row => row.GetProperty("user_title").GetString() == "Imported fixture"), "Import retry lost its typed mapped section");
+        Check(wire.HomePayload.Value.GetProperty("overrides").GetArrayLength() == 1, "Same-server import kept a removed legacy override");
         Click(launch); await Until(() => Read(page, "_layoutTransferPreview") is ContentDialog);
         var reopened = (ContentDialog)Read(page, "_layoutTransferPreview")!;
         await Until(() => All<Button>(reopened).Any(button => button.Name == "CloseButton"));

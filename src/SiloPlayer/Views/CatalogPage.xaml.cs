@@ -216,6 +216,12 @@ public sealed partial class CatalogPage : Page,
     {
         if (_messengerRegistered) return;
         WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this);
+        WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, message) => DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!App.Services.GetRequiredService<CatalogApi>().IsCurrentContext(message.Context) || !message.Marked.HasValue) return;
+            foreach (var item in _items.Where(item => item.ContentId == message.ItemId))
+                MediaItemStateUpdater.SetNotInterested(item, message.Marked.Value);
+        }));
         WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this);
         _messengerRegistered = true;
     }
@@ -224,6 +230,7 @@ public sealed partial class CatalogPage : Page,
     {
         if (!_messengerRegistered) return;
         WeakReferenceMessenger.Default.Unregister<MediaSurfaceChanged>(this);
+        WeakReferenceMessenger.Default.Unregister<NotInterestedChange>(this);
         WeakReferenceMessenger.Default.Unregister<PlaybackProgressUpdated>(this);
         _messengerRegistered = false;
     }

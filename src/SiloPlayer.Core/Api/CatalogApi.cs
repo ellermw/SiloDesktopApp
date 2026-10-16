@@ -7,10 +7,27 @@ namespace SiloPlayer.Core.Api;
 
 public partial class CatalogApi(SiloApiClient client)
 {
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<(ApiRequestContext Context, string Scope), (DateTime LoadedAt, CatalogFiltersResponse Value)> _filterScopes = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<(ApiRequestContext Context, long Language, string Scope), (DateTime LoadedAt, CatalogFiltersResponse Value)> _filterScopes = new();
     private int _filterCacheGeneration;
+    private long _filterLanguageGeneration;
     private readonly object _filterScopesGate = new();
-    public int FilterCacheGeneration => Volatile.Read(ref _filterCacheGeneration);
+    public int FilterCacheGeneration
+    {
+        get
+        {
+            lock (_filterScopesGate)
+            {
+                var language = client.LocalizedReads.Generation;
+                if (_filterLanguageGeneration != language)
+                {
+                    _filterLanguageGeneration = language;
+                    Interlocked.Increment(ref _filterCacheGeneration);
+                    _filterScopes.Clear();
+                }
+                return Volatile.Read(ref _filterCacheGeneration);
+            }
+        }
+    }
     public ApiRequestContext CaptureContext() => client.CaptureContext();
     public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
 
@@ -41,6 +58,10 @@ public partial class CatalogApi(SiloApiClient client)
     private DateTime _librariesCachedAt = DateTime.MinValue;
     private ApiRequestContext? _librariesContext;
     private static readonly TimeSpan LibraryCacheDuration = TimeSpan.FromMinutes(5);
+
+    public async Task<List<Library>> GetLibrariesAsync(CapturedProfileAuthority authority, CancellationToken ct = default)
+        => (await client.SendCapturedProfileAsync<BrowseCollection<Library>>(authority, HttpMethod.Get,
+            "/api/v2/user/libraries", null, ct)).Items;
 
     public async Task<List<Library>> GetLibrariesAsync(CancellationToken ct = default, bool includeHidden = false)
     {
@@ -163,8 +184,9 @@ public partial class CatalogApi(SiloApiClient client)
         var query = "/api/v2/catalog/filters" + (parameters.Count > 0 ? "?" + string.Join("&", parameters) : "");
         ct.ThrowIfCancellationRequested();
         var context = client.CaptureContext();
-        var generation = Volatile.Read(ref _filterCacheGeneration);
-        var key = (context, query);
+        var generation = FilterCacheGeneration;
+        var language = client.LocalizedReads.Generation;
+        var key = (context, language, query);
         lock (_filterScopesGate)
         {
             if (client.IsCurrentContext(context) && generation == Volatile.Read(ref _filterCacheGeneration)
@@ -176,11 +198,11 @@ public partial class CatalogApi(SiloApiClient client)
         ct.ThrowIfCancellationRequested();
         lock (_filterScopesGate)
         {
-            if (!client.IsCurrentContext(context) || generation != Volatile.Read(ref _filterCacheGeneration))
+            if (!client.IsCurrentContext(context) || generation != Volatile.Read(ref _filterCacheGeneration) || language != client.LocalizedReads.Generation)
                 throw new OperationCanceledException("Catalog metadata scope changed.", ct);
             // Failed or canceled requests never populate the successful metadata cache.
             foreach (var entry in _filterScopes)
-                if (entry.Key.Context != context || DateTime.UtcNow - entry.Value.LoadedAt >= TimeSpan.FromMinutes(5))
+                if (entry.Key.Context != context || entry.Key.Language != language || DateTime.UtcNow - entry.Value.LoadedAt >= TimeSpan.FromMinutes(5))
                     _filterScopes.TryRemove(entry.Key, out _);
             if (_filterScopes.Count >= 64)
                 foreach (var entry in _filterScopes.OrderBy(entry => entry.Value.LoadedAt).Take(_filterScopes.Count - 63))

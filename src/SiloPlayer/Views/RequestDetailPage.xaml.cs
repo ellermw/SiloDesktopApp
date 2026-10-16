@@ -186,15 +186,14 @@ public sealed partial class RequestDetailPage : Page
         if (item.MediaType == "series" && item.NumberOfEpisodes is > 0) values.Add($"{item.NumberOfEpisodes} episode{(item.NumberOfEpisodes == 1 ? "" : "s")}");
         if (item.MediaType == "series" && !string.IsNullOrWhiteSpace(item.Status)) values.Add(item.Status);
         foreach (var value in values)
-            MetadataPanel.Children.Add(new Border
+            MetadataPanel.Children.Add(RoundedBadge.Apply(new Border
             {
                 Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(20, 255, 255, 255)),
                 BorderBrush = Brush("BorderBrush"),
                 BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(99),
                 Padding = new Thickness(9.6, 4, 9.6, 4),
                 Child = new TextBlock { Text = value.ToUpperInvariant(), FontSize = 11.2, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, CharacterSpacing = 40, LineHeight = 16, LineStackingStrategy = LineStackingStrategy.BlockLineHeight },
-            });
+            }, 99));
     }
 
     private void BuildActions(RequestMediaDetail item)

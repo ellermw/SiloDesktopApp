@@ -29,8 +29,12 @@ public sealed partial class NotificationSettingsControl : UserControl
         _isReady = false;
         await ViewModel.LoadAsync();
         SyncModeCombos();
+        NotificationSeriesLink.Visibility = ViewModel.Capability.Series?.Available == true ? Visibility.Visible : Visibility.Collapsed;
         _isReady = true;
     }
+
+    private void SeeSeries_Click(object sender, RoutedEventArgs e)
+        => App.Services.GetRequiredService<SiloPlayer.Helpers.NavigationService>().Navigate<SiloPlayer.Views.NotificationsPage>("series");
 
     private async void OpenBrowserSettings_Click(object sender, RoutedEventArgs e)
     {

@@ -4,6 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:models="using:SiloPlayer.Core.Models.Notifications"
     xmlns:converters="using:SiloPlayer.Converters"
+    xmlns:controls="using:SiloPlayer.Controls"
     Background="{StaticResource AppBackgroundBrush}"
     SizeChanged="Page_SizeChanged">
 
@@ -65,6 +66,7 @@
                             <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Continue Watching" Style="{StaticResource NotificationPreferenceLabel}" /><TextBlock Text="Series you are actively watching" Style="{StaticResource NotificationPreferenceCaption}" /></StackPanel><ToggleSwitch x:Name="ContinueWatchingToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Continue Watching" /></Grid>
                             <Grid ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions><StackPanel><TextBlock Text="Next Up" Style="{StaticResource NotificationPreferenceLabel}" /><TextBlock Text="The next episode after your progress" Style="{StaticResource NotificationPreferenceCaption}" /></StackPanel><ToggleSwitch x:Name="NextUpToggle" Grid.Column="1" Toggled="Preference_Toggled" AutomationProperties.Name="Next Up" /></Grid>
                             <TextBlock x:Name="PreferenceErrorText" Foreground="{StaticResource ErrorBrush}" FontSize="12" TextWrapping="Wrap" Visibility="Collapsed" AutomationProperties.LiveSetting="Polite" />
+                            <Button x:Name="SeeSeriesButton" Content="See which series notify you" Click="Series_Click" Visibility="Collapsed" Style="{StaticResource GhostButtonStyle}" HorizontalAlignment="Left" />
                             </StackPanel>
                             <StackPanel x:Name="PreferenceLoadFailedPanel" Spacing="12" Visibility="Collapsed">
                                 <TextBlock Text="Couldn’t load preferences." FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
@@ -79,6 +81,7 @@
         <StackPanel Orientation="Horizontal" Spacing="6">
             <Button x:Name="AllButton" Content="All" Click="Filter_Click" Tag="all" Height="32" MinHeight="32" Padding="12,4" FontSize="14" />
             <Button x:Name="UnreadButton" Click="Filter_Click" Tag="unread" Height="32" MinHeight="32" Padding="12,4" FontSize="14"><TextBlock x:Name="UnreadButtonText" Text="Unread" /></Button>
+            <Button x:Name="SeriesButton" Content="Series" Click="Series_Click" Visibility="Collapsed" Height="32" MinHeight="32" Padding="12,4" FontSize="14" />
         </StackPanel>
 
         <StackPanel x:Name="InboxErrorPanel" Visibility="Collapsed" Spacing="8" HorizontalAlignment="Center">
@@ -100,6 +103,7 @@
                 <TextBlock Text="You will be notified here when new episodes arrive for series you favorite, watchlist, or are watching." TextAlignment="Center" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
             </StackPanel>
             </Grid>
+            <controls:NotificationSeriesControl x:Name="SeriesView" Visibility="Collapsed" />
                 </StackPanel>
             </ListView.Header>
                 <ListView.ItemContainerStyle><Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="0" /><Setter Property="CornerRadius" Value="16" /><Setter Property="Margin" Value="0,0,0,4" /></Style></ListView.ItemContainerStyle>

@@ -104,6 +104,9 @@ public sealed partial class LibraryPage : Page,
     private IDisposable? _recommendationsRealtimeSubscription;
     private readonly DeferredSurfaceRefreshGate _recommendedRefreshGate = new();
     private readonly ObservableCollection<HomeSectionWithItems> _recommendedSections = [];
+    private IReadOnlyList<HomeSection> _recommendedLayoutOrder = [];
+    private readonly Dictionary<string, HomeSectionWithItems> _rawRecommendedSections = new(StringComparer.Ordinal);
+    private HashSet<string> _recommendedAvoidTypes = new(StringComparer.Ordinal);
     private readonly Dictionary<string, SectionRow> _recommendedRows = new(StringComparer.Ordinal);
     private HomeSectionWithItems? _recommendedHeroSection;
     private SectionRow? _recommendedHeroRestRow;
@@ -541,6 +544,12 @@ public sealed partial class LibraryPage : Page,
     {
         if (_messengerRegistered) return;
         WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this);
+        WeakReferenceMessenger.Default.Register<NotInterestedChange>(this, (_, message) => DispatcherQueue.TryEnqueue(() =>
+        {
+            if (!_isNavigated || !App.Services.GetRequiredService<CatalogApi>().IsCurrentContext(message.Context) || !message.Marked.HasValue) return;
+            ViewModel.UpdateCachedItems(message.ItemId, item => MediaItemStateUpdater.SetNotInterested(item, message.Marked.Value));
+            QueueRecommendedRefresh();
+        }));
         WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this);
         _messengerRegistered = true;
     }
@@ -549,6 +558,7 @@ public sealed partial class LibraryPage : Page,
     {
         if (!_messengerRegistered) return;
         WeakReferenceMessenger.Default.Unregister<MediaSurfaceChanged>(this);
+        WeakReferenceMessenger.Default.Unregister<NotInterestedChange>(this);
         WeakReferenceMessenger.Default.Unregister<PlaybackProgressUpdated>(this);
         _messengerRegistered = false;
     }
@@ -2694,6 +2704,9 @@ public sealed partial class LibraryPage : Page,
         }
 
         _recommendedSections.Clear();
+        _rawRecommendedSections.Clear();
+        _recommendedLayoutOrder = [];
+        _recommendedAvoidTypes.Clear();
         _recommendedRows.Clear();
         _recommendedHeroSection = null;
         _recommendedHeroRestRow = null;
@@ -2760,6 +2773,8 @@ public sealed partial class LibraryPage : Page,
                 RecommendedHeroSkeleton.Visibility = Visibility.Visible;
 
             _recommendedSections.Clear();
+            _rawRecommendedSections.Clear();
+            _recommendedLayoutOrder = layoutResponse.Sections;
             _recommendedRows.Clear();
             _recommendedHeroSection = null;
             _recommendedHeroRestRow = null;
@@ -2772,6 +2787,7 @@ public sealed partial class LibraryPage : Page,
                 RecommendedSectionsPanel.Children.Add(row);
             }
 
+            _ = LoadRecommendedRecipeTypesAsync(version, libraryId, cancellationToken);
             using var gate = new SemaphoreSlim(4, 4);
             var tasks = layoutResponse.Sections.Select(async layout =>
             {
@@ -2780,69 +2796,11 @@ public sealed partial class LibraryPage : Page,
                 {
                     var response = await catalogApi.GetLibrarySectionItemsAsync(libraryId, layout.Id, cancellationToken);
                     if (version != _recommendationsVersion || _currentTab != "Recommended") return;
-                    var section = response.Section;
-
-                    if (ReferenceEquals(layout, heroLayout))
-                    {
-                        RecommendedHeroSkeleton.Visibility = Visibility.Collapsed;
-                        if (section?.Items.Count > 0)
-                        {
-                            section.LoadCompleted = true;
-                            _recommendedHeroSection = section;
-                            var isAudiobook = ViewModel.Library?.Type is "audiobook" or "audiobooks";
-                            if (isAudiobook && section.SectionType == "continue_watching")
-                            {
-                                RecommendedNowListeningHero.Bind(section.Items[0]);
-                                RecommendedNowListeningHero.Visibility = Visibility.Visible;
-                                if (section.Items.Count > 1)
-                                {
-                                    var rest = new HomeSectionWithItems
-                                    {
-                                        Id = $"{section.Id}-rest",
-                                        SectionType = "continue_listening",
-                                        Title = section.Title,
-                                        ItemLimit = section.Items.Count - 1,
-                                        TotalCount = section.Items.Count - 1,
-                                        Items = new System.Collections.ObjectModel.ObservableCollection<MediaItem>(section.Items.Skip(1)),
-                                    };
-                                    var restRow = CreateLibrarySectionRow(rest, libraryId);
-                                    _recommendedHeroRestRow = restRow;
-                                    var firstDynamic = RecommendedSectionsPanel.Children
-                                        .Select((child, index) => (child, index))
-                                        .FirstOrDefault(pair => pair.child is SectionRow).index;
-                                    RecommendedSectionsPanel.Children.Insert(Math.Max(5, firstDynamic), restRow);
-                                }
-                            }
-                            else
-                            {
-                                var limit = section.ItemLimit > 0 ? section.ItemLimit : section.Items.Count;
-                                RecommendedHeroCarousel.ItemsSource = section.Items.Take(limit).ToList();
-                                RecommendedHeroCarousel.Visibility = Visibility.Visible;
-                            }
-                            UpdateHeaderOverlayMode(true);
-                        }
-                        return;
-                    }
-
-                    if (!_recommendedRows.TryGetValue(layout.Id, out var row)) return;
-                    if (section == null || section.Items.Count == 0)
-                    {
-                        RecommendedSectionsPanel.Children.Remove(row);
-                        _recommendedRows.Remove(layout.Id);
-                        var emptyModel = _recommendedSections.FirstOrDefault(candidate => candidate.Id == layout.Id);
-                        if (emptyModel != null)
-                            _recommendedSections.Remove(emptyModel);
-                        return;
-                    }
+                    var section = response.Section ?? ToLoadingSection(layout);
                     section.LoadCompleted = true;
-                    var mounted = _recommendedSections.First(candidate => candidate.Id == layout.Id);
-                    var change = HomeSectionReconciler.Apply(mounted, section);
-                    ConfigureLibrarySectionRow(row, mounted, libraryId);
-                    if ((change & HomeSectionChange.Metadata) != 0)
-                    {
-                        row.Section = null;
-                        row.Section = mounted;
-                    }
+                    section.LoadFailed = false;
+                    _rawRecommendedSections[layout.Id] = HomeSectionDedupe.Snapshot(section);
+                    ApplyRecommendedProjection(libraryId);
                 }
                 catch
                 {
@@ -2859,7 +2817,9 @@ public sealed partial class LibraryPage : Page,
                     {
                         var failed = ToLoadingSection(layout);
                         failed.LoadFailed = true;
-                        row.Section = failed;
+                        failed.LoadCompleted = true;
+                        _rawRecommendedSections[layout.Id] = failed;
+                        ApplyRecommendedProjection(libraryId);
                     }
                 }
                 finally
@@ -2951,36 +2911,28 @@ public sealed partial class LibraryPage : Page,
                 return true;
             }
 
-            var heroLayout = layoutResponse.Sections.FirstOrDefault(section => section.Featured);
-            var heroResult = heroLayout == null
-                ? default
-                : results.First(result => ReferenceEquals(result.Layout, heroLayout));
-            ApplyRefreshedRecommendedHero(heroLayout, heroResult.Section, heroResult.Failed, libraryId);
-
-            var incomingRows = new List<HomeSectionWithItems>();
-            foreach (var result in results.Where(result => !ReferenceEquals(result.Layout, heroLayout)))
+            _recommendedLayoutOrder = layoutResponse.Sections;
+            var activeIds = _recommendedLayoutOrder.Select(section => section.Id).ToHashSet(StringComparer.Ordinal);
+            foreach (var staleId in _rawRecommendedSections.Keys.Where(id => !activeIds.Contains(id)).ToList())
+                _rawRecommendedSections.Remove(staleId);
+            foreach (var result in results)
             {
                 if (result.Section != null)
                 {
                     result.Section.LoadCompleted = true;
-                    incomingRows.Add(result.Section);
-                    continue;
+                    result.Section.LoadFailed = false;
+                    _rawRecommendedSections[result.Layout.Id] = HomeSectionDedupe.Snapshot(result.Section);
                 }
-
-                var mounted = _recommendedSections.FirstOrDefault(section => section.Id == result.Layout.Id);
-                if (mounted != null)
+                else if (!_rawRecommendedSections.ContainsKey(result.Layout.Id))
                 {
-                    incomingRows.Add(mounted);
-                    continue;
+                    var failed = ToLoadingSection(result.Layout);
+                    failed.LoadFailed = result.Failed;
+                    failed.LoadCompleted = true;
+                    _rawRecommendedSections[result.Layout.Id] = failed;
                 }
-
-                var failed = ToLoadingSection(result.Layout);
-                failed.LoadFailed = result.Failed;
-                incomingRows.Add(failed);
             }
-
-            HomeSectionCollectionReconciler.Apply(_recommendedSections, incomingRows);
-            ApplyRecommendedRows(libraryId);
+            ApplyRecommendedProjection(libraryId);
+            _ = LoadRecommendedRecipeTypesAsync(version, libraryId, cancellationToken);
             return true;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -2997,6 +2949,68 @@ public sealed partial class LibraryPage : Page,
                 $"layout | {ex.GetType().Name}: {ex.Message}");
             return false;
         }
+    }
+
+    private async Task LoadRecommendedRecipeTypesAsync(int version, int libraryId, CancellationToken ct)
+    {
+        try
+        {
+            var recipes = await App.Services.GetRequiredService<SettingsApi>().GetRecipeCatalogAsync(ct);
+            if (ct.IsCancellationRequested || version != _recommendationsVersion || _currentTab != "Recommended") return;
+            _recommendedAvoidTypes = HomeSectionDedupe.AvoidTypes(recipes);
+            ApplyRecommendedProjection(libraryId);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            LocalLog.AppendLine("library_recommended_refresh.txt", $"recipe_catalog | {ex.GetType().Name}");
+        }
+    }
+
+    private void ApplyRecommendedProjection(int libraryId)
+    {
+        var projected = HomeSectionDedupe.Project(_recommendedLayoutOrder, _rawRecommendedSections, _recommendedAvoidTypes);
+        var heroLayout = _recommendedLayoutOrder.FirstOrDefault(section => section.Featured);
+        if (heroLayout == null)
+            ApplyRefreshedRecommendedHero(null, null, false, libraryId);
+        else if (projected.TryGetValue(heroLayout.Id, out var hero))
+            ApplyRefreshedRecommendedHero(heroLayout, hero, hero.LoadFailed, libraryId);
+
+        var previousMetadata = _recommendedSections.ToDictionary(section => section.Id, SectionMetadata);
+        var incoming = _recommendedLayoutOrder.Where(layout => layout.Id != heroLayout?.Id)
+            .Select(layout => projected.TryGetValue(layout.Id, out var section)
+                ? HomeSectionDedupe.Snapshot(section) : ToLoadingSection(layout))
+            .Where(section => !section.LoadCompleted || section.LoadFailed || section.Items.Count > 0)
+            .ToList();
+        HomeSectionCollectionReconciler.Apply(_recommendedSections, incoming);
+        var metadataChanged = _recommendedSections.Where(section => previousMetadata.TryGetValue(section.Id, out var previous)
+            && previous != SectionMetadata(section)).Select(section => section.Id).ToHashSet(StringComparer.Ordinal);
+        ApplyRecommendedRows(libraryId, metadataChanged);
+    }
+
+    private static (string, string, int, int, bool, bool) SectionMetadata(HomeSectionWithItems section) =>
+        (section.Title, section.SectionType, section.ItemLimit, section.TotalCount, section.LoadFailed, section.LoadCompleted);
+
+    public async Task RefreshLocalizedContentAsync()
+    {
+        CancelRecommendedRefresh();
+        _recommendationsLoadCts?.Cancel();
+        _recommendationsLoadCts?.Dispose();
+        _recommendationsLoadCts = null;
+        _recommendationsLoading = false;
+        ++_recommendationsVersion;
+        if (!_isNavigated) return;
+        if (_currentTab == "Recommended")
+        {
+            if (_recommendedLoaded)
+                await RefreshRecommendationsInPlaceAsync(CancellationToken.None);
+            else
+                await LoadRecommendationsAsync();
+        }
+        else if (_currentTab == "Library")
+            await ViewModel.LoadCommand.ExecuteAsync(null);
+        else if (_currentTab == "Collections")
+            await ViewModel.LoadCollectionsCommand.ExecuteAsync(null);
     }
 
     private void ApplyRefreshedRecommendedHero(
@@ -3028,7 +3042,7 @@ public sealed partial class LibraryPage : Page,
         }
         else
         {
-            _recommendedHeroSection = incoming;
+            _recommendedHeroSection = HomeSectionDedupe.Snapshot(incoming);
         }
 
         var hero = _recommendedHeroSection;
@@ -3105,7 +3119,7 @@ public sealed partial class LibraryPage : Page,
         _recommendedHeroRestRow = null;
     }
 
-    private void ApplyRecommendedRows(int libraryId)
+    private void ApplyRecommendedRows(int libraryId, IReadOnlySet<string>? changedMetadata = null)
     {
         var activeIds = _recommendedSections.Select(section => section.Id).ToHashSet(StringComparer.Ordinal);
         foreach (var staleId in _recommendedRows.Keys.Where(id => !activeIds.Contains(id)).ToList())
@@ -3125,8 +3139,11 @@ public sealed partial class LibraryPage : Page,
             else
             {
                 ConfigureLibrarySectionRow(row, section, libraryId);
-                row.Section = null;
-                row.Section = section;
+                if (!ReferenceEquals(row.Section, section) || changedMetadata?.Contains(section.Id) == true)
+                {
+                    row.Section = null;
+                    row.Section = section;
+                }
             }
         }
 
@@ -3203,6 +3220,7 @@ public sealed partial class LibraryPage : Page,
 
     private async Task RetryLibrarySectionAsync(SectionRow row, string sectionId, int libraryId)
     {
+        var version = _recommendationsVersion;
         var placeholder = row.Section;
         if (placeholder == null) return;
         placeholder.LoadFailed = false;
@@ -3212,16 +3230,16 @@ public sealed partial class LibraryPage : Page,
         {
             var response = await App.Services.GetRequiredService<CatalogApi>()
                 .GetLibrarySectionItemsAsync(libraryId, sectionId);
-            if (response.Section == null || response.Section.Items.Count == 0)
-            {
-                RecommendedSectionsPanel.Children.Remove(row);
-                return;
-            }
-            ConfigureLibrarySectionRow(row, response.Section, libraryId);
-            row.Section = response.Section;
+            if (version != _recommendationsVersion || _currentTab != "Recommended" || !_isNavigated) return;
+            var completed = response.Section ?? HomeSectionDedupe.Snapshot(placeholder);
+            completed.LoadFailed = false;
+            completed.LoadCompleted = true;
+            _rawRecommendedSections[sectionId] = HomeSectionDedupe.Snapshot(completed);
+            ApplyRecommendedProjection(libraryId);
         }
         catch
         {
+            if (version != _recommendationsVersion || _currentTab != "Recommended" || !_isNavigated) return;
             placeholder.LoadFailed = true;
             row.Section = null;
             row.Section = placeholder;

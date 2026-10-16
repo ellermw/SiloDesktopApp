@@ -332,7 +332,6 @@ public sealed partial class CollectionEditorPage : Page
             "smart" => "Automatically match items based on rules.",
             "mdblist" => "Synced from MDBList.",
             "tmdb" => "Synced from TMDB.",
-            "trakt" => "Synced from Trakt.",
             _ => "Synced collection."
         };
     }
@@ -473,7 +472,6 @@ public sealed partial class CollectionEditorPage : Page
             "mdblist" => "MDBList",
             "tmdb" => "TMDB",
             "tmdb_list" => "TMDB List",
-            "trakt" => "Trakt",
             _ => "Manual",
         };
         var selectedLibraries = ViewModel.AvailableLibraries
@@ -499,7 +497,6 @@ public sealed partial class CollectionEditorPage : Page
         {
             "tmdb" => ("TMDB", "Tm", "The Movie Database"),
             "tmdb_list" => ("TMDB", "Tm", "a public TMDB list"),
-            "trakt" => ("TRAKT", "Tk", "Trakt.tv"),
             _ => ("MDBLIST", "Mb", "mdblist.com"),
         };
         SourceBrandLabel.Text = label;
@@ -510,15 +507,15 @@ public sealed partial class CollectionEditorPage : Page
         SourcePresetLockText.Text = label;
         SourceBannerDescription.Text = $"Synced from {tagline} — items, posters, and ordering are managed by the source.";
         SourceBannerSyncStatus.Text = ViewModel.LastSyncSummary ?? "Not yet synced";
-        var accent = source switch { "tmdb" or "tmdb_list" => Windows.UI.Color.FromArgb(255, 34, 211, 238), "trakt" => Windows.UI.Color.FromArgb(255, 251, 113, 133), _ => Windows.UI.Color.FromArgb(255, 251, 191, 36) };
+        var accent = source switch { "tmdb" or "tmdb_list" => Windows.UI.Color.FromArgb(255, 34, 211, 238), _ => Windows.UI.Color.FromArgb(255, 251, 191, 36) };
         var soft = accent; soft.A = 32;
         SourceBrandMark.BorderBrush = SourceBrandInitials.Foreground = SourceBrandLabel.Foreground = new SolidColorBrush(accent);
         SourceBrandBadge.Background = new SolidColorBrush(soft);
         SourceBrandMark.Background = (Brush)Application.Current.Resources["AppBackgroundBrush"];
         SourceSyncButton.Background = new SolidColorBrush(accent);
         SourceSyncButton.Foreground = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 16, 23, 34));
-        var haloFrom = source switch { "tmdb" or "tmdb_list" => Windows.UI.Color.FromArgb(82, 56, 189, 248), "trakt" => Windows.UI.Color.FromArgb(77, 244, 63, 94), _ => Windows.UI.Color.FromArgb(82, 251, 191, 36) };
-        var haloTo = source switch { "tmdb" or "tmdb_list" => Windows.UI.Color.FromArgb(46, 16, 185, 129), "trakt" => Windows.UI.Color.FromArgb(46, 251, 146, 60), _ => Windows.UI.Color.FromArgb(46, 249, 115, 22) };
+        var haloFrom = source switch { "tmdb" or "tmdb_list" => Windows.UI.Color.FromArgb(82, 56, 189, 248), _ => Windows.UI.Color.FromArgb(82, 251, 191, 36) };
+        var haloTo = source switch { "tmdb" or "tmdb_list" => Windows.UI.Color.FromArgb(46, 16, 185, 129), _ => Windows.UI.Color.FromArgb(46, 249, 115, 22) };
         ImportedSourceBanner.Background = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(1, 1), GradientStops = { new() { Color = haloFrom, Offset = 0 }, new() { Color = Microsoft.UI.Colors.Transparent, Offset = .38 }, new() { Color = Microsoft.UI.Colors.Transparent, Offset = .62 }, new() { Color = haloTo, Offset = 1 } } };
         ImportedSourceBanner.BorderBrush = (Brush)Application.Current.Resources["BorderBrush"];
         OpenSourceButton.Visibility = source is "mdblist" or "tmdb_list" && Uri.TryCreate(ViewModel.SourceUrl, UriKind.Absolute, out _)

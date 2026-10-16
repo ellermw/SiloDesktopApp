@@ -145,7 +145,7 @@ public sealed class MainWindowSourceTests
         Assert.Contains("capability.InApp.Enabled", code);
         Assert.Contains("NotificationUnreadBadge.Value = isOpen ? _notificationUnreadCount : -1", code);
         Assert.Contains("_notificationUnreadCount = Math.Max(_notificationUnreadCount, unread)", code);
-        Assert.Contains("_eventChannel.Subscribe(\"notifications\")", code);
+        Assert.Contains("_eventChannel.Subscribe(\"notifications\", \"user_settings\", \"user_state\")", code);
         Assert.Contains("notification.created", code);
         Assert.Contains("notification.read", code);
         Assert.Contains("NotificationBelongsToSelectedProfile", code);

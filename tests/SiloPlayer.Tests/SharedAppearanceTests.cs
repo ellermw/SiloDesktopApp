@@ -7,28 +7,20 @@ namespace SiloPlayer.Tests;
 
 public sealed class SharedAppearanceTests
 {
-    [Fact]
-    public async Task AmbientGlowUsesItsOwnSupportedPublicToken()
+    [Theory]
+    [InlineData("#4f46e5", "#4F46E5", true)]
+    [InlineData("#abc", "#AABBCC", false)]
+    public async Task BrandingSetsPrimarySidebarAndFocusWithContrastingLabels(string accent, string expected, bool white)
     {
         using var f = new Fixture();
-        f.Body = Payload(new() { ["primary"] = "#4f46e5", ["ambient"] = "#78aefc" });
+        f.Body = JsonSerializer.Serialize(new { accent_color = accent });
         await f.State.RefreshAsync();
-        Assert.Equal("#78AEFC", f.State.Colors["ambient"]);
-        Assert.Equal("#4F46E5", f.State.Colors["primary"]);
-        Assert.False(f.HadAuthorization);
-    }
-
-    [Fact]
-    public async Task PublicSharedTokensReplaceProfileThemesWithoutAuthenticationOrWrites()
-    {
-        using var f = new Fixture();
-        f.Body = Payload(new() { ["primary"] = "#4f46e5", ["ring"] = "#abc", ["background"] = "#12345678", ["font-body"] = "evil", ["unknown"] = "#ffffff", ["foreground"] = "url(https://example.invalid)" });
-        await f.State.RefreshAsync();
-        Assert.Equal("#4F46E5", f.State.Colors["primary"]);
-        Assert.Equal("#AABBCC", f.State.Colors["ring"]);
-        Assert.Equal("#78123456", f.State.Colors["background"]);
-        Assert.Equal(3, f.State.Colors.Count);
-        Assert.Equal(new[] { "GET /api/v2/theme/admin-css" }, f.Requests);
+        Assert.Equal(expected, f.State.Colors["primary"]);
+        Assert.Equal(expected, f.State.Colors["ring"]);
+        Assert.Equal(expected, f.State.Colors["sidebar-primary"]);
+        Assert.Equal(white, f.State.Colors.ContainsKey("primary-foreground"));
+        if (white) Assert.Equal("#FFFFFF", f.State.Colors["primary-foreground"]);
+        Assert.Equal(new[] { "GET /api/v2/theme/branding" }, f.Requests);
         Assert.False(f.HadAuthorization);
     }
 
@@ -38,7 +30,7 @@ public sealed class SharedAppearanceTests
         using var f = new Fixture();
         f.Body = Payload(new() { ["primary"] = "#112233" });
         await f.State.RefreshAsync();
-        Assert.Single(f.State.Colors);
+        Assert.NotEmpty(f.State.Colors);
         f.Body = Payload(new());
         await f.State.RefreshAsync();
         Assert.Empty(f.State.Colors);
@@ -92,6 +84,10 @@ public sealed class SharedAppearanceTests
     }
 
     [Theory]
+    [InlineData("#12345678")]
+    [InlineData("#abcd")]
+    [InlineData("red")]
+    [InlineData("#ffffff; color:red")]
     [InlineData("not json")]
     [InlineData("[]")]
     [InlineData("null")]
@@ -99,7 +95,7 @@ public sealed class SharedAppearanceTests
     public async Task InvalidTokensAndRawCssNeverBecomeNativeColors(string vars)
     {
         using var f = new Fixture();
-        f.Body = JsonSerializer.Serialize(new { vars, raw_css = "body { color: #123456; } @import url(https://example.invalid)" });
+        f.Body = JsonSerializer.Serialize(new { accent_color = vars, vars, raw_css = "body { color: #123456; } @import url(https://example.invalid)" });
         await f.State.RefreshAsync();
         Assert.Empty(f.State.Colors);
     }
@@ -131,7 +127,7 @@ public sealed class SharedAppearanceTests
         Assert.Equal(2, f.Requests.Count);
         Assert.Equal("#445566", f.State.Colors["primary"]);
     }
-    private static string Payload(Dictionary<string, string> vars) => JsonSerializer.Serialize(new { vars = JsonSerializer.Serialize(vars), raw_css = "" });
+    private static string Payload(Dictionary<string, string> vars) => JsonSerializer.Serialize(new { accent_color = vars.GetValueOrDefault("primary") });
     private static HttpResponseMessage Response(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body) };
 
     private sealed class Fixture : HttpMessageHandler

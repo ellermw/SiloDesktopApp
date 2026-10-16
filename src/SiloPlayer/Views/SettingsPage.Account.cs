@@ -149,7 +149,7 @@ public sealed partial class SettingsPage
                                 Spacing = 3,
                                 Children =
                                 {
-                                    new TextBlock { Text = (string.IsNullOrWhiteSpace(device.DeviceName) ? "Unknown device" : device.DeviceName) + owner, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis },
+                                    new TextBlock { Text = device.DisplayName + owner, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis },
                                     SecondaryText(device.IsCurrentDevice ? "This is the device you're on" : RelativeTime(device.LastSeenAt)),
                                     SecondaryText(changed),
                                 },
@@ -336,16 +336,19 @@ public sealed partial class SettingsPage
             var nameStack = new StackPanel { Spacing = 3 };
             nameStack.Children.Add(new TextBlock
             {
-                Text = string.IsNullOrWhiteSpace(device.DeviceName) ? "Unknown device" : device.DeviceName,
+                Text = device.DisplayName,
                 FontSize = 18,
                 FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
                 Foreground = PrimaryBrush(),
                 TextWrapping = TextWrapping.Wrap,
             });
+            if (!string.IsNullOrWhiteSpace(device.CustomName) && !string.Equals(device.CustomName, device.DeviceName, StringComparison.Ordinal))
+                nameStack.Children.Add(SecondaryText(device.DeviceName));
             nameStack.Children.Add(SecondaryText(DeviceSummary(device)));
             heading.Children.Add(nameStack);
 
             var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            if (capabilities.SupportsDeviceRename) actions.Children.Add(BuildDeviceRenameButton(api, device, summaryStack, context, generation));
             if (device.ChangedCount > 0)
             {
                 var clear = new Button { Content = "Use profile settings" };
@@ -353,7 +356,7 @@ public sealed partial class SettingsPage
                 {
                     var noun = device.ChangedCount == 1 ? "setting" : "settings";
                     if (!await ConfirmAsync("Use profile settings?",
-                            $"Use {ownerLabel} profile settings on {device.DeviceName}? This removes the {device.ChangedCount} {noun} changed on this device. Settings that only apply to devices go back to the app default.")) return;
+                            $"Use {ownerLabel} profile settings on {device.DisplayName}? This removes the {device.ChangedCount} {noun} changed on this device. Settings that only apply to devices go back to the app default.")) return;
                     try
                     {
                         await api.ClearUserDeviceSettingsAsync(device.DeviceId, device.ProfileId);
@@ -373,7 +376,7 @@ public sealed partial class SettingsPage
                 forget.Click += async (_, _) =>
                 {
                     if (!await ConfirmAsync("Forget device?",
-                            $"Forget {device.DeviceName}? Its settings are removed and it disappears from this list until it's used again.")) return;
+                            $"Forget {device.DisplayName}? Its settings are removed and it disappears from this list until it's used again.")) return;
                     try
                     {
                         await api.ForgetUserDeviceAsync(device.DeviceId, device.ProfileId);
@@ -907,26 +910,27 @@ public sealed partial class SettingsPage
         var button = new Button { Content = buttonText };
         button.Click += async (_, _) =>
         {
+            var appearanceContext = api.CaptureContext();
             async Task<string?> LoadAppearanceAsync()
             {
-                var response = await api.GetContractEffectiveSettingsAsync([key], device.DeviceId, device.ProfileId);
+                var response = await api.GetContractEffectiveSettingsAsync(appearanceContext, [key], device.DeviceId, device.ProfileId);
                 return response.Settings.FirstOrDefault(setting => setting.Key == key)?.Value.GetRawText();
             }
 
             var dialog = new SubtitleAppearanceDialog
             {
                 XamlRoot = XamlRoot,
-                ApplyToLocalPlayer = device.IsCurrentDevice,
+                ApplyToLocalPlayer = device.IsCurrentDevice && (string.IsNullOrEmpty(device.ProfileId) || device.ProfileId == appearanceContext.ProfileId),
                 CanReset = values.TryGetValue(key, out var entry)
                     && string.Equals(entry.Scope, "profile_device", StringComparison.OrdinalIgnoreCase),
                 LoadOverrideAsync = LoadAppearanceAsync,
                 SaveOverrideAsync = async json =>
                 {
                     using var document = JsonDocument.Parse(json);
-                    await api.SetContractSettingValueAsync(key, "profile_device", document.RootElement.Clone(),
+                    await api.SetContractSettingValueAsync(appearanceContext, key, "profile_device", document.RootElement.Clone(),
                         device.DeviceId, device.ProfileId);
                 },
-                ResetOverrideAsync = () => api.DeleteContractSettingValueAsync(key, "profile_device",
+                ResetOverrideAsync = () => api.DeleteContractSettingValueAsync(appearanceContext, key, "profile_device",
                     device.DeviceId, device.ProfileId),
             };
             await dialog.ShowAsync();
@@ -1040,8 +1044,53 @@ public sealed partial class SettingsPage
 
     private static Brush PrimaryBrush() => (Brush)Application.Current.Resources["PrimaryTextBrush"];
 
+    private Button BuildDeviceRenameButton(SettingsApi api, UserDevice device, StackPanel summary,
+        ApiRequestContext context, int generation)
+    {
+        var rename = new Button { Content = "Rename" };
+        rename.Click += (_, _) =>
+        {
+            if (generation != _deviceDetailGeneration || !api.IsCurrentContext(context)) return;
+            rename.IsEnabled = false;
+            var editor = new StackPanel { Spacing = 10 };
+            var input = new TextBox { Header = "Device name", Text = device.CustomName ?? device.DeviceName, MaxLength = 240,
+                HorizontalAlignment = HorizontalAlignment.Stretch };
+            var error = ErrorText("");
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            var save = new Button { Content = "Save" };
+            var cancel = new Button { Content = "Cancel" };
+            var reset = new Button { Content = "Use reported name", Visibility = string.IsNullOrWhiteSpace(device.CustomName) ? Visibility.Collapsed : Visibility.Visible };
+            buttons.Children.Add(save); buttons.Children.Add(cancel); buttons.Children.Add(reset);
+            editor.Children.Add(input); editor.Children.Add(error); editor.Children.Add(buttons);
+            summary.Children.Add(editor);
+            cancel.Click += (_, _) => { summary.Children.Remove(editor); rename.IsEnabled = true; };
+            async Task ApplyAsync(string? value)
+            {
+                if (!save.IsEnabled || generation != _deviceDetailGeneration || !api.IsCurrentContext(context)) return;
+                save.IsEnabled = cancel.IsEnabled = reset.IsEnabled = input.IsEnabled = false;
+                error.Text = "";
+                try
+                {
+                    await api.RenameUserDeviceAsync(context, device.DeviceId, value, device.ProfileId);
+                    if (generation != _deviceDetailGeneration || !api.IsCurrentContext(context)) return;
+                    Toast(value == null ? "Device name reset" : "Device renamed");
+                    await LoadDevicesAsync();
+                }
+                catch (Exception ex)
+                {
+                    if (generation == _deviceDetailGeneration && api.IsCurrentContext(context)) error.Text = ex.Message;
+                }
+                finally { save.IsEnabled = cancel.IsEnabled = reset.IsEnabled = input.IsEnabled = true; }
+            }
+            save.Click += async (_, _) => await ApplyAsync(input.Text.Trim());
+            reset.Click += async (_, _) => await ApplyAsync(null);
+            input.Focus(FocusState.Programmatic); input.SelectAll();
+        };
+        return rename;
+    }
+
     private static string DeviceSelectorLabel(UserDevice device)
-        => $"{(string.IsNullOrWhiteSpace(device.DeviceName) ? "Unknown device" : device.DeviceName)}{(device.IsCurrentDevice ? " · using now" : "")}";
+        => $"{device.DisplayName}{(device.IsCurrentDevice ? " · using now" : "")}";
 
     private static string DeviceSummary(UserDevice device)
     {

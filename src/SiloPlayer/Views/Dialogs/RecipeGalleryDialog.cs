@@ -1,3 +1,4 @@
+using SiloPlayer.Helpers;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Automation;
@@ -181,7 +182,7 @@ public static class RecipeGalleryDialog
         }
 
         FrameworkElement typeControl;
-        var contentLocked = section is { IsCustom: false } && !string.IsNullOrEmpty(section.Id) || HomeSectionWritePolicy.IsTrakt(section?.Config);
+        var contentLocked = section is { IsCustom: false } && !string.IsNullOrEmpty(section.Id);
         var variantHost = new StackPanel();
         void RenderVariants()
         {
@@ -389,9 +390,9 @@ public static class RecipeGalleryDialog
                     Content = label,
                     IsChecked = activeCategory == key,
                     Padding = new Thickness(12, 5, 12, 5),
-                    CornerRadius = new CornerRadius(9999),
                     MinHeight = 30,
                 };
+                RoundedBadge.SetRadius(chip, 9999);
                 chip.Click += (_, _) =>
                 {
                     activeCategory = key;
@@ -621,7 +622,7 @@ public static class RecipeGalleryDialog
     private static FrameworkElement? CreateVariantPicker(RecipeDefinition definition, Dictionary<string, object> config, TextBox title, Func<Task> rebuild)
     {
         var family = HomeRowVariants.Family(definition.Type);
-        if (family == null || HomeSectionWritePolicy.IsTrakt(config)
+        if (family == null
             || definition.Type == "continue_watching" && StringValue(config, "continue_type") == "reading") return null;
         var root = new StackPanel { Name = "HomeRowVariants", Spacing = 8 };
         root.Children.Add(Label(family.Label));
@@ -788,16 +789,6 @@ public static class RecipeGalleryDialog
 
     private static async Task AddCollectionFieldAsync(Dictionary<string, object> config, StackPanel host)
     {
-        var isAutoBacked = StringValue(config, "source_provider") == "trakt" &&
-            StringValue(config, "source_preset") is "trending" or "popular";
-        if (isAutoBacked && string.IsNullOrWhiteSpace(StringValue(config, "library_collection_id")) &&
-            string.IsNullOrWhiteSpace(StringValue(config, "user_collection_id")))
-        {
-            host.Children.Add(Hint($"A synced Trakt {StringValue(config, "source_preset")} " +
-                $"{(StringValue(config, "media_type") == "tv" ? "shows" : "movies")} collection will be created automatically."));
-            return;
-        }
-
         var combo = new ComboBox { Header = "Collection", Width = double.NaN, HorizontalAlignment = HorizontalAlignment.Stretch };
         combo.Items.Add(new CollectionOption("", "Choose a collection…", "", ""));
         try
@@ -811,7 +802,7 @@ public static class RecipeGalleryDialog
             await Task.WhenAll(libraryTasks);
 
             foreach (var collection in (await userTask).Collections)
-                if (StringValue(config, "source_provider") != "trakt") combo.Items.Add(new CollectionOption(collection.Id, collection.Name, "My Collections", "user"));
+                combo.Items.Add(new CollectionOption(collection.Id, collection.Name, "My Collections", "user"));
 
             var libraryOptions = new Dictionary<string, CollectionOption>(StringComparer.Ordinal);
             foreach (var task in libraryTasks)
@@ -819,8 +810,6 @@ public static class RecipeGalleryDialog
                 var (library, response) = await task;
                 foreach (var collection in response.Collections.Where(collection => collection.Visibility == "visible"))
                 {
-                    if (StringValue(config, "source_provider") == "trakt" && (collection.CollectionType != "trakt" || collection.SourceConfig == null
-                        || StringValue(collection.SourceConfig, "preset") != StringValue(config, "source_preset") || StringValue(collection.SourceConfig, "media_type") != StringValue(config, "media_type"))) continue;
                     if (libraryOptions.TryGetValue(collection.Id, out var existing))
                     {
                         existing.Group = $"{existing.Group}, {library.Name}";
@@ -1070,8 +1059,7 @@ public static class RecipeGalleryDialog
         if (definition.Type == "collection")
         {
             var hasCollection = StringValue(config, "library_collection_id").Length > 0 || StringValue(config, "user_collection_id").Length > 0;
-            var autoBacked = StringValue(config, "source_provider") == "trakt" && StringValue(config, "source_preset") is "trending" or "popular";
-            if (!hasCollection && !autoBacked) return "Choose a collection before adding this row.";
+            if (!hasCollection) return "Choose a collection before adding this row.";
         }
         if (definition.Type == "seasonal_themed" && config.TryGetValue("enabled_themes", out var themes)
             && JsonSerializer.SerializeToElement(themes) is { ValueKind: JsonValueKind.Array } list && list.GetArrayLength() == 0)

@@ -1,5 +1,8 @@
 namespace SiloPlayer.Messaging;
 
+/// <summary>A captured profile's server-ordered Home preference was accepted.</summary>
+public sealed record HomePreferenceChanged(SiloPlayer.Core.Api.ApiRequestContext Context);
+
 /// <summary>
 /// Reason a media surface changed. Used by subscribers to decide what to
 /// refresh. Matches the webui <c>mediaSurfaceRefresh</c> event taxonomy.

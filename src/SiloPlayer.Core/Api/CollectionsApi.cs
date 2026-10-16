@@ -105,9 +105,6 @@ public class CollectionsApi(SiloApiClient client)
     public Task<ImportUserCollectionResponse> ImportUserTMDBListCollectionAsync(ImportUserTMDBListCollectionRequest request, CancellationToken ct = default)
         => client.PostAsync<ImportUserCollectionResponse>("/api/v2/collections/import/tmdb-list", V2Json.Body(request), ct);
 
-    public Task<ImportUserCollectionResponse> ImportUserTraktCollectionAsync(ImportUserTraktCollectionRequest request, CancellationToken ct = default)
-        => client.PostAsync<ImportUserCollectionResponse>("/api/v2/collections/import/trakt", V2Json.Body(request), ct);
-
     public Task<CollectionPreviewResponse> PreviewCollectionAsync(CollectionPreviewRequest request, CancellationToken ct = default)
         => client.PostAsync<CollectionPreviewResponse>("/api/v2/collections/preview", V2Json.Body(request), ct);
 

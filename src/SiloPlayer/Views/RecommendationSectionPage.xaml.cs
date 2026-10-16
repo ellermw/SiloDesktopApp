@@ -22,11 +22,12 @@ public sealed partial class RecommendationSectionPage : Page
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
         LoadingSkeleton.ItemsSource = Enumerable.Range(0, 24).ToArray();
-        ViewModel.Items.CollectionChanged += (_, _) => Bindings.Update();
+        ViewModel.Items.CollectionChanged += (_, _) => { Bindings.Update(); UpdatePageState(); };
         ViewModel.PropertyChanged += (_, args) =>
         {
             if (args.PropertyName == nameof(ViewModel.Title))
                 Bindings.Update();
+            if (args.PropertyName is nameof(ViewModel.IsLoading) or nameof(ViewModel.ErrorMessage)) UpdatePageState();
         };
     }
 

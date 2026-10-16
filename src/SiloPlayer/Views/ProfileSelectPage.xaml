@@ -33,7 +33,8 @@
         <StackPanel x:Name="ExistingProfilesState" Spacing="32" HorizontalAlignment="Stretch" VerticalAlignment="Center" MaxWidth="1000" Visibility="Collapsed">
             <TextBlock x:Name="ProfilePickerTitle" Text="Who's watching?" FontSize="64" FontWeight="ExtraBold" Foreground="{StaticResource PrimaryTextBrush}" HorizontalAlignment="Center" />
             <TextBlock Text="{x:Bind ViewModel.ErrorMessage, Mode=OneWay}" Visibility="{x:Bind ViewModel.ErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}" Foreground="{StaticResource ErrorBrush}" HorizontalAlignment="Center" TextWrapping="Wrap" />
-            <ItemsControl ItemsSource="{x:Bind ViewModel.Profiles, Mode=OneWay}" HorizontalAlignment="Center">
+            <TextBlock Text="Please wait…" Visibility="{x:Bind ViewModel.IsManagementBusy, Mode=OneWay, Converter={StaticResource BoolToVis}}" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Center" AutomationProperties.LiveSetting="Polite" />
+            <ItemsControl ItemsSource="{x:Bind ViewModel.PickerCards, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanUseProfileCards, Mode=OneWay}" HorizontalAlignment="Center">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                         <controls:CenteredWrapPanel HorizontalSpacing="20" VerticalSpacing="20" />
@@ -41,31 +42,46 @@
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Button Click="ProfileButton_Click" Tag="{Binding}" Background="Transparent"
+                        <Grid>
+                        <Button Click="ProfileButton_Click" Tag="{Binding Profile}" Background="Transparent" Visibility="{Binding IsProfile, Converter={StaticResource BoolToVis}}"
                                 BorderThickness="0" Padding="0" Margin="0"
-                                AutomationProperties.Name="{Binding SelectProfileAccessibleName}"
+                                AutomationProperties.Name="{Binding Profile.SelectProfileAccessibleName}"
                                 PointerEntered="ProfileCard_PointerEntered" PointerExited="ProfileCard_PointerExited">
                             <Border x:Name="ProfileCardBorder" Width="148" Background="{StaticResource SurfaceBrush}" CornerRadius="28" Padding="20" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
                                 <StackPanel Spacing="12" HorizontalAlignment="Center">
                                     <Grid Width="80" Height="80">
                                         <Border CornerRadius="40" BorderBrush="{StaticResource BorderBrush}" BorderThickness="2" Background="{StaticResource CardBackgroundBrush}">
-                                            <TextBlock Text="{Binding Name, Converter={StaticResource StringToInitial}}" FontSize="24" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding Profile.Name, Converter={StaticResource StringToInitial}}" FontSize="24" FontWeight="Bold" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                         </Border>
-                                        <Border CornerRadius="40" BorderBrush="{StaticResource BorderBrush}" BorderThickness="2" Visibility="{Binding AvatarUrl, Converter={StaticResource NullToVis}}">
-                                            <Image Source="{Binding AvatarUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" />
+                                        <Border CornerRadius="40" BorderBrush="{StaticResource BorderBrush}" BorderThickness="2" Visibility="{Binding Profile.AvatarUrl, Converter={StaticResource NullToVis}}">
+                                            <Image Source="{Binding Profile.AvatarUrl, Converter={StaticResource UrlToImage}}" Stretch="UniformToFill" />
                                         </Border>
-                                        <Border Width="24" Height="24" CornerRadius="12" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" HorizontalAlignment="Right" VerticalAlignment="Bottom" Visibility="{Binding HasPin, Converter={StaticResource BoolToVis}}">
+                                        <Border Width="24" Height="24" CornerRadius="12" Background="{StaticResource SurfaceBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" HorizontalAlignment="Right" VerticalAlignment="Bottom" Visibility="{Binding Profile.HasPin, Converter={StaticResource BoolToVis}}">
                                             <FontIcon Glyph="&#xE72E;" FontSize="11" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                         </Border>
                                     </Grid>
-                                    <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="Medium" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" LineHeight="20" LineStackingStrategy="BlockLineHeight" MaxWidth="108" />
+                                    <TextBlock Text="{Binding Profile.Name}" FontSize="14" FontWeight="Medium" HorizontalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" LineHeight="20" LineStackingStrategy="BlockLineHeight" MaxWidth="108" />
                                 </StackPanel>
                             </Border>
                         </Button>
+                        <Button x:Name="AddProfileCard" Click="AddProfileButton_Click" AutomationProperties.Name="Add profile" Background="Transparent" BorderThickness="0" Padding="0" Margin="0" Visibility="{Binding IsAdd, Converter={StaticResource BoolToVis}}" PointerEntered="ProfileCard_PointerEntered" PointerExited="ProfileCard_PointerExited">
+                            <Border x:Name="AddProfileCardBorder" Width="148" CornerRadius="28" Padding="20" BorderBrush="{StaticResource BorderBrush}" BorderThickness="2">
+                                <StackPanel Spacing="12" HorizontalAlignment="Center">
+                                    <Border Width="80" Height="80" CornerRadius="40" BorderBrush="{StaticResource BorderBrush}" BorderThickness="2">
+                                        <FontIcon Glyph="&#xE710;" FontSize="32" Foreground="{StaticResource SecondaryTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Border>
+                                    <TextBlock Text="Add profile" FontSize="14" FontWeight="Medium" TextAlignment="Center" LineHeight="20" LineStackingStrategy="BlockLineHeight" />
+                                </StackPanel>
+                            </Border>
+                        </Button>
+                        </Grid>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
-            <Button Content="Sign out" Style="{StaticResource OutlineButtonStyle}" HorizontalAlignment="Center" Click="SignOutButton_Click" Margin="0,8,0,0" />
+            <controls:CenteredWrapPanel HorizontalAlignment="Center" HorizontalSpacing="12" VerticalSpacing="12" Margin="0,8,0,0">
+                <Button x:Name="ManageProfilesButton" Content="Manage profiles" AutomationProperties.Name="Manage profiles" IsEnabled="{x:Bind ViewModel.CanUseProfileCards, Mode=OneWay}" Style="{StaticResource OutlineButtonStyle}" Click="ManageProfilesButton_Click" />
+                <Button Content="Sign out" Style="{StaticResource OutlineButtonStyle}" Click="SignOutButton_Click" />
+            </controls:CenteredWrapPanel>
         </StackPanel>
 
         <StackPanel x:Name="EmptyProfilesState" Spacing="22" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="520" Visibility="Collapsed">

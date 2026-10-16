@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Media.Animation;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Shapes;
 using SiloPlayer.Core.Models.Home;
+using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
@@ -16,6 +17,10 @@ public sealed partial class HeroCarousel : UserControl
 {
     private IList<MediaItem>? _items;
     private int _currentIndex;
+    private CancellationTokenSource? _heroTranslationCts;
+    private MediaItem? _translationItem;
+    private ApiRequestContext? _translationContext;
+    private EpisodeSpoilerPreferences? _spoilerPreferences;
     private DispatcherTimer? _autoAdvanceTimer;
     private CancellationTokenSource? _imageCts;
     private FrameworkElement? _sizeRoot;
@@ -116,9 +121,12 @@ public sealed partial class HeroCarousel : UserControl
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
+        _spoilerPreferences = App.Services.GetService<EpisodeSpoilerPreferences>();
+        if (_spoilerPreferences != null) { _spoilerPreferences.Changed -= HeroSpoilersChanged; _spoilerPreferences.Changed += HeroSpoilersChanged; _ = LoadHeroSpoilersAsync(); }
         _animationsEnabled = AreSystemAnimationsEnabled();
         SubscribePlayer();
         RefreshPrimaryAction();
+        _ = ConfigureHeroTranslationAsync();
         StartAutoAdvance();
         UpdateThemeGradientColors();
         UpdateHeightFromWindow();
@@ -236,6 +244,8 @@ public sealed partial class HeroCarousel : UserControl
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         StopAutoAdvance();
+        if (_spoilerPreferences != null) _spoilerPreferences.Changed -= HeroSpoilersChanged;
+        CancelHeroTranslation();
         UnsubscribePlayer();
         CancelBackdropLoad(clearImages: false);
         DetachSizeRoot();
@@ -350,6 +360,7 @@ public sealed partial class HeroCarousel : UserControl
         if (_items == null || _items.Count == 0 || _currentIndex >= _items.Count)
         {
             CancelBackdropLoad(clearImages: true);
+            CancelHeroTranslation();
             Visibility = Visibility.Collapsed;
             return;
         }
@@ -373,7 +384,10 @@ public sealed partial class HeroCarousel : UserControl
         HeroTitleShadow.Text = item.Title;
         BalanceTitle();
         HeroOverview.Text = item.Overview ?? "";
-        HeroOverview.Visibility = string.IsNullOrEmpty(item.Overview) ? Visibility.Collapsed : Visibility.Visible;
+        HeroTranslationLabel.Visibility = !HideHeroOverview(item) && !string.IsNullOrWhiteSpace(item.Overview) && MachineTranslationPresentation.HasField(item.MachineTranslatedFields)
+            ? Visibility.Visible : Visibility.Collapsed;
+        _ = ConfigureHeroTranslationAsync();
+        HeroOverview.Visibility = string.IsNullOrEmpty(item.Overview) || HideHeroOverview(item) ? Visibility.Collapsed : Visibility.Visible;
         UpdatePrimaryAction(item);
 
         // Eyebrow: "FEATURED — No. 01"
@@ -454,6 +468,110 @@ public sealed partial class HeroCarousel : UserControl
         _lastDisplayedContentId = null;
         _lastDisplayedBackdropUrl = null;
         _lastDisplayedBackdropThumbhash = null;
+    }
+
+    private bool HideHeroOverview(MediaItem item) => item.Type == "episode" && _spoilerPreferences?.HideOverviews == true
+        && EpisodeSpoilerPolicy.IsUnwatched(item.UserState?.Played, item.UserState?.IsInProgress, item.PositionSeconds);
+    private async Task LoadHeroSpoilersAsync()
+    {
+        if (_spoilerPreferences == null) return;
+        try { await _spoilerPreferences.EnsureLoadedAsync(); if (IsLoaded) HeroSpoilersChanged(this, EventArgs.Empty); } catch (OperationCanceledException) { }
+    }
+    private void HeroSpoilersChanged(object? sender, EventArgs e) => DispatcherQueue.TryEnqueue(() =>
+    {
+        if (!IsLoaded) return;
+        CancelBackdropLoad(clearImages: true);
+        CancelHeroTranslation();
+        ShowCurrentItem();
+    });
+
+    private void CancelHeroTranslation()
+    {
+        _heroTranslationCts?.Cancel();
+        _heroTranslationCts?.Dispose();
+        _heroTranslationCts = null;
+        _translationItem = null;
+        _translationContext = null;
+        HeroOverview.Opacity = 1;
+    }
+
+    private async Task ConfigureHeroTranslationAsync()
+    {
+        if (!IsLoaded || _items == null || _currentIndex >= _items.Count) return;
+        var item = _items[_currentIndex];
+        var api = App.Services.GetRequiredService<CatalogApi>();
+        var context = api.CaptureContext();
+        if (ReferenceEquals(_translationItem, item) && _translationContext == context) return;
+        CancelHeroTranslation();
+        _translationItem = item;
+        _translationContext = context;
+        HeroTranslateButton.Visibility = Visibility.Collapsed;
+        if (string.IsNullOrWhiteSpace(item.PendingTranslationLanguage) || HideHeroOverview(item)) return;
+        var cts = new CancellationTokenSource();
+        _heroTranslationCts = cts;
+        try
+        {
+            var status = await api.GetMetadataAiStatusAsync(cts.Token);
+            if (!IsCurrentHeroTranslation(item, context, cts.Token) || !status.Enabled) return;
+            if (status.OnView == "auto") await TranslateHeroAsync(item, context, cts);
+            else if (status.OnView == "button")
+            {
+                HeroTranslateButton.Content = "Translate description";
+                HeroTranslateButton.IsEnabled = true;
+                HeroTranslateButton.Visibility = Visibility.Visible;
+            }
+        }
+        catch { }
+    }
+
+    private bool IsCurrentHeroTranslation(MediaItem item, ApiRequestContext context, CancellationToken ct)
+        => !ct.IsCancellationRequested && IsLoaded && App.Services.GetRequiredService<CatalogApi>().IsCurrentContext(context)
+            && _items != null && _currentIndex < _items.Count && ReferenceEquals(_items[_currentIndex], item);
+
+    private async void HeroTranslateButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_translationItem != null && _translationContext is { } context && _heroTranslationCts != null && HeroTranslateButton.IsEnabled)
+        {
+            if (_heroTranslationCts.IsCancellationRequested) { _heroTranslationCts.Dispose(); _heroTranslationCts = new(); }
+            await TranslateHeroAsync(_translationItem, context, _heroTranslationCts);
+        }
+    }
+
+    private async Task TranslateHeroAsync(MediaItem item, ApiRequestContext context, CancellationTokenSource cts)
+    {
+        var ct = cts.Token;
+        if (string.IsNullOrWhiteSpace(item.PendingTranslationLanguage) || !IsCurrentHeroTranslation(item, context, ct)) return;
+        cts.CancelAfter(TimeSpan.FromSeconds(45));
+        HeroTranslateButton.Visibility = Visibility.Visible;
+        HeroTranslateButton.IsEnabled = false;
+        HeroTranslateButton.Content = "Translating\u2026";
+        HeroOverview.Opacity = 0.55;
+        var api = App.Services.GetRequiredService<CatalogApi>();
+        try
+        {
+            await api.TranslateItemDescriptionAsync(item.ContentId, item.PendingTranslationLanguage, ct);
+            while (IsCurrentHeroTranslation(item, context, ct))
+            {
+                await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                if (!IsCurrentHeroTranslation(item, context, ct)) return;
+                var detail = await api.GetItemDetailAsync(item.ContentId, ct);
+                if (!IsCurrentHeroTranslation(item, context, ct)) return;
+                item.Overview = detail.Overview;
+                item.MachineTranslatedFields = detail.MachineTranslatedFields;
+                item.PendingTranslationLanguage = detail.PendingTranslationLanguage;
+                HeroOverview.Text = item.Overview;
+                HeroOverview.Visibility = string.IsNullOrWhiteSpace(item.Overview) ? Visibility.Collapsed : Visibility.Visible;
+                HeroTranslationLabel.Visibility = MachineTranslationPresentation.HasField(item.MachineTranslatedFields) && !string.IsNullOrWhiteSpace(item.Overview) ? Visibility.Visible : Visibility.Collapsed;
+                if (string.IsNullOrWhiteSpace(item.PendingTranslationLanguage)) { HeroTranslateButton.Visibility = Visibility.Collapsed; break; }
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { if (IsCurrentHeroTranslation(item, context, ct)) App.Services.GetRequiredService<ToastService>().Error(ex); }
+        finally
+        {
+            if (ReferenceEquals(_translationItem, item) && IsLoaded && api.IsCurrentContext(context))
+            { HeroOverview.Opacity = 1; HeroTranslateButton.IsEnabled = true; HeroTranslateButton.Content = "Translate description"; }
+        }
     }
 
     private bool IsCurrentBackdropLoad(int version, CancellationToken ct) =>
@@ -657,6 +775,12 @@ public sealed partial class HeroCarousel : UserControl
                 item.ContentId, "backdrop", item.BackdropUrl, httpClient, ct);
 
             if (!IsCurrentBackdropLoad(version, ct) || bytes == null) return;
+
+            _spoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
+            if (item.Type == "episode" && _spoilerPreferences != null) await _spoilerPreferences.EnsureLoadedAsync(ct);
+            if (EpisodeSpoilerPolicy.HideImage(item.Type, item.BackdropIsEpisodeStill, item.UserState?.Played, item.UserState?.IsInProgress, item.PositionSeconds, _spoilerPreferences?.HideImages == true))
+                bytes = await ArtworkEffects.BlurEpisodeStillAsync(bytes, ct);
+            if (!IsCurrentBackdropLoad(version, ct)) return;
 
             App.SetPerfBreadcrumb($"Hero backdrop decode start item={item.ContentId}");
             var bitmapImage = new BitmapImage();

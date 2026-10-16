@@ -9,8 +9,6 @@ public sealed class CollectionEditorRecoveryBehaviorTests
 {
     [Theory]
     [InlineData("tmdb", "tmdb_discover", "daily", "tmdb_discover", true)]
-    [InlineData("trakt", "trakt_preset", "daily", "trakt", true)]
-    [InlineData("trakt", "trakt_preset", "", "trakt", false)]
     public async Task LockedSourceKeepsItsConfigurationAndHonorsExistingSchedule(string type, string mode, string cadence, string source, bool canSchedule)
     {
         using var wire = new LockedSourceWire(type, mode, cadence); using var http = new HttpClient(wire);

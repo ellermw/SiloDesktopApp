@@ -127,6 +127,51 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             _window.AppWindow.Show(false);
             await Task.Delay(150); // Allow the hidden native tree to acquire its XamlRoot.
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "subtitle-preferences")
+            {
+                await SubtitlePreferencesNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "new-episodes-first")
+            {
+                await NewEpisodesFirstNativeFixture.RunAsync(parent, _window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "picker-management")
+            {
+                await PickerManagementNativeFixture.RunAsync(parent, _window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "notification-series")
+            {
+                await NotificationSeriesNativeFixture.RunAsync(parent, _window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "not-interested")
+            {
+                await NotInterestedNativeFixture.RunAsync(parent, _window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "room-timing")
+            {
+                await WatchPartyNativeFixture.RunAsync();
+                await WatchPartyTimingNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "shared-appearance")
+            {
+                await SharedAppearanceNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "upstream-shell")
+            {
+                await UpstreamShellNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "library-cursor")
             {
                 await LibraryCursorNativeFixture.RunAsync(parent, _window);
