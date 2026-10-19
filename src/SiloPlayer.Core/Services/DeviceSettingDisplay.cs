@@ -20,7 +20,8 @@ public sealed record DeviceSettingDefinition(JsonElement Data)
     public string Default => Scalar(Data.GetProperty("default_value"));
     public static string Scalar(JsonElement value) => value.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined ? "" : value.ValueKind == JsonValueKind.String ? value.GetString()! : value.GetRawText();
     public (string Value, string Label)[] Options => Schema.TryGetProperty("values", out var values)
-        ? values.EnumerateArray().Select(value => (Scalar(value.GetProperty("value")), value.TryGetProperty("label", out var label) ? label.GetString()! : Scalar(value.GetProperty("value")))).ToArray() : [];
+        ? values.EnumerateArray().Where(value => !value.TryGetProperty("deprecated", out var deprecated) || deprecated.ValueKind != JsonValueKind.True)
+            .Select(value => (Scalar(value.GetProperty("value")), value.TryGetProperty("label", out var label) ? label.GetString()! : Scalar(value.GetProperty("value")))).ToArray() : [];
     public string Group => Key.Contains("subtitle") || Key == "playback.show_forced_subtitles" ? "Subtitles"
         : Key.Contains("audio") || Key == "player.playback_speed" || Key.StartsWith("ui.theme_music") ? "Sound"
         : Key.Contains("skip") || Key.Contains("auto_play") || Key.Contains("next_up") || Key.Contains("sleep_timer") ? "Episodes" : "Picture";

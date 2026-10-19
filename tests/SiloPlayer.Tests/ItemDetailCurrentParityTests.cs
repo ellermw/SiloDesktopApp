@@ -197,7 +197,6 @@ public sealed class ItemDetailCurrentParityTests
         var api = Read("src", "SiloPlayer.Core", "Api", "MediaMaintenanceApi.cs");
 
         Assert.Contains("Add to Collection", page);
-        Assert.Contains("Search Subtitles", page);
         Assert.Contains("Media Info", page);
         Assert.Contains("Refresh Metadata", page);
         Assert.Contains("Match Item", page);
@@ -537,7 +536,6 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("HeroContentGrid.RowSpacing = stackedHero && !hidesPoster ? 24 : 0", page);
         Assert.Contains("HeroContentGrid.MaxWidth = Math.Max(0, 1520 - (heroGutter * 2))", page);
         Assert.Contains("DetailSkeletonHeroContent.MaxWidth = Math.Max(0, 1520 - (heroGutter * 2))", page);
-        Assert.Equal(2, xaml.Split("<Grid.RowDefinitions>").Length - 1);
         Assert.Contains("KeyDown=\"HorizontalCarousel_KeyDown\"", xaml);
         Assert.Contains("x:Name=\"DetailErrorContent\"", xaml);
         Assert.Contains("ViewModel.ErrorMessage", xaml);

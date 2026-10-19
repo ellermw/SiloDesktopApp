@@ -99,9 +99,11 @@ public partial class PlayerService : IDisposable
     private int? _requestedMediaFileId;
 
     public string ActiveQualityTier => _activeQualityTier;
+    public string SelectedQualityIntent => _playbackManager?.CurrentSession?.ProtocolVersion >= 3
+        ? _playbackManager.QualityPreference : PlaybackQualityPreferences.Normalize(_activeQualityTier);
     public bool IsQualitySwitchActive => _qualitySwitchActive;
     public IReadOnlyList<PlaybackQualityV3> AvailableQualities =>
-        _playbackManager?.CurrentSession?.AvailableQualities ?? [];
+        PlaybackQualityPreferences.MenuOptions(_playbackManager?.CurrentSession?.AvailableQualities ?? []);
     public int? ActiveMediaFileId => _playbackManager?.CurrentSession?.MediaFileId;
     public int? RequestedMediaFileId => _requestedMediaFileId ?? ActiveMediaFileId;
 
@@ -1999,7 +2001,8 @@ public partial class PlayerService : IDisposable
                 _audiobookPartOffsetSeconds = audiobookPart.Value.Start;
             }
 
-            var bestVersion = SelectVersion(watchDetail, fileId);
+            var qualityPreferences = await _playbackManager.ResolveQualityPreferencesAsync(requestToken);
+            var bestVersion = SelectVersion(watchDetail, fileId, qualityPreferences.Quality);
             if (bestVersion == null)
             {
                 throw new InvalidOperationException("No playable version found.");
@@ -2022,7 +2025,8 @@ public partial class PlayerService : IDisposable
                     audioTrackIndex: selectedAudioTrackIndex,
                     forceDirectAudioSelection: selectedAudioTrackIndex.HasValue,
                     disableProgressPersistence: IsAudiobook,
-                    ct: requestToken);
+                    ct: requestToken,
+                    preferences: qualityPreferences);
             }
             catch (ApiException ex) when (
                 ex.StatusCode == 429 &&
@@ -2038,7 +2042,8 @@ public partial class PlayerService : IDisposable
                     audioTrackIndex: selectedAudioTrackIndex,
                     forceDirectAudioSelection: selectedAudioTrackIndex.HasValue,
                     disableProgressPersistence: IsAudiobook,
-                    ct: requestToken);
+                    ct: requestToken,
+                    preferences: qualityPreferences);
             }
             ResolveInitialSubtitleSelection(
                 watchDetail,
@@ -3411,7 +3416,7 @@ public partial class PlayerService : IDisposable
         }
     }
 
-    private FileVersion? SelectVersion(WatchDetailResponse watchDetail, int? fileId)
+    private FileVersion? SelectVersion(WatchDetailResponse watchDetail, int? fileId, string qualityPreference)
     {
         Versions = watchDetail.Versions?.ToList() ?? [];
         var versions = watchDetail.Versions ?? new List<FileVersion>();
@@ -3423,7 +3428,7 @@ public partial class PlayerService : IDisposable
         bestVersion ??= _playbackManager!.SelectBestVariantVersion(
             versions,
             watchDetail.PlaybackVariants,
-            qualityPreference: _authService.SelectedProfile?.QualityPreference,
+            qualityPreference: qualityPreference,
             userData: watchDetail.UserData,
             preferredEditionKey: watchDetail.EffectiveVersionEditionKey);
         return bestVersion;
@@ -5602,14 +5607,12 @@ public partial class PlayerService : IDisposable
             ["versions"] = versions,
             ["active_file_id"] = session.MediaFileId,
             ["requested_file_id"] = _requestedMediaFileId ?? session.MediaFileId,
-            ["active_quality"] = _activeQualityTier,
+            ["active_quality"] = SelectedQualityIntent,
             ["qualities"] = session.ProtocolVersion >= 3
-                ? session.AvailableQualities.Select(quality => new Dictionary<string, object?>
+                ? AvailableQualities.Select(quality => new Dictionary<string, object?>
                 {
                     ["id"] = quality.Label,
-                    ["label"] = quality.Label.Equals("original", StringComparison.OrdinalIgnoreCase)
-                        ? "Original"
-                        : quality.Label,
+                    ["label"] = quality.DisplayName ?? quality.Label,
                     ["height"] = quality.Height,
                     ["bitrate_kbps"] = quality.BitrateKbps,
                     ["preserves_source"] = quality.PreservesSource,
@@ -5859,10 +5862,9 @@ public partial class PlayerService : IDisposable
         await SwitchVersionAsync(version);
         if (_requestedMediaFileId != version.FileId)
             return;
-        _activeQualityTier = "original";
         SendQualityInfoToOsc();
         SendMediaInfoToOsc();
-        _mpv?.SendScriptMessage("osc-set-active-quality", "original");
+        _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityIntent);
     }
 
     private async Task SwitchQualityTierAsync(string tierId)
@@ -5917,7 +5919,7 @@ public partial class PlayerService : IDisposable
                 // Show the quality actually accepted by the server, including
                 // any fallback; a requested tier is not proof of delivery.
                 _activeQualityTier = session.ActiveQuality;
-                _mpv?.SendScriptMessage("osc-set-active-quality", _activeQualityTier);
+                _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityIntent);
                 SendQualityInfoToOsc();
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -5935,7 +5937,7 @@ public partial class PlayerService : IDisposable
                 var (title, detail) = DescribePlaybackError(ex);
                 ErrorMessage = detail;
                 ShowNotice(title, detail, "error");
-                _mpv?.SendScriptMessage("osc-set-active-quality", _activeQualityTier);
+                _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityIntent);
             }
             return;
         }
@@ -6126,7 +6128,7 @@ public partial class PlayerService : IDisposable
                     var (title, detail) = DescribePlaybackError(ex);
                     ErrorMessage = detail;
                     ShowNotice(title, detail, "error");
-                    _mpv?.SendScriptMessage("osc-set-active-quality", _activeQualityTier);
+                    _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityIntent);
                 }
                 else
                 {

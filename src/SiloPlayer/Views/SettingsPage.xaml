@@ -741,7 +741,6 @@
                                       VerticalAlignment="Center"
                                       SelectionChanged="QualityComboBox_SelectionChanged">
                                 <ComboBoxItem Content="Auto" Tag="auto" />
-                                <ComboBoxItem Content="Original quality" Tag="original" />
                                 <ComboBoxItem Content="480p" Tag="480p" />
                                 <ComboBoxItem Content="720p" Tag="720p" />
                                 <ComboBoxItem Content="1080p" Tag="1080p" />

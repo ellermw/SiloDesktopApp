@@ -25,7 +25,7 @@ public partial class PlayerService
                 ["title"] = t.Label ?? t.Language ?? $"Subtitle {t.Index + 1}", ["detail"] = t.Codec });
         var qualities = new JsonArray();
         foreach (var q in AvailableQualities)
-            qualities.Add(new JsonObject { ["id"] = q.Label, ["label"] = q.Label == "original" ? "Original" : q.Label });
+            qualities.Add(new JsonObject { ["id"] = q.Label, ["label"] = q.DisplayName ?? q.Label });
         var mpv = _mpv;
         var volume = mpv?.GetPropertyDouble("volume") ?? Volume;
         var speed = mpv?.GetPropertyDouble("speed") ?? 1;
@@ -39,7 +39,7 @@ public partial class PlayerService
             ["audioTracks"] = audio, ["subtitleTracks"] = subtitles,
             ["selectedAudioTrackId"] = _playbackManager?.CurrentSession is { } session ? session.AudioTrackIndex + 1 : null,
             ["selectedSubtitleTrackId"] = State == PlayerState.Idle || _activeSubtitleServerIndex < 0 ? null : _activeSubtitleServerIndex + 1,
-            ["qualityOptions"] = qualities, ["activeQualityId"] = ActiveQualityTier,
+            ["qualityOptions"] = qualities, ["activeQualityId"] = SelectedQualityIntent,
             ["isQualitySwitching"] = IsQualitySwitchActive, ["playbackSpeed"] = speed > 0 ? speed : 1,
             ["videoGravity"] = _castVideoGravity, ["hdrEnabled"] = ActiveVersion?.Hdr ?? false,
             ["supportsVideoGravity"] = State != PlayerState.Idle, ["supportsHDRToggle"] = false,
@@ -88,6 +88,7 @@ public partial class PlayerService
                 _mpv.SetProperty("speed", Math.Clamp(Number(command, "speed"), 0.25, 4).ToString(CultureInfo.InvariantCulture)); break;
             case "set_quality":
                 var quality = command["value"]?.GetValue<string>();
+                if (quality?.ToLowerInvariant() is "original" or "source" or "max") quality = "auto";
                 if (quality == null || !AvailableQualities.Any(q => q.Label == quality))
                     throw new ArgumentException("This quality is unavailable.");
                 await SelectQualityAsync(quality); break;

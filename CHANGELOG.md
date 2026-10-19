@@ -2,6 +2,14 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.271 (2026-10-18 — owner-approved quality and menu alignment)
+
+- Implement three correction groups after reviewing 33 official upstream commits through `6ab2e85f117935776db052235efeeb149bdc81b4`. The three groups advance 1.2.268 to 1.2.271; test cases and review refinements do not inflate the version.
+- Replace retired Original/source choices with Auto, reuse canonical quality/bitrate preferences for source selection and session creation, and preserve hard caps and requested intent through replans. Native, fullscreen OSC and SiloCast share current choices and display names.
+- Group detail actions with Manage and move subtitle search to a fixed Subs footer. Place login recovery below the password input, right aligned. Preserve permissions, provider gates and playback ownership.
+- Publish the exact owner-installed installer without rebuilding. SHA256: `88AD817966CF41C64150DD9B9AD8EE9A3087CA530D0A564EFA797F18DC0A5A9D`. Verification: 1,920 main tests, nine exact-payload native groups and 24 published-service playback groups passed.
+- See [scope, evidence and limits](docs/releases/1.2.271.md). This release does not certify complete historical parity or eliminate all historical buffering/Next Up reports.
+
 ## 1.2.268 (2026-10-16 — owner-approved server alignment and background repair)
 
 - Include all 13 correction groups from [1.2.260](docs/releases/1.2.260.md), all seven update groups from [1.2.267](docs/releases/1.2.267.md), and the shared rounded-background correction. The 21 groups advance the published version from 1.2.247 to 1.2.268; individual edits and test cases do not inflate the version.

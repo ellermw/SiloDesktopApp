@@ -248,6 +248,7 @@ public sealed class PlaybackSubtitleInventoryV3
 public sealed class PlaybackQualityV3
 {
     public string Label { get; set; } = "";
+    public string? DisplayName { get; set; }
     public int? Height { get; set; }
     public int? BitrateKbps { get; set; }
     public bool PreservesSource { get; set; }
@@ -293,6 +294,9 @@ public sealed class PlaybackFailureV3
 public sealed class PlaybackSourceV3
 {
     public int MediaFileId { get; set; }
+    public int? Width { get; set; }
+    public int? Height { get; set; }
+    public int? BitrateKbps { get; set; }
     public double? DurationSeconds { get; set; }
     public string? Container { get; set; }
     public string? VideoCodec { get; set; }

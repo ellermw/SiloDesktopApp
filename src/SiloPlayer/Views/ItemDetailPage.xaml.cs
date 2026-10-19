@@ -3462,15 +3462,6 @@ public sealed partial class ItemDetailPage : Page
                 MoreFlyout.Items.Add(download);
                 hasOverflowActions = true;
             }
-
-            var searchSubtitles = new MenuFlyoutItem
-            {
-                Text = "Search Subtitles",
-                Icon = new FontIcon { Glyph = "\uED1E" },
-            };
-            searchSubtitles.Click += async (_, _) => await OpenSubtitleSearchDialogAsync();
-            MoreFlyout.Items.Add(searchSubtitles);
-            hasOverflowActions = true;
         }
 
         if (_selectedVersion != null)
@@ -5941,6 +5932,12 @@ public sealed partial class ItemDetailPage : Page
             catch { }
         };
         await dialog.ShowAsync();
+    }
+
+    private async void SearchSubtitlesFromPopover_Click(object sender, RoutedEventArgs e)
+    {
+        SubtitlesPopoverFlyout.Hide();
+        await OpenSubtitleSearchDialogAsync();
     }
 
     private void UpdateSubtitlesPopoverSummary(List<VersionSubtitleTrack> subs)

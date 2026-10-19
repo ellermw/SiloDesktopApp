@@ -150,8 +150,9 @@ internal static class SiloCastScopeChecks
             "Advertised subtitles lost sparse server indexes.");
         Require(state["selectedAudioTrackId"]!.GetValue<int>() == 2 && state["selectedSubtitleTrackId"]!.GetValue<int>() == 9,
             "State selected IDs differ from advertised choices.");
-        Require(state["qualityOptions"]!.AsArray().Select(q => q!["id"]!.GetValue<string>()).SequenceEqual(new[] { "original", "1080p-high" }),
+        Require(state["qualityOptions"]!.AsArray().Select(q => q!["id"]!.GetValue<string>()).SequenceEqual(new[] { "auto", "1080p-high" }),
             "Advertised quality choices differ from the captured session.");
+        Require(state["activeQualityId"]!.GetValue<string>() == "auto", "Cast state must report selected quality intent.");
         Require(state["supportsHDRToggle"]!.GetValue<bool>() == false && state["hdrEnabled"]!.GetValue<bool>(),
             "HDR state or required v2 compatibility field changed.");
         Require(state["currentTime"]!.GetValue<double>() == 321 && state["sessionId"]!.GetValue<string>() == "remote-session",

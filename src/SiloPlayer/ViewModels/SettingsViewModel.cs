@@ -532,7 +532,7 @@ public partial class SettingsViewModel : ObservableObject
 
                 if (_profile != null)
                 {
-                    QualityPreference = _profile.QualityPreference;
+                    QualityPreference = PlaybackQualityPreferences.Normalize(_profile.QualityPreference);
                     AutoSkipIntro = _profile.AutoSkipIntro;
                     AutoSkipCredits = _profile.AutoSkipCredits;
                     AutoSkipRecap = _profile.AutoSkipRecap;
@@ -616,7 +616,7 @@ public partial class SettingsViewModel : ObservableObject
                     SeekSettingsStatus = SeekSettingsAvailable ? "" : "This server does not support profile seek intervals.";
                     var values = response.Settings.ToDictionary(setting => setting.Key, StringComparer.Ordinal);
 
-                    QualityPreference = ReadString(values, "playback.preferred_quality", "auto");
+                    QualityPreference = PlaybackQualityPreferences.Normalize(ReadString(values, "playback.preferred_quality", "auto"));
                     MaxBitrateKbps = ReadNullableNumber(values, "playback.max_bitrate_kbps");
                     AudioLanguage = ReadNullableString(values, PlaybackAudioLanguageSettingKey);
                     SubtitleLanguage = ReadNullableString(values, "playback.subtitle_language");

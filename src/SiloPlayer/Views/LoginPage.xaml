@@ -202,15 +202,13 @@
 
                         <!-- Password -->
                         <StackPanel x:Name="LoginPasswordGroup" Spacing="8">
-                            <Grid>
-                                <TextBlock Text="Password" FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight" FontWeight="Medium" />
-                                <HyperlinkButton Content="Forgot password?" Click="ForgotPassword_Click" HorizontalAlignment="Right" Padding="0" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" Visibility="{x:Bind ViewModel.CanRecoverPassword, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
-                            </Grid>
+                            <TextBlock Text="Password" FontSize="14" Height="14" LineHeight="14" LineStackingStrategy="BlockLineHeight" FontWeight="Medium" />
                             <PasswordBox
                                 x:Name="PasswordBox"
                                 Style="{StaticResource DarkPasswordBoxStyle}"
                                 PasswordChanged="PasswordBox_PasswordChanged"
                                 KeyDown="InputBox_KeyDown" />
+                            <HyperlinkButton Content="Forgot password?" Click="ForgotPassword_Click" HorizontalAlignment="Right" Padding="0" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" Visibility="{x:Bind ViewModel.CanRecoverPassword, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
                         </StackPanel>
 
                         <!-- Credential provider picker -->

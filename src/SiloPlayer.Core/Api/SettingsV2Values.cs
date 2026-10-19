@@ -33,6 +33,8 @@ internal static class SettingsV2Values
         ["playback.subtitle_appearance"] = "object",
         ["playback.preferred_quality"] = "enum",
         ["playback.max_bitrate_kbps"] = "integer",
+        ["playback.cellular_preferred_quality"] = "enum",
+        ["playback.cellular_max_bitrate_kbps"] = "integer",
         ["playback.auto_skip_intro"] = "boolean",
         ["playback.intro_skip_mode"] = "enum",
         ["playback.auto_skip_credits"] = "boolean",

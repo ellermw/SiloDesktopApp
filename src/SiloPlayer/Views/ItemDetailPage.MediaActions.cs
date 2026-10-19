@@ -48,8 +48,8 @@ public sealed partial class ItemDetailPage
         actions.RemoveAll(entry => entry is MenuFlyoutItem action && action.Text == "Media Info" && !curate);
         foreach (var entry in actions.OfType<MenuFlyoutItem>())
         {
-            if (entry.Text == "Search Subtitles") entry.Text = "Add Subtitles";
             if (entry.Text == "Request seasons") entry.Text = "Request Seasons";
+            if (entry.Text == "Start a party with this") entry.Text = "Start a Watch Party";
         }
         void Add(string label, string icon, Func<Task> execute, Func<AuthService, bool> authorized)
         {
@@ -84,23 +84,55 @@ public sealed partial class ItemDetailPage
                     if (IsCurrentDetail(item.ContentId) && client.IsCurrentContext(context) && AuthorizationPolicy.IsActingAdmin(auth)) App.Services.GetRequiredService<ToastService>().Success("Marker detection queued.");
                 }
             }, AuthorizationPolicy.IsActingAdmin);
-        // ActionBar groups viewer operations, Watch Together and curation in this order.
+        // Keep the existing action instances and handlers, including capability-hidden
+        // actions that can become visible after the menu has been built.
         static int Rank(MenuFlyoutItemBase entry) => (entry as MenuFlyoutItem)?.Text switch
         {
-            "Shuffle" => 10, "Add to favorites" or "Remove from favorites" => 0,
-            "Play from Beginning" => 20, "Add to Watchlist" or "Remove from Watchlist" => 30,
-            "Add to Collection" => 40, "Download" => 50, "Add Subtitles" => 60, "Request Seasons" => 70,
-            "Start a party with this" => 80, "Stage this in live room" or "Suggest this to live room" => 81, "Go to live room" => 82,
-            "Media Info" => 90, "View Play History" => 91, "Refresh Metadata" => 92,
-            "Re-detect Markers" or "Re-detect Credits" or "Re-detect Intro Markers" => 93, "Seek Previews" => 94, "Edit Metadata" => 95, "Edit Markers" => 96,
-            "Match Item" => 97, "Split Versions" => 98, _ => 5,
+            "Shuffle" => 10, "Play from Beginning" => 11, "Reset Progress" => 12,
+            "Add to Watchlist" or "Remove from Watchlist" => 20,
+            "Add to Collection" => 21, "Download" => 22, "Request Seasons" => 23,
+            "Not Interested" or "Show in Recommendations" => 24,
+            "Start a Watch Party" => 30, "Stage this in live room" or "Suggest this to live room" => 31, "Go to live room" => 32,
+            "Edit Metadata" => 100, "Match Item" => 101, "Refresh Metadata" => 102,
+            "Edit Markers" => 110, "Re-detect Markers" or "Re-detect Credits" or "Re-detect Intro Markers" => 111,
+            "Seek Previews" => 112, "Split Versions" => 113,
+            "Media Info" => 120, "View Play History" => 121, _ => 0,
         };
-        MoreFlyout.Items.Clear(); int lastGroup = 0;
-        foreach (var entry in actions.OrderBy(Rank))
+        var ordered = actions.OrderBy(Rank).ToList();
+        var management = ordered.Where(entry => Rank(entry) >= 100).ToList();
+        var main = ordered.Where(entry => Rank(entry) < 100).ToList();
+        MoreFlyout.Items.Clear();
+        if (management.Count(entry => entry.Visibility == Visibility.Visible) > 1)
         {
-            var rank = Rank(entry); var group = rank >= 90 ? 2 : rank >= 80 ? 1 : 0;
-            if (group > lastGroup && MoreFlyout.Items.Count > 0) MoreFlyout.Items.Add(new MenuFlyoutSeparator());
-            MoreFlyout.Items.Add(entry); lastGroup = group;
+            var manage = new MenuFlyoutSubItem { Text = "Manage", Icon = new FontIcon { Glyph = "\uE90F" } };
+            AddGroups(manage.Items, management.GroupBy(entry => Rank(entry) / 10));
+            AddGroups(MoreFlyout.Items, main.GroupBy(entry => Rank(entry) / 10).Select(group => group.AsEnumerable()).Append(new[] { manage }));
+        }
+        else
+            AddGroups(MoreFlyout.Items, main.GroupBy(entry => Rank(entry) / 10).Select(group => group.AsEnumerable()).Append(management));
+
+        static void AddGroups(IList<MenuFlyoutItemBase> target, IEnumerable<IEnumerable<MenuFlyoutItemBase>> source)
+        {
+            var groups = source.Select(group => group.ToList()).Where(group => group.Count > 0).ToList();
+            var separators = new List<MenuFlyoutSeparator>();
+            for (var i = 0; i < groups.Count; ++i)
+            {
+                if (i > 0) { var separator = new MenuFlyoutSeparator(); separators.Add(separator); target.Add(separator); }
+                foreach (var entry in groups[i]) target.Add(entry);
+            }
+            void UpdateSeparators()
+            {
+                var precedingVisible = false;
+                for (var i = 0; i < groups.Count; ++i)
+                {
+                    var visible = groups[i].Any(entry => entry.Visibility == Visibility.Visible);
+                    if (i > 0) separators[i - 1].Visibility = precedingVisible && visible ? Visibility.Visible : Visibility.Collapsed;
+                    precedingVisible |= visible;
+                }
+            }
+            foreach (var entry in groups.SelectMany(group => group))
+                entry.RegisterPropertyChangedCallback(UIElement.VisibilityProperty, (_, _) => UpdateSeparators());
+            UpdateSeparators();
         }
     }
 

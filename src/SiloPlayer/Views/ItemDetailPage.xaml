@@ -598,12 +598,29 @@
                              </StackPanel>
                              <Button.Flyout>
                                 <Flyout x:Name="SubtitlesPopoverFlyout" Placement="Bottom">
-                                    <ScrollViewer MaxHeight="320"
-                                                  Width="320"
-                                                  HorizontalScrollBarVisibility="Disabled"
-                                                  VerticalScrollBarVisibility="Auto">
-                                        <StackPanel x:Name="SubtitlesPopoverContent" Spacing="8" />
-                                    </ScrollViewer>
+                                    <Grid Width="320" MaxHeight="320">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="*" />
+                                            <RowDefinition Height="Auto" />
+                                        </Grid.RowDefinitions>
+                                        <ScrollViewer MaxHeight="270"
+                                                      HorizontalScrollBarVisibility="Disabled"
+                                                      VerticalScrollBarVisibility="Auto">
+                                            <StackPanel x:Name="SubtitlesPopoverContent" Spacing="8" />
+                                        </ScrollViewer>
+                                        <Border Grid.Row="1" BorderBrush="{StaticResource BorderBrush}"
+                                                BorderThickness="0,1,0,0" Padding="0,6,0,0">
+                                            <Button Style="{StaticResource GhostButtonStyle}"
+                                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                    Padding="12,8" Click="SearchSubtitlesFromPopover_Click"
+                                                    AutomationProperties.Name="Search for Subtitles">
+                                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                                    <FontIcon Glyph="&#xE721;" FontSize="16" Foreground="{StaticResource SecondaryTextBrush}" />
+                                                    <TextBlock Text="Search for Subtitles…" FontSize="14" FontWeight="Medium" />
+                                                </StackPanel>
+                                            </Button>
+                                        </Border>
+                                    </Grid>
                                 </Flyout>
                              </Button.Flyout>
                          </Button>

@@ -1,16 +1,16 @@
 # Silo Desktop Player
 
-> **Current release: 1.2.268.** Includes the October 15–16 server alignment, profile subtitle preferences, Not Interested controls, notification-series management, Watch Together timing, profile-picker improvements and the rounded-background repair. See [the release record](docs/releases/1.2.268.md) and [SiloCast setup](docs/silocast-testing.md). Local development starts in `D:\SiloPlayer`; read [the current handoff](docs/current-development.md) before editing or building.
+> **Current release: 1.2.271.** Adds current Auto quality and bitrate-cap contracts across native playback, fullscreen controls and SiloCast; updated detail/Manage and subtitle-search menus; and login recovery placement. Includes all previous 1.2.268 updates. See [the release record](docs/releases/1.2.271.md) and [SiloCast setup](docs/silocast-testing.md). Local development starts in `D:\SiloPlayer`; read [the current handoff](docs/current-development.md) before editing or building.
 
 Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/silo-server), built with WinUI 3 and libmpv. The project aims to reproduce the Silo WebUI visually and functionally while providing broad native direct-play support for high-bitrate HEVC, HDR, Dolby Vision, lossless audio, and other formats browsers commonly transcode.
 
-> **Project status:** active pre-release development. Version 1.2.268 preserves the prior parity work and SiloCast receiver. Phone interoperability, broader hardware testing and the separate intermittent Next Up removal investigation continue. Targeted verification does not certify complete visual/functional parity. Silo Server changes are re-audited against its official public `main` branch.
+> **Project status:** active pre-release development. Version 1.2.271 preserves the prior parity work and SiloCast receiver. Phone interoperability, broader hardware testing and the separate intermittent Next Up removal investigation continue. Targeted verification does not certify complete visual/functional parity. Silo Server changes are re-audited against its official public `main` branch.
 
 ## Download
 
-[**Download Silo Desktop Player 1.2.268**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.268/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.2.271**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.271/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `FB7246AF2E77E30BB8EA60DD38ADF9128190367EDE1D2BACAB7EF529B88C84AF`
+SHA-256: `88AD817966CF41C64150DD9B9AD8EE9A3087CA530D0A564EFA797F18DC0A5A9D`
 
 SiloCast is built in and enabled for fresh/missing preferences. The installer automatically adds its Private-network/local-subnet firewall rule, with no extra SiloCast checkbox. A saved opt-out remains respected; enable or disable it under **Settings → Playback → Desktop playback → Allow SiloCast control**. Keep the PC and phone on the same private local network and the desktop app running. See [the testing guide](docs/silocast-testing.md) for setup and troubleshooting. Actual iPhone/Android interoperability remains under testing.
 
@@ -50,6 +50,13 @@ The official public Silo Server reference fetched for the final pass is [1a7a397
 
 
 ## Latest release
+
+### 1.2.271 — current quality contracts and menu updates
+
+- Align Auto and fixed quality choices with current server contracts, preserving canonical preferences, bitrate caps and requested intent across native playback, fullscreen controls, SiloCast and replans.
+- Group media actions with the current Manage submenu and move Search for Subtitles to the fixed Subs footer while preserving permissions and selected-file behavior.
+- Place Forgot password below the password input, right aligned, with existing provider and capability gates.
+- Publish the exact installer the owner installed and approved. Verification passed **1,920 main tests**, **nine exact-payload native groups** and **24 published-service playback groups**. See [the release record](docs/releases/1.2.271.md) for the official upstream reference, evidence and limits.
 
 ### 1.2.268 — server alignment, playback preferences and rounded backgrounds
 

@@ -74,7 +74,7 @@ public sealed class PlaybackQualitySelectionTests
         var handler = new QualityHandler("720p-medium", 720, 2000) { ReturnOriginal = true };
         using var manager = CreateManager(handler);
         var response = await manager.StartSessionAsync(42, forceStartPosition: true, qualityPreference: "720p-medium");
-        Assert.Equal("original", response.ActiveQuality);
+        Assert.Equal("auto", response.ActiveQuality);
         Assert.Null(response.PlaybackInfo?.TargetVideoBitrateKbps);
         await manager.StopSessionAsync();
     }

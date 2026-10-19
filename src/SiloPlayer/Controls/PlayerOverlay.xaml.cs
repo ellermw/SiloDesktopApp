@@ -1143,15 +1143,15 @@ public sealed partial class PlayerOverlay : UserControl
             foreach (var quality in qualities)
             {
                 var qualityId = quality.Label;
-                var label = qualityId.Equals("original", StringComparison.OrdinalIgnoreCase)
-                    ? "Original"
-                    : qualityId;
+                var label = qualityId.Equals("auto", StringComparison.OrdinalIgnoreCase)
+                    ? "Auto"
+                    : quality.DisplayName ?? qualityId;
                 var detail = quality.PreservesSource
-                    ? "Source"
+                    ? "Best available"
                     : quality.BitrateKbps is > 0
                         ? $"{quality.BitrateKbps.Value / 1000.0:0.#} Mbps"
                         : quality.Height is > 0 ? $"{quality.Height}p" : "";
-                var isActive = string.Equals(qualityId, _playerService.ActiveQualityTier, StringComparison.OrdinalIgnoreCase);
+                var isActive = string.Equals(qualityId, _playerService.SelectedQualityIntent, StringComparison.OrdinalIgnoreCase);
                 var row = new Grid { ColumnSpacing = 18 };
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -1187,12 +1187,12 @@ public sealed partial class PlayerOverlay : UserControl
         }
 
         var activeQuality = qualities.FirstOrDefault(quality =>
-            string.Equals(quality.Label, _playerService.ActiveQualityTier, StringComparison.OrdinalIgnoreCase));
+            string.Equals(quality.Label, _playerService.SelectedQualityIntent, StringComparison.OrdinalIgnoreCase));
         QualityButtonText.Text = _playerService.IsQualitySwitchActive
             ? "…"
-            : activeQuality?.Label.Equals("original", StringComparison.OrdinalIgnoreCase) == true
-                ? "Original"
-                : activeQuality?.Label ?? _playerService.ActiveQualityTier;
+            : activeQuality?.Label.Equals("auto", StringComparison.OrdinalIgnoreCase) == true
+                ? "Auto"
+                : activeQuality?.Label ?? _playerService.SelectedQualityIntent;
     }
 
     // ── Subtitle selection ───────────────────────────────────────────────

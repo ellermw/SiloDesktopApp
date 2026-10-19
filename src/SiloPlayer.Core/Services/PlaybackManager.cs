@@ -25,7 +25,8 @@ public class PlaybackManager : IDisposable
     private PlaybackClientContextV3? _clientContextV3;
     private string? _playbackAttemptIdV3;
     private string? _planAttemptIdV3;
-    private string _qualityPreferenceV3 = "original";
+    private string _qualityPreferenceV3 = "auto";
+    private int? _bandwidthCapKbpsV3;
     private readonly PlaybackRecoveryAttemptHistory _recoveryAttemptHistory = new();
     private PlaybackStartResponse? _directRecoverySession;
     private double _directRecoveryPosition;
@@ -52,6 +53,10 @@ public class PlaybackManager : IDisposable
     public WatchDetailResponse? WatchDetail { get; private set; }
     public PlaybackStartResponse? CurrentSession { get; private set; }
     public string? StreamUrl { get; private set; }
+    public string QualityPreference => _qualityPreferenceV3;
+
+    public Task<PlaybackQualityPreferences> ResolveQualityPreferencesAsync(CancellationToken ct = default)
+        => PlaybackQualityPreferences.ReadAsync(_apiClient, _authService.SelectedProfile?.QualityPreference, ct);
 
     public async Task<WatchDetailResponse> GetWatchDetailAsync(string contentId, CancellationToken ct = default)
     {
@@ -105,8 +110,11 @@ public class PlaybackManager : IDisposable
         bool forceDirectAudioSelection = false,
         bool disableProgressPersistence = false,
         string? qualityPreference = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        PlaybackQualityPreferences? preferences = null)
     {
+        preferences ??= await ResolveQualityPreferencesAsync(ct).ConfigureAwait(false);
+        if (!_apiClient.IsCurrentContext(preferences.Context)) throw new OperationCanceledException("Playback quality owner changed.", ct);
         var appVersion = s_appVersion;
         var (capabilities, context) = MpvNativePlaybackCapabilities.CreateProtocolV3Profile(
             appVersion,
@@ -119,7 +127,8 @@ public class PlaybackManager : IDisposable
             ProfileId = _authService.SelectedProfileId ?? "",
             PlaybackAttemptId = Guid.NewGuid().ToString(),
             QualityPreference = NormalizeQualityPreference(
-                qualityPreference ?? _authService.SelectedProfile?.QualityPreference),
+                qualityPreference ?? preferences.Quality),
+            BandwidthCapKbps = preferences.BandwidthCapKbps,
             SubtitleFidelityPreference = "preserve",
             StartPosition = forceStartPosition || disableProgressPersistence
                 ? Math.Max(0, startPosition)
@@ -134,7 +143,7 @@ public class PlaybackManager : IDisposable
         LogToStateTrace($"StartSession v3: fileId={fileId}, pos={startPosition}, force={forceStartPosition}, attempt={request.PlaybackAttemptId}, codecs_video=[{string.Join(",", capabilities.CodecsVideo)}], codecs_audio=[{string.Join(",", capabilities.CodecsAudio)}], max_res={capabilities.MaxResolution}, hdr={capabilities.Hdr}");
 
         var decision = await _playbackApi.StartPlaybackV3Async(request, ct).ConfigureAwait(false);
-        var response = AdoptProtocolV3Decision(decision, request.PlaybackAttemptId, request.QualityPreference);
+        var response = AdoptProtocolV3Decision(decision, request.PlaybackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
         _recoveryAttemptHistory.Reset();
         _currentPlanV3 = decision.PlaybackPlan;
         _clientCapabilitiesV3 = capabilities;
@@ -142,6 +151,7 @@ public class PlaybackManager : IDisposable
         _playbackAttemptIdV3 = request.PlaybackAttemptId;
         _planAttemptIdV3 = Guid.NewGuid().ToString();
         _qualityPreferenceV3 = request.QualityPreference;
+        _bandwidthCapKbpsV3 = request.BandwidthCapKbps;
         _sessionId = response.SessionId;
         CurrentSession = response;
         _lastReportedPosition = Math.Max(0, response.Position);
@@ -181,41 +191,27 @@ public class PlaybackManager : IDisposable
     }
 
     private static string NormalizeQualityPreference(string? qualityPreference)
-    {
-        var normalized = (qualityPreference ?? "").Trim().ToLowerInvariant();
-        return normalized switch
-        {
-            "original" or "source" or "max" => "original",
-            "2160p" or "4k" or "uhd" => "2160p",
-            "1080p" or "fhd" => "1080p",
-            "720p" or "hd" => "720p",
-            "480p" or "sd" => "480p",
-            // Server menu labels pin bitrate as well as resolution. Reducing
-            // them to a resolution (or auto) discards the user's bandwidth cap.
-            "2160p-high" or "2160p-medium" or "2160p-low" or
-            "1080p-high" or "1080p-medium" or "1080p-low" or
-            "720p-high" or "720p-medium" or "720p-low" => normalized,
-            _ => "auto",
-        };
-    }
+        => PlaybackQualityPreferences.Normalize(qualityPreference);
 
-    private static string ResolveActiveQuality(PlaybackPlanV3 plan, string qualityPreference)
+    private static string ResolveActiveQuality(PlaybackPlanV3 plan, string qualityPreference, int? bandwidthCapKbps)
     {
         if (plan.Delivery != "server_transcode_hls")
-            return "original";
+            return "auto";
 
         var requested = plan.AvailableQualities.FirstOrDefault(quality =>
             !quality.PreservesSource && quality.Label == qualityPreference);
         var source = plan.AvailableQualities.FirstOrDefault(quality =>
             quality.PreservesSource && quality.Label == "original");
+        var sourceHeight = plan.Source?.Height ?? source?.Height;
+        var sourceBitrate = plan.Source?.BitrateKbps ?? source?.BitrateKbps;
 
         // The server advertises nominal tiers, but bounds the actual recipe by
         // source height (including cinema crops) and bitrate. Prefer the user's
         // tier when those bounds explain the recipe; never trust the request alone.
         if (requested?.Height is > 0 && requested.BitrateKbps is > 0 &&
-            source?.Height is > 0 && source.BitrateKbps is > 0 &&
-            plan.EffectiveRecipe.Height == Math.Min(requested.Height.Value, source.Height.Value) &&
-            plan.EffectiveRecipe.BitrateKbps == Math.Min(requested.BitrateKbps.Value, source.BitrateKbps.Value))
+            sourceHeight is > 0 && sourceBitrate is > 0 &&
+            plan.EffectiveRecipe.Height == Math.Min(requested.Height.Value, sourceHeight.Value) &&
+            plan.EffectiveRecipe.BitrateKbps == Math.Min(Math.Min(requested.BitrateKbps.Value, sourceBitrate.Value), bandwidthCapKbps ?? int.MaxValue))
             return requested.Label;
 
         return plan.AvailableQualities.FirstOrDefault(quality =>
@@ -227,7 +223,8 @@ public class PlaybackManager : IDisposable
     private static PlaybackStartResponse AdoptProtocolV3Decision(
         PlaybackDecisionResponseV3 decision,
         string playbackAttemptId,
-        string qualityPreference)
+        string qualityPreference,
+        int? bandwidthCapKbps)
     {
         ArgumentNullException.ThrowIfNull(decision);
         if (!string.Equals(decision.Outcome, "playable", StringComparison.OrdinalIgnoreCase) ||
@@ -277,7 +274,7 @@ public class PlaybackManager : IDisposable
             SubtitleMode = plan.Subtitle.Mode,
             SelectedSubtitleArtifactUrl = plan.Subtitle.Artifact?.Url,
             SubtitleTimingOriginSeconds = plan.Subtitle.Artifact?.TimingOriginSeconds ?? 0,
-            ActiveQuality = ResolveActiveQuality(plan, qualityPreference),
+            ActiveQuality = ResolveActiveQuality(plan, qualityPreference, bandwidthCapKbps),
             AvailableQualities = plan.AvailableQualities,
             PlaybackInfo = new PlaybackInfo
             {
@@ -529,6 +526,7 @@ public class PlaybackManager : IDisposable
             AttemptedPlanKeys = recoveryAttempt?.AttemptedPlanKeys.ToList() ?? [],
             AttemptCount = recoveryAttempt?.AttemptCount ?? 1,
             QualityPreference = qualityPreference,
+            BandwidthCapKbps = _bandwidthCapKbpsV3,
             PositionSeconds = Math.Clamp(positionSeconds, 0, 31_536_000),
             Metered = false,
             SelectedTracks = selectedTracks,
@@ -542,7 +540,7 @@ public class PlaybackManager : IDisposable
             _recoveryAttemptHistory.CommitFailure(recoveryAttempt);
         else
             _recoveryAttemptHistory.Reset();
-        var response = AdoptProtocolV3Decision(decision, playbackAttemptId, request.QualityPreference);
+        var response = AdoptProtocolV3Decision(decision, playbackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
         _currentPlanV3 = decision.PlaybackPlan;
         _planAttemptIdV3 = Guid.NewGuid().ToString();
         _qualityPreferenceV3 = qualityPreference;
