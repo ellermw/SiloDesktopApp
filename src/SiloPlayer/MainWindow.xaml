@@ -134,6 +134,37 @@
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
 
+                <NavigationViewItem x:Name="SearchNavItem" Tag="Search">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE721;" />
+                    </NavigationViewItem.Icon>
+                    <NavigationViewItem.Content>
+                        <Grid MinWidth="158">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock
+                                Text="Search"
+                                VerticalAlignment="Center" />
+                            <Border
+                                Grid.Column="1"
+                                Padding="6,2"
+                                CornerRadius="3"
+                                Background="{StaticResource SurfaceRaisedBrush}"
+                                BorderBrush="{StaticResource BorderBrush}"
+                                BorderThickness="1"
+                                IsHitTestVisible="False">
+                                <TextBlock
+                                    Text="Ctrl K"
+                                    FontSize="10"
+                                    FontWeight="Medium"
+                                    Foreground="{StaticResource SecondaryTextBrush}" />
+                            </Border>
+                        </Grid>
+                    </NavigationViewItem.Content>
+                </NavigationViewItem>
+
                 <!-- LIBRARIES section header (collapsible — click toggles library visibility) -->
                 <NavigationViewItem x:Name="LibrariesHeader" SelectsOnInvoked="False"
                                     Tapped="LibrariesHeader_Tapped"
@@ -171,36 +202,7 @@
 
                 <!-- DISCOVER section header -->
                 <NavigationViewItemHeader Content="DISCOVER" />
-                <NavigationViewItem x:Name="SearchNavItem" Tag="Search">
-                    <NavigationViewItem.Icon>
-                        <FontIcon Glyph="&#xE721;" />
-                    </NavigationViewItem.Icon>
-                    <NavigationViewItem.Content>
-                        <Grid MinWidth="158">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBlock
-                                Text="Search"
-                                VerticalAlignment="Center" />
-                            <Border
-                                Grid.Column="1"
-                                Padding="6,2"
-                                CornerRadius="3"
-                                Background="{StaticResource SurfaceRaisedBrush}"
-                                BorderBrush="{StaticResource BorderBrush}"
-                                BorderThickness="1"
-                                IsHitTestVisible="False">
-                                <TextBlock
-                                    Text="Ctrl K"
-                                    FontSize="10"
-                                    FontWeight="Medium"
-                                    Foreground="{StaticResource SecondaryTextBrush}" />
-                            </Border>
-                        </Grid>
-                    </NavigationViewItem.Content>
-                </NavigationViewItem>
+
                 <NavigationViewItem x:Name="RecommendationsNavItem" Content="For You" Tag="Recommendations">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE735;" />

@@ -3,7 +3,7 @@ using SiloPlayer.Core.Api;
 
 namespace SiloPlayer.Core.Services;
 
-/// <summary>Device definitions from official Silo manifest 8e2e840. Render metadata is never a write authority.</summary>
+/// <summary>Device definitions from the official Silo manifest; title-art default metadata is aligned to revision22. Render metadata is never a write authority.</summary>
 public sealed record DeviceSettingDefinition(JsonElement Data)
 {
     public string Key => Data.GetProperty("key").GetString()!;
@@ -54,7 +54,14 @@ public static class DeviceSettingDisplay
         && !(definition.Key == "playback.auto_skip_intro" && revision >= 7)).ToArray();
     public static bool CanWrite(ContractEffectiveSettingEntry entry) => entry.ConstraintKind != "locked";
     public static string? InheritedSource(ContractEffectiveSettingEntry entry, string ownerLabel)
-        => entry.Source switch { "profile" => $"From {ownerLabel} profile", "default" => "App default", _ => null };
+        => entry.Source switch
+        {
+            "profile" => $"From {ownerLabel} profile",
+            "default" => Definitions.Any(definition => definition.Key == entry.Key
+                && definition.Data.TryGetProperty("admin_default", out var adminDefault) && adminDefault.ValueKind == JsonValueKind.True)
+                ? "Server default" : "App default",
+            _ => null,
+        };
     public static string ConstraintExplanation(ContractEffectiveSettingEntry entry)
     {
         if (entry.ConstraintKind == "locked") return "This is set for your household and can't be changed here.";

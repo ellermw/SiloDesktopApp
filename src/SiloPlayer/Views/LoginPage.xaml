@@ -141,13 +141,13 @@
                                     <Button
                                         Style="{StaticResource OutlineButtonStyle}"
                                         HorizontalAlignment="Stretch"
-                                        HorizontalContentAlignment="Left"
+                                        HorizontalContentAlignment="Center"
                                         Padding="16,10"
                                         Tag="{Binding}"
                                         Click="AuthProviderButton_Click">
                                         <StackPanel
                                             Orientation="Horizontal"
-                                            HorizontalAlignment="Left"
+                                            HorizontalAlignment="Center"
                                             Spacing="8">
                                             <Image
                                                 Source="{Binding IconUrl, Converter={StaticResource UrlToImage}}"

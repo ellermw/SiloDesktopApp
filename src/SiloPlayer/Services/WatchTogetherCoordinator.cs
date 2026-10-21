@@ -103,6 +103,7 @@ public sealed class WatchTogetherCoordinator
         ClearActiveRoom();
         _activeRoom = room;
         _playerService.RoomSeekPosition = () => EnsureCurrentAuthority() ? _sync.InputSeekPosition(Now) : null;
+        _playerService.RoomPlaybackStartPosition = () => EnsureCurrentAuthority() ? _sync.StartupPosition(Now) : null;
         _roomAuthority = (_auth.SessionGeneration, _auth.SelectedProfileId);
         room.TransportCommandReceived += OnTransportCommandReceived;
         room.PropertyChanged += OnRoomPropertyChanged;
@@ -130,6 +131,7 @@ public sealed class WatchTogetherCoordinator
         }
         _activeRoom = null;
         _playerService.RoomSeekPosition = null;
+        _playerService.RoomPlaybackStartPosition = null;
         _roomAuthority = null;
         _attachedSessionId = null;
         _sync.SetSession(null);

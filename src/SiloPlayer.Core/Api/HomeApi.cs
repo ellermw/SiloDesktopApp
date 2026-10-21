@@ -14,6 +14,9 @@ public class HomeApi(SiloApiClient client)
     public Task<HomeSectionsResponse> GetSectionsAsync(CancellationToken ct = default)
         => client.GetAsync<HomeSectionsResponse>("/api/v2/home/sections", ct);
 
+    public Task<SeasonalThemeCatalog> GetSeasonalThemesAsync(CancellationToken ct = default)
+        => client.GetAsync<SeasonalThemeCatalog>("/api/v2/sections/seasonal-themes", ct);
+
     /// <summary>
     /// F12: fetch items for a single section. Used by the layout-first
     /// loading pipeline to batch-fetch sections with a concurrency cap

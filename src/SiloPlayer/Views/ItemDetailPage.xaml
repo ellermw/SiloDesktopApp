@@ -774,6 +774,13 @@
                         <StackPanel x:Name="MediaLocationsPanel" Spacing="8" />
                     </StackPanel>
 
+                    <!-- Local extras are first-class watch targets, grouped by kind
+                         in the order supplied by the server. -->
+                    <StackPanel x:Name="ExtrasSection" Visibility="Collapsed" Spacing="16">
+                        <TextBlock Text="Extras" Style="{StaticResource TitleTextStyle}" FontSize="20" />
+                        <StackPanel x:Name="ExtrasGroupsPanel" Spacing="24" />
+                    </StackPanel>
+
                     <!-- Remote provider videos. The current WebUI exposes only
                          YouTube entries and opens them in a privacy-enhanced embed. -->
                     <StackPanel x:Name="TrailersSection" Visibility="Collapsed" Spacing="20">
@@ -819,13 +826,6 @@
                                 <FontIcon Glyph="&#xE76C;" FontSize="20" Foreground="{StaticResource PrimaryTextBrush}" />
                             </Button>
                         </Grid>
-                    </StackPanel>
-
-                    <!-- Local extras are first-class watch targets, grouped by kind
-                         in the order supplied by the server. -->
-                    <StackPanel x:Name="ExtrasSection" Visibility="Collapsed" Spacing="16">
-                        <TextBlock Text="Extras" Style="{StaticResource TitleTextStyle}" FontSize="20" />
-                        <StackPanel x:Name="ExtrasGroupsPanel" Spacing="24" />
                     </StackPanel>
 
                     <StackPanel x:Name="AudiobookNarratorSection" Visibility="Collapsed" Spacing="12" Margin="0,16,0,0">

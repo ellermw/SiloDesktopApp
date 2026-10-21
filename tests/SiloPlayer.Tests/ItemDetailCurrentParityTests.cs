@@ -177,13 +177,13 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("www.youtube-nocookie.com/embed", page);
         Assert.Contains("video.Site.Equals(\"youtube\"", page);
         Assert.Contains("playable.GroupBy(extra => extra.Kind)", page);
-        Assert.Contains("await playerService.PlayAsync(contentId)", page);
+        Assert.Contains("await playerService.PlayAsync(contentId, libraryId: ViewModel.LibraryId", page);
         Assert.Contains("ArrangeCurrentWebUiContentOrder", page);
         Assert.Contains("var parent = DetailContentPanel", page);
         Assert.Contains("DetailContentPanel.Spacing = width >= 640 ? 56 : 48", page);
         Assert.DoesNotContain("new Thickness(0, 32, 0, 0)", page);
-        Assert.Contains("MediaLocationsSection, TrailersSection, ExtrasSection", page);
-        Assert.Contains("SeasonsSection, EpisodesSection, TrailersSection, ExtrasSection", page);
+        Assert.Contains("MediaLocationsSection, ExtrasSection, TrailersSection", page);
+        Assert.Contains("SeasonsSection, EpisodesSection, ExtrasSection, TrailersSection", page);
         Assert.True(
             xaml.IndexOf("x:Name=\"MediaLocationsSection\"", StringComparison.Ordinal)
             < xaml.IndexOf("x:Name=\"TrailersSection\"", StringComparison.Ordinal),
@@ -496,8 +496,9 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("var contentId = Item?.ContentId;", viewModel);
         Assert.Contains("if (Item?.ContentId != contentId) return;", viewModel);
         Assert.Contains("Publish(MediaSurfaceChangeKind.RatingChanged, contentId, seriesId, nextRating)", viewModel);
-        Assert.Contains("Publish(\n                wasWatched ? MediaSurfaceChangeKind.WatchedCleared : MediaSurfaceChangeKind.WatchedMarked,\n                contentId,\n                seriesId)", viewModel.Replace("\r\n", "\n"));
-        Assert.Contains("if (Item?.ContentId == contentId)\n                IsWatched = wasWatched;", viewModel.Replace("\r\n", "\n"));
+        Assert.Contains("seriesId, context: context)", viewModel);
+        Assert.Contains("bool Current() => ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context)", viewModel);
+        Assert.Contains("if (Current())\n                IsWatched = wasWatched;", viewModel.Replace("\r\n", "\n"));
     }
 
     [Fact]
@@ -512,7 +513,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("\"series\" => \"Mark Series Unwatched\"", page);
         Assert.Contains("\"season\" => \"Mark Season Unwatched\"", page);
         Assert.Contains("EpisodeContextText.Text = $\"S{item.SeasonNumber}", page);
-        Assert.Contains("ItemSource = \"episode_carousel\"", page);
+        Assert.Contains("var currentEpisodeIndex = BuildSiblingEpisodeCards()", page);
         Assert.Contains("nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(MediaItem.ContentId, MediaNavigationContext.LibraryId(this)))", landscape);
         Assert.Contains("private void OnHeadingClick", landscape);
         Assert.Contains("MediaItem.ItemSource != \"episode_carousel\"", landscape);
@@ -638,7 +639,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("showCollectionActions: false", page);
         Assert.DoesNotContain("Resources[\"SurfaceBorderBrush\"]", page);
         Assert.DoesNotContain("Executive Producer\", StringComparison.OrdinalIgnoreCase", page);
-        Assert.Contains("var episodeAirDate = FormatDetailDate(episode.AirDate)", page);
+        Assert.Contains("new EpisodeCardCaption(episode, FormatDetailDate(episode.AirDate)", page);
         Assert.Contains("DefaultLeafPlayLabel(item.Type)", page);
         Assert.Contains("? \"Play Episode\"", page);
         Assert.Contains("userData.WatchedCount > 0 || userData.InProgressCount > 0", page);

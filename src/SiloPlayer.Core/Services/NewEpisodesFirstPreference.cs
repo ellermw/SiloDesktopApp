@@ -21,6 +21,8 @@ public sealed class NewEpisodesFirstPreference(SettingsApi api)
         var response = await api.GetContractEffectiveSettingsAsync(context, [Key], ct: ct);
         EnsureCurrent(context, ct);
         var entry = response.Settings.FirstOrDefault(item => item.Key == Key);
+        if (entry?.Value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            throw new InvalidOperationException("Home preference effective value missing.");
         return new(context, true, entry?.Value.ValueKind == JsonValueKind.True, entry?.Source ?? "default");
     }
 

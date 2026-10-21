@@ -35,7 +35,7 @@ public sealed class PlaybackSeekBehaviorTests
         Assert.Contains("PlaybackTransportKind.DirectProgressive", source);
         Assert.Contains("MpvLoadStartSeconds: mediaStartSeconds", source);
         Assert.Contains("TimelineOffsetSeconds: mediaStartSeconds", source);
-        Assert.Contains("BeginMpvLoad(prepared, restorePaused: false);", source);
+        Assert.Contains("BeginMpvLoad(prepared, restorePaused: IsWatchTogetherPlayback);", source);
         Assert.Contains("prepared.Plan.TransportKind == PlaybackTransportKind.DirectProgressive", source);
         Assert.Contains("? TimeSpan.FromSeconds(15)", source);
         Assert.Contains("await Task.Delay(loadDeadline, ownerCts.Token)", source);

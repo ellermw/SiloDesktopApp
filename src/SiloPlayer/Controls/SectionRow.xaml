@@ -67,6 +67,7 @@
                             FontWeight="SemiBold"
                             Foreground="{StaticResource PrimaryTextBrush}" />
                         <TextBlock
+                            x:Name="TitleViewSuffix"
                             Text="View"
                             FontSize="14"
                             Foreground="{StaticResource SecondaryTextBrush}"

@@ -187,7 +187,9 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
     {
         "artwork" => 0,
         "title" => 36,
-        _ => 56,
+        // Episode posters show series title, episode title and episode code.
+        // Reserve the complete three-line caption in both cards and grid rows.
+        _ => 76,
     };
 
     private void Reset(bool supported, bool unavailable)

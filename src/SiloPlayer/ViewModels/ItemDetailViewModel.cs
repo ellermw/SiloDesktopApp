@@ -22,6 +22,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     private long _seasonsLoadGeneration;
     private long _episodesLoadGeneration;
     private long _watchedStateGeneration;
+    public long WatchedStateRevision => Volatile.Read(ref _watchedStateGeneration);
     public int? LibraryId { get; private set; }
     public Task LoadInLibraryAsync(string contentId, int? libraryId)
     {
@@ -72,7 +73,13 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     public void Receive(MediaSurfaceChanged message)
     {
+        if (message.Context is { } context && !_catalogApi.IsCurrentContext(context)) return;
         _detailPrefetchCache.Invalidate(message.ContentId);
+        if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared)
+        {
+            ApplyWatchedChange(message);
+            return;
+        }
         // Ignore our own publishes (already reflected in state) and anything
         // that doesn't match the currently displayed item.
         if (Item == null || message.ContentId != Item.ContentId) return;
@@ -91,16 +98,127 @@ public partial class ItemDetailViewModel : ObservableObject,
             case MediaSurfaceChangeKind.WatchlistRemoved:
                 InWatchlist = false;
                 break;
-            case MediaSurfaceChangeKind.WatchedMarked:
-                IsWatched = true;
-                break;
-            case MediaSurfaceChangeKind.WatchedCleared:
-                IsWatched = false;
-                break;
             case MediaSurfaceChangeKind.RatingChanged:
                 UserRating = message.Rating;
                 break;
         }
+    }
+
+    private void ApplyWatchedChange(MediaSurfaceChanged message)
+    {
+        var item = Item;
+        if (item == null) return;
+        var played = message.Kind == MediaSurfaceChangeKind.WatchedMarked;
+        var own = item.ContentId == message.ContentId;
+        var ancestor = item.SeriesId == message.ContentId;
+        var cascade = (own && item.Type is "series" or "season") || ancestor;
+        var season = Seasons.FirstOrDefault(s => s.ContentId == message.ContentId);
+        var changedEpisodes = Episodes.Where(e => cascade
+            || e.ContentId == message.ContentId || season?.SeasonNumber == e.SeasonNumber).ToArray();
+        if (!own && !ancestor && season == null && changedEpisodes.Length == 0)
+        {
+            if ((item.Type is "series" or "season")
+                && (item.ContentId == message.SeriesId || (item.SeriesId == message.SeriesId && message.SeriesId != null)))
+                _ = RefreshRelatedWatchedStateAsync(item);
+            return;
+        }
+
+        Interlocked.Increment(ref _watchedStateGeneration);
+        _detailPrefetchCache.Invalidate(item.ContentId);
+        if (!string.IsNullOrEmpty(item.SeriesId)) _detailPrefetchCache.Invalidate(item.SeriesId);
+        var watchedDelta = 0;
+        var progressDelta = 0;
+        foreach (var episode in changedEpisodes)
+        {
+            episode.UserData ??= new();
+            var data = episode.UserData;
+            var delta = (played ? 1 : 0) - (data.Played ? 1 : 0);
+            var progress = data.IsInProgress ? -1 : 0;
+            watchedDelta += delta;
+            progressDelta += progress;
+            data.Played = played;
+            data.IsInProgress = false;
+            data.PositionSeconds = 0;
+            _detailPrefetchCache.Invalidate(episode.ContentId);
+            if (!own && !ancestor && season == null)
+            {
+                var parentSeason = Seasons.FirstOrDefault(s => s.SeasonNumber == episode.SeasonNumber);
+                if (parentSeason != null)
+                {
+                    parentSeason.UserData ??= new() { UnplayedCount = parentSeason.EpisodeCount };
+                    var parent = parentSeason.UserData;
+                    parent.WatchedCount = Math.Clamp(parent.WatchedCount + delta, 0, parentSeason.EpisodeCount);
+                    parent.UnplayedCount = Math.Max(0, parentSeason.EpisodeCount - parent.WatchedCount);
+                    parent.InProgressCount = Math.Max(0, parent.InProgressCount + progress);
+                    parent.Played = parentSeason.EpisodeCount > 0 && parent.UnplayedCount == 0;
+                    _detailPrefetchCache.Invalidate(parentSeason.ContentId);
+                }
+            }
+        }
+        foreach (var affected in Seasons.Where(s => cascade || s == season))
+        {
+            var old = affected.UserData;
+            if (!own && !ancestor)
+            {
+                watchedDelta = (played ? affected.EpisodeCount : 0) - (old?.WatchedCount ?? 0);
+                progressDelta = -(old?.InProgressCount ?? 0);
+            }
+            affected.UserData = new() { Played = played, WatchedCount = played ? affected.EpisodeCount : 0,
+                UnplayedCount = played ? 0 : affected.EpisodeCount };
+            _detailPrefetchCache.Invalidate(affected.ContentId);
+        }
+        item.UserData ??= new();
+        if (own || ancestor)
+        {
+            item.UserData.Played = played;
+            item.UserData.IsInProgress = false;
+            item.UserData.PositionSeconds = 0;
+            if (item.Type is "series" or "season")
+            {
+                var total = item.EpisodeCount ?? (item.Type == "series" ? Seasons.Sum(s => s.EpisodeCount) : Episodes.Count);
+                item.UserData.WatchedCount = played ? total : 0;
+                item.UserData.UnplayedCount = played ? 0 : total;
+                item.UserData.InProgressCount = 0;
+            }
+        }
+        else if (item.Type is "series" or "season")
+        {
+            var total = item.EpisodeCount ?? (item.Type == "series" ? Seasons.Sum(s => s.EpisodeCount) : Episodes.Count);
+            item.UserData.WatchedCount = Math.Clamp(item.UserData.WatchedCount + watchedDelta, 0, total);
+            item.UserData.UnplayedCount = Math.Max(0, total - item.UserData.WatchedCount);
+            item.UserData.InProgressCount = Math.Max(0, item.UserData.InProgressCount + progressDelta);
+            item.UserData.Played = total > 0 && item.UserData.UnplayedCount == 0;
+        }
+        IsWatched = item.UserData.Played;
+        OnPropertyChanged(nameof(Item));
+        if (changedEpisodes.Length > 0) OnPropertyChanged(nameof(Episodes));
+        if (Seasons.Count > 0) OnPropertyChanged(nameof(Seasons));
+    }
+
+    private async Task RefreshRelatedWatchedStateAsync(MediaItemDetail item)
+    {
+        var generation = Interlocked.Increment(ref _watchedStateGeneration);
+        var context = _catalogApi.CaptureContext();
+        var libraryId = LibraryId;
+        bool Current() => ReferenceEquals(Item, item) && LibraryId == libraryId
+            && generation == Volatile.Read(ref _watchedStateGeneration) && _catalogApi.IsCurrentContext(context);
+        try
+        {
+            _detailPrefetchCache.Invalidate(item.ContentId);
+            var refreshed = await ReadDetailAsync(item.ContentId, CancellationToken.None);
+            if (!Current()) return;
+            var seasons = item.Type == "series" ? await _catalogApi.GetSeasonsAsync(item.ContentId, libraryId) : null;
+            if (!Current()) return;
+            item.UserData = refreshed.UserData;
+            IsWatched = item.UserData?.Played ?? false;
+            if (seasons != null)
+                foreach (var loaded in Seasons)
+                    if (seasons.Seasons.FirstOrDefault(s => s.ContentId == loaded.ContentId) is { } fresh)
+                        loaded.UserData = fresh.UserData;
+            OnPropertyChanged(nameof(Item));
+            OnPropertyChanged(nameof(Seasons));
+        }
+        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Related watched-state refresh failed: {ex.Message}"); }
     }
 
     public void Receive(PlaybackProgressUpdated message)
@@ -149,14 +267,15 @@ public partial class ItemDetailViewModel : ObservableObject,
         var item = Item;
         if (item?.Type is not ("movie" or "episode" or "series" or "season")) return;
         var generation = Volatile.Read(ref _watchedStateGeneration);
+        var context = _catalogApi.CaptureContext();
         try
         {
             await pendingProgressSave.WaitAsync(cancellationToken);
-            if (!ReferenceEquals(Item, item) || generation != Volatile.Read(ref _watchedStateGeneration)) return;
+            if (!ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context) || generation != Volatile.Read(ref _watchedStateGeneration)) return;
             _detailPrefetchCache.Invalidate(item.ContentId);
             var refreshed = await ReadDetailAsync(item.ContentId, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            if (!ReferenceEquals(Item, item) || generation != Volatile.Read(ref _watchedStateGeneration)) return;
+            if (!ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context) || generation != Volatile.Read(ref _watchedStateGeneration)) return;
             item.UserData = refreshed.UserData;
             IsWatched = item.UserData?.Played ?? false;
         }
@@ -402,9 +521,11 @@ public partial class ItemDetailViewModel : ObservableObject,
     [RelayCommand]
     private async Task ToggleWatchedAsync()
     {
-        var contentId = Item?.ContentId;
-        var seriesId = Item?.SeriesId;
+        var item = Item;
+        var contentId = item?.ContentId;
+        var seriesId = item?.SeriesId;
         if (string.IsNullOrWhiteSpace(contentId)) return;
+        var context = _catalogApi.CaptureContext();
 
         // B13 + F4: optimistic update — flip the flag immediately so the UI
         // responds instantly, then call the API. If it fails, revert. Publish
@@ -412,6 +533,9 @@ public partial class ItemDetailViewModel : ObservableObject,
         // Watching row and HistoryViewModel refresh without a page reload.
         bool wasWatched = IsWatched;
         IsWatched = !wasWatched;
+        var generation = Volatile.Read(ref _watchedStateGeneration);
+        bool Current() => ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context)
+            && generation == Volatile.Read(ref _watchedStateGeneration);
         try
         {
             if (wasWatched)
@@ -419,15 +543,15 @@ public partial class ItemDetailViewModel : ObservableObject,
             else
                 await _catalogApi.MarkWatchedAsync(contentId);
 
-            if (Item?.ContentId != contentId) return;
-            Publish(
+            if (!Current()) return;
+            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                 wasWatched ? MediaSurfaceChangeKind.WatchedCleared : MediaSurfaceChangeKind.WatchedMarked,
                 contentId,
-                seriesId);
+                seriesId, context: context));
         }
         catch
         {
-            if (Item?.ContentId == contentId)
+            if (Current())
                 IsWatched = wasWatched;
         }
     }
@@ -466,15 +590,23 @@ public partial class ItemDetailViewModel : ObservableObject,
         if (Item == null || !IsSeries || IsSeasonsLoading) return;
 
         var contentId = Item.ContentId;
+        var item = Item;
+        var context = _catalogApi.CaptureContext();
         var generation = Interlocked.Increment(ref _seasonsLoadGeneration);
 
         IsSeasonsLoading = true;
         SeasonsLoadFailed = false;
         try
         {
-            var response = await _catalogApi.GetSeasonsAsync(contentId, LibraryId);
-            if (generation != Volatile.Read(ref _seasonsLoadGeneration)
-                || Item?.ContentId != contentId) return;
+            SeasonsResponse response;
+            while (true)
+            {
+                var watchedRevision = WatchedStateRevision;
+                response = await _catalogApi.GetSeasonsAsync(contentId, LibraryId);
+                if (generation != Volatile.Read(ref _seasonsLoadGeneration)
+                    || !ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context)) return;
+                if (watchedRevision == WatchedStateRevision) break;
+            }
             Seasons.Clear();
             foreach (var season in response.Seasons)
                 Seasons.Add(season);
@@ -504,6 +636,8 @@ public partial class ItemDetailViewModel : ObservableObject,
         if (Item == null || seasonNumber < 0) return;
 
         var contentId = Item.ContentId;
+        var item = Item;
+        var context = _catalogApi.CaptureContext();
         var generation = Interlocked.Increment(ref _episodesLoadGeneration);
 
         SelectedSeasonNumber = seasonNumber;
@@ -513,9 +647,15 @@ public partial class ItemDetailViewModel : ObservableObject,
 
         try
         {
-            var response = await _catalogApi.GetEpisodesAsync(contentId, seasonNumber, LibraryId);
-            if (generation != Volatile.Read(ref _episodesLoadGeneration)
-                || Item?.ContentId != contentId) return;
+            EpisodesResponse response;
+            while (true)
+            {
+                var watchedRevision = WatchedStateRevision;
+                response = await _catalogApi.GetEpisodesAsync(contentId, seasonNumber, LibraryId);
+                if (generation != Volatile.Read(ref _episodesLoadGeneration)
+                    || !ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context)) return;
+                if (watchedRevision == WatchedStateRevision) break;
+            }
             foreach (var episode in response.Episodes)
                 Episodes.Add(episode);
         }

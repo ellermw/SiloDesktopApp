@@ -33,6 +33,15 @@ public sealed partial class LandscapeCard : UserControl
         set => SetValue(MediaItemProperty, value);
     }
 
+    public void RefreshWatchedState(bool played, double positionSeconds, bool inProgress)
+    {
+        if (MediaItem is not { } item) return;
+        MediaItemStateUpdater.SetWatched(item, played);
+        item.PositionSeconds = positionSeconds;
+        if (item.UserState != null) item.UserState.IsInProgress = inProgress;
+        RefreshMenuState(item);
+    }
+
     public static readonly DependencyProperty UsePosterAspectProperty =
         DependencyProperty.Register(
             nameof(UsePosterAspect),

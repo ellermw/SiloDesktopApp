@@ -142,6 +142,11 @@ public static class HomeLayoutTransfer
                 }
                 if (row.Removed == true) continue;
                 var type = row.UserSectionType ?? row.SectionType ?? "";
+                if (type == "next_up")
+                {
+                    plan.Skipped.Add($"{title}: Next Up is supplied by the server; choose Separate row in Home preferences");
+                    continue;
+                }
                 var filter = type is "custom_filter" or "filter";
                 string? reason = null;
                 if (!target.RecipeAdminOnly.TryGetValue(type, out var adminOnly) && !filter && !same) reason ??= "unknown recipe";

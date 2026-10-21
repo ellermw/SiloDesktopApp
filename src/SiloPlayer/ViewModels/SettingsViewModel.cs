@@ -600,6 +600,7 @@ public partial class SettingsViewModel : ObservableObject
             async Task LoadContractPlaybackAsync()
             {
                 var context = _settingsApi.CaptureContext();
+                NextUpPreferenceLoaded = false;
                 try
                 {
                     SeekSettingsAvailable = false;
@@ -643,6 +644,7 @@ public partial class SettingsViewModel : ObservableObject
                     _nextUpDeviceOverride = values.TryGetValue("ui.next_up_mode", out var nextUpEntry) && nextUpEntry.Source == "profile_device";
                     NextUpMode = ReadString(values, "ui.next_up_mode",
                         string.IsNullOrWhiteSpace(NextUpMode) ? "combined" : NextUpMode);
+                    ApplyResolvedNextUpPreference(nextUpEntry, context);
                 }
                 catch
                 {
@@ -1087,19 +1089,7 @@ public partial class SettingsViewModel : ObservableObject
 
     private bool _nextUpDeviceOverride;
     [RelayCommand]
-    private async Task SaveNextUpModeAsync()
-    {
-        if (_suppressSave) return;
-        var context = _settingsApi.CaptureContext();
-        try
-        {
-            await _settingsApi.SaveProfileDefaultAsync(context, "ui.next_up_mode", NextUpMode, _nextUpDeviceOverride);
-            if (!_settingsApi.IsCurrentContext(context)) return;
-            _nextUpDeviceOverride = false;
-            ShowStatus("Next up mode saved");
-        }
-        catch (Exception ex) { if (_settingsApi.IsCurrentContext(context)) ErrorMessage = $"Failed to save next up mode: {ex.Message}"; }
-    }
+    private Task SaveNextUpModeAsync() => WriteNextUpPreferenceAsync(reset: false);
 
     private async Task SaveProfileFieldAsync(string field, object value)
     {
@@ -1203,23 +1193,7 @@ public partial class SettingsViewModel : ObservableObject
         => value is "12h" or "24h" ? value : "auto";
 
     [RelayCommand]
-    private async Task ResetNextUpModeAsync()
-    {
-        var context = _settingsApi.CaptureContext();
-        try
-        {
-            await _settingsApi.ResetProfileDefaultAsync(context, "ui.next_up_mode");
-            if (!_settingsApi.IsCurrentContext(context)) return;
-            _nextUpDeviceOverride = false;
-            var resolved = await _settingsApi.GetContractEffectiveSettingsAsync(["ui.next_up_mode"]);
-            if (!_settingsApi.IsCurrentContext(context)) return;
-            _suppressSave = true;
-            try { NextUpMode = ReadString(resolved.Settings.ToDictionary(entry => entry.Key), "ui.next_up_mode", "combined"); }
-            finally { _suppressSave = false; }
-            ShowStatus("Next up preference reset");
-        }
-        catch (Exception ex) { if (_settingsApi.IsCurrentContext(context)) ErrorMessage = $"Failed to reset next up preference: {ex.Message}"; }
-    }
+    private Task ResetNextUpModeAsync() => WriteNextUpPreferenceAsync(reset: true);
 
     // ===== Watch Providers =====
 

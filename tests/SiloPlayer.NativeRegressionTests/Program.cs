@@ -127,6 +127,41 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             _window.AppWindow.Show(false);
             await Task.Delay(150); // Allow the hidden native tree to acquire its XamlRoot.
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct20-calendar-date")
+            {
+                await CalendarDateOct20NativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct20-detail-cards")
+            {
+                await Oct20DetailCardsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct20-playback")
+            {
+                await Oct20PlaybackNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct20-home-rows")
+            {
+                await October20HomeRowsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct20-watched")
+            {
+                await WatchedStateOct20NativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct20-defaults")
+            {
+                await InheritedDefaultsOct20NativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "poster-captions")
+            {
+                await PosterCaptionNativeFixture.RunAsync(parent, _window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct18-ui")
             {
                 await UpstreamOct18UiNativeFixture.RunAsync(parent);

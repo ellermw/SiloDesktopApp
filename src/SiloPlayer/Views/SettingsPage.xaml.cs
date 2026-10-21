@@ -162,6 +162,14 @@ public sealed partial class SettingsPage : Page
                 or nameof(SettingsViewModel.SupportsProfileSubtitleTiming)) DispatcherQueue.TryEnqueue(SyncSubtitlePreferenceStatus);
             if (args.PropertyName == nameof(SettingsViewModel.VisibleLibraryCount))
                 DispatcherQueue.TryEnqueue(() => App.MainWindowInstance?.UpdateLibraryNavItems());
+            if (args.PropertyName is nameof(SettingsViewModel.NextUpMode) or nameof(SettingsViewModel.NextUpPreferenceLoaded))
+                DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (!IsLoaded) return;
+                    var suppressed = _suppressEvents; _suppressEvents = true;
+                    try { SelectComboBoxByTag(NextUpModeComboBox, ViewModel.NextUpMode); }
+                    finally { _suppressEvents = suppressed; }
+                });
         };
 
         Loaded += (_, _) => ViewModel.SubtitleSettingsApi.LocalProfileSettingChanged += OnSubtitlePreferenceChanged;
@@ -537,6 +545,7 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
         DeactivateLayoutTransfer();
         ViewModel.CloseNewEpisodesPreference();
         ViewModel.DeactivateTitleArt();
+        ViewModel.DeactivateInheritedPreferences();
         DeactivateAccountSignIn();
         ++_overlayLoadGeneration;
         _requestSettingGeneration++;
@@ -3301,7 +3310,7 @@ _webhookPlexAuthCts?.Cancel();
         "because_you_watched" => "Because You Watched",
         "similar_users_liked" => "Profiles Like You Enjoyed",
         "taste_match" => "Top Picks Today",
-        "next_up" => "On Deck",
+        "next_up" => "Next Up",
         "next_in_series" => "Next in Series",
         "watchlist" => "Watchlist",
         "favorites" => "Favorites",

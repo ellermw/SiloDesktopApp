@@ -165,6 +165,10 @@ public class ItemExtra
     public double? DurationSeconds { get; set; }
     [JsonPropertyName("file_id")]
     public int? FileId { get; set; }
+    [JsonPropertyName("still_url")]
+    public string? StillUrl { get; set; }
+    [JsonPropertyName("still_thumbhash")]
+    public string? StillThumbhash { get; set; }
 }
 
 public sealed class MetadataAiStatus

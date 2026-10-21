@@ -36,6 +36,7 @@ public sealed class WatchPartySyncController(IWatchPartyPlayback player, Action<
     private long? _disconnectedAt;
     private bool _reconnectNotice;
     private WatchTogetherTransportCommand? _pending;
+    private bool _pendingPlayAwaitedMedia;
     private long _executeAt;
     private WatchPartyRoomClock? _pendingClock;
     private double _pendingClockOffset;
@@ -76,6 +77,15 @@ public sealed class WatchPartySyncController(IWatchPartyPlayback player, Action<
     public event Action<string>? ClosePlaybackRequested;
     public event Action? LowerQualityRequested;
     public bool HasSession => _session != null;
+    public double? StartupPosition(long now)
+    {
+        if (!_connected || _session == null || _room?.Phase != "playing") return null;
+        var command = _pending != null && now >= _executeAt ? _pending : _applied;
+        if (command == null) return null;
+        var executeAt = ReferenceEquals(command, _pending) ? _executeAt : _referenceExecuteAt;
+        return Math.Max(0, command.PositionSeconds +
+            (Playing(command) ? Math.Max(0, (now - executeAt) / 1000d) : 0));
+    }
 
     public void SetSnapshot(WatchTogetherRoomSnapshot? room)
     {
@@ -125,6 +135,7 @@ public sealed class WatchPartySyncController(IWatchPartyPlayback player, Action<
             _reconnectNotice = false;
             // The socket owns attachment. An unchanged playback ID still needs a new attach.
             _pending = null;
+            _pendingPlayAwaitedMedia = false;
             _applied = null;
             _seenCommands.Clear();
             _commandOrder.Clear();
@@ -136,6 +147,7 @@ public sealed class WatchPartySyncController(IWatchPartyPlayback player, Action<
             ClearHeldSeek();
             _disconnectedAt = now;
             _pending = null;
+            _pendingPlayAwaitedMedia = false;
             RestoreRate();
         }
     }
@@ -199,6 +211,7 @@ public sealed class WatchPartySyncController(IWatchPartyPlayback player, Action<
         _commandOrder.Enqueue(command.CommandId);
         while (_commandOrder.Count > 128) _seenCommands.Remove(_commandOrder.Dequeue());
         _pending = command;
+        _pendingPlayAwaitedMedia = false;
         _executeAt = executeAt;
         _pendingClock = null;
         if (command.Action == "seek" && _heldSeek is { } held && Math.Abs(command.PositionSeconds - held) <= 1)
@@ -248,6 +261,8 @@ public sealed class WatchPartySyncController(IWatchPartyPlayback player, Action<
             _stalls.Clear();
             _qualityOffered = false;
         }
+        if (_pending is { Action: "play" } && now >= _executeAt && player.Paused && (!player.Loaded || player.Busy))
+            _pendingPlayAwaitedMedia = true;
         if (_pending != null && now >= _executeAt && player.Loaded && !player.Busy)
         {
             var command = _pending;
@@ -400,8 +415,12 @@ public sealed class WatchPartySyncController(IWatchPartyPlayback player, Action<
         var delta = targetPosition - player.Position;
         var local = player.CanSeekLocally(targetPosition);
         var playingCorrection = command.Action == "play" && localPlaying;
+        // A first play held for media must join where the room is now, even
+        // when a forward-only transport needs a replan for a small gap.
+        var starting = (_applied == null || _pendingPlayAwaitedMedia) && command.Action == "play" && Playing(command) && !localPlaying;
+        _pendingPlayAwaitedMedia = false;
         var seek = command.Action == "seek" || Math.Abs(delta) > 5 ||
-            (!playingCorrection && Math.Abs(delta) > 1 && local);
+            (!playingCorrection && Math.Abs(delta) > 1 && (local || starting));
         _appliedRequiresLanding = _issuedSeekTarget != null;
         _appliedLandingConfirmed = false;
         if (command.Action is "seek" or "pause") _reloadTarget = null;
@@ -428,7 +447,8 @@ public sealed class WatchPartySyncController(IWatchPartyPlayback player, Action<
                 }
                 else if (explicitSeek) _reloadTarget = null;
                 // Pause first, so asynchronous native reanchors capture the room state.
-                player.SetPaused(command.Action == "pause" || command.PlaybackState is "waiting" or "paused");
+                player.SetPaused(starting && !buffered || command.Action == "pause" ||
+                    command.PlaybackState is "waiting" or "paused");
                 IssueSeek(target, now);
                 _appliedRequiresLanding = true;
             }
@@ -456,6 +476,7 @@ public sealed class WatchPartySyncController(IWatchPartyPlayback player, Action<
     {
         RestoreRate();
         _pending = _applied = null;
+        _pendingPlayAwaitedMedia = false;
         _pendingClock = _referenceClock = null;
         ClearHeldSeek();
         _seenCommands.Clear();

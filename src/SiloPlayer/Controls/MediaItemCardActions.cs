@@ -18,22 +18,27 @@ public static class MediaItemCardActions
     {
         var catalog = App.Services.GetRequiredService<CatalogApi>();
         var toast = App.Services.GetRequiredService<ToastService>();
+        var context = catalog.CaptureContext();
         try
         {
             var isWatched = await MediaItemActionExecutor.ToggleWatchedAsync(
                 item,
-                nextValue => nextValue
-                    ? catalog.MarkWatchedAsync(item.ContentId)
-                    : catalog.MarkUnwatchedAsync(item.ContentId));
+                async nextValue =>
+                {
+                    if (nextValue) await catalog.MarkWatchedAsync(item.ContentId);
+                    else await catalog.MarkUnwatchedAsync(item.ContentId);
+                    if (!catalog.IsCurrentContext(context)) throw new OperationCanceledException();
+                });
 
             WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                 isWatched
                     ? MediaSurfaceChangeKind.WatchedMarked
                     : MediaSurfaceChangeKind.WatchedCleared,
                 item.ContentId,
-                item.SeriesId));
+                item.SeriesId, context: context));
             toast.Success(GetWatchedToastMessage(item.Type, isWatched));
         }
+        catch (OperationCanceledException) when (!catalog.IsCurrentContext(context)) { }
         catch (Exception ex)
         {
             toast.Error(ex);

@@ -176,6 +176,7 @@ public sealed partial class MainWindow : Window
         _eventChannel.AccessChanged += OnAccessChanged;
         _eventChannel.ReadCatchUpRequested += OnReadCatchUpRequested;
         _apiClient.LocalizedReads.Invalidated += OnLocalizedReadsInvalidated;
+        InitializeInheritedPreferenceRefresh();
         App.Services.GetRequiredService<EpisodeSpoilerPreferences>().Changed += OnEpisodeSpoilerPreferencesChanged;
 
         // Playing Next cinematic overlay — enters during the final 30 seconds
@@ -450,6 +451,7 @@ public sealed partial class MainWindow : Window
         _eventChannel.AccessChanged -= OnAccessChanged;
         _eventChannel.ReadCatchUpRequested -= OnReadCatchUpRequested;
         _apiClient.LocalizedReads.Invalidated -= OnLocalizedReadsInvalidated;
+        ReleaseInheritedPreferenceRefresh();
         App.Services.GetRequiredService<EpisodeSpoilerPreferences>().Changed -= OnEpisodeSpoilerPreferencesChanged;
         _localizedRefreshCts?.Cancel();
         _localizedRefreshCts?.Dispose();
@@ -1682,6 +1684,7 @@ public sealed partial class MainWindow : Window
             _apiClient.LocalizedReads.NotifyRealtime(channel, eventName, data, _authService.SelectedProfileId);
             App.Services.GetService<NotInterestedService>()?.ReceiveRealtime(channel, eventName, data);
             NotifyEpisodeSpoilerSettingFromRealtime(channel, eventName, data);
+            NotifyInheritedPreferenceFromRealtime(channel, eventName, data);
             if (channel == "user_settings" && eventName == "user_settings.changed"
                 && data.ValueKind == System.Text.Json.JsonValueKind.Object
                 && (!data.TryGetProperty("profile_id", out var changedProfile) || changedProfile.ValueKind == System.Text.Json.JsonValueKind.String && changedProfile.GetString() == _authService.SelectedProfileId)
@@ -2908,11 +2911,14 @@ public sealed partial class MainWindow : Window
         CalendarNavItem.Visibility = customized ? Visibility.Collapsed : Visibility.Visible;
         if (!customized || !CanExposeAuthenticatedNavigation) return;
 
+        // Search stays fixed after the customized primary shortcuts.
+        var insertionIndex = NavView.MenuItems.IndexOf(SearchNavItem);
+        if (insertionIndex < 0) insertionIndex = headerIndex;
         foreach (var menuItem in customMenu!.Items)
         {
             var resolved = ResolvePrimaryMenuItem(menuItem);
             if (resolved is null) continue;
-            NavView.MenuItems.Insert(headerIndex++, resolved);
+            NavView.MenuItems.Insert(insertionIndex++, resolved);
         }
     }
 

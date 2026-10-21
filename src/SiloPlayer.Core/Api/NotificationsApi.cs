@@ -112,11 +112,21 @@ public sealed partial class NotificationsApi(SiloApiClient client)
             new Dictionary<string, object?> { ["mode"] = mode },
             ct);
 
+    public Task<NotificationDiscordPreferences> UpdateDiscordPreferencesAsync(ApiRequestContext context, string mode, CancellationToken ct = default)
+        => client.SendRequestAsync<NotificationDiscordPreferences>(context, HttpMethod.Put, "/api/v2/notifications/discord-preferences",
+            new Dictionary<string, object?> { ["mode"] = mode }, ct);
+
     public Task<NotificationDiscordLinkInit> StartDiscordLinkAsync(CancellationToken ct = default)
         => client.PostAsync<NotificationDiscordLinkInit>("/api/v2/notifications/discord/link/init", new Dictionary<string, object?>(), ct);
 
+    public Task<NotificationDiscordLinkInit> StartDiscordLinkAsync(ApiRequestContext context, CancellationToken ct = default)
+        => client.SendRequestAsync<NotificationDiscordLinkInit>(context, HttpMethod.Post, "/api/v2/notifications/discord/link/init", new Dictionary<string, object?>(), ct);
+
     public Task UnlinkDiscordAsync(CancellationToken ct = default)
         => client.DeleteAsync("/api/v2/notifications/discord-link", ct);
+
+    public Task UnlinkDiscordAsync(ApiRequestContext context, CancellationToken ct = default)
+        => client.SendNoContentRequestAsync(context, HttpMethod.Delete, "/api/v2/notifications/discord-link", null, ct);
 
     public async Task<List<NotificationWebhook>> GetWebhooksAsync(CancellationToken ct = default)
     {

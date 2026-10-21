@@ -1,16 +1,16 @@
 # Silo Desktop Player
 
-> **Current release: 1.2.271.** Adds current Auto quality and bitrate-cap contracts across native playback, fullscreen controls and SiloCast; updated detail/Manage and subtitle-search menus; and login recovery placement. Includes all previous 1.2.268 updates. See [the release record](docs/releases/1.2.271.md) and [SiloCast setup](docs/silocast-testing.md). Local development starts in `D:\SiloPlayer`; read [the current handoff](docs/current-development.md) before editing or building.
+> **Current release: 1.2.286.** Fixes repeated catalog failures after cursor rejection and updates watched badges, counts and actions without a page reload. Includes twelve current Silo Server/WebUI update groups and the shared episode-poster caption repair. See [the release record](docs/releases/1.2.286.md) and [SiloCast setup](docs/silocast-testing.md). Local development starts in `D:\SiloPlayer`; read [the current handoff](docs/current-development.md) before editing or building.
 
 Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/silo-server), built with WinUI 3 and libmpv. The project aims to reproduce the Silo WebUI visually and functionally while providing broad native direct-play support for high-bitrate HEVC, HDR, Dolby Vision, lossless audio, and other formats browsers commonly transcode.
 
-> **Project status:** active pre-release development. Version 1.2.271 preserves the prior parity work and SiloCast receiver. Phone interoperability, broader hardware testing and the separate intermittent Next Up removal investigation continue. Targeted verification does not certify complete visual/functional parity. Silo Server changes are re-audited against its official public `main` branch.
+> **Project status:** active pre-release development. Version 1.2.286 preserves the prior parity work and SiloCast receiver. Phone interoperability, broader hardware testing and the separate intermittent Next Up removal investigation continue. Targeted verification does not certify complete visual/functional parity. Silo Server changes are re-audited against its official public `main` branch.
 
 ## Download
 
-[**Download Silo Desktop Player 1.2.271**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.271/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.2.286**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.286/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `88AD817966CF41C64150DD9B9AD8EE9A3087CA530D0A564EFA797F18DC0A5A9D`
+SHA-256: `1FEF85B4F680658D27D7573B2237BCD37CBF8133163753F3CC878A4025A5F624`
 
 SiloCast is built in and enabled for fresh/missing preferences. The installer automatically adds its Private-network/local-subnet firewall rule, with no extra SiloCast checkbox. A saved opt-out remains respected; enable or disable it under **Settings → Playback → Desktop playback → Allow SiloCast control**. Keep the PC and phone on the same private local network and the desktop app running. See [the testing guide](docs/silocast-testing.md) for setup and troubleshooting. Actual iPhone/Android interoperability remains under testing.
 
@@ -50,6 +50,14 @@ The official public Silo Server reference fetched for the final pass is [1a7a397
 
 
 ## Latest release
+
+### 1.2.286 — upstream alignment, catalog recovery and watched state
+
+- Retire rejected catalog cursors and their cached cards, then retry the visible range once. Add sanitized query/cursor correlation for future diagnostics; the initial rejection trigger remains unproven.
+- Update show, season and episode watched actions, descendant badges and parent counts without reloading, including delayed-response and sibling-card cases.
+- Apply twelve update groups from the current official Silo source: delivered quality across native/OSC/SiloCast, Watch Party startup, inherited defaults, all-row catalog navigation, Seasonal Picks, detail captions/extras, calendar dates, navigation/provider alignment, synced-list help and primary-profile Discord controls.
+- Preserve the episode-poster caption repair across Home, TV/Anime sections and virtualized grids.
+- Publish the exact installer the owner installed and approved. Verification passed **2,005 main tests**, **16 exact-payload native groups** and **24 published-service playback groups**. See [the release record](docs/releases/1.2.286.md) and [the 41-commit upstream comparison](docs/parity/2026-10-20-upstream-delta.md) for scope and limits.
 
 ### 1.2.271 — current quality contracts and menu updates
 

@@ -17,7 +17,7 @@ namespace SiloPlayer.Views.Dialogs;
 /// Profile-facing callers intentionally hide admin-only recipes and do not
 /// expose the admin bulk-apply/enabled controls.
 /// </summary>
-public static class RecipeGalleryDialog
+public static partial class RecipeGalleryDialog
 {
     private static readonly (string Key, string Label)[] CategoryLabels =
     [
@@ -84,7 +84,6 @@ public static class RecipeGalleryDialog
             ("because_you_watched", "Because You Watched"),
             ("similar_users_liked", "Profiles Like You Enjoyed"),
             ("taste_match", "Top Picks Today"),
-            ("next_up", "On Deck"),
             ("next_in_series", "Next in Series"),
             ("watchlist", "Watchlist"),
             ("favorites", "Favorites"),
@@ -98,7 +97,7 @@ public static class RecipeGalleryDialog
             .Concat(fallbackTypes
                 .Where(fallback => !definitions.ContainsKey(fallback.Type))
                 .Select(fallback => new SectionTypeOption(fallback.Type, fallback.Label, "")))
-            .Where(option => option.Type is not ("genre" or "admin_curated_list" or "award_winners"))
+            .Where(option => option.Type is not ("genre" or "admin_curated_list" or "award_winners" or "next_up"))
             .OrderBy(option => option.Category)
             .ThenBy(option => option.Label, StringComparer.CurrentCultureIgnoreCase)
             .ToList();
@@ -259,6 +258,7 @@ public static class RecipeGalleryDialog
         {
             var definition = definitions.GetValueOrDefault(selectedType) ?? new RecipeDefinition { Type = selectedType };
             var message = Validate(definition, config);
+            message ??= SeasonalEditorProblem(paramHost);
             if (message == null && !FilterEditorsValid(paramHost)) message = "Check the highlighted filter values.";
             return message;
         })) return null;
@@ -276,7 +276,7 @@ public static class RecipeGalleryDialog
     {
         var choices = catalog.Categories
             .SelectMany(category => category.Value)
-            .Where(definition => definition.Type is not ("admin_curated_list" or "genre" or "award_winners")
+            .Where(definition => definition.Type is not ("admin_curated_list" or "genre" or "award_winners" or "next_up")
                 && (!definition.AdminOnly || catalog.AllowAdminOnlyRecipes) && (definition.Presets.Count > 0 || definition.Type == "custom_filter"))
             .Select(definition => new RecipeChoice(new RecipeDefinition { Type = definition.Type, Category = PickerGroup(definition.Type), Presets = definition.Presets,
                 SupportsRotation = definition.SupportsRotation, AvoidDuplicates = definition.AvoidDuplicates },
@@ -545,6 +545,7 @@ public static class RecipeGalleryDialog
         var result = await HomeRowDialog.ShowAsync(xamlRoot, choice.Preset.DisplayName, root, "Add row", () =>
         {
             var error = Validate(choice.Definition, config);
+            error ??= SeasonalEditorProblem(paramHost);
             return error ?? (FilterEditorsValid(paramHost) ? null : "Check the highlighted filter values.");
         }, backCancellation.Token);
         if (backRequested) return new ConfigurationDialogResult(true, null);
@@ -564,6 +565,7 @@ public static class RecipeGalleryDialog
         StackPanel host,
         TextBlock validation)
     {
+        host.Tag = null;
         switch (definition.Type)
         {
             case "collection":
@@ -583,7 +585,7 @@ public static class RecipeGalleryDialog
                 await AddPersonalListFieldsAsync(config, host);
                 break;
             case "seasonal_themed":
-                AddSeasonalFields(config, host);
+                if (!await AddSeasonalFieldsAsync(config, host)) return;
                 break;
             case "returning_shows":
                 AddPositiveInteger(host, config, "lookback_days", "Lookback window (days)", "30",
@@ -925,7 +927,7 @@ public static class RecipeGalleryDialog
         });
     }
 
-    private static void AddSeasonalFields(Dictionary<string, object> config, StackPanel host)
+    private static void AddLegacySeasonalFields(Dictionary<string, object> config, StackPanel host)
     {
         host.Children.Add(Label("Holidays to celebrate"));
         var enabled = StringListValue(config, "enabled_themes").ToHashSet(StringComparer.Ordinal);
@@ -1061,9 +1063,7 @@ public static class RecipeGalleryDialog
             var hasCollection = StringValue(config, "library_collection_id").Length > 0 || StringValue(config, "user_collection_id").Length > 0;
             if (!hasCollection) return "Choose a collection before adding this row.";
         }
-        if (definition.Type == "seasonal_themed" && config.TryGetValue("enabled_themes", out var themes)
-            && JsonSerializer.SerializeToElement(themes) is { ValueKind: JsonValueKind.Array } list && list.GetArrayLength() == 0)
-            return "Choose at least one seasonal theme.";
+        if (definition.Type == "seasonal_themed") return SeasonalRowConfiguration.Validate(config, int.MaxValue);
         if (definition.Type == "admin_curated_list" && StringListValue(config, "item_ids").Count == 0)
             return "Add at least one title to the curated list.";
         return null;
@@ -1091,7 +1091,7 @@ public static class RecipeGalleryDialog
         "because_you_watched" => "Because You Watched",
         "similar_users_liked" => "Profiles Like You Enjoyed",
         "taste_match" => "Top Picks Today",
-        "next_up" => "On Deck",
+        "next_up" => "Next Up",
         "next_in_series" => "Next in Series",
         "watchlist" => "Watchlist",
         "favorites" => "Favorites",

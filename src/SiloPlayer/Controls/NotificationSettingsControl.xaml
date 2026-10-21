@@ -121,13 +121,16 @@
                 <TextBlock Text="Discord Notifications" FontSize="14" FontWeight="SemiBold" />
                 <TextBlock Text="Account-wide: the Silo bot sends direct messages covering every profile on this account. You must share a Discord server with the bot."
                            FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                <TextBlock Text="{Binding DiscordPrimaryNotice}" TextWrapping="Wrap" FontSize="13"
+                           Foreground="{StaticResource SecondaryTextBrush}"
+                           Visibility="{Binding DiscordPrimaryNoticeVisible, Converter={StaticResource BoolToVis}}" />
                 <Grid ColumnSpacing="16" Visibility="{Binding DiscordPreferences.Linked, Converter={StaticResource InverseBoolToVis}}">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel Spacing="2">
                         <TextBlock Text="Link your Discord account" FontWeight="SemiBold" />
                         <TextBlock Text="Authorize on Discord so the bot knows who to message" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                     </StackPanel>
-                    <Button Grid.Column="1" Content="Link Discord" Style="{StaticResource AccentButtonStyle}" Click="LinkDiscord_Click" />
+                    <Button Grid.Column="1" Content="Link Discord" Style="{StaticResource AccentButtonStyle}" Click="LinkDiscord_Click" IsEnabled="{Binding CanManageDiscord}" />
                 </Grid>
                 <StackPanel Spacing="14" Visibility="{Binding DiscordPreferences.Linked, Converter={StaticResource BoolToVis}}">
                     <Grid ColumnSpacing="16">
@@ -137,8 +140,8 @@
                             <TextBlock Text="Notifications you'd see in the inbox, delivered as a DM" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                            <ToggleSwitch x:Name="DiscordEnabledToggle" IsOn="{Binding IsDiscordEnabled}" Toggled="DiscordEnabled_Toggled" />
-                            <Button Content="Unlink" Style="{StaticResource DestructiveButtonStyle}" Click="UnlinkDiscord_Click" />
+                            <ToggleSwitch x:Name="DiscordEnabledToggle" IsOn="{Binding IsDiscordEnabled}" Toggled="DiscordEnabled_Toggled" IsEnabled="{Binding CanManageDiscord}" />
+                            <Button Content="Unlink" Style="{StaticResource DestructiveButtonStyle}" Click="UnlinkDiscord_Click" IsEnabled="{Binding CanManageDiscord}" />
                         </StackPanel>
                     </Grid>
                     <Grid ColumnSpacing="16" Visibility="{Binding IsDiscordEnabled, Converter={StaticResource BoolToVis}}">
@@ -147,7 +150,7 @@
                             <TextBlock Text="Frequency" />
                             <TextBlock Text="{Binding DiscordDigestDescription}" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" />
                         </StackPanel>
-                        <ComboBox x:Name="DiscordModeCombo" Grid.Column="1" SelectionChanged="DiscordModeCombo_SelectionChanged">
+                        <ComboBox x:Name="DiscordModeCombo" Grid.Column="1" SelectionChanged="DiscordModeCombo_SelectionChanged" IsEnabled="{Binding CanManageDiscord}">
                             <ComboBoxItem Content="Daily digest" Tag="daily_digest" />
                             <ComboBoxItem Content="Every episode" Tag="per_episode" />
                             <ComboBoxItem Content="Every episode + daily digest" Tag="per_episode_and_digest" />

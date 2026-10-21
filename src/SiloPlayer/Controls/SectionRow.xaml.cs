@@ -45,15 +45,6 @@ public sealed partial class SectionRow : UserControl
     private string? _lastRenderedTemplateKey;
     private const double DragThreshold = 7;
 
-    private static readonly HashSet<string> BrowseableSectionTypes = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "collection",
-        "custom_filter",
-        "genre",
-        "random",
-        "recently_added",
-    };
-
     /// <summary>The containing library. Home sections intentionally leave this null.</summary>
     public int? LibraryId
     {
@@ -68,7 +59,10 @@ public sealed partial class SectionRow : UserControl
     }
 
     public static bool IsBrowseSupported(string? sectionType) =>
-        !string.IsNullOrWhiteSpace(sectionType) && BrowseableSectionTypes.Contains(sectionType);
+        !string.IsNullOrWhiteSpace(sectionType);
+
+    /// <summary>Home and library rows expose both their title and Explore all.</summary>
+    public bool UseSectionBrowseLinks { get; set; }
 
     /// <summary>
     /// Optional callback invoked when the "Explore all" button is clicked.
@@ -295,12 +289,14 @@ public sealed partial class SectionRow : UserControl
     {
         if (ExploreAllBtn == null || TitleLinkBtn == null || SectionTitle == null) return;
         var hasTarget = OnViewAll != null;
-        TitleLinkBtn.Visibility = hasTarget && UseTitleViewLink
+        var titleLink = hasTarget && (UseTitleViewLink || UseSectionBrowseLinks);
+        TitleLinkBtn.Visibility = titleLink
             ? Visibility.Visible : Visibility.Collapsed;
-        SectionTitle.Visibility = hasTarget && UseTitleViewLink
+        SectionTitle.Visibility = titleLink
             ? Visibility.Collapsed : Visibility.Visible;
-        ExploreAllBtn.Visibility = hasTarget && !UseTitleViewLink
+        ExploreAllBtn.Visibility = hasTarget && (!UseTitleViewLink || UseSectionBrowseLinks)
             ? Visibility.Visible : Visibility.Collapsed;
+        TitleViewSuffix.Visibility = UseSectionBrowseLinks ? Visibility.Collapsed : Visibility.Visible;
     }
 
     /// <summary>

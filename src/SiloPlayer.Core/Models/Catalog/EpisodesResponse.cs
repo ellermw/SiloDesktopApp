@@ -35,6 +35,7 @@ public class EpisodeUserData
 
 public class EpisodeFile
 {
+    public bool? Unreadable { get; set; }
     public int FileId { get; set; }
     public string Resolution { get; set; } = "";
     public string CodecVideo { get; set; } = "";

@@ -675,7 +675,7 @@ public partial class LibraryViewModel : ObservableObject
         await LoadWindowAsync(startIndex, itemCount);
     }
 
-    private async Task LoadWindowCoreAsync(int startIndex, int itemCount, bool force)
+    private async Task LoadWindowCoreAsync(int startIndex, int itemCount, bool force, bool allowCursorRecovery = true)
     {
         if (Library == null || itemCount <= 0)
             return;
@@ -720,6 +720,26 @@ public partial class LibraryViewModel : ObservableObject
             }, _snapshot, ct);
         }
         catch (OperationCanceledException) { }
+        catch (ApiException ex) when (allowCursorRecovery && ex.StatusCode == 400 && ex.ErrorCode == "invalid_cursor"
+            && !string.IsNullOrWhiteSpace(_snapshot) && queryVersion == _queryVersion && windowVersion == _windowLoadVersion
+            && _catalogContext == _catalogApi.CaptureContext())
+        {
+            // The server can retire a signed scope after a visibility-policy or
+            // signing change even when our local query/profile is unchanged.
+            // Discard its cards and cursors together, then retry this viewport
+            // once without a cursor. Never mix old-scope rows into the new view.
+            var estimatedTotal = TotalCount;
+            StartNewCatalogQuery();
+            _estimatedTotalItems = estimatedTotal;
+            TotalCount = estimatedTotal;
+            DisplayTotalCount = estimatedTotal;
+            Items.Reset(estimatedTotal);
+            SiloPlayer.Core.Services.LocalLog.AppendLine("catalog_errors.txt",
+                $"catalog_cursor_recovery start={startIndex} count={itemCount} query_version={_queryVersion} prior_scope_retired=true retry_without_cursor=true");
+            _pendingWindowStart = startIndex;
+            _pendingWindowEnd = startIndex + itemCount - 1;
+            await (_pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force: true, allowCursorRecovery: false));
+        }
         catch (Exception ex)
         {
             if (queryVersion == _queryVersion && windowVersion == _windowLoadVersion)
@@ -986,6 +1006,7 @@ public partial class LibraryViewModel : ObservableObject
 
     private async Task<CatalogResponse> FetchWindowPageAsync(int startIndex, bool includeTotal, string? snapshot, CancellationToken ct)
     {
+        using var operation = SiloPlayer.Core.Services.LocalLog.BeginOperation("catalog-" + Guid.NewGuid().ToString("N"));
         var context = _catalogApi.CaptureContext();
         var version = _queryVersion;
         var queryKey = System.Text.Json.JsonSerializer.Serialize(new
@@ -998,6 +1019,10 @@ public partial class LibraryViewModel : ObservableObject
         var nextCursor = _completedBoundaries.TryGetValue(startIndex, out var boundary)
             && boundary.QueryVersion == version && boundary.Context == context && boundary.QueryKey == queryKey
             && boundary.Snapshot == snapshot ? boundary.NextCursor : null;
+        static string Fingerprint(string? text) => string.IsNullOrEmpty(text) ? "none"
+            : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)))[..16];
+        var queryFingerprint = Fingerprint(queryKey);
+        var cursorFingerprint = Fingerprint(nextCursor ?? snapshot);
         // A refetch retires the boundary supplied by that page immediately;
         // failed or canceled replacements cannot leave an older cursor usable.
         foreach (var end in _completedBoundaries.Where(pair => pair.Value.Start == startIndex).Select(pair => pair.Key).ToArray())
@@ -1033,12 +1058,14 @@ public partial class LibraryViewModel : ObservableObject
         catch (Exception ex)
         {
             SiloPlayer.Core.Services.LocalLog.AppendException("catalog_errors.txt", ex,
-                $"catalog_window start={startIndex} limit={CatalogWindowPageSize} totals={includeTotal} cursor_kind={(nextCursor is not null ? "next" : snapshot is not null ? "window" : "none")} query_version={version} read_generation={context.RequestContextGeneration}");
+                $"catalog_window start={startIndex} limit={CatalogWindowPageSize} totals={includeTotal} cursor_kind={(nextCursor is not null ? "next" : snapshot is not null ? "window" : "none")} query_version={version} read_generation={context.RequestContextGeneration} query_fingerprint={queryFingerprint} cursor_fingerprint={cursorFingerprint}");
             throw;
         }
         ct.ThrowIfCancellationRequested();
         if (version != _queryVersion || context != _catalogApi.CaptureContext())
             throw new OperationCanceledException("Catalog continuation authority changed.", ct);
+        SiloPlayer.Core.Services.LocalLog.AppendLine("catalog_queries.txt",
+            $"action={SiloPlayer.Core.Services.LocalLog.CurrentOperationId} start={startIndex} limit={CatalogWindowPageSize} query_version={version} read_generation={context.RequestContextGeneration} query_fingerprint={queryFingerprint} input_cursor={cursorFingerprint} window_cursor={Fingerprint(response.Snapshot)} next_cursor={Fingerprint(response.Page?.NextCursor)} items={response.Items.Count} totals={includeTotal}");
         if (response.Items.Count == CatalogWindowPageSize && response.HasMore
             && !string.IsNullOrWhiteSpace(response.Snapshot) && !string.IsNullOrWhiteSpace(response.Page?.NextCursor))
         {

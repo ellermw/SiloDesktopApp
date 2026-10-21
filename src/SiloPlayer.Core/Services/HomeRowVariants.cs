@@ -16,7 +16,7 @@ public static class HomeRowVariants
         "most_watched" => new("Period", ["window"], [Option("mw_week","This week","The last 7 days",("window","week")),Option("mw_month","This month","The last 30 days",("window","month"))]),
         "trending_discover" => new("Period", ["source","window"], [Option("tdisc_tmdb_day","Today","Changes every day",("source","tmdb"),("window","day")),Option("tdisc_tmdb_week","This week","A steadier weekly list",("source","tmdb"),("window","week"))]),
         "mood_collection" => new("Mood", ["mood"], [Option("mood_feel_good","Feel-good",null,("mood","feel_good")),Option("mood_mind_bending","Mind-bending",null,("mood","mind_bending")),Option("mood_comfort","Comfort rewatches",null,("mood","comfort")),Option("mood_edge_of_seat","Edge of your seat",null,("mood","edge_of_seat")),Option("mood_tearjerker","Tearjerkers",null,("mood","tearjerker")),Option("mood_quiet_sunday","Quiet Sunday",null,("mood","quiet_sunday")),Option("mood_date_night","Date night",null,("mood","date_night")),Option("mood_after_midnight","After midnight",null,("mood","after_midnight"))]),
-        "seasonal_themed" => new("Theme", ["enabled_themes","theme"], [Option("se_auto","Holidays","Changes with the calendar",("enabled_themes",new[]{"halloween","christmas","valentines","st_patricks","thanksgiving","summer_blockbuster","saturday_morning"})),Option("se_family_movie_night","Family movie night","Friday and Saturday evenings",("enabled_themes",new[]{"family_movie_night"}))]),
+        "seasonal_themed" => new("Theme", ["enabled_themes","theme"], [Option("se_auto","Holidays","Changes with the calendar",("enabled_themes",new[]{"halloween","christmas","new_year","valentines","st_patricks","easter","thanksgiving","summer_blockbuster","saturday_morning"})),Option("se_family_movie_night","Family movie night","Friday and Saturday evenings",("enabled_themes",new[]{"family_movie_night"}))]),
         "editorial_spotlight" => new("Spotlight on", ["subject_type","subject"], [Option("es_director_auto","Director","Films by one director",("subject_type","director")),Option("es_actor","Actor","Titles with one actor",("subject_type","actor")),Option("es_studio","Studio","Titles from one studio",("subject_type","studio")),Option("es_era_80s","The 80s","Films from the 1980s",("subject_type","era"),("subject","1980s"))]),
         "format_showcase" => new("Format", ["format","sort"], [Option("fs_4k","4K","Everything in 4K",("format","4k")),Option("fs_4k_recent","New in 4K","The latest 4K additions",("format","4k"),("sort","recent")),Option("fs_dv","Dolby Vision","Dolby Vision titles",("format","dolby_vision")),Option("fs_hdr","HDR","HDR-mastered titles",("format","hdr"))]),
         _ => null
@@ -34,7 +34,8 @@ public static class HomeRowVariants
         {
             if(config.TryGetValue("enabled_themes",out var value))
             { var themes=JsonSerializer.SerializeToElement(value);return themes.ValueKind==JsonValueKind.Array ? themes.GetArrayLength()==1 && themes[0].ValueKind==JsonValueKind.String && themes[0].GetString()=="family_movie_night" ? "se_family_movie_night" : "se_auto" : null; }
-            return !config.ContainsKey("enabled_themes") && Text(config,"theme")=="family_movie_night" ? "se_family_movie_night" : null;
+            if (Text(config,"theme")=="family_movie_night") return "se_family_movie_night";
+            return string.IsNullOrEmpty(Text(config,"theme")) && config.ContainsKey("custom_holidays") ? "se_auto" : null;
         }
         if(type=="editorial_spotlight") return Text(config,"subject_type") switch { "director"=>"es_director_auto","actor"=>"es_actor","studio"=>"es_studio","era" when Text(config,"subject")=="1980s"=>"es_era_80s",_=>null };
         return family.Options.FirstOrDefault(option=>family.Keys.All(key=>Equal(config,option.Values,key)))?.Key;
@@ -45,6 +46,11 @@ public static class HomeRowVariants
         var rotating=type=="editorial_spotlight" && Text(config,"subject_type") is "director" or "actor" or "studio" && config.TryGetValue("auto_rotate",out var value) && JsonSerializer.SerializeToElement(value).ValueKind==JsonValueKind.True;
         foreach(var discriminator in family.Keys)config.Remove(discriminator);
         foreach(var pair in option.Values)config[pair.Key]=pair.Value;
+        if(type=="seasonal_themed" && key=="se_family_movie_night")
+        {
+            config.Remove("custom_holidays");
+            config.Remove("theme_dates");
+        }
         if(type!="editorial_spotlight")return;
         if(key=="es_era_80s"){config.Remove("auto_rotate");config.Remove("rotation_cadence");}
         else if(!rotating){config["auto_rotate"]=true;config["rotation_cadence"]="weekly";}

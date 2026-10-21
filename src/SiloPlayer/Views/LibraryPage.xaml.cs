@@ -2433,12 +2433,7 @@ public sealed partial class LibraryPage : Page,
         var itemWidth = Math.Max(100, (availableWidth - columnGap * (columns - 1)) / columns);
         var isAudiobook = ViewModel.Library?.Type is "audiobook" or "audiobooks";
         var posterHeight = isAudiobook ? itemWidth : itemWidth * 1.5;
-        var captionHeight = _uiCustomizationService.CardPresentation.Caption switch
-        {
-            "artwork" => 0,
-            "title" => 36,
-            _ => 56,
-        };
+        var captionHeight = _uiCustomizationService.CardCaptionHeight;
         var itemHeight = posterHeight + captionHeight;
         return new GridLayoutInfo(
             Columns: columns,
@@ -3207,15 +3202,13 @@ public sealed partial class LibraryPage : Page,
     private void ConfigureLibrarySectionRow(SectionRow row, HomeSectionWithItems section, int libraryId)
     {
         row.OnRetry = ignored => { _ = RetryLibrarySectionAsync(row, section.Id, libraryId); };
-        row.OnViewAll = SectionRow.IsBrowseSupported(section.SectionType) &&
-            (section.TotalCount <= 0 || section.TotalCount > section.ItemLimit)
-            ? () => App.Services.GetRequiredService<NavigationService>().Navigate<CatalogPage>(new CatalogNavigation(
+        row.UseSectionBrowseLinks = true;
+        row.OnViewAll = () => App.Services.GetRequiredService<NavigationService>().Navigate<CatalogPage>(new CatalogNavigation(
                 Source: "section",
                 Title: section.Title,
                 Scope: "library",
                 SectionId: section.Id,
-                LibraryId: libraryId))
-            : null;
+                LibraryId: libraryId));
     }
 
     private async Task RetryLibrarySectionAsync(SectionRow row, string sectionId, int libraryId)

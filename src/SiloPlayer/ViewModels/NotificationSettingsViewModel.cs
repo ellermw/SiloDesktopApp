@@ -2,10 +2,11 @@ using System.Collections.ObjectModel;
 using CommunityToolkit.Mvvm.ComponentModel;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Notifications;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.ViewModels;
 
-public partial class NotificationSettingsViewModel(NotificationsApi notificationsApi) : ObservableObject
+public partial class NotificationSettingsViewModel(NotificationsApi notificationsApi, AuthService? authService = null) : ObservableObject
 {
     public ObservableCollection<NotificationWebhook> Webhooks { get; } = [];
     public ObservableCollection<WebPushSubscriptionView> WebPushSubscriptions { get; } = [];
@@ -36,6 +37,21 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
 
     public string EmailDigestDescription => $"Daily digest around {Capability.Email.DigestHour:00}:00 server time.";
     public string DiscordDigestDescription => $"Daily digest around {Capability.Discord.DigestHour:00}:00 server time.";
+    public bool CanManageDiscord => authService?.SelectedProfile is { IsPrimary: true } profile
+        && profile.Id == notificationsApi.RequestContext.ProfileId && !IsBusy;
+    public bool DiscordPrimaryNoticeVisible => !CanManageDiscord && !IsBusy;
+    public string DiscordPrimaryNotice => "Switch to the primary profile to manage Discord notifications for this account.";
+    partial void OnIsBusyChanged(bool value) { OnPropertyChanged(nameof(CanManageDiscord)); OnPropertyChanged(nameof(DiscordPrimaryNoticeVisible)); }
+
+    public void RefreshDiscordAuthority()
+    { OnPropertyChanged(nameof(CanManageDiscord)); OnPropertyChanged(nameof(DiscordPrimaryNoticeVisible)); }
+
+    private ApiRequestContext? CaptureDiscordAuthority()
+    {
+        RefreshDiscordAuthority();
+        if (!CanManageDiscord) { ErrorMessage = DiscordPrimaryNotice; return null; }
+        return notificationsApi.RequestContext;
+    }
     public bool IsEmailEnabled => !string.Equals(EmailMode, "off", StringComparison.Ordinal);
     public bool IsDiscordEnabled => !string.Equals(DiscordMode, "off", StringComparison.Ordinal);
     public bool HasVerifiedEmail => !string.IsNullOrWhiteSpace(EmailPreferences.CustomEmail);
@@ -78,6 +94,7 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
     public async Task LoadAsync()
     {
         if (IsLoading) return;
+        RefreshDiscordAuthority();
         IsLoading = true;
         ErrorMessage = null;
         try
@@ -168,7 +185,7 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
 
     public async Task SaveDiscordEnabledAsync(bool enabled)
     {
-        if (!DiscordPreferences.Linked) return;
+        if (!DiscordPreferences.Linked || !CanManageDiscord) return;
         DiscordMode = enabled ? "daily_digest" : "off";
         await SaveDiscordModeAsync();
     }
@@ -204,27 +221,44 @@ public partial class NotificationSettingsViewModel(NotificationsApi notification
 
     public async Task<string?> StartDiscordLinkAsync()
     {
+        var context = CaptureDiscordAuthority(); if (!context.HasValue) return null;
         string? url = null;
-        await RunAsync(async () => url = (await notificationsApi.StartDiscordLinkAsync()).Url);
+        await RunAsync(async () =>
+        {
+            if (!notificationsApi.IsCurrentContext(context.Value) || authService?.SelectedProfile?.IsPrimary != true) return;
+            var link = await notificationsApi.StartDiscordLinkAsync(context.Value);
+            if (notificationsApi.IsCurrentContext(context.Value)) url = link.Url;
+        });
         return url;
     }
 
     public async Task SaveDiscordModeAsync()
-        => await RunAsync(async () =>
+    {
+        var context = CaptureDiscordAuthority(); if (!context.HasValue) return;
+        await RunAsync(async () =>
         {
-            DiscordPreferences = await notificationsApi.UpdateDiscordPreferencesAsync(DiscordMode);
+            if (!notificationsApi.IsCurrentContext(context.Value) || authService?.SelectedProfile?.IsPrimary != true) return;
+            var saved = await notificationsApi.UpdateDiscordPreferencesAsync(context.Value, DiscordMode);
+            if (!notificationsApi.IsCurrentContext(context.Value)) return;
+            DiscordPreferences = saved;
             DiscordMode = DiscordPreferences.Mode;
             StatusMessage = "Discord notification frequency saved.";
         });
+    }
 
     public async Task UnlinkDiscordAsync()
-        => await RunAsync(async () =>
+    {
+        var context = CaptureDiscordAuthority(); if (!context.HasValue) return;
+        await RunAsync(async () =>
         {
-            await notificationsApi.UnlinkDiscordAsync();
+            if (!notificationsApi.IsCurrentContext(context.Value) || authService?.SelectedProfile?.IsPrimary != true) return;
+            await notificationsApi.UnlinkDiscordAsync(context.Value);
+            if (!notificationsApi.IsCurrentContext(context.Value)) return;
             DiscordPreferences = new NotificationDiscordPreferences();
             DiscordMode = "off";
             StatusMessage = "Discord account unlinked.";
         });
+    }
 
     public async Task<NotificationWebhook?> SaveWebhookAsync(string? id, NotificationWebhookInput input)
     {

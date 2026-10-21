@@ -17,6 +17,12 @@ internal static class BrowseCallerGridsNativeFixture
 {
     internal static async Task RunAsync(StackPanel parent)
     {
+        var episodeCaptions = Environment.GetEnvironmentVariable("SILO_NATIVE_EPISODE_GRIDS") == "1";
+        var requestedWidth = Environment.GetEnvironmentVariable("SILO_NATIVE_EPISODE_GRID_WIDTH");
+        var viewportWidths = episodeCaptions
+            ? new[] { 1080, 1920, 3440, 3840 }.Where(width => requestedWidth is null || width.ToString() == requestedWidth).ToArray()
+            : new[] { 1400, 900, 500 };
+        if (viewportWidths.Length == 0) throw new InvalidOperationException("Unknown episode-grid viewport.");
         var serviceField=typeof(SiloPlayer.App).GetField("_services",BindingFlags.NonPublic|BindingFlags.Static)!;var previous=(IServiceProvider)serviceField.GetValue(null)!;
         using var wire=new Wire();using var http=new HttpClient(wire);var client=new SiloApiClient(http);client.SetBaseUrl("https://browse-grids.invalid");
         using var auth=new AuthService(client,new AuthApi(client));auth.SetCurrentUser(new(){Id="fixture",Role="user"});auth.SelectProfile("grid-profile",profile:new(){Id="grid-profile",Name="Fixture"});
@@ -35,9 +41,9 @@ internal static class BrowseCallerGridsNativeFixture
         try
         {
             window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000,-20000));window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(900,900));window.AppWindow.Show(false);await Task.Delay(100);
-            foreach(var viewportWidth in new[]{1400,900,500})
+            foreach(var viewportWidth in viewportWidths)
             foreach(var size in new[]{"standard","compact","large"})
-            foreach(var kind in viewportWidth==900?new[]{"Catalog","Library","Search","Recommendation"}:new[]{"Catalog"})
+            foreach(var kind in viewportWidth==900 || episodeCaptions ? new[]{"Catalog","Library","Search","Recommendation"}:new[]{"Catalog"})
             {
                 window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(viewportWidth,900));await Task.Delay(80);
                 await presentation.SaveCardPresentationAsync(new(){PosterSize=size,Caption="title_metadata"});
@@ -55,7 +61,11 @@ internal static class BrowseCallerGridsNativeFixture
                 {
                     var row=positions.Where(value=>Math.Abs(value.Point.Y-first.Point.Y)<.5).ToArray();
                     if(row.Length!=presentation.GetPosterColumnCount(viewportWidth)) throw new InvalidOperationException($"Library/{size}/{viewportWidth} uses content width rather than the full viewport for its grid breakpoint: {row.Length} columns.");
-                    if(Math.Abs(first.Point.Y-177)>.6) throw new InvalidOperationException($"Library/{size}/{viewportWidth} begins its cards at{first.Point.Y}, expected current header+toolbar rhythm177.");
+                    var toolbar = (FrameworkElement)page.FindName("FilterBar");
+                    var expectedTop = episodeCaptions
+                        ? toolbar.TransformToVisual(page).TransformPoint(new Windows.Foundation.Point(0, toolbar.ActualHeight)).Y + toolbar.Margin.Bottom
+                        : 177;
+                    if(Math.Abs(first.Point.Y-expectedTop)>.6) throw new InvalidOperationException($"Library/{size}/{viewportWidth} begins its cards at{first.Point.Y}, expected current header+toolbar rhythm{expectedTop}.");
                 }
                 var below=positions.FirstOrDefault(value=>value.Point.Y>first.Point.Y+first.Card.ActualHeight*.5&&Math.Abs(value.Point.X-first.Point.X)<.5);
                 if(adjacent.Card==null||below.Card==null)throw new InvalidOperationException($"Mounted{kind}/{size} did not realize two actual rows/columns for its bounded gap proof.");
@@ -75,6 +85,13 @@ internal static class BrowseCallerGridsNativeFixture
                 var horizontal=adjacent.Point.X-first.Point.X-first.Card.ActualWidth;var vertical=below.Point.Y-first.Point.Y-first.Card.ActualHeight;var expected=size=="large"?16d:12d;
                 Program.Log($"Mounted{kind}/{size}/{viewportWidth}: card={first.Card.ActualWidth:R}x{first.Card.ActualHeight:R}, horizontalGap={horizontal:R}, verticalGap={vertical:R}.");
                 if(Math.Abs(horizontal-expected)>.6||Math.Abs(vertical-expected)>.6)throw new InvalidOperationException($"Mounted{kind}/{size} must render its actual source gap{expected} in both axes.");
+                if (episodeCaptions)
+                {
+                    var checkedCodes = positions.Sum(item => AssertCaptionBounds(item.Card));
+                    if (checkedCodes == 0) throw new InvalidOperationException("Mixed grid did not paint an episode-code line.");
+                    if (size == "standard") await MediaParityNativeFixture.CaptureAsync(page, $"episode-grid-{kind}-{viewportWidth}.png");
+                    Program.Log($"PASS: mounted mixed episode/movie {kind} grid at{viewportWidth}/{size} keeps all caption lines inside the card and preserves the next-row gap.");
+                }
                 if(kind=="Library"&&size=="standard")
                 {
                     var factory=typeof(LibraryPage).GetMethod("CreateCollectionCard",BindingFlags.Instance|BindingFlags.NonPublic)!;
@@ -115,11 +132,34 @@ internal static class BrowseCallerGridsNativeFixture
         finally{frame?.Navigate(typeof(Page));serviceField.SetValue(null,previous);await Task.Delay(250);navigation.Frame=null;owner.Children.Clear();window.Close();}
     }
     private static async Task Until(Func<bool> ready){for(var n=0;n<160&&!ready();n++)await Task.Delay(25);if(!ready())throw new InvalidOperationException("Actual mounted caller grid did not settle.");}
+    private static int AssertCaptionBounds(FrameworkElement card)
+    {
+        var checkedCodes = 0;
+        var captions = card is PosterCard poster
+            ? new[] { "TitleText", "EpisodeTitleText", "SubtitleText" }.Select(name => (TextBlock)poster.FindName(name))
+            : new[] { "_titleText", "_episodeTitleText", "_subtitleText" }.Select(name => (TextBlock)typeof(LibraryGridCard).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(card)!);
+        foreach (var text in captions.Where(text => text.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(text.Text)))
+        {
+            // Library intentionally realizes overscan cards beyond the viewport;
+            // those text elements have not been measured/painted yet.
+            if (text.ActualHeight <= 0) continue;
+            var bottom = text.TransformToVisual(card).TransformPoint(new Windows.Foundation.Point(0, text.ActualHeight)).Y;
+            if (bottom > card.ActualHeight + .6)
+                throw new InvalidOperationException($"Mounted {card.GetType().Name} clips '{text.Text}': bottom{bottom} exceeds card{card.ActualHeight}.");
+            if (text.Text.StartsWith("S04E")) checkedCodes++;
+        }
+        return checkedCodes;
+    }
     private static IEnumerable<T> Descendants<T>(DependencyObject parent)where T:DependencyObject{for(var n=0;n<VisualTreeHelper.GetChildrenCount(parent);n++){var child=VisualTreeHelper.GetChild(parent,n);if(child is T match)yield return match;foreach(var match2 in Descendants<T>(child))yield return match2;}}
     private sealed class Services(IServiceProvider fallback,Dictionary<Type,Func<object>> values):IServiceProvider{public object? GetService(Type type)=>values.TryGetValue(type,out var factory)?factory():fallback.GetService(type);}
     private sealed class Wire:HttpMessageHandler
     {
-        private object[] Items()=>Enumerable.Range(0,30).Select(n=>(object)new{content_id="grid-"+n,title="Grid feature "+n,type="movie",year=2025}).ToArray();
+        private object[] Items()=>Enumerable.Range(0,30).Select(n =>
+        {
+            var episode = Environment.GetEnvironmentVariable("SILO_NATIVE_EPISODE_GRIDS") == "1" && n % 3 == 1;
+            return (object)new { content_id = "grid-" + n, title = "Grid feature " + n, type = episode ? "episode" : "movie", year = 2025,
+                series_title = episode ? "Fixture TV series" : null, season_number = episode ? (int?)4 : null, episode_number = episode ? (int?)(n + 1) : null };
+        }).ToArray();
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
             if(request.RequestUri?.Host!="browse-grids.invalid")throw new InvalidOperationException("Grid fixture attempted external networking.");var path=request.RequestUri.AbsolutePath;object body;

@@ -1,7 +1,7 @@
 namespace SiloPlayer.Messaging;
 
 /// <summary>A captured profile's server-ordered Home preference was accepted.</summary>
-public sealed record HomePreferenceChanged(SiloPlayer.Core.Api.ApiRequestContext Context);
+public sealed record HomePreferenceChanged(SiloPlayer.Core.Api.ApiRequestContext Context, bool ReloadLayout = false);
 
 /// <summary>
 /// Reason a media surface changed. Used by subscribers to decide what to
@@ -55,12 +55,17 @@ public sealed class MediaSurfaceChanged
     /// </summary>
     public int? Rating { get; }
 
-    public MediaSurfaceChanged(MediaSurfaceChangeKind kind, string contentId, string? seriesId = null, int? rating = null)
+    /// <summary>Optional captured account/profile authority for asynchronous mutations.</summary>
+    public SiloPlayer.Core.Api.ApiRequestContext? Context { get; }
+
+    public MediaSurfaceChanged(MediaSurfaceChangeKind kind, string contentId, string? seriesId = null, int? rating = null,
+        SiloPlayer.Core.Api.ApiRequestContext? context = null)
     {
         Kind = kind;
         ContentId = contentId;
         SeriesId = seriesId;
         Rating = rating;
+        Context = context;
     }
 }
 

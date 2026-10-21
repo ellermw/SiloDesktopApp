@@ -11,6 +11,37 @@ namespace SiloPlayer.Tests;
 
 public sealed class LibraryCursorScopeTests
 {
+    [Fact]
+    public async Task RejectedWindowCursorIsRetiredAndViewportReloadsUnderFreshScope()
+    {
+        using var wire = new SignedCatalog(); var model = Create(wire, "series");
+        await model.LoadCommand.ExecuteAsync(null);
+        wire.ScopeVersion++;
+        await model.LoadWindowAsync(623, 60, force: true);
+        Assert.Null(model.ErrorMessage);
+        Assert.Equal(1, wire.InvalidCursors);
+        Assert.NotNull(model.GetWindowItem(623));
+        Assert.NotNull(model.GetWindowItem(682));
+        Assert.Null(model.GetWindowItem(0)); // Retire previously authorized cards too.
+        await model.LoadWindowAsync(742, 60, force: true);
+        Assert.Null(model.ErrorMessage);
+        Assert.Equal(1, wire.InvalidCursors);
+    }
+
+    [Fact]
+    public async Task FreshRequestFailureIsNotRetriedInALoop()
+    {
+        using var wire = new SignedCatalog(); var model = Create(wire, "series");
+        await model.LoadCommand.ExecuteAsync(null);
+        wire.ScopeVersion++;
+        wire.RejectFresh = true;
+        var reads = wire.Reads;
+        await model.LoadWindowAsync(623, 60, force: true);
+        Assert.Contains("Failed to load catalog", model.ErrorMessage);
+        Assert.InRange(wire.Reads - reads, 1, 2);
+        Assert.Null(model.GetWindowItem(0));
+    }
+
     [Theory]
     [InlineData("movie", 159)]
     [InlineData("series", 215)]
@@ -88,9 +119,13 @@ public sealed class LibraryCursorScopeTests
         public SiloApiClient Client { get; }
         public int InvalidCursors;
         public bool PartialFirst;
+        public int ScopeVersion;
+        public bool RejectFresh;
+        public int Reads;
         public SignedCatalog() { Client = new SiloApiClient(new HttpClient(this)); Client.SetBaseUrl("https://catalog-scope.invalid"); }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
+            Reads++;
             Dictionary<string, string> values;
             if (request.Method == HttpMethod.Post)
             {
@@ -103,6 +138,7 @@ public sealed class LibraryCursorScopeTests
             var scope = (request.Headers.TryGetValues("X-Profile-ID", out var profiles) ? profiles.First() : "no-profile") + "|" +
                 string.Join('&', values.Where(pair => pair.Key is not ("seek" or "cursor" or "skip_total"))
                 .OrderBy(pair => pair.Key).Select(pair => pair.Key + "=" + pair.Value));
+            scope += "|server-policy=" + ScopeVersion;
             var offset = values.TryGetValue("seek", out var seek) ? int.Parse(seek) : 0;
             if (values.TryGetValue("cursor", out var cursor))
             {
@@ -110,11 +146,14 @@ public sealed class LibraryCursorScopeTests
                 if (parts.Length != 2 || parts[1] != Sign(scope, parts[0]))
                 {
                     InvalidCursors++;
-                    return await Reply(new { type = "https://fixture.invalid/problems/invalid_cursor", status = 400,
+                    return await Reply(new { type = "https://fixture.invalid/docs/api/v2/problems/invalid_cursor", status = 400,
                         detail = "The cursor is malformed, tampered with, or belongs to a different query." }, HttpStatusCode.BadRequest);
                 }
                 if (!values.ContainsKey("seek")) offset = int.Parse(parts[0]);
             }
+            else if (RejectFresh)
+                return await Reply(new { type = "https://fixture.invalid/docs/api/v2/problems/invalid_cursor", status = 400,
+                    detail = "Fresh cursor request rejected." }, HttpStatusCode.BadRequest);
             var count = Math.Min(int.Parse(values["limit"]), 1000 - offset);
             if (PartialFirst && offset == 0) { PartialFirst = false; count = 50; }
             return await Reply(new { items = Enumerable.Range(offset, count).Select(index => new { content_id = "item-" + index, title = "Title " + index, type = "movie" }),

@@ -83,7 +83,7 @@ public sealed partial class CollectionEditorPage
         UpdateSyncedResponsive();
         return SyncedDivider(new StackPanel { Spacing = 12, Children = {
             new TextBlock { Text = "Order", FontSize = 14.5, LineHeight = 21.75, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, FontWeight = FontWeights.SemiBold }, _syncedOrderGrid,
-            new TextBlock { Text = "Blank takes the whole list, up to 500. A profile that picks its own sort while browsing keeps that choice.", FontSize = 13, LineHeight = 19.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = CurrentBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap }
+            new TextBlock { Text = "Blank takes up to 10,000 titles from an MDBList, or the first 20 from a TMDB chart. A profile that picks its own sort while browsing keeps that choice.", FontSize = 13, LineHeight = 19.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight, Foreground = CurrentBrush("SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap }
         } });
     }
 

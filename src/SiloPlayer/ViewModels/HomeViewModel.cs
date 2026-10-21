@@ -45,8 +45,17 @@ public partial class HomeViewModel : ObservableObject,
         _ = RunOnUiThreadAsync(() =>
         {
             if (!_homeApi.IsCurrentContext(message.Context) || _loadedContext != message.Context) return;
-            QueueRealtimeRefresh("home_preference", message.Context);
+            if (message.ReloadLayout) _ = RefreshPreferenceLayoutAsync(message.Context);
+            else QueueRealtimeRefresh("home_preference", message.Context);
         });
+    }
+
+    private async Task RefreshPreferenceLayoutAsync(ApiRequestContext context)
+    {
+        while (_loadInProgress && _homeApi.IsCurrentContext(context)) await Task.Delay(20);
+        if (!_homeApi.IsCurrentContext(context) || _loadedContext != context) return;
+        InvalidateCache();
+        if (_isActive) await LoadAsync();
     }
 
     // F4 — messenger receivers.

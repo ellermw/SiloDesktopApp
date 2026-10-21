@@ -39,7 +39,7 @@ public partial class PlayerService
             ["audioTracks"] = audio, ["subtitleTracks"] = subtitles,
             ["selectedAudioTrackId"] = _playbackManager?.CurrentSession is { } session ? session.AudioTrackIndex + 1 : null,
             ["selectedSubtitleTrackId"] = State == PlayerState.Idle || _activeSubtitleServerIndex < 0 ? null : _activeSubtitleServerIndex + 1,
-            ["qualityOptions"] = qualities, ["activeQualityId"] = SelectedQualityIntent,
+            ["qualityOptions"] = qualities, ["activeQualityId"] = SelectedQualityMenuId,
             ["isQualitySwitching"] = IsQualitySwitchActive, ["playbackSpeed"] = speed > 0 ? speed : 1,
             ["videoGravity"] = _castVideoGravity, ["hdrEnabled"] = ActiveVersion?.Hdr ?? false,
             ["supportsVideoGravity"] = State != PlayerState.Idle, ["supportsHDRToggle"] = false,

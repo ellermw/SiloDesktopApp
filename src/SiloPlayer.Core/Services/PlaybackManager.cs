@@ -54,6 +54,25 @@ public class PlaybackManager : IDisposable
     public PlaybackStartResponse? CurrentSession { get; private set; }
     public string? StreamUrl { get; private set; }
     public string QualityPreference => _qualityPreferenceV3;
+    // Auto names the viewer's mode; every fixed checkmark names delivery.
+    // Empty means the plan delivers no advertised menu entry.
+    public string SelectedQualityMenuId => NormalizeQualityPreference(QualityPreference) == "auto"
+        ? "auto"
+        : CurrentSession?.AvailableQualities.FirstOrDefault(quality => !quality.PreservesSource &&
+            quality.Label == CurrentSession.ActiveQuality)?.Label ?? "";
+
+    public PlaybackQualityV3? GetLowerQualityOption(int? sourceBitrateKbps = null)
+    {
+        var options = CurrentSession?.AvailableQualities ?? [];
+        var active = options.FirstOrDefault(quality => quality.Label == SelectedQualityMenuId);
+        var delivered = CurrentSession?.PlaybackInfo?.TargetVideoBitrateKbps ?? sourceBitrateKbps;
+        var ceiling = Math.Min(active?.BitrateKbps is > 0 ? active.BitrateKbps.Value : int.MaxValue,
+            delivered is > 0 ? delivered.Value : int.MaxValue);
+        return options.Where(quality => !quality.PreservesSource && quality.BitrateKbps > 0)
+            .OrderByDescending(quality => quality.BitrateKbps)
+            .FirstOrDefault(quality => quality.Label != SelectedQualityMenuId &&
+                quality.BitrateKbps < ceiling);
+    }
 
     public Task<PlaybackQualityPreferences> ResolveQualityPreferencesAsync(CancellationToken ct = default)
         => PlaybackQualityPreferences.ReadAsync(_apiClient, _authService.SelectedProfile?.QualityPreference, ct);
@@ -193,8 +212,15 @@ public class PlaybackManager : IDisposable
     private static string NormalizeQualityPreference(string? qualityPreference)
         => PlaybackQualityPreferences.Normalize(qualityPreference);
 
-    private static string ResolveActiveQuality(PlaybackPlanV3 plan, string qualityPreference, int? bandwidthCapKbps)
+    private static string ResolveActiveQuality(PlaybackPlanV3 plan, string qualityPreference, int? bandwidthCapKbps,
+        IReadOnlyCollection<string> serverFeatures)
     {
+        // A present field is useful even if an older proxy drops feature names.
+        // With the feature advertised, absence explicitly means no listed rung.
+        if (plan.ActiveQuality != null || serverFeatures.Contains("plan_active_quality_v1"))
+            return plan.AvailableQualities.FirstOrDefault(quality => !quality.PreservesSource &&
+                quality.Label == plan.ActiveQuality)?.Label ?? "";
+
         if (plan.Delivery != "server_transcode_hls")
             return "auto";
 
@@ -274,7 +300,7 @@ public class PlaybackManager : IDisposable
             SubtitleMode = plan.Subtitle.Mode,
             SelectedSubtitleArtifactUrl = plan.Subtitle.Artifact?.Url,
             SubtitleTimingOriginSeconds = plan.Subtitle.Artifact?.TimingOriginSeconds ?? 0,
-            ActiveQuality = ResolveActiveQuality(plan, qualityPreference, bandwidthCapKbps),
+            ActiveQuality = ResolveActiveQuality(plan, qualityPreference, bandwidthCapKbps, decision.ServerFeatures),
             AvailableQualities = plan.AvailableQualities,
             PlaybackInfo = new PlaybackInfo
             {

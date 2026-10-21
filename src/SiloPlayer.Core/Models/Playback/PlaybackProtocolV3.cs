@@ -157,6 +157,7 @@ public sealed class PlaybackPlanV3
     public PlaybackRecipeV3 EffectiveRecipe { get; set; } = new();
     public PlaybackSubtitlePlanV3 Subtitle { get; set; } = new();
     public List<PlaybackQualityV3> AvailableQualities { get; set; } = [];
+    public string? ActiveQuality { get; set; }
     public List<PlaybackDegradationWarningV3> DegradationWarnings { get; set; } = [];
     public string? DecisionReason { get; set; }
     public int RequestedMediaFileId { get; set; }

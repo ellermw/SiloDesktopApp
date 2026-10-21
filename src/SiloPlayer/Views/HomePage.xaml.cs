@@ -433,26 +433,13 @@ public sealed partial class HomePage : Page
 
     private void ConfigureSectionNavigation(SectionRow row, HomeSectionWithItems section)
     {
-        var itemLimit = section.ItemLimit > 0 ? section.ItemLimit : section.Items.Count;
-        var hasKnownOverflow = itemLimit > 0 && section.TotalCount > itemLimit;
-
-        if (SectionRow.IsBrowseSupported(section.SectionType)
-            && hasKnownOverflow)
+        row.UseSectionBrowseLinks = true;
+        row.OnViewAll = () =>
         {
-            row.OnViewAll = () =>
-            {
-                var nav = App.Services.GetRequiredService<NavigationService>();
-                nav.Navigate<CatalogPage>(new CatalogNavigation(
-                    Source: "section",
-                    Title: section.Title,
-                    Scope: "home",
-                    SectionId: section.Id));
-            };
-        }
-        else
-        {
-            row.OnViewAll = null;
-        }
+            var nav = App.Services.GetRequiredService<NavigationService>();
+            nav.Navigate<CatalogPage>(new CatalogNavigation(
+                Source: "section", Title: section.Title, Scope: "home", SectionId: section.Id));
+        };
     }
 
     private void AddSectionRow(HomeSectionWithItems section, int? preferredIndex = null)

@@ -680,6 +680,9 @@
                             <TextBlock Text="{x:Bind ViewModel.TitleArtErrorMessage, Mode=OneWay}" Foreground="{StaticResource ErrorBrush}" TextWrapping="Wrap" />
                             <Button Content="Try again" Click="TitleArtRetry_Click" Visibility="{x:Bind ViewModel.TitleArtReadFailed, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
                             <TextBlock Text="{x:Bind ViewModel.TitleArtExplanation, Mode=OneWay}" FontSize="13" LineHeight="21" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
+                            <Button Content="Use server default" Style="{StaticResource GhostButtonStyle}"
+                                    Command="{x:Bind ViewModel.ResetTitleArtCommand}"
+                                    Visibility="{x:Bind ViewModel.TitleArtHasOwnChoice, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
                         </StackPanel>
                     </Border>
     <Border Style="{StaticResource SettingsGroupStyle}"><StackPanel Spacing="16"><TextBlock Text="Sound" FontSize="18" FontWeight="SemiBold" /><StackPanel Spacing="8">
@@ -1393,12 +1396,20 @@
                       <TextBlock Text="Keep the next episode of a show you're watching in Continue Watching, or give them their own row."
                                  FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                       <StackPanel Orientation="Horizontal" Spacing="6">
-                        <ComboBox x:Name="NextUpModeComboBox" Width="240" SelectionChanged="NextUpModeComboBox_SelectionChanged">
+                        <ComboBox x:Name="NextUpModeComboBox" Width="240" SelectionChanged="NextUpModeComboBox_SelectionChanged"
+                                  IsEnabled="{x:Bind ViewModel.CanChangeNextUpMode, Mode=OneWay}">
                           <ComboBoxItem Content="With Continue Watching" Tag="combined" />
                           <ComboBoxItem Content="Separate row" Tag="separate" />
                         </ComboBox>
-                        <Button Content="Reset" Style="{StaticResource GhostButtonStyle}" Command="{x:Bind ViewModel.ResetNextUpModeCommand}" />
+                        <Button Content="Use server default" Style="{StaticResource GhostButtonStyle}" Command="{x:Bind ViewModel.ResetNextUpModeCommand}"
+                                Visibility="{x:Bind ViewModel.NextUpHasOwnChoice, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
                       </StackPanel>
+                      <TextBlock Text="{x:Bind ViewModel.NextUpInheritanceExplanation, Mode=OneWay}" TextWrapping="Wrap"
+                                 Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" />
+                      <TextBlock Text="{x:Bind ViewModel.NextUpPreferenceError, Mode=OneWay}" TextWrapping="Wrap"
+                                 Foreground="{StaticResource ErrorBrush}" FontSize="12" />
+                      <Button Content="Try again" Command="{x:Bind ViewModel.RetryNextUpPreferenceCommand}"
+                              Visibility="{x:Bind ViewModel.NextUpPreferenceError, Mode=OneWay, Converter={StaticResource NullToVis}}" />
                     </StackPanel>
                     <StackPanel x:Name="NewEpisodesFirstGroup" Spacing="8"
                                 Visibility="{x:Bind ViewModel.NewEpisodesPreferenceVisible, Mode=OneWay, Converter={StaticResource BoolToVis}}">
@@ -1412,6 +1423,11 @@
                                     IsEnabled="{x:Bind ViewModel.CanChangeNewEpisodesFirst, Mode=OneWay}" />
                       <TextBlock Text="Only this profile changes, and it saves as you go." TextWrapping="Wrap"
                                  Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" />
+                      <TextBlock Text="{x:Bind ViewModel.NewEpisodesInheritanceExplanation, Mode=OneWay}" TextWrapping="Wrap"
+                                 Foreground="{StaticResource SecondaryTextBrush}" FontSize="12" />
+                      <Button Content="Use server default" Style="{StaticResource GhostButtonStyle}"
+                              Command="{x:Bind ViewModel.ResetNewEpisodesPreferenceCommand}"
+                              Visibility="{x:Bind ViewModel.NewEpisodesHasOwnChoice, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
                       <TextBlock Text="Saving Home preference…" FontSize="12" Foreground="{StaticResource SecondaryTextBrush}"
                                  Visibility="{x:Bind ViewModel.IsNewEpisodesPreferencePending, Mode=OneWay, Converter={StaticResource BoolToVis}}" />
                       <TextBlock x:Name="NewEpisodesFirstError" Text="{x:Bind ViewModel.NewEpisodesPreferenceError, Mode=OneWay}"

@@ -98,9 +98,12 @@ public partial class PlayerService : IDisposable
     private string? _preBitmapBurnInQualityTier;
     private int? _requestedMediaFileId;
 
-    public string ActiveQualityTier => _activeQualityTier;
+    public string ActiveQualityTier => _playbackManager?.CurrentSession?.ProtocolVersion >= 3
+        ? _playbackManager.CurrentSession.ActiveQuality : _activeQualityTier;
     public string SelectedQualityIntent => _playbackManager?.CurrentSession?.ProtocolVersion >= 3
         ? _playbackManager.QualityPreference : PlaybackQualityPreferences.Normalize(_activeQualityTier);
+    public string SelectedQualityMenuId => _playbackManager?.CurrentSession?.ProtocolVersion >= 3
+        ? _playbackManager.SelectedQualityMenuId : SelectedQualityIntent;
     public bool IsQualitySwitchActive => _qualitySwitchActive;
     public IReadOnlyList<PlaybackQualityV3> AvailableQualities =>
         PlaybackQualityPreferences.MenuOptions(_playbackManager?.CurrentSession?.AvailableQualities ?? []);
@@ -405,7 +408,9 @@ public partial class PlayerService : IDisposable
 
     public void SetWatchTogetherPlayback(bool active)
     {
+        var joining = active && !IsWatchTogetherPlayback;
         IsWatchTogetherPlayback = active;
+        if (joining) SetPaused(true);
         if (!active) _offeredRoomQuality = _offeredFromQuality = null;
         UpdateRoomInputBindings();
         UpdateRoomSeekDisplay();
@@ -452,6 +457,9 @@ public partial class PlayerService : IDisposable
     /// <summary>The newest accepted room seek is the origin of a burst of relative skips.
     /// Native Position remains the actual media time used for progress and room reports.</summary>
     public Func<double?>? RoomSeekPosition { private get; set; }
+    public Func<double?>? RoomPlaybackStartPosition { private get; set; }
+    private bool _roomPlaybackPaused = true;
+    private bool _transportHasFirstOutput;
     public double UserSeekPosition => IsWatchTogetherPlayback ? RoomSeekPosition?.Invoke() ?? Position : Position;
 
     public void UpdateRoomSeekDisplay()
@@ -502,14 +510,7 @@ public partial class PlayerService : IDisposable
 
     public void OfferWatchPartyLowerQuality()
     {
-        var qualities = AvailableQualities.Where(q => !q.PreservesSource && q.BitrateKbps > 0)
-            .OrderByDescending(q => q.BitrateKbps).ToList();
-        var current = AvailableQualities.FirstOrDefault(q => q.Label == ActiveQualityTier);
-        var currentBitrate = current?.BitrateKbps
-            ?? _playbackManager?.CurrentSession?.PlaybackInfo?.TargetVideoBitrateKbps
-            ?? ActiveVersion?.Bitrate;
-        var next = qualities.FirstOrDefault(q => q.Label != ActiveQualityTier &&
-            (currentBitrate is null or <= 0 || q.BitrateKbps < currentBitrate));
+        var next = _playbackManager?.GetLowerQualityOption(ActiveVersion?.Bitrate);
         if (next == null) return;
         _offeredRoomQuality = next.Label;
         _offeredFromQuality = ActiveQualityTier;
@@ -529,6 +530,18 @@ public partial class PlayerService : IDisposable
     /// <summary>Pause / resume the local mpv player.</summary>
     public void SetPaused(bool paused)
     {
+        if (IsWatchTogetherPlayback)
+        {
+            _roomPlaybackPaused = paused;
+            if (IsLoading || _switchingContent)
+            {
+                // A room play may initiate a reanchor. Carry its authority
+                // into FileLoaded without releasing the outgoing stream.
+                _restorePausedAfterLoad = paused;
+                if (paused) _mpv?.Pause();
+                return;
+            }
+        }
         if (_mpv == null) return;
         if (_idleRemuxResume.IsReopening)
         {
@@ -1908,6 +1921,7 @@ public partial class PlayerService : IDisposable
         _canSeekAnywhere = true;
         _activeHlsRecipe = null;
         _activeQualityTier = "original";
+        _roomPlaybackPaused = true;
         _preBitmapBurnInPlan = null;
         _preBitmapBurnInQualityTier = null;
         _requestedMediaFileId = null;
@@ -2107,9 +2121,11 @@ public partial class PlayerService : IDisposable
             requestToken.ThrowIfCancellationRequested();
             if (_closing || !ReferenceEquals(_playbackManager?.CurrentSession, session))
                 return;
-            BeginMpvLoad(prepared, restorePaused: false);
+            // Room startup stays held through FileLoaded. Only a due room
+            // command may release it after the media becomes playable.
+            IsPaused = IsWatchTogetherPlayback;
+            BeginMpvLoad(prepared, restorePaused: IsWatchTogetherPlayback);
             LogToFile("state_trace.txt", "Play() called");
-            IsPaused = false;
 
             _mpv?.SendScriptMessage("osc-set-play-method", session.PlayMethod ?? "direct");
         }
@@ -2236,7 +2252,8 @@ public partial class PlayerService : IDisposable
         var ownerCts = CancellationTokenSource.CreateLinkedTokenSource(playbackToken);
         var generation = Interlocked.Increment(ref _fileLoadGeneration);
         _fileLoadTimeoutCts = ownerCts;
-        _restorePausedAfterLoad = restorePaused;
+        _restorePausedAfterLoad = IsWatchTogetherPlayback ? _roomPlaybackPaused : restorePaused;
+        _transportHasFirstOutput = false;
         _switchingContent = true;
         IsLoading = true;
         App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
@@ -2639,7 +2656,9 @@ public partial class PlayerService : IDisposable
         var restorePaused = _recoveryPauseIntentOverride
             ?? (_mpv.IsPaused && !_mpv.IsBufferingForCache);
         _recoveryPauseIntentOverride = null;
-        var resumePosition = Math.Max(0, currentPosition - 2);
+        var roomStartupPosition = IsWatchTogetherPlayback && !_transportHasFirstOutput
+            ? RoomPlaybackStartPosition?.Invoke() : null;
+        var resumePosition = roomStartupPosition ?? Math.Max(0, currentPosition - 2);
         var ct = _playbackCts?.Token ?? CancellationToken.None;
 
         _prematureEofRecoveryActive = true;
@@ -4175,7 +4194,7 @@ public partial class PlayerService : IDisposable
         _mpvFileLoadedHandler = () =>
         {
             var wasPrematureEofRecovery = _prematureEofRecoveryActive;
-            var restorePaused = _restorePausedAfterLoad == true;
+            var restorePaused = IsWatchTogetherPlayback ? _roomPlaybackPaused : _restorePausedAfterLoad == true;
             // v3 original_http is byte-for-byte source media: the server's
             // selected audio ordinal must be applied locally, before unpausing
             // or publishing the selected language to the OSC.
@@ -4200,8 +4219,6 @@ public partial class PlayerService : IDisposable
             ReconcilePlaybackSurfaceStateAfterLoad();
             CancelPendingFileLoadTimeout();
             Interlocked.Exchange(ref _consecutiveFileLoadTimeouts, 0);
-            IsLoading = false;
-            _switchingContent = false; // Safe to receive PlaybackEnded now
             _qualitySwitchActive = false;
             _playingNextShown = false;
             _postRollActive = false;
@@ -4249,6 +4266,10 @@ public partial class PlayerService : IDisposable
             InvokeSubscribersSafely(PositionChanged, mediaPosition, nameof(PositionChanged));
             InvokeSubscribersSafely(DurationChanged, mediaDuration, nameof(DurationChanged));
 
+            // Publish readiness only after pause and position settle: the UI
+            // room timer must not release play ahead of this load callback.
+            _switchingContent = false; // Safe to receive PlaybackEnded now
+            IsLoading = false;
             StartPlaybackStallWatchdog();
             InvokeSubscribersSafely(ContentLoaded, nameof(ContentLoaded));
 
@@ -4271,6 +4292,7 @@ public partial class PlayerService : IDisposable
 
         _mpvPlaybackRestartedHandler = () =>
         {
+            _transportHasFirstOutput = true;
             // MPV_EVENT_PLAYBACK_RESTART is the first-frame-ready boundary for
             // an initial load and fires again after seeks/cache recovery. Keep
             // the opaque startup surface visible through FILE_LOADED so the
@@ -5607,7 +5629,7 @@ public partial class PlayerService : IDisposable
             ["versions"] = versions,
             ["active_file_id"] = session.MediaFileId,
             ["requested_file_id"] = _requestedMediaFileId ?? session.MediaFileId,
-            ["active_quality"] = SelectedQualityIntent,
+            ["active_quality"] = SelectedQualityMenuId,
             ["qualities"] = session.ProtocolVersion >= 3
                 ? AvailableQualities.Select(quality => new Dictionary<string, object?>
                 {
@@ -5864,7 +5886,7 @@ public partial class PlayerService : IDisposable
             return;
         SendQualityInfoToOsc();
         SendMediaInfoToOsc();
-        _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityIntent);
+        _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
     }
 
     private async Task SwitchQualityTierAsync(string tierId)
@@ -5919,7 +5941,7 @@ public partial class PlayerService : IDisposable
                 // Show the quality actually accepted by the server, including
                 // any fallback; a requested tier is not proof of delivery.
                 _activeQualityTier = session.ActiveQuality;
-                _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityIntent);
+                _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
                 SendQualityInfoToOsc();
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -5937,7 +5959,7 @@ public partial class PlayerService : IDisposable
                 var (title, detail) = DescribePlaybackError(ex);
                 ErrorMessage = detail;
                 ShowNotice(title, detail, "error");
-                _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityIntent);
+                _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
             }
             return;
         }
@@ -6128,7 +6150,7 @@ public partial class PlayerService : IDisposable
                     var (title, detail) = DescribePlaybackError(ex);
                     ErrorMessage = detail;
                     ShowNotice(title, detail, "error");
-                    _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityIntent);
+                    _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
                 }
                 else
                 {
