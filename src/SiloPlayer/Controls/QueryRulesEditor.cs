@@ -13,6 +13,7 @@ public sealed partial class QueryRulesEditor : UserControl
     private readonly StackPanel _body = new() { Spacing = 16 };
     private UIElementCollection Children => _body.Children;
     public bool ExtendedRules { get; set; }
+    public bool ShowTitleRules { get; set; }
     public bool CollectionPresentation { get; set; }
     public TextBox? CollectionLimitInput { get; set; }
     public IReadOnlySet<string>? ShownRatingSources { get; set; }
@@ -79,7 +80,7 @@ public sealed partial class QueryRulesEditor : UserControl
         {
             var capability = await CapabilitiesLoader(owner.Token);
             if (_capabilityOwner != owner || owner.IsCancellationRequested || !IsLoaded) return;
-            ExtendedRules = capability.ExtendedRules; ShownRatingSources = capability.ShownRatingSources;
+            ExtendedRules = capability.ExtendedRules; ShownRatingSources = capability.ShownRatingSources; ShowTitleRules = capability.ShowTitleRules;
             // Updating option lists must not rebuild value inputs or discard an in-progress edit.
             _refreshingChoices = true;
             try
@@ -503,7 +504,7 @@ public sealed partial class QueryRulesEditor : UserControl
     {
         choice.Items.Clear();
         var definition = QueryFieldCatalog.Get(selected)!;
-        var fields = QueryFieldCatalog.Offered(_mediaScope, ExtendedRules, ShownRatingSources, AllowPersonalizedFilters).ToList();
+        var fields = QueryFieldCatalog.Offered(_mediaScope, ExtendedRules, ShownRatingSources, AllowPersonalizedFilters, ShowTitleRules).ToList();
         if (!fields.Any(field => field.Name == definition.Name)) fields.Add(definition);
         foreach (var group in new[] { "Title", "People", "File", "You", "Library" })
         {
@@ -512,6 +513,7 @@ public sealed partial class QueryRulesEditor : UserControl
             foreach (var field in members)
             {
                 var label = _mediaScope is "ebook" or "manga" ? field.Name switch { "watched" => "Read", "last_watched" => "Last read", _ => field.Label } : field.Label;
+                if (_mediaScope == "episode" && field.Name == "title") label = "Episode title";
                 var item = new ComboBoxItem { Content = label, Tag = field.Name == definition.Name ? selected : field.Name };
                 choice.Items.Add(item); if (field.Name == definition.Name) choice.SelectedItem = item;
             }

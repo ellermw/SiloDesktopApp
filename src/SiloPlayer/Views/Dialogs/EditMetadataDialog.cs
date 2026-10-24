@@ -75,7 +75,6 @@ public sealed class EditMetadataDialog : ContentDialog
         var general = Section("general", "General");
         foreach (var (key, label) in new[] { ("title","Title"),("sort_title","Sort Title"),("original_title","Original Title"),("overview","Overview"),("tagline","Tagline"),("content_rating","Content Rating") }) Text(general, key, label);
         if (item.Type is "movie" or "episode") Number(general, "runtime", "Runtime (min)", 0, double.PositiveInfinity);
-        if (item.Type == "series") Choice(general, "status", "Status", new[] { "", "Continuing", "Ended" });
         if (item.Type is "season" or "episode") Number(general, "season_number", "Season Number", 0, double.PositiveInfinity, item.Type == "episode");
         if (item.Type == "episode") Number(general, "episode_number", "Episode Number", 0, double.PositiveInfinity);
         var dates = Section("dates", "Dates & Ratings");
@@ -106,7 +105,7 @@ public sealed class EditMetadataDialog : ContentDialog
             item.Type switch
             {
                 "movie" => new[] { "content_rating", "runtime" },
-                "series" => new[] { "content_rating", "status" },
+                "series" => new[] { "content_rating" },
                 "season" or "episode" => new[] { "content_rating", "season_number" },
                 _ => new[] { "content_rating" },
             } };

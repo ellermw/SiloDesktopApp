@@ -21,6 +21,9 @@ public sealed partial class CollectionsPage : Page
     private bool _collectionBuildQueued;
     private int _collectionColumnCount;
     private int _serverCardSizeClass;
+    private long _collectionsPageGeneration;
+    private bool _libraryRefreshQueued;
+    private bool _libraryRefreshPending;
 
     public CollectionsPage()
     {
@@ -39,8 +42,42 @@ public sealed partial class CollectionsPage : Page
             else if (args.PropertyName == nameof(ViewModel.IsLoadingServerCollections))
                 DispatcherQueue.TryEnqueue(BuildServerCollectionRows);
             else if (args.PropertyName == nameof(ViewModel.Capabilities)) QueueCollectionBuild();
+            else if (args.PropertyName == nameof(ViewModel.ServerCollectionRevision)) BuildServerCollectionRows();
         };
         SizeChanged += CollectionsPage_SizeChanged;
+        Loaded += (_, _) => App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>().LibraryCacheInvalidated += CollectionsLibraryInvalidated;
+        Unloaded += (_, _) =>
+        {
+            App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>().LibraryCacheInvalidated -= CollectionsLibraryInvalidated;
+            ++_collectionsPageGeneration; _libraryRefreshPending = _libraryRefreshQueued = false;
+            ViewModel.CancelServerCollectionLoads();
+        };
+    }
+
+    private void CollectionsLibraryInvalidated()
+    {
+        var client = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>();
+        var context = client.CaptureContext(); var generation = _collectionsPageGeneration;
+        bool Current() => IsLoaded && generation == _collectionsPageGeneration && client.IsCurrentContext(context);
+        DispatcherQueue.TryEnqueue(async () =>
+        {
+            if (!Current()) return;
+            _libraryRefreshPending = true;
+            if (_libraryRefreshQueued) return;
+            _libraryRefreshQueued = true;
+            try
+            {
+                while (Current() && _libraryRefreshPending)
+                {
+                    _libraryRefreshPending = false;
+                    // Let an earlier page read finish, then perform the invalidated
+                    // read. The view model's concurrent-load guard would drop it.
+                    while (Current() && ViewModel.LoadCollectionsCommand.IsRunning) await Task.Delay(20);
+                    if (Current()) await ViewModel.LoadCollectionsCommand.ExecuteAsync(null);
+                }
+            }
+            finally { if (generation == _collectionsPageGeneration) _libraryRefreshQueued = false; }
+        });
     }
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)

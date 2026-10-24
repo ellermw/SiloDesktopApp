@@ -23,9 +23,10 @@ public sealed class PlayHistoryDialog : ContentDialog
     {
         _id = contentId; _client = App.Services.GetRequiredService<SiloApiClient>(); _context = _client.CaptureContext();
         Title = "Play History"; CloseButtonText = "Close";
-        var body = new StackPanel { Spacing = 16 }; body.Children.Add(_status); body.Children.Add(_rows); body.Children.Add(_more);
-        var scroll = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        Content = scroll; Opened += async (_, _) => { body.Width = Math.Max(220, Math.Min(850, (XamlRoot?.Size.Width ?? 1000) - 80)); scroll.MaxHeight = (XamlRoot?.Size.Height ?? 800) * .75; await Load(); };
+        var body = new StackPanel { Spacing = 16, HorizontalAlignment = HorizontalAlignment.Stretch }; body.Children.Add(_status); body.Children.Add(_rows); body.Children.Add(_more);
+        var scroll = new ScrollViewer { Content = body, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollMode = ScrollMode.Disabled, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        Content = scroll; Opened += async (_, _) => { body.MaxWidth = Math.Max(0, Math.Min(850, (XamlRoot?.Size.Width ?? 1000) - 80)); scroll.MaxHeight = (XamlRoot?.Size.Height ?? 800) * .75; await Load(); };
         _more.Click += async (_, _) => await Load(); Closed += (_, _) => _lifetime.Cancel();
     }
     private async Task Load()
@@ -40,11 +41,12 @@ public sealed class PlayHistoryDialog : ContentDialog
             foreach (var row in result.GetProperty("items").EnumerateArray())
             {
                 string Value(string key) => row.TryGetProperty(key, out var value) ? value.ToString() : "";
+                var display = PlaybackHistoryPresentation.Format(row);
                 var content = new Grid { Padding = new Thickness(12, 8, 12, 8), ColumnSpacing = 16 };
                 content.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
                 content.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-                var text = new TextBlock { Text = Value("username") + " · " + Value("profile_name") + "\n" + Value("media_title"), TextWrapping = TextWrapping.Wrap, FontSize = 14 };
-                var info = new TextBlock { Text = Value("started_at") + "\n" + Value("play_method") + " · " + Value("watched_seconds") + " seconds", TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] };
+                var text = new TextBlock { Text = Value("username") + " · " + Value("profile_name") + "\n" + display.Title + (display.Detail.Length == 0 ? "" : "\n" + display.Detail), TextWrapping = TextWrapping.Wrap, FontSize = 14 };
+                var info = new TextBlock { Text = Value("started_at") + "\n" + Value("play_method") + " · " + Math.Floor(display.Seconds).ToString("0", System.Globalization.CultureInfo.CurrentCulture) + " seconds" + (display.Estimated ? " (estimated)" : ""), TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] };
                 content.Children.Add(text); Grid.SetColumn(info, 1); content.Children.Add(info);
                 _rows.Children.Add(new Border { Child = content, BorderThickness = new Thickness(0, 0, 0, 1), BorderBrush = (Brush)Application.Current.Resources["BorderBrush"] });
             }

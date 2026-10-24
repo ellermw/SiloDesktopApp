@@ -40,7 +40,7 @@ public sealed class HomeHeroCurrentParityTests
         Assert.Contains("ThumbhashDecoder.GetAmbientColor", code);
         Assert.Contains("AreSystemAnimationsEnabled", code);
         Assert.Contains("OnHeroGotFocus", code);
-        Assert.Contains("HeroOverview.MaxLines = width >= 640 ? 0 : 2", code);
+        Assert.Contains("HeroOverview.MaxLines = width >= 640 ? 3 : 2", code);
         Assert.Contains("_restingArrowOpacity", code);
         Assert.DoesNotContain("_manuallyPaused", code);
         Assert.DoesNotContain("_pointerPaused", code);

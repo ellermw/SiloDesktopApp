@@ -228,7 +228,8 @@ public sealed partial class SettingsPage
                 finally { input.IsPrimaryButtonEnabled = true; deferral.Complete(); }
             };
             if (await input.ShowAsync() != ContentDialogResult.Primary || plan == null || !api.IsCurrentContext(context) || !_layoutTransferActive) return;
-            var descriptions = plan.Pages.Select(page => $"{(page.Scope == "home" ? "Home" : $"Library {page.LibraryId}")}: replace saved overrides with {page.Overrides.Count} sections").ToList();
+            var descriptions = plan.Pages.Select(page => $"{(page.Scope == "home" ? "Home" : $"Library {page.LibraryId}")}: " +
+                (plan.SameServer && page.Overrides.Count == 0 ? "restore server rows (clear saved overrides)" : $"replace saved overrides with {page.Overrides.Count} sections")).ToList();
             if (plan.HideWatchedItems.HasValue) descriptions.Add($"Hide watched items: {(plan.HideWatchedItems.Value ? "On" : "Off")}");
             descriptions.Add("Imports from another server preserve this server's section hides and ordering.");
             if (plan.Skipped.Count > 0) descriptions.Add("Skipped:\n" + string.Join("\n", plan.Skipped));

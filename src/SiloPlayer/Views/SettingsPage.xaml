@@ -709,6 +709,7 @@
 <!-- ===== Playback Panel ===== -->
             <!-- ===================================================================== -->
             <StackPanel x:Name="PlaybackPanel" Spacing="24" Margin="0">
+                <controls:PlaybackConnectionSettingsControl />
 
                 <StackPanel Spacing="12">
                     <TextBlock x:Name="PlaybackTitleText" Text="Playback" FontSize="24" FontWeight="SemiBold"

@@ -26,7 +26,7 @@ public sealed class HomeLayoutTransferService(SettingsApi settings, CatalogApi c
             var stored = await settings.GetProfileSectionsAsync(page.Scope, page.LibraryId?.ToString(CultureInfo.InvariantCulture), ct); Check(context, ct);
             page.Overrides = stored.Overrides.Select(HomeSectionWritePolicy.FromRaw).ToList();
             foreach (var row in page.Overrides) row.Id = null;
-            if (page.Overrides.Count > 0) file.Pages.Add(page);
+            file.Pages.Add(page);
         }
         HomeLayoutTransfer.Serialize(file); return file;
     }

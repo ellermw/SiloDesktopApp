@@ -12,6 +12,10 @@ public sealed class PlaybackCapabilityV3
     public List<int> ProtocolVersions { get; set; } = [];
     public List<string> Features { get; set; } = [];
     public List<string> Deliveries { get; set; } = [];
+    public string? BandwidthProbeUrl { get; set; }
+    public bool? BandwidthProbeAutomatic { get; set; }
+    public int? BandwidthProbeMaxAgeSeconds { get; set; }
+    public int? BandwidthProbeTargetKbps { get; set; }
 }
 
 /// <summary>
@@ -21,6 +25,7 @@ public sealed class PlaybackCapabilityV3
 /// </summary>
 public sealed class PlaybackStartRequestV3
 {
+    internal (SiloPlayer.Core.Api.ApiIdentityContext Owner, PlaybackCapabilityV3 Capability)? CapabilitySnapshot { get; set; }
     public string InstallationId { get; set; } = "";
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public bool? AllowAlternateVersions { get; set; }
     public int ProtocolVersion { get; set; } = 3;
@@ -38,6 +43,9 @@ public sealed class PlaybackStartRequestV3
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? SubtitleTrackIndex { get; set; }
     public bool Metered { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? BandwidthEstimateKbps { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? BandwidthEstimateSource { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? ObservedThroughputKbps { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? LearnedLimit { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? BandwidthCapKbps { get; set; }
     public PlaybackClientCapabilitiesV3 ClientCapabilities { get; set; } = new();
     public PlaybackClientContextV3 ClientPlaybackContext { get; set; } = new();
@@ -146,6 +154,7 @@ public sealed class PlaybackTerminalV3
 
 public sealed class PlaybackPlanV3
 {
+    public PlaybackBandwidthLimit? BandwidthLimit { get; set; }
     public int ProtocolVersion { get; set; }
     public string PlanId { get; set; } = "";
     public string PlanAttemptKey { get; set; } = "";
@@ -278,6 +287,9 @@ public sealed class PlaybackReplanRequestV3
     public double PositionSeconds { get; set; }
     public bool Metered { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? BandwidthEstimateKbps { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? BandwidthEstimateSource { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? ObservedThroughputKbps { get; set; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public string? LearnedLimit { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? BandwidthCapKbps { get; set; }
     public PlaybackSelectedTracksV3 SelectedTracks { get; set; } = new();
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public PlaybackFailureV3? Failure { get; set; }

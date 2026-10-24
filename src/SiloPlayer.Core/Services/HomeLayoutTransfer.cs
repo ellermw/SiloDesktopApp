@@ -55,10 +55,14 @@ public static class HomeLayoutTransfer
         using var document = JsonDocument.Parse(text);
         if (!document.RootElement.TryGetProperty("format", out _) || !document.RootElement.TryGetProperty("version", out _) ||
             !document.RootElement.TryGetProperty("server_id", out var serverId) || serverId.ValueKind != JsonValueKind.String ||
-            !document.RootElement.TryGetProperty("pages", out _) || file.Format != "silo-home-layout" || file.Version != 1 ||
+            !document.RootElement.TryGetProperty("pages", out var pages) || pages.ValueKind != JsonValueKind.Array ||
+            pages.EnumerateArray().Any(page => page.ValueKind != JsonValueKind.Object ||
+                !page.TryGetProperty("scope", out var scope) || scope.ValueKind != JsonValueKind.String ||
+                !page.TryGetProperty("overrides", out var overrides) || overrides.ValueKind != JsonValueKind.Array) ||
+            file.Format != "silo-home-layout" || file.Version != 1 ||
             file.Pages == null || file.Libraries == null || file.Libraries.Any(library => library == null || library.Id <= 0 ||
                 library.Name == null || library.Type == null) || file.Pages.Any(page => page == null || page.Scope is not ("home" or "library") ||
-                page.Scope == "library" && page.LibraryId is not > 0 || page.Overrides == null) ||
+                page.Scope == "library" && page.LibraryId is not > 0 || page.Overrides == null || page.Overrides.Any(row => row == null)) ||
             file.Pages.GroupBy(page => (page.Scope, page.LibraryId)).Any(group => group.Count() > 1))
             throw new InvalidDataException("This is not a supported Silo Home layout file.");
         return file;
@@ -164,7 +168,7 @@ public static class HomeLayoutTransfer
                 if (reason != null) { plan.Skipped.Add($"{title}: {reason}"); continue; }
                 row.Id = Guid.NewGuid().ToString(); planned.Overrides.Add(row);
             }
-            if (planned.Overrides.Count > 0) plan.Pages.Add(planned);
+            if (planned.Overrides.Count > 0 || same && page.Overrides.Count == 0) plan.Pages.Add(planned);
         }
         return plan;
     }

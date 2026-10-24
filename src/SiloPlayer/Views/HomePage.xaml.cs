@@ -18,8 +18,10 @@ public sealed partial class HomePage : Page
     // data. When the user navigates away and back, skip rebuilding so we
     // don't spike the UI thread tearing down and rebuilding ~60 PosterCards.
     private bool _contentBuilt;
+    private bool _pageActive;
+    private long _activationGeneration;
+    private long _renderedSurfaceGeneration = -1;
     private bool _isRefreshingLayout;
-    private bool _layoutChangedWhileRefreshing;
     private string? _failedHeroSectionId;
     private int _lastRenderedRevision = -1;
     private readonly EventChannelClient _eventChannel;
@@ -40,6 +42,8 @@ public sealed partial class HomePage : Page
 
     private async void Page_Loaded(object sender, RoutedEventArgs e)
     {
+        _pageActive = true;
+        var activation = ++_activationGeneration;
         App.RecordUiDiagnostic($"Home loaded built={_contentBuilt} revision={ViewModel.RenderRevision} rows={ViewModel.Sections.Count}");
         try
         {
@@ -47,26 +51,19 @@ public sealed partial class HomePage : Page
             AttachRealtimeEvents();
             ViewModel.SetActive(true);
 
-            _layoutChangedWhileRefreshing = false;
             _isRefreshingLayout = true;
             await ViewModel.LoadCommand.ExecuteAsync(null);
+            if (!_pageActive || activation != _activationGeneration) return;
             _isRefreshingLayout = false;
-
-            if (!_contentBuilt ||
-                _layoutChangedWhileRefreshing ||
-                _lastRenderedRevision != ViewModel.RenderRevision)
-            {
-                BuildContent();
-                _contentBuilt = true;
-                _lastRenderedRevision = ViewModel.RenderRevision;
-            }
+            SynchronizeContent();
 
             await UpdateTasteSeedBannerAsync();
         }
         catch (Exception ex)
         {
+            if (!_pageActive || activation != _activationGeneration) return;
             _isRefreshingLayout = false;
-            LocalLog.AppendLine("home_error.txt", $"page_load | {ex.GetType().Name}: {ex.Message}");
+            LocalLog.AppendException("home_error.txt", ex, "page_load");
             ViewModel.ErrorMessage = "Unable to load the homepage";
         }
     }
@@ -209,6 +206,64 @@ public sealed partial class HomePage : Page
             : Visibility.Visible;
     }
 
+    private void SynchronizeContent()
+    {
+        if (!_pageActive) return;
+        if (!_contentBuilt || _renderedSurfaceGeneration != ViewModel.SurfaceGeneration)
+        {
+            // A different authority must never inherit the previous profile's
+            // controls. Same-owner revisions describe data changes, not a
+            // reason to discard the cached visual surface.
+            BuildContent();
+            _contentBuilt = true;
+            _renderedSurfaceGeneration = ViewModel.SurfaceGeneration;
+        }
+        else
+        {
+            var desired = ViewModel.Sections;
+            var ids = desired.Select(s => s.Id).ToHashSet(StringComparer.Ordinal);
+            for (var i = SectionsPanel.Children.Count - 1; i >= 0; i--)
+                if (SectionsPanel.Children[i] is not SectionRow row || row.Section == null || !ids.Contains(row.Section.Id))
+                    SectionsPanel.Children.RemoveAt(i);
+            for (var index = 0; index < desired.Count; index++)
+            {
+                var section = desired[index];
+                var row = SectionsPanel.Children.OfType<SectionRow>().FirstOrDefault(r => r.Section?.Id == section.Id);
+                if (row == null)
+                {
+                    row = CreateSectionRow(section);
+                    SectionsPanel.Children.Insert(index, row);
+                }
+                else
+                {
+                    var oldIndex = SectionsPanel.Children.IndexOf(row);
+                    if (oldIndex != index)
+                    {
+                        SectionsPanel.Children.RemoveAt(oldIndex);
+                        SectionsPanel.Children.Insert(index, row);
+                    }
+                    if (!ReferenceEquals(row.Section, section)) row.Section = section;
+                    else row.RefreshPresentation();
+                    ConfigureSectionNavigation(row, section);
+                }
+            }
+            RefreshHeroIfChanged();
+            EmptyHomeState.Visibility = ViewModel.HasConfiguredSections ? Visibility.Collapsed : Visibility.Visible;
+        }
+        _lastRenderedRevision = ViewModel.RenderRevision;
+        UpdateUndoBanner();
+    }
+
+    private void RefreshHeroIfChanged()
+    {
+        var hero = ViewModel.FeaturedSections.FirstOrDefault();
+        if (hero is { LoadFailed: false } && hero.Items.Count > 0
+            && HeroCarouselControl.Visibility == Visibility.Visible
+            && HomeSectionReconciler.IsHeroSnapshotCurrent(HeroCarouselControl.ItemsSource, hero.Items, hero.ItemLimit))
+            return;
+        RefreshHero();
+    }
+
     private void UpdateUndoBanner()
     {
         if (ViewModel.ShowUndoBanner)
@@ -225,8 +280,7 @@ public sealed partial class HomePage : Page
     private async void UndoButton_Click(object sender, RoutedEventArgs e)
     {
         await ViewModel.UndoDismissalCommand.ExecuteAsync(null);
-        // Rebuild content to restore the item
-        BuildContent();
+        SynchronizeContent();
     }
 
     private async Task UpdateTasteSeedBannerAsync()
@@ -279,85 +333,16 @@ public sealed partial class HomePage : Page
 
     private void OnSectionsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
-        App.RecordUiDiagnostic($"Home sections action={e.Action} oldIndex={e.OldStartingIndex} newIndex={e.NewStartingIndex} rows={ViewModel.Sections.Count} refreshing={_isRefreshingLayout}");
-        if (_isRefreshingLayout)
-        {
-            // A layout refresh clears and repopulates both collections. Fold
-            // that burst into one rebuild so rows never tear down one-by-one.
-            _layoutChangedWhileRefreshing = true;
-            return;
-        }
-
-        // Incremental updates only. Before: any CollectionChanged event fired
-        // BuildContent() which cleared and recreated every SectionRow. During
-        // a home load this rebuilt ~15 rows up to 15 times on the UI thread,
-        // freezing the app for seconds. Now we patch just the affected row.
+        if (!_pageActive || _isRefreshingLayout) return;
+        var activation = _activationGeneration;
+        // Read the current projection when dispatched; captured collection event
+        // indices/items can belong to a departed page or an older profile.
         DispatcherQueue.TryEnqueue(() =>
         {
-            bool isFeaturedCollection = ReferenceEquals(sender, ViewModel.FeaturedSections);
-
-            switch (e.Action)
-            {
-                case System.Collections.Specialized.NotifyCollectionChangedAction.Replace:
-                    if (e.NewItems != null)
-                    {
-                        foreach (HomeSectionWithItems updated in e.NewItems)
-                        {
-                            if (isFeaturedCollection)
-                                RefreshHero();
-                            else
-                                UpdateSectionRow(updated);
-                        }
-                    }
-                    break;
-
-                case System.Collections.Specialized.NotifyCollectionChangedAction.Remove:
-                    if (e.OldItems != null)
-                    {
-                        foreach (HomeSectionWithItems removed in e.OldItems)
-                        {
-                            if (isFeaturedCollection)
-                                RefreshHero();
-                            else
-                                RemoveSectionRow(removed.Id);
-                        }
-                    }
-                    break;
-
-                case System.Collections.Specialized.NotifyCollectionChangedAction.Add:
-                    if (e.NewItems != null)
-                    {
-                        int? insertIndex = e.NewStartingIndex >= 0 ? e.NewStartingIndex : null;
-                        foreach (HomeSectionWithItems added in e.NewItems)
-                        {
-                            if (isFeaturedCollection)
-                                RefreshHero();
-                            else
-                            {
-                                AddSectionRow(added, insertIndex);
-                                if (insertIndex.HasValue)
-                                    insertIndex++;
-                            }
-                        }
-                    }
-                    break;
-
-                default:
-                    // Reset / Move: fall back to a full rebuild.
-                    BuildContent();
-                    _contentBuilt = true;
-                    _lastRenderedRevision = ViewModel.RenderRevision;
-                    return;
-            }
-
-            // Empty-state visibility may need to flip on add/remove.
-            EmptyHomeState.Visibility = ViewModel.HasConfiguredSections
-                ? Visibility.Collapsed
-                : Visibility.Visible;
-            _lastRenderedRevision = ViewModel.RenderRevision;
+            if (!_pageActive || activation != _activationGeneration || _isRefreshingLayout) return;
+            SynchronizeContent();
         });
     }
-
     private void RefreshHero()
     {
         HeroCarouselControl.Visibility = Visibility.Collapsed;
@@ -494,23 +479,27 @@ public sealed partial class HomePage : Page
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
+        if (!_pageActive) return;
+        var activation = _activationGeneration;
+        var owner = ViewModel.SurfaceContext;
+        bool IsCurrent() => _pageActive && activation == _activationGeneration && owner == ViewModel.SurfaceContext;
         if (e.PropertyName == nameof(ViewModel.ShowUndoBanner))
         {
-            DispatcherQueue.TryEnqueue(UpdateUndoBanner);
+            DispatcherQueue.TryEnqueue(() => { if (IsCurrent()) UpdateUndoBanner(); });
         }
         else if (e.PropertyName == nameof(ViewModel.HasConfiguredSections))
         {
             DispatcherQueue.TryEnqueue(() =>
-                EmptyHomeState.Visibility = ViewModel.HasConfiguredSections
-                    ? Visibility.Collapsed
-                    : Visibility.Visible);
+            {
+                if (IsCurrent()) EmptyHomeState.Visibility = ViewModel.HasConfiguredSections ? Visibility.Collapsed : Visibility.Visible;
+            });
         }
         else if (e.PropertyName == nameof(ViewModel.RenderRevision))
         {
             var revision = ViewModel.RenderRevision;
             DispatcherQueue.TryEnqueue(() =>
             {
-                if (_isRefreshingLayout) return;
+                if (!IsCurrent() || _isRefreshingLayout) return;
 
                 var heroSection = ViewModel.FeaturedSections.FirstOrDefault();
                 var itemLimit = heroSection?.ItemLimit ?? 0;
@@ -531,6 +520,9 @@ public sealed partial class HomePage : Page
     {
         base.OnNavigatedFrom(e);
 
+        _pageActive = false;
+        ++_activationGeneration;
+        _isRefreshingLayout = false;
         ViewModel.SetActive(false);
         DetachRealtimeEvents();
 

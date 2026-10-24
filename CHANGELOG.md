@@ -2,6 +2,15 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.304 (2026-10-24 — owner-approved Home, playback and upstream update)
+
+- Implement fifteen alignment groups against official Silo Server/WebUI `489fe4d55735f3855b2a0d6276e57d148891b456`, plus Home return, sidebar navigation and direct-reader deadline repairs. Eighteen groups advance1.2.286 to1.2.304.
+- Preserve Home row/card/artwork/scroll identity, retain same-owner reconnect state, and guard stale callbacks. Avoid reentrant sidebar mode changes.
+- Preserve late useful bytes and retry expired direct responses at the exact unread offset. Distinguish actual outage from historical retry counters; add scoped connection testing, learned Auto limits and buffering consent without silently lowering fixed quality.
+- Align audio/subtitle preferences, Server Collections, Show title rules, metadata editing, Home layout transfers, Connect Apps, Play History and hero/codec presentation; remove the obsolete unwatched-sync toggle.
+- Publish the exact tested installer without rebuilding. SHA256: `75E011777AFABB8A052BDE79BE72547ACBC42398F2EE145F09B70A47EA5C5188`. Verification:2,120 main tests,32 exact-payload native runs,24 packaged playback groups and three repeated native constrained-link cases passed.
+- See [the complete release record](docs/releases/1.2.304.md). Broader hardware/phone testing and historical live buffering/Next Up causality remain separate investigations.
+
 ## 1.2.271 (2026-10-18 — owner-approved quality and menu alignment)
 
 - Implement three correction groups after reviewing 33 official upstream commits through `6ab2e85f117935776db052235efeeb149bdc81b4`. The three groups advance 1.2.268 to 1.2.271; test cases and review refinements do not inflate the version.

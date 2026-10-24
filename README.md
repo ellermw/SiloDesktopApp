@@ -1,16 +1,16 @@
 # Silo Desktop Player
 
-> **Current release: 1.2.286.** Fixes repeated catalog failures after cursor rejection and updates watched badges, counts and actions without a page reload. Includes twelve current Silo Server/WebUI update groups and the shared episode-poster caption repair. See [the release record](docs/releases/1.2.286.md) and [SiloCast setup](docs/silocast-testing.md). Local development starts in `D:\SiloPlayer`; read [the current handoff](docs/current-development.md) before editing or building.
+> **Current release: 1.2.304.** Preserves Home rows, artwork and scroll when returning from playback or another page, repairs stale Home/sidebar callbacks and direct-read deadline recovery, and includes fifteen current Silo Server/WebUI alignment groups. See [the release record](docs/releases/1.2.304.md) and [SiloCast setup](docs/silocast-testing.md). Local development starts in `D:\SiloPlayer`; read [the current handoff](docs/current-development.md) before editing or building.
 
 Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/silo-server), built with WinUI 3 and libmpv. The project aims to reproduce the Silo WebUI visually and functionally while providing broad native direct-play support for high-bitrate HEVC, HDR, Dolby Vision, lossless audio, and other formats browsers commonly transcode.
 
-> **Project status:** active pre-release development. Version 1.2.286 preserves the prior parity work and SiloCast receiver. Phone interoperability, broader hardware testing and the separate intermittent Next Up removal investigation continue. Targeted verification does not certify complete visual/functional parity. Silo Server changes are re-audited against its official public `main` branch.
+> **Project status:** active pre-release development. Version 1.2.304 preserves the prior parity work and SiloCast receiver. Phone interoperability, broader hardware testing and the separate intermittent Next Up removal investigation continue. The reproduced reader failures are repaired; the cause of every historical live buffering incident is not established. Targeted verification does not certify complete visual/functional parity. Silo Server changes are re-audited against its official public `main` branch.
 
 ## Download
 
-[**Download Silo Desktop Player 1.2.286**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.286/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.2.304**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.304/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `1FEF85B4F680658D27D7573B2237BCD37CBF8133163753F3CC878A4025A5F624`
+SHA-256: `75E011777AFABB8A052BDE79BE72547ACBC42398F2EE145F09B70A47EA5C5188`
 
 SiloCast is built in and enabled for fresh/missing preferences. The installer automatically adds its Private-network/local-subnet firewall rule, with no extra SiloCast checkbox. A saved opt-out remains respected; enable or disable it under **Settings → Playback → Desktop playback → Allow SiloCast control**. Keep the PC and phone on the same private local network and the desktop app running. See [the testing guide](docs/silocast-testing.md) for setup and troubleshooting. Actual iPhone/Android interoperability remains under testing.
 
@@ -25,6 +25,8 @@ Third-party components retain their own licenses. The externally loaded FSRCNNX 
 The reader includes Foliate and PDF.js; pinned sources, local adaptations and license texts are documented in [reader third-party notices](src/SiloPlayer/Assets/Reader/THIRD-PARTY-NOTICES.md).
 
 ## Current parity
+
+Version **1.2.304** adds eighteen correction groups after comparing 129 official upstream commits through [`489fe4d`](https://github.com/Silo-Server/silo-server/commit/489fe4d55735f3855b2a0d6276e57d148891b456): fifteen server/WebUI alignment groups, Home return and sidebar repairs, and the reader-deadline correction discovered during native verification. Passed **2,120 main tests**, **32 exact-payload native runs** and **24 packaged playback checks**. See [the current correction ledger and limits](docs/releases/1.2.304.md). The table below records the earlier 1.2.241 acceptance pass.
 
 **1.2.241 includes 241 distinct verified correction groups tracked since the October 1 implementation pass.** The patch number follows the [correction ledger](docs/parity/2026-10-01-parity-implementation-ledger.md). Seventy-six groups were newly reconciled during the final implementation and verification cycle; overlapping refinements count once.
 
@@ -50,6 +52,14 @@ The official public Silo Server reference fetched for the final pass is [1a7a397
 
 
 ## Latest release
+
+### 1.2.304 — Home stability, streaming recovery and upstream alignment
+
+- Keep cached Home rows, cards, decoded artwork and scroll across return navigation and reconnect catch-up. Guard retired callbacks and defer sidebar pane transitions outside WinUI opening callbacks.
+- Recover direct-read deadline cancellation and late bytes at the exact unread offset; preserve caller cancellation and terminal handling for unrelated disposal. Correct false-outage detection so slow-but-live playback can accumulate real stall history.
+- Add capability-gated connection speed/learned Auto limits and buffering preferences, explicit audio save/reset, current subtitle behavior, complete Server Collections, episode Show title rules and provider-aware Connect Apps guidance.
+- Align metadata editing, Play History labels/durations/layout, Home layout reset/import, hero synopsis limits and Dolby Vision/HDR10+ compatibility wording; remove the obsolete unwatched-sync toggle.
+- Publish the unchanged owner-tested installer. Verification: **2,120 main tests**, **32 native runs**, **24 packaged playback checks** and three repeated real libmpv constrained-link scenarios. See [all eighteen correction groups, evidence and limits](docs/releases/1.2.304.md).
 
 ### 1.2.286 — upstream alignment, catalog recovery and watched state
 

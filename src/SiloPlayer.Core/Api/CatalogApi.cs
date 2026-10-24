@@ -78,10 +78,12 @@ public partial class CatalogApi(SiloApiClient client)
         return _librariesCache;
     }
 
+    public event Action? LibraryCacheInvalidated;
     public void InvalidateLibraryCache()
     {
         _librariesCache = null;
         _librariesCachedAt = DateTime.MinValue;
+        LibraryCacheInvalidated?.Invoke();
     }
 
     public Task<HomeSectionsResponse> GetLibrarySectionsAsync(int libraryId, CancellationToken ct = default)
@@ -371,31 +373,11 @@ public partial class CatalogApi(SiloApiClient client)
 
     // ===== Watchlist / Favorites Check =====
 
-    public async Task<bool> GetWatchlistItemAsync(string itemId, CancellationToken ct = default)
-    {
-        try
-        {
-            await client.GetAsync<object>($"/api/v2/watchlist/{Uri.EscapeDataString(itemId)}", ct);
-            return true;
-        }
-        catch (ApiException ex) when (ex.StatusCode == 404)
-        {
-            return false;
-        }
-    }
+    public Task<bool> GetWatchlistItemAsync(string itemId, CancellationToken ct = default)
+        => GetPersonalListMembershipAsync("watchlist", itemId, ct);
 
-    public async Task<bool> GetFavoriteItemAsync(string itemId, CancellationToken ct = default)
-    {
-        try
-        {
-            await client.GetAsync<object>($"/api/v2/favorites/{Uri.EscapeDataString(itemId)}", ct);
-            return true;
-        }
-        catch (ApiException ex) when (ex.StatusCode == 404)
-        {
-            return false;
-        }
-    }
+    public Task<bool> GetFavoriteItemAsync(string itemId, CancellationToken ct = default)
+        => GetPersonalListMembershipAsync("favorites", itemId, ct);
 
     // ===== Audio Preferences =====
 

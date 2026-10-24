@@ -12,10 +12,12 @@ public partial class PlaybackApi
     private readonly ConcurrentQueue<string> _retiredSessions = new();
     private const int RetainedStopAttempts = 64;
 
-    private sealed class SessionState(string installationId, ApiIdentityContext context)
+    private sealed class SessionState(string installationId, ApiIdentityContext context, IReadOnlyList<string> features, bool summaryEnabled)
     {
         public string InstallationId { get; } = installationId;
         public ApiIdentityContext Context { get; } = context;
+        public IReadOnlyList<string> Features { get; } = features;
+        public bool SummaryEnabled { get; } = summaryEnabled;
         public object Gate { get; } = new();
         public long Sequence;
         public PlaybackAcceptedSample? LastSample;
@@ -29,14 +31,18 @@ public partial class PlaybackApi
             if (entry.Value.Context != authority) _sessions.TryRemove(entry.Key, out _);
         for (var attempt = 0; ; attempt++)
         {
-            var capability = await GetPlaybackCapabilityAsync(ct).ConfigureAwait(false);
+            var capability = attempt == 0 && request.CapabilitySnapshot is { } snapshot && snapshot.Owner == authority
+                ? snapshot.Capability : await GetPlaybackCapabilityAsync(ct).ConfigureAwait(false);
             EnsureAuthority(authority);
             if (!capability.Allowed || capability.State != "available" ||
                 !capability.ProtocolVersions.Contains(3) || string.IsNullOrEmpty(capability.InstallationId))
                 throw new InvalidOperationException("This server does not currently support native playback API v2.");
             request.InstallationId = capability.InstallationId;
             // Preserve the viewer's source/timeline through seek and recovery.
-            request.AllowAlternateVersions = capability.Features.Contains("fixed_media_file_v1") ? false : null;
+            request.AllowAlternateVersions = capability.Features.Contains("fixed_media_file_v1") ? request.AllowAlternateVersions ?? false : null;
+            request.ClientFeatures = NegotiateConnectionFeatures(request.ClientFeatures, capability.Features);
+            if (!request.ClientFeatures.Contains("buffering_quality_v1"))
+            { request.BandwidthEstimateSource = null; request.ObservedThroughputKbps = null; request.LearnedLimit = null; }
             var body = StartBody(request);
             try
             {
@@ -46,7 +52,8 @@ public partial class PlaybackApi
                 EnsureAuthority(authority);
                 var session = decision.PlaybackPlan?.SessionId ?? decision.SessionId;
                 if (decision.Outcome == "playable" && !string.IsNullOrEmpty(session))
-                    _sessions.TryAdd(session, new SessionState(capability.InstallationId, authority));
+                    _sessions.TryAdd(session, new SessionState(capability.InstallationId, authority, capability.Features.ToArray(),
+                        request.ClientFeatures.Contains("playback_plan_summary_v1")));
                 return decision;
             }
             catch (ApiException ex) when (ex.ErrorCode == "installation_changed" && attempt == 0)
@@ -82,6 +89,9 @@ public partial class PlaybackApi
         Optional("subtitle_track_id", request.SubtitleTrackId);
         Optional("subtitle_track_index", request.SubtitleTrackIndex);
         Optional("bandwidth_estimate_kbps", request.BandwidthEstimateKbps);
+        Optional("bandwidth_estimate_source", request.BandwidthEstimateSource);
+        Optional("observed_throughput_kbps", request.ObservedThroughputKbps);
+        Optional("learned_limit", request.LearnedLimit);
         Optional("bandwidth_cap_kbps", request.BandwidthCapKbps);
         return body;
     }
@@ -90,8 +100,13 @@ public partial class PlaybackApi
     {
         var state = Session(sessionId);
         request.InstallationId = state.InstallationId;
-        var decision = await client.SendIdentityBoundRequestAsync<PlaybackDecisionResponseV3>(state.Context, HttpMethod.Post,
-            $"/api/v2/playback/{Uri.EscapeDataString(sessionId)}/replan", request, ct).ConfigureAwait(false);
+        request.ClientFeatures = NegotiateConnectionFeatures(request.ClientFeatures, state.Features);
+        if (!request.ClientFeatures.Contains("buffering_quality_v1"))
+        { request.BandwidthEstimateSource = null; request.ObservedThroughputKbps = null; request.LearnedLimit = null; }
+        // A lost response is ambiguous delivery. Retry this same request and ID.
+        var decision = await RetryDeliveryAsync(token => client.SendIdentityBoundRequestAsync<PlaybackDecisionResponseV3>(state.Context, HttpMethod.Post,
+            $"/api/v2/playback/{Uri.EscapeDataString(sessionId)}/replan", request, token),
+            state.Context, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(20), ct).ConfigureAwait(false);
         EnsureAuthority(state.Context);
         return decision;
     }
@@ -179,6 +194,7 @@ public partial class PlaybackApi
         IReadOnlyDictionary<string, string>? diagnostics = null)
     {
         var state = Session(session.SessionId);
+        if (eventName == "plan_summary" && !state.SummaryEnabled) return;
         // Best effort telemetry is sent once; 202 is queue acknowledgement, and
         // retrying a dropped event must never delay playback or teardown.
         await client.SendIdentityBoundNoContentAsync(state.Context, HttpMethod.Post, "/api/v2/playback/route-events", new Dictionary<string, object?>
@@ -203,6 +219,9 @@ public partial class PlaybackApi
         EnsureAuthority(state.Context);
         return state;
     }
+
+    private static List<string> NegotiateConnectionFeatures(IEnumerable<string> requested, IReadOnlyList<string> available)
+        => requested.Where(f => f is not ("buffering_quality_v1" or "connection_speed_v1" or "playback_plan_summary_v1") || available.Contains(f)).Distinct().ToList();
 
     private void EnsureAuthority(ApiIdentityContext authority)
     {

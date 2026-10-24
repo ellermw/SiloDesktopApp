@@ -142,11 +142,17 @@ public sealed partial class PosterCard : UserControl
     public bool DeferImageLoading { get; set; }
     public bool DeferOverlayLoading { get; set; }
     public bool SuppressImageLoading { get; set; }
+    private DecodedArtworkCache.Key? _decodedArtworkKey;
 
     public PosterCard()
     {
         this.InitializeComponent();
-        PosterImage.ImageOpened += (_, _) => ArtworkFallback.Visibility = Visibility.Collapsed;
+        PosterImage.ImageOpened += (_, _) =>
+        {
+            ArtworkFallback.Visibility = Visibility.Collapsed;
+            if (PosterImage.Source is Microsoft.UI.Xaml.Media.Imaging.BitmapImage bitmap)
+                DecodedArtworkCache.Remember(_decodedArtworkKey, bitmap, this);
+        };
         PosterImage.ImageFailed += (_, _) => { PosterImage.Source = null; PosterImage.Opacity = 0; ArtworkFallback.Visibility = Visibility.Visible; _ = ArtworkFallback.ShowThumbhashAsync(); };
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         ApplyOverlayGeometry();
@@ -769,12 +775,23 @@ public sealed partial class PosterCard : UserControl
 
         try
         {
+            var imageService = App.Services.GetRequiredService<ImageService>();
+            _spoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
+            if (item.Type == "episode" && _spoilerPreferences != null) await _spoilerPreferences.EnsureLoadedAsync(ct);
+            var hidden = HideEpisodeArtwork(item);
+            var key = DecodedArtworkCache.Capture(imageService, App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>(), imageUrl, 200, hidden);
+            if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem)) return;
+            if (DecodedArtworkCache.TryGet(key, out var cached))
+            {
+                _decodedArtworkKey = key; _spoilerArtworkHidden = hidden;
+                PosterImage.Source = cached; PosterImage.Opacity = 1; ArtworkFallback.Visibility = Visibility.Collapsed;
+                return;
+            }
             // Short grace window: skip transient recycle churn without making
             // the visible page wait noticeably before poster fetches begin.
             await Task.Delay(60, ct);
             if (ct.IsCancellationRequested) return;
 
-            var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
             var imageType = !string.IsNullOrEmpty(item.PosterUrl) ? "poster" : "backdrop";
 
@@ -799,11 +816,13 @@ public sealed partial class PosterCard : UserControl
                 if (ct.IsCancellationRequested) return;
                 _spoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
                 if (item.Type == "episode" && _spoilerPreferences != null) await _spoilerPreferences.EnsureLoadedAsync(ct);
-                var hidden = HideEpisodeArtwork(item);
-                var bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(diskPath, 200, hidden, ct);
-                if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem)) return;
-                _spoilerArtworkHidden = hidden;
+                var currentHidden = HideEpisodeArtwork(item);
+                var bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(diskPath, 200, currentHidden, ct);
+                if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem) || !DecodedArtworkCache.IsCurrent(key)) return;
+                _decodedArtworkKey = DecodedArtworkCache.Capture(imageService, App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>(), imageUrl, 200, currentHidden);
+                _spoilerArtworkHidden = currentHidden;
                 PosterImage.Source = bitmapImage;
+                DecodedArtworkCache.Remember(_decodedArtworkKey, bitmapImage, this);
                 PosterImage.Opacity = 1;
             }
             finally { s_bitmapCreateLock.Release(); }

@@ -76,8 +76,10 @@ public partial class HomeViewModel : ObservableObject,
 
     public void Receive(MediaSurfaceChanged message)
     {
+        var owner = message.Context ?? _homeApi.CaptureContext();
         _ = RunOnUiThreadAsync(() =>
         {
+            if (!_homeApi.IsCurrentContext(owner) || _loadedContext != owner) return;
             switch (message.Kind)
             {
                 case MediaSurfaceChangeKind.WatchedMarked:
@@ -86,7 +88,7 @@ public partial class HomeViewModel : ObservableObject,
                     break;
             }
 
-            QueueRealtimeRefresh($"media_surface:{message.Kind}");
+            QueueRealtimeRefresh($"media_surface:{message.Kind}", owner);
         });
     }
 
@@ -112,8 +114,10 @@ public partial class HomeViewModel : ObservableObject,
 
     public void Receive(PlaybackProgressUpdated message)
     {
+        var owner = _homeApi.CaptureContext();
         _ = RunOnUiThreadAsync(() =>
         {
+            if (!_homeApi.IsCurrentContext(owner) || _loadedContext != owner) return;
             // Apply the position/removal optimistically, then fetch the server's
             // authoritative rows so Next Up can advance to the following episode.
             foreach (var section in FeaturedSections.Concat(Sections).Concat(_rawSections.Values))
@@ -222,6 +226,9 @@ public partial class HomeViewModel : ObservableObject,
     private int _renderRevision;
 
     private void BumpRenderRevision() => RenderRevision++;
+    public ApiRequestContext? SurfaceContext => _loadedContext;
+    /// <summary>Changes only when the mounted owner's data is actually retired.</summary>
+    public long SurfaceGeneration { get; private set; }
 
     /// <summary>
     /// Tracks whether the cached Home surface is the current navigation target.
@@ -364,6 +371,7 @@ public partial class HomeViewModel : ObservableObject,
         var context = _homeApi.CaptureContext();
         if (_loadedContext != context || !string.Equals(_loadedProfileId, profileId, StringComparison.Ordinal))
         {
+            SurfaceGeneration++;
             _sectionLoadCts?.Cancel();
             ++_sectionLoadGeneration;
             FeaturedSections.Clear();
@@ -620,7 +628,7 @@ public partial class HomeViewModel : ObservableObject,
         LoadFailed = false,
         LoadCompleted = cached?.LoadCompleted == true && cached.LoadFailed == false,
         Items = cached?.LoadCompleted == true && cached.LoadFailed == false
-            ? new ObservableCollection<MediaItem>(cached.Items)
+            ? cached.Items
             : new ObservableCollection<MediaItem>(),
     };
 

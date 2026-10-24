@@ -20,6 +20,7 @@ internal sealed class DirectHttpReader : IDisposable
     private long _end;
     private string? _entityTag;
     private double _readWaitSeconds;
+    private bool _responseReadExpired;
     private long _progressBytes;
     private int _failures;
     private readonly PlaybackDiagnostics? _diagnostics;
@@ -34,6 +35,8 @@ internal sealed class DirectHttpReader : IDisposable
     private long _requestStarted;
     public long Position { get; private set; }
     public bool IsCanceled => _stop.IsCancellationRequested;
+    internal long MediaBytesReceived => Interlocked.Read(ref _totalBytes);
+    internal double SinceLastMediaByteMs => Stopwatch.GetElapsedTime(Interlocked.Read(ref _lastProgress)).TotalMilliseconds;
 
     public DirectHttpReader(string url, Func<double> duration, Func<HttpMessageHandler>? handlerFactory = null)
         : this(url, duration, handlerFactory, null) { }
@@ -125,6 +128,8 @@ internal sealed class DirectHttpReader : IDisposable
             try
             {
                 await EnsureResponseAsync().ConfigureAwait(false);
+                if (_responseReadExpired || _readWaitSeconds >= ProgressWindowSeconds)
+                    throw new OperationCanceledException("Direct stream progress deadline expired.");
                 var duration = _duration();
                 var minimumRate = duration > 0 && _length > 0
                     ? Math.Max(16 * 1024, _length / duration)
@@ -138,10 +143,21 @@ internal sealed class DirectHttpReader : IDisposable
                 {
                     read = await _body!.ReadAsync(buffer[..(int)Math.Min(buffer.Length, _end - Position)], deadline.Token).ConfigureAwait(false);
                 }
+                catch (ObjectDisposedException ex) when (deadline.IsCancellationRequested)
+                {
+                    // HTTP implementations may dispose the response body when
+                    // a pending read is canceled. Preserve that cancellation's
+                    // meaning: our progress deadline retries the unread range;
+                    // a canceled reader lifetime never sends another request.
+                    throw new OperationCanceledException("Direct media read canceled.", ex, deadline.Token);
+                }
                 finally
                 {
                     var waited = Stopwatch.GetElapsedTime(started);
                     _readWaitSeconds += waited.TotalSeconds;
+                    // A late successful read can satisfy useful progress, but
+                    // resetting that budget must not reuse its expired body.
+                    _responseReadExpired |= deadline.IsCancellationRequested || _readWaitSeconds >= ProgressWindowSeconds;
                     _bodyWaitMs += waited.TotalMilliseconds;
                     _longestReadMs = Math.Max(_longestReadMs, waited.TotalMilliseconds);
                     EndIo();
@@ -247,6 +263,7 @@ internal sealed class DirectHttpReader : IDisposable
                     _end = range.To.Value + 1;
                     _body = await response.Content.ReadAsStreamAsync(_stop.Token).ConfigureAwait(false);
                     _response = response;
+                    _responseReadExpired = false;
                 }
                 catch { response.Dispose(); throw; }
             }
@@ -300,6 +317,7 @@ internal sealed class DirectHttpReader : IDisposable
         _body = null;
         _response?.Dispose();
         _response = null;
+        _responseReadExpired = false;
     }
 
     public void Cancel() { _diagnostics?.Record("reader_cancel", DiagnosticSnapshot()); try { _ = _stop.CancelAsync(); } catch (ObjectDisposedException) { } }

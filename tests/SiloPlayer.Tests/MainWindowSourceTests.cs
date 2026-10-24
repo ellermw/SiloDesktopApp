@@ -200,7 +200,7 @@ public sealed class MainWindowSourceTests
         Assert.Contains("RememberDesktopSidebarState(!NavView.IsPaneOpen)", code);
         Assert.Contains("NavView.PaneOpening += NavView_PaneOpening", code);
         Assert.Contains("private void NavView_PaneOpening", code);
-        Assert.Contains("before WinUI renders the", code);
+        Assert.Contains("ScheduleDesktopPaneSynchronization();", code);
         Assert.Contains("x:Name=\"MobileShellHeader\"", xaml);
         Assert.Contains("Click=\"MobileMenu_Click\"", xaml);
         Assert.Contains("Click=\"MobileSearch_Click\"", xaml);

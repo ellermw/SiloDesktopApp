@@ -83,36 +83,71 @@ internal static class Oct20PlaybackNativeFixture
                 ("1080p-medium", null, false, 1080, 6000, "1080p-medium"),
             };
             var index = 0;
+            await Until(() => overlay.IsLoaded && overlay.ActualWidth > 0 && overlay.ActualHeight > 0);
             foreach (var (intent, active, feature, height, bitrate, expected) in cases)
             {
                 wire.Active = active; wire.Feature = feature; wire.Height = height; wire.Bitrate = bitrate;
                 wire.Delivery = active == "720p" ? "original_http" : "server_transcode_hls";
                 await manager.StartSessionAsync(42, qualityPreference: intent);
                 Call(overlay, "PopulateQualityFlyout");
-                var flyout = (FlyoutBase)overlay.FindName("QualityFlyout"); flyout.ShowAt(overlay);
-                await Task.Delay(80);
-                var panel = (StackPanel)overlay.FindName("QualityListPanel"); panel.UpdateLayout();
-                foreach (var button in panel.Children.OfType<Button>()) { button.ApplyTemplate(); button.UpdateLayout(); }
-                await Task.Delay(80); panel.UpdateLayout();
-                var known = service.AvailableQualities.Select(quality => quality.Label == "auto" ? "Auto" : quality.Label).ToHashSet();
-                var bold = panel.Children.OfType<Button>().Select(button => button.Content).OfType<Grid>()
-                    .Select(row => row.Children.OfType<TextBlock>().FirstOrDefault())
-                    .Where(text => text != null && known.Contains(text.Text) && text.FontWeight.Weight == Microsoft.UI.Text.FontWeights.SemiBold.Weight)
-                    .Select(text => text!.Text).ToArray();
-                var expectedLabel = expected == "auto" ? "Auto" : expected;
-                Require(bold.SequenceEqual(expected.Length == 0 ? Array.Empty<string>() : [expectedLabel]), "Actual native quality picker highlights requested intent instead of delivery.");
-                Require(service.CaptureSiloCastState()["activeQualityId"]!.GetValue<string>() == expected,
-                    "Actual SiloCast state disagrees with delivered quality selection.");
-                qualityReply = new(TaskCreationOptions.RunContinuationsAsynchronously);
-                Call(service, "SendQualityInfoToOsc");
-                using var payload = JsonDocument.Parse(await qualityReply.Task.WaitAsync(TimeSpan.FromSeconds(4)));
-                Require(payload.RootElement.GetProperty("active_quality").GetString() == expected,
-                    "Actual libmpv OSC message disagrees with native/SiloCast selection.");
-                Require(service.SelectedQualityIntent == intent && manager.QualityPreference == intent,
-                    "Delivered-rung UI replaced desired future replan intent.");
-                Program.Log($"TRACE quality case{index} expected='{expected}' panel={panel.ActualWidth}x{panel.ActualHeight} loaded={panel.IsLoaded}");
-                await MediaParityNativeFixture.CaptureAsync(panel, $"oct20-delivered-quality-{index++}.png"); flyout.Hide();
-                for (var closing = 0; closing < 40 && panel.IsLoaded; closing++) await Task.Delay(20);
+                var flyout = (FlyoutBase)overlay.FindName("QualityFlyout");
+                var panel = (StackPanel)overlay.FindName("QualityListPanel");
+                var opened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var closed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var caseIndex = index;
+                void OnOpened(object? sender, object args)
+                {
+                    Program.Log($"TRACE quality lifecycle Opened case={caseIndex} panelLoaded={panel.IsLoaded}");
+                    opened.TrySetResult();
+                }
+                void OnClosed(object? sender, object args)
+                {
+                    Program.Log($"TRACE quality lifecycle Closed case={caseIndex} panelLoaded={panel.IsLoaded}");
+                    closed.TrySetResult();
+                }
+                flyout.Opened += OnOpened; flyout.Closed += OnClosed;
+                try
+                {
+                    Require(!flyout.IsOpen, $"Quality case{index} began before its predecessor closed.");
+                    flyout.ShowAt(overlay);
+                    await opened.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    await WaitForQualityPanelAsync(flyout, panel, index);
+                    var known = service.AvailableQualities.Select(quality => quality.Label == "auto" ? "Auto" : quality.Label).ToHashSet();
+                    var bold = panel.Children.OfType<Button>().Select(button => button.Content).OfType<Grid>()
+                        .Select(row => row.Children.OfType<TextBlock>().FirstOrDefault())
+                        .Where(text => text != null && known.Contains(text.Text) && text.FontWeight.Weight == Microsoft.UI.Text.FontWeights.SemiBold.Weight)
+                        .Select(text => text!.Text).ToArray();
+                    var expectedLabel = expected == "auto" ? "Auto" : expected;
+                    Require(bold.SequenceEqual(expected.Length == 0 ? Array.Empty<string>() : [expectedLabel]), "Actual native quality picker highlights requested intent instead of delivery.");
+                    Require(service.CaptureSiloCastState()["activeQualityId"]!.GetValue<string>() == expected,
+                        "Actual SiloCast state disagrees with delivered quality selection.");
+                    qualityReply = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    Call(service, "SendQualityInfoToOsc");
+                    using var payload = JsonDocument.Parse(await qualityReply.Task.WaitAsync(TimeSpan.FromSeconds(4)));
+                    Require(payload.RootElement.GetProperty("active_quality").GetString() == expected,
+                        "Actual libmpv OSC message disagrees with native/SiloCast selection.");
+                    Require(service.SelectedQualityIntent == intent && manager.QualityPreference == intent,
+                        "Delivered-rung UI replaced desired future replan intent.");
+                    Program.Log($"TRACE quality case{index} expected='{expected}' panel={panel.ActualWidth}x{panel.ActualHeight} loaded={panel.IsLoaded}");
+                    Require(!closed.Task.IsCompleted && flyout.IsOpen, $"Quality case{index} closed before capture.");
+                    await MediaParityNativeFixture.CaptureAsync(panel, $"oct20-delivered-quality-{index}.png");
+                    Require(!closed.Task.IsCompleted && flyout.IsOpen && panel.IsLoaded,
+                        $"Quality case{index} closed while its rendered state was being captured.");
+                    flyout.Hide();
+                    // IsLoaded can turn false during the closing animation. The
+                    // next ShowAt must wait for the native popup's Closed event.
+                    await closed.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                    await Until(() => !panel.IsLoaded);
+                    index++;
+                }
+                finally
+                {
+                    try
+                    {
+                        if (flyout.IsOpen) { flyout.Hide(); await closed.Task.WaitAsync(TimeSpan.FromSeconds(4)); }
+                    }
+                    finally { flyout.Opened -= OnOpened; flyout.Closed -= OnClosed; }
+                }
             }
             Program.Log("PASS: actual native quality picker, libmpv Lua OSC message and PlayerService SiloCast state agree for decoder/cap/plain/direct/Auto/authoritative-absence/older-server cases; future intent remains intact.");
         }
@@ -154,6 +189,18 @@ internal static class Oct20PlaybackNativeFixture
         }
     }
     private static void Require(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
+    private static async Task WaitForQualityPanelAsync(FlyoutBase flyout, StackPanel panel, int caseIndex)
+    {
+        for (var attempt = 0; attempt < 200; attempt++)
+        {
+            panel.UpdateLayout();
+            foreach (var button in panel.Children.OfType<Button>()) { button.ApplyTemplate(); button.UpdateLayout(); }
+            if (flyout.IsOpen && panel.IsLoaded && panel.ActualWidth > 0 && panel.ActualHeight > 0 &&
+                panel.Children.OfType<Button>().All(button => button.ActualWidth > 0 && button.ActualHeight > 0)) return;
+            await Task.Delay(20);
+        }
+        throw new InvalidOperationException($"Quality case{caseIndex} did not render after Opened: open={flyout.IsOpen}, loaded={panel.IsLoaded}, size={panel.ActualWidth}x{panel.ActualHeight}.");
+    }
     private static async Task Until(Func<bool> ready) { for (var count = 0; count < 100 && !ready(); count++) await Task.Delay(20); Require(ready(), "Native playback state did not settle."); }
     private static object? Call(object owner, string name, params object?[] args) => owner.GetType().GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(owner, args);
     private static void Set(object owner, string name, object? value) => owner.GetType().GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(owner, value);

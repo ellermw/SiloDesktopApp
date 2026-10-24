@@ -339,27 +339,17 @@ public sealed partial class MainWindow : Window
 
     private void NavView_PaneOpening(object sender, object e)
     {
-        if (!_isNarrowShell && NavView.IsPaneVisible && CanExposeAuthenticatedNavigation)
-        {
-            if (!DesktopSidebarIsOpen)
-            {
-                SynchronizeDesktopPaneState();
-                return;
-            }
-
-            // Enter the side-by-side desktop mode before WinUI renders the
-            // expanded pane. This avoids a transient acrylic LeftCompact frame
-            // and prevents item invocation from treating the pane as a flyout.
-            if (NavView.PaneDisplayMode != NavigationViewPaneDisplayMode.Left)
-                NavView.PaneDisplayMode = NavigationViewPaneDisplayMode.Left;
-        }
+        // PaneDisplayMode mutates WinUI's own pane state. Doing that from
+        // inside PaneOpening reenters its transition (the logged0x80004005
+        // navigation failure). Reconcile after the current native callback.
+        ScheduleDesktopPaneSynchronization();
     }
 
     private void NavView_PaneOpened(object sender, object e)
     {
         if (!_isNarrowShell && NavView.IsPaneVisible && CanExposeAuthenticatedNavigation)
         {
-            SynchronizeDesktopPaneState();
+            ScheduleDesktopPaneSynchronization();
         }
         else
         {
@@ -371,7 +361,7 @@ public sealed partial class MainWindow : Window
     {
         if (!_isNarrowShell && NavView.IsPaneVisible && CanExposeAuthenticatedNavigation)
         {
-            SynchronizeDesktopPaneState();
+            ScheduleDesktopPaneSynchronization();
         }
         else
         {
@@ -1536,6 +1526,7 @@ public sealed partial class MainWindow : Window
         if (shouldHydrateShell)
         {
             var shellToken = _shellHydrationCts!.Token;
+            _playerService.RefreshConnectionObservation();
             var cardOverlayService = App.Services.GetRequiredService<CardOverlayService>();
             cardOverlayService.Invalidate();
             _uiCustomizationService.Invalidate();
@@ -1792,6 +1783,14 @@ public sealed partial class MainWindow : Window
         object sender,
         Microsoft.UI.Xaml.Input.KeyRoutedEventArgs e)
     {
+        if (e.Key == Windows.System.VirtualKey.Escape
+            && _playerService.State == PlayerState.Minimized
+            && _playerService.BufferingQualityPill is "prompt" or "undo")
+        {
+            _playerService.KeepBufferingQuality();
+            e.Handled = true;
+            return;
+        }
         if (e.Key != Windows.System.VirtualKey.GamepadB)
             return;
 
@@ -1800,6 +1799,11 @@ public sealed partial class MainWindow : Window
 
     private bool TryHandleShellBack()
     {
+        if (_playerService.BufferingQualityPill is "prompt" or "undo")
+        {
+            _playerService.KeepBufferingQuality();
+            return true;
+        }
         if (PlayingNextOverlay.Visibility == Visibility.Visible)
         {
             DismissPlayingNext();
@@ -2093,9 +2097,6 @@ public sealed partial class MainWindow : Window
 
         // Restore the authenticated shell at the frame boundary so navigation
         // never leaves the user-controlled pane in a transient hidden state.
-        var desiredPaneOpen = !_isNarrowShell && DesktopSidebarIsOpen;
-        if (NavView.IsPaneOpen != desiredPaneOpen)
-            NavView.IsPaneOpen = desiredPaneOpen;
         if (!NavView.IsPaneVisible)
             NavView.IsPaneVisible = true;
         ApplyResponsiveShellLayout();
@@ -2369,7 +2370,7 @@ public sealed partial class MainWindow : Window
             if (DesktopSidebarIsOpen)
             {
                 args.Cancel = true;
-                SynchronizeDesktopPaneState();
+                ScheduleDesktopPaneSynchronization();
                 return;
             }
         }
@@ -2453,9 +2454,21 @@ public sealed partial class MainWindow : Window
         }
 
         if (NavView.IsPaneOpen != DesktopSidebarIsOpen)
-            SynchronizeDesktopPaneState();
+            ScheduleDesktopPaneSynchronization();
         else
             UpdateSidebarPanePresentation(DesktopSidebarIsOpen);
+    }
+
+    private bool _desktopPaneSynchronizationQueued;
+    private void ScheduleDesktopPaneSynchronization()
+    {
+        if (_desktopPaneSynchronizationQueued || _synchronizingDesktopPaneState) return;
+        _desktopPaneSynchronizationQueued = true;
+        if (!DispatcherQueue.TryEnqueue(() =>
+        {
+            _desktopPaneSynchronizationQueued = false;
+            SynchronizeDesktopPaneState();
+        })) _desktopPaneSynchronizationQueued = false;
     }
 
     private void SynchronizeDesktopPaneState()

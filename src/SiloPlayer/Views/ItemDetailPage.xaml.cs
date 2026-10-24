@@ -38,6 +38,10 @@ public sealed partial class ItemDetailPage : Page
     private bool _translateButtonMode;
     private WatchDetailResponse? _watchDetail;
     private FileVersion? _selectedVersion;
+    private bool _selectedVersionWasExplicit;
+    private ApiIdentityContext? _selectedVersionOwner;
+    private bool IsSelectedVersionPinned => _selectedVersionWasExplicit && _selectedVersionOwner is { } owner &&
+        App.Services.GetRequiredService<SiloApiClient>().IsCurrentIdentityContext(owner);
     private List<SubtitleEntry> _downloadedSubtitles = [];
     private bool _loadingDownloadedSubtitles;
     private string? _readerTargetContentId;
@@ -73,6 +77,7 @@ public sealed partial class ItemDetailPage : Page
     /// <c>PlaybackManager.StartSessionAsync</c> so the initial stream uses it.
     /// </summary>
     private int? _selectedAudioTrackIndex;
+    private PrePlayAudioSelection? _prePlayAudioSelection;
 
     /// <summary>
     /// Pre-play subtitle selection (Phase 2b). Sentinels:
@@ -84,6 +89,7 @@ public sealed partial class ItemDetailPage : Page
     /// </summary>
     private int? _selectedSubtitleIndex;
     private SubtitleTrackSignature? _selectedSubtitleSignature;
+    private long _prePlaySubtitleWriteRevision;
     private Services.PlayerService? _playerService;
     private FrameworkElement? _rootElement;
 
@@ -962,6 +968,8 @@ public sealed partial class ItemDetailPage : Page
         _watchDetail = null;
         _siblingEpisodes.Clear();
         _selectedVersion = null;
+        _selectedVersionWasExplicit = false;
+        _selectedVersionOwner = null;
         _mediaActionCapabilitiesId = null;
         _offerSeekPreviews = _offerMarkerDetection = _honorMarkerSettings = false;
         _playableContentId = null;
@@ -3859,6 +3867,7 @@ public sealed partial class ItemDetailPage : Page
         ["DOVIWithEL"] = "EL",
         ["DOVIWithELHDR10Plus"] = "EL",
         ["DOVIWithHDR10"] = "HDR10 compatible",
+        ["DOVIWithHDR10Plus"] = "HDR10 compatible",
         ["DOVIWithSDR"] = "SDR compatible",
         ["DOVIWithHLG"] = "HLG compatible",
     };
@@ -5039,7 +5048,8 @@ public sealed partial class ItemDetailPage : Page
             prefetchedWatchDetail: string.Equals(_watchDetail?.ContentId, contentId, StringComparison.Ordinal)
                 ? _watchDetail
                 : null,
-            subtitleTrackSignature: _selectedSubtitleSignature, libraryId: ViewModel.LibraryId);
+            subtitleTrackSignature: _selectedSubtitleSignature, libraryId: ViewModel.LibraryId,
+            sourceVersionPinned: IsSelectedVersionPinned);
     }
 
     /// <summary>
@@ -5138,6 +5148,7 @@ public sealed partial class ItemDetailPage : Page
                 qualityPreference: null,
                 preferredEditionKey: item.EffectiveVersionEditionKey)
                 ?? item.Versions[0];
+            best = RetainExplicitVersion(item.Versions, best);
             _selectedVersion = best;
             UpdateSelectedVersionHeroSummary(best);
             VersionSummaryText.Text = BuildQualitySummary(best);
@@ -5446,6 +5457,7 @@ public sealed partial class ItemDetailPage : Page
                 _watchDetail.PlaybackVariants,
                 userData: userData,
                 preferredEditionKey: _watchDetail.EffectiveVersionEditionKey);
+            best = RetainExplicitVersion(versions, best ?? versions[0]);
             _selectedVersion = best;
             BuildAudioTracksFlyout(best);
             BuildSubtitlesPopoverFlyout(best);
@@ -5525,6 +5537,7 @@ public sealed partial class ItemDetailPage : Page
     /// </summary>
     private void BuildAudioTracksFlyout(FileVersion? version)
     {
+        _prePlayAudioSelection?.Clear();
         AudioTracksFlyoutContent.Children.Clear();
         var tracks = version?.AudioTracks;
         if (tracks == null || tracks.Count == 0)
@@ -5555,12 +5568,9 @@ public sealed partial class ItemDetailPage : Page
         AudioTracksFlyoutContent.Children.Clear();
         var autoSummary = FormatAudioTrackSummary(tracks[autoIndex]);
         var autoItem = CreateTrackSelectionRow("Auto", autoSummary, [], _selectedAudioTrackIndex is null);
-        autoItem.Click += (_, _) =>
+        autoItem.Click += async (_, _) =>
         {
-            _selectedAudioTrackIndex = null;
-            UpdateAudioTracksSummary(tracks, autoIndex);
-            AudioTracksFlyout.Hide();
-            RenderAudioTracksFlyout(version, tracks, autoIndex);
+            await SelectPrePlayAudioAsync(version, tracks, autoIndex, null);
         };
         AudioTracksFlyoutContent.Children.Add(autoItem);
 
@@ -5590,15 +5600,41 @@ public sealed partial class ItemDetailPage : Page
                 string.Join(" · ", descriptionParts),
                 badges,
                 _selectedAudioTrackIndex == idx);
-            item.Click += (_, _) =>
+            item.Click += async (_, _) =>
             {
-                _selectedAudioTrackIndex = idx;
-                UpdateAudioTracksSummary(tracks, autoIndex);
-                AudioTracksFlyout.Hide();
-                RenderAudioTracksFlyout(version, tracks, autoIndex);
+                await SelectPrePlayAudioAsync(version, tracks, autoIndex, idx);
             };
             AudioTracksFlyoutContent.Children.Add(item);
         }
+    }
+
+    private async Task SelectPrePlayAudioAsync(FileVersion version, List<AudioTrackInfo> tracks, int autoIndex, int? index)
+    {
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        var owner = client.CaptureContext();
+        var selectedVersion = _selectedVersion;
+        var selection = _prePlayAudioSelection ??= new(client, App.Services.GetRequiredService<CatalogApi>());
+        var preferenceId = PrePlaySubtitlePreferenceId();
+        if (string.IsNullOrWhiteSpace(preferenceId)) return;
+        var write = selection.SelectAsync(preferenceId, index,
+            index is int i ? tracks[i] : null, _navigationCts?.Token ?? CancellationToken.None);
+        _selectedAudioTrackIndex = selection.SelectedIndex;
+        UpdateAudioTracksSummary(tracks, autoIndex);
+        AudioTracksFlyout.Hide();
+        RenderAudioTracksFlyout(version, tracks, autoIndex);
+        try { await write; }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            if (client.IsCurrentContext(owner) && ReferenceEquals(selectedVersion, _selectedVersion))
+                App.Services.GetRequiredService<ToastService>().Error(
+                    string.IsNullOrWhiteSpace(ex.Message) ? "Failed to save audio preference" : ex.Message);
+        }
+        if (!client.IsCurrentContext(owner) || !ReferenceEquals(selectedVersion, _selectedVersion) ||
+            _navigationCts?.IsCancellationRequested == true) return;
+        _selectedAudioTrackIndex = selection.SelectedIndex;
+        UpdateAudioTracksSummary(tracks, autoIndex);
+        RenderAudioTracksFlyout(version, tracks, autoIndex);
     }
 
     private void UpdateAudioTracksSummary(List<AudioTrackInfo> tracks, int autoIndex)
@@ -5965,13 +6001,13 @@ public sealed partial class ItemDetailPage : Page
         var mode = _watchDetail.EffectiveSubtitleMode;
         var preferredLang = _watchDetail.EffectiveSubtitleLanguage;
         var showForced = _watchDetail.EffectiveShowForcedSubtitles;
-        if (string.IsNullOrEmpty(mode) || string.IsNullOrEmpty(preferredLang) || showForced == null)
+        if (string.IsNullOrEmpty(mode) || preferredLang == null || showForced == null)
         {
             try
             {
                 var settings = App.Services.GetRequiredService<SettingsViewModel>();
                 if (string.IsNullOrEmpty(mode)) mode = settings.SubtitleMode;
-                if (string.IsNullOrEmpty(preferredLang)) preferredLang = settings.SubtitleLanguage;
+                if (preferredLang == null) preferredLang = settings.SubtitleLanguage;
                 if (showForced == null) showForced = settings.ShowForcedSubtitles;
             }
             catch { /* settings unavailable — use defaults below */ }
@@ -6169,9 +6205,15 @@ public sealed partial class ItemDetailPage : Page
     {
         var preferenceId = PrePlaySubtitlePreferenceId();
         if (string.IsNullOrWhiteSpace(preferenceId)) return;
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        var owner = client.CaptureContext();
+        var detail = _watchDetail;
+        var revision = ++_prePlaySubtitleWriteRevision;
+        var token = _navigationCts?.Token ?? CancellationToken.None;
         try
         {
             await App.Services.GetRequiredService<PlaybackApi>().SaveSubtitlePrefsAsync(
+                owner,
                 preferenceId,
                 new SubtitlePreferenceRequest
                 {
@@ -6179,15 +6221,16 @@ public sealed partial class ItemDetailPage : Page
                     SubtitleTrackIndex = trackIndex,
                     SubtitleMode = mode,
                     TrackSignature = signature,
-                    ShowForcedSubtitles = _watchDetail?.EffectiveShowForcedSubtitles,
-                });
-            if (_watchDetail is not null)
+                }, token);
+            if (detail is not null && ReferenceEquals(detail, _watchDetail) &&
+                client.IsCurrentContext(owner) && revision == _prePlaySubtitleWriteRevision && !token.IsCancellationRequested)
             {
                 _watchDetail.EffectiveSubtitleLanguage = signature?.Language;
                 _watchDetail.EffectiveSubtitleMode = mode;
                 _watchDetail.EffectiveSubtitleTrackSignature = signature;
             }
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             App.Services.GetRequiredService<ToastService>().Error(
@@ -6199,16 +6242,23 @@ public sealed partial class ItemDetailPage : Page
     {
         var preferenceId = PrePlaySubtitlePreferenceId();
         if (string.IsNullOrWhiteSpace(preferenceId)) return;
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        var owner = client.CaptureContext();
+        var detail = _watchDetail;
+        var revision = ++_prePlaySubtitleWriteRevision;
+        var token = _navigationCts?.Token ?? CancellationToken.None;
         try
         {
-            await App.Services.GetRequiredService<PlaybackApi>().DeleteSubtitlePrefsAsync(preferenceId);
-            if (_watchDetail is not null)
+            await App.Services.GetRequiredService<PlaybackApi>().DeleteSubtitlePrefsAsync(owner, preferenceId, token);
+            if (detail is not null && ReferenceEquals(detail, _watchDetail) &&
+                client.IsCurrentContext(owner) && revision == _prePlaySubtitleWriteRevision && !token.IsCancellationRequested)
             {
                 _watchDetail.EffectiveSubtitleLanguage = null;
                 _watchDetail.EffectiveSubtitleMode = "auto";
                 _watchDetail.EffectiveSubtitleTrackSignature = null;
             }
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
             App.Services.GetRequiredService<ToastService>().Error(
@@ -6424,7 +6474,7 @@ public sealed partial class ItemDetailPage : Page
                 {
                     var defaultVersion = ResolveVariantDefaultVersion(selectedVariant, versions);
                     if (defaultVersion == null) return;
-                    _selectedVersion = defaultVersion;
+                    SelectExplicitVersion(defaultVersion);
                     _downloadedSubtitles = [];
                     UpdateSelectedVersionUi(defaultVersion);
                     ConfigureVersionSelectors(versions, orderedVariants, defaultVersion, isResuming);
@@ -6598,7 +6648,7 @@ public sealed partial class ItemDetailPage : Page
                 var fileVersion = version;
                 item.Click += (_, _) =>
                 {
-                    _selectedVersion = fileVersion;
+                    SelectExplicitVersion(fileVersion);
                     _downloadedSubtitles = [];
                     UpdateSelectedVersionUi(fileVersion);
                     if (allVersions != null && variants != null)
@@ -6612,6 +6662,22 @@ public sealed partial class ItemDetailPage : Page
     }
 
     // ─── Version formatting helpers (webui lib/quality.ts parity) ──────
+
+    private void SelectExplicitVersion(FileVersion version)
+    {
+        _selectedVersion = version;
+        _selectedVersionWasExplicit = true;
+        _selectedVersionOwner = App.Services.GetRequiredService<SiloApiClient>().CaptureIdentityContext();
+    }
+
+    private FileVersion RetainExplicitVersion(IReadOnlyList<FileVersion> versions, FileVersion automatic)
+    {
+        if (IsSelectedVersionPinned && versions.FirstOrDefault(version => version.FileId == _selectedVersion?.FileId) is { } selected)
+            return selected;
+        _selectedVersionWasExplicit = false;
+        _selectedVersionOwner = null;
+        return automatic;
+    }
 
     /// <summary>
     /// Build the main quality summary line for a file version. Matches the

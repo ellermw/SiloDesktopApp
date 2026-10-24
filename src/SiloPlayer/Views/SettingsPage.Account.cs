@@ -461,17 +461,47 @@ public sealed partial class SettingsPage
         return group;
     }
 
+    private CancellationTokenSource? _connectAppsCancellation;
+    private bool _connectAppsLifetimeAttached;
     private async Task LoadConnectAppsAsync()
     {
+        if (!_connectAppsLifetimeAttached)
+        {
+            _connectAppsLifetimeAttached = true;
+            Unloaded += (_, _) => { _connectAppsCancellation?.Cancel(); _connectAppsCancellation?.Dispose(); _connectAppsCancellation = null; ConnectAppsContentHost.Children.Clear(); };
+        }
+        _connectAppsCancellation?.Cancel();
+        _connectAppsCancellation?.Dispose();
+        var owner = new CancellationTokenSource(); _connectAppsCancellation = owner;
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        var context = client.CaptureContext();
+        var currentAuth = App.Services.GetRequiredService<AuthService>();
+        var session = currentAuth.SessionGeneration;
+        bool Current() => ReferenceEquals(owner, _connectAppsCancellation) && !owner.IsCancellationRequested && client.IsCurrentContext(context) && currentAuth.SessionGeneration == session;
         ConnectAppsLoadingRing.IsActive = true;
         ConnectAppsContentHost.Children.Clear();
         try
         {
             var api = App.Services.GetRequiredService<SettingsApi>();
             var auth = App.Services.GetRequiredService<AuthService>();
-            var compatTask = api.GetCompatConnectInfoAsync();
-            var profilesTask = api.GetProfilesAsync();
+            var compatTask = api.GetCompatConnectInfoAsync(owner.Token);
+            var profilesTask = api.GetProfilesAsync(owner.Token);
             await Task.WhenAll(compatTask, profilesTask);
+            if (!Current()) return;
+
+            AuthProvidersResponse? discovery = null;
+            AccountIdentityCollection? identities = null;
+            var signInFailed = false;
+            try
+            {
+                discovery = await client.GetUnauthenticatedAsync<AuthProvidersResponse>("/api/v2/auth/providers", owner.Token);
+                if (!Current()) return;
+                if (!(compatTask.Result.Account.PasswordLoginAvailable != false && discovery.PasswordLogin))
+                    identities = await App.Services.GetRequiredService<AuthApi>().GetAccountIdentitiesAsync(context, owner.Token);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch { signInFailed = true; }
+            if (!Current()) return;
 
             var compat = compatTask.Result;
             var profiles = profilesTask.Result.Profiles;
@@ -494,14 +524,38 @@ public sealed partial class SettingsPage
 
             void ShowSilo()
             {
+                if (!Current()) return;
                 details.Children.Clear();
                 details.Children.Add(InfoCallout("For Silo's own apps",
                     "Silo for iPhone, Apple TV, Android, Android TV, and this Windows app. Don't add a # to either field here."));
+                if (signInFailed || discovery == null)
+                {
+                    details.Children.Add(InfoCallout("Couldn't load your sign-in details", "Reload this page to load the server's sign-in options.")); return;
+                }
+                var choice = ConnectAppsSignIn.Resolve(compat.Account.PasswordLoginAvailable != false, discovery.PasswordLogin, discovery.Providers, identities?.Items ?? []);
                 var card = CreateSettingsGroup("Sign-in details", "Use these values only on a Silo sign-in screen.");
                 AddCredentialRow(card, "Server", auth.ConfiguredServerUrl, "The address of this Silo server.");
-                AddCredentialRow(card, "Username", accountName, "Just your account name.");
-                AddCredentialRow(card, "Password", "your password",
-                    "Your account password. The profile PIN is asked for separately, in the app.", canCopy: false);
+                if (choice.Kind is "password" or "directory")
+                {
+                    AddCredentialRow(card, "Username", choice.Kind == "directory" && !string.IsNullOrWhiteSpace(choice.Username) ? choice.Username : accountName,
+                        choice.Kind == "directory" ? $"Your {choice.Provider!.DisplayName} username." : "Just your account name.");
+                    AddCredentialRow(card, "Password", "your password", choice.Kind == "directory"
+                        ? $"Your {choice.Provider!.DisplayName} password. The profile PIN is asked for separately, in the app."
+                        : "Your account password. The profile PIN is asked for separately, in the app.", canCopy: false);
+                }
+                else if (choice.Kind == "provider")
+                {
+                    AddCredentialRow(card, "Sign in with", choice.Provider!.DisplayName, string.IsNullOrEmpty(choice.Provider.NativeStartPath)
+                        ? "Sign-in cannot start until an administrator sets this server's public address."
+                        : $"Choose {choice.Provider.DisplayName} on the sign-in screen and sign in there.", canCopy: false);
+                    details.Children.Add(InfoCallout("Signing in on a TV", $"Scan the code shown by your TV with your phone, or enter it at {auth.ConfiguredServerUrl.TrimEnd('/')}/activate and approve the TV there."));
+                }
+                else if (choice.Kind == "network")
+                    AddCredentialRow(card, "Sign in with", choice.ProviderName, $"On a device connected to {choice.ProviderName}, open this server through that network and choose Continue as on the sign-in screen.", canCopy: false);
+                else
+                    details.Children.Add(InfoCallout("This account has no available Silo app sign-in", compat.Account.PasswordLoginAvailable == true
+                        ? $"Password sign-in is off. This recovery account can still use {auth.ConfiguredServerUrl.TrimEnd('/')}/login?local=1 in a browser, then approve a TV code at /activate."
+                        : "Ask an administrator to connect an enabled sign-in provider or allow password sign-in for this account."));
                 details.Children.Add(card);
                 details.Children.Add(InfoCallout("Profiles come next",
                     "After signing in you'll choose a profile from the profile picker, and PIN-protected profiles prompt for their PIN there."));
@@ -509,6 +563,7 @@ public sealed partial class SettingsPage
 
             void ShowJellyfin()
             {
+                if (!Current()) return;
                 details.Children.Clear();
                 details.Children.Add(InfoCallout("For Jellyfin-compatible apps only",
                     "Infuse, Swiftfin, JellyCon, Findroid, Jellyfin Media Player. These credentials will not work on a Silo sign-in screen."));
@@ -516,7 +571,7 @@ public sealed partial class SettingsPage
                 if (compat.Account.PasswordLoginAvailable == false)
                 {
                     details.Children.Add(InfoCallout("This account can't sign in to a Jellyfin app",
-                        "It signs in through an external provider rather than a Silo password, and the compatibility API only accepts Silo passwords. Use a Silo app, or ask an administrator about an account with password sign-in."));
+                        "Password sign-in is unavailable for this account or turned off on this server. The compatibility API only accepts Silo passwords. Use a Silo app, or ask an administrator about password sign-in."));
                     return;
                 }
                 if (!compat.Jellyfin.Enabled)
@@ -548,6 +603,7 @@ public sealed partial class SettingsPage
 
                 void RenderCredentials()
                 {
+                    if (!Current()) return;
                     credentialHost.Children.Clear();
                     var profileName = selectedProfile?.Name?.Trim() ?? "";
                     var profileNameIssue = profileName.Contains('#')
@@ -631,8 +687,10 @@ public sealed partial class SettingsPage
             jellyfinButton.Click += (_, _) => ShowJellyfin();
             ShowJellyfin();
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
+            if (!Current()) return;
             ConnectAppsContentHost.Children.Clear();
             ConnectAppsContentHost.Children.Add(InfoCallout(
                 "Couldn't load your sign-in details",
@@ -641,7 +699,7 @@ public sealed partial class SettingsPage
         }
         finally
         {
-            ConnectAppsLoadingRing.IsActive = false;
+            if (Current()) ConnectAppsLoadingRing.IsActive = false;
         }
     }
 

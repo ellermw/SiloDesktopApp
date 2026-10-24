@@ -2084,6 +2084,8 @@ public sealed partial class PlayerOverlay : UserControl
         };
         if (!string.IsNullOrWhiteSpace(requestedSource))
             playerRows.Add(("Auto-switched from", requestedSource));
+        if (!string.IsNullOrWhiteSpace(_playerService.BufferingQualityPlaybackInfo))
+            playerRows.Add(("Auto quality limit", _playerService.BufferingQualityPlaybackInfo));
 
         StatsSectionsPanel.Children.Clear();
         AddPlaybackInfoSection("Player", playerRows);

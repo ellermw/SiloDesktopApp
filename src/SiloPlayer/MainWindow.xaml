@@ -610,6 +610,9 @@
                                  Visibility="Collapsed"
                                  Canvas.ZIndex="60"
                                  VerticalAlignment="Bottom" />
+        <controls:BufferingQualityPillControl Canvas.ZIndex="65"
+                                             VerticalAlignment="Bottom" HorizontalAlignment="Center"
+                                             Margin="16,0,16,88" />
 
         <!-- Layer 4: Playing Next cinematic overlay — shown when an episode
              ends naturally and the series has another episode queued. Lives

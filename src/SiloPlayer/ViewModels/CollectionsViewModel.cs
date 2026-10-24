@@ -36,6 +36,68 @@ public partial class CollectionsViewModel : ObservableObject
     public ObservableCollection<CollectionGroup> Groups { get; } = [];
 
     public ObservableCollection<ServerCollectionsLibrary> ServerLibraries { get; } = [];
+    private readonly Dictionary<int, List<ServerCollectionSummary>> _serverRest = [];
+    private readonly HashSet<int> _requestedServerLibraries = [];
+    private readonly Dictionary<int, string> _serverCollectionErrors = [];
+    private readonly HashSet<int> _loadingServerLibraries = [];
+    private CancellationTokenSource _serverCollectionOwner = new();
+    public int ServerCollectionRevision { get; private set; }
+    public sealed record ServerCollectionCard(ServerCollectionSummary Collection, ServerCollectionsLibrary? Library);
+
+    public IReadOnlyList<ServerCollectionCard> GetServerCollectionCards(int? libraryId = null)
+    {
+        if (_requestClient != null && _displayContext != _requestClient.CaptureContext()) return [];
+        var libraries = ServerLibraries.Where(l => libraryId == null || l.LibraryId == libraryId).ToArray();
+        var pages = libraries.Select(l => (Library: l, Rows: l.Collections))
+            .Concat(libraries.Select(l => (Library: l, Rows: _serverRest.GetValueOrDefault(l.LibraryId) ?? []))).ToArray();
+        var counts = pages.SelectMany(p => p.Rows.Select(c => (c.Id, p.Library.LibraryId))).Distinct()
+            .GroupBy(c => c.Id).ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        return pages.SelectMany(p => p.Rows.Where(c => seen.Add(c.Id)).Select(c => new ServerCollectionCard(c, libraryId == null && counts[c.Id] > 1 ? null : p.Library))).ToArray();
+    }
+    public bool IsServerLibraryLoading(int libraryId) => _loadingServerLibraries.Contains(libraryId);
+    public string? ServerLibraryError(int libraryId) => _serverCollectionErrors.GetValueOrDefault(libraryId);
+    public bool HasServerLibraryRest(int libraryId) => _serverRest.ContainsKey(libraryId);
+    public ServerCollectionsLibrary? NextServerLibrary => ServerLibraries.FirstOrDefault(l => l.TotalCount > l.Collections.Count && !_requestedServerLibraries.Contains(l.LibraryId));
+    private void ServerCollectionsChanged() { ServerCollectionRevision++; OnPropertyChanged(nameof(ServerCollectionRevision)); }
+    public void CancelServerCollectionLoads()
+    {
+        _serverCollectionOwner.Cancel(); _serverCollectionOwner.Dispose(); _serverCollectionOwner = new();
+        _loadingServerLibraries.Clear();
+    }
+    public async Task LoadServerLibraryAsync(int libraryId, CancellationToken ct = default)
+    {
+        if (_requestClient != null && _displayContext != _requestClient.CaptureContext()) return;
+        if (_loadingServerLibraries.Contains(libraryId)) return;
+        var library = ServerLibraries.FirstOrDefault(l => l.LibraryId == libraryId);
+        if (library == null || library.TotalCount <= library.Collections.Count) return;
+        var owner = _serverCollectionOwner; var context = _requestClient?.CaptureContext(); var generation = _loadGeneration;
+        bool Current() => owner == _serverCollectionOwner && !owner.IsCancellationRequested && generation == _loadGeneration &&
+            (context == null || _requestClient!.IsCurrentContext(context.Value));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(owner.Token, ct);
+        _requestedServerLibraries.Add(libraryId); _loadingServerLibraries.Add(libraryId); _serverCollectionErrors.Remove(libraryId); ServerCollectionsChanged();
+        try
+        {
+            var response = await _catalogApi.GetLibraryCollectionsAsync(libraryId, linked.Token);
+            linked.Token.ThrowIfCancellationRequested(); if (!Current()) return;
+            var first = library.Collections.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+            _serverRest[libraryId] = response.Collections.Select(c => new ServerCollectionSummary { Id = c.Id, Title = c.Title, PosterUrl = c.PosterUrl,
+                PosterThumbhash = c.PosterThumbhash, ItemCount = c.ItemCount, Featured = c.Featured })
+                .Where(c => !first.Contains(c.Id)).DistinctBy(c => c.Id).ToList();
+        }
+        catch (OperationCanceledException)
+        {
+            if (Current() && !_serverRest.ContainsKey(libraryId)) _requestedServerLibraries.Remove(libraryId);
+        }
+        catch (Exception)
+        {
+            if (Current()) _serverCollectionErrors[libraryId] = $"Couldn't load all {library.LibraryName} collections. Previously loaded cards are still shown.";
+        }
+        finally
+        {
+            if (Current()) { _loadingServerLibraries.Remove(libraryId); ServerCollectionsChanged(); }
+        }
+    }
 
     public ObservableCollection<CollectionTemplateCategory> TemplateGroups { get; } = [];
 
@@ -79,11 +141,13 @@ public partial class CollectionsViewModel : ObservableObject
         var context = _requestClient?.CaptureContext();
         if (_loadInProgress && _loadContext == context) return;
         var generation = ++_loadGeneration;
+        CancelServerCollectionLoads();
         bool Current() => generation == _loadGeneration && (context == null || _requestClient!.IsCurrentContext(context.Value));
         if (_displayContext != context)
         {
             Collections.Clear(); Groups.Clear(); ServerLibraries.Clear(); Profiles.Clear();
             Capabilities = null; OnPropertyChanged(nameof(Capabilities));
+            _serverRest.Clear(); _requestedServerLibraries.Clear(); _serverCollectionErrors.Clear();
             _displayContext = context;
         }
         _loadContext = context;
@@ -131,6 +195,11 @@ public partial class CollectionsViewModel : ObservableObject
                 {
                     ServerLibraries.Clear();
                     foreach (var library in serverResponse.Libraries) ServerLibraries.Add(library);
+                    var requested = _requestedServerLibraries.ToArray();
+                    foreach (var libraryId in _serverRest.Keys.Where(id => !ServerLibraries.Any(l => l.LibraryId == id)).ToArray()) _serverRest.Remove(libraryId);
+                    if (ServerLibraries.Count == 1) requested = requested.Append(ServerLibraries[0].LibraryId).Distinct().ToArray();
+                    foreach (var libraryId in requested) { if (!Current()) break; await LoadServerLibraryAsync(libraryId); }
+                    if (Current()) ServerCollectionsChanged();
                 }
             }
         }

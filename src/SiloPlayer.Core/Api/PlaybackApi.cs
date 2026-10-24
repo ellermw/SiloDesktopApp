@@ -102,6 +102,9 @@ public partial class PlaybackApi(SiloApiClient client)
         }, ct);
 
     public Task SaveSubtitlePrefsAsync(string seriesId, SubtitlePreferenceRequest request, CancellationToken ct = default)
+        => SaveSubtitlePrefsAsync(client.CaptureContext(), seriesId, request, ct);
+
+    private static Dictionary<string, object?> BuildSubtitlePreferenceBody(SubtitlePreferenceRequest request)
     {
         // Use Dictionary<string,object?> so the .NET 8 trimmer doesn't strip the
         // anonymous-type properties (established gotcha in this codebase).
@@ -127,11 +130,11 @@ public partial class PlaybackApi(SiloApiClient client)
         }
         if (request.ShowForcedSubtitles.HasValue)
             body["show_forced_subtitles"] = request.ShowForcedSubtitles.Value;
-        return client.PutNoContentAsync($"/api/v2/subtitle-prefs/{Uri.EscapeDataString(seriesId)}", body, ct);
+        return body;
     }
 
     public Task DeleteSubtitlePrefsAsync(string seriesId, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v2/subtitle-prefs/{Uri.EscapeDataString(seriesId)}", ct);
+        => DeleteSubtitlePrefsAsync(client.CaptureContext(), seriesId, ct);
 
     // ===== Home Dismissals =====
 

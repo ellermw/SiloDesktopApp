@@ -4,7 +4,7 @@ using SiloPlayer.Core.Models.Playback;
 
 namespace SiloPlayer.Core.Services;
 
-public class PlaybackManager : IDisposable
+public partial class PlaybackManager : IDisposable
 {
     private static readonly string s_appVersion = ResolveAppVersion();
 
@@ -74,8 +74,15 @@ public class PlaybackManager : IDisposable
                 quality.BitrateKbps < ceiling);
     }
 
-    public Task<PlaybackQualityPreferences> ResolveQualityPreferencesAsync(CancellationToken ct = default)
-        => PlaybackQualityPreferences.ReadAsync(_apiClient, _authService.SelectedProfile?.QualityPreference, ct);
+    public async Task<PlaybackQualityPreferences> ResolveQualityPreferencesAsync(CancellationToken ct = default)
+    {
+        var owner = _apiClient.CaptureIdentityContext();
+        var capability = await _playbackApi.GetConnectionCapabilityAsync(owner, ct).ConfigureAwait(false);
+        var preferences = await PlaybackQualityPreferences.ReadAsync(_apiClient, _authService.SelectedProfile?.QualityPreference,
+            ct, capability.Features.Contains("buffering_quality_v1")).ConfigureAwait(false);
+        if (!_apiClient.IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Playback owner changed.", ct);
+        return preferences with { CapabilitySnapshot = (owner, capability) };
+    }
 
     public async Task<WatchDetailResponse> GetWatchDetailAsync(string contentId, CancellationToken ct = default)
     {
@@ -130,10 +137,15 @@ public class PlaybackManager : IDisposable
         bool disableProgressPersistence = false,
         string? qualityPreference = null,
         CancellationToken ct = default,
-        PlaybackQualityPreferences? preferences = null)
+        PlaybackQualityPreferences? preferences = null,
+        int? subtitleTrackIndex = null,
+        bool preserveTrackIntent = false)
     {
         preferences ??= await ResolveQualityPreferencesAsync(ct).ConfigureAwait(false);
         if (!_apiClient.IsCurrentContext(preferences.Context)) throw new OperationCanceledException("Playback quality owner changed.", ct);
+        if (!preserveTrackIntent) ResetLocalTrackIntent();
+        var subtitleRevision = CaptureSubtitleRevision();
+        var audioRevision = CaptureAudioRevision();
         var appVersion = s_appVersion;
         var (capabilities, context) = MpvNativePlaybackCapabilities.CreateProtocolV3Profile(
             appVersion,
@@ -153,6 +165,7 @@ public class PlaybackManager : IDisposable
                 ? Math.Max(0, startPosition)
                 : (startPosition > 0 ? startPosition : null),
             AudioTrackIndex = audioTrackIndex,
+            SubtitleTrackIndex = subtitleTrackIndex,
             ProgressPersistence = disableProgressPersistence ? "client" : null,
             Metered = false,
             ClientCapabilities = capabilities,
@@ -161,7 +174,9 @@ public class PlaybackManager : IDisposable
 
         LogToStateTrace($"StartSession v3: fileId={fileId}, pos={startPosition}, force={forceStartPosition}, attempt={request.PlaybackAttemptId}, codecs_video=[{string.Join(",", capabilities.CodecsVideo)}], codecs_audio=[{string.Join(",", capabilities.CodecsAudio)}], max_res={capabilities.MaxResolution}, hdr={capabilities.Hdr}");
 
+        await ConfigureConnectionStartAsync(request, preferences, ct).ConfigureAwait(false);
         var decision = await _playbackApi.StartPlaybackV3Async(request, ct).ConfigureAwait(false);
+        _connectionFeatures = request.ClientFeatures.ToArray();
         var response = AdoptProtocolV3Decision(decision, request.PlaybackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
         _recoveryAttemptHistory.Reset();
         _currentPlanV3 = decision.PlaybackPlan;
@@ -173,6 +188,8 @@ public class PlaybackManager : IDisposable
         _bandwidthCapKbpsV3 = request.BandwidthCapKbps;
         _sessionId = response.SessionId;
         CurrentSession = response;
+        AcknowledgeSubtitleIntent(subtitleRevision);
+        AcknowledgeAudioIntent(audioRevision);
         _lastReportedPosition = Math.Max(0, response.Position);
         _isPaused = response.IsPaused;
 
@@ -296,7 +313,7 @@ public class PlaybackManager : IDisposable
             PlayerStartSeconds = Math.Max(0, plan.Timeline.PlayerStartSeconds),
             TimelineOffsetSeconds = Math.Max(0, plan.Timeline.TimelineOffsetSeconds),
             CanSeekAnywhere = plan.Timeline.CanSeekAnywhere,
-            SelectedSubtitleTrackId = plan.Subtitle.TrackId,
+            SelectedSubtitleTrackId = plan.SelectedTracks.Subtitle?.Id ?? plan.Subtitle.TrackId,
             SubtitleMode = plan.Subtitle.Mode,
             SelectedSubtitleArtifactUrl = plan.Subtitle.Artifact?.Url,
             SubtitleTimingOriginSeconds = plan.Subtitle.Artifact?.TimingOriginSeconds ?? 0,
@@ -346,31 +363,31 @@ public class PlaybackManager : IDisposable
         int audioTrackIndex,
         double positionSeconds,
         CancellationToken ct = default)
-        => ReplanAsync(
+    {
+        RecordLocalAudioSelection(audioTrackIndex);
+        return ReplanAsync(
             "track_change",
             positionSeconds,
             _qualityPreferenceV3,
-            selectedTracks => selectedTracks.Audio = new PlaybackTrackIdentityV3
-            {
-                Id = $"file:{_currentPlanV3?.EffectiveMediaFileId ?? 0}:audio:{audioTrackIndex}",
-                Index = audioTrackIndex,
-            },
+            selectedTracks => { },
             failure: null,
             ct);
+    }
 
     public Task<PlaybackStartResponse> ReplanSubtitleAsync(
         int? subtitleTrackIndex,
         double positionSeconds,
         CancellationToken ct = default)
-        => ReplanAsync(
+    {
+        RecordLocalSubtitleSelection(subtitleTrackIndex);
+        return ReplanAsync(
             "track_change",
             positionSeconds,
             _qualityPreferenceV3,
-            selectedTracks => selectedTracks.Subtitle = subtitleTrackIndex.HasValue
-                ? FindSubtitleIdentity(subtitleTrackIndex.Value)
-                : null,
+            selectedTracks => { },
             failure: null,
             ct);
+    }
 
     public Task<PlaybackStartResponse> ReplanSeekAsync(
         double positionSeconds,
@@ -490,6 +507,12 @@ public class PlaybackManager : IDisposable
         await _replanGuard.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // Only track_change gives an omitted subtitle the meaning Off.
+            EnsureBufferingReplanOwner();
+            // Tell the server before quality_change, which preserves an omitted identity.
+            if (operation == "quality_change" && NeedsExplicitSubtitleOff())
+                await ReplanCoreAsync("track_change", positionSeconds, _qualityPreferenceV3,
+                    selectedTracks => { }, null, ct).ConfigureAwait(false);
             return await ReplanCoreAsync(
                 operation,
                 positionSeconds,
@@ -536,6 +559,8 @@ public class PlaybackManager : IDisposable
                 Index = plan.SelectedTracks.Subtitle.Index,
             },
         };
+        var subtitleRevision = ApplyLocalSubtitleIntent(selectedTracks, operation);
+        var audioRevision = ApplyLocalAudioIntent(selectedTracks, operation);
         mutateSelectedTracks(selectedTracks);
 
         var recoveryAttempt = failure == null
@@ -561,6 +586,7 @@ public class PlaybackManager : IDisposable
             ClientPlaybackContext = context,
         };
 
+        ConfigureConnectionReplan(request);
         var decision = await _playbackApi.ReplanPlaybackV3Async(sessionId, request, ct).ConfigureAwait(false);
         if (recoveryAttempt != null)
             _recoveryAttemptHistory.CommitFailure(recoveryAttempt);
@@ -572,6 +598,8 @@ public class PlaybackManager : IDisposable
         _qualityPreferenceV3 = qualityPreference;
         _sessionId = response.SessionId;
         CurrentSession = response;
+        AcknowledgeSubtitleIntent(subtitleRevision);
+        AcknowledgeAudioIntent(audioRevision);
         _lastReportedPosition = Math.Max(0, response.Position);
         ApplyStreamUrl(response);
         _ = RecordRouteEventAsync(response, "plan_selected");
@@ -602,6 +630,8 @@ public class PlaybackManager : IDisposable
         CancellationToken ct = default)
     {
         var previousSessionId = _sessionId;
+        var subtitleIndex = ReplacementSubtitleIndex(fileId);
+        audioTrackIndex ??= ReplacementAudioIndex(fileId);
         var response = await StartSessionAsync(
             fileId,
             startPosition,
@@ -609,7 +639,9 @@ public class PlaybackManager : IDisposable
             audioTrackIndex,
             forceDirectAudioSelection,
             qualityPreference: qualityPreference,
-            ct: ct).ConfigureAwait(false);
+            ct: ct,
+            subtitleTrackIndex: subtitleIndex,
+            preserveTrackIntent: true).ConfigureAwait(false);
 
         if (!string.IsNullOrWhiteSpace(previousSessionId) &&
             !string.Equals(previousSessionId, response.SessionId, StringComparison.Ordinal))

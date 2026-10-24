@@ -231,10 +231,11 @@ public sealed class CurrentHomeParitySourceTests
 
         Assert.Contains("NavigationCacheMode = NavigationCacheMode.Required", page);
         Assert.Contains("AttachViewModelEvents();", page);
-        Assert.Contains("_layoutChangedWhileRefreshing", page);
-        Assert.Contains("_lastRenderedRevision", page);
-        Assert.Contains("ViewModel.RenderRevision", page);
-        Assert.Contains("if (_isRefreshingLayout)", page);
+        // Native warm-return tests exercise identity, artwork and scroll. This
+        // source guard keeps the retained-owner reconciliation boundary wired.
+        Assert.Contains("SynchronizeContent();", page);
+        Assert.Contains("_renderedSurfaceGeneration != ViewModel.SurfaceGeneration", page);
+        Assert.Contains("row.RefreshPresentation();", page);
         Assert.Contains("Math.Clamp(e.NewSize.Height * ratio, 380, 760)", page);
         Assert.Contains("if (_loadInProgress) return;", viewModel);
         Assert.Contains("IsLoading = !hadContent;", viewModel);

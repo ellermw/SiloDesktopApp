@@ -174,7 +174,7 @@ public sealed partial class HeroCarousel : UserControl
             BalanceTitle();
             HeroEyebrow.Visibility = width >= 640 ? Visibility.Visible : Visibility.Collapsed;
             HeroOverview.FontSize = width >= 640 ? 16 : 14;
-            HeroOverview.MaxLines = width >= 640 ? 0 : 2;
+            HeroOverview.MaxLines = width >= 640 ? 3 : 2;
 
             var arrowSize = width >= 640 ? 36d : 28d;
             PrevButton.Width = PrevButton.Height = arrowSize;

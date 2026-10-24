@@ -6,7 +6,8 @@ namespace SiloPlayer.Core.Services;
 /// Port of web/src/player/utils/subtitleSort.ts + subtitleMode.ts.
 /// Resolves which subtitle track to auto-select at playback start, given
 /// the user's subtitle mode (off/auto/always), preferred language, audio
-/// language, and profile language. Used to show "Auto: ENG" feedback in
+/// language. The profile display language never stands in for unknown audio.
+/// Used to show "Auto: ENG" feedback in
 /// the pre-play subtitles popover before playback actually begins.
 /// </summary>
 public static class SubtitleAutoSelect
@@ -20,19 +21,6 @@ public static class SubtitleAutoSelect
         ["embedded"] = 2,
     };
 
-    // Subset of ISO639-1 → ISO639-2/B mapping for cross-format matching.
-    // (Most embedded subtitle tracks use 3-letter codes; user prefs use 2-letter.)
-    private static readonly Dictionary<string, string> Iso639To3 = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["en"] = "eng", ["es"] = "spa", ["fr"] = "fre", ["de"] = "ger", ["it"] = "ita",
-        ["pt"] = "por", ["nl"] = "dut", ["pl"] = "pol", ["sv"] = "swe", ["no"] = "nor",
-        ["da"] = "dan", ["fi"] = "fin", ["ru"] = "rus", ["uk"] = "ukr", ["cs"] = "cze",
-        ["sk"] = "slo", ["hu"] = "hun", ["ro"] = "rum", ["bg"] = "bul", ["hr"] = "hrv",
-        ["sl"] = "slv", ["sr"] = "srp", ["tr"] = "tur", ["el"] = "gre", ["he"] = "heb",
-        ["ar"] = "ara", ["zh"] = "chi", ["ja"] = "jpn", ["ko"] = "kor", ["vi"] = "vie",
-        ["th"] = "tha", ["id"] = "ind", ["ms"] = "may", ["hi"] = "hin",
-    };
-
     public static string NormalizeSubtitleMode(string? mode) => mode switch
     {
         "off" or "auto" or "always" => mode,
@@ -44,7 +32,7 @@ public static class SubtitleAutoSelect
     private static string? NormalizeConcreteLanguage(string? value)
     {
         var n = Normalize(value);
-        if (string.IsNullOrEmpty(n) || n == OriginalLanguageSentinel) return null;
+        if (string.IsNullOrEmpty(n) || n is OriginalLanguageSentinel or "x-silo-original" or "und") return null;
         return n;
     }
 
@@ -54,9 +42,7 @@ public static class SubtitleAutoSelect
         var right = NormalizeConcreteLanguage(b);
         if (left == null || right == null) return false;
         if (left == right) return true;
-        var leftMapped = Iso639To3.TryGetValue(left, out var l3) ? l3 : left;
-        var rightMapped = Iso639To3.TryGetValue(right, out var r3) ? r3 : right;
-        return leftMapped == rightMapped;
+        return MediaLanguageCatalog.Normalize(left) == MediaLanguageCatalog.Normalize(right);
     }
 
     public record SubtitleCandidate(
@@ -176,12 +162,7 @@ public static class SubtitleAutoSelect
         if (options.Tracks.Count == 0) return null;
 
         var preferredSubtitleLang = NormalizeConcreteLanguage(options.PreferredLanguage);
-        var rawProfile = Normalize(options.ProfileLanguage);
-        var effectiveProfileLang = NormalizeConcreteLanguage(options.ProfileLanguage)
-            ?? (rawProfile == OriginalLanguageSentinel ? preferredSubtitleLang
-                : rawProfile == "" ? "en"
-                : null);
-        var effectiveAudioLang = NormalizeConcreteLanguage(options.AudioLanguage) ?? effectiveProfileLang;
+        var effectiveAudioLang = NormalizeConcreteLanguage(options.AudioLanguage);
 
         switch (NormalizeSubtitleMode(options.Mode))
         {
@@ -200,22 +181,14 @@ public static class SubtitleAutoSelect
 
             case "auto":
                 if (options.PreferredLanguage == "") return null;
-                if (effectiveProfileLang != null &&
-                    SameLanguageCode(effectiveAudioLang, effectiveProfileLang))
-                {
-                    return options.ShowForcedSubtitles
-                        ? FindForcedSubtitleIndex(options.Tracks, effectiveAudioLang)
-                        : null;
-                }
-                var lang = preferredSubtitleLang ?? effectiveProfileLang;
-                if (lang == null)
+                if (preferredSubtitleLang == null || SameLanguageCode(effectiveAudioLang, preferredSubtitleLang))
                 {
                     return options.ShowForcedSubtitles
                         ? FindForcedSubtitleIndex(options.Tracks, effectiveAudioLang)
                         : null;
                 }
                 var matchAuto = FindPreferredSubtitleIndexWithSignature(
-                    options.Tracks, lang, options.PreferredTrackSignature);
+                    options.Tracks, preferredSubtitleLang, options.PreferredTrackSignature);
                 return matchAuto >= 0 ? matchAuto : null;
 
             default:

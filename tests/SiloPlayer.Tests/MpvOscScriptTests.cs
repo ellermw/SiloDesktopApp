@@ -656,7 +656,10 @@ public sealed class MpvOscScriptTests
             "mp.add_forced_key_binding(\"ESC\", \"silo-menu-escape\"",
             StringComparison.Ordinal);
         Assert.True(escapeStart >= 0);
-        var escape = script[escapeStart..Math.Min(script.Length, escapeStart + 320)];
+        var escapeEnd = script.IndexOf("    -- M = mute toggle", escapeStart, StringComparison.Ordinal);
+        Assert.True(escapeEnd > escapeStart);
+        var escape = script[escapeStart..escapeEnd];
+        Assert.Contains("if buffering_quality_action(\"keep\") then return end", escape);
         Assert.Contains("if not close_keyboard_surface() then", escape);
         Assert.Contains("silo-escape-unhandled", escape);
     }

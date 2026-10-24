@@ -20,7 +20,7 @@ public sealed class MetadataEditState
     {
         _lockable = item.Type is "movie" or "series";
         var serialized = JsonSerializer.SerializeToElement(item, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower });
-        foreach (var key in new[] { "title","sort_title","original_title","overview","tagline","content_rating","year","runtime","genres","studios","networks","countries","release_date","first_air_date","last_air_date","air_time","air_timezone","air_date","status","rating_imdb","rating_tmdb","rating_rt_critic","rating_rt_audience","imdb_id","tmdb_id","tvdb_id","season_number","episode_number" })
+        foreach (var key in new[] { "title","sort_title","original_title","overview","tagline","content_rating","year","runtime","genres","studios","networks","countries","release_date","first_air_date","last_air_date","air_time","air_timezone","air_date","rating_imdb","rating_tmdb","rating_rt_critic","rating_rt_audience","imdb_id","tmdb_id","tvdb_id","season_number","episode_number" })
         {
             var value = serialized.GetProperty(key);
             Fields[key] = value.ValueKind switch
@@ -31,7 +31,6 @@ public sealed class MetadataEditState
                 _ => key.StartsWith("rating_") || key.EndsWith("_number") ? null : "",
             };
         }
-        if (!string.IsNullOrEmpty(item.ShowStatus)) Fields["status"] = item.ShowStatus;
         _original = new Dictionary<string, object?>(Fields);
     }
     public void Set(string key, object? value)

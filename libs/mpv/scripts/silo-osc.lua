@@ -2255,6 +2255,9 @@ local function render_stats()
     if state.media_info and state.media_info.requested_source and state.media_info.requested_source ~= "" then
         table.insert(s1.rows, { label = "Auto-switched from", value = state.media_info.requested_source })
     end
+    if state.media_info and state.media_info.buffering_limit and state.media_info.buffering_limit ~= "" then
+        table.insert(s1.rows, { label = "Auto quality limit", value = state.media_info.buffering_limit })
+    end
     table.insert(sections, s1)
 
     -- Section 2: Video Info (live)
@@ -2585,6 +2588,7 @@ end
 -- Forward declarations for functions defined after tick()
 local check_skip_markers
 local render_skip_button
+local render_buffering_quality
 local check_next_episode_button
 local render_next_episode_button
 local check_next_episode_countdown
@@ -2594,6 +2598,7 @@ local render_pause_indicator
 local render_playback_wait
 
 local function tick()
+    if render_buffering_quality then render_buffering_quality() end
     local now = mp.get_time()
     if state.osc_disabled then
         -- Detached/minimized WebUI playback hides the controls but does not
@@ -2703,6 +2708,7 @@ local function handle_mouse_move()
         if skip_hovered ~= state.skip_hovered then
             state.skip_hovered = skip_hovered
             render_skip_button()
+            if render_buffering_quality then render_buffering_quality() end
         end
     end
 
@@ -3294,6 +3300,78 @@ local function render_subtitle_sync_notice()
     state.subtitle_sync_overlay:update()
 end
 
+local function buffering_quality_obscured()
+    return state.skip_visible or state.next_ep_countdown_active or state.playback_failure_visible
+end
+
+render_buffering_quality = function()
+    local obscured = buffering_quality_obscured() == true
+    if state.buffering_obscured ~= obscured then
+        state.buffering_obscured = obscured
+        mp.commandv("script-message", "silo-buffering-obscured", tostring(obscured))
+    end
+    local render_key = tostring(state.buffering_quality_pill) .. ":" .. tostring(state.osc_disabled)
+        .. ":" .. tostring(obscured) .. ":" .. tostring(state.buffering_quality_focus)
+        .. ":" .. tostring(state.osd_width) .. ":" .. tostring(state.osd_height)
+    if state.buffering_quality_render_key == render_key then return end
+    state.buffering_quality_render_key = render_key
+    state.buffering_quality_actions = {}
+    local pill = state.buffering_quality_pill
+    if not pill or state.osc_disabled or obscured then
+        if state.buffering_quality_overlay then
+            state.buffering_quality_overlay.data = ""
+            state.buffering_quality_overlay:update()
+        end
+        return
+    end
+    update_osd_dimensions()
+    local W, H, sc = state.osd_width, state.osd_height, ui_scale()
+    local width = math.min(math.floor(440 * sc), W - math.floor(24 * sc))
+    local height = math.floor(106 * sc)
+    local x, y = W - width - math.floor(12 * sc), H - height - math.floor(105 * sc)
+    local ass = assdraw.ass_new()
+    draw_rounded_rect(ass, x, y, x + width, y + height, math.floor(10 * sc), "171717", "10", 1.0)
+    local title = pill == "prompt" and "Playback keeps buffering"
+        or pill == "cant_lower" and "Can't lower quality for this video"
+        or "Quality lowered to stop buffering"
+    draw_text(ass, x + math.floor(16 * sc), y + math.floor(24 * sc), title,
+        math.floor(16 * sc), config.text_color, "00", 1.0, 4, nil, true)
+    local function action(name, text, left, button_width)
+        local top, h = y + math.floor(54 * sc), math.floor(36 * sc)
+        local focused = (state.buffering_quality_focus or 1) == #state.buffering_quality_actions + 1
+        draw_rounded_rect(ass, left, top, left + button_width, top + h, math.floor(6 * sc),
+            focused and config.accent_color or "404040", "10", 1.0)
+        draw_text(ass, left + button_width / 2, top + h / 2, text, math.floor(14 * sc), config.text_color, "00", 1.0, 5)
+        table.insert(state.buffering_quality_actions, {x = left, y = top, w = button_width, h = h, action = name})
+    end
+    if pill == "prompt" then
+        local bw = math.floor((width - 44 * sc) / 2)
+        action("lower", "Lower quality", x + math.floor(16 * sc), bw)
+        action("keep", "Keep quality", x + math.floor(28 * sc) + bw, bw)
+    elseif pill == "undo" then
+        action("restore", "Restore quality", x + math.floor(16 * sc), math.min(width - 32 * sc, 190 * sc))
+    end
+    state.buffering_quality_overlay = state.buffering_quality_overlay or mp.create_osd_overlay("ass-events")
+    local overlay = state.buffering_quality_overlay
+    overlay.data, overlay.res_x, overlay.res_y, overlay.z = ass.text, W, H, 85
+    overlay:update()
+end
+
+local function buffering_quality_action(action)
+    if not state.buffering_quality_pill or buffering_quality_obscured() then return false end
+    mp.commandv("script-message", "silo-buffering-" .. action)
+    return true
+end
+
+local function move_buffering_quality_focus()
+    if not state.buffering_quality_pill or buffering_quality_obscured() then return false end
+    local count = #(state.buffering_quality_actions or {})
+    if count == 0 then return false end
+    state.buffering_quality_focus = (state.buffering_quality_focus or 1) % count + 1
+    render_buffering_quality()
+    return true
+end
+
 local function render_notice()
     if state.osc_disabled or not state.notice_visible then
         if state.notice_overlay then
@@ -3801,6 +3879,9 @@ local function point_on_next_episode_countdown_action(mx, my)
 end
 
 local function point_on_floating_action_button(mx, my)
+    for _, item in ipairs(state.buffering_quality_actions or {}) do
+        if point_in_rect(mx, my, item) then return true end
+    end
     return point_on_skip_button(mx, my) or point_on_next_episode_button(mx, my)
 end
 
@@ -4649,6 +4730,7 @@ local function move_controller_focus(direction)
     if state.playback_failure_visible then
         return move_playback_failure_focus()
     end
+    if move_buffering_quality_focus() then return true end
     if current_keyboard_menu() then
         if direction == "up" or direction == "left" then
             return move_keyboard_menu_focus("previous")
@@ -4709,6 +4791,8 @@ local function activate_controller_focus()
     if state.playback_failure_visible then
         return invoke_playback_failure_action(state.playback_failure_focus)
     end
+    local buffering_action = (state.buffering_quality_actions or {})[state.buffering_quality_focus or 1]
+    if buffering_action and buffering_quality_action(buffering_action.action) then return true end
     local name = state.controller_focus_name
     if not name then
         move_controller_focus("next")
@@ -4778,6 +4862,14 @@ local function handle_mouse_down()
     end
 
     if state.osc_disabled then return end
+
+    for _, item in ipairs(state.buffering_quality_actions or {}) do
+        if point_in_rect(mx, my, item) then
+            consume_video_click()
+            buffering_quality_action(item.action)
+            return
+        end
+    end
 
     local next_action = point_on_next_episode_countdown_action(mx, my)
     if next_action then
@@ -5337,6 +5429,7 @@ local function observe_properties()
         -- refresh them on both detach and return. Their renderers suppress
         -- output while osc_disabled without destroying lifecycle state.
         render_notice()
+        render_buffering_quality()
         render_skip_button()
         render_next_episode_button()
         render_next_episode_countdown()
@@ -5744,6 +5837,12 @@ local function observe_properties()
         state.track_list = val or {}
     end)
 
+    mp.register_script_message("osc-buffering-quality", function(pill)
+        state.buffering_quality_pill = pill and pill ~= "" and pill or nil
+        state.buffering_quality_focus = 1
+        render_buffering_quality()
+    end)
+
     mp.observe_property("current-tracks/sub/id", "number", function(_, val)
         state.sub_track = val or 0
     end)
@@ -5764,6 +5863,7 @@ local function observe_properties()
             if state.audio_menu_visible then render_audio_menu() end
             if state.chapter_menu_visible then render_chapter_menu() end
             if state.notice_visible then render_notice() end
+            render_buffering_quality()
             if state.subtitle_sync_notice then render_subtitle_sync_notice() end
             if state.skip_visible then render_skip_button() end
             if state.next_ep_visible then render_next_episode_button() end
@@ -5906,6 +6006,7 @@ local function setup_key_bindings()
             invoke_playback_failure_action("exit")
             return
         end
+        if buffering_quality_action("keep") then return end
         if not close_keyboard_surface() then
             mp.commandv("script-message", "silo-escape-unhandled")
         end

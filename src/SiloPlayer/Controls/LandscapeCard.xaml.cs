@@ -20,6 +20,7 @@ public sealed partial class LandscapeCard : UserControl
     private bool _isKeyboardFocusWithin;
     private bool _quickActionPending;
     private MediaItem? _artworkItem;
+    private DecodedArtworkCache.Key? _decodedArtworkKey;
     public static readonly DependencyProperty MediaItemProperty =
         DependencyProperty.Register(
             nameof(MediaItem),
@@ -58,7 +59,11 @@ public sealed partial class LandscapeCard : UserControl
     public LandscapeCard()
     {
         this.InitializeComponent();
-        BackdropImage.ImageOpened += (_, _) => ArtworkFallback.Visibility = Visibility.Collapsed;
+        BackdropImage.ImageOpened += (_, _) =>
+        {
+            ArtworkFallback.Visibility = Visibility.Collapsed;
+            if (BackdropImage.Source is BitmapImage bitmap) DecodedArtworkCache.Remember(_decodedArtworkKey, bitmap, this);
+        };
         BackdropImage.ImageFailed += (_, _) => { BackdropImage.Source = null; BackdropImage.Opacity = 0; ArtworkFallback.Visibility = Visibility.Visible; _ = ArtworkFallback.ShowThumbhashAsync(); };
         this.Loaded += (_, _) =>
         {
@@ -455,10 +460,22 @@ public sealed partial class LandscapeCard : UserControl
 
         try
         {
+            var imageService = App.Services.GetRequiredService<ImageService>();
+            _spoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
+            if (item.Type == "episode" && _spoilerPreferences != null) await _spoilerPreferences.EnsureLoadedAsync(ct);
+            var hidden = HideEpisodeArtwork(item);
+            var decodeWidth = (int)Math.Ceiling(_cardWidth * 2);
+            var key = DecodedArtworkCache.Capture(imageService, App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>(), imageUrl, decodeWidth, hidden);
+            if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem)) return;
+            if (DecodedArtworkCache.TryGet(key, out var cached))
+            {
+                _decodedArtworkKey = key; _spoilerArtworkHidden = hidden;
+                BackdropImage.Source = cached; BackdropImage.Opacity = 1; ArtworkFallback.Visibility = Visibility.Collapsed;
+                return;
+            }
             await Task.Delay(300, ct);
             if (ct.IsCancellationRequested) return;
 
-            var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
 
             // Episode-carousel backdrops are episode stills. Use the same cache
@@ -482,11 +499,13 @@ public sealed partial class LandscapeCard : UserControl
             // the rendering pipeline ever scales it up.
             _spoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
             if (item.Type == "episode" && _spoilerPreferences != null) await _spoilerPreferences.EnsureLoadedAsync(ct);
-            var hidden = HideEpisodeArtwork(item);
-            var bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(diskPath, (int)Math.Ceiling(_cardWidth * 2), hidden, ct);
-            if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem)) return;
-            _spoilerArtworkHidden = hidden;
+            var currentHidden = HideEpisodeArtwork(item);
+            var bitmapImage = await EpisodeSpoilerArtwork.LoadAsync(diskPath, decodeWidth, currentHidden, ct);
+            if (ct.IsCancellationRequested || !ReferenceEquals(item, MediaItem) || !DecodedArtworkCache.IsCurrent(key)) return;
+            _decodedArtworkKey = DecodedArtworkCache.Capture(imageService, App.Services.GetService<SiloPlayer.Core.Api.SiloApiClient>(), imageUrl, decodeWidth, currentHidden);
+            _spoilerArtworkHidden = currentHidden;
             BackdropImage.Source = bitmapImage;
+            DecodedArtworkCache.Remember(_decodedArtworkKey, bitmapImage, this);
             // Smooth fade-in matching webui transition-opacity duration-300
             var fadeIn = new Microsoft.UI.Xaml.Media.Animation.DoubleAnimation
             {

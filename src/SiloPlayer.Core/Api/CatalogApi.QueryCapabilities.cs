@@ -1,10 +1,10 @@
 namespace SiloPlayer.Core.Api;
 
-public sealed record QueryEditorCapabilities(bool ExtendedRules, IReadOnlySet<string> ShownRatingSources);
+public sealed record QueryEditorCapabilities(bool ExtendedRules, IReadOnlySet<string> ShownRatingSources, bool ShowTitleRules = false);
 
 public partial class CatalogApi
 {
-    private sealed class SearchRuleCapabilities { public bool ExtendedQueryRules { get; set; } public bool FacetValueSearch { get; set; } }
+    private sealed class SearchRuleCapabilities { public bool ExtendedQueryRules { get; set; } public bool FacetValueSearch { get; set; } public bool ShowTitleRules { get; set; } }
     private sealed record SearchRuleCache(ApiRequestContext Context, DateTime LoadedAt, SearchRuleCapabilities Value);
     private SearchRuleCache? _searchRuleCache;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<ApiRequestContext, SemaphoreSlim> _searchRuleGates = new();
@@ -34,14 +34,14 @@ public partial class CatalogApi
     public async Task<QueryEditorCapabilities> GetQueryEditorCapabilitiesAsync(CancellationToken ct = default)
     {
         var context = client.CaptureContext();
-        async Task<bool> ExtendedAsync()
+        async Task<SearchRuleCapabilities> RulesAsync()
         {
             try
             {
-                return (await GetSearchRuleCapabilitiesAsync(context, ct)).ExtendedQueryRules;
+                return await GetSearchRuleCapabilitiesAsync(context, ct);
             }
             catch (OperationCanceledException) { throw; }
-            catch { return false; }
+            catch { return new(); }
         }
         async Task<IReadOnlySet<string>> RatingsAsync()
         {
@@ -49,10 +49,10 @@ public partial class CatalogApi
             catch (OperationCanceledException) { throw; }
             catch { return NoRatingSources; }
         }
-        var extended = ExtendedAsync(); var ratings = RatingsAsync();
-        await Task.WhenAll(extended, ratings);
+        var rules = RulesAsync(); var ratings = RatingsAsync();
+        await Task.WhenAll(rules, ratings);
         ct.ThrowIfCancellationRequested();
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Query capability context changed.", ct);
-        return new(await extended, await ratings);
+        return new((await rules).ExtendedQueryRules, await ratings, (await rules).ShowTitleRules);
     }
 }

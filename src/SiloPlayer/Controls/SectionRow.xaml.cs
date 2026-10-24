@@ -43,6 +43,7 @@ public sealed partial class SectionRow : UserControl
     private System.Collections.ObjectModel.ObservableCollection<MediaItem>? _observedItems;
     private string? _lastRenderedSectionId;
     private string? _lastRenderedTemplateKey;
+    private long _activationGeneration;
     private const double DragThreshold = 7;
 
     /// <summary>The containing library. Home sections intentionally leave this null.</summary>
@@ -104,13 +105,17 @@ public sealed partial class SectionRow : UserControl
         UpdateThemeFadeColors();
         Loaded += (_, _) =>
         {
+            ++_activationGeneration;
             App.RecordUiDiagnostic($"SectionRow loaded type={Section?.SectionType} count={Section?.Items.Count}");
             ObserveItems(Section?.Items);
             _uiCustomizationService.Changed += UICustomization_Changed;
             ApplyResponsiveCardWidths(ActualWidth);
+            RefreshPresentation();
         };
         Unloaded += (_, _) =>
         {
+            if (IsLoaded) return;
+            ++_activationGeneration;
             App.RecordUiDiagnostic($"SectionRow unloaded type={Section?.SectionType} count={Section?.Items.Count}");
             ObserveItems(null);
             _uiCustomizationService.Changed -= UICustomization_Changed;
@@ -118,7 +123,10 @@ public sealed partial class SectionRow : UserControl
     }
 
     private void UICustomization_Changed(object? sender, EventArgs e)
-        => DispatcherQueue.TryEnqueue(() => ApplyResponsiveCardWidths(ActualWidth));
+    {
+        var activation = _activationGeneration;
+        DispatcherQueue.TryEnqueue(() => { if (IsLoaded && activation == _activationGeneration) ApplyResponsiveCardWidths(ActualWidth); });
+    }
 
     private static void OnSectionChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
@@ -149,12 +157,23 @@ public sealed partial class SectionRow : UserControl
         object? sender,
         System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
-        if (Section == null) return;
+        var section = Section;
+        if (!IsLoaded || section == null || !ReferenceEquals(sender, section.Items)) return;
+        var activation = _activationGeneration;
         App.RecordUiDiagnostic($"SectionRow collection type={Section.SectionType} action={e.Action} oldIndex={e.OldStartingIndex} newIndex={e.NewStartingIndex} count={Section.Items.Count} loaded={IsLoaded}");
         // A removal can change Continue Watching from a mixed episode row to
         // an all-cover row (or vice versa), so recompute both visibility and
         // the WebUI card variant instead of only hiding an emptied row.
-        DispatcherQueue.TryEnqueue(() => UpdateSection(Section));
+        DispatcherQueue.TryEnqueue(() =>
+        {
+            if (IsLoaded && activation == _activationGeneration && ReferenceEquals(Section, section))
+                UpdateSection(section);
+        });
+    }
+
+    internal void RefreshPresentation()
+    {
+        if (Section is { } section) UpdateSection(section);
     }
 
     private void UpdateSection(HomeSectionWithItems section)
@@ -207,8 +226,9 @@ public sealed partial class SectionRow : UserControl
             : useLandscape ? "LandscapeCardTemplate"
             : "PosterCardTemplate";
         var templateChanged = !string.Equals(_lastRenderedTemplateKey, templateKey, StringComparison.Ordinal);
-        CardsRepeater.ItemTemplate = (DataTemplate)this.Resources[templateKey];
-        CardsRepeater.ItemsSource = section.Items;
+        var template = (DataTemplate)this.Resources[templateKey];
+        if (!ReferenceEquals(CardsRepeater.ItemTemplate, template)) CardsRepeater.ItemTemplate = template;
+        if (!ReferenceEquals(CardsRepeater.ItemsSource, section.Items)) CardsRepeater.ItemsSource = section.Items;
         _lastRenderedSectionId = section.Id;
         _lastRenderedTemplateKey = templateKey;
 
@@ -269,8 +289,11 @@ public sealed partial class SectionRow : UserControl
         if (targetOffset <= 1)
             return;
 
+        var activation = _activationGeneration;
+        var section = Section;
         DispatcherQueue.TryEnqueue(() =>
         {
+            if (!IsLoaded || activation != _activationGeneration || !ReferenceEquals(section, Section)) return;
             var clamped = Math.Clamp(targetOffset, 0, CardsScrollViewer.ScrollableWidth);
             CardsScrollViewer.ChangeView(clamped, null, null, disableAnimation: true);
             UpdateScrollBounds();

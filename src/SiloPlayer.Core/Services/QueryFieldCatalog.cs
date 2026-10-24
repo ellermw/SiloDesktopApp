@@ -2,7 +2,7 @@ namespace SiloPlayer.Core.Services;
 
 public sealed record QueryFieldDefinition(string Name, string Label, string Group, string Kind,
     string[] Operators, bool Extended = false, bool Hidden = false, bool ShowsOnly = false,
-    bool NoEpisode = false, string? RatingSource = null, string? Unit = null);
+    bool NoEpisode = false, string? RatingSource = null, string? Unit = null, bool EpisodeTitle = false);
 
 /// <summary>Current public collectionBuilderFields contract, shared by all native query editors.</summary>
 public static class QueryFieldCatalog
@@ -12,6 +12,7 @@ public static class QueryFieldCatalog
     private static readonly string[] Date = ["in_last", "not_in_last", "lt", "gt", "between"];
     public static readonly IReadOnlyList<QueryFieldDefinition> All = [
         new("title", "Title", "Title", "text", ["contains", "not_contains", "is", "is_not", "begins_with", "ends_with"], Extended: true),
+        new("show_title", "Show title", "Title", "text", ["contains", "not_contains", "is", "is_not", "begins_with", "ends_with"], EpisodeTitle: true),
         new("genre", "Genre", "Title", "facet", ["is", "is_not", "contains"]),
         new("studio", "Studio", "Title", "facet", Is), new("network", "Network", "Title", "facet", Is),
         new("country", "Country", "Title", "facet", Is), new("content_rating", "Content rating", "Title", "facet", Is),
@@ -38,8 +39,9 @@ public static class QueryFieldCatalog
         new("latest_episode_added", "Latest episode added", "Library", "date", Date, Extended: true, ShowsOnly: true),
     ];
     public static QueryFieldDefinition? Get(string name) => All.FirstOrDefault(field => field.Name == (name == "rating" ? "rating_imdb" : name));
-    public static IEnumerable<QueryFieldDefinition> Offered(string? scope, bool extended, IReadOnlySet<string>? shownRatings, bool personalized = true)
+    public static IEnumerable<QueryFieldDefinition> Offered(string? scope, bool extended, IReadOnlySet<string>? shownRatings, bool personalized = true, bool showTitleRules = false)
         => All.Where(field => !field.Hidden && (!field.Extended || extended)
+            && (!field.EpisodeTitle || showTitleRules && scope == "episode")
             && (personalized || field.Group != "You") && (!field.ShowsOnly || scope is null or "all" or "video" or "series" or "tv")
             && (!field.NoEpisode || scope != "episode") && (field.RatingSource == null || shownRatings == null || shownRatings.Contains(field.RatingSource)));
     public static string[] OfferedOperators(string field, string current, bool extended)

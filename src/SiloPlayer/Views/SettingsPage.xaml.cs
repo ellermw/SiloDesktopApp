@@ -4549,7 +4549,6 @@ _webhookPlexAuthCts?.Cancel();
             toggles.Children.Add(BuildWatchProviderToggle(vm, "import_watched_enabled", "Import watched history", $"Bring completed {displayName} plays into this profile.", connection.ImportWatchedEnabled));
             toggles.Children.Add(BuildWatchProviderToggle(vm, "import_progress_enabled", "Import paused progress", $"Use newer {displayName} resume points when local progress is older.", connection.ImportProgressEnabled));
             toggles.Children.Add(BuildWatchProviderToggle(vm, "export_watched_enabled", "Send watched changes", "Send local watched marks and completed plays to this provider.", connection.ExportWatchedEnabled));
-            toggles.Children.Add(BuildWatchProviderToggle(vm, "export_unwatched_enabled", "Send unwatched changes", "When you mark something unwatched, remove matching history from this provider.", connection.ExportUnwatchedEnabled));
 
             var favoritesSupported = connection.Capabilities.ImportFavorites || connection.Capabilities.ExportFavorites;
             if (favoritesSupported)

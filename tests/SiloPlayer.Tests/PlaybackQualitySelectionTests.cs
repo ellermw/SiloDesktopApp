@@ -11,6 +11,8 @@ public sealed class PlaybackQualitySelectionTests
     [InlineData("720p-high", 720, 4000)]
     [InlineData("720p-medium", 720, 2000)]
     [InlineData("720p-low", 720, 1500)]
+    [InlineData("480p-low", 480, 700)]
+    [InlineData("360p", 360, 400)]
     [InlineData("1080p-high", 1080, 10000)]
     [InlineData("1080p-medium", 1080, 6000)]
     [InlineData("1080p-low", 1080, 3000)]
