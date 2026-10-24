@@ -3906,6 +3906,7 @@ public sealed partial class LibraryPage : Page,
             _suppressFilterEvents = true;
             clearAction();
             _suppressFilterEvents = false;
+            SaveViewState(_currentTab);
             await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
             await FillViewportAsync();
             UpdateActiveFilterBadges();
@@ -4011,6 +4012,7 @@ public sealed partial class LibraryPage : Page,
         FilterCountBadge.Visibility = Visibility.Collapsed;
         FilterCountText.Text = "";
 
+        SaveViewState(_currentTab);
         await ViewModel.ApplyFilterCommand.ExecuteAsync(null);
         await FillViewportAsync();
     }

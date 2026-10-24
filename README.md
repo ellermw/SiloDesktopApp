@@ -1,16 +1,16 @@
 # Silo Desktop Player
 
-> **Current release: 1.2.309.** Updates the native Dolby Vision engine, verifies Profile 7 enhancement processing and Profile 8 playback, and repairs personal Settings, connection speed tests, profile hover and media-button feedback. See [the release record and limits](docs/releases/1.2.309.md) and [SiloCast setup](docs/silocast-testing.md). Local development starts in `D:\SiloPlayer`; read [the current handoff](docs/current-development.md) before editing or building.
+> **Current release: 1.2.310.** Updates the native Dolby Vision engine, verifies Profile 7 enhancement processing and Profile 8 playback, and repairs personal Settings, connection speed tests, profile hover and media-button feedback. See [the release record and limits](docs/releases/1.2.309.md) and [SiloCast setup](docs/silocast-testing.md). Local development starts in `D:\SiloPlayer`; read [the current handoff](docs/current-development.md) before editing or building.
 
 Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/silo-server), built with WinUI 3 and libmpv. The project aims to reproduce the Silo WebUI visually and functionally while providing broad native direct-play support for high-bitrate HEVC, HDR, Dolby Vision, lossless audio, and other formats browsers commonly transcode.
 
-> **Project status:** active pre-release development. Version 1.2.309 preserves the prior parity work and SiloCast receiver. Phone interoperability, broader hardware testing and the separate intermittent Next Up removal investigation continue. Dolby Vision source processing is verified for the tested samples; physical Dolby Vision display transport and every legacy container are not certified. The cause of every historical live buffering incident is not established. Targeted verification does not certify complete visual/functional parity. Silo Server changes are re-audited against its official public `main` branch.
+> **Project status:** active pre-release development. Version 1.2.310 preserves the prior parity work and SiloCast receiver. Phone interoperability, broader hardware testing and the separate intermittent Next Up removal investigation continue. Dolby Vision source processing is verified for the tested samples; physical Dolby Vision display transport and every legacy container are not certified. The cause of every historical live buffering incident is not established. Targeted verification does not certify complete visual/functional parity. Silo Server changes are re-audited against its official public `main` branch.
 
 ## Download
 
-[**Download Silo Desktop Player 1.2.309**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.309/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.2.310**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.310/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `FF0BFE7B3F4D7BCB21BC64649362714A6AF319D8C4521417517A96AAA66FABC8`
+SHA-256: `BC30DA1E4C8BF09B3DC25A15315158074A5D7A0F18DD9520F90BC6A006A78FF3`
 
 SiloCast is built in and enabled for fresh/missing preferences. The installer automatically adds its Private-network/local-subnet firewall rule, with no extra SiloCast checkbox. A saved opt-out remains respected; enable or disable it under **Settings → Playback → Desktop playback → Allow SiloCast control**. Keep the PC and phone on the same private local network and the desktop app running. See [the testing guide](docs/silocast-testing.md) for setup and troubleshooting. Actual iPhone/Android interoperability remains under testing.
 

@@ -367,6 +367,12 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                     Program.Log("PASS: native regression run completed.");
                     return;
                 }
+                if (Environment.GetEnvironmentVariable("SILO_NATIVE_LIBRARY_FILTER_CLEAR") == "1")
+                {
+                    await LibraryFilterClearNativeFixture.RunAsync(parent);
+                    Program.Log("PASS: native regression run completed.");
+                    return;
+                }
                 if (Environment.GetEnvironmentVariable("SILO_NATIVE_BROWSE_CALLER_GRIDS") == "1")
                 {
                     await BrowseCallerGridsNativeFixture.RunAsync(parent);
