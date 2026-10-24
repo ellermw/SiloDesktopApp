@@ -158,7 +158,7 @@ public sealed class MainWindowSourceTests
         Assert.Contains("ReloadLibrariesAsync(cancellationToken)", code);
         Assert.Contains("_libraryLoadGeneration", mainViewModel);
         Assert.Contains("loadCts.IsCancellationRequested", mainViewModel);
-        Assert.Contains("SidebarFooterPanel.Width = isOpen ? double.NaN : NavView.CompactPaneLength", code);
+        Assert.Contains("SidebarFooterPanel.Width = isOpen ? NavView.OpenPaneLength : NavView.CompactPaneLength", code);
         Assert.Contains("SidebarFooterSeparator.Width = isOpen ? double.NaN : NavView.CompactPaneLength", code);
         Assert.Contains("ProfileFooterButton.Margin = isOpen", code);
         Assert.Contains("UpdateLibraryNavigationVisibility(isOpen)", code);
@@ -217,7 +217,7 @@ public sealed class MainWindowSourceTests
         Assert.Contains("SiloWordmarkImage.Opacity = isOpen ? 1 : 0", code);
         Assert.Contains("SiloMarkImage.Opacity = isOpen ? 0 : 1", code);
         Assert.Contains("ProfileNameText.Opacity = isOpen ? 1 : 0", code);
-        Assert.Contains("ProfileFooterContent.Spacing = 10", code);
+        Assert.Contains("ProfileFooterContent.Spacing = isOpen ? 10 : 0", code);
         Assert.Contains("FlyoutPlacementMode.RightEdgeAlignedBottom", code);
         Assert.Contains("NotificationUnreadBadge.Margin = isOpen", code);
         Assert.Contains("ThemeDotsPanel.Visibility = Visibility.Collapsed", code);

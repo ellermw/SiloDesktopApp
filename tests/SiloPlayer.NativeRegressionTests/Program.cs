@@ -127,9 +127,29 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             _window.AppWindow.Show(false);
             await Task.Delay(150); // Allow the hidden native tree to acquire its XamlRoot.
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "dolby-vision-oct24")
+            {
+                await DolbyVisionOct24NativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "settings-visual-oct24")
+            {
+                await SettingsVisualOct24NativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "detail-action-hover")
+            {
+                await DetailActionHoverNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct24-connection-transport")
             {
                 await ConnectionTransportOct24NativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "connection-test-oct24")
+            {
+                await ConnectionSpeedTestOct24NativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct24-connection")

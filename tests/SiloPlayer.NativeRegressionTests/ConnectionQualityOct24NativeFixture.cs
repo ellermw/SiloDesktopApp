@@ -59,19 +59,18 @@ internal static class ConnectionQualityOct24NativeFixture
             var combo = All<ComboBox>(control).Single();
             combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().Single(i => Equals(i.Tag, "ask"));
             vm.StatusMessage = "Unrelated settings update";
-            Check(Equals(((ComboBoxItem)combo.SelectedItem).Tag,"ask"),"Unrelated settings updates discarded the unsaved buffering choice.");
-            Invoke(All<Button>(control).Single(b => Equals(b.Content, "Save buffering preference")));
+            Check(Equals(((ComboBoxItem)combo.SelectedItem).Tag,"ask"),"Unrelated settings updates discarded the buffering choice.");
             await WaitAsync(() => wire.Writes == 1 && !vm.ConnectionSettingsBusy && vm.BufferingQualityMode == "ask");
-            Check(wire.LastScope == "profile_device", "Native device scope did not reach current settings API.");
-            Invoke(All<Button>(control).Single(b => Equals(b.Content, "Reset learned limit")));
+            Check(wire.LastScope == "profile" && wire.DeviceCleared, "Profile default did not clear the shadowing native device scope.");
+            Invoke(All<Button>(control).Single(b => Equals(b.Content, "Reset")));
             await WaitAsync(() => wire.Resets == 1 && !vm.ConnectionSettingsBusy && !vm.CanResetLearnedLimit);
             foreach (var width in new[] { 800d, 360d })
             {
                 control.Width = width; control.UpdateLayout(); await Task.Delay(80);
-                foreach(var child in All<Button>(control).Where(b=>b.ActualWidth>0))
+                foreach(var child in All<Button>(control).Where(b=>b.ActualWidth>0 && Visible(b)))
                 { var bounds=child.TransformToVisual(control).TransformBounds(new Windows.Foundation.Rect(0,0,child.ActualWidth,child.ActualHeight)); Check(bounds.X>=-1&&bounds.Right<=control.ActualWidth+1,"A connection action overflows the native settings width."); }
                 await MediaParityNativeFixture.CaptureAsync(control, $"oct24-connection-settings-{width:0}.png");
-                Check(All<TextBlock>(control).Any(t => t.Text == "Connection and buffering"), "Connection heading missing after responsive layout.");
+                Check(All<TextBlock>(control).Any(t => t.Text == "Connection"), "Connection heading missing after responsive layout.");
             }
             var controller = new BufferingQualityController("always");
             controller.Adopt(new("p", "a", "1080p", "1080p", 8000, [new() { Label = "720p", BitrateKbps = 4000 }]), 0);
@@ -87,13 +86,15 @@ internal static class ConnectionQualityOct24NativeFixture
             Invoke(All<Button>(pill).Single(b => Equals(b.Content, "Keep quality")));
             Check(controller.Pill == null && controller.Summary.BufferingAction == "kept", "Keep quality failed to suppress lowering.");
             parent.Children.Remove(pill);
-            Program.Log("PASS: native connection settings resolve/save device scope, show measured reading/learned limit, reset via current API, render at360/800, and fixed-quality minimized consent Keep action works. No physical network benchmark or historic buffering repair claimed.");
+            Program.Log("PASS: native connection settings resolve device scope, immediately save profile default and clear device override, show measured reading/learned limit, reset via current API, render at360/800, and fixed-quality minimized consent Keep action works. No physical network benchmark or historic buffering repair claimed.");
         }
         finally { parent.Children.Remove(control); slot.SetValue(null, original); }
     }
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static async Task WaitAsync(Func<bool> condition) { for (var i=0;i<100 && !condition();i++) await Task.Delay(20); Check(condition(), "Timed out waiting for native connection state."); }
     private static void Check(bool value,string detail) { if (!value) throw new InvalidOperationException(detail); }
+    private static bool Visible(DependencyObject node)
+    { for (DependencyObject? current=node;current!=null;current=VisualTreeHelper.GetParent(current)) if(current is UIElement { Visibility: Visibility.Collapsed }) return false; return true; }
     private static IEnumerable<T> All<T>(DependencyObject root) where T:DependencyObject
     { if(root is T t) yield return t; for(var i=0;i<VisualTreeHelper.GetChildrenCount(root);i++) foreach(var child in All<T>(VisualTreeHelper.GetChild(root,i))) yield return child; }
     private sealed class Services(IServiceProvider original, PlaybackApi api, SettingsViewModel vm, PlayerService player) : IServiceProvider
@@ -101,6 +102,7 @@ internal static class ConnectionQualityOct24NativeFixture
     private sealed class Wire:HttpMessageHandler
     {
         internal int Writes,Resets; internal string Mode="always",LastScope="";
+        internal bool DeviceCleared;
         internal List<string> Paths = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
@@ -108,7 +110,7 @@ internal static class ConnectionQualityOct24NativeFixture
             var path=request.RequestUri.AbsolutePath;
             Paths.Add(path);
             if(request.Method == HttpMethod.Delete)
-            { Check(path=="/api/v2/playback/connection/learned-limit","Unexpected fixture delete."); Resets++; return new(HttpStatusCode.NoContent); }
+            { if(path.Contains("/settings/values/playback.buffering_quality_mode")) { DeviceCleared = true; return new(HttpStatusCode.NoContent); } Check(path=="/api/v2/playback/connection/learned-limit","Unexpected fixture delete."); Resets++; return new(HttpStatusCode.NoContent); }
             if(request.Method == HttpMethod.Put)
             { Check(path.Contains("/settings/values/playback.buffering_quality_mode"),"Unexpected fixture write."); using var body=JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); Mode=body.RootElement.GetProperty("value").GetString()!; LastScope=request.RequestUri.Query.Contains("scope=profile_device")?"profile_device":"profile"; Writes++; }
             var json=path switch

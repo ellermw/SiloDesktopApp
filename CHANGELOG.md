@@ -2,6 +2,14 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.309 (2026-10-24 — owner-approved Dolby Vision and Settings update)
+
+- Five correction groups beyond 1.2.304: media-button feedback, native Dolby Vision engine/profile support, profile hover geometry, personal Settings/font packaging and connection-test behavior/presentation.
+- Pin mpv `v0.41.0-1227-ge471496c5`; verify Profile 7 MEL/FEL enhancement processing, Profile 8.1/8.4 and Profile 5 playback. Add sanitized pipeline diagnostics. Physical Dolby Vision display transport and legacy separate-track P7 MP4 enhancement are not certified.
+- Align personal Settings and connection controls with official Silo `d2c12dbb0f8f40f0a33304f3032f2104c5ee9674`. Correct signed-media probe redirects, cancellation, persistence and rate limits; validate all five packaged fonts and center profile hover paint.
+- Preserve the 1.2.305 media-page Play/Resume and Watched hover repair.
+- Publish the unchanged owner-tested installer, SHA256 `FF0BFE7B3F4D7BCB21BC64649362714A6AF319D8C4521417517A96AAA66FABC8`. Verification: 2,132 main tests, nine exact-payload native groups and 24 packaged playback checks. See [the release record and precise limits](docs/releases/1.2.309.md).
+
 ## 1.2.304 (2026-10-24 — owner-approved Home, playback and upstream update)
 
 - Implement fifteen alignment groups against official Silo Server/WebUI `489fe4d55735f3855b2a0d6276e57d148891b456`, plus Home return, sidebar navigation and direct-reader deadline repairs. Eighteen groups advance1.2.286 to1.2.304.

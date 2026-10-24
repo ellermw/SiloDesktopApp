@@ -1,0 +1,16 @@
+{
+  "mpvVersion": "mpv v0.41.0-1227-ge471496c5",
+  "mpvCommit": "e471496c56f0f49c133bd88b50aed62b845f1909",
+  "ffmpegVersion": "N-127893-g9a861e968",
+  "libplaceboVersion": "v7.377.0 (v7.360.0-176-g285d1cc-dirty)",
+  "architecture": "x86_64",
+  "requiresX86_64V3": false,
+  "provider": "https://github.com/shinchiro/mpv-winbuild-cmake",
+  "release": "20261021",
+  "archive": "mpv-dev-x86_64-20261021-git-e471496c56.7z",
+  "archiveUrl": "https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20261021/mpv-dev-x86_64-20261021-git-e471496c56.7z",
+  "archiveSha256": "EFC719EFF3DC5954B4A5EFC800632808BCEC01CC9034940DD14E5EB7FE9EA633",
+  "librarySha256": "04E4D27DC385DC18DDD93FBE69C75E635B864F3C6EC53A9122DF54C2F7842F4A",
+  "reference": "https://mpv.io/installation/",
+  "evidence": "docs/audit-gaps/2026-10-24-dolby-vision-engine.md"
+}

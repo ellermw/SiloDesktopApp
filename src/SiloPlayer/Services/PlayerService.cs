@@ -545,6 +545,7 @@ public partial class PlayerService : IDisposable
             }
         }
         if (_mpv == null) return;
+        if (!paused && !_closing && State != PlayerState.Idle) SetConnectionMediaActive(true);
         if (_idleRemuxResume.IsReopening)
         {
             _idleRemuxResume.SetPauseIntent(paused);
@@ -564,6 +565,7 @@ public partial class PlayerService : IDisposable
         _idleRemuxResume.ObservePause(paused, _switchingContent || IsLoading, DateTimeOffset.UtcNow);
         if (paused) _mpv.Pause();
         else _mpv.Play();
+        SynchronizeConnectionMediaActivity(paused);
     }
 
     private bool TryReopenIdleRemux()
@@ -2275,6 +2277,7 @@ public partial class PlayerService : IDisposable
         _transportHasFirstOutput = false;
         _switchingContent = true;
         IsLoading = true;
+        SetConnectionMediaActive(true);
         App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
             () => App.MainWindowInstance?.ShowLoadingOverlay());
 
@@ -2873,6 +2876,7 @@ public partial class PlayerService : IDisposable
             terminal?.Reason == "direct_recovery_exhausted" ? "viewer-retry" : trigger,
             wasPaused,
             description.CanRetry);
+        SetConnectionMediaActive(false);
 
         _mpv?.Pause();
         _mpv?.SendScriptMessage("osc-set-loading", "false");
@@ -4198,6 +4202,7 @@ public partial class PlayerService : IDisposable
             if (!_idleRemuxResume.IsReopening && !paused && TryReopenIdleRemux()) return;
             _idleRemuxResume.ObservePause(paused, _switchingContent || IsLoading, DateTimeOffset.UtcNow);
             IsPaused = paused;
+            SynchronizeConnectionMediaActivity(paused);
             UpdateDisplayWakeLock(!paused && !_closing && State != PlayerState.Idle);
             if (IsAudiobook)
                 _audiobookPausedAt = paused ? DateTimeOffset.UtcNow : null;
@@ -4211,6 +4216,7 @@ public partial class PlayerService : IDisposable
 
         _mpvBufferingHandler = (buffering) =>
         {
+            SynchronizeConnectionMediaActivity(buffering: buffering);
             LogToFile("state_trace.txt", $"BufferingForCache changed: {buffering} pos={_mpv?.Position:F1} paused={_mpv?.IsPaused}");
             _mpv?.SendScriptMessage("osc-set-buffering", buffering ? "true" : "false");
             InvokeSubscribersSafely(BufferingChanged, buffering, nameof(BufferingChanged));
@@ -4296,6 +4302,7 @@ public partial class PlayerService : IDisposable
             // room timer must not release play ahead of this load callback.
             _switchingContent = false; // Safe to receive PlaybackEnded now
             IsLoading = false;
+            SynchronizeConnectionMediaActivity(restorePaused);
             StartPlaybackStallWatchdog();
             InvokeSubscribersSafely(ContentLoaded, nameof(ContentLoaded));
 

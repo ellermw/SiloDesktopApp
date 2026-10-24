@@ -20,17 +20,12 @@ public partial class SiloApiClient
         var path = uri.PathAndQuery + (string.IsNullOrEmpty(uri.Query) ? "?" : "&") + "size=" + meter.MaximumBytes;
         using var firstByte = CancellationTokenSource.CreateLinkedTokenSource(ct);
         firstByte.CancelAfter(TimeSpan.FromSeconds(10));
-        using var request = CreateIdentityBoundRequest(owner, HttpMethod.Get, path, null);
-        // Probe authentication is account scoped; never send the profile's PIN grant to a media redirect.
-        request.Headers.Remove("X-Profile-Token");
-        request.Headers.Accept.ParseAdd("application/octet-stream");
-        request.Headers.CacheControl = new() { NoStore = true };
-        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, firstByte.Token).ConfigureAwait(false);
+        using var response = await OpenConnectionProbeAsync(owner, path, firstByte.Token).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.TooManyRequests)
         {
             var retry = Math.Max(1, Math.Ceiling(response.Headers.RetryAfter?.Delta?.TotalSeconds ??
                 (response.Headers.RetryAfter?.Date - DateTimeOffset.UtcNow)?.TotalSeconds ?? 30));
-            throw new ApiException("rate_limited", $"Try again in {retry:0} seconds.", 429, retryAfterSeconds: retry);
+            throw new ApiException("rate_limited", $"Try again in {retry:0} {(retry == 1 ? "second" : "seconds")}", 429, retryAfterSeconds: retry);
         }
         response.EnsureSuccessStatusCode();
         using var body = await response.Content.ReadAsStreamAsync(firstByte.Token).ConfigureAwait(false);
@@ -56,5 +51,55 @@ public partial class SiloApiClient
         if (!IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Connection owner changed.");
         if (meter.Result is { } result) result.Transport = transport is "ethernet" or "wifi" or "cellular" ? transport : "other";
         return meter.Result;
+    }
+
+    private async Task<HttpResponseMessage> OpenConnectionProbeAsync(ApiIdentityContext owner, string path, CancellationToken ct)
+    {
+        var target = new Uri(owner.BaseUrl.TrimEnd('/') + path);
+        var authenticationRetried = false;
+        // The shared API transport intentionally refuses automatic redirects.
+        // Only this probe follows the server's short-lived media URL, with no
+        // account, profile, PIN or device identity copied to that media host.
+        for (var hop = 0; ; hop++)
+        {
+            if (!IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Connection owner changed.");
+            using var request = hop == 0
+                ? CreateIdentityBoundRequest(owner, HttpMethod.Get, path, null)
+                : new HttpRequestMessage(HttpMethod.Get, target);
+            request.Headers.Remove("X-Profile-Token");
+            request.Version = _http.DefaultRequestVersion;
+            request.VersionPolicy = _http.DefaultVersionPolicy;
+            request.Headers.Accept.ParseAdd("application/octet-stream");
+            request.Headers.CacheControl = new() { NoStore = true };
+            var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+            if (!IsCurrentIdentityContext(owner))
+            { response.Dispose(); throw new OperationCanceledException("Connection owner changed."); }
+            if (hop == 0 && !authenticationRetried && response.StatusCode == HttpStatusCode.Unauthorized && _tokenRefresher != null)
+            {
+                authenticationRetried = true;
+                response.Dispose();
+                await _refreshLock.WaitAsync(ct).ConfigureAwait(false);
+                try
+                {
+                    if (!IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Connection owner changed.");
+                    if (string.Equals(AccessToken, request.Headers.Authorization?.Parameter, StringComparison.Ordinal))
+                        await _tokenRefresher(ct).ConfigureAwait(false);
+                }
+                finally { _refreshLock.Release(); }
+                // Rebuild the account request so it keeps the fresh bearer but
+                // still omits the PIN grant. Never refresh on the signed host.
+                hop--; continue;
+            }
+            if (response.StatusCode is not (HttpStatusCode.MovedPermanently or HttpStatusCode.Redirect or
+                HttpStatusCode.SeeOther or HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect))
+                return response;
+            var location = response.Headers.Location;
+            response.Dispose();
+            if (hop >= 5 || location == null || !Uri.TryCreate(target, location, out var next) ||
+                next.Scheme is not ("http" or "https") || next.UserInfo.Length != 0 ||
+                (target.Scheme == "https" && next.Scheme != "https"))
+                throw new InvalidDataException("The speed test returned an unsafe or repeated redirect.");
+            target = next;
+        }
     }
 }

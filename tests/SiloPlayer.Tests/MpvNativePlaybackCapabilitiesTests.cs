@@ -6,6 +6,18 @@ namespace SiloPlayer.Tests;
 public sealed class MpvNativePlaybackCapabilitiesTests
 {
     [Fact]
+    public void EnginePin_MatchesBundledLibraryAndDeclaredVersions()
+    {
+        using var manifest = System.Text.Json.JsonDocument.Parse(File.ReadAllText(FindRepositoryFile("libs", "mpv", "engine.json")));
+        var root = manifest.RootElement;
+        Assert.Equal(MpvNativePlaybackCapabilities.VerifiedMpvVersion, root.GetProperty("mpvVersion").GetString());
+        Assert.Equal(MpvNativePlaybackCapabilities.VerifiedFfmpegVersion, root.GetProperty("ffmpegVersion").GetString());
+        using var library = File.OpenRead(FindRepositoryFile("libs", "mpv", "libmpv-2.dll"));
+        Assert.Equal(root.GetProperty("librarySha256").GetString(), Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(library)));
+        Assert.False(root.GetProperty("requiresX86_64V3").GetBoolean());
+    }
+
+    [Fact]
     public void WindowedPlayer_UsesGpuNextD3D11AndBoundedFastStartCache()
     {
         var source = File.ReadAllText(FindRepositoryFile(
@@ -40,7 +52,7 @@ public sealed class MpvNativePlaybackCapabilitiesTests
     {
         var profile = MpvNativePlaybackCapabilities.CreateProfile();
 
-        Assert.Equal("mpv v0.41.0-243-g05fac7f21", profile.VerifiedMpvVersion);
+        Assert.Equal("mpv v0.41.0-1227-ge471496c5", profile.VerifiedMpvVersion);
         Assert.Contains("hevc", profile.VideoCodecs);
         Assert.Contains("av1", profile.VideoCodecs);
         Assert.Contains("vc1", profile.VideoCodecs);
@@ -71,15 +83,14 @@ public sealed class MpvNativePlaybackCapabilitiesTests
     }
 
     [Fact]
-    public void Profile_ClaimsSingleLayerDolbyVisionButNotUnverifiedProfileSeven()
+    public void Profile_ClaimsVerifiedSingleAndDualLayerDolbyVision()
     {
         var details = MpvNativePlaybackCapabilities.CreateProfile().HdrDetails;
 
         Assert.True(details.Hdr10);
         Assert.True(details.Hdr10Plus);
         Assert.True(details.Hlg);
-        Assert.Equal([5, 8], details.DolbyVisionProfiles);
-        Assert.DoesNotContain(7, details.DolbyVisionProfiles);
+        Assert.Equal([5, 7, 8], details.DolbyVisionProfiles);
     }
 
     [Fact]
@@ -108,7 +119,7 @@ public sealed class MpvNativePlaybackCapabilitiesTests
         first.HdrDetails!.DolbyVisionProfiles.Clear();
 
         Assert.Contains("hevc", second.CodecsVideo);
-        Assert.Equal([5, 8], second.HdrDetails!.DolbyVisionProfiles);
+        Assert.Equal([5, 7, 8], second.HdrDetails!.DolbyVisionProfiles);
         Assert.Null(first.AudioPassthrough);
         Assert.Null(second.AudioPassthrough);
         Assert.Equal("2160p", second.MaxResolution);

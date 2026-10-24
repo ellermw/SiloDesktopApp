@@ -47,8 +47,8 @@ public class ThemeColors
     public string SidebarRing { get; set; } = "";
 
     // ===== Font properties =====
-    public string FontFamily { get; set; } = "Outfit";
-    public string DisplayFontFamily { get; set; } = "Outfit";
+    public string FontFamily { get; set; } = "Plus Jakarta Sans";
+    public string DisplayFontFamily { get; set; } = "Plus Jakarta Sans";
 }
 
 public class ThemeService
@@ -60,6 +60,7 @@ public class ThemeService
     /// <summary>Maps font family name to the ms-appx font URI for WinUI 3.</summary>
     private static readonly Dictionary<string, string> FontUris = new()
     {
+        ["Plus Jakarta Sans"] = "ms-appx:///Assets/Fonts/PlusJakartaSans-VariableFont_wght.ttf#Plus Jakarta Sans",
         ["Outfit"] = "ms-appx:///Assets/Fonts/Outfit-VariableFont_wght.ttf#Outfit",
         ["Manrope"] = "ms-appx:///Assets/Fonts/Manrope-VariableFont_wght.ttf#Manrope",
         ["Sora"] = "ms-appx:///Assets/Fonts/Sora-VariableFont_wght.ttf#Sora",
@@ -110,8 +111,8 @@ public class ThemeService
             SidebarBorder = "#232328",
             SidebarRing = "#E8E8EC",
             // Fonts
-            FontFamily = "Outfit",
-            DisplayFontFamily = "Outfit",
+            FontFamily = "Plus Jakarta Sans",
+            DisplayFontFamily = "Plus Jakarta Sans",
         },
     };
 

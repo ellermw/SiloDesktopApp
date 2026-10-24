@@ -101,6 +101,8 @@ public sealed partial class ItemDetailPage : Page
         SimilarCarouselHost.Children.Remove(SimilarScroller);
         SimilarCarouselHost.Children.Add(new CarouselRail(SimilarScroller, webUiEdges: true));
         ComposeHeroLayout();
+        DetailActionFeedback.Attach(PrimaryPlayButton, SplitPlayButton);
+        DetailActionFeedback.Attach(WatchedButton, WatchedButton);
         UpdateThemeGradientColors();
 
         this.Loaded += OnPageLoaded;

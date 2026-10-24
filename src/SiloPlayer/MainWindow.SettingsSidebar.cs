@@ -30,6 +30,7 @@ public sealed partial class MainWindow
             SidebarBrandHost.Visibility = Visibility.Collapsed;
             SidebarFooterPanel.Visibility = Visibility.Collapsed;
             SettingsSidebarHeader.Visibility = Visibility.Visible;
+            NavView.IsPaneToggleButtonVisible = false;
             RebuildSettingsSidebar();
         }
         SynchronizeSettingsSidebarSelection();
@@ -50,14 +51,25 @@ public sealed partial class MainWindow
             if (entry.Group != group)
             {
                 group = entry.Group;
-                NavView.MenuItems.Add(new NavigationViewItemHeader { Content = group });
+                NavView.MenuItems.Add(new NavigationViewItemHeader
+                {
+                    Content = group.ToUpperInvariant(),
+                    Style = (Style)RootGrid.Resources["SettingsSidebarGroupHeaderStyle"],
+                    Margin = new Thickness(0, NavView.MenuItems.Count == 0 ? 0 : 20, 0, 0),
+                });
             }
-            NavView.MenuItems.Add(new NavigationViewItem
+            var item = new NavigationViewItem
             {
-                Content = entry.Label,
+                Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10,
+                    Children = { WebUiIcon.Navigation(SettingsSectionIcon(entry.Section), 18),
+                        new TextBlock { Text = entry.Label, FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.Medium } } },
                 Tag = new SettingsSidebarTag(entry.Section),
-                Icon = WebUiIcon.Navigation(SettingsSectionIcon(entry.Section), 18),
-            });
+                CornerRadius = new CornerRadius(12),
+                MinHeight = 40,
+                Margin = new Thickness(8, 0, 8, 2),
+            };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(item, entry.Label);
+            NavView.MenuItems.Add(item);
         }
         if (NavView.MenuItems.Count == 0)
             NavView.MenuItems.Add(new NavigationViewItemHeader { Content = "No matching settings" });
@@ -88,6 +100,7 @@ public sealed partial class MainWindow
         NavView.MenuItems.Clear();
         foreach (var item in original) NavView.MenuItems.Add(item);
         SettingsSidebarHeader.Visibility = Visibility.Collapsed;
+        NavView.IsPaneToggleButtonVisible = _currentWindowWidth >= 1024;
         SidebarBrandHost.Visibility = Visibility.Visible;
         SidebarFooterPanel.Visibility = Visibility.Visible;
         if (CanExposeAuthenticatedNavigation)

@@ -28,9 +28,9 @@
         <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
 
         <!-- Version -->
-    <Version>1.2.304</Version>
-    <FileVersion>1.2.304.0</FileVersion>
-    <AssemblyVersion>1.2.304.0</AssemblyVersion>
+    <Version>1.2.309</Version>
+    <FileVersion>1.2.309.0</FileVersion>
+    <AssemblyVersion>1.2.309.0</AssemblyVersion>
 
         <!-- App Options -->
         <ApplicationIcon>Assets\app.ico</ApplicationIcon>
@@ -65,7 +65,14 @@
         </Content>
         <Content Include="Assets\StoreLogo.png" />
         <Content Include="Assets\Wide310x150Logo.scale-200.png" />
-        <Content Include="Assets\Fonts\*.ttf" />
+        <Content Include="Assets\Fonts\*.ttf">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        </Content>
+        <Content Include="Assets\Fonts\PlusJakartaSans-OFL.txt">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+            <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        </Content>
         <Content Include="Assets\Reader\**\*">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
@@ -116,6 +123,11 @@
       <None Include="..\..\libs\mpv\scripts\silo-osc.lua">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         <Link>libs\mpv\scripts\silo-osc.lua</Link>
+      </None>
+      <None Include="..\..\libs\mpv\engine.json">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+        <Link>libs\mpv\engine.json</Link>
       </None>
       <None Include="..\..\libs\mpv\shaders\*">
         <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

@@ -192,6 +192,15 @@ public sealed class NativeDirectStreamingTests
 
             // Switching away from signed direct playback must reset its options
             // and restore explicit bearer auth for non-signed HTTP loads.
+            // The newer native curl transport correctly verifies TLS. Trust
+            // only this fixture's temporary certificate for the legacy load;
+            // the production defaults and OS trust store remain unchanged.
+            if (source.CertificatePem is { } certificate)
+            {
+                var caFile = Path.Combine(logDirectory, "fixture-ca.pem");
+                await File.WriteAllTextAsync(caFile, certificate);
+                player.SetProperty("tls-ca-file", caFile);
+            }
             var requestCount = source.Requests.Count;
             player.LoadFile(source.Url.Replace("/stream/direct/", "/legacy/"), "Bearer fixture-account-token");
             player.Play();
@@ -226,6 +235,7 @@ public sealed class NativeDirectStreamingTests
         public int ConnectionCount => Volatile.Read(ref _connections);
         private readonly string _reconnectFault;
         private readonly X509Certificate2? _certificate;
+        public string? CertificatePem => _certificate?.ExportCertificatePem();
         public int Interruptions => Volatile.Read(ref _interruptions);
         public ConcurrentQueue<(long From, long? To)> Requests { get; } = new();
         public ConcurrentQueue<string> Paths { get; } = new();
@@ -252,6 +262,10 @@ public sealed class NativeDirectStreamingTests
             {
                 using var key = RSA.Create(2048);
                 var request = new CertificateRequest("CN=localhost", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+                var names = new SubjectAlternativeNameBuilder();
+                names.AddDnsName("localhost");
+                names.AddIpAddress(IPAddress.Loopback);
+                request.CertificateExtensions.Add(names.Build());
                 using var generated = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
                 _certificate = new X509Certificate2(generated.Export(X509ContentType.Pfx));
             }

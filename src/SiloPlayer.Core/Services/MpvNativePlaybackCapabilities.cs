@@ -17,8 +17,8 @@ public static class MpvNativePlaybackCapabilities
     public const string ClientManagedDynamicRangeClaim = "client_managed_dynamic_range_v1";
     public const string ClientSelectedAudioTrackClaim = "client_selected_audio_track_v1";
 
-    public const string VerifiedMpvVersion = "mpv v0.41.0-243-g05fac7f21";
-    public const string VerifiedFfmpegVersion = "N-123079-ge869426a8";
+    public const string VerifiedMpvVersion = "mpv v0.41.0-1227-ge471496c5";
+    public const string VerifiedFfmpegVersion = "N-127893-g9a861e968";
 
     // mpv decoder-list was queried through the client API from the bundled
     // libmpv-2.dll. Keep this list explicit: advertising a codec that the
@@ -63,9 +63,10 @@ public static class MpvNativePlaybackCapabilities
 
     /// <summary>
     /// Creates a fresh profile. Dolby Vision profiles 5 and 8 are single-layer
-    /// sources handled by gpu-next/libplacebo reshaping. Profile 7 is omitted:
-    /// its enhancement layer requires dual-layer decoding that this client has
-    /// not verified and must not claim.
+    /// sources handled by gpu-next/libplacebo reshaping. The pinned engine also
+    /// decodes and reconstructs Profile7's enhancement layer on the native
+    /// D3D11 path. These are source-processing capabilities, not a declaration
+    /// that every Windows display receives a Dolby Vision transport signal.
     /// </summary>
     public static NativePlaybackCapabilityProfile CreateProfile() => new(
         VerifiedMpvVersion,
@@ -79,7 +80,7 @@ public static class MpvNativePlaybackCapabilities
             Hdr10 = true,
             Hdr10Plus = true,
             Hlg = true,
-            DolbyVisionProfiles = [5, 8],
+            DolbyVisionProfiles = [5, 7, 8],
         });
 
     /// <summary>

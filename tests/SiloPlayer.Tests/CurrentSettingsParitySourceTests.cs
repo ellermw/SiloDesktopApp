@@ -33,8 +33,8 @@ public sealed class CurrentSettingsParitySourceTests
     {
         var xaml = ReadRepoFile("src", "SiloPlayer", "Views", "SettingsPage.xaml");
 
-        Assert.Contains("Choose the defaults Silo should use when playback starts.", xaml);
-        Assert.Contains("Text=\"Defaults\"", xaml);
+        Assert.Contains("The defaults this profile starts playback with. A library, a series, or one of your devices can override some of them.", xaml);
+        Assert.Contains("Text=\"Quality\"", xaml);
         Assert.Contains("Text=\"Skip intros\"", xaml);
         Assert.Contains("Text=\"Start next at preview\"", xaml);
         Assert.Contains("Text=\"Background &amp; Position\"", xaml);

@@ -16,6 +16,33 @@
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
+        <!-- The primary/progress paint belongs to SplitPlayButton. Stock WinUI
+             Button draws an inset Fluent hover fill over only its 39px content.
+             Keep this hit target transparent and full-height in every state;
+             DetailActionFeedback animates the complete painted pill. -->
+        <Style x:Key="DetailPlayButtonStyle" TargetType="Button" BasedOn="{StaticResource AccentButtonStyle}">
+            <Setter Property="Height" Value="44" />
+            <Setter Property="VerticalAlignment" Value="Stretch" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="PlayHitTarget" Background="{TemplateBinding Background}" CornerRadius="{TemplateBinding CornerRadius}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" Foreground="{TemplateBinding Foreground}" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
+                            <VisualStateManager.VisualStateGroups>
+                                <VisualStateGroup x:Name="CommonStates">
+                                    <VisualState x:Name="Normal" />
+                                    <VisualState x:Name="PointerOver" />
+                                    <VisualState x:Name="Pressed" />
+                                    <!-- The page sets opacity on the complete
+                                         pill for an unavailable action. -->
+                                    <VisualState x:Name="Disabled" />
+                                </VisualStateGroup>
+                            </VisualStateManager.VisualStateGroups>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Page.Resources>
 
     <Grid>
@@ -489,6 +516,7 @@
 
                             <!-- Main play/resume button -->
                             <Button x:Name="PrimaryPlayButton" Grid.Column="0" Click="PlayButton_Click"
+                                Style="{StaticResource DetailPlayButtonStyle}"
                                 Background="Transparent" BorderThickness="0"
                                 Padding="12,10" CornerRadius="22"
                                 AutomationProperties.Name="{Binding Text, ElementName=PlayButtonText}">

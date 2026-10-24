@@ -15,6 +15,7 @@
         <converters:BoolToVisibilityConverter x:Key="BoolToVis" />
         <converters:BoolToVisibilityConverter x:Key="InverseBoolToVis" Invert="True" />
         <converters:NullToVisibilityConverter x:Key="NullToVis" />
+        <converters:IntroSkipModeLabelConverter x:Key="IntroSkipModeLabel" />
 
         <!-- Active tab style (pill on surface) -->
         <Style x:Key="ActiveTabStyle" TargetType="Button">
@@ -63,13 +64,13 @@
             </Setter>
         </Style>
 
-        <!-- Current raised settings surfaces. -->
+        <!-- Current SettingsGroup: sections sit on the page, divided by hairlines. -->
         <Style x:Key="SettingsGroupStyle" TargetType="Border">
-            <Setter Property="Background" Value="{StaticResource SettingsRaisedBrush}" />
-            <Setter Property="CornerRadius" Value="27.2" />
-            <Setter Property="Padding" Value="24,20" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="CornerRadius" Value="0" />
+            <Setter Property="Padding" Value="0,28" />
             <Setter Property="BorderBrush" Value="{StaticResource SettingsBorderBrush}" />
-            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderThickness" Value="0,1,0,0" />
         </Style>
 
         <Style x:Key="PersonalizeGroupStyle" TargetType="Border">
@@ -88,7 +89,8 @@
         </Style>
     </Page.Resources>
 
-    <ScrollViewer IsScrollInertiaEnabled="True">
+    <ScrollViewer IsScrollInertiaEnabled="True" HorizontalContentAlignment="Stretch"
+                  HorizontalScrollBarVisibility="Disabled" HorizontalScrollMode="Disabled">
         <StackPanel x:Name="SettingsPageShell" MaxWidth="1520" Margin="48,24,48,48">
 
             <!-- The WebUI keeps the back action floating above a wide page header. -->
@@ -134,7 +136,7 @@
             </Grid>
 
             <!-- ===== Status / Error ===== -->
-            <StackPanel Margin="0,8,0,0">
+            <StackPanel x:Name="SettingsStatusPanel" Margin="0,8,0,0">
                 <ProgressRing
                     IsActive="{x:Bind ViewModel.IsLoading, Mode=OneWay}"
                     Visibility="{x:Bind ViewModel.IsLoading, Mode=OneWay, Converter={StaticResource BoolToVis}}"
@@ -709,12 +711,10 @@
 <!-- ===== Playback Panel ===== -->
             <!-- ===================================================================== -->
             <StackPanel x:Name="PlaybackPanel" Spacing="24" Margin="0">
-                <controls:PlaybackConnectionSettingsControl />
-
                 <StackPanel Spacing="12">
                     <TextBlock x:Name="PlaybackTitleText" Text="Playback" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
-                    <TextBlock Text="Choose the defaults Silo should use when playback starts."
+                    <TextBlock Text="The defaults this profile starts playback with. A library, a series, or one of your devices can override some of them."
                                FontSize="14" Foreground="{StaticResource SecondaryTextBrush}"
                                TextWrapping="Wrap" />
                 </StackPanel>
@@ -722,9 +722,9 @@
                 <!-- Defaults group mirrors the current WebUI settings surface. -->
                 <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="0">
-                        <TextBlock Text="Defaults" FontSize="14" FontWeight="SemiBold"
+                        <TextBlock Text="Quality" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock Text="These preferences apply unless a library or item has a more specific playback choice."
+                        <TextBlock Text="Each of your devices can override these, and a household manager can cap them for this profile."
                                    FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                    TextWrapping="Wrap" Margin="0,4,0,16" />
 
@@ -737,7 +737,7 @@
                             <StackPanel Grid.Column="0" Spacing="2">
                                 <TextBlock Text="Preferred quality" FontSize="14" FontWeight="Medium"
                                            Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="The resolution your profile should request when playback begins. Auto lets Silo pick based on your connection."
+                                <TextBlock x:Name="PreferredQualityDescription" Text="Plays the original file whenever your device and connection can handle it."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
                                            TextWrapping="Wrap" />
                             </StackPanel>
@@ -785,18 +785,12 @@
                             </ComboBox>
                         </Grid>
 
-                        <Border Style="{StaticResource SettingsSeparator}" />
-
-                        <!-- Spoken language -->
-
-
-                        <Border Style="{StaticResource SettingsSeparator}" />
-
-                        <!-- Metadata language -->
-
-
-                        <Border Style="{StaticResource SettingsSeparator}" />
-
+                    </StackPanel>
+                </Border>
+                <controls:PlaybackConnectionSettingsControl />
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="0">
+                        <TextBlock Text="Skipping" FontSize="15" FontWeight="SemiBold" />
                         <!-- Skip intros -->
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -815,30 +809,11 @@
                                 Grid.Column="1"
                                 ItemsSource="{x:Bind ViewModel.IntroModeChoices}"
                                 SelectedItem="{x:Bind ViewModel.IntroSkipMode, Mode=TwoWay}"
-                                VerticalAlignment="Center" />
-                        </Grid>
-
-                        <Border Style="{StaticResource SettingsSeparator}" />
-
-                        <!-- Skip credits -->
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <StackPanel Grid.Column="0" Spacing="2">
-                                <TextBlock Text="Auto-skip credits" FontSize="14" FontWeight="Medium"
-                                            Foreground="{StaticResource PrimaryTextBrush}" />
-                                <TextBlock Text="Move through end credits automatically when a skip is available."
-                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
-                                           TextWrapping="Wrap" />
-                            </StackPanel>
-                            <ToggleSwitch
-                                x:Name="AutoSkipCreditsToggle"
-                                Grid.Column="1"
-                                IsOn="{x:Bind ViewModel.AutoSkipCredits, Mode=TwoWay}"
-                                VerticalAlignment="Center"
-                                OnContent="" OffContent="" />
+                                VerticalAlignment="Center">
+                                <ComboBox.ItemTemplate>
+                                    <DataTemplate><TextBlock Text="{Binding Converter={StaticResource IntroSkipModeLabel}}" /></DataTemplate>
+                                </ComboBox.ItemTemplate>
+                            </ComboBox>
                         </Grid>
 
                         <Border Style="{StaticResource SettingsSeparator}" />
@@ -866,6 +841,34 @@
 
                         <Border Style="{StaticResource SettingsSeparator}" />
 
+                        <!-- Skip credits -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Spacing="2">
+                                <TextBlock Text="Auto-skip credits" FontSize="14" FontWeight="Medium"
+                                            Foreground="{StaticResource PrimaryTextBrush}" />
+                                <TextBlock Text="Move through end credits automatically when a skip is available."
+                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <ToggleSwitch
+                                x:Name="AutoSkipCreditsToggle"
+                                Grid.Column="1"
+                                IsOn="{x:Bind ViewModel.AutoSkipCredits, Mode=TwoWay}"
+                                VerticalAlignment="Center"
+                                OnContent="" OffContent="" />
+                        </Grid>
+
+                        <Border Style="{StaticResource SettingsSeparator}" />
+
+                    </StackPanel>
+                </Border>
+                <Border Style="{StaticResource SettingsGroupStyle}">
+                    <StackPanel Spacing="0">
+                        <TextBlock Text="Next episode" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,16" />
                         <!-- Next episode preview -->
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -904,6 +907,8 @@
 
                     </StackPanel>
                 </Border>
+
+
 
                 <Border Style="{StaticResource SettingsGroupStyle}"><StackPanel Spacing="16">
                     <TextBlock Text="Seek controls" FontSize="14" FontWeight="SemiBold" />
@@ -2295,10 +2300,12 @@
                 <StackPanel Spacing="12">
                     <TextBlock x:Name="AccessibilityTitleText" Text="Accessibility" FontSize="24" FontWeight="SemiBold"
                                Foreground="{StaticResource PrimaryTextBrush}" />
+                    <TextBlock Text="Text size, weight, contrast, and date and time formats." FontSize="14"
+                               Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                 </StackPanel>
 
                 <!-- Readability -->
-                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
+                <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="12">
                         <TextBlock Text="Readability" FontSize="14" FontWeight="SemiBold"
                                    Foreground="{StaticResource PrimaryTextBrush}" />
@@ -2319,7 +2326,7 @@
                 </Border>
 
                 <!-- Preview -->
-                <Border Background="{StaticResource CardBackgroundBrush}" CornerRadius="16" Padding="20,16">
+                <Border Style="{StaticResource SettingsGroupStyle}">
                     <StackPanel Spacing="8">
                         <TextBlock Text="Preview" FontSize="14" FontWeight="Medium"
                                    Foreground="{StaticResource PrimaryTextBrush}" />

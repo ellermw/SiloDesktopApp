@@ -53,7 +53,7 @@ public sealed partial class MainWindow : Window
         get => _sidebarPresentation.BrowsingOpen;
         set => _sidebarPresentation.BrowsingOpen = value;
     }
-    private bool DesktopSidebarIsOpen => _sidebarPresentation.IsOpen;
+    private bool DesktopSidebarIsOpen => ContentFrame.Content is SettingsPage || _sidebarPresentation.IsOpen;
     private bool _synchronizingDesktopPaneState;
     private long _paneOpenPropertyCallbackToken;
     private bool _mobileHeaderHidden;
@@ -250,7 +250,7 @@ public sealed partial class MainWindow : Window
 
         // Desktop sidebar state is controlled only by NavigationView's
         // explicit toggle. The custom mobile header owns its own menu button.
-        var shouldShowDesktopToggle = !isNarrow;
+        var shouldShowDesktopToggle = !isNarrow && ContentFrame.Content is not SettingsPage;
         if (NavView.IsPaneToggleButtonVisible != shouldShowDesktopToggle)
             NavView.IsPaneToggleButtonVisible = shouldShowDesktopToggle;
 
@@ -1918,13 +1918,17 @@ public sealed partial class MainWindow : Window
         // unless it is explicitly constrained. Pin it to the 64px rail while
         // compact so the profile icon cannot be centered at x=130 and
         // clipped in half by the native pane viewport.
-        SidebarFooterPanel.Width = isOpen ? double.NaN : NavView.CompactPaneLength;
+        SidebarFooterPanel.Width = isOpen ? NavView.OpenPaneLength : NavView.CompactPaneLength;
         SidebarFooterPanel.HorizontalAlignment = HorizontalAlignment.Left;
         SidebarFooterSeparator.Width = isOpen ? double.NaN : NavView.CompactPaneLength;
         SidebarFooterSeparator.Margin = new Thickness(0, 0, 0, 8);
 
         ProfileNameText.Opacity = isOpen ? 1 : 0;
-        ProfileFooterContent.Spacing = 10;
+        ProfileNameText.Visibility = isOpen ? Visibility.Visible : Visibility.Collapsed;
+        ProfileAvatarSlot.Width = 28;
+        ProfileAvatarSlot.Margin = isOpen ? new Thickness(-5, 0, -5, 0) : new Thickness(0);
+        ProfileFooterContent.Spacing = isOpen ? 10 : 0;
+        ProfileFooterButton.MinWidth = 0;
         ProfileFooterButton.HorizontalAlignment = isOpen ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
         ProfileFooterButton.Width = isOpen ? double.NaN : 40;
         ProfileFooterButton.Height = 52;

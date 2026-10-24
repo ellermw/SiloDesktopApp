@@ -137,6 +137,7 @@ public sealed partial class SettingsPage : Page
         _cardOverlayService = App.Services.GetRequiredService<CardOverlayService>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
+        InitializeSettingsPresentation();
         PersonalizeTasteIcon.Child = WebUiIcon.Create("sparkles", 24, (Brush)Application.Current.Resources["AccentBrush"]);
         PersonalizeTourIcon.Child = WebUiIcon.Create("map", 24, (Brush)Application.Current.Resources["AccentBrush"]);
         PersonalizeFavoritesRow.Children.RemoveAt(0);
@@ -157,6 +158,10 @@ public sealed partial class SettingsPage : Page
         ViewModel.WatchProviderCards.CollectionChanged += WatchProviderCards_CollectionChanged;
         ViewModel.PropertyChanged += (_, args) =>
         {
+            if (args.PropertyName is nameof(SettingsViewModel.IsLoading) or nameof(SettingsViewModel.ErrorMessage) or nameof(SettingsViewModel.StatusMessage))
+                DispatcherQueue.TryEnqueue(SynchronizeSettingsStatusPresentation);
+            if (args.PropertyName == nameof(SettingsViewModel.QualityPreference))
+                DispatcherQueue.TryEnqueue(SynchronizeQualityDescription);
             if (args.PropertyName is nameof(SettingsViewModel.SubtitleOffsetMs) or nameof(SettingsViewModel.SubtitlePreferencesLoaded)
                 or nameof(SettingsViewModel.IsSavingSubtitlePreferences) or nameof(SettingsViewModel.HasSubtitleAppearanceDeviceOverride)
                 or nameof(SettingsViewModel.SupportsProfileSubtitleTiming)) DispatcherQueue.TryEnqueue(SyncSubtitlePreferenceStatus);
@@ -258,13 +263,11 @@ public sealed partial class SettingsPage : Page
         SetSettingsNavigationGroupLayout(ConnectionsNavGroup, false);
         SetSettingsNavigationGroupLayout(AccountNavGroup, false);
 
-        SettingsContentPanel.Padding = isCompact
-            ? new Thickness(16)
-            : new Thickness(24);
-        SettingsContentPanel.MaxWidth = DevicesPanel.Visibility == Visibility.Visible ? double.PositiveInfinity : 816;
+        SettingsContentPanel.Padding = new Thickness(0);
+        SettingsContentPanel.MaxWidth = DevicesPanel.Visibility == Visibility.Visible ? double.PositiveInfinity : 1120;
         SettingsContentPanel.HorizontalAlignment = HorizontalAlignment.Left;
         SettingsHeaderGrid.Visibility = isCompact && !_showingSettingsOverview ? Visibility.Collapsed : Visibility.Visible;
-        ReflowSettingsRows(SettingsContentPanel, isCompact);
+        ReflowSettingsRows(SettingsContentPanel, SettingsViewportWidth < 768);
         ReflowSettingsDirectory();
         ReflowInterfacePresets();
         ReflowSettingsShell();
@@ -272,20 +275,26 @@ public sealed partial class SettingsPage : Page
 
     private void ReflowSettingsShell()
     {
+        SynchronizeSettingsStatusPresentation();
         var gutter = ActualWidth < 640 ? 16 : SettingsViewportWidth < 1024 ? 24 : ActualWidth < 1280 ? 40 : 48;
-        SettingsPageShell.MaxWidth = 1520 - gutter * 2;
+        SettingsPageShell.MaxWidth = _showingSettingsOverview ? 768 : 1520 - gutter * 2;
         if (SettingsHeaderGrid.Children.OfType<StackPanel>().FirstOrDefault() is { } heading && heading.Children.OfType<TextBlock>().FirstOrDefault() is { } headerTitle)
         {
-            headerTitle.FontSize = Math.Clamp(SiloPlayer.Helpers.WebUiViewport.Width(this, ActualWidth) * .04, 32, 48);
-            headerTitle.LineHeight = headerTitle.FontSize * .95;
+            headerTitle.FontSize = _showingSettingsOverview ? SettingsViewportWidth < 640 ? 28 : 32 : Math.Clamp(SettingsViewportWidth * .04, 32, 48);
+            headerTitle.LineHeight = headerTitle.FontSize * (_showingSettingsOverview ? 1.15 : .95);
             headerTitle.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
-            heading.Spacing = 12;
+            heading.Spacing = 8;
         }
-        SettingsHeaderSubtitle.FontSize = ActualWidth < 640 ? 14 : 16;
-        SettingsHeaderSubtitle.LineHeight = ActualWidth < 640 ? 21 : 24;
+        SettingsHeaderSubtitle.FontSize = 14;
+        SettingsHeaderSubtitle.LineHeight = 22.75;
         SettingsHeaderSubtitle.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
-        SettingsCurrentProfileButton.HorizontalAlignment = ActualWidth < 640 ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-        SettingsCurrentProfileButton.Width = Math.Min(448, Math.Max(0, ActualWidth - gutter * 2));
+        SettingsHeaderGrid.Margin = new Thickness(0, _showingSettingsOverview ? 8 : 40, 0, 0);
+        SettingsSearchPanel.Width = double.NaN;
+        SettingsSearchPanel.HorizontalAlignment = HorizontalAlignment.Stretch;
+        SettingsCurrentProfileButton.MaxWidth = double.PositiveInfinity;
+        SettingsCurrentProfileButton.HorizontalAlignment = HorizontalAlignment.Stretch;
+        SettingsCurrentProfileButton.Width = double.NaN;
+        SettingsCurrentProfileButton.MinHeight = 56;
         SettingsCurrentProfileButton.Background = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["SurfaceBrush"]).Color) { Opacity = .72 };
         SettingsCurrentProfileButton.BorderBrush = new SolidColorBrush(((SolidColorBrush)Application.Current.Resources["BorderBrush"]).Color) { Opacity = .62 };
         SettingsCurrentProfileButton.BorderThickness = new Thickness(1);
@@ -299,45 +308,28 @@ public sealed partial class SettingsPage : Page
         SettingsLayoutGrid.Background = plainDetail ? new SolidColorBrush(Colors.Transparent) : (Brush)Resources["SettingsPanelBrush"];
         SettingsLayoutGrid.BorderThickness = plainDetail ? new Thickness(0) : new Thickness(1);
         SettingsLayoutGrid.CornerRadius = plainDetail ? new CornerRadius(0) : new CornerRadius(27.2);
+        SettingsPageShell.Width = double.NaN;
+        SettingsPageShell.HorizontalAlignment = HorizontalAlignment.Stretch;
+        SettingsContentPanel.Width = double.NaN;
         if (hostedDesktop)
         {
-            SettingsPageShell.Margin = new Thickness(32, 32, 32, 48);
-            SettingsPageShell.MaxWidth = double.PositiveInfinity;
+            var inset = SettingsViewportWidth < 1280 ? 40 : 48;
+            var frameWidth = Math.Min(1560, Math.Max(0, ActualWidth - inset * 2));
+            // ScrollViewer's stretch arrangement still centres a MaxWidth child
+            // using its narrower desired width. Own the PageFrame width and
+            // position explicitly so the reading column stays at its left edge.
+            SettingsPageShell.Width = frameWidth;
+            SettingsPageShell.HorizontalAlignment = HorizontalAlignment.Left;
+            SettingsPageShell.Margin = new Thickness(inset + Math.Max(0, (ActualWidth - inset * 2 - frameWidth) / 2), 64, inset, 48);
+            SettingsPageShell.MaxWidth = 1560;
             SettingsContentPanel.Padding = new Thickness(0);
+            SettingsContentPanel.Width = DevicesPanel.Visibility == Visibility.Visible ? frameWidth : Math.Min(1120, frameWidth);
         }
-        foreach (var title in new[] { InterfaceTitleText, TitlePagesTitleText, PlaybackTitleText, SubtitlesTitleText, ConnectAppsTitleText, AccessibilityTitleText })
-        {
-            title.FontSize = ActualWidth < 640 ? 24 : 30;
-            title.LineHeight = ActualWidth < 640 ? 32 : 36;
-            title.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
-            title.CharacterSpacing = -25;
-        }
-        PersonalizeTitleText.FontSize = 20;
-        PersonalizeTitleText.LineHeight = 28;
-        PersonalizeTitleText.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+        NormalizeSettingsPageHeaders();
         ReflowSettingsGroupPadding(SettingsContentPanel, ActualWidth < 640);
     }
 
-    private void ReflowSettingsGroupPadding(DependencyObject parent, bool narrow)
-    {
-        if (parent is Border border && ReferenceEquals(border.Style, Resources["SettingsGroupStyle"]))
-        {
-            border.Padding = new Thickness(narrow ? 16 : 24, 20, narrow ? 16 : 24, 20);
-            if (border.Child is StackPanel group && group.Children.FirstOrDefault() is StackPanel heading
-                && heading.Children.FirstOrDefault() is TextBlock { FontSize: 14 } title)
-            {
-                group.Spacing = 20;
-                title.LineHeight = 20; title.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
-                title.CharacterSpacing = -25;
-                foreach (var description in heading.Children.OfType<TextBlock>().Skip(1))
-                {
-                    description.LineHeight = 21.125; description.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
-                }
-            }
-        }
-        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
-            ReflowSettingsGroupPadding(VisualTreeHelper.GetChild(parent, index), narrow);
-    }
+    private void ReflowSettingsGroupPadding(DependencyObject parent, bool narrow) => ReflowSettingsSections();
 
     private void ReflowInterfacePresets()
     {
@@ -372,6 +364,7 @@ public sealed partial class SettingsPage : Page
     }
 
     private readonly Dictionary<Grid, (GridLength First, GridLength Second, List<(FrameworkElement Child, int Row, int Column)> Children)> _responsiveRows = [];
+    private readonly Dictionary<ComboBox, (double Width, HorizontalAlignment Alignment)> _responsiveSettingsControls = [];
     private void ReflowSettingsRows(DependencyObject parent, bool compact)
     {
         for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
@@ -379,7 +372,7 @@ public sealed partial class SettingsPage : Page
             var child = VisualTreeHelper.GetChild(parent, index);
             if (child is Grid grid && grid.ColumnDefinitions.Count == 2 && grid.Children.Count >= 2
                 && grid.Children[0] is TextBlock or StackPanel && grid != SettingsLayoutGrid && grid.Tag as string != "preset-icon-row" && grid.Tag as string != "title-art-row"
-                && grid.Tag is not ("device-inline-row" or "device-value-row"))
+                && grid.Tag is not ("device-inline-row" or "device-value-row" or "settings-section-layout"))
             {
                 if (!_responsiveRows.TryGetValue(grid, out var original))
                 {
@@ -387,18 +380,48 @@ public sealed partial class SettingsPage : Page
                         grid.Children.OfType<FrameworkElement>().Select(element => (element, Grid.GetRow(element), Grid.GetColumn(element))).ToList());
                     _responsiveRows[grid] = original;
                 }
+                if (grid.Children[0] is StackPanel label)
+                {
+                    label.Spacing = 4;
+                    foreach (var text in label.Children.OfType<TextBlock>())
+                    {
+                        text.LineHeight = text.FontSize == 13 ? 21.125 : 20;
+                        text.LineStackingStrategy = LineStackingStrategy.BlockLineHeight;
+                    }
+                }
+                foreach (var control in original.Children.Where(child => child.Column == 1).Select(child => child.Child).OfType<ComboBox>())
+                {
+                    control.MinHeight = 36;
+                    if (!compact && double.IsNaN(control.Width)) control.Width = 220;
+                }
                 if (compact)
                 {
                     while (grid.RowDefinitions.Count < 2) grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
                     grid.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
                     grid.ColumnDefinitions[1].Width = new GridLength(0);
-                    grid.RowSpacing = 10;
-                    foreach (var (element, row, column) in original.Children) { Grid.SetColumn(element, 0); Grid.SetRow(element, column == 1 ? 1 : row); }
+                    grid.RowSpacing = 12;
+                    foreach (var (element, row, column) in original.Children)
+                    {
+                        Grid.SetColumn(element, 0); Grid.SetRow(element, column == 1 ? 1 : row);
+                        if (column == 1 && element is ToggleSwitch toggle) toggle.HorizontalAlignment = HorizontalAlignment.Left;
+                        if (column == 1 && element is ComboBox combo)
+                        {
+                            _responsiveSettingsControls.TryAdd(combo, (combo.Width, combo.HorizontalAlignment));
+                            combo.Width = double.NaN;
+                            combo.HorizontalAlignment = HorizontalAlignment.Stretch;
+                        }
+                    }
                 }
                 else
                 {
                     grid.ColumnDefinitions[0].Width = original.First; grid.ColumnDefinitions[1].Width = original.Second;
-                    foreach (var (element, row, column) in original.Children) { Grid.SetColumn(element, column); Grid.SetRow(element, row); }
+                    foreach (var (element, row, column) in original.Children)
+                    {
+                        Grid.SetColumn(element, column); Grid.SetRow(element, row);
+                        if (column == 1 && element is ToggleSwitch toggle) toggle.HorizontalAlignment = HorizontalAlignment.Right;
+                        if (element is ComboBox combo && _responsiveSettingsControls.TryGetValue(combo, out var control))
+                        { combo.Width = double.IsNaN(control.Width) ? 220 : control.Width; combo.HorizontalAlignment = control.Alignment; }
+                    }
                 }
             }
             ReflowSettingsRows(child, compact);
@@ -889,7 +912,7 @@ _webhookPlexAuthCts?.Cancel();
     {
         for (int i = 0; i < combo.Items.Count; i++)
         {
-            if (combo.Items[i] is ComboBoxItem item && item.Tag is string tag && tag == tagValue)
+            if (combo.Items[i] is ComboBoxItem item && (item.Tag as string ?? "") == tagValue)
             {
                 combo.SelectedIndex = i;
                 return;
@@ -912,9 +935,9 @@ _webhookPlexAuthCts?.Cancel();
         var profileName = string.IsNullOrWhiteSpace(profile?.Name) ? "Your profile" : profile.Name;
         var avatarHost = new Border
         {
-            Width = 40,
-            Height = 40,
-            CornerRadius = new CornerRadius(20),
+            Width = 32,
+            Height = 32,
+            CornerRadius = new CornerRadius(16),
             Background = (Brush)Application.Current.Resources["AccentBackgroundBrush"],
         };
         if (!string.IsNullOrWhiteSpace(profile?.AvatarUrl) &&
@@ -931,7 +954,7 @@ _webhookPlexAuthCts?.Cancel();
             avatarHost.Child = new TextBlock
             {
                 Text = profileName[..1].ToUpperInvariant(),
-                FontSize = 17,
+                FontSize = 12,
                 FontWeight = FontWeights.SemiBold,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -1052,7 +1075,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             if (section.Children.FirstOrDefault() is TextBlock heading)
             {
-                heading.FontSize = desktop ? 16 : 11;
+                heading.FontSize = desktop ? 16 : 12;
                 heading.CharacterSpacing = desktop ? -25 : 160;
                 if (heading.Tag is string label) heading.Text = desktop ? label : label.ToUpperInvariant();
             }
@@ -1168,8 +1191,8 @@ _webhookPlexAuthCts?.Cancel();
             : Visibility.Collapsed;
         Tab_Click(button, new RoutedEventArgs());
         SettingsHeaderGrid.Visibility = SettingsViewportWidth < 1024 ? Visibility.Collapsed : Visibility.Visible;
-        SettingsContentPanel.MaxWidth = button.Tag is "Devices" ? double.PositiveInfinity : 816;
-        ReflowSettingsRows(SettingsContentPanel, SettingsViewportWidth < 1024);
+        SettingsContentPanel.MaxWidth = button.Tag is "Devices" ? double.PositiveInfinity : 1120;
+        ReflowSettingsRows(SettingsContentPanel, SettingsViewportWidth < 768);
         ReflowSettingsShell();
     }
 

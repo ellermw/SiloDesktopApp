@@ -151,6 +151,14 @@ if ($ForbiddenPublishedResources) {
 }
 
 # Copy libmpv if not already in publish output
+foreach ($font in Get-ChildItem -LiteralPath "$RepoRoot\src\SiloPlayer\Assets\Fonts" -File -Filter '*.ttf') {
+    $publishedFont = Join-Path $PublishDir ("Assets\Fonts\" + $font.Name)
+    if (-not (Test-Path -LiteralPath $publishedFont) -or
+        (Get-FileHash -LiteralPath $publishedFont -Algorithm SHA256).Hash -ne
+        (Get-FileHash -LiteralPath $font.FullName -Algorithm SHA256).Hash) {
+        throw "Published font is missing or differs from its source: $($font.Name). PRI path entries do not embed font bytes."
+    }
+}
 $MpvDll = "$PublishDir\libmpv-2.dll"
 if (-not (Test-Path $MpvDll)) {
     Write-Host "Copying libmpv-2.dll..."
@@ -168,6 +176,10 @@ if ($MpvHeader[0] -ne 0x4D -or $MpvHeader[1] -ne 0x5A) {
     throw "Published libmpv-2.dll is not a Windows PE binary."
 }
 $SourceMpvHash = (Get-FileHash -LiteralPath "$RepoRoot\libs\mpv\libmpv-2.dll" -Algorithm SHA256).Hash
+$EngineManifest = Get-Content -LiteralPath "$RepoRoot\libs\mpv\engine.json" -Raw | ConvertFrom-Json
+if ($SourceMpvHash -ne $EngineManifest.librarySha256) {
+    throw "The playback engine does not match libs/mpv/engine.json. Verify its provenance and native Dolby Vision tests before updating the pin."
+}
 $PublishedMpvHash = (Get-FileHash -LiteralPath $MpvDll -Algorithm SHA256).Hash
 if ($SourceMpvHash -ne $PublishedMpvHash) {
     throw "Published libmpv-2.dll does not match the verified repository asset."

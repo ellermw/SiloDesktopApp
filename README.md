@@ -1,16 +1,16 @@
 # Silo Desktop Player
 
-> **Current release: 1.2.304.** Preserves Home rows, artwork and scroll when returning from playback or another page, repairs stale Home/sidebar callbacks and direct-read deadline recovery, and includes fifteen current Silo Server/WebUI alignment groups. See [the release record](docs/releases/1.2.304.md) and [SiloCast setup](docs/silocast-testing.md). Local development starts in `D:\SiloPlayer`; read [the current handoff](docs/current-development.md) before editing or building.
+> **Current release: 1.2.309.** Updates the native Dolby Vision engine, verifies Profile 7 enhancement processing and Profile 8 playback, and repairs personal Settings, connection speed tests, profile hover and media-button feedback. See [the release record and limits](docs/releases/1.2.309.md) and [SiloCast setup](docs/silocast-testing.md). Local development starts in `D:\SiloPlayer`; read [the current handoff](docs/current-development.md) before editing or building.
 
 Native Windows desktop client for [Silo Server](https://github.com/Silo-Server/silo-server), built with WinUI 3 and libmpv. The project aims to reproduce the Silo WebUI visually and functionally while providing broad native direct-play support for high-bitrate HEVC, HDR, Dolby Vision, lossless audio, and other formats browsers commonly transcode.
 
-> **Project status:** active pre-release development. Version 1.2.304 preserves the prior parity work and SiloCast receiver. Phone interoperability, broader hardware testing and the separate intermittent Next Up removal investigation continue. The reproduced reader failures are repaired; the cause of every historical live buffering incident is not established. Targeted verification does not certify complete visual/functional parity. Silo Server changes are re-audited against its official public `main` branch.
+> **Project status:** active pre-release development. Version 1.2.309 preserves the prior parity work and SiloCast receiver. Phone interoperability, broader hardware testing and the separate intermittent Next Up removal investigation continue. Dolby Vision source processing is verified for the tested samples; physical Dolby Vision display transport and every legacy container are not certified. The cause of every historical live buffering incident is not established. Targeted verification does not certify complete visual/functional parity. Silo Server changes are re-audited against its official public `main` branch.
 
 ## Download
 
-[**Download Silo Desktop Player 1.2.304**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.304/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
+[**Download Silo Desktop Player 1.2.309**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.309/SiloInstaller-Windows-x64.exe) — Windows 10/11 x64 installer from GitHub Releases.
 
-SHA-256: `75E011777AFABB8A052BDE79BE72547ACBC42398F2EE145F09B70A47EA5C5188`
+SHA-256: `FF0BFE7B3F4D7BCB21BC64649362714A6AF319D8C4521417517A96AAA66FABC8`
 
 SiloCast is built in and enabled for fresh/missing preferences. The installer automatically adds its Private-network/local-subnet firewall rule, with no extra SiloCast checkbox. A saved opt-out remains respected; enable or disable it under **Settings → Playback → Desktop playback → Allow SiloCast control**. Keep the PC and phone on the same private local network and the desktop app running. See [the testing guide](docs/silocast-testing.md) for setup and troubleshooting. Actual iPhone/Android interoperability remains under testing.
 
@@ -26,7 +26,7 @@ The reader includes Foliate and PDF.js; pinned sources, local adaptations and li
 
 ## Current parity
 
-Version **1.2.304** adds eighteen correction groups after comparing 129 official upstream commits through [`489fe4d`](https://github.com/Silo-Server/silo-server/commit/489fe4d55735f3855b2a0d6276e57d148891b456): fifteen server/WebUI alignment groups, Home return and sidebar repairs, and the reader-deadline correction discovered during native verification. Passed **2,120 main tests**, **32 exact-payload native runs** and **24 packaged playback checks**. See [the current correction ledger and limits](docs/releases/1.2.304.md). The table below records the earlier 1.2.241 acceptance pass.
+Version **1.2.309** adds five correction groups beyond 1.2.304: media-button feedback, Dolby Vision engine/profile support, profile hover geometry, personal Settings/font packaging and connection-test behavior/presentation. The focused comparison uses official Silo Server/WebUI [`d2c12db`](https://github.com/Silo-Server/silo-server/commit/d2c12dbb0f8f40f0a33304f3032f2104c5ee9674). Passed **2,132 main tests**, **nine exact-payload native groups** and **24 packaged playback checks**. See [the current correction ledger and limits](docs/releases/1.2.309.md). This preserves [1.2.304's upstream alignment and stability repairs](docs/releases/1.2.304.md); the table below records the earlier 1.2.241 acceptance pass.
 
 **1.2.241 includes 241 distinct verified correction groups tracked since the October 1 implementation pass.** The patch number follows the [correction ledger](docs/parity/2026-10-01-parity-implementation-ledger.md). Seventy-six groups were newly reconciled during the final implementation and verification cycle; overlapping refinements count once.
 
@@ -52,6 +52,14 @@ The official public Silo Server reference fetched for the final pass is [1a7a397
 
 
 ## Latest release
+
+### 1.2.309 — Dolby Vision and personal Settings
+
+- Upgrade the pinned native playback engine and verify Profile 7 MEL/FEL enhancement processing, Profile 8.1/8.4 and Profile 5 playback, including hardware rendering, pause and seek/resume. Add sanitized video-pipeline diagnostics.
+- Align personal Settings layout, navigation, labels and fonts with the current WebUI. Ship and validate all five indexed fonts; center the profile-icon hover backdrop.
+- Repair connection speed-test redirects, cancellation, saving and rate-limit handling, with current connection and Auto-budget controls.
+- Correct media-page Play/Resume and Watched hover feedback across the full button.
+- Publish the exact owner-tested installer. Verification: **2,132 main tests**, **nine exact-payload native groups**, **24 packaged playback checks**, six Settings widths and 16 final screenshots. See [scope, engine provenance and display/container limits](docs/releases/1.2.309.md).
 
 ### 1.2.304 — Home stability, streaming recovery and upstream alignment
 

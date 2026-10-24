@@ -981,6 +981,7 @@ public sealed partial class MpvPlayer : IDisposable
 
                     case MPV_EVENT_PLAYBACK_RESTART:
                         _diagnostics?.Record("playback_restart", new { position = Position });
+                        _diagnostics?.Record("video_pipeline", GetVideoPipelineSnapshot());
                         InvokeSafely(PlaybackRestarted, nameof(PlaybackRestarted));
                         break;
 

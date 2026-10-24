@@ -52,6 +52,16 @@ public partial class PlayerService
         if (!ReferenceEquals(_localAuthority.PlaybackApi, _activeAuthority.PlaybackApi))
             PlaybackConnectionService.For(_activeAuthority.PlaybackApi).SetMediaActive(active);
     }
+    private void SynchronizeConnectionMediaActivity(bool? paused = null, bool? buffering = null)
+    {
+        // A user pause frees the link for Settings' test. A source load or
+        // paused-for-cache stall still owns it, and resuming cancels a test
+        // before playback competes with the transfer.
+        var active = !_closing && _playbackTerminalState == null &&
+            (IsLoading || _switchingContent || State != PlayerState.Idle &&
+                ((buffering ?? _mpv?.IsBufferingForCache) == true || !(paused ?? IsPaused)));
+        SetConnectionMediaActive(active);
+    }
     private void AdoptBufferingQualityPlan()
     {
         lock (_bufferingGate)

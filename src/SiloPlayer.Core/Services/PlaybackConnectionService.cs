@@ -12,6 +12,7 @@ public sealed class PlaybackConnectionService
     private readonly PlaybackApi _api;
     private readonly SemaphoreSlim _gate = new(1,1);
     private CancellationTokenSource? _pending;
+    private CancellationTokenSource? _manualPending;
     private ApiIdentityContext? _owner;
     private string _network = "";
     private bool _mediaActive, _metered;
@@ -19,13 +20,14 @@ public sealed class PlaybackConnectionService
     private PlaybackConnectionService(PlaybackApi api) => _api = api;
     public PlaybackConnectionState? State { get; private set; }
     public PlaybackCapabilityV3? Capability { get; private set; }
+    public bool IsMediaActive { get { lock (this) return _mediaActive; } }
     public void SetMediaActive(bool active)
     {
-        lock (this) { _mediaActive = active; if (active) _pending?.Cancel(); }
+        lock (this) { _mediaActive = active; if (active) { _pending?.Cancel(); _manualPending?.Cancel(); } }
     }
     public void Retire()
     {
-        lock (this) { _pending?.Cancel(); State = null; Capability = null; _owner = null; }
+        lock (this) { _pending?.Cancel(); _manualPending?.Cancel(); State = null; Capability = null; _owner = null; }
     }
     public async Task RefreshAsync(string network, bool metered, string transport, bool allowAutomatic, CancellationToken ct = default)
     {
@@ -33,6 +35,10 @@ public sealed class PlaybackConnectionService
         CancellationTokenSource pending;
         lock (this)
         {
+            // A connectivity notification for the same link must not replace a
+            // viewer's test with a background refresh or another transfer.
+            if (_manualPending is { IsCancellationRequested: false } && _owner == owner && _network == network && _metered == metered) return;
+            _manualPending?.Cancel();
             _pending?.Cancel();
             if (_owner != owner || _network != network) { State = null; Capability = null; }
             _owner = owner; _network = network; _metered = metered;
@@ -41,10 +47,10 @@ public sealed class PlaybackConnectionService
         try
         {
             var cap = await _api.GetConnectionCapabilityAsync(owner, pending.Token).ConfigureAwait(false);
-            if (!cap.Features.Contains("connection_speed_v1")) { Install(owner, network, cap, null); return; }
+            if (!cap.Features.Contains("connection_speed_v1") && !cap.Features.Contains("buffering_quality_v1")) { Install(owner, network, cap, null); return; }
             var state = await _api.GetConnectionAsync(owner, pending.Token).ConfigureAwait(false);
             if (!Install(owner, network, cap, state)) return;
-            if (!allowAutomatic || !AutomaticAllowed() || cap.BandwidthProbeAutomatic == false || ProvesConnection(state, cap, DateTimeOffset.UtcNow)) return;
+            if (!cap.Features.Contains("connection_speed_v1") || !allowAutomatic || !AutomaticAllowed() || cap.BandwidthProbeAutomatic == false || ProvesConnection(state, cap, DateTimeOffset.UtcNow)) return;
             await Task.Delay(5000, pending.Token).ConfigureAwait(false);
             if (!AutomaticAllowed() || !Current(owner, network)) return;
             await RunProbeAsync(owner, network, cap, false, transport, pending.Token).ConfigureAwait(false);
@@ -59,10 +65,11 @@ public sealed class PlaybackConnectionService
         {
             if (_mediaActive) throw new InvalidOperationException("Stop playback before testing connection speed.");
             if (metered) throw new InvalidOperationException("Connection tests are unavailable on a metered connection.");
+            if (_manualPending is { IsCancellationRequested: false }) throw new InvalidOperationException("A speed test is already running. Try again in a moment.");
             _pending?.Cancel();
             if (_owner != owner || _network != network) State = null;
             _owner = owner; _network = network; _metered = metered;
-            pending = CancellationTokenSource.CreateLinkedTokenSource(ct); _pending = pending;
+            pending = CancellationTokenSource.CreateLinkedTokenSource(ct); _manualPending = pending;
         }
         try
         {
@@ -70,7 +77,7 @@ public sealed class PlaybackConnectionService
             if (!Install(owner, network, cap, State)) throw new OperationCanceledException();
             return await RunProbeAsync(owner, network, cap, true, transport, pending.Token).ConfigureAwait(false);
         }
-        finally { lock(this) { if (ReferenceEquals(_pending, pending)) _pending = null; } pending.Dispose(); }
+        finally { lock(this) { if (ReferenceEquals(_manualPending, pending)) _manualPending = null; } pending.Dispose(); }
     }
     public async Task ResetAsync(CancellationToken ct = default)
     {
@@ -103,9 +110,16 @@ public sealed class PlaybackConnectionService
             var result = await _api.MeasureConnectionAsync(owner, cap, manual, transport, ct).ConfigureAwait(false)
                 ?? throw new IOException("The connection speed could not be measured.");
             if (!Current(owner, network)) throw new OperationCanceledException();
-            await _api.ReportConnectionProbeAsync(owner, result, ct).ConfigureAwait(false);
-            var state = await _api.GetConnectionAsync(owner, ct).ConfigureAwait(false);
-            Install(owner, network, cap, state);
+            try { await _api.ReportConnectionProbeAsync(owner, result, ct).ConfigureAwait(false); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { throw new ConnectionProbeNotSavedException(ex); }
+            // Saving succeeded. A failed follow-up read must not claim the test
+            // failed, or leave an older, higher playback sample in use.
+            try
+            {
+                var state = await _api.GetConnectionAsync(owner, ct).ConfigureAwait(false);
+                Install(owner, network, cap, state);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { if (manual) Install(owner, network, cap, null); }
             return result;
         }
         catch (ApiException ex) when (ex.StatusCode == 429)
@@ -113,3 +127,5 @@ public sealed class PlaybackConnectionService
         finally { _gate.Release(); }
     }
 }
+
+public sealed class ConnectionProbeNotSavedException(Exception inner) : IOException("The speed test result could not be saved.", inner);
