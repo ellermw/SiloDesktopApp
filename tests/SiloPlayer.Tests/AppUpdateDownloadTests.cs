@@ -26,6 +26,48 @@ public sealed class AppUpdateDownloadTests : IDisposable
     }
 
     [Fact]
+    public async Task UpdateNowDuringABackgroundCheckStillDownloadsThePackage()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var service = Create(http); await service.CheckAsync();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.BeforeMetadata = async ct => { entered.TrySetResult(); await release.Task.WaitAsync(ct); };
+        var check = service.CheckAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // The periodic six-hour check, or the dialog's own Check button, is in
+        // flight when the user presses Update now.
+        var download = service.DownloadAsync();
+        release.TrySetResult();
+        await download.WaitAsync(TimeSpan.FromSeconds(5)); await check;
+
+        Assert.Equal(1, wire.Downloads);
+        Assert.NotNull(service.State.ReadyInstaller);
+        Assert.True(await service.ReverifyReadyAsync());
+    }
+
+    [Fact]
+    public async Task PlaybackStillDefersAnAutomaticTransferQueuedBehindACheck()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var service = Create(http); service.SetMode(AppUpdateMode.Automatic); await service.CheckAsync();
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.BeforeMetadata = async ct => { entered.TrySetResult(); await release.Task.WaitAsync(ct); };
+        var check = service.CheckAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var download = service.DownloadAsync(automatic: true);
+        service.SetPlaybackActive(true);
+        release.TrySetResult();
+        await download.WaitAsync(TimeSpan.FromSeconds(5)); await check;
+
+        Assert.Equal(0, wire.Downloads);
+        Assert.Null(service.State.ReadyInstaller); Assert.Null(service.State.Error);
+    }
+
+    [Fact]
     public async Task BadChecksumNeverProducesAnExecutableReadyPackage()
     {
         using var wire = new Wire { AdvertisedDigest = AppUpdateTests.Digest }; using var http = new HttpClient(wire);
@@ -251,13 +293,17 @@ public sealed class AppUpdateDownloadTests : IDisposable
         public string? AdvertisedDigest;
         public int Downloads;
         public Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? Response;
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        public Func<CancellationToken, Task>? BeforeMetadata;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host == "api.github.com")
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(Metadata ?? AppUpdateTests.Release(
-                    digest: "sha256:" + (AdvertisedDigest ?? Convert.ToHexString(SHA256.HashData(Package)).ToLowerInvariant()), size: Package.Length), Encoding.UTF8, "application/json") });
+            {
+                if (BeforeMetadata is { } wait) await wait(ct);
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(Metadata ?? AppUpdateTests.Release(
+                    digest: "sha256:" + (AdvertisedDigest ?? Convert.ToHexString(SHA256.HashData(Package)).ToLowerInvariant()), size: Package.Length), Encoding.UTF8, "application/json") };
+            }
             Downloads++;
-            return Response?.Invoke(request, ct) ?? Task.FromResult(Body(Package));
+            return await (Response?.Invoke(request, ct) ?? Task.FromResult(Body(Package)));
         }
     }
 

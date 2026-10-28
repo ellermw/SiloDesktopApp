@@ -74,12 +74,17 @@ public sealed partial class AppUpdateService
 
     private async Task DownloadCoreAsync(CancellationToken ct)
     {
-        if (!await _operation.WaitAsync(0, ct).ConfigureAwait(false)) return;
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(15), timeProvider ?? TimeProvider.System);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
         lock (_transferGate) _transferCancellation = deadline;
+        var entered = false;
         try
         {
+            // Wait out a running check (bounded by its own deadline) instead of
+            // returning: Update now and the automatic transfer otherwise do
+            // nothing, with no error, whenever they overlap a check.
+            await _operation.WaitAsync(deadline.Token).ConfigureAwait(false);
+            entered = true;
             var release = State.Release;
             if (release is null) return;
             SetState(State with { IsDownloading = true, Error = null });
@@ -112,7 +117,7 @@ public sealed partial class AppUpdateService
         finally
         {
             lock (_transferGate) _transferCancellation = null;
-            _operation.Release();
+            if (entered) _operation.Release();
         }
     }
 
