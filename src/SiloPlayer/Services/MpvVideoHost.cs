@@ -13,7 +13,6 @@ public class MpvVideoHost : IDisposable
     private bool _disposed;
 
     private const int WS_CHILD = 0x40000000;
-    private const int WS_VISIBLE = 0x10000000;
     private const int WS_CLIPSIBLINGS = 0x04000000;
     private const int WS_EX_NOACTIVATE = 0x08000000;
     private const int SWP_NOZORDER = 0x0004;

@@ -17,7 +17,6 @@ public sealed class LibraryGridCard : Canvas
     private readonly Border _hoverBrighten;
     private readonly CompositeTransform _cardHoverTransform;
     private readonly CompositeTransform _posterHoverTransform;
-    private readonly UICustomizationService _uiCustomizationService;
     private readonly DefaultArtwork _artworkFallback;
     private readonly TextBlock _titleText;
     private readonly TextBlock _episodeTitleText;
@@ -47,7 +46,6 @@ public sealed class LibraryGridCard : Canvas
 
     public LibraryGridCard()
     {
-        _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         var cardWidth = (double)Application.Current.Resources["PosterCardWidth"];
         var posterHeight = (double)Application.Current.Resources["PosterCardHeight"];
         var cardHeight = (double)Application.Current.Resources["PosterCardTotalHeight"];

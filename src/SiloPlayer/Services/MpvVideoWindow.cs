@@ -23,10 +23,8 @@ public sealed class MpvVideoWindow : IDisposable
 
     // Win32 constants
     private const int WS_POPUP = unchecked((int)0x80000000);
-    private const int WS_VISIBLE = 0x10000000;
     private const int WS_CLIPSIBLINGS = 0x04000000;
     private const int WS_CLIPCHILDREN = 0x02000000;
-    private const int WS_EX_NOACTIVATE = 0x08000000;
     private const int WS_EX_TOOLWINDOW = 0x00000080; // Hide from taskbar
     private const uint SWP_NOACTIVATE = 0x0010;
     private const uint SWP_NOZORDER = 0x0004;
@@ -35,7 +33,6 @@ public sealed class MpvVideoWindow : IDisposable
     private const uint SWP_NOSENDCHANGING = 0x0400;
     private const int SW_HIDE = 0;
     private const int SW_SHOWNOACTIVATE = 4;
-    private const int GWL_STYLE = -16;
     private const int DWMWA_TRANSITIONS_FORCEDISABLED = 3;
 
     public event Action? EscapeRequested;
@@ -307,7 +304,6 @@ public sealed class MpvVideoWindow : IDisposable
         // picture-in-picture. Drop the topmost PiP contract first so the
         // fullscreen window cannot remain above unrelated applications.
         ExitPictureInPicture();
-        GetWindowRect(_hwnd, out _savedRect);
         var monitor = MonitorFromWindow(_hwnd, 2 /*MONITOR_DEFAULTTONEAREST*/);
         var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
         GetMonitorInfoW(monitor, ref mi);
@@ -409,7 +405,6 @@ public sealed class MpvVideoWindow : IDisposable
     public bool IsForeground => _hwnd != IntPtr.Zero && GetForegroundWindow() == _hwnd;
     private bool _isFullscreen;
     private bool _isMiniBar;
-    private RECT _savedRect;
 
     // Click-to-pause detection: a "clean" click is a short press with minimal
     // pointer movement. On WM_LBUTTONUP we hand the hit-test to Lua
