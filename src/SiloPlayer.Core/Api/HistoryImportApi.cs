@@ -24,6 +24,4 @@ public class HistoryImportApi(SiloApiClient client)
     public Task<HistoryImportRun> CreateImportRunAsync(CreateHistoryImportRunRequest request, CancellationToken ct = default)
         => client.PostAsync<HistoryImportRun>("/api/v2/history-imports/runs", V2Json.Body(request), ct);
 
-    public Task<HistoryImportRun> GetImportRunAsync(string id, CancellationToken ct = default)
-        => client.GetAsync<HistoryImportRun>($"/api/v2/history-imports/runs/{Uri.EscapeDataString(id)}", ct);
 }

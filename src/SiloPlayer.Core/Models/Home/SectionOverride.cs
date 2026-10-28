@@ -63,10 +63,3 @@ public class RawSectionOverride
     }
     [JsonPropertyName("user_title")] public string UserTitle { get; set; } = "";
 }
-
-public class SidebarPin
-{
-    public string Type { get; set; } = "";
-    public string Id { get; set; } = "";
-    public string Label { get; set; } = "";
-}

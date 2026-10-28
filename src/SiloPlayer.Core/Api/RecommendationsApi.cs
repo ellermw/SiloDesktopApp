@@ -13,14 +13,8 @@ public class RecommendationsApi(SiloApiClient client)
     public async Task<RecommendationsResponse> GetForYouRowsAsync(CancellationToken ct = default)
         => new() { Rows = (await client.GetAsync<BrowseCollection<RecommendationRow>>("/api/v2/recommendations/for-you/rows", ct)).Items };
 
-    public Task<SimilarResponse> GetBecauseWatchedAsync(string itemId, CancellationToken ct = default)
-        => client.GetAsync<SimilarResponse>($"/api/v2/recommendations/because-watched/{Uri.EscapeDataString(itemId)}", ct);
-
     public Task<SimilarResponse> GetSimilarAsync(string itemId, CancellationToken ct = default)
         => client.GetAsync<SimilarResponse>($"/api/v2/recommendations/similar/{Uri.EscapeDataString(itemId)}", ct);
-
-    public Task<SimilarResponse> GetSimilarUsersAsync(CancellationToken ct = default)
-        => client.GetAsync<SimilarResponse>("/api/v2/recommendations/similar-users", ct);
 
     public Task<TasteProfileResponse> GetTasteProfileAsync(CancellationToken ct = default)
         => client.GetAsync<TasteProfileResponse>("/api/v2/recommendations/taste-profile", ct);
@@ -36,16 +30,6 @@ public class RecommendationsApi(SiloApiClient client)
         return client.GetAsync<RecommendationSectionResponse>(path, ct);
     }
 
-    public Task<SimilarResponse> GetPopularAsync(int? days = null, CancellationToken ct = default)
-    {
-        var path = "/api/v2/recommendations/popular";
-        if (days.HasValue) path += $"?days={days.Value}";
-        return client.GetAsync<SimilarResponse>(path, ct);
-    }
-
-    public Task<SimilarResponse> GetRecentlyAddedAsync(CancellationToken ct = default)
-        => client.GetAsync<SimilarResponse>("/api/v2/recommendations/recently-added", ct);
-
     public async Task<TasteSeedItemsPage> GetTasteSeedItemsAsync(int limit = 30, int offset = 0,
         CancellationToken ct = default)
     {
@@ -58,13 +42,6 @@ public class RecommendationsApi(SiloApiClient client)
         => client.PostAsync<TasteSeedSubmitResponse>("/api/v2/recommendations/taste-seed",
             new Dictionary<string, object?> { ["item_ids"] = itemIds.Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToArray() },
             ct);
-
-    /// <summary>
-    /// Fetch the "Watch Tonight" quick-picks list — a short mixed set of
-    /// continue_watching / next_up / recommendation items.
-    /// </summary>
-    public Task<WatchTonightResponse> GetWatchTonightAsync(CancellationToken ct = default)
-        => client.GetAsync<WatchTonightResponse>("/api/v2/recommendations/watch-tonight", ct);
 
     /// <summary>
     /// Fetch the swipe-deck "Watch Tonight" cards. Supports "continue" (pick up

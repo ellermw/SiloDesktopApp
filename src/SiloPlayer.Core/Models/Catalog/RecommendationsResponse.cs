@@ -7,17 +7,6 @@ public class RecommendationsResponse
     public List<RecommendationRow> Rows { get; set; } = [];
 }
 
-/// <summary>
-/// Response for GET /api/v1/recommendations/watch-tonight. Returns a small
-/// mixed list of in-progress, next-up, and discovery items suitable for a
-/// "pick something to watch" quick-launcher.
-/// </summary>
-public class WatchTonightResponse
-{
-    public List<WatchTonightItem> Items { get; set; } = [];
-    public bool IsCold { get; set; }
-}
-
 public class DiscoverResponse
 {
     public List<DiscoverRow> Rows { get; set; } = [];

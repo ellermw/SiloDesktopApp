@@ -44,11 +44,6 @@ public sealed class EbookReaderAnnotation
     public DateTimeOffset? UpdatedAt { get; set; }
 }
 
-public sealed class EbookReaderAnnotationsEnvelope
-{
-    public List<EbookReaderAnnotation> Items { get; set; } = [];
-}
-
 public sealed class EbookReaderAnnotationInput
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();

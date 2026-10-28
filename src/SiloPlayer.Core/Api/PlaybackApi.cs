@@ -21,9 +21,6 @@ public partial class PlaybackApi(SiloApiClient client)
         return detail;
     }
 
-    public Task<PlaybackStartResponse> StartPlaybackAsync(PlaybackStartRequest request, CancellationToken ct = default)
-        => throw new NotSupportedException("Playback API v2 requires a protocol-v3 playback plan.");
-
     public Task<PlaybackDecisionResponseV3> StartPlaybackV3Async(PlaybackStartRequestV3 request, CancellationToken ct = default)
         => StartV2Async(request, ct);
 
@@ -137,14 +134,6 @@ public partial class PlaybackApi(SiloApiClient client)
         => DeleteSubtitlePrefsAsync(client.CaptureContext(), seriesId, ct);
 
     // ===== Home Dismissals =====
-
-    public Task DismissContinueWatchingAsync(string itemId, string progressUpdatedAt, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v2/home/dismissals/continue_watching/{Uri.EscapeDataString(itemId)}",
-            new Dictionary<string, object?> { ["progress_updated_at"] = progressUpdatedAt }, ct);
-
-    public Task DismissNextUpAsync(string itemId, string seriesId, CancellationToken ct = default)
-        => client.PutNoContentAsync($"/api/v2/home/dismissals/next_up/{Uri.EscapeDataString(itemId)}",
-            new Dictionary<string, object?> { ["series_id"] = seriesId }, ct);
 
     // ===== Subtitles =====
 

@@ -7,13 +7,6 @@ public class AudioPreference
     public AudioTrackSignature? TrackSignature { get; set; }
 }
 
-public class AudioPreferenceResponse
-{
-    public int AudioTrackIndex { get; set; }
-    public string? AudioLanguage { get; set; }
-    public AudioTrackSignature? TrackSignature { get; set; }
-}
-
 public class AudioTrackSignature
 {
     public string? Language { get; set; }
