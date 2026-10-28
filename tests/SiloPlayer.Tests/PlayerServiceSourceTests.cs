@@ -524,7 +524,7 @@ public sealed class PlayerServiceSourceTests
         Assert.Contains("var replacementAccepted = false;", source, StringComparison.Ordinal);
         Assert.Contains("RecoverInterruptedStreamAsync(currentPos, \"version-switch-failed\")", source, StringComparison.Ordinal);
         Assert.Contains("var transportMutationAttempted = false;", source, StringComparison.Ordinal);
-        Assert.Contains("RecoverInterruptedStreamAsync(CurrentMediaPosition, \"subtitle-switch-failed\")", source, StringComparison.Ordinal);
+        Assert.Contains("RunStreamRecoveryAsync(CurrentMediaPosition, \"subtitle-switch-failed\", manager, wasPaused, ct)", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1177,7 +1177,7 @@ public sealed class PlayerServiceSourceTests
         var service = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
         var osc = File.ReadAllText(Path.Combine(root, "libs", "mpv", "scripts", "silo-osc.lua"));
 
-        var recoveryStart = service.IndexOf("private async Task RecoverInterruptedStreamAsync", StringComparison.Ordinal);
+        var recoveryStart = service.IndexOf("private async Task RunStreamRecoveryAsync", StringComparison.Ordinal);
         var recoveryEnd = service.IndexOf("private double _resumePosition", recoveryStart, StringComparison.Ordinal);
         Assert.True(recoveryStart >= 0 && recoveryEnd > recoveryStart);
         var recovery = service[recoveryStart..recoveryEnd];

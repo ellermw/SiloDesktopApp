@@ -40,6 +40,34 @@ internal static class BurnedInSubtitleSwitchNativeFixture
         Call(service, "WireMpvEvents");
         try
         {
+            var lifetimeCase = Environment.GetEnvironmentVariable("SILO_NATIVE_BURN_FAILURE");
+            if (lifetimeCase is "queued-cancel" or "queued-owner")
+            {
+                var gate = (SemaphoreSlim)Get(service, "_streamRecoveryGate")!;
+                using var lifetime = new CancellationTokenSource();
+                await gate.WaitAsync();
+                try
+                {
+                    var queued = (Task)Call(service, "RunStreamRecoveryAsync", 0d, "subtitle-switch-failed", manager, false, lifetime.Token)!;
+                    if (lifetimeCase == "queued-cancel")
+                    {
+                        lifetime.Cancel();
+                        await queued.WaitAsync(TimeSpan.FromSeconds(2));
+                        Require(gate.CurrentCount == 0, "A canceled waiter released another recovery's ownership.");
+                    }
+                    else
+                    {
+                        Set(service, "_playbackManager", null);
+                        gate.Release();
+                        await queued.WaitAsync(TimeSpan.FromSeconds(2));
+                        await gate.WaitAsync();
+                    }
+                    Require(wire.Replans.Count == 0, "A canceled or retired queued recovery replanned playback.");
+                    Program.Log($"PASS: subtitle recovery {lifetimeCase} retires without changing playback or releasing another owner's gate.");
+                    return;
+                }
+                finally { gate.Release(); }
+            }
             // Off while burned in: the caller must replan, not only clear mpv's sid.
             await Loaded(() => service.SetSubtitleTrackAndPersistAsync(0, null, null));
             Require(wire.Replans.Count == 1 && IsTrackChangeWithoutSubtitle(wire.Replans[0]),
@@ -62,8 +90,9 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             var spanish = manager.CurrentSession.SubtitleUrls.Single(t => t.Index == Spanish);
             var failureMode = Environment.GetEnvironmentVariable("SILO_NATIVE_BURN_FAILURE");
             var failSwitch = !string.IsNullOrEmpty(failureMode);
-            var startPaused = failureMode?.StartsWith("paused", StringComparison.Ordinal) == true;
+            var startPaused = failureMode?.Contains("paused-", StringComparison.Ordinal) == true;
             var selectOff = failureMode?.EndsWith("off", StringComparison.Ordinal) == true;
+            var overlapRecovery = failureMode?.StartsWith("overlap-", StringComparison.Ordinal) == true;
             if (failSwitch)
             {
                 service.SetPaused(startPaused);
@@ -71,9 +100,23 @@ internal static class BurnedInSubtitleSwitchNativeFixture
                 wire.FailNextTrackChange = true;
             }
             var replansBeforeText = wire.Replans.Count;
-            await Loaded(() => selectOff
-                ? service.SetSubtitleTrackAndPersistAsync(0, null, null)
-                : service.SetSubtitleTrackAndPersistAsync(Spanish + 1, spanish.Language, spanish));
+            SemaphoreSlim? heldRecovery = null;
+            try
+            {
+                await Loaded(async () =>
+                {
+                    if (overlapRecovery)
+                    {
+                        heldRecovery = (SemaphoreSlim)Get(service, "_streamRecoveryGate")!;
+                        await heldRecovery.WaitAsync();
+                    }
+                    await (selectOff
+                        ? service.SetSubtitleTrackAndPersistAsync(0, null, null)
+                        : service.SetSubtitleTrackAndPersistAsync(Spanish + 1, spanish.Language, spanish));
+                    if (heldRecovery != null) { heldRecovery.Release(); heldRecovery = null; }
+                });
+            }
+            finally { heldRecovery?.Release(); }
             if (failSwitch)
             {
                 var expected = selectOff ? -1 : Spanish;

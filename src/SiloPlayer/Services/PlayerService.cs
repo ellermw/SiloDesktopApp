@@ -2700,7 +2700,11 @@ public partial class PlayerService : IDisposable
         }
     }
 
-    private async Task RecoverInterruptedStreamAsync(double currentPosition, string reason)
+    private Task RecoverInterruptedStreamAsync(double currentPosition, string reason)
+        => RunStreamRecoveryAsync(currentPosition, reason, null, null, default);
+
+    private async Task RunStreamRecoveryAsync(double currentPosition, string reason,
+        PlaybackManager? queuedOwner, bool? pauseIntent, CancellationToken ownerToken)
     {
         // Keep recovery decisions in the same bounded timeline as the reader and
         // decoder. Only fixed classifications belong here, never error messages.
@@ -2713,7 +2717,12 @@ public partial class PlayerService : IDisposable
         };
         _mpv?.Diagnostics?.Record("recovery_requested", new { reason = diagnosticReason, position = currentPosition });
         _mpv?.Diagnostics?.Incident(diagnosticReason);
-        if (!await _streamRecoveryGate.WaitAsync(0).ConfigureAwait(false))
+        if (queuedOwner != null)
+        {
+            try { await _streamRecoveryGate.WaitAsync(ownerToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ownerToken.IsCancellationRequested) { return; }
+        }
+        else if (!await _streamRecoveryGate.WaitAsync(0).ConfigureAwait(false))
         {
             LogToFile("state_trace.txt", $"Stream recovery skipped ({reason}): another recovery is active");
             return;
@@ -2721,9 +2730,17 @@ public partial class PlayerService : IDisposable
 
         try
         {
+            if (queuedOwner != null)
+            {
+                if (_closing || ownerToken.IsCancellationRequested || State == PlayerState.Idle ||
+                    !ReferenceEquals(queuedOwner, _playbackManager)) return;
+                // Do not let an earlier recovery consume this switch's pause intent.
+                _recoveryPauseIntentOverride = pauseIntent;
+                currentPosition = CurrentMediaPosition;
+            }
             await RecoverInterruptedStreamCoreAsync(currentPosition, reason).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) when (_closing || _playbackCts?.IsCancellationRequested == true)
+        catch (OperationCanceledException) when (ownerToken.IsCancellationRequested || _closing || _playbackCts?.IsCancellationRequested == true)
         {
             LogToFile("state_trace.txt", $"Stream recovery canceled before restart ({reason})");
         }
@@ -4661,8 +4678,9 @@ public partial class PlayerService : IDisposable
                     "Reconnecting playback",
                     "The subtitle transport switch was interrupted. Restoring playback from your current position…",
                     "warning");
-                _recoveryPauseIntentOverride = wasPaused;
-                _ = RecoverInterruptedStreamAsync(CurrentMediaPosition, "subtitle-switch-failed");
+                // A concurrent recovery may own the gate. Queue this viewer
+                // change with its lifetime and pause intent instead of dropping it.
+                _ = RunStreamRecoveryAsync(CurrentMediaPosition, "subtitle-switch-failed", manager, wasPaused, ct);
                 // Recovery now owns the transport; callers must not restore
                 // the outgoing stream's position or pause state.
                 return true;
