@@ -31,6 +31,13 @@ public sealed class UrlToImageSourceConverter : IValueConverter
 
         var cacheKey = StableIdentity(uri);
         var dimRequestPoster = parameter is "request-dim";
+        if (!dimRequestPoster && SvgArtwork.IsSvgUrl(uri))
+        {
+            // BitmapImage cannot decode SVG profile avatars.
+            var svg = new SvgImageSource();
+            _ = PopulateSvgAsync(svg, svg.DispatcherQueue, cacheKey, url);
+            return svg;
+        }
         // Reuse disk bytes by stable artwork identity, but never attach a
         // renewed URL to an older URL's pending/failed bitmap operation.
         var sourceKey = dimRequestPoster ? url + "|request-dim" : url;
@@ -84,6 +91,36 @@ public sealed class UrlToImageSourceConverter : IValueConverter
             if (!loaded && Sources.TryGetValue(sourceKey, out var saved) && saved.TryGetTarget(out var current) && ReferenceEquals(current, bitmap))
                 ((ICollection<KeyValuePair<string, WeakReference<BitmapImage>>>)Sources).Remove(new(sourceKey, saved));
             outcome.TrySetResult(loaded);
+        }
+    }
+
+    private static async Task PopulateSvgAsync(SvgImageSource svg, DispatcherQueue owner, string cacheKey, string url)
+    {
+        try
+        {
+            var bytes = await App.Services.GetRequiredService<ImageService>().GetImageAsync(
+                cacheKey, "converted", url, App.Services.GetRequiredService<HttpClient>());
+            if (bytes == null || bytes.Length == 0) return;
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            async void Load()
+            {
+                try
+                {
+                    using var stream = new MemoryStream(bytes);
+                    var status = await svg.SetSourceAsync(stream.AsRandomAccessStream());
+                    if (status == SvgImageSourceLoadStatus.Success) completion.TrySetResult();
+                    else completion.TrySetException(new InvalidDataException($"SVG load status {status}."));
+                }
+                catch (Exception error) { completion.TrySetException(error); }
+            }
+            if (owner.HasThreadAccess) Load();
+            else if (!owner.TryEnqueue(Load)) return;
+            await completion.Task;
+        }
+        catch (Exception error)
+        {
+            var identity = System.Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(cacheKey)))[..16];
+            LocalLog.AppendLine("artwork_loading.txt", $"svg_fetch_or_load_failed | artwork={identity} | error={error.GetType().Name} | hresult=0x{error.HResult:X8}");
         }
     }
 
