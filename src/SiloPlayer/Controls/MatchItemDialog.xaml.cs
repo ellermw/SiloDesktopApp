@@ -657,7 +657,7 @@ public sealed partial class MatchItemDialog : ContentDialog
             };
             var img = new Image
             {
-                Source = new BitmapImage(imageUri),
+                Source = new BitmapImage(imageUri) { DecodePixelType = DecodePixelType.Logical, DecodePixelWidth = 64 },
                 Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill
             };
             poster.Child = img;
@@ -665,7 +665,7 @@ public sealed partial class MatchItemDialog : ContentDialog
             {
                 Content = new Image
                 {
-                    Source = new BitmapImage(imageUri),
+                    Source = new BitmapImage(imageUri) { DecodePixelType = DecodePixelType.Logical, DecodePixelWidth = 192 },
                     Width = 192,
                     Height = 288,
                     Stretch = Microsoft.UI.Xaml.Media.Stretch.UniformToFill,
