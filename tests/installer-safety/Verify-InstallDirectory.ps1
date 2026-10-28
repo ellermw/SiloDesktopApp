@@ -8,6 +8,14 @@ $iscc=Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'
 if(!(Test-Path -LiteralPath $iscc)){throw 'Inno Setup6 is required for this Windows runtime fixture'}
 $sourcePath=if($InstallerSourcePath){$InstallerSourcePath}else{Join-Path $repo 'installer\SiloInstaller.iss'}
 $source=[IO.File]::ReadAllText($sourcePath)
+$productionIdentity=[regex]::Match($source,'AppId=\{(\{[A-F0-9-]+\})').Groups[1].Value
+$productionKey=[regex]::Match($source,'#define SiloUninstallKey "([^"]+)"').Groups[1].Value
+if($productionKey){
+ $updater=[IO.File]::ReadAllText((Join-Path $repo 'src\SiloPlayer\Services\WindowsAppUpdateInstaller.cs'))
+ if(!$productionIdentity -or !$productionKey.EndsWith($productionIdentity+'_is1',[StringComparison]::OrdinalIgnoreCase) -or !$updater.Contains($productionIdentity+'_is1')){
+  throw 'Production installer, guard and updater registration identities disagree'
+ }
+}
 $begin=$source.IndexOf('[Code]')+6
 $end=$source.IndexOf('procedure InstallWindowsAppRuntime;',$begin)
 if($begin -lt 6 -or $end -lt $begin){throw 'Installer guard boundary missing'}
@@ -148,5 +156,7 @@ if(!$process.WaitForExit(30000) -or $process.ExitCode -ne 0){throw 'Isolated uni
 if(!(Test-Path -LiteralPath "$fullTarget\keep-on-uninstall.txt") -or (Test-Path -LiteralPath "$fullTarget\SiloPlayer.exe")){
  throw 'Uninstall did not preserve an unrelated addition while removing installed files'
 }
-[pscustomobject]@{appId=$fullId;setupPrivileges='lowest';sourceSha256=(Get-FileHash -LiteralPath $sourcePath).Hash;freshInstall=$true;registeredUpgrade=$true;obsoletePayloadRemoved=$true;foreignFilePreservedOnUninstall=$true;productionAppChanged=$false}|ConvertTo-Json|Set-Content "$result\install-upgrade-uninstall.json"
+$hash=[Security.Cryptography.SHA256]::Create();$stream=[IO.File]::OpenRead($sourcePath)
+try{$sourceHash=[BitConverter]::ToString($hash.ComputeHash($stream)).Replace('-','')}finally{$stream.Dispose();$hash.Dispose()}
+[pscustomobject]@{appId=$fullId;setupPrivileges='lowest';sourceSha256=$sourceHash;productionIdentityMatchesUpdater=$true;freshInstall=$true;registeredUpgrade=$true;obsoletePayloadRemoved=$true;foreignFilePreservedOnUninstall=$true;productionAppChanged=$false}|ConvertTo-Json|Set-Content "$result\install-upgrade-uninstall.json"
 Write-Output 'PASS: isolated fresh install, registered clean upgrade and uninstall preserve the unrelated addition.'
