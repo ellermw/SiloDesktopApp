@@ -395,11 +395,11 @@ public class SettingsApi(SiloApiClient client)
                 body[key] = null;
         if (body["allowed_library_ids"] is JsonArray ids)
             body["allowed_library_ids"] = new JsonArray(ids.Select(id => JsonValue.Create(id!.ToString())).ToArray<JsonNode?>());
-        return client.WithResolvedAvatar(client.PatchAsync<Profile>($"/api/v2/profiles/{Uri.EscapeDataString(profileId)}", JsonSerializer.SerializeToElement(body), ct));
+        return client.WithResolvedAvatar(() => client.PatchAsync<Profile>($"/api/v2/profiles/{Uri.EscapeDataString(profileId)}", JsonSerializer.SerializeToElement(body), ct));
     }
 
     public Task<ProfilesResponse> GetProfilesAsync(CancellationToken ct = default)
-        => client.WithResolvedAvatars(client.GetAsync<ProfilesResponse>("/api/v2/profiles", ct));
+        => client.WithResolvedAvatars(() => client.GetAsync<ProfilesResponse>("/api/v2/profiles", ct));
 
     public Task<OnboardingFlow> GetOnboardingFlowAsync(string surface = "web", CancellationToken ct = default)
         => client.GetAsync<OnboardingFlow>(

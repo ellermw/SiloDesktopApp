@@ -143,6 +143,12 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     private readonly SemaphoreSlim _wsLifecycleGate = new(1, 1);
     private readonly SemaphoreSlim _wsSendGate = new(1, 1);
     private bool _disposed;
+    private long _initializationGeneration;
+    private long _adoptableInitializationGeneration;
+    private ApiRequestContext? _initializationAuthority;
+    internal bool CanAdoptRoom => !_disposed && ClosedReason == null
+        && (_initializationAuthority is not { } authority ||
+            (_adoptableInitializationGeneration == _initializationGeneration && _apiClient.IsCurrentContext(authority)));
     private Microsoft.UI.Xaml.DispatcherTimer? _pingTimer;
 
     public WatchTogetherRoomViewModel(PlaybackApi playbackApi, SiloApiClient apiClient)
@@ -214,8 +220,21 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     }
 
     /// <summary>Initialize for a specific room and kick off the initial REST fetch + WS connect.</summary>
-    public async Task InitializeAsync(string roomId, string roomToken)
+    public Task InitializeAsync(string roomId, string roomToken)
+        => InitializeCoreAsync(roomId, roomToken, static () => true);
+
+    internal Task InitializeCurrentJoinAsync(string roomId, string roomToken, Func<bool> ownsJoin)
+        => InitializeCoreAsync(roomId, roomToken, ownsJoin);
+
+    private async Task InitializeCoreAsync(string roomId, string roomToken, Func<bool> ownsJoin)
     {
+        if (_disposed || !ownsJoin()) return;
+        var generation = ++_initializationGeneration;
+        var authority = _apiClient.CaptureContext();
+        _initializationAuthority = authority;
+        _adoptableInitializationGeneration = generation;
+        bool IsCurrent() => !_disposed && generation == _initializationGeneration && ownsJoin()
+            && _apiClient.IsCurrentContext(authority) && RoomId == roomId && RoomToken == roomToken;
         if (RoomId != roomId) RoomClock.Reset();
         RoomId = roomId;
         RoomToken = roomToken;
@@ -225,20 +244,25 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         try
         {
             var detail = await _playbackApi.GetWatchTogetherRoomAsync(roomId, roomToken);
+            if (!IsCurrent()) return;
             Room = detail.Room;
         }
         catch (ApiException ex) when (ex.StatusCode == 404 || ex.StatusCode == 410)
         {
+            if (!IsCurrent()) return;
             ClosedReason = ex.StatusCode == 410 ? "room_closed" : "not_found";
         }
         catch (Exception ex)
         {
+            if (!IsCurrent()) return;
             ErrorMessage = $"Failed to load room: {ex.Message}";
         }
 
+        if (!IsCurrent()) return;
         try
         {
             var list = await _playbackApi.ListWatchTogetherSuggestionsAsync(roomId, roomToken);
+            if (!IsCurrent()) return;
             Suggestions.Clear();
             UpdateSuggestionPermissions(list.Suggestions);
             foreach (var s in list.Suggestions) Suggestions.Add(s);
@@ -248,7 +272,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
             // Non-fatal — suggestions may be empty or vote-mode-off.
         }
 
-        await RestartWebSocketAsync();
+        if (IsCurrent()) await RestartWebSocketAsync(IsCurrent);
     }
 
     [RelayCommand]
@@ -272,6 +296,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     private async Task CloseRoomAsync()
     {
         if (string.IsNullOrEmpty(RoomId) || IsBusy) return;
+        ++_initializationGeneration;
         IsBusy = true;
         try
         {
@@ -543,13 +568,13 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
 
     // ===== WebSocket =====
 
-    private async Task RestartWebSocketAsync()
+    private async Task RestartWebSocketAsync(Func<bool> isCurrent)
     {
         await _wsLifecycleGate.WaitAsync();
         try
         {
             await StopWebSocketCoreAsync();
-            if (_disposed || string.IsNullOrEmpty(RoomId) || string.IsNullOrEmpty(RoomToken))
+            if (!isCurrent() || string.IsNullOrEmpty(RoomId) || string.IsNullOrEmpty(RoomToken))
                 return;
 
             var cts = new CancellationTokenSource();
@@ -816,6 +841,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        ++_initializationGeneration;
         _pingTimer?.Stop();
         _pingTimer = null;
 

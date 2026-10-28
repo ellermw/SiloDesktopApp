@@ -315,6 +315,9 @@ public partial class SiloApiClient
 
     /// <summary>Resolves a server-returned absolute or root-relative asset URL.</summary>
     public string? ResolveServerUrl(string? value)
+        => ResolveServerUrl(value, BaseUrl);
+
+    internal static string? ResolveServerUrl(string? value, string baseUrl)
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         var trimmed = value.Trim();
@@ -324,8 +327,6 @@ public partial class SiloApiClient
         if (!trimmed.StartsWith('/') && Uri.TryCreate(trimmed, UriKind.Absolute, out var absolute))
             return absolute.ToString();
 
-        string baseUrl;
-        lock (_authStateGate) baseUrl = _baseUrl;
         if (!Uri.TryCreate(baseUrl.TrimEnd('/') + "/", UriKind.Absolute, out var origin))
             return null;
         return Uri.TryCreate(origin, trimmed, out var resolved) ? resolved.ToString() : null;

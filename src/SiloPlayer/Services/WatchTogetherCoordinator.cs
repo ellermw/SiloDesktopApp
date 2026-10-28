@@ -21,6 +21,8 @@ public sealed class WatchTogetherCoordinator
     private readonly AuthService _auth;
     private (long Generation, string? Profile)? _roomAuthority;
     private WatchTogetherRoomViewModel? _activeRoom;
+    private long _roomJoinGeneration;
+    private (long Generation, string? Profile, string Server)? _joinAuthority;
     private string? _attachedSessionId;
     private static long Now => Environment.TickCount64;
 
@@ -92,8 +94,26 @@ public sealed class WatchTogetherCoordinator
         return false;
     }
 
+    public long BeginRoomJoin()
+    {
+        _joinAuthority = (_auth.SessionGeneration, _auth.SelectedProfileId, _auth.ConfiguredServerUrl);
+        return ++_roomJoinGeneration;
+    }
+
+    public bool IsCurrentRoomJoin(long generation) => generation == _roomJoinGeneration
+        && !_playerService.HasRemoteAuthority
+        && _joinAuthority == (_auth.SessionGeneration, _auth.SelectedProfileId, _auth.ConfiguredServerUrl);
+
+    public bool TryAdoptRoom(WatchTogetherRoomViewModel room, long generation)
+    {
+        if (!IsCurrentRoomJoin(generation) || !room.CanAdoptRoom) return false;
+        SetActiveRoom(room);
+        return ReferenceEquals(_activeRoom, room);
+    }
+
     public void SetActiveRoom(WatchTogetherRoomViewModel room)
     {
+        InvalidatePendingJoin();
         if (_playerService.HasRemoteAuthority)
         {
             if (_activeRoom != null) ClearActiveRoom();
@@ -122,6 +142,7 @@ public sealed class WatchTogetherCoordinator
 
     public void ClearActiveRoom()
     {
+        InvalidatePendingJoin();
         if (_activeRoom != null)
         {
             _activeRoom.TransportCommandReceived -= OnTransportCommandReceived;
@@ -140,6 +161,12 @@ public sealed class WatchTogetherCoordinator
         _timer.Stop();
         _playerService.SetWatchTogetherPlayback(false);
         _playerService.SetWatchTogetherOverlay(null);
+    }
+
+    private void InvalidatePendingJoin()
+    {
+        ++_roomJoinGeneration;
+        _joinAuthority = null;
     }
 
     public void NotifyPlaybackStarted(string sessionId)

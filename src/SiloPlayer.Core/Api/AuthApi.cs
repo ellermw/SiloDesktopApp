@@ -16,10 +16,10 @@ public partial class AuthApi(SiloApiClient client)
     public Task<VerifyPinResponse> VerifyPinAsync(ApiRequestContext owner, string profileId, string pin, CancellationToken ct = default)
         => client.VerifyProfilePinForManagementAsync(owner, profileId, pin, ct);
     public Task<Profile> CreateProfileAsync(CapturedProfileAuthority authority, CreateProfileRequest request, CancellationToken ct = default)
-        => client.WithResolvedAvatar(client.SendCapturedProfileAsync<Profile>(authority, HttpMethod.Post, "/api/v2/profiles", ProfileBody(request, false), ct));
+        => client.WithResolvedAvatar(() => client.SendCapturedProfileAsync<Profile>(authority, HttpMethod.Post, "/api/v2/profiles", ProfileBody(request, false), ct));
     public Task<Profile> UploadProfileAvatarAsync(CapturedProfileAuthority authority, string profileId,
         string fileName, byte[] bytes, string contentType, CancellationToken ct = default)
-        => client.WithResolvedAvatar(client.UploadCapturedProfileAsync<Profile>(authority, $"/api/v2/profiles/{Uri.EscapeDataString(profileId)}/avatar", fileName, bytes, contentType, ct));
+        => client.WithResolvedAvatar(() => client.UploadCapturedProfileAsync<Profile>(authority, $"/api/v2/profiles/{Uri.EscapeDataString(profileId)}/avatar", fileName, bytes, contentType, ct));
     public Task<LoginResponse> LoginAsync(string username, string password, CancellationToken ct = default)
         => LoginAsync(username, password, provider: null, ct);
 
@@ -41,7 +41,7 @@ public partial class AuthApi(SiloApiClient client)
         => client.PostUnauthenticatedAsync<RefreshResponse>(baseUrl, "/api/v2/auth/refresh", new RefreshRequest { RefreshToken = refreshToken }, ct);
 
     public Task<ProfilesResponse> GetProfilesAsync(CancellationToken ct = default)
-        => client.WithResolvedAvatars(client.GetAsync<ProfilesResponse>("/api/v2/profiles", ct));
+        => client.WithResolvedAvatars(() => client.GetAsync<ProfilesResponse>("/api/v2/profiles", ct));
 
     public async Task<List<PlaybackSessionSummary>> GetHouseholdSessionsAsync(CancellationToken ct = default)
     {
@@ -75,7 +75,7 @@ public partial class AuthApi(SiloApiClient client)
         }, ct);
 
     public Task<Profile> CreateProfileAsync(CreateProfileRequest request, CancellationToken ct = default)
-        => client.WithResolvedAvatar(client.PostAsync<Profile>("/api/v2/profiles", ProfileBody(request, updating: false), ct));
+        => client.WithResolvedAvatar(() => client.PostAsync<Profile>("/api/v2/profiles", ProfileBody(request, updating: false), ct));
 
     public Task DeleteProfileAsync(string profileId, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v2/profiles/{Uri.EscapeDataString(profileId)}", ct);
@@ -94,11 +94,11 @@ public partial class AuthApi(SiloApiClient client)
         };
         // Send pin explicitly so server can tell "clear" ("") from "unchanged" (missing).
         if (pin != null) body["pin"] = pin.Length == 0 ? null : pin;
-        return client.WithResolvedAvatar(client.PatchAsync<Profile>($"/api/v2/profiles/{Uri.EscapeDataString(profileId)}", body, ct));
+        return client.WithResolvedAvatar(() => client.PatchAsync<Profile>($"/api/v2/profiles/{Uri.EscapeDataString(profileId)}", body, ct));
     }
 
     public Task<Profile> UpdateProfileAsync(string profileId, CreateProfileRequest request, CancellationToken ct = default)
-        => client.WithResolvedAvatar(client.PatchAsync<Profile>($"/api/v2/profiles/{Uri.EscapeDataString(profileId)}", ProfileBody(request, updating: true), ct));
+        => client.WithResolvedAvatar(() => client.PatchAsync<Profile>($"/api/v2/profiles/{Uri.EscapeDataString(profileId)}", ProfileBody(request, updating: true), ct));
 
     private static Dictionary<string, object?> ProfileBody(CreateProfileRequest request, bool updating)
     {
@@ -132,7 +132,7 @@ public partial class AuthApi(SiloApiClient client)
         byte[] fileBytes,
         string contentType,
         CancellationToken ct = default)
-        => client.WithResolvedAvatar(client.PutMultipartAsync<Profile>(
+        => client.WithResolvedAvatar(() => client.PutMultipartAsync<Profile>(
             $"/api/v2/profiles/{Uri.EscapeDataString(profileId)}/avatar",
             "avatar",
             fileName,
@@ -141,7 +141,7 @@ public partial class AuthApi(SiloApiClient client)
             ct));
 
     public Task<Profile> DeleteProfileAvatarAsync(string profileId, CancellationToken ct = default)
-        => client.WithResolvedAvatar(client.DeleteReturningAsync<Profile>($"/api/v2/profiles/{Uri.EscapeDataString(profileId)}/avatar", ct));
+        => client.WithResolvedAvatar(() => client.DeleteReturningAsync<Profile>($"/api/v2/profiles/{Uri.EscapeDataString(profileId)}/avatar", ct));
 
     // ===== Signup =====
 

@@ -9,18 +9,22 @@ namespace SiloPlayer.Core.Api;
 /// </summary>
 internal static class ProfileAvatarResolution
 {
-    public static async Task<Profile> WithResolvedAvatar(this SiloApiClient client, Task<Profile> request)
+    public static async Task<Profile> WithResolvedAvatar(this SiloApiClient client, Func<Task<Profile>> request)
     {
-        var profile = await request.ConfigureAwait(false);
-        profile.AvatarUrl = client.ResolveServerUrl(profile.AvatarUrl);
+        var owner = client.CaptureContext();
+        var profile = await request().ConfigureAwait(false);
+        if (!client.IsCurrentContext(owner)) throw new OperationCanceledException("Profile response authority changed.");
+        profile.AvatarUrl = SiloApiClient.ResolveServerUrl(profile.AvatarUrl, owner.BaseUrl);
         return profile;
     }
 
-    public static async Task<ProfilesResponse> WithResolvedAvatars(this SiloApiClient client, Task<ProfilesResponse> request)
+    public static async Task<ProfilesResponse> WithResolvedAvatars(this SiloApiClient client, Func<Task<ProfilesResponse>> request)
     {
-        var response = await request.ConfigureAwait(false);
+        var owner = client.CaptureContext();
+        var response = await request().ConfigureAwait(false);
+        if (!client.IsCurrentContext(owner)) throw new OperationCanceledException("Profile response authority changed.");
         foreach (var profile in response.Profiles)
-            profile.AvatarUrl = client.ResolveServerUrl(profile.AvatarUrl);
+            profile.AvatarUrl = SiloApiClient.ResolveServerUrl(profile.AvatarUrl, owner.BaseUrl);
         return response;
     }
 }

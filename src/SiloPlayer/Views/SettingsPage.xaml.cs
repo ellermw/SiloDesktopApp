@@ -5904,12 +5904,13 @@ _webhookPlexAuthCts?.Cancel();
     private async Task LoadProfilesAsync()
     {
         var generation = Interlocked.Increment(ref _profilesLoadGeneration);
+        var authApi = App.Services.GetRequiredService<AuthApi>();
+        var owner = authApi.CaptureContext();
         _ = LoadHouseholdSessionsAsync(showLoading: HouseholdStreamsPanel.Children.Count == 0);
         try
         {
-            var authApi = App.Services.GetRequiredService<AuthApi>();
             var response = await authApi.GetProfilesAsync();
-            if (generation != Volatile.Read(ref _profilesLoadGeneration)) return;
+            if (generation != Volatile.Read(ref _profilesLoadGeneration) || authApi.CaptureContext() != owner) return;
             var profiles = response.Profiles;
             ProfileCardsPanel.Children.Clear();
 
@@ -6179,6 +6180,7 @@ _webhookPlexAuthCts?.Cancel();
                 ProfileCardsPanel.Children.Add(card);
             }
         }
+        catch (OperationCanceledException) when (authApi.CaptureContext() != owner) { }
         catch (Exception ex)
         {
             NoProfilesText.Text = $"Failed to load profiles: {ex.Message}";

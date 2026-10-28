@@ -9,6 +9,28 @@ namespace SiloPlayer.Tests;
 
 public sealed class SiloApiClientTests
 {
+    [Theory]
+    [InlineData(false, "server")]
+    [InlineData(true, "server")]
+    [InlineData(false, "profile")]
+    [InlineData(true, "profile")]
+    [InlineData(false, "account")]
+    [InlineData(true, "account")]
+    public async Task ProfileAvatarResponseCannotCrossTheInitiatingAuthority(bool settings, string change)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = CreateClient(new DelegateHandler((_, _) => { received.TrySetResult(); return release.Task; }));
+        client.SetBaseUrl("https://avatar-a.invalid");
+        var pending = settings ? new SettingsApi(client).GetProfilesAsync() : new AuthApi(client).GetProfilesAsync();
+        await received.Task;
+        if (change == "server") client.SetBaseUrl("https://avatar-b.invalid");
+        else if (change == "profile") client.SetProfile("other-fixture");
+        else client.BeginAuthenticationSession("synthetic-other-account");
+        release.SetResult(JsonResponse(HttpStatusCode.OK, "{\"items\":[{\"id\":\"a\",\"name\":\"A\",\"avatar_url\":\"/profile-avatars/avatar.svg\"}]}"));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+    }
+
     [Fact]
     public async Task DismissalHttpDiagnostics_CorrelateStatusWithoutLoggingIdentityOrCredentials()
     {
