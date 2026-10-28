@@ -213,5 +213,5 @@ begin
       'The Windows App SDK runtime installer failed with code %d. {#MyAppName} cannot start without it.', [ResultCode]));
 end;
 
-; Inno removes installed files from its own log. Do not recursively erase
-; unrelated files that a user may later place in the application directory.
+// Inno removes installed files from its own log. Do not recursively erase
+// unrelated files that a user may later place in the application directory.
