@@ -28,9 +28,9 @@
         <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
 
         <!-- Version -->
-    <Version>1.2.327</Version>
-    <FileVersion>1.2.327.0</FileVersion>
-    <AssemblyVersion>1.2.327.0</AssemblyVersion>
+    <Version>1.2.334</Version>
+    <FileVersion>1.2.334.0</FileVersion>
+    <AssemblyVersion>1.2.334.0</AssemblyVersion>
 
         <!-- App Options -->
         <ApplicationIcon>Assets\app.ico</ApplicationIcon>
@@ -43,6 +43,7 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <Content Include="Updates\UpdateOnExit.ps1" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
         <Content Include="Assets\SplashScreen.scale-200.png" />
         <Content Include="Assets\LockScreenLogo.scale-200.png" />
         <Content Include="Assets\Square150x150Logo.scale-200.png" />

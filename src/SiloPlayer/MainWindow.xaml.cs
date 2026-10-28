@@ -201,6 +201,7 @@ public sealed partial class MainWindow : Window
         this.Closed += OnWindowClosed;
         if (AppWindow != null) AppWindow.Closing += OnWindowClosing;
         App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().Initialize(DispatcherQueue);
+        InitializeAppUpdates();
     }
 
     private void OnWindowSizeChanged(object sender, WindowSizeChangedEventArgs e)
@@ -424,15 +425,29 @@ public sealed partial class MainWindow : Window
     {
         if (_receiverShutdownComplete) return;
         args.Cancel = true;
+        await CloseWithAppUpdatesAsync();
+    }
+
+    private async Task CloseWithAppUpdatesAsync()
+    {
         if (_receiverShutdownStarted) return;
         _receiverShutdownStarted = true;
         try { await App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().ShutdownAsync(); }
         catch (Exception ex) { LocalLog.AppendLine("silocast.txt", $"shutdown_failed | {ex.GetType().Name}"); }
-        finally { _receiverShutdownComplete = true; Close(); }
+        finally
+        {
+            await PrepareAppUpdateExitAsync();
+            _receiverShutdownComplete = true;
+            Close();
+        }
     }
 
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        if (!_updateSessionEnding)
+            try { App.Services.GetService<IAppUpdateInstaller>()?.ConfirmNormalClose(); }
+            catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "confirm_update_close"); }
+        DetachAppUpdates();
         CancelShellHydration();
         ReleaseNotificationSubscription();
         _brandingLoadGate.Cancel();

@@ -4,13 +4,13 @@ A native Windows client for [Silo Server](https://github.com/Silo-Server/silo-se
 
 ## Download
 
-[**Download version 1.2.327 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.327/SiloInstaller-Windows-x64.exe)
+[**Download version 1.2.334 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.334/SiloInstaller-Windows-x64.exe)
 
 Requires Windows 10 version 1809 or newer, or Windows 11, and access to a Silo Server. Runtime dependencies are included in the installer.
 
-[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.327) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.327/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
+[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.334) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.334/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
 
-Version 1.2.327 fixes Watch Party freezing at fractional display scaling and includes navigation, playback, subtitle, settings and reader improvements. See the [release record](docs/releases/1.2.327.md).
+Version 1.2.334 adds update notifications, in-app changelogs and optional automatic downloads with installation on exit, plus six reviewed audit improvements. Both update modes notify you and keep manual updating available. See the [release record](docs/releases/1.2.334.md).
 
 Historical navigation slowdown and a separate WinUI navigation crash remain under investigation.
 
@@ -29,6 +29,7 @@ The installer is unsigned, so Windows may display an unknown-publisher warning.
 - Profiles, Requests, Collections, personal lists, Calendar and Notifications.
 - Audio-track and subtitle selection, playback quality controls, and audiobook and reader support.
 - Built-in SiloCast receiver for mobile remote control, plus optional experimental AI upscaling.
+- Update notifications and in-app release notes, with manual updating or optional background download and installation when you close Silo.
 
 SiloCast is enabled by default unless you previously disabled it. Keep the desktop app running and the phone and PC on the same Private local network. Its toggle is under **Settings → Playback → Desktop playback → Allow SiloCast control**. Physical phone compatibility testing remains ongoing.
 

@@ -313,6 +313,8 @@
 
 
                     <!-- Profile button with dropdown (webui: Settings + Switch Profile + Logout inside avatar dropdown) -->
+                    <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <Button
                         x:Name="ProfileFooterButton"
                         Background="Transparent"
@@ -351,6 +353,8 @@
                                     </Ellipse.Fill>
                                 </Ellipse>
                             </Grid>
+                            <Border x:Name="ProfileUpdateDot" Width="7" Height="7" CornerRadius="3.5" Background="#4ADE80"
+                                    HorizontalAlignment="Right" VerticalAlignment="Top" Visibility="Collapsed" />
                             </Grid>
                             <TextBlock
                                 x:Name="ProfileNameText"
@@ -358,6 +362,7 @@
                                 Foreground="{StaticResource PrimaryTextBrush}"
                                 VerticalAlignment="Center"
                                 FontSize="13"
+                                TextTrimming="CharacterEllipsis"
                                 FontWeight="Medium">
                                 <TextBlock.OpacityTransition>
                                     <ScalarTransition Duration="0:0:0.3" />
@@ -414,6 +419,10 @@
                                                        Foreground="{StaticResource SecondaryTextBrush}" />
                                         </StackPanel>
                                     </Grid>
+
+                                    <Button x:Name="UpdateMenuButton" Content="Check for updates" Click="AppUpdateButton_Click"
+                                            HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Background="Transparent"
+                                            BorderThickness="0" Padding="10,10" CornerRadius="6" FontSize="13" />
 
                                     <!-- Theme switcher: label + five keyboard-focusable dots. -->
                                     <Grid Margin="10,4,10,6" Visibility="Collapsed">
@@ -480,6 +489,11 @@
                             </Flyout>
                         </Button.Flyout>
                     </Button>
+                    <Button x:Name="UpdateAvailableButton" Grid.Column="1" Content="Update Available" Click="AppUpdateButton_Click"
+                            Visibility="Collapsed" Foreground="#4ADE80" Background="Transparent" BorderThickness="0"
+                            FontSize="11" FontWeight="SemiBold" CornerRadius="6" Padding="4,8" Margin="0,0,12,0"
+                            VerticalAlignment="Center" AutomationProperties.Name="Update available. View changelog and update Silo." />
+                    </Grid>
                 </StackPanel>
             </NavigationView.PaneFooter>
 
@@ -832,5 +846,9 @@
              including the player overlay, so feedback stays visible during
              playback preparation and errors. -->
         <controls:ToastContainer x:Name="ToastHost" />
+        <Button x:Name="StandaloneUpdateButton" Content="Update Available" Click="AppUpdateButton_Click" Visibility="Collapsed"
+                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,12,18,0" Padding="12,8" CornerRadius="6"
+                Foreground="#4ADE80" Background="#18251D" BorderBrush="#3A7D50" FontWeight="SemiBold"
+                AutomationProperties.Name="Update available. View changelog and update Silo." />
     </Grid>
 </Window>

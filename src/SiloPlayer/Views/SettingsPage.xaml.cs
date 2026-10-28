@@ -140,6 +140,9 @@ public sealed partial class SettingsPage : Page
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         this.InitializeComponent();
         InitializeSettingsPresentation();
+        Loaded += (_, _) => InitializeAppUpdateSettings();
+        Unloaded += (_, _) => ReleaseAppUpdateSettings();
+        InitializeAppUpdateSettings();
         PersonalizeTasteIcon.Child = WebUiIcon.Create("sparkles", 24, (Brush)Application.Current.Resources["AccentBrush"]);
         PersonalizeTourIcon.Child = WebUiIcon.Create("map", 24, (Brush)Application.Current.Resources["AccentBrush"]);
         PersonalizeFavoritesRow.Children.RemoveAt(0);

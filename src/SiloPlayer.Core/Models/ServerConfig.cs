@@ -14,6 +14,7 @@ public class AudiobookRatePreference
 
 public class AppSettings
 {
+    public Updates.AppUpdateMode UpdateMode { get; set; } = Updates.AppUpdateMode.NotifyOnly;
     public List<ServerEntry> Servers { get; set; } = [];
     public string? DeviceId { get; set; }
     public string? LastProfileId { get; set; }

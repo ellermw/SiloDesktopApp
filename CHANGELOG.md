@@ -2,6 +2,14 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.334 (2026-10-28 — desktop updates and reviewed audit corrections)
+
+- Add green update notifications and persistent update access, in-app release notes, and manual Update Now. Notification-only is the default; optional automatic mode downloads while playback is idle and installs after a normal exit. Both modes always notify and allow manual updating before automatic installation.
+- Verify installer downloads by size and SHA256, safely resume interrupted downloads, preserve playback during automatic transfers, and record update failures/results. Later cancels a pending manual installation; Windows shutdown does not trigger installation.
+- Include all six reviewed audit PRs24–29. PR15 was declined and closed without merging, preserving phone control of PC-started playback.
+- Publish the sealed1.2.334 installer without rebuilding. SHA256: `A167B5BDAA9B8E547C8695B1CB63C757FF7450C7E7CC403884D7AAD1AC7A8AC8`. Packaged verification:2,324 main tests,12 native groups and33 playback/service groups. See [scope and verification limits](docs/releases/1.2.334.md).
+- End-to-end installation from inside the updater needs a subsequent published release; physical HDR/phone interoperability and historical navigation/buffering investigations remain outside this release's verification.
+
 ## 1.2.327 (2026-10-28 — Watch Party freeze repair and reviewed hardening)
 
 - Fix the reproduced Watch Party layout cycle at150% display scaling by keeping its decorative glow out of card measurement. The owner installed this build and confirmed the freeze is resolved.

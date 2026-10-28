@@ -42,7 +42,7 @@ internal static class ProfileMenuNavigationNativeFixture
         var local = new SettingsService(Path.Combine(Program.ResultDirectory, "local-" + width));
         var prefs = local.Load(); prefs.SiloCastEnabled = false;
         prefs.TasteSeedDismissedProfileIds.AddRange(["first", "second"]); local.Save(prefs);
-        await using var provider = new ServiceCollection()
+        var serviceCollection = new ServiceCollection()
             .AddSingleton(client).AddSingleton(auth).AddSingleton(local).AddSingleton(http)
             .AddSingleton<CredentialStore>().AddSingleton<AuthApi>().AddSingleton<SettingsApi>().AddSingleton<CatalogApi>()
             .AddSingleton<RequestsApi>().AddSingleton<NotificationsApi>().AddSingleton<PlaybackApi>().AddSingleton<HistoryImportApi>()
@@ -56,8 +56,11 @@ internal static class ProfileMenuNavigationNativeFixture
             .AddSingleton<EpisodeSpoilerPreferences>().AddSingleton<PlayerService>()
             .AddSingleton<SiloPlayer.Services.SiloCast.SiloCastReceiverService>()
             .AddSingleton(new ImageService(Path.Combine(Program.ResultDirectory, "images-" + width)))
-            .AddSingleton<ItemDetailPrefetchCache>().BuildServiceProvider();
-        servicesField.SetValue(null, provider); MainWindow? window = null;
+            .AddSingleton<ItemDetailPrefetchCache>();
+        if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_UPDATES") == "1")
+            AppUpdateNativeFixture.Configure(serviceCollection);
+        await using var provider = serviceCollection.BuildServiceProvider();
+        servicesField.SetValue(null, provider); MainWindow? window = null; var fixtureWindowClosed = false;
         var traced = 0;
         EventHandler<System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs> layoutTrace = (_, args) =>
         {
@@ -69,6 +72,7 @@ internal static class ProfileMenuNavigationNativeFixture
         try
         {
             window = new MainWindow(); mainProperty.SetValue(null, window);
+            window.Closed += (_, _) => fixtureWindowClosed = true;
             var root = (FrameworkElement)window.Content;
             var nav = (NavigationView)root.FindName("NavView");
             nav.Loaded -= (RoutedEventHandler)typeof(MainWindow).GetMethod("NavView_Loaded", Instance)!.CreateDelegate(typeof(RoutedEventHandler), window);
@@ -79,6 +83,11 @@ internal static class ProfileMenuNavigationNativeFixture
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TRANSPARENT_ON_MONITOR") == "1") TransparentFixtureWindow.Configure(window);
             window.AppWindow.Move(new(x, y)); window.AppWindow.ResizeClient(new(width, height)); window.AppWindow.Show(false);
             await Task.Delay(160); window.RestoreMainPane(); navigation.Navigate<Page>();
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_UPDATES") == "1")
+            {
+                await AppUpdateNativeFixture.CheckAsync(window, provider);
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_VOLUME_PERSISTENCE") == "1")
             {
                 await VolumePersistenceNativeFixture.RunAsync();
@@ -138,7 +147,7 @@ internal static class ProfileMenuNavigationNativeFixture
         }
         finally
         {
-            if (window != null) { window.Close(); await Task.Delay(200); }
+            if (window != null) { if (!fixtureWindowClosed) window.Close(); await Task.Delay(250); }
             AppDomain.CurrentDomain.FirstChanceException -= layoutTrace;
             mainProperty.SetValue(null, previousMain); servicesField.SetValue(null, previous);
         }

@@ -42,6 +42,12 @@ public partial class App : Application
 
     protected override void OnLaunched(LaunchActivatedEventArgs e)
     {
+        if (Environment.ProcessPath is { } executable && SiloPlayer.Core.Services.Updates.AppUpdateInstallGate.InstallationInProgress(executable))
+        {
+            SiloPlayer.Helpers.AppUpdateNotice.Show();
+            Exit();
+            return;
+        }
         _instanceNames = AppInstanceNames.Create(Environment.GetEnvironmentVariable("SILO_QA_INSTANCE_ID"));
         _singleInstanceMutex = new Mutex(
             initiallyOwned: true,
@@ -210,6 +216,12 @@ public partial class App : Application
 
         // Core services
         services.AddSingleton(new SettingsService(appDataDir));
+        services.AddSingleton(_ => new SiloPlayer.Core.Services.Updates.AppUpdateService(
+            new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, AutomaticDecompression = System.Net.DecompressionMethods.None })
+                { Timeout = Timeout.InfiniteTimeSpan },
+            Path.Combine(appDataDir, "updates"), typeof(App).Assembly.GetName().Version!,
+            message => LocalLog.AppendLine("updates.txt", message)));
+        services.AddSingleton<IAppUpdateInstaller>(new WindowsAppUpdateInstaller(Path.Combine(appDataDir, "updates")));
         services.AddSingleton<CredentialStore>();
         services.AddSingleton<ICredentialStore>(sp => sp.GetRequiredService<CredentialStore>());
 

@@ -173,6 +173,12 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await ProfileMenuNavigationNativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "app-updates")
+            {
+                Environment.SetEnvironmentVariable("SILO_NATIVE_TEST_UPDATES", "1");
+                await ProfileMenuNavigationNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "detail-action-hover")
             {
                 await DetailActionHoverNativeFixture.RunAsync(parent);
