@@ -4072,9 +4072,9 @@ public sealed partial class ItemDetailPage : Page
             var extension = Path.GetExtension(version.FileName);
             if (string.IsNullOrWhiteSpace(extension))
                 extension = string.IsNullOrWhiteSpace(version.Container) ? ".mkv" : $".{version.Container.TrimStart('.')}";
-            picker.SuggestedFileName = string.IsNullOrWhiteSpace(version.FileName)
-                ? $"{title}{extension}"
-                : version.FileName;
+            picker.SuggestedFileName = DownloadFileTransfer.SafeFileName(
+                string.IsNullOrWhiteSpace(version.FileName) ? $"{title}{extension}" : version.FileName,
+                "download" + extension);
             picker.FileTypeChoices.Add("Media file", [extension]);
             var file = await picker.PickSaveFileAsync();
             if (file == null) return false;

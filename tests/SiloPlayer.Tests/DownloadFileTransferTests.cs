@@ -6,6 +6,34 @@ namespace SiloPlayer.Tests;
 
 public sealed class DownloadFileTransferTests : IDisposable
 {
+    [Theory]
+    [InlineData("Mission: Impossible (1996).mkv", "Mission_ Impossible (1996).mkv")]
+    [InlineData("/srv/media/Movies/What? (2020).mkv", "What_ (2020).mkv")]
+    [InlineData(@"D:\Media\Show|Name.mp4", "Show_Name.mp4")]
+    [InlineData("CON.mkv", "_CON.mkv")]
+    [InlineData("Trailing dots...", "Trailing dots")]
+    [InlineData("   ", "download.mkv")]
+    [InlineData(null, "download.mkv")]
+    public void SafeFileNameGivesSaveDialogsAWindowsBasename(string? name, string expected)
+        => Assert.Equal(expected, DownloadFileTransfer.SafeFileName(name, "download.mkv"));
+
+    [Fact]
+    public void EverySaveDialogSuggestsASanitizedServerFileName()
+    {
+        // version.FileName is the server's own basename (Linux names may hold ':' or '?').
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root != null && !File.Exists(Path.Combine(root.FullName, "SiloPlayer.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        foreach (var page in new[] { "ItemDetailPage.xaml.cs", "EbookReaderPage.xaml.cs", "DownloadsPage.xaml.cs" })
+        {
+            var source = File.ReadAllText(Path.Combine(root.FullName, "src", "SiloPlayer", "Views", page));
+            foreach (var assignment in System.Text.RegularExpressions.Regex.Matches(source, @"SuggestedFileName\s*=\s*([^;]+);").Select(match => match.Groups[1].Value.Trim().TrimEnd('}').Trim()))
+                Assert.True(assignment.Contains("SafeFileName(", StringComparison.Ordinal) || assignment is "suggestedName" or "suggested",
+                    $"{page}: SuggestedFileName = {assignment}");
+            if (page == "EbookReaderPage.xaml.cs") Assert.Contains("var suggested = DownloadFileTransfer.SafeFileName(", source);
+        }
+    }
+
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "SiloDownloadTests-" + Guid.NewGuid().ToString("N"));
 
     public DownloadFileTransferTests() => Directory.CreateDirectory(_directory);

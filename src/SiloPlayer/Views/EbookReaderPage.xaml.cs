@@ -1287,7 +1287,8 @@ public sealed partial class EbookReaderPage : Page
     {
         if (_sourceBytes == null || _selectedVersion == null || App.MainWindowInstance == null) return;
         var format = FormatOf(_selectedVersion).ToLowerInvariant();
-        var suggested = Path.GetFileNameWithoutExtension(_selectedVersion.FileName ?? _selectedVersion.FilePath ?? _item?.Title ?? "book");
+        var suggested = DownloadFileTransfer.SafeFileName(
+            Path.GetFileNameWithoutExtension(_selectedVersion.FileName ?? _selectedVersion.FilePath ?? _item?.Title ?? "book"), "book");
         var picker = new Windows.Storage.Pickers.FileSavePicker { SuggestedFileName = suggested };
         picker.FileTypeChoices.Add(format.ToUpperInvariant(), [$".{format}"]);
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance));

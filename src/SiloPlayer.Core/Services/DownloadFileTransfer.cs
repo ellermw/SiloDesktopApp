@@ -5,16 +5,16 @@ namespace SiloPlayer.Core.Services;
 
 public static class DownloadFileTransfer
 {
-    public static string GetSuggestedFileName(HttpContentHeaders headers)
+    /// <summary>
+    /// A Windows-safe basename for a save dialog. Servers can return names and
+    /// paths from either OS (a Linux file may be "Mission: Impossible.mkv");
+    /// never use a server-supplied directory as a destination.
+    /// </summary>
+    public static string SafeFileName(string? name, string fallback)
     {
-        var disposition = headers.ContentDisposition;
-        var name = disposition?.FileNameStar;
-        if (string.IsNullOrWhiteSpace(name)) name = disposition?.FileName;
-        // Servers can return paths from either OS. Only offer a Windows-safe
-        // basename; never use a response-supplied directory as a destination.
         name = (name ?? "").Trim().Trim('"').Replace('\\', '/').Split('/').Last();
         name = new string(name.Select(c => c < 32 || "<>:\"/\\|?*".Contains(c) ? '_' : c).ToArray()).Trim(' ', '.');
-        if (string.IsNullOrWhiteSpace(name)) name = "download";
+        if (string.IsNullOrWhiteSpace(name)) name = fallback;
 
         var stem = name.Split('.')[0].TrimEnd(' ');
         if (stem.Equals("CON", StringComparison.OrdinalIgnoreCase)
@@ -26,6 +26,15 @@ public static class DownloadFileTransfer
             || (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase)
                 || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && "123456789¹²³".Contains(stem[3])))
             name = "_" + name;
+        return name;
+    }
+
+    public static string GetSuggestedFileName(HttpContentHeaders headers)
+    {
+        var disposition = headers.ContentDisposition;
+        var name = disposition?.FileNameStar;
+        if (string.IsNullOrWhiteSpace(name)) name = disposition?.FileName;
+        name = SafeFileName(name, "download");
 
         var extension = Path.GetExtension(name);
         if (extension.Length < 2 || extension.Length > 12 || !extension[1..].All(char.IsAsciiLetterOrDigit))
