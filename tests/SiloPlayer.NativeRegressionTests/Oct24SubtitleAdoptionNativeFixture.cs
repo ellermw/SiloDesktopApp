@@ -77,7 +77,7 @@ internal static class Oct24SubtitleAdoptionNativeFixture
         {
             var type = typeof(PlayerService).GetNestedType("PreparedPlaybackTransport", BindingFlags.NonPublic)!;
             var prepared = Activator.CreateInstance(type, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-                null, [PlaybackTransportPlanner.Plan("direct", wave), wave, 0d, position, 0d, (double?)60d, true, null], null)!;
+                null, [PlaybackTransportPlanner.Plan("direct", wave), wave, 0d, position, 0d, (double?)60d, true], null)!;
             Set(service, "_requestedMediaFileId", manager.CurrentSession!.MediaFileId);
             Call(service, "ApplyPreparedTransport", prepared);
             var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

@@ -80,7 +80,7 @@ internal static class ConnectionTransportOct24NativeFixture
             var preparedType=typeof(PlayerService).GetNestedType("PreparedPlaybackTransport",BindingFlags.NonPublic)!;
             var url=media.Origin+"/stream/direct/slow";
             var prepared=Activator.CreateInstance(preparedType,Flags|BindingFlags.Public,null,
-                [PlaybackTransportPlanner.Plan("direct",url),url,0d,0d,0d,(double?)90d,true,null],null)!;
+                [PlaybackTransportPlanner.Plan("direct",url),url,0d,0d,0d,(double?)90d,true],null)!;
             Call(service,"ApplyPreparedTransport",prepared); Call(service,"BeginMpvLoad",prepared,false);
             phase="initial-load";
             traceTask=Task.Run(async()=>

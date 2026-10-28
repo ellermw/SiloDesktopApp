@@ -99,9 +99,6 @@ public partial class PlayerService : IDisposable
     private DateTimeOffset? _audiobookPausedAt;
     private Timer? _audiobookSleepTimer;
     private bool _canSeekAnywhere = true;
-    private TranscodeStartRequest? _activeHlsRecipe;
-    private PlaybackTransportPlan? _preBitmapBurnInPlan;
-    private string? _preBitmapBurnInQualityTier;
     private int? _requestedMediaFileId;
 
     public string ActiveQualityTier => _playbackManager?.CurrentSession?.ProtocolVersion >= 3
@@ -788,7 +785,7 @@ public partial class PlayerService : IDisposable
                 ?? throw new InvalidOperationException("The playback session is no longer active.");
             var version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
                 ?? throw new InvalidOperationException("The active media version is no longer available.");
-            var plan = _activeTransportPlan
+            _ = _activeTransportPlan
                 ?? throw new InvalidOperationException("The active playback transport is unknown.");
             var mpv = _mpv
                 ?? throw new InvalidOperationException("The player is no longer active.");
@@ -807,53 +804,18 @@ public partial class PlayerService : IDisposable
             // background while preparing the replacement transport now.
             _ = ReportSeekProgressAsync(mediaPosition, seekPaused);
 
-            PreparedPlaybackTransport prepared;
-            if (session.ProtocolVersion >= 3)
-            {
-                session = await manager.ReplanSeekAsync(mediaPosition, ct).ConfigureAwait(false);
-                version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
-                    ?? version;
-                var streamUrl = manager.StreamUrl
-                    ?? throw new InvalidOperationException("The replanned playback stream is unavailable.");
-                prepared = await PreparePlaybackTransportAsync(
-                    session,
-                    version,
-                    streamUrl,
-                    mediaPosition,
-                    ct).ConfigureAwait(false);
-                PlayMethod = session.PlayMethod;
-            }
-            else if (plan.TransportKind == PlaybackTransportKind.RemuxProgressive)
-            {
-                var remuxStreamUrl = manager.StreamUrl;
-                if (string.IsNullOrWhiteSpace(remuxStreamUrl))
-                    remuxStreamUrl = NormalizePlaybackUrl(session.StreamUrl);
-                var remoteUrl = SetSeekQueryParameter(remuxStreamUrl, mediaPosition);
-                var localUrl = PrepareDirectStreamForMpv(remoteUrl, session.PlayMethod, supportsRanges: false);
-                prepared = new PreparedPlaybackTransport(
-                    plan,
-                    localUrl,
-                    MpvLoadStartSeconds: 0,
-                    ResumeAfterLoadSeconds: 0,
-                    TimelineOffsetSeconds: mediaPosition,
-                    DurationSeconds: GetKnownDuration(session, version) ?? CurrentMediaDuration,
-                    CanSeekAnywhere: false);
-            }
-            else if (plan.IsHls)
-            {
-                var recipe = _activeHlsRecipe
-                    ?? throw new InvalidOperationException("The active HLS recipe is unavailable.");
-                prepared = await PrepareHlsTransportAsync(
-                    plan,
-                    session,
-                    CloneTranscodeRecipe(recipe, session.SessionId, mediaPosition),
-                    CurrentMediaDuration,
-                    ct).ConfigureAwait(false);
-            }
-            else
-            {
-                throw new InvalidOperationException($"Transport {plan.TransportKind} cannot be restarted for seeking.");
-            }
+            session = await manager.ReplanSeekAsync(mediaPosition, ct).ConfigureAwait(false);
+            version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
+                ?? version;
+            var streamUrl = manager.StreamUrl
+                ?? throw new InvalidOperationException("The replanned playback stream is unavailable.");
+            var prepared = await PreparePlaybackTransportAsync(
+                session,
+                version,
+                streamUrl,
+                mediaPosition,
+                ct).ConfigureAwait(false);
+            PlayMethod = session.PlayMethod;
 
             ct.ThrowIfCancellationRequested();
             if (generation != Volatile.Read(ref _seekRestartGeneration))
@@ -2044,11 +2006,8 @@ public partial class PlayerService : IDisposable
         _timelineOffsetSeconds = 0;
         _transportDurationSeconds = null;
         _canSeekAnywhere = true;
-        _activeHlsRecipe = null;
         _activeQualityTier = "original";
         _roomPlaybackPaused = true;
-        _preBitmapBurnInPlan = null;
-        _preBitmapBurnInQualityTier = null;
         _requestedMediaFileId = null;
         _prematureEofRecoveryActive = false;
         _prematureEofRecoveryPosition = 0;
@@ -2797,9 +2756,6 @@ public partial class PlayerService : IDisposable
         var fileId = _requestedMediaFileId ?? session.MediaFileId;
         int? audioTrackIndex = session.AudioTrackIndex >= 0 ? session.AudioTrackIndex : null;
         var previousPlan = _activeTransportPlan;
-        var previousRecipe = _activeHlsRecipe;
-        var previousQualityTier = _activeQualityTier;
-        var previousDuration = CurrentMediaDuration;
         // A keepalive failure can happen while the user has intentionally
         // paused. Preserve that intent across the replacement session, but do
         // not mistake mpv's network-cache pause for a user pause: buffering
@@ -2922,29 +2878,12 @@ public partial class PlayerService : IDisposable
 
             var version = Versions.FirstOrDefault(v => v.FileId == fileId)
                 ?? throw new InvalidOperationException("The active media version is no longer available.");
-            PreparedPlaybackTransport prepared;
-            if (previousRecipe != null && previousQualityTier is not ("auto" or "original"))
-            {
-                prepared = await PrepareHlsTransportAsync(
-                    new PlaybackTransportPlan(
-                        PlaybackSemanticMethod.Transcode,
-                        PlaybackTransportKind.TranscodeHls,
-                        RequiresTranscodeStartPreparation: true),
-                    newSession,
-                    CloneTranscodeRecipe(previousRecipe, newSession.SessionId, resumePosition),
-                    previousDuration,
-                    ct);
-                PlayMethod = "transcode";
-            }
-            else
-            {
-                prepared = await PreparePlaybackTransportAsync(
-                    newSession,
-                    version,
-                    streamUrl,
-                    resumePosition,
-                    ct);
-            }
+            var prepared = await PreparePlaybackTransportAsync(
+                newSession,
+                version,
+                streamUrl,
+                resumePosition,
+                ct);
 
             if (_closing || State == PlayerState.Idle || !ReferenceEquals(_playbackManager, manager) || ct.IsCancellationRequested)
                 return;
@@ -3643,8 +3582,7 @@ public partial class PlayerService : IDisposable
         double ResumeAfterLoadSeconds,
         double TimelineOffsetSeconds,
         double? DurationSeconds,
-        bool CanSeekAnywhere,
-        TranscodeStartRequest? HlsRecipe = null);
+        bool CanSeekAnywhere);
 
     /// <summary>
     /// Converts the semantic playback decision returned by /playback/start into
@@ -3652,7 +3590,7 @@ public partial class PlayerService : IDisposable
     /// progressive stream or HLS, so play_method alone is never treated as the
     /// transport decision.
     /// </summary>
-    private async Task<PreparedPlaybackTransport> PreparePlaybackTransportAsync(
+    private Task<PreparedPlaybackTransport> PreparePlaybackTransportAsync(
         PlaybackStartResponse session,
         FileVersion version,
         string remoteStreamUrl,
@@ -3663,135 +3601,22 @@ public partial class PlayerService : IDisposable
         var knownDuration = GetKnownDuration(session, version);
         mediaStartSeconds = Math.Max(0, mediaStartSeconds);
 
-        if (session.ProtocolVersion >= 3)
-        {
-            var localUrl = plan.IsHls
-                ? PrepareHlsStreamForMpv(NormalizePlaybackUrl(remoteStreamUrl))
-                : PrepareDirectStreamForMpv(
-                    remoteStreamUrl,
-                    session.PlayMethod,
-                    supportsRanges: session.CanSeekAnywhere);
-            return new PreparedPlaybackTransport(
-                plan,
-                localUrl,
-                MpvLoadStartSeconds: plan.TransportKind == PlaybackTransportKind.DirectProgressive
-                    ? Math.Max(0, PlaybackTimeline.ToPlayerTime(mediaStartSeconds, session.TimelineOffsetSeconds))
-                    : Math.Max(0, session.PlayerStartSeconds),
-                ResumeAfterLoadSeconds: 0,
-                TimelineOffsetSeconds: Math.Max(0, session.TimelineOffsetSeconds),
-                DurationSeconds: knownDuration,
-                CanSeekAnywhere: session.CanSeekAnywhere);
-        }
-
-        if (!plan.RequiresTranscodeStartPreparation)
-        {
-            var supportsRanges = plan.TransportKind == PlaybackTransportKind.DirectProgressive;
-            var effectiveRemoteUrl = plan.TransportKind == PlaybackTransportKind.RemuxProgressive
-                ? SetSeekQueryParameter(remoteStreamUrl, mediaStartSeconds)
-                : remoteStreamUrl;
-            var localUrl = PrepareDirectStreamForMpv(effectiveRemoteUrl, session.PlayMethod, supportsRanges);
-
-            if (plan.TransportKind == PlaybackTransportKind.RemuxProgressive)
-            {
-                // The server's local ffmpeg remux is a forward-only pipe. It has
-                // already applied ?seek=mediaStartSeconds, so mpv starts at zero.
-                return new PreparedPlaybackTransport(
-                    plan,
-                    localUrl,
-                    MpvLoadStartSeconds: 0,
-                    ResumeAfterLoadSeconds: 0,
-                    TimelineOffsetSeconds: mediaStartSeconds,
-                    DurationSeconds: knownDuration,
-                    CanSeekAnywhere: false);
-            }
-
-            return new PreparedPlaybackTransport(
-                plan,
-                localUrl,
-                MpvLoadStartSeconds: mediaStartSeconds,
-                ResumeAfterLoadSeconds: 0,
-                TimelineOffsetSeconds: 0,
-                DurationSeconds: knownDuration,
-                CanSeekAnywhere: true);
-        }
-
-        try
-        {
-            var copyVideo = plan.TransportKind == PlaybackTransportKind.RemuxHls;
-            var copyAudio = copyVideo && session.PlaybackInfo?.TranscodeAudio != true;
-            var initialTier = copyVideo
-                ? null
-                : TranscodeQualityPolicy.ResolveInitialVideoTier(
-                    version.Resolution,
-                    _authService.SelectedProfile?.QualityPreference);
-            var recipe = new TranscodeStartRequest
-            {
-                SessionId = session.SessionId,
-                SeekSeconds = mediaStartSeconds,
-                TargetResolution = copyVideo ? "" : initialTier?.Resolution ?? "",
-                TargetCodecVideo = copyVideo ? "copy" : "h264",
-                TargetCodecAudio = copyAudio ? "copy" : "aac",
-                TargetBitrateKbps = copyVideo ? 0 : initialTier?.BitrateKbps ?? 0,
-                SegmentDuration = 2,
-                SubtitleTrackIndex = -1,
-                SubtitleBurnIn = false
-            };
-            var prepared = await PrepareHlsTransportAsync(plan, session, recipe, knownDuration, ct)
-                .ConfigureAwait(false);
-            if (!copyVideo)
-                _activeQualityTier = initialTier?.Id ?? "original";
-            return prepared;
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            LogToFile("player_transcode_error.txt", ex.ToString());
-            throw new InvalidOperationException("Failed to prepare HLS playback.", ex);
-        }
-    }
-
-    private async Task<PreparedPlaybackTransport> PrepareHlsTransportAsync(
-        PlaybackTransportPlan plan,
-        PlaybackStartResponse session,
-        TranscodeStartRequest recipe,
-        double? fallbackDuration,
-        CancellationToken ct)
-    {
-        var transcodeResponse = await _playbackApi.StartTranscodeAsync(recipe, ct).ConfigureAwait(false);
-        ct.ThrowIfCancellationRequested();
-
-        if (transcodeResponse.SwitchedFileId is int switchedFileId)
-        {
-            session.MediaFileId = switchedFileId;
-            LogToFile("state_trace.txt", $"Server switched transcode source to fileId={switchedFileId}");
-        }
-
-        var remoteManifestUrl = NormalizePlaybackUrl(transcodeResponse.ManifestUrl);
-        var localUrl = PrepareHlsStreamForMpv(remoteManifestUrl);
-        var duration = transcodeResponse.DurationSeconds is > 0
-            ? transcodeResponse.DurationSeconds
-            : fallbackDuration;
-
-        LogToFile(
-            "state_trace.txt",
-            $"Prepared {plan.TransportKind}: remote={PlaybackUrlRedactor.Redact(remoteManifestUrl)} " +
-            $"local={PlaybackUrlRedactor.Redact(localUrl)} " +
-            $"playerStart={transcodeResponse.PlayerStartSeconds:F3} origin={transcodeResponse.StreamOriginSeconds:F3} " +
-            $"offset={transcodeResponse.TimelineOffsetSeconds:F3} canSeekAnywhere={transcodeResponse.CanSeekAnywhere}");
-
-        return new PreparedPlaybackTransport(
+        var localUrl = plan.IsHls
+            ? PrepareHlsStreamForMpv(NormalizePlaybackUrl(remoteStreamUrl))
+            : PrepareDirectStreamForMpv(
+                remoteStreamUrl,
+                session.PlayMethod,
+                supportsRanges: session.CanSeekAnywhere);
+        return Task.FromResult(new PreparedPlaybackTransport(
             plan,
             localUrl,
-            // player_start_seconds is already expressed in the prepared
-            // transport's local timeline. For copy HLS the server may anchor
-            // the manifest at an earlier keyframe and return a non-zero value
-            // here; discarding it replays the material between that anchor and
-            // the requested resume/seek point.
-            MpvLoadStartSeconds: Math.Max(0, transcodeResponse.PlayerStartSeconds),
+            MpvLoadStartSeconds: plan.TransportKind == PlaybackTransportKind.DirectProgressive
+                ? Math.Max(0, PlaybackTimeline.ToPlayerTime(mediaStartSeconds, session.TimelineOffsetSeconds))
+                : Math.Max(0, session.PlayerStartSeconds),
             ResumeAfterLoadSeconds: 0,
-            TimelineOffsetSeconds: Math.Max(0, transcodeResponse.TimelineOffsetSeconds),
-            DurationSeconds: duration,
-            CanSeekAnywhere: transcodeResponse.CanSeekAnywhere,
-            HlsRecipe: recipe);
+            TimelineOffsetSeconds: Math.Max(0, session.TimelineOffsetSeconds),
+            DurationSeconds: knownDuration,
+            CanSeekAnywhere: session.CanSeekAnywhere));
     }
 
     private static double? GetKnownDuration(PlaybackStartResponse session, FileVersion version)
@@ -3803,46 +3628,6 @@ public partial class PlayerService : IDisposable
         return null;
     }
 
-    private static TranscodeStartRequest CloneTranscodeRecipe(
-        TranscodeStartRequest source,
-        string sessionId,
-        double seekSeconds)
-    {
-        return new TranscodeStartRequest
-        {
-            SessionId = sessionId,
-            SeekSeconds = seekSeconds,
-            TargetResolution = source.TargetResolution,
-            TargetCodecVideo = source.TargetCodecVideo,
-            TargetCodecAudio = source.TargetCodecAudio,
-            TargetBitrateKbps = source.TargetBitrateKbps,
-            SegmentDuration = source.SegmentDuration,
-            SubtitleTrackIndex = source.SubtitleTrackIndex,
-            SubtitleMediaFileId = source.SubtitleMediaFileId,
-            SubtitleBurnIn = source.SubtitleBurnIn
-        };
-    }
-
-    private static string SetSeekQueryParameter(string url, double seekSeconds)
-    {
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var absolute))
-            throw new InvalidOperationException("The remux stream URL is invalid.");
-
-        var builder = new UriBuilder(absolute);
-        var queryParts = builder.Query.TrimStart('?')
-            .Split('&', StringSplitOptions.RemoveEmptyEntries)
-            .Where(part =>
-            {
-                var separator = part.IndexOf('=');
-                var key = separator >= 0 ? part[..separator] : part;
-                return !Uri.UnescapeDataString(key).Equals("seek", StringComparison.OrdinalIgnoreCase);
-            })
-            .ToList();
-        queryParts.Add("seek=" + seekSeconds.ToString("F3", System.Globalization.CultureInfo.InvariantCulture));
-        builder.Query = string.Join("&", queryParts);
-        return builder.Uri.AbsoluteUri;
-    }
-
     private string NormalizePlaybackUrl(string pathOrUrl)
         => PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, pathOrUrl);
 
@@ -3852,7 +3637,6 @@ public partial class PlayerService : IDisposable
         _timelineOffsetSeconds = prepared.TimelineOffsetSeconds;
         _transportDurationSeconds = prepared.DurationSeconds;
         _canSeekAnywhere = prepared.CanSeekAnywhere;
-        _activeHlsRecipe = prepared.HlsRecipe;
         _resumePosition = prepared.ResumeAfterLoadSeconds;
 
         var effectiveVersion = ActiveVersion;
@@ -4687,7 +4471,7 @@ public partial class PlayerService : IDisposable
         if (!CurrentSwitch()) return;
         var wasPaused = CaptureUserPausedState();
         var currentPos = CurrentMediaPosition;
-        if (manager.CurrentSession?.ProtocolVersion >= 3)
+        if (manager.CurrentSession is not null)
         {
             _switchingContent = true;
             IsLoading = true;
@@ -4736,165 +4520,22 @@ public partial class PlayerService : IDisposable
 
         if (_activeTransportPlan?.TransportKind == PlaybackTransportKind.DirectProgressive)
         {
-            // A native direct stream already contains every audio track. Keep
-            // it direct instead of asking the browser-oriented PATCH /audio
-            // resolver, which can unnecessarily turn lossless audio into a
-            // remux/transcode.
+            // The session has ended, but a native direct stream already contains
+            // every audio track, so the switch needs no server.
             _mpv.SetAudioTrack(trackIndex + 1);
-            if (manager.CurrentSession != null)
-                manager.CurrentSession.AudioTrackIndex = trackIndex;
             await PersistAudioPreferenceAsync(audioPreference);
             if (!CurrentSwitch()) return;
             SendAudioTrackListToOsc();
             return;
         }
 
-        var previousPlan = _activeTransportPlan;
-        var previousCanSeekAnywhere = _canSeekAnywhere;
-        var previousRecipe = _activeHlsRecipe;
-        var previousDuration = CurrentMediaDuration;
-        var serverTransportChanged = false;
-        _switchingContent = true;
-        IsLoading = true;
-
-        try
-        {
-            var expectedSessionId = manager.SessionId
-                ?? throw new InvalidOperationException("The playback session is no longer active.");
-            var response = await authority.PlaybackApi.ChangeAudioTrackAsync(
-                expectedSessionId,
-                trackIndex,
-                currentPos,
-                ct);
-            ct.ThrowIfCancellationRequested();
-            if (!CurrentSwitch() ||
-                !string.Equals(manager.SessionId, expectedSessionId, StringComparison.Ordinal))
-                return;
-            manager.ApplyAudioChange(response);
-            // PATCH /audio may restart remux/HLS output before the replacement
-            // manifest has reached mpv. From this point onward the old player
-            // URL is not a safe fallback if local transport preparation fails.
-            serverTransportChanged = true;
-
-            PlayMethod = response.PlayMethod;
-            var session = manager.CurrentSession
-                ?? throw new InvalidOperationException("The playback session ended during the audio switch.");
-            var version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
-                ?? throw new InvalidOperationException("No active version available for the audio switch.");
-            var remoteUrl = NormalizePlaybackUrl(response.StreamUrl);
-            PreparedPlaybackTransport prepared;
-
-            if (PlaybackTransportPlanner.IsHlsStreamUrl(response.StreamUrl) ||
-                string.Equals(response.PlaybackInfo?.StreamType, "hls", StringComparison.OrdinalIgnoreCase))
-            {
-                // PATCH /audio has already restarted/prepared an HLS transport.
-                // Calling /transcode/start again here would tear that stream down.
-                var plan = previousPlan?.IsHls == true
-                    ? previousPlan
-                    : response.PlayMethod.Equals("remux", StringComparison.OrdinalIgnoreCase)
-                        ? new PlaybackTransportPlan(
-                            PlaybackSemanticMethod.Remux,
-                            PlaybackTransportKind.RemuxHls,
-                            RequiresTranscodeStartPreparation: true)
-                        : new PlaybackTransportPlan(
-                            PlaybackSemanticMethod.Transcode,
-                            PlaybackTransportKind.TranscodeHls,
-                            RequiresTranscodeStartPreparation: true);
-                var copyWindow = previousPlan?.IsHls == true
-                    ? !previousCanSeekAnywhere
-                    : plan.TransportKind == PlaybackTransportKind.RemuxHls;
-                var canSeekAnywhere = response.CanSeekAnywhere ?? !copyWindow;
-                var timelineOffset = Math.Max(
-                    0,
-                    response.StreamOriginSeconds
-                        ?? response.TimelineOffsetSeconds
-                        ?? (copyWindow ? currentPos : 0));
-                var playerStart = Math.Max(
-                    0,
-                    response.PlayerStartSeconds
-                        ?? (canSeekAnywhere ? currentPos : currentPos - timelineOffset));
-                var localUrl = PrepareHlsStreamForMpv(remoteUrl);
-                var activeTier = TranscodeQualityPolicy.Find(_activeQualityTier);
-                var recipe = previousRecipe == null
-                    ? new TranscodeStartRequest
-                    {
-                        SessionId = session.SessionId,
-                        SeekSeconds = currentPos,
-                        TargetResolution = copyWindow ? "" : activeTier?.Resolution ?? "",
-                        TargetCodecVideo = copyWindow ? "copy" : "h264",
-                        TargetCodecAudio = response.PlaybackInfo?.TranscodeAudio == true ? "aac" : "copy",
-                        TargetBitrateKbps = copyWindow ? 0 : activeTier?.BitrateKbps ?? 0,
-                        SegmentDuration = 2,
-                        SubtitleTrackIndex = -1,
-                        SubtitleBurnIn = false
-                    }
-                    : CloneTranscodeRecipe(previousRecipe, session.SessionId, currentPos);
-                recipe.TargetCodecAudio = response.PlaybackInfo?.TranscodeAudio == true
-                    ? "aac"
-                    : "copy";
-
-                prepared = new PreparedPlaybackTransport(
-                    plan,
-                    localUrl,
-                    MpvLoadStartSeconds: playerStart,
-                    ResumeAfterLoadSeconds: 0,
-                    TimelineOffsetSeconds: timelineOffset,
-                    DurationSeconds: previousDuration > 0 ? previousDuration : GetKnownDuration(session, version),
-                    CanSeekAnywhere: canSeekAnywhere,
-                    HlsRecipe: recipe);
-            }
-            else
-            {
-                prepared = await PreparePlaybackTransportAsync(
-                    session,
-                    version,
-                    remoteUrl,
-                    currentPos,
-                    ct);
-            }
-
-            ct.ThrowIfCancellationRequested();
-            if (!CurrentSwitch() ||
-                !ReferenceEquals(manager.CurrentSession, session))
-                return;
-            ApplyPreparedTransport(prepared);
-            BeginMpvLoad(prepared, restorePaused: wasPaused);
-
-            await PersistAudioPreferenceAsync(audioPreference);
-            if (!CurrentSwitch()) return;
-            SendAudioTrackListToOsc();
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            LogToFile("state_trace.txt", "Audio switch canceled");
-        }
-        catch (Exception ex)
-        {
-            if (!CurrentSwitch()) return;
-            LogToFile("player_audio_switch_error.txt", ex.ToString());
-            if (serverTransportChanged && CurrentSwitch())
-            {
-                // The server accepted the track switch, so the previous remux
-                // or HLS URL may already be invalid. Rebuild a fresh session at
-                // canonical media time instead of leaving a frozen frame behind.
-                _prematureEofRecoveryActive = true;
-                _switchingContent = true;
-                ShowNotice(
-                    "Reconnecting playback",
-                    "The audio switch was interrupted. Restoring playback from your current position…",
-                    "warning");
-                _ = RecoverInterruptedStreamAsync(currentPos, "audio-switch-failed");
-            }
-            else
-            {
-                _switchingContent = false;
-                IsLoading = false;
-                var (title, detail) = DescribePlaybackError(ex);
-                ErrorMessage = detail;
-                ShowNotice(title, detail, "error");
-                SendAudioTrackListToOsc();
-            }
-        }
+        // Changing a server transport's audio needs the session, which ended.
+        var ended = new InvalidOperationException("The playback session is no longer active.");
+        LogToFile("player_audio_switch_error.txt", ended.ToString());
+        var (endedTitle, endedDetail) = DescribePlaybackError(ended);
+        ErrorMessage = endedDetail;
+        ShowNotice(endedTitle, endedDetail, "error");
+        SendAudioTrackListToOsc();
     }
 
     // ── Subtitles ────────────────────────────────────────────────────────
@@ -4978,137 +4619,39 @@ public partial class PlayerService : IDisposable
                 ?? Versions.FirstOrDefault(v => v.FileId == (_requestedMediaFileId ?? 0))
                 ?? throw new InvalidOperationException("The subtitle source version is unavailable.");
             var position = CurrentMediaPosition;
-            if (session.ProtocolVersion >= 3)
-            {
-                transportMutationAttempted = true;
-                _switchingContent = true;
-                IsLoading = true;
-                _mpv.Pause();
-                App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
-                    () => App.MainWindowInstance?.ShowLoadingOverlay());
-
-                var replanned = await manager.ReplanSubtitleAsync(track?.Index, position, ct)
-                    .ConfigureAwait(false);
-                var replannedVersion = Versions.FirstOrDefault(v => v.FileId == replanned.MediaFileId)
-                    ?? version;
-                var streamUrl = manager.StreamUrl
-                    ?? throw new InvalidOperationException("No stream URL was returned for the subtitle switch.");
-                var preparedV3 = await PreparePlaybackTransportAsync(
-                    replanned,
-                    replannedVersion,
-                    streamUrl,
-                    position,
-                    ct).ConfigureAwait(false);
-                ct.ThrowIfCancellationRequested();
-                if (_closing || manager.CurrentSession != replanned) return false;
-                ApplyPreparedTransport(preparedV3);
-                PlayMethod = replanned.PlayMethod;
-                // Clearing burn-in for a text track: the Off replan above made
-                // Off the viewer's choice. Record the text pick again so later
-                // replans and reloads keep it, as for any local text selection.
-                if (track is null && postLoadSubtitleIndex is int textIndex &&
-                    replanned.SubtitleUrls.Any(t => t.Index == textIndex))
-                    manager.RecordLocalSubtitleSelection(textIndex);
-                _pendingInitialServerSubtitleIndex = postLoadSubtitleIndex;
-                BeginMpvLoad(preparedV3, restorePaused: wasPaused);
-                _mpv.ShowOsdText(track is null ? "Bitmap subtitles off" : $"{track.Label} · burned in", 2500);
-                SendQualityInfoToOsc();
-                return true;
-            }
-
-            if (track is not null && _activeHlsRecipe?.SubtitleBurnIn != true)
-            {
-                _preBitmapBurnInPlan = _activeTransportPlan;
-                _preBitmapBurnInQualityTier = _activeQualityTier;
-            }
+            transportMutationAttempted = true;
             _switchingContent = true;
             IsLoading = true;
             _mpv.Pause();
             App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
                 () => App.MainWindowInstance?.ShowLoadingOverlay());
 
-            // Bitmap burn-in is a temporary transport override. If it was
-            // entered from progressive direct/remux playback, turning it off
-            // must reconstruct the native transport rather than keep an
-            // unnecessary H.264 transcode alive for the remainder of playback.
-            if (track is null && _activeHlsRecipe?.SubtitleBurnIn == true &&
-                _preBitmapBurnInPlan is { IsHls: false })
-            {
-                var audioTrackIndex = session.AudioTrackIndex >= 0 ? session.AudioTrackIndex : (int?)null;
-                transportMutationAttempted = true;
-                var restoredSession = await manager.StartReplacementSessionAsync(
-                    version.FileId,
-                    position,
-                    forceStartPosition: true,
-                    audioTrackIndex: audioTrackIndex,
-                    forceDirectAudioSelection: audioTrackIndex.HasValue,
-                    previousFinalPosition: position,
-                    ct: ct).ConfigureAwait(false);
-                InvokeSubscribersSafely(SessionStarted, restoredSession.SessionId, nameof(SessionStarted));
-                var remoteUrl = manager.StreamUrl;
-                if (string.IsNullOrWhiteSpace(remoteUrl))
-                    throw new InvalidOperationException("No stream URL was returned while restoring native playback.");
-                var restored = await PreparePlaybackTransportAsync(
-                    restoredSession, version, remoteUrl, position, ct).ConfigureAwait(false);
-                ct.ThrowIfCancellationRequested();
-                if (_closing || manager.CurrentSession != restoredSession) return false;
-                ApplyPreparedTransport(restored);
-                PlayMethod = restoredSession.PlayMethod;
-                _activeQualityTier = _preBitmapBurnInQualityTier ?? "original";
-                _preBitmapBurnInPlan = null;
-                _preBitmapBurnInQualityTier = null;
-                _pendingInitialServerSubtitleIndex = postLoadSubtitleIndex;
-                BeginMpvLoad(restored, restorePaused: wasPaused);
-                _mpv.ShowOsdText("Bitmap subtitles off · direct playback restored", 2500);
-                SendQualityInfoToOsc();
-                return true;
-            }
-
-            var recipe = _activeHlsRecipe is null
-                ? new TranscodeStartRequest
-                {
-                    SessionId = session.SessionId,
-                    TargetResolution = "",
-                    TargetCodecVideo = "h264",
-                    TargetCodecAudio = "aac",
-                    TargetBitrateKbps = 0,
-                    SegmentDuration = 2,
-                }
-                : CloneTranscodeRecipe(_activeHlsRecipe, session.SessionId, position);
-            recipe.SeekSeconds = position;
-            recipe.SubtitleTrackIndex = track?.Index ?? -1;
-            recipe.SubtitleMediaFileId = track?.MediaFileId ?? 0;
-            recipe.SubtitleBurnIn = track is not null;
-            if (recipe.SubtitleBurnIn && recipe.TargetCodecVideo.Equals("copy", StringComparison.OrdinalIgnoreCase))
-            {
-                recipe.TargetCodecVideo = "h264";
-                recipe.TargetCodecAudio = "aac";
-                // Match the WebUI's Original + bitmap-subtitle request.
-                // Empty values delegate the safe source-resolution recipe,
-                // including the 4K guard, to the server resolver.
-                recipe.TargetResolution = "";
-                recipe.TargetBitrateKbps = 0;
-            }
-
-            var plan = new PlaybackTransportPlan(
-                PlaybackSemanticMethod.Transcode,
-                PlaybackTransportKind.TranscodeHls,
-                RequiresTranscodeStartPreparation: true);
-            transportMutationAttempted = true;
-            var prepared = await PrepareHlsTransportAsync(
-                plan, session, recipe, CurrentMediaDuration, ct).ConfigureAwait(false);
+            var replanned = await manager.ReplanSubtitleAsync(track?.Index, position, ct)
+                .ConfigureAwait(false);
+            var replannedVersion = Versions.FirstOrDefault(v => v.FileId == replanned.MediaFileId)
+                ?? version;
+            var streamUrl = manager.StreamUrl
+                ?? throw new InvalidOperationException("No stream URL was returned for the subtitle switch.");
+            var preparedV3 = await PreparePlaybackTransportAsync(
+                replanned,
+                replannedVersion,
+                streamUrl,
+                position,
+                ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
-            if (_closing || manager.CurrentSession != session) return false;
-            ApplyPreparedTransport(prepared);
-            PlayMethod = "transcode";
-            if (track is null)
-            {
-                _preBitmapBurnInPlan = null;
-                _preBitmapBurnInQualityTier = null;
-            }
+            if (_closing || manager.CurrentSession != replanned) return false;
+            ApplyPreparedTransport(preparedV3);
+            PlayMethod = replanned.PlayMethod;
+            // Clearing burn-in for a text track: the Off replan above made
+            // Off the viewer's choice. Record the text pick again so later
+            // replans and reloads keep it, as for any local text selection.
+            if (track is null && postLoadSubtitleIndex is int textIndex &&
+                replanned.SubtitleUrls.Any(t => t.Index == textIndex))
+                manager.RecordLocalSubtitleSelection(textIndex);
             _pendingInitialServerSubtitleIndex = postLoadSubtitleIndex;
-            BeginMpvLoad(prepared, restorePaused: wasPaused);
+            BeginMpvLoad(preparedV3, restorePaused: wasPaused);
             _mpv.ShowOsdText(track is null ? "Bitmap subtitles off" : $"{track.Label} · burned in", 2500);
+            SendQualityInfoToOsc();
             return true;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
@@ -5967,283 +5510,70 @@ public partial class PlayerService : IDisposable
         _mpv?.SendScriptMessage("osc-room-quality-offer", "");
         var wasPaused = CaptureUserPausedState();
         var currentPos = CurrentMediaPosition;
-        var switchSucceeded = false;
         if (bufferingReplan == null)
         {
             lock (_bufferingGate) { _bufferingController?.QualityPicked(); PublishBufferingPillCore(); }
             manager.KeptBufferingEstimateKbps = null;
         }
 
-        if (manager.CurrentSession?.ProtocolVersion >= 3)
+        // The session has ended; there is nothing to switch.
+        if (manager.CurrentSession is null) return;
+        _switchingContent = true;
+        _qualitySwitchActive = true;
+        IsLoading = true;
+        App.MainWindowInstance?.ShowLoadingOverlay();
+        try
         {
-            _switchingContent = true;
-            _qualitySwitchActive = true;
-            IsLoading = true;
-            App.MainWindowInstance?.ShowLoadingOverlay();
-            try
+            var quality = tierId.ToLowerInvariant() switch
             {
-                var quality = tierId.ToLowerInvariant() switch
-                {
-                    "420p" => "480p",
-                    _ => tierId,
-                };
-                var session = bufferingReplan == null
-                    ? await manager.ReplanQualityAsync(quality, currentPos, ct).ConfigureAwait(false)
-                    : await manager.ReplanBufferingQualityAsync(bufferingReplan, currentPos, ct, bufferingExpectedSession).ConfigureAwait(false);
-                if (!CurrentSwitch()) return;
-                var version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
-                    ?? throw new InvalidOperationException("No active version is available for the quality switch.");
-                var streamUrl = manager.StreamUrl
-                    ?? throw new InvalidOperationException("No stream URL was returned for the quality switch.");
-                var prepared = await PreparePlaybackTransportAsync(
-                    session,
-                    version,
-                    streamUrl,
-                    currentPos,
-                    ct).ConfigureAwait(false);
-                ct.ThrowIfCancellationRequested();
-                if (!CurrentSwitch() ||
-                    !ReferenceEquals(manager.CurrentSession, session))
-                    return;
-                PlayMethod = session.PlayMethod;
-                ApplyPreparedTransport(prepared);
-                BeginMpvLoad(prepared, restorePaused: wasPaused);
-                // Show the quality actually accepted by the server, including
-                // any fallback; a requested tier is not proof of delivery.
-                _activeQualityTier = session.ActiveQuality;
-                _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
-                SendQualityInfoToOsc();
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                LogToFile("state_trace.txt", "Protocol-v3 quality switch canceled");
-            }
-            catch (OperationCanceledException) when (bufferingReplan != null && !ReferenceEquals(bufferingExpectedSession, manager.CurrentSession))
-            { LogToFile("state_trace.txt", "Buffering quality action superseded by another plan."); }
-            catch (Exception ex)
-            {
-                if (!CurrentSwitch()) return;
-                _switchingContent = false;
-                _qualitySwitchActive = false;
-                IsLoading = false;
-                App.MainWindowInstance?.HideLoadingOverlay();
-                LogToFile("player_quality_switch_error.txt", ex.ToString());
-                var (title, detail) = DescribePlaybackError(ex);
-                ErrorMessage = detail;
-                ShowNotice(title, detail, "error");
-                _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
-            }
-            return;
-        }
-
-        if (tierId == "original")
-        {
-            // If already on direct play or remux, this is a no-op
-            if (PlayMethod is "direct" or "remux")
-            {
-                _activeQualityTier = tierId;
-                _switchingContent = false;
-                _qualitySwitchActive = false;
-                _mpv?.SendScriptMessage("osc-set-active-quality", tierId);
+                "420p" => "480p",
+                _ => tierId,
+            };
+            var session = bufferingReplan == null
+                ? await manager.ReplanQualityAsync(quality, currentPos, ct).ConfigureAwait(false)
+                : await manager.ReplanBufferingQualityAsync(bufferingReplan, currentPos, ct, bufferingExpectedSession).ConfigureAwait(false);
+            if (!CurrentSwitch()) return;
+            var version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
+                ?? throw new InvalidOperationException("No active version is available for the quality switch.");
+            var streamUrl = manager.StreamUrl
+                ?? throw new InvalidOperationException("No stream URL was returned for the quality switch.");
+            var prepared = await PreparePlaybackTransportAsync(
+                session,
+                version,
+                streamUrl,
+                currentPos,
+                ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            if (!CurrentSwitch() ||
+                !ReferenceEquals(manager.CurrentSession, session))
                 return;
-            }
-
-            // Currently transcoding — switch back to direct play
-            var currentFileId = _requestedMediaFileId ?? manager.CurrentSession?.MediaFileId;
-            var version = Versions.FirstOrDefault(v => v.FileId == currentFileId);
-            if (version == null)
-            {
-                _switchingContent = false;
-                _qualitySwitchActive = false;
-                _mpv.ShowOsdText("Original version is unavailable", 3000);
-                return;
-            }
-
-            if (version != null)
-            {
-                var replacementAccepted = false;
-                try
-                {
-                    var session = await manager.StartReplacementSessionAsync(
-                        version.FileId,
-                        currentPos,
-                        forceStartPosition: true,
-                        previousFinalPosition: currentPos,
-                        ct: ct);
-                    if (!CurrentSwitch()) return;
-                    replacementAccepted = true;
-                    InvokeSubscribersSafely(SessionStarted, session.SessionId, nameof(SessionStarted));
-                    PlayMethod = session.PlayMethod;
-                    var remoteUrl = manager.StreamUrl;
-                    if (string.IsNullOrWhiteSpace(remoteUrl))
-                        throw new InvalidOperationException("No stream URL was returned for original quality.");
-                    var prepared = await PreparePlaybackTransportAsync(
-                        session,
-                        version,
-                        remoteUrl,
-                        currentPos,
-                        ct);
-
-                    ct.ThrowIfCancellationRequested();
-                    if (!CurrentSwitch() ||
-                        !ReferenceEquals(manager.CurrentSession, session))
-                        return;
-
-                    ApplyPreparedTransport(prepared);
-                    BeginMpvLoad(prepared, restorePaused: wasPaused);
-                    SendMediaInfoToOsc();
-                    switchSucceeded = true;
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    LogToFile("state_trace.txt", "Quality reset canceled");
-                }
-                catch (Exception ex)
-                {
-                    if (!CurrentSwitch()) return;
-                    _qualitySwitchActive = false;
-                    LogToFile("player_quality_switch_error.txt", ex.ToString());
-                    if (replacementAccepted && CurrentSwitch())
-                    {
-                        _prematureEofRecoveryActive = true;
-                        _switchingContent = true;
-                        IsLoading = true;
-                        ShowNotice(
-                            "Reconnecting playback",
-                            "The quality switch was interrupted. Restoring playback from your current position…",
-                            "warning");
-                        _ = RecoverInterruptedStreamAsync(currentPos, "quality-reset-failed");
-                    }
-                    else
-                    {
-                        _switchingContent = false;
-                        IsLoading = false;
-                        var (title, detail) = DescribePlaybackError(ex);
-                        ShowNotice(title, detail, "error");
-                    }
-                }
-            }
+            PlayMethod = session.PlayMethod;
+            ApplyPreparedTransport(prepared);
+            BeginMpvLoad(prepared, restorePaused: wasPaused);
+            // Show the quality actually accepted by the server, including
+            // any fallback; a requested tier is not proof of delivery.
+            _activeQualityTier = session.ActiveQuality;
+            _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
+            SendQualityInfoToOsc();
         }
-        else
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            var transportReplaced = false;
-            var tier = TranscodeQualityPolicy.Find(tierId);
-            var resolution = tier?.Resolution ?? "";
-            var bitrate = tier?.BitrateKbps ?? 0;
-
-            // Pause and show loading
-            _mpv.Pause();
-            App.MainWindowInstance?.ShowLoadingOverlay();
-
-            try
-            {
-                var expectedSessionId = manager.SessionId
-                    ?? throw new InvalidOperationException("The playback session is no longer active.");
-                var recipe = new TranscodeStartRequest
-                {
-                    SessionId = expectedSessionId,
-                    SeekSeconds = currentPos, // Start encoding from user's position
-                    TargetResolution = resolution,
-                    TargetCodecVideo = "h264",
-                    TargetCodecAudio = "aac",
-                    TargetBitrateKbps = bitrate,
-                    SegmentDuration = 2,
-                    SubtitleTrackIndex = -1,
-                    SubtitleBurnIn = false
-                };
-                var transcodeResponse = await authority.PlaybackApi.StartTranscodeAsync(recipe, ct);
-                ct.ThrowIfCancellationRequested();
-                if (!CurrentSwitch() ||
-                    !string.Equals(manager.SessionId, expectedSessionId, StringComparison.Ordinal))
-                    return;
-
-                // A successful transcode/start may invalidate the prior
-                // transport before manifest normalization or local proxy
-                // preparation. Any later failure must rebuild playback.
-                transportReplaced = true;
-
-                LogToFile(
-                    "state_trace.txt",
-                    $"Transcode response: status={transcodeResponse.Status} " +
-                    $"manifest={PlaybackUrlRedactor.Redact(transcodeResponse.ManifestUrl)} " +
-                    $"switchedFileId={transcodeResponse.SwitchedFileId} " +
-                    $"playerStart={transcodeResponse.PlayerStartSeconds} duration={transcodeResponse.DurationSeconds}");
-
-                if (transcodeResponse.SwitchedFileId is int switchedFileId &&
-                    manager.CurrentSession != null)
-                {
-                    manager.CurrentSession.MediaFileId = switchedFileId;
-                }
-
-                var remoteManifestUrl = NormalizePlaybackUrl(transcodeResponse.ManifestUrl);
-                var localUrl = PrepareHlsStreamForMpv(remoteManifestUrl);
-                var prepared = new PreparedPlaybackTransport(
-                    new PlaybackTransportPlan(
-                        PlaybackSemanticMethod.Transcode,
-                        PlaybackTransportKind.TranscodeHls,
-                        RequiresTranscodeStartPreparation: true),
-                    localUrl,
-                    // This is transport-local even when the returned HLS
-                    // window is not globally seekable. Copy-HLS may start at
-                    // an earlier keyframe and require a non-zero local start.
-                    MpvLoadStartSeconds: Math.Max(0, transcodeResponse.PlayerStartSeconds),
-                    ResumeAfterLoadSeconds: 0,
-                    TimelineOffsetSeconds: Math.Max(0, transcodeResponse.TimelineOffsetSeconds),
-                    DurationSeconds: transcodeResponse.DurationSeconds is > 0
-                        ? transcodeResponse.DurationSeconds
-                        : CurrentMediaDuration,
-                    CanSeekAnywhere: transcodeResponse.CanSeekAnywhere,
-                    HlsRecipe: recipe);
-
-                ApplyPreparedTransport(prepared);
-                PlayMethod = "transcode";
-
-                LogToFile("state_trace.txt", $"Loading HLS via proxy: {PlaybackUrlRedactor.Redact(localUrl)}");
-                BeginMpvLoad(prepared, restorePaused: wasPaused);
-                SendMediaInfoToOsc();
-                switchSucceeded = true;
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                LogToFile("state_trace.txt", "Quality transcode canceled");
-            }
-            catch (Exception ex)
-            {
-                if (!CurrentSwitch()) return;
-                _switchingContent = false;
-                _qualitySwitchActive = false;
-                LogToFile("player_quality_switch_error.txt", ex.ToString());
-                if (!transportReplaced)
-                {
-                    IsLoading = false;
-                    App.MainWindowInstance?.HideLoadingOverlay();
-                    if (!wasPaused)
-                        _mpv?.Play();
-                    var (title, detail) = DescribePlaybackError(ex);
-                    ErrorMessage = detail;
-                    ShowNotice(title, detail, "error");
-                    _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
-                }
-                else
-                {
-                    _prematureEofRecoveryActive = true;
-                    _switchingContent = true;
-                    ShowNotice(
-                        "Reconnecting playback",
-                        "The quality switch was interrupted. Restoring playback from your current position…",
-                        "warning");
-                    _ = RecoverInterruptedStreamAsync(currentPos, "quality-switch-failed");
-                }
-            }
+            LogToFile("state_trace.txt", "Protocol-v3 quality switch canceled");
         }
-
-        // Don't clear _switchingContent/_qualitySwitchActive here —
-        // they're cleared in the FileLoaded handler when the new stream loads.
-        // Clearing here races with END_FILE from the old stream being killed.
-        if (switchSucceeded && CurrentSwitch())
+        catch (OperationCanceledException) when (bufferingReplan != null && !ReferenceEquals(bufferingExpectedSession, manager.CurrentSession))
+        { LogToFile("state_trace.txt", "Buffering quality action superseded by another plan."); }
+        catch (Exception ex)
         {
-            _activeQualityTier = tierId;
-            _mpv?.SendScriptMessage("osc-set-active-quality", tierId);
+            if (!CurrentSwitch()) return;
+            _switchingContent = false;
+            _qualitySwitchActive = false;
+            IsLoading = false;
+            App.MainWindowInstance?.HideLoadingOverlay();
+            LogToFile("player_quality_switch_error.txt", ex.ToString());
+            var (title, detail) = DescribePlaybackError(ex);
+            ErrorMessage = detail;
+            ShowNotice(title, detail, "error");
+            _mpv?.SendScriptMessage("osc-set-active-quality", SelectedQualityMenuId);
         }
     }
 
@@ -6651,10 +5981,7 @@ public partial class PlayerService : IDisposable
         _transportStartPosition = null;
         _transportDurationSeconds = null;
         _canSeekAnywhere = true;
-        _activeHlsRecipe = null;
         _activeQualityTier = "original";
-        _preBitmapBurnInPlan = null;
-        _preBitmapBurnInQualityTier = null;
         _requestedMediaFileId = null;
         IsAudiobook = false;
         AudiobookPosterUrl = null;

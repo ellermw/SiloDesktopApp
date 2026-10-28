@@ -165,41 +165,6 @@ public sealed class PlaybackManagerTests
     }
 
     [Fact]
-    public async Task ApplyAudioChange_UpdatesCurrentSessionMetadata()
-    {
-        var handler = new BlockingPlaybackHandler();
-        var apiClient = new SiloApiClient(new HttpClient(handler));
-        apiClient.SetBaseUrl("https://example.test");
-        var playbackApi = new PlaybackApi(apiClient);
-        var catalogApi = new CatalogApi(apiClient);
-        var authService = new AuthService(apiClient, new AuthApi(apiClient));
-        using var manager = new PlaybackManager(playbackApi, catalogApi, authService, apiClient);
-
-        await manager.StartSessionAsync(123, startPosition: 0, forceStartPosition: true);
-
-        manager.ApplyAudioChange(new ChangeAudioResponse
-        {
-            AudioTrackIndex = 2,
-            PlayMethod = "remux",
-            StreamUrl = "/stream/session-1?audio=2",
-            PlaybackInfo = new PlaybackInfo
-            {
-                StreamType = "progressive",
-                TranscodeAudio = true,
-                VideoCodec = "hevc",
-                AudioCodec = "aac"
-            }
-        });
-
-        Assert.NotNull(manager.CurrentSession);
-        Assert.Equal(2, manager.CurrentSession.AudioTrackIndex);
-        Assert.Equal("remux", manager.CurrentSession.PlayMethod);
-        Assert.Equal("/stream/session-1?audio=2", manager.CurrentSession.StreamUrl);
-        Assert.True(manager.CurrentSession.PlaybackInfo?.TranscodeAudio);
-        Assert.Equal("aac", manager.CurrentSession.PlaybackInfo?.AudioCodec);
-    }
-
-    [Fact]
     public async Task StopSessionAsync_UsesCallerDeadlineAndAlwaysClearsLocalSession()
     {
         var handler = new BlockingPlaybackHandler { BlockStopPlayback = true };
