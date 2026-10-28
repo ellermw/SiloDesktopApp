@@ -817,10 +817,36 @@ end
 
 local function ass_escape_text(value)
     local text = tostring(value or "")
-    text = text:gsub("\\", "\\\\")
+    -- libass has no backslash escape: "\\N" still renders a line break and
+    -- "\\h" a hard space. Break every backslash sequence with a zero-width
+    -- no-break space, as mpv's own OSC does, so media and server text renders
+    -- literally.
+    text = text:gsub("\\", "\\\239\187\191")
     text = text:gsub("{", "\\{")
     text = text:gsub("}", "\\}")
     text = text:gsub("[\r\n]+", " ")
+    return text
+end
+
+-- Truncate to at most max_chars code points without splitting a UTF-8 sequence.
+local function truncate_chars(value, max_chars)
+    local text = tostring(value or "")
+    local count, byte_index = 0, 1
+    while byte_index <= #text do
+        if count == max_chars - 1 then
+            local rest_index, rest = byte_index, 0
+            while rest_index <= #text and rest < 2 do
+                local first = text:byte(rest_index)
+                rest_index = rest_index + ((first >= 0xF0 and 4) or (first >= 0xE0 and 3) or (first >= 0xC0 and 2) or 1)
+                rest = rest + 1
+            end
+            if rest > 1 then return text:sub(1, byte_index - 1) .. "…" end
+            return text
+        end
+        local first = text:byte(byte_index)
+        byte_index = byte_index + ((first >= 0xF0 and 4) or (first >= 0xE0 and 3) or (first >= 0xC0 and 2) or 1)
+        count = count + 1
+    end
     return text
 end
 
@@ -1908,7 +1934,7 @@ local function render_osc()
     if bq.show_label then
         draw_settings_icon(ass, bq.x + math.floor(21 * sc), bq.cy, math.floor(18 * sc),
             config.text_color, state.quality_menu_visible and "00" or "38", ma)
-        draw_text(ass, bq.x + math.floor(41 * sc), bq.cy, active_quality_label(), math.floor(11 * sc),
+        draw_text(ass, bq.x + math.floor(41 * sc), bq.cy, ass_escape_text(active_quality_label()), math.floor(11 * sc),
             config.text_color, state.quality_menu_visible and "00" or "38", ma, 4, nil, true)
     else
         draw_settings_icon(ass, bq.cx, bq.cy, math.floor(18 * sc),
@@ -2946,7 +2972,7 @@ local function render_subtitle_menu()
             and detail_lower ~= codec_lower
             and detail_lower ~= ("." .. codec_lower)
         if has_detail then text_y = text_y - math.floor(7 * sc) end
-        draw_text(ass, menu_x + padding + math.floor(24 * sc), text_y, display,
+        draw_text(ass, menu_x + padding + math.floor(24 * sc), text_y, ass_escape_text(display),
             fs, text_color, "00", 1.0, 4)
 
         local source_labels = {
@@ -2957,12 +2983,12 @@ local function render_subtitle_menu()
             or string.upper(capitalize(track.source or "embedded"))
         local codec_badge = string.upper(track.codec or "")
         local badge = codec_badge ~= "" and (codec_badge .. "  " .. source_badge) or source_badge
-        draw_text(ass, menu_x + menu_w - padding, text_y, badge,
+        draw_text(ass, menu_x + menu_w - padding, text_y, ass_escape_text(badge),
             fs_small, config.dim_text_color, "40", 1.0, 6)
 
         if has_detail then
             local max_detail = 42
-            if #detail > max_detail then detail = string.sub(detail, 1, max_detail - 1) .. "…" end
+            detail = ass_escape_text(truncate_chars(detail, max_detail))
             draw_text(ass, menu_x + padding + math.floor(24 * sc),
                 cy + track_item_h / 2 + math.floor(9 * sc), detail,
                 fs_small, config.dim_text_color, "58", 1.0, 4)
@@ -3193,7 +3219,7 @@ local function render_quality_menu()
             end
 
             local label = ver.label or ver.resolution or "Unknown"
-            draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, label,
+            draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, ass_escape_text(label),
                 fs, text_color, "00", 1.0, 4)
 
             local status = is_active and "Playing" or (is_requested and "Requested" or "")
@@ -3236,13 +3262,13 @@ local function render_quality_menu()
                 fs, config.text_color, "00", 1.0, 4)
         end
 
-        draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, tier.label,
+        draw_text(ass, menu_x + padding + math.floor(24 * sc), cy + item_h / 2, ass_escape_text(tier.label),
             fs, text_color, "00", 1.0, 4)
 
         local sublabel = tier.sublabel
 
         if sublabel then
-            draw_text(ass, menu_x + menu_w - padding, cy + item_h / 2, sublabel,
+            draw_text(ass, menu_x + menu_w - padding, cy + item_h / 2, ass_escape_text(sublabel),
                 fs_small, config.dim_text_color, "40", 1.0, 6)
         end
 
@@ -3701,7 +3727,7 @@ local function render_audio_menu()
                 math.floor(3 * sc), config.text_color,
                 badge == "DEFAULT" and "C8" or "DC", 1.0)
             draw_text(ass, badge_x + badge_w / 2, badge_y + badge_h / 2,
-                badge, math.floor(9.5 * sc), config.text_color, "48", 1.0, 5, nil, true)
+                ass_escape_text(badge), math.floor(9.5 * sc), config.text_color, "48", 1.0, 5, nil, true)
             badge_right = badge_x - math.floor(6 * sc)
         end
 
@@ -3721,7 +3747,7 @@ local function render_audio_menu()
         local bit_depth = tonumber(track.bit_depth) or 0
         if bit_depth > 0 then table.insert(meta, tostring(bit_depth) .. "-bit") end
         draw_text(ass, text_x, cy + math.floor(40 * sc),
-            table.concat(meta, " · "), math.floor(11 * sc), config.text_color, "72", 1.0, 4)
+            ass_escape_text(table.concat(meta, " · ")), math.floor(11 * sc), config.text_color, "72", 1.0, 4)
 
         table.insert(state.audio_menu_items,
             { x = menu_x, y = cy, w = menu_w, h = item_h, index = index })
