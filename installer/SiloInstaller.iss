@@ -7,6 +7,9 @@
 #endif
 #define MyAppPublisher "Silo"
 #define MyAppExeName "SiloPlayer.exe"
+#ifndef SiloUninstallKey
+#define SiloUninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\{B8E2F4A1-3C5D-4E6F-9A1B-2D3E4F5A6B7C}_is1"
+#endif
 #ifndef PublishSourceDir
 #define PublishSourceDir "publish"
 #endif
@@ -84,18 +87,80 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: no
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Silo Desktop SiloCast (Private LAN)"""; Flags: runhidden waituntilterminated; RunOnceId: "SiloCastPrivateLanFirewall"
 
 [Code]
-// [InstallDelete] empties {app} and [UninstallDelete] removes it, both with
-// administrator rights. That is only safe for a folder that holds Silo alone.
-// A typed folder that already contains other files (Inno only warns "folder
-// exists") would otherwise lose them. Upgrades keep working: their folder
-// already contains Silo or its uninstall data.
+function GuardFileAttributes(const Name: String): Cardinal;
+  external 'GetFileAttributesW@kernel32.dll stdcall';
+function GuardLastError: Cardinal;
+  external 'GetLastError@kernel32.dll stdcall';
+
+function HasLinkedInstallPath(Dir: String): Boolean;
+var Attributes, ErrorCode: Cardinal; Parent: String;
+begin
+  Result := False;
+  Dir := RemoveBackslashUnlessRoot(ExpandFileName(Dir));
+  repeat
+    Attributes := GuardFileAttributes(Dir);
+    if Attributes = $FFFFFFFF then
+    begin
+      ErrorCode := GuardLastError;
+      if (ErrorCode <> 2) and (ErrorCode <> 3) then
+      begin Result := True; Exit; end;
+    end;
+    if (Attributes <> $FFFFFFFF) and ((Attributes and $400) <> 0) then
+    begin Result := True; Exit; end;
+    Parent := ExtractFileDir(Dir);
+    if CompareText(Parent, Dir) = 0 then Exit;
+    Dir := Parent;
+  until Dir = '';
+end;
+
+function SameInstallDirectory(const Left, Right: String): Boolean;
+begin
+  Result := (Left <> '') and (Right <> '') and
+    (CompareText(RemoveBackslashUnlessRoot(ExpandFileName(Left)),
+      RemoveBackslashUnlessRoot(ExpandFileName(Right))) = 0);
+end;
+
+function RegisteredSiloDirectory(const Dir: String): Boolean;
+var Location: String;
+begin
+  Result := False;
+  if not FileExists(AddBackslash(Dir) + '{#MyAppExeName}') then Exit;
+  if RegQueryStringValue(HKLM64, '{#SiloUninstallKey}', 'InstallLocation', Location) then
+    Result := SameInstallDirectory(Dir, Location);
+  if not Result then
+    if RegQueryStringValue(HKCU64, '{#SiloUninstallKey}', 'InstallLocation', Location) then
+      Result := SameInstallDirectory(Dir, Location);
+end;
+
+function HasLinkedInstallContent(const Dir: String; Depth: Integer): Boolean;
+var FindRec: TFindRec;
+begin
+  Result := True;
+  if Depth > 32 then Exit;
+  if not FindFirst(AddBackslash(Dir) + '*', FindRec) then Exit;
+  Result := False;
+  try
+    repeat
+      if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+      begin
+        if (FindRec.Attributes and $400) <> 0 then Result := True
+        else if (FindRec.Attributes and $10) <> 0 then
+          Result := HasLinkedInstallContent(AddBackslash(Dir) + FindRec.Name, Depth + 1);
+      end;
+    until Result or not FindNext(FindRec);
+  finally FindClose(FindRec); end;
+end;
+
+// A generic uninstall-data or executable filename is not ownership proof.
+// Only the registered Silo destination may receive clean-payload upgrades.
 function DirectoryHasForeignContent(const Dir: String): Boolean;
 var
   FindRec: TFindRec;
 begin
   Result := False;
   if not DirExists(Dir) then Exit;
-  if FileExists(AddBackslash(Dir) + '{#MyAppExeName}') or FileExists(AddBackslash(Dir) + 'unins000.dat') then Exit;
+  if RegisteredSiloDirectory(Dir) then
+  begin Result := HasLinkedInstallContent(Dir, 0); Exit; end;
   if FindFirst(AddBackslash(Dir) + '*', FindRec) then
   begin
     try
@@ -115,9 +180,24 @@ var
   Dir: String;
 begin
   Result := '';
-  Dir := ExpandConstant('{app}');
+  Dir := RemoveBackslashUnlessRoot(ExpandFileName(ExpandConstant('{app}')));
+  if SameInstallDirectory(Dir, AddBackslash(ExtractFileDrive(Dir))) or
+    SameInstallDirectory(Dir, ExpandConstant('{commonpf64}')) or
+    SameInstallDirectory(Dir, ExpandConstant('{commonpf32}')) or
+    SameInstallDirectory(Dir, GetEnv('USERPROFILE')) or
+    SameInstallDirectory(Dir, ExpandConstant('{userdocs}')) or
+    SameInstallDirectory(Dir, ExpandConstant('{userdesktop}')) or
+    SameInstallDirectory(Dir, ExpandConstant('{userappdata}')) or
+    SameInstallDirectory(Dir, ExpandConstant('{commonappdata}')) or
+    SameInstallDirectory(Dir, ExpandConstant('{localappdata}')) or
+    FileOrDirExists(AddBackslash(Dir) + '.git') or
+    FileOrDirExists(AddBackslash(Dir) + '.codex-tmp') or
+    (Pos(Lowercase(AddBackslash(ExpandConstant('{win}'))), Lowercase(AddBackslash(Dir))) = 1) or
+    (Pos(Lowercase(AddBackslash(ExpandConstant('{localappdata}\SiloPlayer'))), Lowercase(AddBackslash(Dir))) = 1) or
+    HasLinkedInstallPath(Dir) then
+  begin Result := 'Choose a dedicated local folder, not a system, account, data or linked directory.'; Exit; end;
   if DirectoryHasForeignContent(Dir) then
-    Result := 'The folder "' + Dir + '" already contains other files. {#MyAppName} replaces everything in its installation folder, so choose a new or empty folder.';
+    Result := 'The folder "' + Dir + '" is not a verified Silo installation or contains linked files. Choose a new or empty folder. Registered Silo upgrades replace their dedicated application payload.';
 end;
 
 procedure InstallWindowsAppRuntime;
@@ -133,5 +213,5 @@ begin
       'The Windows App SDK runtime installer failed with code %d. {#MyAppName} cannot start without it.', [ResultCode]));
 end;
 
-[UninstallDelete]
-Type: filesandordirs; Name: "{app}"
+; Inno removes installed files from its own log. Do not recursively erase
+; unrelated files that a user may later place in the application directory.
