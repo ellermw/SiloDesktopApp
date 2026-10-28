@@ -6495,7 +6495,7 @@ _webhookPlexAuthCts?.Cancel();
             VerticalAlignment = VerticalAlignment.Top,
         };
         if (!string.IsNullOrWhiteSpace(session.PosterUrl) && Uri.TryCreate(session.PosterUrl, UriKind.Absolute, out var posterUri))
-            poster.Child = new Image { Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(posterUri), Stretch = Stretch.UniformToFill };
+            poster.Child = new Image { Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(posterUri) { DecodePixelType = Microsoft.UI.Xaml.Media.Imaging.DecodePixelType.Logical, DecodePixelWidth = 40 }, Stretch = Stretch.UniformToFill };
         layout.Children.Add(poster);
 
         var content = new StackPanel { Spacing = 6 };

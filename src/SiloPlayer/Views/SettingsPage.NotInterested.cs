@@ -92,7 +92,7 @@ public sealed partial class SettingsPage
         row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
         row.RowDefinitions.Add(new() { Height = GridLength.Auto }); row.RowDefinitions.Add(new() { Height = GridLength.Auto });
         var poster = new Image { Width = 44, Height = 64, Stretch = Stretch.UniformToFill };
-        if (Uri.TryCreate(item.PosterUrl, UriKind.Absolute, out var posterUri)) poster.Source = new BitmapImage(posterUri);
+        if (Uri.TryCreate(item.PosterUrl, UriKind.Absolute, out var posterUri)) poster.Source = new BitmapImage(posterUri) { DecodePixelType = DecodePixelType.Logical, DecodePixelWidth = 44 };
         var artwork = new Button { Content = poster, Padding = new Thickness(0), Width = 44, Height = 64, BorderThickness = new Thickness(0) };
         void Navigate() { if (catalog.IsCurrentContext(context)) App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(item.ContentId); }
         artwork.Click += (_, _) => Navigate(); AutomationProperties.SetName(artwork, item.Title);

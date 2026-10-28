@@ -761,7 +761,8 @@ public sealed partial class CollectionsPage : Page
         {
             poster.Child = new Image
             {
-                Source = new BitmapImage(posterUri),
+                // Decode at the card size rather than the full poster resolution.
+                Source = new BitmapImage(posterUri) { DecodePixelType = DecodePixelType.Logical, DecodePixelWidth = (int)Math.Ceiling(cardWidth) },
                 Stretch = Stretch.UniformToFill
             };
         }
