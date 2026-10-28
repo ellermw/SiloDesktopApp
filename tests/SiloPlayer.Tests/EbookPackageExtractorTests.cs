@@ -24,6 +24,27 @@ public sealed class EbookPackageExtractorTests : IDisposable
     }
 
     [Fact]
+    public void SvgComicPagesAreShownThroughAnInertImageWrapper()
+    {
+        // The reader navigates to each page on its trusted origin, where a
+        // top-level SVG document would run its scripts.
+        var svg = System.Text.Encoding.UTF8.GetBytes(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\"><script>chrome.webview.postMessage('{\"type\":\"reader-error\"}')</script></svg>");
+        var target = Path.Combine(_root, "svg");
+
+        var book = EbookPackageExtractor.Extract(Zip(("001.png", [0x89, 0x50, 0x4E, 0x47]), ("pages/0 2&.svg", svg)), target, "cbz");
+
+        Assert.Equal("001.png", book.Chapters[0].RelativePath);
+        var wrapper = book.Chapters[1].RelativePath;
+        Assert.EndsWith(".html", wrapper);
+        var html = File.ReadAllText(Path.Combine(target, wrapper));
+        Assert.Contains("<img src=\"pages/0%202%26.svg\"", html);
+        Assert.Contains("default-src 'none'", html);
+        Assert.DoesNotContain("<script", html);
+        Assert.DoesNotContain("<svg", html);
+    }
+
+    [Fact]
     public void ArchiveWithMoreEntriesThanTheLimitIsRejected()
     {
         var target = Path.Combine(_root, "many");
