@@ -1191,12 +1191,6 @@ public static partial class RecipeGalleryDialog
             ? Label
             : $"{Category.Replace('_', ' ')} — {Label}";
     }
-    private sealed class EditableFilterRule
-    {
-        public string Field { get; set; } = "genre";
-        public string Operator { get; set; } = "contains";
-        public string Value { get; set; } = "";
-    }
     private sealed record Option(string Value, string Label)
     {
         public override string ToString() => Label;
