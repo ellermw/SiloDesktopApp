@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.430
+
+Profile-avatar rendering and response authority, plus authoritative room joins across navigation. See [twenty-four-change record](docs/releases/1.2.430.md).
+
 ## 1.2.406
 
 Record queued playback events at event time, serialize flush completion and remove verified unused code. See [twenty-change record](docs/releases/1.2.406.md).
