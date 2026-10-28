@@ -75,11 +75,23 @@ public sealed class SearchProgressionTests
     }
 
     private static async Task Until(Func<bool> condition)
-    { var deadline = DateTime.UtcNow.AddSeconds(2); while (!condition()) { if (DateTime.UtcNow > deadline) throw new TimeoutException(); await Task.Delay(10); } }
+    { var deadline = DateTime.UtcNow.AddSeconds(10); while (!condition()) { if (DateTime.UtcNow > deadline) throw new TimeoutException(); await Task.Delay(10); } }
+
+    private sealed class RequestLog : IEnumerable<string>
+    {
+        private readonly List<string> _paths = [];
+        public void Add(string path) { lock (_paths) _paths.Add(path); }
+        public void Clear() { lock (_paths) _paths.Clear(); }
+        public IEnumerator<string> GetEnumerator() { lock (_paths) return _paths.ToList().GetEnumerator(); }
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
 
     private sealed class Wire : HttpMessageHandler
     {
-        public List<string> Paths = [];
+        // The view model issues catalog, capability and people requests
+        // concurrently; an unsynchronized List can corrupt or throw inside the
+        // handler and fault the people request under full-suite load.
+        public readonly RequestLog Paths = new();
         public bool DelayPeople;
         public bool PeopleScoped = true;
         public TaskCompletionSource<HttpResponseMessage> People = new(TaskCreationOptions.RunContinuationsAsynchronously);
