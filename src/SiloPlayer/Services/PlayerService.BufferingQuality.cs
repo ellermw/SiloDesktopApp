@@ -17,6 +17,11 @@ public partial class PlayerService
     private double? _bufferingLastPosition;
     private long _bufferingLastPositionAt;
     private bool _bufferingObscured;
+    // Samples are taken outside _bufferingGate, so they need their own
+    // ordering: one sample at a time, discarded if a plan was adopted or
+    // ended while libmpv was being read.
+    private int _bufferingSampling;
+    private long _bufferingPlanGeneration;
     private string? _publishedBufferingPill;
     private sealed record BufferingActionOwner(PlaybackManager Manager, PlaybackStartResponse Session,
         PlaybackAuthorityScope Authority, BufferingQualityController Controller);
@@ -66,6 +71,7 @@ public partial class PlayerService
     {
         lock (_bufferingGate)
         {
+            _bufferingPlanGeneration++;
             FlushBufferingSummaryCore();
             var manager = _playbackManager;
             if (manager?.CurrentSession is not { } session || !manager.SupportsBufferingQuality) { _bufferingController = null; PublishBufferingPillCore(); return; }
@@ -86,35 +92,51 @@ public partial class PlayerService
     }
     private void ObserveBufferingQuality()
     {
-        BufferingQualityAction? action;
-        BufferingActionOwner? actionOwner;
-        lock (_bufferingGate)
+        // A libmpv read can outlast the 1s watchdog period; a later tick must
+        // not overtake this sample and feed the controller older state.
+        if (Interlocked.Exchange(ref _bufferingSampling, 1) != 0) return;
+        BufferingQualityAction? action = null;
+        BufferingActionOwner? actionOwner = null;
+        try
         {
-            if (_bufferingController == null || _mpv == null || _closing || State == PlayerState.Idle || !ReferenceEquals(_bufferingManager, _playbackManager)) return;
+            var mpv = _mpv;
+            if (Volatile.Read(ref _bufferingController) == null || mpv == null || _closing || State == PlayerState.Idle) return;
+            var plan = Interlocked.Read(ref _bufferingPlanGeneration);
+            // libmpv reads can wait for a busy player core. Take them before the
+            // gate that UI-thread pill reads and key handling also take.
             var now = Environment.TickCount64;
-            var sample = _mpv.ReadMediaNetworkObservation();
+            var sample = mpv.ReadMediaNetworkObservation();
             var paused = _restorePausedAfterLoad ?? CaptureUserPausedState();
             var position = CurrentMediaPosition;
-            var jump = _bufferingLastPosition is double previous && Math.Abs(position - previous) > Math.Max(4, (now - _bufferingLastPositionAt) / 1000d * 3);
-            _bufferingLastPosition = position; _bufferingLastPositionAt = now;
-            var seeking = sample.Seeking || jump || _qualitySwitchActive || (_switchingContent && _transportHasFirstOutput) || !double.IsFinite(sample.BufferedSeconds);
-            var rate = _nativeMediaMeter.Observe(now, sample.Bytes, paused, seeking);
-            // Native HLS/remux has no monotonic HTTP byte counter. Use mpv's media-network layer estimate only while the reader is active.
-            if (sample.Bytes == null && !paused && !seeking && sample.InputBytesPerSecond is > 0)
+            var cacheWait = mpv.IsBufferingForCache;
+            lock (_bufferingGate)
             {
-                var kbps = sample.InputBytesPerSecond.Value * 8 / 1000;
-                rate = kbps >= 100 ? (int)Math.Min(kbps, 1000000) : null;
+                if (plan != _bufferingPlanGeneration || _bufferingController == null || !ReferenceEquals(_mpv, mpv) || _closing || State == PlayerState.Idle || !ReferenceEquals(_bufferingManager, _playbackManager)) return;
+                var jump = _bufferingLastPosition is double previous && Math.Abs(position - previous) > Math.Max(4, (now - _bufferingLastPositionAt) / 1000d * 3);
+                _bufferingLastPosition = position; _bufferingLastPositionAt = now;
+                var seeking = sample.Seeking || jump || _qualitySwitchActive || (_switchingContent && _transportHasFirstOutput) || !double.IsFinite(sample.BufferedSeconds);
+                var rate = _nativeMediaMeter.Observe(now, sample.Bytes, paused, seeking);
+                // Native HLS/remux has no monotonic HTTP byte counter. Use mpv's media-network layer estimate only while the reader is active.
+                if (sample.Bytes == null && !paused && !seeking && sample.InputBytesPerSecond is > 0)
+                {
+                    var kbps = sample.InputBytesPerSecond.Value * 8 / 1000;
+                    rate = kbps >= 100 ? (int)Math.Min(kbps, 1000000) : null;
+                }
+                if (rate != null) _bufferingLastDataAt = now;
+                var wait = cacheWait || (!_transportHasFirstOutput && IsLoading);
+                var silence = sample.SinceLastByteMs ?? now - _bufferingLastDataAt;
+                var segmented = _bufferingSession?.Delivery is "server_transcode_hls" or "server_remux_hls";
+                var outage = NativeBufferingSignalPolicy.IsOutage(wait, sample.TransportFailing, silence, segmented);
+                action = _bufferingController.Observe(new(now, wait, paused, seeking, outage, IsWatchTogetherPlayback,
+                    sample.BufferedSeconds, rate, _bufferingObscured));
+                actionOwner = CaptureBufferingActionOwnerCore();
+                if (_bufferingManager != null) _bufferingManager.KeptBufferingEstimateKbps = _bufferingController.KeptEstimateKbps;
+                PublishBufferingPillCore();
             }
-            if (rate != null) _bufferingLastDataAt = now;
-            var wait = _mpv.IsBufferingForCache || (!_transportHasFirstOutput && IsLoading);
-            var silence = sample.SinceLastByteMs ?? now - _bufferingLastDataAt;
-            var segmented = _bufferingSession?.Delivery is "server_transcode_hls" or "server_remux_hls";
-            var outage = NativeBufferingSignalPolicy.IsOutage(wait, sample.TransportFailing, silence, segmented);
-            action = _bufferingController.Observe(new(now, wait, paused, seeking, outage, IsWatchTogetherPlayback,
-                sample.BufferedSeconds, rate, _bufferingObscured));
-            actionOwner = CaptureBufferingActionOwnerCore();
-            if (_bufferingManager != null) _bufferingManager.KeptBufferingEstimateKbps = _bufferingController.KeptEstimateKbps;
-            PublishBufferingPillCore();
+        }
+        finally
+        {
+            Volatile.Write(ref _bufferingSampling, 0);
         }
         if (action != null && actionOwner != null) DispatchBufferingAction(action, actionOwner);
     }
@@ -201,7 +223,7 @@ public partial class PlayerService
     }
     private void EndBufferingQuality()
     {
-        lock (_bufferingGate) { FlushBufferingSummaryCore(); _bufferingController = null; _bufferingManager = null; _bufferingSession = null; PublishBufferingPillCore(); }
+        lock (_bufferingGate) { _bufferingPlanGeneration++; FlushBufferingSummaryCore(); _bufferingController = null; _bufferingManager = null; _bufferingSession = null; PublishBufferingPillCore(); }
         SetConnectionMediaActive(false);
     }
 }
