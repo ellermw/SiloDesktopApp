@@ -38,6 +38,7 @@ public class ImageService : IDisposable
 
     public Task<byte[]?> GetImageAsync(string contentId, string imageType, string url, HttpClient http, CancellationToken ct = default)
     {
+        if (NativeApiRetirement.IsRetiredResource(url)) return Task.FromResult<byte[]?>(null);
         var cacheKey = BuildCacheKey(contentId, imageType, url);
         var negativeCacheKey = BuildNegativeCacheKey(cacheKey, url);
 
@@ -89,6 +90,7 @@ public class ImageService : IDisposable
     /// </summary>
     public Task<string?> GetImageDiskPathAsync(string contentId, string imageType, string url, HttpClient http, CancellationToken ct = default)
     {
+        if (NativeApiRetirement.IsRetiredResource(url)) return Task.FromResult<string?>(null);
         var cacheKey = BuildCacheKey(contentId, imageType, url);
         var negativeCacheKey = BuildNegativeCacheKey(cacheKey, url);
 

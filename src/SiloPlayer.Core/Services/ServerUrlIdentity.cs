@@ -31,13 +31,19 @@ public static class ServerUrlIdentity
             return trimmed.TrimEnd('/');
         }
 
+        var path = uri.AbsolutePath.TrimEnd('/');
+        // Older saved server entries sometimes include the API namespace. Only a
+        // terminal known API suffix is removed; a deployment prefix stays intact.
+        if (path.EndsWith("/api/v1", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith("/api/v2", StringComparison.OrdinalIgnoreCase))
+            path = path[..^7];
         var builder = new UriBuilder(uri)
         {
             Scheme = uri.Scheme.ToLowerInvariant(),
             Host = uri.Host.ToLowerInvariant(),
             Query = "",
             Fragment = "",
-            Path = uri.AbsolutePath.TrimEnd('/'),
+            Path = path,
         };
 
         if (uri.IsDefaultPort)

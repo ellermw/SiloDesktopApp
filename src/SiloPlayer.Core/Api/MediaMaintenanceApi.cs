@@ -9,6 +9,22 @@ namespace SiloPlayer.Core.Api;
 /// </summary>
 public sealed class MediaMaintenanceApi(SiloApiClient client)
 {
+    public async Task<MetadataRefreshReceipt> ResetToProviderAsync(string itemId, CancellationToken ct = default)
+    {
+        EnsureSecureBaseUrl();
+        ct.ThrowIfCancellationRequested();
+        var owner = client.CaptureContext();
+        var path = $"/api/v2/admin/items/{Uri.EscapeDataString(itemId)}";
+        // Refresh honors locks. Only an explicit Reset clears them; ordinary
+        // refreshes continue preserving manually protected fields and images.
+        await client.SendRequestAsync<SiloPlayer.Core.Models.Catalog.MediaItemDetail>(owner,
+            HttpMethod.Patch, path + "/metadata", new { locked_fields = Array.Empty<int>() }, ct).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
+        if (!client.IsCurrentContext(owner)) throw new OperationCanceledException("Metadata reset owner changed.", ct);
+        return await client.SendRequestAsync<MetadataRefreshReceipt>(owner, HttpMethod.Post,
+            path + "/refresh-metadata", new { mode = "quick" }, ct).ConfigureAwait(false);
+    }
+
     public Task<SiloPlayer.Core.Models.Catalog.MediaItemDetail> UpdateMetadataAsync(string itemId,
         IReadOnlyDictionary<string, object?> changes, CancellationToken ct = default)
     {

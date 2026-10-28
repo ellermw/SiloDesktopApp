@@ -7,7 +7,10 @@ public static class PlaybackDeliveryUrl
         ArgumentException.ThrowIfNullOrWhiteSpace(pathOrUrl);
         var value = pathOrUrl.Trim();
         if (value.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || value.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+        {
+            NativeApiRetirement.RequireCurrentResource(value);
             return value; // Preserve distributed delivery origins and signed query bytes.
+        }
         if (!value.StartsWith('/')) value = "/" + value;
         // playback-api.md explicitly projects these local delivery mounts into
         // v2 without changing st. Other API/proxy paths remain server-owned.
@@ -15,6 +18,7 @@ public static class PlaybackDeliveryUrl
             value.StartsWith("/api/v1/playback/transcode/", StringComparison.OrdinalIgnoreCase))
             value = "/api/v2/" + value[8..];
         else if (!value.StartsWith("/api/", StringComparison.OrdinalIgnoreCase)) value = "/api/v2" + value;
+        NativeApiRetirement.RequireCurrentResource(value);
         return baseUrl.TrimEnd('/') + value;
     }
 }

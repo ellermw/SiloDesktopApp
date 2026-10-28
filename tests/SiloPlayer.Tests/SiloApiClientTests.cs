@@ -54,8 +54,8 @@ public sealed class SiloApiClientTests
         client.SetBaseUrl("https://silo.example.test");
 
         Assert.Equal(
-            "https://silo.example.test/api/v1/branding/assets/mark?v=one",
-            client.ResolveServerUrl("/api/v1/branding/assets/mark?v=one"));
+            "https://silo.example.test/api/v2/branding/assets/mark?v=one",
+            client.ResolveServerUrl("/api/v2/branding/assets/mark?v=one"));
         Assert.Equal(
             "https://cdn.example.test/brand.webp",
             client.ResolveServerUrl("https://cdn.example.test/brand.webp"));

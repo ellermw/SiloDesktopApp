@@ -278,14 +278,11 @@ public sealed class LibraryGridCard : Canvas
 
     public void ApplyCardPresentation()
     {
-        var caption = _uiCustomizationService.CardPresentation.Caption;
-        var showCaption = caption != "artwork";
-        var showMetadata = caption == "title_metadata";
-        _titleText.Visibility = showCaption ? Visibility.Visible : Visibility.Collapsed;
-        _episodeTitleText.Visibility = showMetadata && !string.IsNullOrWhiteSpace(_episodeTitleText.Text)
+        _titleText.Visibility = Visibility.Visible;
+        _episodeTitleText.Visibility = !string.IsNullOrWhiteSpace(_episodeTitleText.Text)
             ? Visibility.Visible
             : Visibility.Collapsed;
-        _subtitleText.Visibility = showMetadata && !string.IsNullOrWhiteSpace(_subtitleText.Text)
+        _subtitleText.Visibility = !string.IsNullOrWhiteSpace(_subtitleText.Text)
             ? Visibility.Visible
             : Visibility.Collapsed;
     }

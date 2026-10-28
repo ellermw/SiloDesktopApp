@@ -457,12 +457,6 @@ public sealed partial class RequestDetailPage : Page
         _recommendationWidth = width;
         foreach (var item in items)
         {
-            Func<Task>? request = item.Request.Requestable ? async () =>
-            {
-                await _api.CreateAsync(new CreateMediaRequestInput { MediaType = item.MediaType, TmdbId = item.TmdbId, Title = item.Title, Year = item.Year, Overview = item.Overview, PosterPath = item.PosterPath, BackdropPath = item.BackdropPath }, _lifetime.Token);
-                item.Request.Requestable = false; item.Request.Status = "pending";
-                if (_item?.Recommendations != null) BuildRecommendations(_item.Recommendations);
-            } : null;
             Func<Task>? watchlist = _features.WatchlistTitlesSupported ? async () =>
             {
                 if (item.InWatchlist == true) await _api.RemoveWatchlistTitleAsync(item.MediaType, item.TmdbId, _lifetime.Token);
@@ -470,7 +464,7 @@ public sealed partial class RequestDetailPage : Page
                 item.InWatchlist = item.InWatchlist != true;
                 App.Services.GetService<SiloPlayer.ViewModels.WatchlistViewModel>()?.InvalidateExternalTitles();
             } : null;
-            RecommendationsPanel.Children.Add(ExternalTitleCard.Build(item, width, request, watchlist));
+            RecommendationsPanel.Children.Add(ExternalTitleCard.Build(item, width, watchlist: watchlist));
         }
         RecommendationsSection.Visibility = RecommendationsPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }

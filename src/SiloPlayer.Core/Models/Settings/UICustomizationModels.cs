@@ -19,7 +19,9 @@ public sealed class CardPresentation
     public CardPresentation Normalize() => new()
     {
         PosterSize = PosterSize is "compact" or "standard" or "large" ? PosterSize : "standard",
-        Caption = Caption is "title_metadata" or "title" or "artwork" ? Caption : "title_metadata",
+        // The server still requires this wire member, but the caption choice
+        // is retired. Older saved values must not hide titles or metadata.
+        Caption = "title_metadata",
     };
 }
 

@@ -107,19 +107,6 @@ public sealed class SettingsV2ContractTests
     }
 
     [Fact]
-    public async Task OfficialThemeDocumentsPreserveCamelCasePortableFileFields()
-    {
-        var (catalog, _) = Create(Fixture("theme_catalog_document"));
-        Assert.Equal("https://themes.example/theme.json", (await catalog.GetThemeCatalogAsync()).Themes[0].DownloadUrl);
-        var (refresh, _) = Create(Fixture("theme_catalog_refreshed"));
-        Assert.NotEmpty((await refresh.RefreshThemeCatalogAsync()).Themes);
-        var (theme, _) = Create(Fixture("theme_download_document"));
-        var file = await theme.DownloadThemeAsync("https://themes.example/theme.json");
-        Assert.Equal("midnight-cinema", file.BaseTheme);
-        Assert.Equal("body { color: red; }", file.CustomCss);
-    }
-
-    [Fact]
     public async Task LegacyBooleanWriteUsesCanonicalKeyAndJsonBoolean()
     {
         var (api, handler) = Create("{}");

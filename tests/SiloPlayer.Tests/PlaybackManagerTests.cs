@@ -8,6 +8,61 @@ namespace SiloPlayer.Tests;
 public sealed class PlaybackManagerTests
 {
     [Fact]
+    public async Task SubtitleResources_AuthenticateApiRelativePathsAndKeepDistributedBytes()
+    {
+        var handler = new BlockingPlaybackHandler();
+        var api = new SiloApiClient(new HttpClient(handler)); api.SetBaseUrl("https://example.test"); api.SetAccessToken("fixture-account");
+        using var manager = new PlaybackManager(new PlaybackApi(api), new CatalogApi(api), new AuthService(api, new AuthApi(api)), api);
+        try
+        {
+            await manager.StartSessionAsync(123);
+            manager.CurrentSession!.SubtitleUrls = [
+                new() { Index = 0, Url = "/stream/session/subtitles/0.vtt?st=fixture%2fquery" },
+                new() { Index = 1, Url = "https://node.fixture/stream/subtitles/fixture-signed/1?st=fixture%2fquery" },
+                new() { Index = 2, Url = "https://example.test/stream/subtitles/fixture-signed/2?st=fixture%2fquery" },
+            ];
+            var resources = manager.GetSubtitleUrls();
+            Assert.Equal("https://example.test/api/v2/stream/session/subtitles/0.vtt?st=fixture%2fquery&token=fixture-account", resources[0].FullUrl);
+            Assert.Equal("https://node.fixture/stream/subtitles/fixture-signed/1?st=fixture%2fquery", resources[1].FullUrl);
+            Assert.Equal("https://example.test/stream/subtitles/fixture-signed/2?st=fixture%2fquery", resources[2].FullUrl);
+            api.SetAccessToken("fixture-refreshed");
+            Assert.EndsWith("&token=fixture-refreshed", manager.GetSubtitleUrls()[0].FullUrl);
+        }
+        finally { handler.ReleaseProgress(); await manager.StopSessionAsync(); }
+    }
+
+    [Theory]
+    [InlineData("https://example.test", "")]
+    [InlineData("https://example.test", "?st=fixture%2fquery")]
+    [InlineData("https://example.test/silo", "")]
+    [InlineData("https://example.test/silo", "?st=fixture%2fquery")]
+    public async Task AbsoluteIntegratedSubtitles_RetainAccountAuthenticationWithOrWithoutStreamReference(string serverBase, string query)
+    {
+        var handler = new BlockingPlaybackHandler();
+        var api = new SiloApiClient(new HttpClient(handler)); api.SetBaseUrl("https://example.test"); api.SetAccessToken("fixture-account");
+        using var manager = new PlaybackManager(new PlaybackApi(api), new CatalogApi(api), new AuthService(api, new AuthApi(api)), api);
+        try
+        {
+            await manager.StartSessionAsync(123);
+            // The resource resolver uses the configured deployment prefix. No
+            // HTTP is dispatched after changing this synthetic fixture base.
+            api.SetBaseUrl(serverBase);
+            api.SetAccessToken("fixture-account");
+            var integrated = serverBase + "/api/v2/stream/session/subtitles/0.vtt" + query;
+            manager.CurrentSession!.SubtitleUrls = [
+                new() { Index = 0, Url = integrated },
+                new() { Index = 1, Url = "https://cdn.fixture/api/v2/stream/session/subtitles/0.vtt" + query },
+                new() { Index = 2, Url = "https://example.test/stream/subtitles/fixture-signed/2?st=fixture%2fquery" },
+            ];
+            var resources = manager.GetSubtitleUrls();
+            Assert.Equal(integrated + (query.Length == 0 ? "?" : "&") + "token=fixture-account", resources[0].FullUrl);
+            Assert.Equal("https://cdn.fixture/api/v2/stream/session/subtitles/0.vtt" + query, resources[1].FullUrl);
+            Assert.Equal("https://example.test/stream/subtitles/fixture-signed/2?st=fixture%2fquery", resources[2].FullUrl);
+        }
+        finally { handler.ReleaseProgress(); await manager.StopSessionAsync(); }
+    }
+
+    [Fact]
     public async Task StartSessionAsync_AdvertisesTheVerifiedBundledMpvProfile()
     {
         var handler = new BlockingPlaybackHandler();

@@ -1,0 +1,47 @@
+# Installed321 navigation latency and WinUI crash
+
+Owner installed the verified321 installer and reported sluggish left-sidebar navigation. Installed DLL hash matches sealed321 exactly: `19BB6F57AD5C3B43EC1CFC22E2772D7F87DCA0B810B07D0C368423838B39A1C3`. Process34876 started23:01:32 CDT October27. No product source, preferences, server settings or installed binaries were changed during this diagnosis. Live performance/crash verification remains unresolved. The owner subsequently explicitly authorized GitHub publication; disclose these known issues rather than describing the build as fully working.
+
+## Confirmed observations
+
+- Before CPU tracing, the installed250ms UI dispatcher heartbeat recorded18 navigation-period gaps of500–1,328ms (samples5–22,23:01:47–23:04:19). Startup separately recorded2,140ms. These are dispatcher-tick gaps, **not direct click-to-content measurements**. Breadcrumbs include Library bind, render clear and native scrolling. The app itself is not servicing its UI timer promptly during the reported activity.
+- During the owner's foreground sidebar exercise, a45-second read-only EventPipe capture started23:06:32.854. UI timer gaps were2,484ms at23:06:34.903 and1,188ms at23:06:37.824. Capture overhead has not been excluded from these two values; the earlier delays independently predate the observer.
+- Application Error1000 at **23:06:41.072739 CDT** identifies `SiloPlayer.exe1.2.321.0`, PID34876, `Microsoft.UI.Xaml.dll3.1.8.0`, exception **0xc000027b**, module offset0x3a7515. WER1001 at23:06:44 reports stowed **0x8000ffff**. This was an app crash, not an orderly window close.
+- Existing dump `%LOCALAPPDATA%\CrashDumps\SiloPlayer.exe.34876.dmp` was analyzed **in place**, without copying heap/account data. Faulting OS thread44188 is managed thread1. Managed frames at fatal exit are the WinUI Application.Start boundary; there is no current managed exception. Stowed headers include E_UNEXPECTED and E_FAIL. Recorded native stack arrays are not readable from this minidump through the current reader, so no originating app call is established.
+- The app's managed crash/error logs did not receive a new entry. Windows event/dump evidence therefore matters here; absence of a new managed log is not absence of a crash.
+
+## Trace findings and limits
+
+Evidence: `.codex-tmp/navigation-lag-oct27`. `findings.json`, `installed-session-ui-lag.txt`, `windows-crash-evidence.json`, `crash-stack-summary.json`, and both traces/analyses are preserved. The raw observer requests sampled stacks plus runtime method/loader/GC metadata, not HTTP headers/URLs, app EventSource payloads, exception messages or heap strings. Both observers have ended. The second observer's own .NET Runtime event at23:07:17 is a diagnostic `ServerNotAvailableException` after the desktop process vanished; **it is not a managed desktop crash**.
+
+The first complete trace includes method rundown for the same PID. The active trace ended abruptly with the crash and lacks rundown; it was salvaged with TraceLog ContinueOnError and mapped using34,166 same-process method ranges from the immediately preceding complete trace. Counts are stack observations, not elapsed CPU milliseconds; thread sampling includes idle states. Recursive method frames must be counted once per sample. The earlier recursive-frame-count report is retained but superseded by `active/cpu-summary.json` (unique counts).
+
+UI thread44188 has3,795 sampled stacks. `AccessibilityService.ApplyTypography`, Apply/ApplySaved and the queued OnNavigated accessibility callback occur in26 unique samples; navigation callbacks in11, Library OnNavigatedTo in10, PosterCard updates in8. A raw474 recursive-frame count overstated the typography hotspot and must not be used as CPU attribution. Native framework work is not fully symbolized. The trace confirms navigation/formatting paths run, but it **does not prove a sole slowdown cause or connect that work to the fatal exception**.
+
+Source inspection confirms `MainWindow.OnNavigated_ApplyAccessibility` queues an accessibility pass after every route, and `ApplySaved → Apply` synchronously loads/saves preferences, reapplies the theme and recursively rewrites typography. This is a concrete optimization candidate. Competing leads are native card/layout teardown and page realization. A server-only response delay cannot by itself establish the observed missed dispatcher ticks; request latency may still affect content arrival separately. An A/B reproduction must establish causal contribution before changing this path or claiming it fixes the crash.
+
+The computer-control helper did not give reliable navigation measurements: an attempted TV Shows click left Movies selected, and a later supposedly targeted screenshot showed another foreground application. No further input was sent after user-input interference. The recorded2.8-second click-plus-accessibility-snapshot duration is instrumentation overhead plus an unconfirmed action, **not a route benchmark**. The owner supplied the successful foreground navigation exercise. The app was not restarted automatically.
+
+## Follow-up: isolated navigation measurement (October 27)
+
+Continued from the preserved incident without modifying product source, installed binaries, user preferences, account data or sealed 321 payload. No installed SiloPlayer process was running when checked; it was not restarted automatically. No commit, push, installer build or publication was performed.
+
+Added an opt-in native diagnostic fixture, reached through the existing profile-menu fixture with `SILO_NATIVE_NAVIGATION_LATENCY=1`. It measures synchronous navigation, populated-page readiness and maximum dispatcher heartbeat gaps over 32 alternating Home/Library navigations. Synthetic catalog sizes of 1, 240 and 500 items were exercised. The accessibility navigation callback is enabled/disabled in an ABBA sequence in the test process only; normal fixture behavior remains unchanged. Requests use the fixture-only handler, temporary preferences and synthetic identity. No artwork downloads or real-account requests occur.
+
+The first three runs recorded maximum heartbeat gaps of 194.1ms, 259.0ms and 179.6ms respectively, with no 500ms threshold failures. After adding a detector positive control, a fresh 500-item run recorded a maximum 224.9ms gap, all 32 populated-page checks passed, and the normal profile-menu navigation regression also passed. A deliberate 650ms UI-thread sleep in the separate positive-control run produced a 928.5ms recorded gap and the expected test failure. This validates that the detector can reject a long UI-thread stall; it is NOT a reproduction of the owner's unexplained stall.
+
+Evidence is under `.codex-tmp/upstream-oct27/`: `navigation-latency-321-investigation-a`, `navigation-latency-321-investigation-b-240`, `navigation-latency-321-investigation-c-500`, `navigation-latency-321-positive-control`, `navigation-latency-321-final-500` and `navigation-latency-321-final-profile`. Each result directory retains its receipt and results; benchmark directories also retain `navigation-latency.json`. The initial diagnostic host was rebuilt during fixture development; its initial receipt records an intermediate host hash, not the final retained host. The final control host and sealed-payload mirror are retained separately. Product DLL SHA256 remains `19BB6F57AD5C3B43EC1CFC22E2772D7F87DCA0B810B07D0C368423838B39A1C3`.
+
+Reproduce against the sealed payload with a fresh evidence name (the runner refuses to overwrite existing results):
+
+~~~powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& 'D:\SiloPlayer\.codex-tmp\upstream-oct27\Run-Native-Final.ps1' -Name 'navigation-latency-321-next' -Selector 'profile-menu-navigation' -BuildHost -Extra @{ SILO_NATIVE_NAVIGATION_LATENCY='1'; SILO_NATIVE_NAVIGATION_ITEMS='500' }"
+~~~
+
+For a deliberate detector failure, add `SILO_NATIVE_NAVIGATION_PROBE_STALL_MS='650'` to Extra and use another fresh evidence name. This is a test-only positive control, never a product setting.
+
+Limits: windows are offscreen; the test drives real frame navigation but not physical sidebar clicks, foreground rendering, installed-account data, image loading or the precise route sequence from the incident. Readiness is a data/IsLoaded condition, not a presented-frame timestamp. ABBA reduces ordering bias but does not establish a performance cause when the reported symptom is absent. Neither disabling accessibility in this fixture nor successful synthetic checks proves the installed app fixed or clears the native crash. The next required evidence is a foreground reproduction in the installed app, with confirmed route transitions and heartbeat correlation. Avoid another CPU capture until unprofiled stalls are measured. No repair is justified from these results; 321 remains on publication hold.
+
+## Follow-up boundary
+
+Navigation sluggishness and the native crash are verified release blockers; the originating code and their relationship remain unresolved. Preserve the installed crash dump and sealed321 baseline. Build a foreground route/heartbeat reproduction and compare redundant accessibility/theme work with card/layout behavior using the same data. A native failure needs the stowed origin/first-failure stack or a controlled reproduction; do not label ApplyTypography or the API-v2 migration as the crash cause merely because they appear near the incident. No repair/installer update is claimed by this verification request.

@@ -273,14 +273,14 @@ public sealed class DirectStreamRelay
                     bytesWritten += ex.BytesCopied;
                     nextOffset += ex.BytesCopied;
                     _log?.Invoke(
-                        $"Direct stream retry {attempts}/{_maxRetries} from byte {nextOffset}: {ex.InnerException?.GetType().Name}: {ex.InnerException?.Message}");
+                        $"Direct stream retry {attempts}/{_maxRetries} from byte {nextOffset}: {ex.InnerException?.GetType().Name}: {LocalLog.RedactDiagnosticText(ex.InnerException?.Message)}");
                     BeginRecovery();
                     await DelayBeforeRetryAsync(attempts, cancellationToken);
                 }
                 catch (Exception ex) when (_supportsRanges && !cancellationToken.IsCancellationRequested && IsTransient(ex) && attempts <= _maxRetries)
                 {
                     _log?.Invoke(
-                        $"Direct stream retry {attempts}/{_maxRetries} from byte {nextOffset}: {ex.GetType().Name}: {ex.Message}");
+                        $"Direct stream retry {attempts}/{_maxRetries} from byte {nextOffset}: {ex.GetType().Name}: {LocalLog.RedactDiagnosticText(ex.Message)}");
                     BeginRecovery();
                     await DelayBeforeRetryAsync(attempts, cancellationToken);
                 }

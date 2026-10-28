@@ -4,11 +4,13 @@ A native Windows client for [Silo Server](https://github.com/Silo-Server/silo-se
 
 ## Download
 
-[**Download version 1.2.310 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.310/SiloInstaller-Windows-x64.exe)
+[**Download version 1.2.321 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.321/SiloInstaller-Windows-x64.exe)
 
 Requires Windows 10 version 1809 or newer, or Windows 11, and access to a Silo Server. Runtime dependencies are included in the installer.
 
-[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.310) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.310/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
+[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.321) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.321/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
+
+Known issues in 1.2.321: sluggish sidebar navigation and a WinUI crash during navigation remain under investigation. See the [release record](docs/releases/1.2.321.md).
 
 The installer is unsigned, so Windows may display an unknown-publisher warning.
 

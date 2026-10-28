@@ -371,35 +371,6 @@ public class OverlayConfigResponse
     public string? Defaults { get; set; }
 }
 
-public class ThemeCatalogResponse
-{
-    public int Version { get; set; }
-    public List<ThemeCatalogEntry> Themes { get; set; } = [];
-}
-
-public class ThemeCatalogEntry
-{
-    public string Id { get; set; } = "";
-    public string Name { get; set; } = "";
-    public string Description { get; set; } = "";
-    public string Author { get; set; } = "";
-    [JsonPropertyName("previewAccent")] public string PreviewAccent { get; set; } = "#ffffff";
-    [JsonPropertyName("previewBg")] public string PreviewBg { get; set; } = "#111111";
-    public List<string> Tags { get; set; } = [];
-    [JsonPropertyName("downloadUrl")] public string DownloadUrl { get; set; } = "";
-    public string Version { get; set; } = "";
-}
-
-public class ThemeFileResponse
-{
-    public int Version { get; set; }
-    public string Name { get; set; } = "";
-    [JsonPropertyName("baseTheme")] public string BaseTheme { get; set; } = "";
-    public Dictionary<string, string> Vars { get; set; } = [];
-    [JsonPropertyName("customCss")] public string CustomCss { get; set; } = "";
-}
-
-
 public class SettingsApi(SiloApiClient client)
 {
     private SubtitlePreferences? _subtitles;
@@ -598,20 +569,6 @@ public class SettingsApi(SiloApiClient client)
         return string.IsNullOrWhiteSpace(profileId)
             ? path
             : $"{path}?profile_id={Uri.EscapeDataString(profileId)}";
-    }
-
-    public async Task<ThemeCatalogResponse> GetThemeCatalogAsync(CancellationToken ct = default)
-        => (await client.GetAsync<ThemeDocument<ThemeCatalogResponse>>("/api/v2/theme/catalog", ct)).Document;
-
-    public async Task<ThemeFileResponse> DownloadThemeAsync(string url, CancellationToken ct = default)
-        => (await client.GetAsync<ThemeDocument<ThemeFileResponse>>($"/api/v2/theme/download?url={Uri.EscapeDataString(url)}", ct)).Document;
-
-    public async Task<ThemeCatalogResponse> RefreshThemeCatalogAsync(CancellationToken ct = default)
-        => (await client.PostAsync<ThemeDocument<ThemeCatalogResponse>>("/api/v2/theme/catalog/refresh", new Dictionary<string, object?>(), ct)).Document;
-
-    private sealed class ThemeDocument<T> where T : new()
-    {
-        public T Document { get; set; } = new();
     }
 
     /// <summary>

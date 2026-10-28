@@ -8,6 +8,22 @@ namespace SiloPlayer.Core.Services;
 /// </summary>
 public static partial class PlaybackUrlRedactor
 {
+    /// <summary>Removes signed URL authority from ordinary and relative diagnostics.</summary>
+    public static string RedactSignedCredentials(string text)
+    {
+        text = SignedDeliveryPathRegex().Replace(text, "${prefix}<redacted>");
+        return PathSegmentRegex().Replace(text, match =>
+        {
+            var segment = match.Value;
+            var trimmed = segment.TrimEnd('.', ',', ';', ':', '!', ')', ']', '}');
+            string decoded;
+            try { decoded = Uri.UnescapeDataString(trimmed); }
+            catch (UriFormatException) { return segment; }
+            return SignedTokenRegex().IsMatch(decoded)
+                ? "<redacted>" + segment[trimmed.Length..] : segment;
+        });
+    }
+
     public static string Redact(string? url)
     {
         if (string.IsNullOrWhiteSpace(url))
@@ -32,6 +48,8 @@ public static partial class PlaybackUrlRedactor
     private static string RedactPath(string path)
     {
         path = SignedNodeStreamRegex().Replace(path, "$1<redacted>");
+        path = SignedDeliveryPathRegex().Replace(path, "${prefix}<redacted>");
+        path = RedactSignedCredentials(path);
         path = IntegratedStreamRegex().Replace(path, "$1<redacted>");
         path = PlaybackSessionRegex().Replace(path, "$1<redacted>");
         return path;
@@ -51,4 +69,13 @@ public static partial class PlaybackUrlRedactor
         "(/(?:api/v1/)?playback/(?:transcode|ws)/)[^/]+",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex PlaybackSessionRegex();
+
+    [GeneratedRegex("(?<prefix>/(?:stream/(?:direct|remux|transcode|subtitles)|downloads/file)/)[^/\\s?#<>\"']+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex SignedDeliveryPathRegex();
+
+    [GeneratedRegex("(?<=/)[^/\\s?#<>\"']+", RegexOptions.CultureInvariant)]
+    private static partial Regex PathSegmentRegex();
+
+    [GeneratedRegex(@"^eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*$", RegexOptions.CultureInvariant)]
+    private static partial Regex SignedTokenRegex();
 }

@@ -89,7 +89,8 @@ public sealed class CurrentItemCardParityTests
         var root = FindRepositoryRoot();
         var code = File.ReadAllText(Path.Combine(
             root, "src", "SiloPlayer", "Controls", "PosterCard.xaml.cs"));
-        Assert.Contains("Series Premiere", code);
+        Assert.Contains("\"series_premiere\" => \"Premiere\"", code);
+        Assert.Contains("\"season_premiere\" => \"New Season\"", code);
         Assert.Contains("FormatUpcomingSchedule", code);
     }
 

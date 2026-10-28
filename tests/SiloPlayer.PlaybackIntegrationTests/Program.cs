@@ -11,6 +11,7 @@ var results = Path.Combine(Path.GetTempPath(), "silo-playback-integration-" + Gu
 Environment.SetEnvironmentVariable(LocalLog.LogDirectoryEnvironmentVariable, results);
 await IdleRemuxResumeChecks.RunAsync(results);
 await SiloCastScopeChecks.RunAsync(results);
+await AutoAudioStartChecks.RunAsync(results);
 using var http = new HttpClient(new RejectNetworkHandler());
 var api = new SiloApiClient(http);
 api.SetBaseUrl("https://fixture.invalid");
@@ -58,6 +59,9 @@ try
 
     var enterTerminal = typeof(PlayerService).GetMethod("EnterPlaybackTerminalState", BindingFlags.NonPublic | BindingFlags.Instance)!;
     var terminalState = typeof(PlayerService).GetField("_playbackTerminalState", BindingFlags.NonPublic | BindingFlags.Instance)!;
+    // These assertions model viewer retries after output. Startup errors before
+    // output require a real shell and are covered by the native startup fixture.
+    SetField("_transportHasFirstOutput", true);
     enterTerminal.Invoke(service, [new PlaybackPlanTerminalException("direct_recovery_exhausted", "fixture", true), 687.3, "buffering-stalled", false]);
     Require((string)Get(terminalState.GetValue(service)!, "Trigger") == "viewer-retry", "Exhausted direct recovery cannot start a fresh attempt.");
     enterTerminal.Invoke(service, [new PlaybackPlanTerminalException("transcode_start_failed", "fixture", true), 687.3, "playback-error", false]);

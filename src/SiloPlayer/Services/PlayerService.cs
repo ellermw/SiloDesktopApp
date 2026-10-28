@@ -462,6 +462,9 @@ public partial class PlayerService : IDisposable
     public Func<double?>? RoomPlaybackStartPosition { private get; set; }
     private bool _roomPlaybackPaused = true;
     private bool _transportHasFirstOutput;
+    private double? _transportStartPosition;
+    private double PlaybackRecoveryPosition => !_transportHasFirstOutput && _transportStartPosition is { } start
+        ? start : CurrentMediaPosition;
     public double UserSeekPosition => IsWatchTogetherPlayback ? RoomSeekPosition?.Invoke() ?? Position : Position;
 
     public void UpdateRoomSeekDisplay()
@@ -1927,6 +1930,7 @@ public partial class PlayerService : IDisposable
         if (string.IsNullOrWhiteSpace(shuffleId)) _shuffleController?.Leave();
         else ShuffleController.Attach(shuffleId);
         _resumePosition = 0;
+        _transportStartPosition = null;
         _activeTransportPlan = null;
         _timelineOffsetSeconds = 0;
         _transportDurationSeconds = null;
@@ -2043,7 +2047,10 @@ public partial class PlayerService : IDisposable
             var startPosition = IsAudiobook
                 ? Math.Max(0, absoluteStartPosition - _audiobookPartOffsetSeconds)
                 : absoluteStartPosition;
-            var selectedAudioTrackIndex = audioTrackIndex ?? bestVersion.EffectiveAudioTrackIndex;
+            // A catalog effective/default track is a preview, not a fresh
+            // viewer choice. Omit Auto so the server can honor remembered
+            // tracks and refine compatibility on the source it actually plays.
+            var selectedAudioTrackIndex = audioTrackIndex;
 
             PlaybackStartResponse session;
             try
@@ -2275,6 +2282,9 @@ public partial class PlayerService : IDisposable
         _fileLoadTimeoutCts = ownerCts;
         _restorePausedAfterLoad = IsWatchTogetherPlayback ? _roomPlaybackPaused : restorePaused;
         _transportHasFirstOutput = false;
+        _transportStartPosition = Math.Max(0, PlaybackTimeline.ToMediaTime(
+            prepared.ResumeAfterLoadSeconds > 0 ? prepared.ResumeAfterLoadSeconds : prepared.MpvLoadStartSeconds,
+            prepared.TimelineOffsetSeconds)) + _audiobookPartOffsetSeconds;
         _switchingContent = true;
         IsLoading = true;
         SetConnectionMediaActive(true);
@@ -2413,7 +2423,7 @@ public partial class PlayerService : IDisposable
 
             var attempt = Interlocked.Increment(ref _consecutiveFileLoadTimeouts);
             if (TryBufferingStartupRecovery()) return;
-            var mediaPosition = CurrentMediaPosition;
+            var mediaPosition = PlaybackRecoveryPosition;
             LogToFile(
                 "state_trace.txt",
                 $"File load timed out: attempt={attempt} " +
@@ -2685,7 +2695,7 @@ public partial class PlayerService : IDisposable
         _recoveryPauseIntentOverride = null;
         var roomStartupPosition = IsWatchTogetherPlayback && !_transportHasFirstOutput
             ? RoomPlaybackStartPosition?.Invoke() : null;
-        var resumePosition = roomStartupPosition ?? Math.Max(0, currentPosition - 2);
+        var resumePosition = roomStartupPosition ?? Math.Max(0, currentPosition - (_transportHasFirstOutput ? 2 : 0));
         var ct = _playbackCts?.Token ?? CancellationToken.None;
 
         _prematureEofRecoveryActive = true;
@@ -2871,6 +2881,14 @@ public partial class PlayerService : IDisposable
                         : error.Message,
                     CanRetry: true);
         ErrorMessage = description.Message;
+        // Before first output mpv has no usable video/ASS surface. Sending an
+        // OSC error to that surface leaves a blank native popup over the shell.
+        // Retire the failed session and use the existing XAML startup error.
+        if (!_transportHasFirstOutput && !IsAudiobook)
+        {
+            ShowStartupPlaybackFailure(description);
+            return;
+        }
         _playbackTerminalState = new PlaybackTerminalState(
             Math.Max(0, position),
             terminal?.Reason == "direct_recovery_exhausted" ? "viewer-retry" : trigger,
@@ -2896,6 +2914,34 @@ public partial class PlayerService : IDisposable
             "state_trace.txt",
             $"Playback terminal state: trigger={trigger} position={position:F1} " +
             $"reason={terminal?.Reason ?? error.GetType().Name} retryable={description.CanRetry}");
+    }
+
+    private void ShowStartupPlaybackFailure(PlaybackFailurePresentation description)
+    {
+        var manager = _playbackManager;
+        var generation = Volatile.Read(ref _fileLoadGeneration);
+        var window = App.MainWindowInstance;
+        window?.DispatcherQueue.TryEnqueue(async () =>
+        {
+            // A queued failure must never close a newer play request.
+            if (_closing || State == PlayerState.Idle ||
+                generation != Volatile.Read(ref _fileLoadGeneration) ||
+                !ReferenceEquals(manager, _playbackManager)) return;
+            LogToFile("state_trace.txt", "Startup playback failed before first output; returning to shell error surface.");
+            try
+            {
+                await CloseAsync();
+                if (State == PlayerState.Idle && _playbackManager == null && !_switchingContent)
+                    window.ShowPlaybackError(description.Title, description.Message);
+            }
+            catch (Exception ex)
+            {
+                LogToFile("state_trace.txt", $"Startup failure cleanup error: {ex.GetType().Name}");
+                _videoWindow?.Hide();
+                SetState(PlayerState.Idle);
+                window.ShowPlaybackError(description.Title, description.Message);
+            }
+        });
     }
 
     private void ClearPlaybackTerminalState()
@@ -4206,7 +4252,7 @@ public partial class PlayerService : IDisposable
             UpdateDisplayWakeLock(!paused && !_closing && State != PlayerState.Idle);
             if (IsAudiobook)
                 _audiobookPausedAt = paused ? DateTimeOffset.UtcNow : null;
-            var mediaPosition = CurrentMediaPosition;
+            var mediaPosition = PlaybackRecoveryPosition;
             UpdatePlaybackManagerPosition(mediaPosition, paused);
             if (!_closing && !_switchingContent && State != PlayerState.Idle)
                 _ = ReportSeekProgressAsync(mediaPosition, paused);
@@ -4396,7 +4442,7 @@ public partial class PlayerService : IDisposable
         if (_closing || State == PlayerState.Idle)
             return;
 
-        var mediaPosition = CurrentMediaPosition;
+        var mediaPosition = PlaybackRecoveryPosition;
         var mediaDuration = CurrentMediaDuration;
         if (!directTransport && IsAtMediaEnd(mediaPosition, mediaDuration))
             return;
@@ -6630,7 +6676,7 @@ public partial class PlayerService : IDisposable
             ExitAnyFullscreen();
 
         string? closedContentId = ContentId;
-        double closedPosition = CurrentMediaPosition;
+        double closedPosition = PlaybackRecoveryPosition;
         double closedDuration = CurrentMediaDuration;
         var audiobookProgressTask = IsAudiobook
             ? ReportAudiobookProgressAsync(closedPosition, force: true)
@@ -6722,6 +6768,7 @@ public partial class PlayerService : IDisposable
         _activeTransportPlan = null;
         _recoveryPauseIntentOverride = null;
         _timelineOffsetSeconds = 0;
+        _transportStartPosition = null;
         _transportDurationSeconds = null;
         _canSeekAnywhere = true;
         _activeHlsRecipe = null;

@@ -183,14 +183,8 @@ public sealed class UICustomizationService(SettingsApi settingsApi)
         _ => contentWidth >= 1280 ? 8 : contentWidth >= 1024 ? 7 : contentWidth >= 768 ? 5 : contentWidth >= 640 ? 4 : 3,
     };
 
-    public double CardCaptionHeight => CardPresentation.Caption switch
-    {
-        "artwork" => 0,
-        "title" => 36,
-        // Episode posters show series title, episode title and episode code.
-        // Reserve the complete three-line caption in both cards and grid rows.
-        _ => 76,
-    };
+    // Always reserve the complete series/title/episode metadata caption.
+    public double CardCaptionHeight => 76;
 
     private void Reset(bool supported, bool unavailable)
     {

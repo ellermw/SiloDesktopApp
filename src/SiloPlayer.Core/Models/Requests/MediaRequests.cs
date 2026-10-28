@@ -15,6 +15,7 @@ public class RequestFeatureStatus
     public bool DownloadProgressSupported { get; set; }
     public bool WatchlistTitlesSupported { get; set; }
     public bool WatchlistRequests { get; set; }
+    public bool DiscoverRowsSupported { get; set; }
 }
 
 public class RequestState
@@ -95,6 +96,15 @@ public class RequestDiscoverySection : RequestMediaPage
 public class RequestDiscoveryResponse
 {
     public List<RequestDiscoverySection> Sections { get; set; } = [];
+    // Null identifies the older contract. An explicit empty layout must stay empty.
+    public List<RequestDiscoverRow>? RowOrder { get; set; }
+}
+
+public class RequestDiscoverRow
+{
+    public string Key { get; set; } = "";
+    public string Type { get; set; } = "";
+    public string Title { get; set; } = "";
 }
 
 public class DiscoverBrandCard

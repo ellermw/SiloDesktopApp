@@ -48,7 +48,7 @@ internal static class RequestsLifecycleNativeFixture
             timer.Stop();
             if (!vm.IsLoadingDiscovery) throw new InvalidOperationException("Fixture failed to keep independent discovery pending during live account polling.");
             wire.Discovery.SetResult(Response("{\"items\":[{\"key\":\"trending_movies\",\"title\":\"Trending movies\",\"results\":[{\"media_type\":\"movie\",\"tmdb_id\":42,\"title\":\"Retained rail\",\"request\":{\"requestable\":true}}]}]}"));
-            await Until(() => !vm.IsLoadingDiscovery && ((StackPanel)page.FindName("DiscoveryList")).Children.Count == 1);
+            await Until(() => !vm.IsLoadingDiscovery && ((StackPanel)page.FindName("DiscoveryList")).Children.Count == 4);
             var rail = ((StackPanel)page.FindName("DiscoveryList")).Children[0];
             var before = wire.MineReads;
             var original = vm.MyRequests[0]; wire.PendingMine = new(TaskCreationOptions.RunContinuationsAsynchronously);

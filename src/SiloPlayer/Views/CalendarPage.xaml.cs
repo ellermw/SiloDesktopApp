@@ -42,7 +42,6 @@ public sealed partial class CalendarPage : Page
     private int _layoutBucket = -1;
     private double _gutter = 48;
     private double _eventCardWidth = 185;
-    private string _captionPresentation = "title_metadata";
     private CancellationTokenSource? _imageLoadCts;
     private readonly UICustomizationService _uiCustomization = App.Services.GetRequiredService<UICustomizationService>();
     private readonly Dictionary<string, Border> _focusedPills = new(StringComparer.Ordinal);
@@ -634,7 +633,7 @@ public sealed partial class CalendarPage : Page
         });
 
         var subtitle = FormatSubtitle(ev);
-        if (_uiCustomization.CardPresentation.Caption == "title_metadata" && !string.IsNullOrEmpty(subtitle))
+        if (!string.IsNullOrEmpty(subtitle))
         {
             textStack.Children.Add(new TextBlock
             {
@@ -652,7 +651,7 @@ public sealed partial class CalendarPage : Page
         }
 
         var airTime = FormatAirTime(ev.AirTime, ev.AirAt);
-        if (_uiCustomization.CardPresentation.Caption == "title_metadata" && !string.IsNullOrEmpty(airTime))
+        if (!string.IsNullOrEmpty(airTime))
         {
             textStack.Children.Add(new TextBlock
             {
@@ -667,7 +666,7 @@ public sealed partial class CalendarPage : Page
         }
 
         Grid.SetRow(textStack, 1);
-        textStack.Visibility = _uiCustomization.CardPresentation.Caption == "artwork" ? Visibility.Collapsed : Visibility.Visible;
+        textStack.Visibility = Visibility.Visible;
         root.Children.Add(textStack);
 
         // Use an actual button rather than a mouse-only tapped Grid. This keeps
@@ -713,8 +712,8 @@ public sealed partial class CalendarPage : Page
     {
         var label = badge switch
         {
-            "series_premiere" => "Series Premiere",
-            "season_premiere" => "Season Premiere",
+            "series_premiere" => "Premiere",
+            "season_premiere" => "New Season",
             "finale" => "Finale",
             _ => badge,
         };
@@ -963,8 +962,6 @@ public sealed partial class CalendarPage : Page
 
         var bucket = viewportWidth < 640 ? 0 : viewportWidth < 1024 ? 1 : 2;
         var previousCardWidth = _eventCardWidth;
-        var previousCaption = _captionPresentation;
-        _captionPresentation = _uiCustomization.CardPresentation.Caption;
         _eventCardWidth = _uiCustomization.CardPresentation.PosterSize switch
         {
             "compact" => bucket switch { 0 => 120, 1 => 140, _ => 160 },
@@ -979,7 +976,7 @@ public sealed partial class CalendarPage : Page
         foreach (var element in _skeletonRows)
             element.Margin = new Thickness(_gutter, 0, _gutter, 0);
 
-        if (_layoutBucket != bucket || previousCardWidth != _eventCardWidth || previousCaption != _captionPresentation)
+        if (_layoutBucket != bucket || previousCardWidth != _eventCardWidth)
         {
             var hadLayout = _layoutBucket >= 0;
             _layoutBucket = bucket;

@@ -23,8 +23,8 @@ public sealed class RequestDetailCurrentParitySourceTests
 
         Assert.Contains("x:Name=\"LoadingBackButton\"", markup);
         Assert.Contains("AutomationProperties.Name=\"Go back\"", markup);
-        // Recommendations now share the same actionable card as discovery grids.
-        Assert.Contains("ExternalTitleCard.Build(item, width, request, watchlist)", source);
+        // Recommendations retain navigation/watchlist while requesting stays on detail.
+        Assert.Contains("ExternalTitleCard.Build(item, width, watchlist: watchlist)", source);
         Assert.Contains("RequestViewerPolicy.Label", source);
         Assert.Contains("RequestDownloadProgress.Build", source);
         Assert.Contains("FormatVoteCount(item.VoteCount.Value)", source);

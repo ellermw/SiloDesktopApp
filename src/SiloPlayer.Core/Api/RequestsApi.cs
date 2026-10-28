@@ -4,6 +4,10 @@ namespace SiloPlayer.Core.Api;
 
 public class RequestsApi(SiloApiClient client)
 {
+    private ApiRequestContext? _discoverContext;
+    private bool _discoverRowsSupported;
+    public ApiRequestContext CaptureContext() => client.CaptureContext();
+    public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
     public Task<MediaRequest> GetAsync(string id, CancellationToken ct = default)
         => client.GetAsync<MediaRequest>($"/api/v2/requests/{Uri.EscapeDataString(id)}", ct);
 
@@ -22,15 +26,34 @@ public class RequestsApi(SiloApiClient client)
     public Task RemoveWatchlistTitleAsync(string mediaType, int tmdbId, CancellationToken ct = default)
         => client.DeleteAsync($"/api/v2/watchlist/titles/{Uri.EscapeDataString(mediaType)}/{tmdbId}", ct);
 
-    public Task<RequestFeatureStatus> GetStatusAsync(CancellationToken ct = default)
-        => client.GetAsync<RequestFeatureStatus>("/api/v2/requests/status", ct);
+    public async Task<RequestFeatureStatus> GetStatusAsync(CancellationToken ct = default)
+    {
+        var context = client.CaptureContext();
+        var status = await client.GetAsync<RequestFeatureStatus>("/api/v2/requests/status", ct);
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Request viewer changed.", ct);
+        _discoverContext = context; _discoverRowsSupported = status.DiscoverRowsSupported;
+        return status;
+    }
 
     public async Task<RequestDiscoveryResponse> GetDiscoveryAsync(CancellationToken ct = default)
-        => new() { Sections = (await client.GetAsync<BrowseCollection<RequestDiscoverySection>>("/api/v2/requests/discover", ct)).Items };
+    {
+        var context = client.CaptureContext();
+        var page = await client.GetAsync<DiscoverCollection>("/api/v2/requests/discover", ct);
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Request viewer changed.", ct);
+        if (page.RowOrder != null) { _discoverContext = context; _discoverRowsSupported = true; }
+        return new() { Sections = page.Items, RowOrder = page.RowOrder ?? (UsesDiscoverRows ? [] : null) };
+    }
+
+    private bool UsesDiscoverRows => _discoverRowsSupported && _discoverContext is { } context && client.IsCurrentContext(context);
+    private sealed class DiscoverCollection
+    {
+        public List<RequestDiscoverySection> Items { get; set; } = [];
+        public List<RequestDiscoverRow>? RowOrder { get; set; }
+    }
 
     public Task<RequestDiscoverySection> GetDiscoverySectionAsync(string section, int page = 1, CancellationToken ct = default)
         => client.GetAsync<RequestDiscoverySection>(
-            $"/api/v2/requests/discover/{Uri.EscapeDataString(section)}?page={page}", ct);
+            $"/api/v2/requests/discover/{(UsesDiscoverRows ? "rows/" : "")}{Uri.EscapeDataString(section)}?page={page}", ct);
 
     public async Task<DiscoverStudiosResponse> GetDiscoverStudiosAsync(CancellationToken ct = default)
         => new() { Studios = (await client.GetAsync<BrowseCollection<DiscoverBrandCard>>("/api/v2/requests/discover/studios", ct)).Items };

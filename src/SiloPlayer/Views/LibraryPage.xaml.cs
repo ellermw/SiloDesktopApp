@@ -3407,11 +3407,9 @@ public sealed partial class LibraryPage : Page,
             Children = { posterGrid }
         };
 
-        var cardCaption = _uiCustomizationService.CardPresentation.Caption;
-        if (cardCaption != "artwork")
-            content.Children.Add(titleText);
+        content.Children.Add(titleText);
 
-        if (collection.IsUserCollection && cardCaption == "title_metadata")
+        if (collection.IsUserCollection)
         {
             content.Children.Add(new TextBlock
             {

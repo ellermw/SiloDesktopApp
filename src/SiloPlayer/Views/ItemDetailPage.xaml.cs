@@ -730,7 +730,6 @@ public sealed partial class ItemDetailPage : Page
             "large" => viewport >= 1024 ? 220d : viewport >= 640 ? 195d : 170d,
             _ => viewport >= 1024 ? 185d : viewport >= 640 ? 160d : 140d,
         };
-        var showCaption = _uiCustomizationService.CardPresentation.Caption != "artwork";
         SimilarLoadingSkeleton.Spacing = viewport >= 1024 ? 20 : 16;
         foreach (var placeholder in SimilarLoadingSkeleton.Children.OfType<StackPanel>())
         {
@@ -738,12 +737,12 @@ public sealed partial class ItemDetailPage : Page
             placeholder.Children.OfType<SkeletonPoster>().Single().SetResponsiveWidth(cardWidth);
             var caption = placeholder.Children.OfType<SkeletonText>().Single();
             caption.Width = cardWidth * .75; caption.HorizontalAlignment = HorizontalAlignment.Left;
-            caption.Visibility = showCaption ? Visibility.Visible : Visibility.Collapsed;
+            caption.Visibility = Visibility.Visible;
         }
         foreach (var child in SimilarPanel.Children)
         {
             if (child is RecommendationPosterCard card)
-                card.SetLayout(cardWidth, showCaption);
+                card.SetLayout(cardWidth);
         }
     }
 

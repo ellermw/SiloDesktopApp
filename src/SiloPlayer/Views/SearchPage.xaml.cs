@@ -315,13 +315,6 @@ public sealed partial class SearchPage : Page
     private void BuildExternalRequestCard(ContentControl host, RequestMediaResult item)
     {
         host.Content = SiloPlayer.Controls.ExternalTitleCard.Build(item, _catalogCardWidth,
-            request: async () =>
-            {
-                await ViewModel.RequestOutsideTitleAsync(item);
-                if (!ReferenceEquals(host.Tag, item) || !ViewModel.OutsideLibraryResults.Contains(item)) return;
-                BuildExternalRequestCard(host, item);
-                App.Services.GetRequiredService<ToastService>().Success("Request submitted");
-            },
             watchlist: ViewModel.OutsideWatchlistTitlesSupported ? async () =>
             {
                 await ViewModel.ToggleOutsideWatchlistAsync(item);

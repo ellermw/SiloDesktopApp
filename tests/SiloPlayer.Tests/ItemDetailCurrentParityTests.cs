@@ -92,7 +92,8 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("FontWeight=\"ExtraBold\"", xaml);
         Assert.Contains("new CarouselRail(SimilarScroller, webUiEdges: true)", code);
         Assert.Contains("_ => contentWidth >= 1280 ? 8", customization);
-        Assert.Contains("card.SetLayout(cardWidth, showCaption)", code);
+        Assert.Contains("card.SetLayout(cardWidth)", code);
+        Assert.DoesNotContain("showCaption", code);
         Assert.Contains("x:Name=\"SimilarPanel\" Orientation=\"Horizontal\" Spacing=\"20\"", xaml);
         Assert.Contains("response.Items.Where(item => item.UserState?.NotInterested != true).Take(12)", viewModel);
         Assert.Contains("x:Name=\"SeasonsPrevButton\"", xaml);

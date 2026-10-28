@@ -424,101 +424,22 @@
                 <StackPanel x:Name="InterfaceControls" Spacing="24">
 
 
-                    <Border Style="{StaticResource SettingsGroupStyle}">
-                        <StackPanel Spacing="14">
-                            <StackPanel Spacing="4">
-                                <TextBlock Text="Card preset" FontSize="14" FontWeight="SemiBold" />
-                                <TextBlock Text="Start with a complete layout, then adjust poster size or captions below."
-                                           FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                            </StackPanel>
-                            <Border x:Name="InterfaceCardDeviceOverrideNotice" Background="{StaticResource CardBackgroundBrush}"
-                                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10"
-                                    Padding="14" Visibility="Collapsed">
-                                <Grid ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                    <TextBlock Text="This PC has a higher-priority device card layout. Clear it before editing the layout shared by desktop apps."
-                                               FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                                    <Button Grid.Column="1" Content="Use desktop-family layout" Click="ClearInterfaceCardDeviceOverride_Click" />
-                                </Grid>
-                            </Border>
-                            <Grid x:Name="InterfacePresetGrid" ColumnSpacing="12" RowSpacing="12">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="Auto" />
-                                </Grid.RowDefinitions>
-                                <Button x:Name="BalancedCardPreset" Tag="standard:title_metadata" Click="CardPreset_Click"
-                                        Style="{StaticResource SettingsPresetStyle}">
-                                    <Grid Tag="preset-icon-row" ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <StackPanel Spacing="4">
-                                        <TextBlock Text="Balanced" FontWeight="SemiBold" />
-                                        <TextBlock Text="Standard posters with titles and metadata." FontSize="12" LineHeight="19.5" LineStackingStrategy="BlockLineHeight"
-                                                   Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                                    </StackPanel>
-                                        <Viewbox Grid.Column="1" Width="16" Height="16" VerticalAlignment="Top" Visibility="Collapsed">
-                                            <Canvas Width="24" Height="24"><Path Data="M20 6L9 17l-5-5" Stroke="{StaticResource AccentBrush}" StrokeThickness="2"
-                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas>
-                                        </Viewbox>
-                                    </Grid>
-                                </Button>
-                                <Button x:Name="CompactCardPreset" Grid.Column="1" Tag="compact:title" Click="CardPreset_Click"
-                                        Style="{StaticResource SettingsPresetStyle}">
-                                    <Grid Tag="preset-icon-row" ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <StackPanel Spacing="4">
-                                        <TextBlock Text="Compact" FontWeight="SemiBold" />
-                                        <TextBlock Text="More posters on screen with titles only." FontSize="12" LineHeight="19.5" LineStackingStrategy="BlockLineHeight"
-                                                   Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                                    </StackPanel>
-                                        <Viewbox Grid.Column="1" Width="16" Height="16" VerticalAlignment="Top" Visibility="Collapsed">
-                                            <Canvas Width="24" Height="24"><Path Data="M20 6L9 17l-5-5" Stroke="{StaticResource AccentBrush}" StrokeThickness="2"
-                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas>
-                                        </Viewbox>
-                                    </Grid>
-                                </Button>
-                                <Button x:Name="CinemaCardPreset" Grid.Row="1" Tag="large:title" Click="CardPreset_Click"
-                                        Style="{StaticResource SettingsPresetStyle}">
-                                    <Grid Tag="preset-icon-row" ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <StackPanel Spacing="4">
-                                        <TextBlock Text="Cinema" FontWeight="SemiBold" />
-                                        <TextBlock Text="Large posters with titles only." FontSize="12" LineHeight="19.5" LineStackingStrategy="BlockLineHeight"
-                                                   Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                                    </StackPanel>
-                                        <Viewbox Grid.Column="1" Width="16" Height="16" VerticalAlignment="Top" Visibility="Collapsed">
-                                            <Canvas Width="24" Height="24"><Path Data="M20 6L9 17l-5-5" Stroke="{StaticResource AccentBrush}" StrokeThickness="2"
-                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas>
-                                        </Viewbox>
-                                    </Grid>
-                                </Button>
-                                <Button x:Name="ArtworkCardPreset" Grid.Row="1" Grid.Column="1" Tag="large:artwork" Click="CardPreset_Click"
-                                        Style="{StaticResource SettingsPresetStyle}">
-                                    <Grid Tag="preset-icon-row" ColumnSpacing="12">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <StackPanel Spacing="4">
-                                        <TextBlock Text="Artwork only" FontWeight="SemiBold" />
-                                        <TextBlock Text="Large artwork without caption rows." FontSize="12" LineHeight="19.5" LineStackingStrategy="BlockLineHeight"
-                                                   Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
-                                    </StackPanel>
-                                        <Viewbox Grid.Column="1" Width="16" Height="16" VerticalAlignment="Top" Visibility="Collapsed">
-                                            <Canvas Width="24" Height="24"><Path Data="M20 6L9 17l-5-5" Stroke="{StaticResource AccentBrush}" StrokeThickness="2"
-                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" /></Canvas>
-                                        </Viewbox>
-                                    </Grid>
-                                </Button>
-                            </Grid>
-                        </StackPanel>
+                    <Border x:Name="InterfaceCardDeviceOverrideNotice" Background="{StaticResource CardBackgroundBrush}"
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10"
+                            Padding="14" Visibility="Collapsed">
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="This PC has a higher-priority device card layout. Clear it before editing the layout shared by desktop apps."
+                                       FontSize="12" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
+                            <Button Grid.Column="1" Content="Use desktop-family layout" Click="ClearInterfaceCardDeviceOverride_Click" />
+                        </Grid>
                     </Border>
 
                     <Border Style="{StaticResource SettingsGroupStyle}">
                         <StackPanel Spacing="16">
                             <StackPanel Spacing="4">
                                 <TextBlock Text="Poster cards" FontSize="14" FontWeight="SemiBold" />
-                                <TextBlock Text="Fine-tune density and the rows shown below artwork. Changes apply immediately."
+                                <TextBlock Text="Choose poster size. Titles and metadata are always shown. Changes apply immediately."
                                            FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" TextWrapping="Wrap" />
                             </StackPanel>
                             <Grid ColumnSpacing="24">
@@ -535,16 +456,6 @@
                                             <ComboBoxItem Content="Compact" Tag="compact" />
                                             <ComboBoxItem Content="Standard" Tag="standard" />
                                             <ComboBoxItem Content="Large" Tag="large" />
-                                        </ComboBox>
-                                    </StackPanel>
-                                    <StackPanel Spacing="6">
-                                        <TextBlock Text="Caption" FontSize="13" FontWeight="SemiBold" />
-                                        <controls:WrapPanel x:Name="InterfaceCaptionChoices" HorizontalSpacing="8" VerticalSpacing="8" />
-                                        <ComboBox x:Name="InterfaceCaptionCombo" Visibility="Collapsed" HorizontalAlignment="Stretch"
-                                                  SelectionChanged="InterfaceCardOption_SelectionChanged">
-                                            <ComboBoxItem Content="Title &amp; metadata" Tag="title_metadata" />
-                                            <ComboBoxItem Content="Title only" Tag="title" />
-                                            <ComboBoxItem Content="Artwork only" Tag="artwork" />
                                         </ComboBox>
                                     </StackPanel>
                                 </StackPanel>

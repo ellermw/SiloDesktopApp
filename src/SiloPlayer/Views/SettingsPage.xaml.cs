@@ -35,7 +35,9 @@ public sealed partial class SettingsPage : Page
     public event Action<string>? SettingsSectionChanged;
     public string? ActiveSettingsSection { get; private set; }
     private bool _shellSidebarHosted;
-    private double SettingsViewportWidth => WebUiViewport.Width(this, ActualWidth > 0 ? ActualWidth : Frame?.Width ?? 0);
+    private double SettingsViewportWidth => ActualWidth > 0
+        ? WebUiViewport.Width(this, ActualWidth)
+        : Frame is { } frame ? WebUiViewport.Width(frame, frame.ActualWidth) : 0;
     public void SelectSettingsSection(string section)
     {
         if (ResolveSettingsTabButton(section) is { } button) ShowSettingsDetail(button);
@@ -269,7 +271,6 @@ public sealed partial class SettingsPage : Page
         SettingsHeaderGrid.Visibility = isCompact && !_showingSettingsOverview ? Visibility.Collapsed : Visibility.Visible;
         ReflowSettingsRows(SettingsContentPanel, SettingsViewportWidth < 768);
         ReflowSettingsDirectory();
-        ReflowInterfacePresets();
         ReflowSettingsShell();
     }
 
@@ -331,19 +332,6 @@ public sealed partial class SettingsPage : Page
 
     private void ReflowSettingsGroupPadding(DependencyObject parent, bool narrow) => ReflowSettingsSections();
 
-    private void ReflowInterfacePresets()
-    {
-        var singleColumn = ActualWidth < 640;
-        while (InterfacePresetGrid.RowDefinitions.Count < 4)
-            InterfacePresetGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        InterfacePresetGrid.ColumnDefinitions[1].Width = singleColumn ? new GridLength(0) : new GridLength(1, GridUnitType.Star);
-        var presets = new[] { BalancedCardPreset, CompactCardPreset, CinemaCardPreset, ArtworkCardPreset };
-        for (var index = 0; index < presets.Length; index++)
-        {
-            Grid.SetColumn(presets[index], singleColumn ? 0 : index % 2);
-            Grid.SetRow(presets[index], singleColumn ? index : index / 2);
-        }
-    }
 
     private static void SetSettingsNavigationGroupLayout(StackPanel group, bool isCompact)
     {
@@ -1006,7 +994,7 @@ _webhookPlexAuthCts?.Cancel();
             ]),
             ("Appearance",
             [
-                ("Interface", "Navigation & Cards", "Poster size, captions, shortcuts and badges on posters, and your menu.", "\uE7F8", "navigation menu poster size card captions title year artwork preset badges overlay accent color corner position quick actions favorite watched server defaults add link reset"),
+                ("Interface", "Navigation & Cards", "Poster size, shortcuts and badges on posters, and your menu.", "\uE7F8", "navigation menu poster size card title year artwork badges overlay accent color corner position quick actions favorite watched server defaults add link reset"),
                 ("TitlePages", "Title Pages", "Title art, theme music, spoilers, and age guidance.", "\uE8B2", "title art logo clearlogo theme music loop spoilers blur unwatched descriptions advisory age"),
                 ("Accessibility", "Accessibility", "Text size, weight, contrast, and date and time formats.", "\uE7F3", "contrast readability motion transparency text size weight date time clock"),
             ]),
@@ -1237,7 +1225,7 @@ _webhookPlexAuthCts?.Cancel();
         {
             (PlaybackTab, "playback quality language skipping video spoken metadata auto skip intros credits recaps preview auto play next up episodes seek rewind fast-forward audiobook intervals"),
             (SubtitlesTab, "subtitles subtitle language behavior forced captions font size family color outline background opacity position preview"),
-            (InterfaceTab, "navigation cards menu poster size card captions title year artwork preset primary menu title art logo clearlogo apply all devices"),
+            (InterfaceTab, "navigation cards menu poster size card title year artwork primary menu title art logo clearlogo apply all devices"),
             (AccessibilityTab, "accessibility readability contrast motion transparency text size weight high contrast preview date time format clock"),
             (HomeScreenTab, "home screen sections layout rows continue watching next up recently added library order scope reset"),
             (TitlePagesTab, "title pages title art logo theme music loop spoilers blur unwatched episode descriptions advisory age"),
@@ -1455,10 +1443,8 @@ _webhookPlexAuthCts?.Cancel();
         var presentation = _uiCustomizationService.CardPresentation;
         _suppressInterfaceEvents = true;
         SelectComboBoxByTag(InterfacePosterSizeCombo, presentation.PosterSize);
-        SelectComboBoxByTag(InterfaceCaptionCombo, presentation.Caption);
         _suppressInterfaceEvents = false;
         BuildInterfaceRadioChoices(InterfacePosterSizeChoices, InterfacePosterSizeCombo);
-        BuildInterfaceRadioChoices(InterfaceCaptionChoices, InterfaceCaptionCombo);
 
         var cardDeviceOverride = string.Equals(
             _uiCustomizationService.CardPresentationSource,
@@ -1471,15 +1457,8 @@ _webhookPlexAuthCts?.Cancel();
         InterfaceCardDeviceOverrideNotice.Visibility = cardDeviceOverride ? Visibility.Visible : Visibility.Collapsed;
         InterfaceMenuDeviceOverrideNotice.Visibility = menuDeviceOverride ? Visibility.Visible : Visibility.Collapsed;
         InterfacePosterSizeCombo.IsEnabled = !cardDeviceOverride;
-        InterfaceCaptionCombo.IsEnabled = !cardDeviceOverride;
         SetSettingsEnabled(InterfacePosterSizeChoices, !cardDeviceOverride);
-        SetSettingsEnabled(InterfaceCaptionChoices, !cardDeviceOverride);
-        BalancedCardPreset.IsEnabled = !cardDeviceOverride;
-        CompactCardPreset.IsEnabled = !cardDeviceOverride;
-        CinemaCardPreset.IsEnabled = !cardDeviceOverride;
-        ArtworkCardPreset.IsEnabled = !cardDeviceOverride;
 
-        UpdateInterfacePresetVisuals();
         BuildInterfaceCardPreview();
         BuildInterfacePrimaryMenu();
         BuildInterfaceAddMenuChoices();
@@ -1495,28 +1474,16 @@ _webhookPlexAuthCts?.Cancel();
                 : Visibility.Collapsed;
     }
 
-    private async void CardPreset_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button { Tag: string value }) return;
-        var parts = value.Split(':');
-        if (parts.Length != 2) return;
-        await SaveInterfaceCardPresentationAsync(new CardPresentation
-        {
-            PosterSize = parts[0],
-            Caption = parts[1],
-        });
-    }
 
     private async void InterfaceCardOption_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_suppressInterfaceEvents ||
-            InterfacePosterSizeCombo.SelectedItem is not ComboBoxItem { Tag: string posterSize } ||
-            InterfaceCaptionCombo.SelectedItem is not ComboBoxItem { Tag: string caption })
+            InterfacePosterSizeCombo.SelectedItem is not ComboBoxItem { Tag: string posterSize })
             return;
         await SaveInterfaceCardPresentationAsync(new CardPresentation
         {
             PosterSize = posterSize,
-            Caption = caption,
+            Caption = "title_metadata",
         });
     }
 
@@ -1582,31 +1549,14 @@ _webhookPlexAuthCts?.Cancel();
         }
     }
 
-    private void UpdateInterfacePresetVisuals()
-    {
-        var current = $"{_uiCustomizationService.CardPresentation.PosterSize}:{_uiCustomizationService.CardPresentation.Caption}";
-        foreach (var button in new[] { BalancedCardPreset, CompactCardPreset, CinemaCardPreset, ArtworkCardPreset })
-        {
-            var active = string.Equals(button.Tag as string, current, StringComparison.Ordinal);
-            button.Opacity = button.IsEnabled ? 1 : .6;
-            button.BorderThickness = new Thickness(1);
-            var accent = ((SolidColorBrush)Application.Current.Resources["AccentBrush"]).Color;
-            button.BorderBrush = active ? new SolidColorBrush(accent) { Opacity = .5 } : (Brush)Resources["SettingsBorderBrush"];
-            button.Background = active ? new SolidColorBrush(accent) { Opacity = .08 } : (Brush)Resources["SettingsPresetBrush"];
-            var content = (Grid)button.Content;
-            var check = content.Children.OfType<Viewbox>().Single();
-            check.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetItemStatus(button, active ? "Selected" : "Not selected");
-        }
-    }
 
     private void BuildInterfaceCardPreview()
     {
         var presentation = _uiCustomizationService.CardPresentation;
         NavigationPreviewPoster.Width = presentation.PosterSize switch { "compact" => 146, "large" => 218, _ => 178 };
         NavigationPreviewPoster.Height = NavigationPreviewPoster.Width * 1.5;
-        NavigationPreviewCaption.Visibility = presentation.Caption == "artwork" ? Visibility.Collapsed : Visibility.Visible;
-        NavigationPreviewYear.Visibility = presentation.Caption == "title_metadata" ? Visibility.Visible : Visibility.Collapsed;
+        NavigationPreviewCaption.Visibility = Visibility.Visible;
+        NavigationPreviewYear.Visibility = Visibility.Visible;
     }
 
     private void BuildInterfacePrimaryMenu()

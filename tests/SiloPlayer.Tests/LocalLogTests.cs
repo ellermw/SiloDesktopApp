@@ -4,6 +4,67 @@ namespace SiloPlayer.Tests;
 
 public sealed class LocalLogTests
 {
+    private const string SignedFixtureToken = "eyJhbGciOiJIUzI1NiJ9.eyJmaXh0dXJlIjp0cnVlfQ.c3ludGhldGlj";
+
+    [Fact]
+    public void EncodedQueryNames_AreRedactedInOrdinaryAndRelativeExceptionLogs()
+    {
+        var dir = CreateTempLogDir();
+        try
+        {
+            const string relative = "/api/v2/stream/session?%73%74=fixture-encoded-stream&%64%74=fixture-encoded-download&seek=15";
+            LocalLog.AppendLine("transport.txt", "GET " + relative, dir);
+            LocalLog.AppendLines("transport.txt", ["GET /media?%54%4f%4b%45%4e=fixture-encoded-account&part=2"], dir);
+            LocalLog.AppendException("transport.txt", new IOException("Failed " + relative), "fetch", logDirectory: dir);
+            var log = File.ReadAllText(Path.Combine(dir, "transport.txt"));
+            Assert.DoesNotContain("fixture-encoded-stream", log);
+            Assert.DoesNotContain("fixture-encoded-download", log);
+            Assert.DoesNotContain("fixture-encoded-account", log);
+            Assert.Contains("%73%74=<redacted>", log);
+            Assert.Contains("%64%74=<redacted>", log);
+            Assert.Contains("seek=15", log);
+            Assert.Contains("part=2", log);
+        }
+        finally { DeleteTempLogDir(dir); }
+    }
+
+    [Fact]
+    public void OrdinaryLogWrites_RedactSignedPathsAndStreamDownloadQueries()
+    {
+        var dir = CreateTempLogDir();
+        try
+        {
+            LocalLog.AppendLine("transport.txt", "HTTP failure: GET https://node.fixture/stream/transcode/" + SignedFixtureToken + "/master.m3u8?st=fixture-stream&dt=fixture-download&seek=15", dir);
+            LocalLog.AppendLines("transport.txt", ["HEAD /downloads/file/%65" + SignedFixtureToken[1..] + "!", "opaque /resources/%65" + SignedFixtureToken[1..] + ")", "normal /media/feature.mkv seek=15 HTTP 502"], dir);
+            var log = File.ReadAllText(Path.Combine(dir, "transport.txt"));
+            Assert.DoesNotContain(SignedFixtureToken, log);
+            Assert.DoesNotContain(SignedFixtureToken[1..], log);
+            Assert.DoesNotContain("fixture-stream", log);
+            Assert.DoesNotContain("fixture-download", log);
+            Assert.Contains("normal /media/feature.mkv seek=15 HTTP 502", log);
+            Assert.Contains("seek=15", log);
+        }
+        finally { DeleteTempLogDir(dir); }
+    }
+
+    [Fact]
+    public void NestedDiagnosticFailure_RedactsRelativeSignedUrlsAndUnquotedStreamTokens()
+    {
+        var dir = CreateTempLogDir();
+        try
+        {
+            LocalLog.AppendException("errors.txt", new IOException("relative /downloads/file/" + SignedFixtureToken,
+                new HttpRequestException("st=fixture-stream dt: fixture-download /stream/subtitles/" + SignedFixtureToken + "/0")), "media", logDirectory: dir);
+            var log = File.ReadAllText(Path.Combine(dir, "errors.txt"));
+            Assert.DoesNotContain(SignedFixtureToken, log);
+            Assert.DoesNotContain("fixture-stream", log);
+            Assert.DoesNotContain("fixture-download", log);
+            Assert.Contains("HttpRequestException", log);
+            Assert.Contains("IOException", log);
+        }
+        finally { DeleteTempLogDir(dir); }
+    }
+
     [Fact]
     public void AppendException_PreservesNestedFailureAndRedactsCredentials()
     {

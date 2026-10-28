@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Requests;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.ViewModels;
 
@@ -11,6 +12,12 @@ public partial class RequestsViewModel : ObservableObject
     private readonly RequestsApi _requestsApi;
     private DateTime _lastLoadedAt = DateTime.MinValue;
     private bool _loadInProgress;
+    private ApiRequestContext? _loadedContext;
+    private ApiRequestContext? _loadingContext;
+    private int _loadRevision;
+    private int _discoveryRevision;
+    private ApiRequestContext? _configuredDiscoveryContext;
+    private long _brandReadRevision;
     private bool _downloadRefreshInProgress;
     private int _mineReadRevision;
     private CancellationTokenSource? _searchCts;
@@ -22,6 +29,7 @@ public partial class RequestsViewModel : ObservableObject
     }
 
     public ObservableCollection<RequestDiscoverySection> DiscoverySections { get; } = [];
+    public ObservableCollection<RequestDiscoverRow> DiscoveryRows { get; } = [];
     public ObservableCollection<RequestMediaResult> SearchResults { get; } = [];
     public ObservableCollection<MediaRequest> MyRequests { get; } = [];
     public ObservableCollection<DiscoverBrandCard> Studios { get; } = [];
@@ -29,7 +37,7 @@ public partial class RequestsViewModel : ObservableObject
     public ObservableCollection<DiscoverBrandCard> Genres { get; } = [];
     public RequestFeatureStatus Features { get; private set; } = new();
     public System.Collections.Concurrent.ConcurrentDictionary<string, string> BrandErrors { get; } = new();
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _brandPending = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> _brandPending = new();
     public async Task RetryBrandAsync(string kind) { await LoadBrandAsync(kind); DataVersion++; }
 
     [ObservableProperty] private bool _isLoading;
@@ -53,72 +61,88 @@ public partial class RequestsViewModel : ObservableObject
     [RelayCommand]
     private async Task LoadAsync()
     {
-        if (_loadInProgress) return;
-        if (DataVersion > 0 && DateTime.UtcNow - _lastLoadedAt < CacheDuration) return;
+        var context = _requestsApi.CaptureContext();
+        if (_loadInProgress && _loadingContext == context) return;
+        if (_loadedContext == context && DataVersion > 0 && DateTime.UtcNow - _lastLoadedAt < CacheDuration) return;
+        if (_loadedContext != context)
+        {
+            DiscoverySections.Clear(); DiscoveryRows.Clear(); Studios.Clear(); Networks.Clear(); Genres.Clear();
+            MyRequests.Clear(); SearchResults.Clear(); BrandErrors.Clear(); _brandPending.Clear();
+        }
+        var revision = ++_loadRevision;
+        _loadingContext = context;
 
         _loadInProgress = true;
-        IsLoading = DataVersion == 0;
+        IsLoading = DataVersion == 0 || _loadedContext != context;
         ErrorMessage = null;
         StatusMessage = "Loading requests...";
 
         try
         {
             var status = await _requestsApi.GetStatusAsync();
+            if (revision != _loadRevision || !_requestsApi.IsCurrentContext(context)) return;
             Features = status;
             RequestsEnabled = status.RequestsEnabled;
             if (!RequestsEnabled)
             {
                 DiscoverySections.Clear();
+                DiscoveryRows.Clear(); Studios.Clear(); Networks.Clear(); Genres.Clear();
                 MyRequests.Clear();
                 StatusMessage = "Requests are disabled on this server.";
                 _lastLoadedAt = DateTime.UtcNow;
+                _loadedContext = context;
                 DataVersion++;
                 return;
             }
 
             IsLoadingMine = IsLoadingDiscovery = true;
+            if (!status.DiscoverRowsSupported)
+                Replace(DiscoveryRows, RequestDiscoveryLayout.VisibleRows(new()));
             var mineTask = LoadMineAsync();
-            var discoveryTask = LoadDiscoveryAsync();
-            var brandsTask = LoadBrandsAsync();
+            var discoveryTask = LoadDiscoveryAsync(brandsPreloaded: !status.DiscoverRowsSupported);
+            var brandsTask = status.DiscoverRowsSupported ? Task.CompletedTask : LoadBrandsAsync();
             // Each WebUI query owns its loading state. A slow discovery rail
             // must not hide completed account requests or brand results.
             IsLoading = false;
             await Task.WhenAll(mineTask, discoveryTask, brandsTask);
+            if (revision != _loadRevision || !_requestsApi.IsCurrentContext(context)) return;
 
             StatusMessage = MyRequests.Count > 0 ? $"{MyRequests.Count:N0} request(s) loaded." : "";
             _lastLoadedAt = DateTime.UtcNow;
+            _loadedContext = context;
             DataVersion++;
         }
         catch (Exception ex)
         {
+            if (revision != _loadRevision || !_requestsApi.IsCurrentContext(context)) return;
             ErrorMessage = $"Failed to load requests: {ex.Message}";
             StatusMessage = "";
         }
         finally
         {
-            _loadInProgress = false;
-            IsLoading = false;
+            if (revision == _loadRevision) { _loadInProgress = false; IsLoading = false; }
         }
     }
 
     private async Task LoadMineAsync()
     {
+        var context = _requestsApi.CaptureContext();
         IsLoadingMine = true;
         var revision = ++_mineReadRevision;
         MineError = null;
         try
         {
             var response = await _requestsApi.GetMineAsync(limit: 100);
-            if (revision != _mineReadRevision) return;
+            if (revision != _mineReadRevision || !_requestsApi.IsCurrentContext(context)) return;
             Replace(MyRequests, response.Requests);
         }
         catch
         {
-            if (revision != _mineReadRevision) return;
+            if (revision != _mineReadRevision || !_requestsApi.IsCurrentContext(context)) return;
             MineError = "Couldn't load your requests";
             MyRequests.Clear();
         }
-        finally { IsLoadingMine = false; DataVersion++; }
+        finally { if (revision == _mineReadRevision && _requestsApi.IsCurrentContext(context)) { IsLoadingMine = false; DataVersion++; } }
     }
 
     public bool HasDownloadingRequests => MyRequests.Any(request =>
@@ -147,32 +171,55 @@ public partial class RequestsViewModel : ObservableObject
         finally { _downloadRefreshInProgress = false; }
     }
 
-    private async Task LoadDiscoveryAsync()
+    private async Task LoadDiscoveryAsync(bool brandsPreloaded = false)
     {
+        var context = _requestsApi.CaptureContext();
+        var revision = ++_discoveryRevision;
         IsLoadingDiscovery = true;
         DiscoveryError = null;
         try
         {
-            var discoverTask = _requestsApi.GetDiscoveryAsync();
-            Replace(DiscoverySections, (await discoverTask).Sections);
+            var response = await _requestsApi.GetDiscoveryAsync();
+            if (revision != _discoveryRevision || !_requestsApi.IsCurrentContext(context)) return;
+            if (response.RowOrder != null) _configuredDiscoveryContext = context;
+            var rows = RequestDiscoveryLayout.VisibleRows(response);
+            Replace(DiscoveryRows, rows);
+            var keys = rows.Where(row => RequestDiscoveryLayout.BrandKind(row.Type) == null).Select(row => row.Key).ToHashSet(StringComparer.Ordinal);
+            Replace(DiscoverySections, response.Sections.Where(section => keys.Contains(section.Key)));
+            IsLoadingDiscovery = false; DataVersion++;
+            if (!brandsPreloaded || response.RowOrder != null)
+            {
+                Studios.Clear(); Networks.Clear(); Genres.Clear(); BrandErrors.Clear();
+                await LoadBrandsAsync();
+            }
         }
+        catch (OperationCanceledException) { }
         catch
         {
+            if (revision != _discoveryRevision || !_requestsApi.IsCurrentContext(context)) return;
             DiscoveryError = "Discovery is offline";
             DiscoverySections.Clear();
+            // A legacy title query is independent of its three fixed brand
+            // queries. A configured layout has no safe default to invent.
+            Replace(DiscoveryRows, Features.DiscoverRowsSupported || _configuredDiscoveryContext == context
+                ? [] : RequestDiscoveryLayout.VisibleRows(new()));
         }
-        finally { IsLoadingDiscovery = false; DataVersion++; }
+        finally { if (revision == _discoveryRevision && _requestsApi.IsCurrentContext(context)) { IsLoadingDiscovery = false; DataVersion++; } }
     }
 
     private async Task LoadBrandsAsync()
     {
-        await Task.WhenAll(LoadBrandAsync("studio"), LoadBrandAsync("network"), LoadBrandAsync("genre"));
+        await Task.WhenAll(DiscoveryRows.Select(row => RequestDiscoveryLayout.BrandKind(row.Type))
+            .OfType<string>().Distinct().Select(LoadBrandAsync));
     }
 
     private async Task LoadBrandAsync(string kind)
     {
+        if (!DiscoveryRows.Any(row => RequestDiscoveryLayout.BrandKind(row.Type) == kind)) return;
+        var context = _requestsApi.CaptureContext();
         var target = kind switch { "studio" => Studios, "network" => Networks, "genre" => Genres, _ => throw new ArgumentOutOfRangeException(nameof(kind)) };
-        if (!_brandPending.TryAdd(kind, 0)) return;
+        var revision = Interlocked.Increment(ref _brandReadRevision);
+        if (!_brandPending.TryAdd(kind, revision)) return;
         BrandErrors.TryRemove(kind, out _);
         try
         {
@@ -182,11 +229,11 @@ public partial class RequestsViewModel : ObservableObject
                 "network" => (await _requestsApi.GetDiscoverNetworksAsync()).Networks,
                 _ => (await _requestsApi.GetDiscoverGenresAsync()).Genres,
             };
-            Replace(target, cards);
+            if (_requestsApi.IsCurrentContext(context) && DiscoveryRows.Any(row => RequestDiscoveryLayout.BrandKind(row.Type) == kind)) Replace(target, cards);
         }
         catch (OperationCanceledException) { }
-        catch { BrandErrors[kind] = $"Couldn't load {(kind == "studio" ? "studios" : kind == "network" ? "networks" : "genres")}."; }
-        finally { _brandPending.TryRemove(kind, out _); DataVersion++; }
+        catch { if (_requestsApi.IsCurrentContext(context)) BrandErrors[kind] = $"Couldn't load {(kind == "studio" ? "studios" : kind == "network" ? "networks" : "genres")}."; }
+        finally { ((ICollection<KeyValuePair<string, long>>)_brandPending).Remove(new(kind, revision)); DataVersion++; }
     }
 
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> values)

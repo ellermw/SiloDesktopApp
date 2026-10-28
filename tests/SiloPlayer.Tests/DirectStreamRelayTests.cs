@@ -7,6 +7,25 @@ namespace SiloPlayer.Tests;
 public sealed class DirectStreamRelayTests
 {
     [Fact]
+    public async Task TransportRetryLog_DoesNotHandUrlCredentialsToItsSink()
+    {
+        var calls = 0;
+        var messages = new List<string>();
+        using var client = new HttpClient(new SequenceHandler(_ =>
+        {
+            if (++calls == 1) throw new HttpRequestException("Get https://node.fixture/stream/direct/fixture-signed?st=fixture-stream&signature=fixture-signature failed");
+            return CreateResponse(HttpStatusCode.OK, new MemoryStream(new byte[] { 1, 2 }), 2, null);
+        }));
+        var relay = new DirectStreamRelay(client, new Uri("https://node.fixture/stream/direct/fixture-signed"), () => null, messages.Add, maxRetries: 1);
+        using var output = new MemoryStream();
+        await relay.RelayAsync(output, null, null, CancellationToken.None);
+        Assert.Equal(new byte[] { 1, 2 }, output.ToArray());
+        Assert.NotEmpty(messages);
+        Assert.DoesNotContain(messages, message => message.Contains("fixture-stream") || message.Contains("fixture-signature") || message.Contains("fixture-signed"));
+        Assert.Contains(messages, message => message.Contains("HttpRequestException"));
+    }
+
+    [Fact]
     public async Task RelayAsync_ReconnectHeaderTimeoutResumesWithoutClosingMediaResponse()
     {
         var calls = 0;

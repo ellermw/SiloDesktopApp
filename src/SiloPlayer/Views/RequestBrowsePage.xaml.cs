@@ -58,6 +58,9 @@ public sealed partial class RequestBrowsePage : Page
         if (_navigation is not { } nav) return;
         var type = nav.Kind switch { "studio" => "movie", "network" => "series", _ => _mediaType };
         var sort = (SortCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "popularity";
+        try { _features = await _api.GetStatusAsync(_lifetime.Token); }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
+        catch { _features = new(); }
         await _browse.ResetAsync(async (page, token) =>
         {
             if (nav.Kind == "section")
@@ -69,9 +72,7 @@ public sealed partial class RequestBrowsePage : Page
             return (response, page < Math.Min(500, response.TotalPages) ? page + 1 : (int?)null);
         });
         if (_lifetime.IsCancellationRequested) return;
-        try { _features = await _api.GetStatusAsync(_lifetime.Token); RebuildRealizedCards(); }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
-        catch { _features = new(); }
+        RebuildRealizedCards();
         await TraverseEmptyPagesAsync();
     }
     private async Task TraverseEmptyPagesAsync()
@@ -144,14 +145,7 @@ public sealed partial class RequestBrowsePage : Page
     private void BuildCard(ContentControl host, RequestMediaResult item)
     {
         host.Tag = item; host.Margin = new Thickness(_gap / 2); host.Content = ExternalTitleCard.Build(item, _browseCardWidth,
-            request: async () =>
-            {
-                if (item.MediaType == "series") { App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(item.MediaType, item.TmdbId)); return; }
-                var created = await _api.CreateAsync(new() { MediaType = item.MediaType, TmdbId = item.TmdbId, Title = item.Title, Year = item.Year, Overview = item.Overview, PosterPath = item.PosterPath, BackdropPath = item.BackdropPath }, _lifetime.Token);
-                item.Request = new() { Status = string.IsNullOrWhiteSpace(created.Status) ? "pending" : created.Status, Requestable = false, RequestId = created.Id };
-                if (ReferenceEquals(host.Tag, item)) BuildCard(host, item);
-                App.Services.GetRequiredService<ToastService>().Success("Request submitted");
-            }, watchlist: _features.WatchlistTitlesSupported ? async () =>
+            watchlist: _features.WatchlistTitlesSupported ? async () =>
             {
                 if (item.InWatchlist == true) await _api.RemoveWatchlistTitleAsync(item.MediaType, item.TmdbId, _lifetime.Token);
                 else await _api.AddWatchlistTitleAsync(item.MediaType, item.TmdbId, _lifetime.Token);
@@ -189,7 +183,7 @@ public sealed partial class RequestBrowsePage : Page
             _ => width < 640 ? 3 : width < 768 ? 4 : width < 1024 ? 5 : width < 1280 ? 7 : 8,
         };
         _browseCardWidth = Math.Max(64, Math.Floor((width - gutter * 2 - (columns - 1) * _gap) / columns));
-        if (ResultsGrid.ItemsPanelRoot is ItemsWrapGrid panel) { panel.ItemWidth = _browseCardWidth + _gap; panel.ItemHeight = _browseCardWidth * 1.5 + (_presentation?.CardPresentation.Caption == "artwork" ? _gap : 72); }
+        if (ResultsGrid.ItemsPanelRoot is ItemsWrapGrid panel) { panel.ItemWidth = _browseCardWidth + _gap; panel.ItemHeight = _browseCardWidth * 1.5 + 72 + _gap; }
         RebuildRealizedCards();
     }
     private void Back_Click(object sender, RoutedEventArgs e) => App.Services.GetRequiredService<NavigationService>().GoBack();

@@ -139,8 +139,17 @@ public static partial class LocalLog
         if (string.IsNullOrEmpty(value))
             return string.Empty;
 
-        var redacted = BearerTokenRegex().Replace(value, "$1<redacted>");
-        redacted = QuerySecretRegex().Replace(redacted, "${prefix}<redacted>");
+        var redacted = PlaybackUrlRedactor.RedactSignedCredentials(value);
+        redacted = BearerTokenRegex().Replace(redacted, "$1<redacted>");
+        redacted = QuerySecretRegex().Replace(redacted, match =>
+        {
+            string name;
+            try { name = Uri.UnescapeDataString(match.Groups["name"].Value).ToLowerInvariant(); }
+            catch (UriFormatException) { return match.Value; }
+            return name is "access_token" or "refresh_token" or "profile_token" or "room_token" or "token" or
+                "st" or "dt" or "jwt" or "password" or "secret" or "api_key" or "apikey" or "key"
+                ? match.Groups["prefix"].Value + "<redacted>" : match.Value;
+        });
         redacted = JsonSecretRegex().Replace(redacted, "${prefix}<redacted>${suffix}");
         return redacted;
     }
@@ -193,10 +202,10 @@ public static partial class LocalLog
     [GeneratedRegex(@"(Authorization:\s*Bearer\s+)[^\s,;]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex BearerTokenRegex();
 
-    [GeneratedRegex(@"(?<prefix>[?&](?:access_token|refresh_token|profile_token|room_token|token|jwt|password|secret|api_key|apikey|key)=)[^&\s]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<prefix>[?&](?<name>[^=&\s]+)=)[^&\s]+", RegexOptions.CultureInvariant)]
     private static partial Regex QuerySecretRegex();
 
-    [GeneratedRegex(@"(?<prefix>""(?:access_token|refresh_token|profile_token|token|jwt|password|secret|api_key|apikey|key)""\s*:\s*"")[^""]*(?<suffix>"")", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<prefix>""(?:access_token|refresh_token|profile_token|token|st|dt|jwt|password|secret|api_key|apikey|key)""\s*:\s*"")[^""]*(?<suffix>"")", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex JsonSecretRegex();
 
     [GeneratedRegex(@"https?://[^\s<>""']+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
@@ -205,6 +214,6 @@ public static partial class LocalLog
     [GeneratedRegex(@"(?<prefix>Authorization:\s*(?:Basic|Bearer)\s+)[^\s,;]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex DiagnosticAuthorizationRegex();
 
-    [GeneratedRegex(@"(?<prefix>\b(?:access_token|refresh_token|profile_token|room_token|token|jwt|password|secret|api_key|apikey)\s*[:=]\s*)[^\s,;]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<prefix>\b(?:access_token|refresh_token|profile_token|room_token|token|st|dt|jwt|password|secret|api_key|apikey)\s*[:=]\s*)[^\s,;]+", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
     private static partial Regex DiagnosticSecretRegex();
 }

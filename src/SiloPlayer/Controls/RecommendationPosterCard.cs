@@ -77,9 +77,9 @@ public sealed class RecommendationPosterCard : Grid
             };
         }
     }
-    public void SetLayout(double width, bool showCaption)
+    public void SetLayout(double width)
     {
         Width = width; _artwork.Width = width; _artwork.Height = width * 1.5;
-        _title.Visibility = showCaption ? Visibility.Visible : Visibility.Collapsed;
+        _title.Visibility = Visibility.Visible;
     }
 }

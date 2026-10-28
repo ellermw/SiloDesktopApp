@@ -127,9 +127,20 @@ public partial class SiloApiClient
             var target = new Uri(origin, path);
             if (target.Scheme != origin.Scheme || target.Host != origin.Host || target.Port != origin.Port)
                 throw new ArgumentException("Authenticated downloads must use the connected server origin.", nameof(path));
+            Services.NativeApiRetirement.RequireCurrentResource(target.AbsoluteUri);
             var request = new HttpRequestMessage(method, target);
             AddHeaders(request);
             return request;
+        }
+    }
+
+    /// <summary>Captures headers only while the initiating plugin/download owner is current.</summary>
+    public HttpRequestMessage CreateAuthenticatedRequest(ApiRequestContext owner, HttpMethod method, string path)
+    {
+        lock (_authStateGate)
+        {
+            if (!IsCurrentContext(owner)) throw new OperationCanceledException("The initiating profile changed. Reopen this page to continue.");
+            return CreateAuthenticatedRequest(method, path);
         }
     }
 
@@ -317,6 +328,7 @@ public partial class SiloApiClient
     {
         if (string.IsNullOrWhiteSpace(value)) return null;
         var trimmed = value.Trim();
+        if (Services.NativeApiRetirement.IsRetiredResource(trimmed)) return null;
         if (Uri.TryCreate(trimmed, UriKind.Absolute, out var absolute))
             return absolute.ToString();
 

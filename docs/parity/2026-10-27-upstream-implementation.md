@@ -1,0 +1,35 @@
+# October 27 current-server alignment and v1 cutover
+
+Official source fetched directly from `https://github.com/Silo-Server/silo-server`, pinned main `564b906b8eb529c77c5e0b5c640aa13c1133c7f1`. This is 73 commits beyond the complete 309 comparison (`d2c12dbb0f8f40f0a33304f3032f2104c5ee9674`). The clean official clone was fast-forwarded; commit/path inventories are preserved under `.codex-tmp/upstream-oct27`. Local 310, 311 and 312 repairs are retained. Target local version is **1.2.321**, nine correction groups beyond312; public main/download remain310 until owner approval.
+
+The companion [viewer audit](2026-10-27-user-facing-delta.md), [core audit](2026-10-27-core-contract-delta.md), and [retirement audit](2026-10-27-v1-cutover-audit.md) retain the original findings and contract references. This record describes the resulting implementation; release receipts record actual verification.
+
+| Group | Desktop change |
+|---|---|
+| 1. Native v1 retirement | Plugin pages/assets use the v2 plugin-content mount. Captured account/profile authority cannot be borrowed after a switch. Retired returned native URLs fail before dispatch/cache; documented local delivery projection and opaque signed worker URLs are preserved. Saved terminal API-suffixed server addresses normalize without losing deployment prefixes or saved credentials. Unused retired theme catalog/download/refresh adapters are removed. External plugin resources lose desktop identity headers and external document navigation is refused. |
+| 2. Requests Discover | Render configured interleaved title/brand rows, labels, hidden/empty/unknown states; page custom opaque row IDs through the current rows endpoint. Preserve older-server fallback, account ownership and partial failures. Missing next_page advances only within total_pages; invalid/nonadvancing values stop. Trimmed one-page rows retain Explore All. |
+| 3. Card captions | Retire caption controls/presets and normalize old preferences to title_metadata while preserving poster size and the required wire member. Shared cards and page sizing retain titles and applicable details, including three-line episode captions. |
+| 4. Request actions | Remove obsolete direct Request actions from Discover/search/brand/external recommendation cards. Preserve detail submission, season selection and the separate Watchlist request workflow. |
+| 5. Metadata reset/locks | Tagline uses overview lock1. Reset explicitly clears locks before provider refresh; failed unlock does not refresh. Save/reset/image writes are serialized and bound to the active owner. Ordinary refresh continues honoring locks. |
+| 6. Uploaded artwork | Existing uploaded choices use their returned display URL and opaque identity for the Current badge. Never fetch upload:// as a network URL or keep a replaced upload as a second Current choice. |
+| 7. Premiere wording | Calendar/poster/landscape labels use Premiere and New Season, preserving wire codes, colors and finale labels. |
+| 8. Auto audio | Initial Auto leaves audio intent null so the server can choose a compatible delivered track. Explicit track0/1, remembered choices and accepted replacement-file mappings remain supported. No playback-engine replacement or forced remux policy is added. |
+| 9. Media/log credentials | Integrated API subtitles retain required account auth, including absolute same-origin URLs with st. Signed worker/CDN URLs remain byte-identical without account credentials. Transport and ordinary logs sanitize signed path/query authority, including encoded query names, before persistence/callbacks. |
+
+## Automatic benefits and exclusions
+
+Server-side fixes to manual-metadata cache invalidation, artwork races/revision GC, scanner tags, search/catalog filtering, directory/session authority, signed worker credentials and relay redirect handling are consumed through existing native v2 operations. They do not require copying the server's storage/auth implementation into this client. Additive episode series-artwork/date/rating fields and delivery capability/recipe fields preserve existing client behavior; they are not required new request members. The detailed audits distinguish these from implemented changes.
+
+New administration-only AI-provider management, artwork upload creation and Discover layout editing are outside the viewer client scope; existing permitted metadata/image editing is covered above. Optional automatic device-activation polling, request-origin preflight, newer artwork presentation and provider interoperability are not certified by this pass. Existing profile-authorized SiloCast handoff approval remains supported; the browser's deny-only activation restriction is not applied to that separate native workflow.
+
+## Cutover boundary and verification limits
+
+The pinned official main still registers the v1 bridge. The owner's announced retirement is an operational requirement, not a release date proven by this source. Verification must therefore refuse legacy traffic explicitly: the real WebView fixture returns410 for v1 while exercising v2 document/JS/CSS/assets/fetch/form, then checks stale-owner refusal and external redirects. Other current v2 API, saved-origin, playback delivery, auth/download/settings/catalog/request regressions run in the main and published-service suites.
+
+Third-party plugin HTML that hard-codes retired absolute routes is refused with an actionable message; the desktop cannot safely rewrite arbitrary plugin content or opaque signatures. Root worker /stream/* and /downloads/file/* are retained contracts, not evidence of native v1 use. No mechanical string purge or signed URL rewrite is used.
+
+External plugin resources use a bounded anonymous GET/HEAD reader because actual WebView tests proved that removing or blanking Cookie does not stop Chromium from attaching it later. Browser-visible validated redirect hops preserve stylesheet/module base URLs; Chromium terminates the tested redirect loop after20 requests. External document dispatch, writes, account-authenticated external resources, server-origin reentry and insecure redirects are refused. The reader has a15-second per-hop deadline and32MiB body limit. This is a native credential boundary, not a promise that arbitrary third-party browser applications or external video uploads run inside a plugin. Same-server plugin forms and cookies remain supported. Rejected header-removal, empty-header and internally-followed-redirect experiments retain their actual failing evidence under `v1/`.
+
+This update does not establish complete historical visual parity, physical HDR/Dolby Vision display output, actual phone/directory/provider interoperability, a fix for remote storage stalls, or the exact blocking call behind the October27 historical app hang. Re-audit the actual retirement release when available; today's dual-stack server cannot certify tomorrow's unpublished code.
+
+All verification uses synthetic identities and isolated local hosts. The installed player and production services remain untouched. Source is uncommitted; no push, publication or installation is authorized by this update task.

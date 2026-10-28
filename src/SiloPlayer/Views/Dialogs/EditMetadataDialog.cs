@@ -128,9 +128,9 @@ public sealed class EditMetadataDialog : ContentDialog
         confirmation.Children.Add(new TextBlock { Text = "This will re-fetch metadata from the provider. Your manual edits may be replaced.", TextWrapping = TextWrapping.Wrap });
         var confirm = new Button { Content = "Reset", Style = (Style)Application.Current.Resources["DestructiveButtonStyle"] };
         var flyout = new Flyout { Content = confirmation }; reset.Flyout = flyout; confirmation.Children.Add(confirm);
-        confirm.Click += async (_, _) => { if (_pending) return; _pending = true; confirm.IsEnabled = false;
-            try { await _api.RefreshMetadataAsync(_item.ContentId); HasSaved = true; Changed(); flyout.Hide(); Hide(); }
-            catch (Exception ex) { Toast().Error(ex); } finally { _pending = false; confirm.IsEnabled = true; } };
+        confirm.Click += async (_, _) => { if (_pending || _imagePending) return; _pending = true; confirm.IsEnabled = false; reset.IsEnabled = false; IsPrimaryButtonEnabled = false;
+            try { await _api.ResetToProviderAsync(_item.ContentId, _lifetime.Token); HasSaved = true; Changed(); flyout.Hide(); Hide(); }
+            catch (Exception ex) { Toast().Error(ex); } finally { _pending = false; confirm.IsEnabled = true; reset.IsEnabled = !_imagePending; IsPrimaryButtonEnabled = !_imagePending; } };
         Content = _root;
         ShowSection("general"); PrimaryButtonClick += Save;
         Opened += async (_, _) => { Reflow(); await BuildTranslation(); };
@@ -287,10 +287,10 @@ public sealed class EditMetadataDialog : ContentDialog
         foreach (var (key, value) in changes)
             if (key.EndsWith("_date") && value is string date && date.Length > 0 && !DateOnly.TryParseExact(date, "yyyy-MM-dd", out _)) { Toast().Error("Use YYYY-MM-DD for dates."); return; }
         if (changes.Count == 0) { Hide(); return; }
-        _pending = true; IsPrimaryButtonEnabled = false; PrimaryButtonText = "Saving...";
+        _pending = true; IsPrimaryButtonEnabled = false; _reset.IsEnabled = false; PrimaryButtonText = "Saving...";
         try { await _api.UpdateMetadataAsync(_item.ContentId, changes); HasSaved = true; Changed(); Toast().Success("Metadata saved"); Hide(); }
         catch (Exception ex) { Toast().Error(ex); }
-        finally { _pending = false; IsPrimaryButtonEnabled = !_imagePending; PrimaryButtonText = "Save Changes"; }
+        finally { _pending = false; IsPrimaryButtonEnabled = !_imagePending; _reset.IsEnabled = !_imagePending; PrimaryButtonText = "Save Changes"; }
     }
     private void CaptureVisibleValue(string key, object? value)
     {
@@ -408,24 +408,29 @@ public sealed class EditMetadataDialog : ContentDialog
             }
         }
         _resizeImages = ResizeImages;
+        bool IsCurrentImage(string original) => applied.TryGetValue(type, out var latest)
+            ? original == latest
+            : original.StartsWith("upload://", StringComparison.Ordinal) || original == String(current, type + "_url");
         void SelectionPresentation()
         {
             foreach (var (card, _, badge) in cards)
             {
                 var original = (string)card.Tag;
                 var selected = selection.ValueKind == JsonValueKind.Object && String(selection, "original_url") == original;
-                var isCurrent = original == (applied.GetValueOrDefault(type) ?? String(current, type + "_url"));
+                var isCurrent = IsCurrentImage(original);
                 card.BorderBrush = selected ? Brush("AccentBrush") : isCurrent ? TranslucentBrush("AccentBrush", .5) : Brush("BorderBrush");
                 badge.Visibility = selected && !isCurrent ? Visibility.Visible : Visibility.Collapsed;
             }
             apply.Visibility = selection.ValueKind == JsonValueKind.Object ? Visibility.Visible : Visibility.Collapsed;
-            apply.IsEnabled = !_imagePending && selection.ValueKind == JsonValueKind.Object;
+            apply.IsEnabled = !_pending && !_imagePending && selection.ValueKind == JsonValueKind.Object;
             apply.Content = _imagePending ? "Applying..." : "Apply " + char.ToUpperInvariant(type[0]) + type[1..];
         }
         void Render()
         {
             grid.Children.Clear(); cards.Clear(); selection = default; apply.IsEnabled = false;
-            var choices = images?.Where(image => String(image, "type") == type && (textless.IsChecked != true || type == "logo" || String(image, "language").Length == 0)).ToArray() ?? [];
+            var choices = images?.Where(image => String(image, "type") == type &&
+                (!String(image, "original_url").StartsWith("upload://", StringComparison.Ordinal) || IsCurrentImage(String(image, "original_url"))) &&
+                (textless.IsChecked != true || type == "logo" || String(image, "language").Length == 0)).ToArray() ?? [];
             foreach (var tab in tabs.Children.OfType<Button>()) tab.Style = (Style)Application.Current.Resources[Equals(tab.Tag, type) ? "AccentButtonStyle" : "GhostButtonStyle"];
             if (choices.Length == 0) grid.Children.Add(new TextBlock { Text = textless.IsChecked == true ? "No textless images available." : "No images available.", FontSize = 14 });
             foreach (var image in choices)
@@ -433,7 +438,7 @@ public sealed class EditMetadataDialog : ContentDialog
                 var picture = new Image { Stretch = Stretch.UniformToFill };
                 if (String(image, "url") is { Length: > 0 } url) picture.Source = (ImageSource)new UrlToImageSourceConverter().Convert(url, typeof(ImageSource), null!, "");
                 var body = new Grid(); body.Children.Add(picture);
-                var original = String(image, "original_url"); var isCurrent = original == (applied.GetValueOrDefault(type) ?? String(current, type + "_url"));
+                var original = String(image, "original_url"); var isCurrent = IsCurrentImage(original);
                 if (isCurrent) body.Children.Add(new Border { Margin = new Thickness(4), Padding = new Thickness(6, 2, 6, 2), CornerRadius = new CornerRadius(4),
                     Background = TranslucentBrush("AccentBrush", .9), HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top,
                     Child = new TextBlock { Text = "Current", FontSize = 9, Foreground = Brush("AccentForegroundBrush"), FontWeight = FontWeights.SemiBold } });
@@ -446,7 +451,7 @@ public sealed class EditMetadataDialog : ContentDialog
                     Child = new TextBlock { Text = String(image, "provider_id").ToUpperInvariant(), FontSize = 9, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) } });
                 var button = new Button { Content = body, Tag = original, Padding = new Thickness(0), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(12), Style = (Style)Application.Current.Resources["GhostButtonStyle"] };
                 cards.Add((button, picture, selectionBadge));
-                button.Click += (_, _) => { if (_imagePending) return; selection = selection.ValueKind == JsonValueKind.Object && String(selection, "original_url") == original ? default : image;
+                button.Click += (_, _) => { if (_pending || _imagePending) return; selection = selection.ValueKind == JsonValueKind.Object && String(selection, "original_url") == original ? default : image;
                     SelectionPresentation(); Reflow(); };
                 grid.Children.Add(button);
             }
@@ -461,13 +466,13 @@ public sealed class EditMetadataDialog : ContentDialog
         textless.Click += (_, _) => Render();
         apply.Click += async (_, _) =>
         {
-            if (_imagePending || selection.ValueKind != JsonValueKind.Object || !AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>())) return;
-            var selected = selection; var selectedType = String(selected, "type"); _imagePending = true; apply.IsEnabled = false; IsPrimaryButtonEnabled = false; apply.Content = "Applying...";
+            if (_pending || _imagePending || selection.ValueKind != JsonValueKind.Object || !AuthorizationPolicy.IsActingAdmin(App.Services.GetRequiredService<AuthService>())) return;
+            var selected = selection; var selectedType = String(selected, "type"); _imagePending = true; apply.IsEnabled = false; IsPrimaryButtonEnabled = false; _reset.IsEnabled = false; apply.Content = "Applying...";
             try { await _api.ApplyImageAsync(_item.ContentId, String(selected, "original_url"), selectedType, String(selected, "provider_id"));
                 applied[selectedType] = String(selected, "original_url"); _state.SetLock(10, true); HasSaved = true; Changed();
                 _item = await App.Services.GetRequiredService<CatalogApi>().GetItemDetailAsync(_item.ContentId); RefreshLocks(); Render(); Toast().Success("Image applied successfully"); }
             catch (Exception ex) { Toast().Error(ex); }
-            finally { _imagePending = false; IsPrimaryButtonEnabled = !_pending; SelectionPresentation(); }
+            finally { _imagePending = false; IsPrimaryButtonEnabled = !_pending; _reset.IsEnabled = !_pending; SelectionPresentation(); }
         };
         Opened += async (_, _) =>
         {

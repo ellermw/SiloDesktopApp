@@ -223,14 +223,11 @@ public sealed partial class PosterCard : UserControl
 
     private void ApplyCardPresentation()
     {
-        var caption = _uiCustomizationService.CardPresentation.Caption;
-        var showCaption = caption != "artwork";
-        var showMetadata = caption == "title_metadata";
-        TitleText.Visibility = showCaption ? Visibility.Visible : Visibility.Collapsed;
-        EpisodeTitleText.Visibility = showMetadata && !string.IsNullOrWhiteSpace(EpisodeTitleText.Text)
+        TitleText.Visibility = Visibility.Visible;
+        EpisodeTitleText.Visibility = !string.IsNullOrWhiteSpace(EpisodeTitleText.Text)
             ? Visibility.Visible
             : Visibility.Collapsed;
-        SubtitleText.Visibility = showMetadata && !string.IsNullOrWhiteSpace(SubtitleText.Text)
+        SubtitleText.Visibility = !string.IsNullOrWhiteSpace(SubtitleText.Text)
             ? Visibility.Visible
             : Visibility.Collapsed;
         if (Width > 0)
@@ -534,8 +531,8 @@ public sealed partial class PosterCard : UserControl
             {
                 var label = badge switch
                 {
-                    "series_premiere" => "Series Premiere",
-                    "season_premiere" => "Season Premiere",
+                    "series_premiere" => "Premiere",
+                    "season_premiere" => "New Season",
                     "finale" => "Finale",
                     _ => badge,
                 };

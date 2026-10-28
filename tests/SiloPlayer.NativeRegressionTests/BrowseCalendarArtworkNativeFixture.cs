@@ -118,20 +118,21 @@ internal static class BrowseCalendarArtworkNativeFixture
                             var previousArrow = Descendants<Button>(rail).Single(button => AutomationProperties.GetName(button) == "Scroll left");
                             Invoke(previousArrow); await Until(() => scroll.HorizontalOffset < 1);
                         }
-                        var premiere = Descendants<TextBlock>(firstCard).Single(text => text.Text == "SERIES PREMIERE");
+                        var premiere = Descendants<TextBlock>(firstCard).Single(text => text.Text == "PREMIERE");
                         var premiereBorder = (Border)premiere.Parent;
                         if (premiereBorder.Height != 16 || premiereBorder.Padding.Left != 8 || premiere.CharacterSpacing != 50 || ((FrameworkElement)premiereBorder.Parent).Margin.Left != 10)
                             layoutDifferences.Add($"{width}: Calendar artwork badges differ from current10px inset/16px pill/8px padding/0.05em tracking.");
                         await presentation.SaveCardPresentationAsync(new() { PosterSize = size, Caption = "artwork" });
                         await Task.Delay(100); page.UpdateLayout();
                         var artworkCard = Descendants<Button>(page).First(button => AutomationProperties.GetName(button).StartsWith("Watched Feature, Movie", StringComparison.Ordinal));
-                        if (Descendants<TextBlock>(artworkCard).Any(text => text.Text == "Watched Feature" && text.Visibility == Visibility.Visible && ((FrameworkElement)VisualTreeHelper.GetParent(text)).Visibility == Visibility.Visible))
-                            layoutDifferences.Add($"{width}: artwork-only Calendar still renders captions.");
+                        if (!Descendants<TextBlock>(artworkCard).Any(text => text.Text == "Watched Feature" && text.Visibility == Visibility.Visible && ((FrameworkElement)VisualTreeHelper.GetParent(text)).Visibility == Visibility.Visible) ||
+                            !Descendants<TextBlock>(artworkCard).Any(text => text.Text == "MOVIE" && text.Visibility == Visibility.Visible))
+                            layoutDifferences.Add($"{width}: retired artwork caption preference hides Calendar title/details.");
                         await presentation.SaveCardPresentationAsync(new() { PosterSize = size, Caption = "title" });
                         await Task.Delay(100); page.UpdateLayout();
                         var titleCard = Descendants<Button>(page).First(button => AutomationProperties.GetName(button).StartsWith("Watched Feature, Movie", StringComparison.Ordinal));
-                        if (Descendants<TextBlock>(titleCard).Any(text => text.FontSize == 11 && text.Visibility == Visibility.Visible))
-                            layoutDifferences.Add($"{width}: title-only Calendar still renders metadata.");
+                        if (!Descendants<TextBlock>(titleCard).Any(text => text.Text == "MOVIE" && text.FontSize == 11 && text.Visibility == Visibility.Visible))
+                            layoutDifferences.Add($"{width}: retired title caption preference hides Calendar metadata.");
                         if (heading.FontSize != (width < 640 ? 24 : 30) || heading.CharacterSpacing != -25 || header.Margin.Top != (width < 640 ? 32 : width < 1024 ? 40 : 56) || header.Margin.Bottom != 24 || actions.Spacing != 8)
                             layoutDifferences.Add($"{width}: header typography, outer vertical rhythm and action gaps differ from current Calendar.");
                         if (preset.Padding.Left != 16 || navigator.Padding.Left != (width < 640 ? 8 : 12) || selectedEmpty.CornerRadius.TopLeft != 20)

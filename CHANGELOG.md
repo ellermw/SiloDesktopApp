@@ -2,6 +2,13 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.321 (2026-10-27 — current-server alignment and native v2 cutover)
+
+- Preserve the profile-menu/navigation and initial playback-failure repairs from local311/312.
+- Update native plugin routing/retirement guards, configured Requests layouts and paging, card captions/actions, metadata reset/artwork handling, Calendar labels, Auto audio selection and media/log credential boundaries against official server `564b906b8eb529c77c5e0b5c640aa13c1133c7f1`.
+- Publish the unchanged installer at the owner's request. SHA256: `979C270477BD1F6CE0253BBEEAB06F010D7F6AE79267DB834EFB8632BA157340`. Recorded packaged verification:2,195 main tests,13 native groups and25 playback groups.
+- Known issues remain: sluggish sidebar navigation and a native WinUI crash observed during owner testing. Their exact causes are unresolved; publication does not claim a repair. See [scope, evidence and limits](docs/releases/1.2.321.md).
+
 ## 1.2.309 (2026-10-24 — owner-approved Dolby Vision and Settings update)
 
 - Five correction groups beyond 1.2.304: media-button feedback, native Dolby Vision engine/profile support, profile hover geometry, personal Settings/font packaging and connection-test behavior/presentation.

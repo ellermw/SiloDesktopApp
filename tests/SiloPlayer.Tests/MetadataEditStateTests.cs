@@ -7,6 +7,16 @@ namespace SiloPlayer.Tests;
 public class MetadataEditStateTests
 {
     [Fact]
+    public void EditingOnlyTaglineLocksOverviewWithoutLockingTheTitle()
+    {
+        var state = new MetadataEditState(new MediaItemDetail { Type = "movie", Title = "Unchanged", Tagline = "Before" });
+        state.Set("tagline", "After");
+        var changes = state.Changes([]);
+        Assert.Equal(new[] { 1 }, (int[])changes["locked_fields"]!);
+        Assert.False(changes.ContainsKey("title"));
+    }
+
+    [Fact]
     public void ClearsDatesWithNullButTimezoneWithEmptyStringAndSendsOnlyChangedFields()
     {
         var state = new MetadataEditState(new MediaItemDetail { Type = "series", Title = "Original", FirstAirDate = "2020-01-01", AirTimezone = "America/Chicago" });

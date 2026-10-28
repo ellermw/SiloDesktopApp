@@ -11,7 +11,7 @@ public sealed class MetadataEditState
     private readonly bool _lockable;
     public static readonly IReadOnlyDictionary<string, int> LockMap = new Dictionary<string, int>
     {
-        ["title"]=0,["sort_title"]=0,["original_title"]=0,["tagline"]=0,["overview"]=1,
+        ["title"]=0,["sort_title"]=0,["original_title"]=0,["tagline"]=1,["overview"]=1,
         ["genres"]=2,["studios"]=3,["networks"]=3,["countries"]=8,["runtime"]=7,["content_rating"]=9,
         ["rating_imdb"]=6,["rating_tmdb"]=6,["rating_rt_critic"]=6,["rating_rt_audience"]=6,
         ["air_time"]=11,["air_timezone"]=11,["year"]=13,["release_date"]=13,["first_air_date"]=13,["last_air_date"]=13,

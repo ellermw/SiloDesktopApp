@@ -145,7 +145,7 @@ public sealed partial class CatalogPage
         // Leave that spacing budget in the minimum; the card still fills the
         // intended column width without dropping a column at exact boundaries.
         ExternalTitlesLayout.MinItemWidth = Math.Max(1, _externalTitleWidth - gap);
-        ExternalTitlesLayout.MinItemHeight = _externalTitleWidth * 1.5 + (_uiCustomizationService.CardPresentation.Caption == "artwork" ? 24 : 80);
+        ExternalTitlesLayout.MinItemHeight = _externalTitleWidth * 1.5 + 80;
         ExternalTitlesLayout.MaximumRowsOrColumns = columns;
         ExternalTitlesSkeletonLayout.MinItemWidth = ExternalTitlesLayout.MinItemWidth;
         ExternalTitlesSkeletonLayout.MinItemHeight = _externalTitleWidth * 1.5;

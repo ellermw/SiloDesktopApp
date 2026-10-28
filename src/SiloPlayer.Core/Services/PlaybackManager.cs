@@ -841,9 +841,29 @@ public partial class PlaybackManager : IDisposable
             .Select(s =>
         {
             var url = PlaybackDeliveryUrl.Resolve(baseUrl, s.Url);
-            url = UrlHelper.AppendToken(url, token);
+            // Integrated sidecars require account/viewer authentication even
+            // with a reconstruction reference (st). Worker/CDN URLs carry their
+            // own authority and must never receive the account credential.
+            if (RequiresSubtitleAccountAuthentication(baseUrl, s.Url))
+                url = UrlHelper.AppendToken(url, token);
             return (s, url);
         }).ToList();
+    }
+
+    private static bool RequiresSubtitleAccountAuthentication(string baseUrl, string resource)
+    {
+        if (!Uri.TryCreate(resource, UriKind.Absolute, out var absolute) ||
+            (absolute.Scheme != Uri.UriSchemeHttp && absolute.Scheme != Uri.UriSchemeHttps))
+            return true;
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var origin) ||
+            absolute.Scheme != origin.Scheme || absolute.IdnHost != origin.IdnHost || absolute.Port != origin.Port ||
+            !string.IsNullOrEmpty(absolute.UserInfo))
+            return false;
+        var prefix = origin.AbsolutePath.TrimEnd('/') + "/api/v2/stream/";
+        if (!absolute.AbsolutePath.StartsWith(prefix, StringComparison.Ordinal)) return false;
+        var route = absolute.AbsolutePath[prefix.Length..].Split('/');
+        return route.Length is 3 or 4 && route[0].Length > 0 && route[1] == "subtitles" && route[2].Length > 0 &&
+            (route.Length == 3 || route[3] == "fonts");
     }
 
     private void StartProgressReporting()

@@ -4,8 +4,12 @@ namespace SiloPlayer.Core.Services;
 
 public static class RequestDiscoveryPaging
 {
-    // Restricted viewers may skip provider pages with no accessible results.
+    // An absent cursor uses ordinary numbered pages. An explicit cursor can
+    // skip filtered pages or point beyond the end; never replace it with +1.
     public static int? Next(RequestDiscoverySection response, int current)
-        => response.NextPage is int next && next > current && next <= Math.Min(500, response.TotalPages)
-            ? next : null;
+    {
+        var pages = Math.Min(500, response.TotalPages);
+        if (response.NextPage is int next) return next > current && next <= pages ? next : null;
+        return current < pages ? current + 1 : null;
+    }
 }

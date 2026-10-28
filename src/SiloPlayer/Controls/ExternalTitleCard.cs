@@ -32,8 +32,6 @@ public static class ExternalTitleCard
         Func<Task>? watchlist = null, bool removeOnly = false, string? statusCaption = null, bool attention = false, string? statusBadge = null,
         bool watchlistCard = false, Action? statusSearchAction = null)
     {
-        var presentation = App.Services.GetService<UICustomizationService>()?.CardPresentation;
-        var showCaption = presentation?.Caption != "artwork";
         var card = new Grid { Width = width, RowSpacing = 0 };
         card.RowDefinitions.Add(new RowDefinition { Height = new GridLength(width * 1.5) });
         card.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -68,12 +66,11 @@ public static class ExternalTitleCard
         poster.Loaded += (_, _) => ClipPoster(); poster.SizeChanged += (_, _) => { if (poster.IsLoaded) ClipPoster(); };
         var title = new TextBlock { Text = item.Title, FontSize = 14, FontWeight = FontWeights.SemiBold, LineHeight = 21, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
             TextTrimming = TextTrimming.CharacterEllipsis, CharacterSpacing = -25, Margin = new Thickness(4, 12, 4, 0) };
-        title.Visibility = showCaption ? Visibility.Visible : Visibility.Collapsed;
         Grid.SetRow(title, 1); card.Children.Add(title);
         var meta = string.Join(" · ", new[] { item.MediaType == "series" ? "Series" : "Movie", item.YearText }.Where(s => s.Length > 0)).ToUpperInvariant();
-        var caption = new StackPanel { Margin = new Thickness(4, showCaption ? 4 : 12, 4, 0), Spacing = 6,
-            Visibility = showCaption || statusCaption != null ? Visibility.Visible : Visibility.Collapsed };
-        if (showCaption) caption.Children.Add(new TextBlock { Text = meta, FontSize = 11, FontWeight = FontWeights.Medium, LineHeight = 16.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+        var caption = new StackPanel { Margin = new Thickness(4, 4, 4, 0), Spacing = 6,
+            Visibility = Visibility.Visible };
+        caption.Children.Add(new TextBlock { Text = meta, FontSize = 11, FontWeight = FontWeights.Medium, LineHeight = 16.5, LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
             CharacterSpacing = 140, Foreground = Brush("SecondaryTextBrush"), TextTrimming = TextTrimming.CharacterEllipsis });
         if (statusCaption != null)
         {

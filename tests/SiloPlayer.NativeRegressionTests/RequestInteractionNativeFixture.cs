@@ -29,6 +29,7 @@ internal static class RequestInteractionNativeFixture
         var navigation = new NavigationService();
         var vm = new RequestsViewModel(api) { DataVersion = 1 };
         typeof(RequestsViewModel).GetField("_lastLoadedAt", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(vm, DateTime.UtcNow);
+        typeof(RequestsViewModel).GetField("_loadedContext", BindingFlags.Instance | BindingFlags.NonPublic)?.SetValue(vm, client.CaptureContext());
         var outer = SiloPlayer.App.Services;
         using var services = new ServiceCollection().AddSingleton(api).AddSingleton(client).AddSingleton(catalog)
             .AddSingleton(new SettingsApi(client)).AddSingleton(cache).AddSingleton(navigation).AddSingleton(vm)
@@ -142,7 +143,7 @@ internal static class RequestInteractionNativeFixture
 
     private static async Task HubPresentationAsync(StackPanel parent, RequestsViewModel vm)
     {
-        vm.MyRequests.Clear(); vm.DiscoverySections.Clear(); vm.Genres.Clear();
+        vm.MyRequests.Clear(); vm.DiscoverySections.Clear(); vm.DiscoveryRows.Clear(); vm.Genres.Clear();
         foreach (var (state, index) in new[] { ("declined", 1), ("processing", 2), ("available", 3), ("cancelled", 4) })
             vm.MyRequests.Add(new MediaRequest { Id = index.ToString(), Title = "A request title with a deliberately long name to check narrow layout", MediaType = "series", TmdbId = index, State = state, Status = state,
                 Year = 2026, Seasons = [1, 2], CreatedAt = DateTimeOffset.UtcNow.AddDays(-2).ToString("O"), UpdatedAt = DateTimeOffset.UtcNow.AddMinutes(-5).ToString("O"),
@@ -150,6 +151,7 @@ internal static class RequestInteractionNativeFixture
         vm.DiscoverySections.Add(new() { Key = "trending_movies", Title = "Trending movies", TotalPages = 2,
             Results = Enumerable.Range(1, 8).Select(id => new RequestMediaResult { MediaType = "movie", TmdbId = id, Title = "Fixture movie " + id, Year = 2026, Request = new() { Requestable = true } }).ToList() });
         vm.Genres.Add(new() { Slug = "drama", DisplayName = "Drama", GradientFrom = "#1e3a8a", GradientTo = "#581c87" });
+        foreach (var row in RequestDiscoveryLayout.VisibleRows(new() { Sections = vm.DiscoverySections.ToList() })) vm.DiscoveryRows.Add(row);
         foreach (var width in new[] { 1280d, 900d, 500d })
         {
             var page = new RequestsPage { Width = width, Height = 800 }; parent.Children.Add(page);

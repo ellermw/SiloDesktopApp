@@ -6,6 +6,9 @@ public sealed class PlaybackUrlRedactorTests
 {
     [Theory]
     [InlineData(
+        "/api/v2/stream/session-uuid/subtitles/2?%73%74=fixture-stream&%64%74=fixture-download",
+        "/api/v2/stream/<redacted>/subtitles/2")]
+    [InlineData(
         "https://node.example/stream/transcode/signed.jwt.value/master.m3u8?token=user-token",
         "https://node.example/stream/transcode/<redacted>/master.m3u8")]
     [InlineData(

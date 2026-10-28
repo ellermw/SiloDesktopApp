@@ -1,4 +1,5 @@
 using SiloPlayer.Core.Models.Requests;
+using SiloPlayer.Core.Services;
 using SiloPlayer.ViewModels;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Text;
@@ -20,6 +21,7 @@ public sealed partial class RequestsPage : Page
     private int _renderedDataVersion = -1;
     private int _layoutBucket = -1;
     private double _requestCardWidth = 184;
+    private readonly Dictionary<string, StackPanel> _brandRegions = new(StringComparer.Ordinal);
     private readonly StackPanel _mineLoadingSkeleton = new() { Spacing = 12, Visibility = Visibility.Collapsed };
     private readonly Grid _mineHeading = new() { ColumnSpacing = 8, RowSpacing = 8 };
     private Button? _mineHelp;
@@ -90,11 +92,13 @@ public sealed partial class RequestsPage : Page
             LineStackingStrategy = LineStackingStrategy.BlockLineHeight, TextWrapping = TextWrapping.Wrap,
             Foreground = Brush("SecondaryTextBrush"), VerticalAlignment = VerticalAlignment.Center });
         _mineHelp = help; Grid.SetColumn(help, 1); _mineHeading.Children.Add(help); MyRequestsSection.Children.Insert(0, _mineHeading);
-        foreach (var brandRegion in BrandsSection.Children.OfType<StackPanel>())
+        foreach (var (brandRegion, type) in BrandsSection.Children.OfType<StackPanel>().ToArray().Zip(new[] { "studios", "networks", "genres" }))
         {
             if (brandRegion.Children.OfType<ScrollViewer>().FirstOrDefault() is not { } scroll) continue;
             brandRegion.Children.Remove(scroll); brandRegion.Children.Add(new SiloPlayer.Controls.CarouselRail(scroll));
+            BrandsSection.Children.Remove(brandRegion); _brandRegions[type] = brandRegion;
         }
+        BrandsSection.Visibility = Visibility.Collapsed;
         var customization = App.Services.GetService<SiloPlayer.Services.UICustomizationService>();
         _downloadRefreshTimer.Tick += DownloadRefresh_Tick;
         Loaded += (_, _) => { if (customization != null) { customization.Changed -= CardPresentationChanged; customization.Changed += CardPresentationChanged; } };
@@ -396,20 +400,27 @@ public sealed partial class RequestsPage : Page
                 DiscoveryList.Children.Add(section);
             }
             DiscoveryErrorPanel.Visibility = Visibility.Collapsed;
+            // Older servers have fixed independent brand queries; their ready
+            // rows remain usable while the title discovery read is pending.
+            foreach (var row in ViewModel.DiscoveryRows.Where(row => RequestDiscoveryLayout.BrandKind(row.Type) != null)) AddBrandRegion(row);
             return;
         }
         DiscoveryErrorPanel.Visibility = string.IsNullOrWhiteSpace(ViewModel.DiscoveryError)
             ? Visibility.Collapsed : Visibility.Visible;
-        if (!string.IsNullOrWhiteSpace(ViewModel.DiscoveryError)) return;
-
-        foreach (var section in ViewModel.DiscoverySections)
+        foreach (var row in ViewModel.DiscoveryRows)
         {
-            if (section.Results.Count == 0) continue;
+            if (RequestDiscoveryLayout.BrandKind(row.Type) != null)
+            {
+                AddBrandRegion(row);
+                continue;
+            }
+            var section = ViewModel.DiscoverySections.FirstOrDefault(section => section.Key == row.Key);
+            if (section == null || section.Results.Count == 0) continue;
             var panel = new StackPanel { Spacing = 20 };
             var heading = new Grid { ColumnDefinitions = { new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) }, new ColumnDefinition { Width = GridLength.Auto } } };
             heading.Children.Add(new TextBlock
             {
-                Text = section.Title,
+                Text = row.Title,
                 FontSize = 20,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = Brush("PrimaryTextBrush"),
@@ -417,9 +428,9 @@ public sealed partial class RequestsPage : Page
             var explore = new Button { Content = new TextBlock { Text = "EXPLORE ALL", FontSize = 11, FontWeight = FontWeights.SemiBold, CharacterSpacing = 140 },
                 Height = 24, MinHeight = 0, Padding = new Thickness(0), Foreground = Brush("SecondaryTextBrush"),
                 Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-                Visibility = section.TotalPages > 1 ? Visibility.Visible : Visibility.Collapsed };
+                Visibility = RequestDiscoveryLayout.HasExploreAll(section) ? Visibility.Visible : Visibility.Collapsed };
             explore.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<RequestBrowsePage>(new RequestBrowseNavigation("section", section.Key));
-            AutomationProperties.SetName(explore, $"Explore {section.Title}");
+            AutomationProperties.SetName(explore, $"Explore {row.Title}");
             Grid.SetColumn(explore, 1); heading.Children.Add(explore); panel.Children.Add(heading);
 
             var cards = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
@@ -436,15 +447,16 @@ public sealed partial class RequestsPage : Page
         }
     }
 
+    private void AddBrandRegion(RequestDiscoverRow row)
+    {
+        if (!_brandRegions.TryGetValue(row.Type, out var region)) return;
+        region.Children.OfType<TextBlock>().First().Text = row.Title;
+        DiscoveryList.Children.Add(region);
+    }
+
     private FrameworkElement BuildMediaPosterCard(RequestMediaResult result)
     {
         return SiloPlayer.Controls.ExternalTitleCard.Build(result, _requestCardWidth,
-            request: result.Request.Requestable ? async () =>
-            {
-                await ViewModel.SubmitRequestCommand.ExecuteAsync(result);
-                if (ViewModel.ErrorMessage is { Length: > 0 } error) throw new InvalidOperationException(error);
-                Render();
-            } : null,
             watchlist: ViewModel.Features.WatchlistTitlesSupported ? async () =>
             {
                 var api = App.Services.GetRequiredService<SiloPlayer.Core.Api.RequestsApi>();
@@ -513,11 +525,17 @@ public sealed partial class RequestsPage : Page
 
     private void BuildBrands()
     {
-        BuildBrandRow(StudiosPanel, "studio", ViewModel.Studios);
-        BuildBrandRow(NetworksPanel, "network", ViewModel.Networks);
-        BuildBrandRow(GenresPanel, "genre", ViewModel.Genres);
-        foreach (var region in BrandsSection.Children.OfType<StackPanel>()) region.Visibility = Visibility.Visible;
-        BrandsSection.Visibility = Visibility.Visible;
+        foreach (var row in ViewModel.DiscoveryRows)
+        {
+            if (RequestDiscoveryLayout.BrandKind(row.Type) is not { } kind) continue;
+            var (panel, cards) = kind switch
+            {
+                "studio" => (StudiosPanel, ViewModel.Studios),
+                "network" => (NetworksPanel, ViewModel.Networks),
+                _ => (GenresPanel, ViewModel.Genres),
+            };
+            BuildBrandRow(panel, kind, cards);
+        }
     }
 
     private void BuildBrandRow(StackPanel panel, string kind, IEnumerable<DiscoverBrandCard> cards)

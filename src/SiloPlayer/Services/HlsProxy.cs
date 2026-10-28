@@ -123,7 +123,7 @@ public sealed class HlsProxy : IDisposable
             catch (ObjectDisposedException) { break; }
             catch (Exception ex)
             {
-                Log($"Accept error: {ex.Message}");
+                Log($"Accept error: {LocalLog.RedactDiagnosticText(ex.Message)}");
                 if (!ct.IsCancellationRequested)
                     await Task.Delay(100, ct).ConfigureAwait(false);
             }
@@ -178,7 +178,7 @@ public sealed class HlsProxy : IDisposable
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (IOException) { }
-        catch (Exception ex) { Log($"Client error: {ex.Message}"); }
+        catch (Exception ex) { Log($"Client error: {LocalLog.RedactDiagnosticText(ex.Message)}"); }
     }
 
     private async Task ServeRemoteAsync(
@@ -281,13 +281,13 @@ public sealed class HlsProxy : IDisposable
                     return;
                 if (attempt >= 14)
                 {
-                    Log($"HTTP timeout after {attempt + 1} attempts: {ex.Message}");
+                    Log($"HTTP timeout after {attempt + 1} attempts: {LocalLog.RedactDiagnosticText(ex.Message)}");
                     await WriteResponseAsync(stream, 504, "Gateway Timeout", "text/plain", null, headOnly, ct)
                         .ConfigureAwait(false);
                     return;
                 }
 
-                Log($"HTTP timeout: {ex.Message}; retry {attempt + 1}");
+                Log($"HTTP timeout: {LocalLog.RedactDiagnosticText(ex.Message)}; retry {attempt + 1}");
                 await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
             }
             catch (HttpRequestException ex)
@@ -296,13 +296,13 @@ public sealed class HlsProxy : IDisposable
                     return;
                 if (attempt >= 14)
                 {
-                    Log($"HTTP failure after {attempt + 1} attempts: {ex.Message}");
+                    Log($"HTTP failure after {attempt + 1} attempts: {LocalLog.RedactDiagnosticText(ex.Message)}");
                     await WriteResponseAsync(stream, 502, "Bad Gateway", "text/plain", null, headOnly, ct)
                         .ConfigureAwait(false);
                     return;
                 }
 
-                Log($"HTTP error: {ex.Message}; retry {attempt + 1}");
+                Log($"HTTP error: {LocalLog.RedactDiagnosticText(ex.Message)}; retry {attempt + 1}");
                 await Task.Delay(TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
             }
             catch (TimeoutException ex)
@@ -311,7 +311,7 @@ public sealed class HlsProxy : IDisposable
                 // response cannot be replaced safely. Close it promptly; mpv
                 // will request the segment again and the stall watchdog remains
                 // available if the upstream outage persists.
-                Log($"Upstream media body stalled: {ex.Message}");
+                Log($"Upstream media body stalled: {LocalLog.RedactDiagnosticText(ex.Message)}");
                 if (responseStarted)
                     return;
                 if (attempt >= 14)
