@@ -211,30 +211,30 @@ public partial class CalendarViewModel : ObservableObject
         // JS: 0=Sun, 1=Mon ... diff = day == 0 ? -6 : 1 - day
         int day = (int)date.DayOfWeek; // 0=Sun, 1=Mon ...
         int diff = day == 0 ? -6 : 1 - day;
-        return date.AddDays(diff).ToString("yyyy-MM-dd");
+        return FormatDate(date.AddDays(diff));
     }
 
     public static string AddDays(string dateStr, int n)
     {
-        var d = ParseDate(dateStr).AddDays(n);
-        return d.ToString("yyyy-MM-dd");
+        return FormatDate(ParseDate(dateStr).AddDays(n));
     }
 
     public static bool IsToday(string dateStr)
-        => dateStr == DateTime.Today.ToString("yyyy-MM-dd");
+        => dateStr == FormatDate(DateTime.Today);
 
     public static List<string> GetWeekDays(string weekStart)
     {
         var d = ParseDate(weekStart);
         var list = new List<string>(7);
-        for (int i = 0; i < 7; i++) list.Add(d.AddDays(i).ToString("yyyy-MM-dd"));
+        for (int i = 0; i < 7; i++) list.Add(FormatDate(d.AddDays(i)));
         return list;
     }
 
     public static string FormatDayHeading(string dateStr)
     {
         var d = ParseDate(dateStr);
-        return $"{d:dddd}, {d:MMMM} {Ordinal(d.Day)}";
+        var culture = DisplayCulture();
+        return $"{d.ToString("dddd", culture)}, {d.ToString("MMMM", culture)} {Ordinal(d.Day)}";
     }
 
     /// <summary>"Apr 6 – 12, 2026" (same month) or "Apr 28 – May 4, 2026" (spanning).</summary>
@@ -242,19 +242,38 @@ public partial class CalendarViewModel : ObservableObject
     {
         var start = ParseDate(weekStart);
         var end = start.AddDays(6);
+        var culture = DisplayCulture();
         if (start.Month == end.Month && start.Year == end.Year)
-            return $"{start:MMM} {start.Day} \u2013 {end.Day}, {start.Year}";
-        return $"{start:MMM} {start.Day} \u2013 {end:MMM} {end.Day}, {end.Year}";
+            return $"{start.ToString("MMM", culture)} {start.Day} \u2013 {end.Day}, {start.Year}";
+        return $"{start.ToString("MMM", culture)} {start.Day} \u2013 {end.ToString("MMM", culture)} {end.Day}, {end.Year}";
     }
 
     public static (string Label, int Day) FormatShortDay(string dateStr)
     {
         var d = ParseDate(dateStr);
-        return (d.ToString("ddd"), d.Day);
+        return (d.ToString("ddd", DisplayCulture()), d.Day);
     }
 
     private static DateTime ParseDate(string s)
         => DateTime.ParseExact(s, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+    // The API takes Gregorian dates. Culture formatting would write the user's
+    // calendar instead: 2569 under th-TH, 1448 under ar-SA, 1405 under fa-IR.
+    private static string FormatDate(DateTime date)
+        => date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+
+    // Labels combine month names with Gregorian day/year numbers, so the names
+    // must come from the Gregorian calendar in the user's language.
+    private static System.Globalization.CultureInfo DisplayCulture()
+    {
+        var culture = System.Globalization.CultureInfo.CurrentCulture;
+        if (culture.DateTimeFormat.Calendar is System.Globalization.GregorianCalendar) return culture;
+        var gregorian = culture.OptionalCalendars.OfType<System.Globalization.GregorianCalendar>().FirstOrDefault();
+        if (gregorian == null) return System.Globalization.CultureInfo.InvariantCulture;
+        var clone = (System.Globalization.CultureInfo)culture.Clone();
+        clone.DateTimeFormat.Calendar = gregorian;
+        return clone;
+    }
 
     private static string GetViewerTimezone()
     {
