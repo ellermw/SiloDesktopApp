@@ -6868,8 +6868,10 @@ public partial class PlayerService : IDisposable
         };
     }
 
-    private static readonly System.Collections.Concurrent.ConcurrentQueue<(string File, string Line)> _logQueue = new();
-    private static readonly Timer _logFlushTimer = new(_ => FlushLogs(), null, 100, 200);
+    private static readonly QueuedLocalLog _queuedLog = new();
+    private static readonly Timer _logFlushTimer = new(_ => _queuedLog.TryFlush(), null, 100, 200);
+
+    private static void FlushLogs() => _queuedLog.Flush();
 
     private static void InvokeSubscribersSafely(Action? handlers, string eventName)
     {
@@ -6903,24 +6905,7 @@ public partial class PlayerService : IDisposable
 
     private static void LogToFile(string fileName, string content)
     {
-        _logQueue.Enqueue((fileName, content));
+        _queuedLog.Enqueue(fileName, content);
     }
 
-    private static void FlushLogs()
-    {
-        var batches = new Dictionary<string, List<string>>();
-        while (_logQueue.TryDequeue(out var entry))
-        {
-            if (!batches.TryGetValue(entry.File, out var list))
-            {
-                list = new List<string>();
-                batches[entry.File] = list;
-            }
-            list.Add(entry.Line);
-        }
-        foreach (var (fileName, lines) in batches)
-        {
-            LocalLog.AppendLines(fileName, lines);
-        }
-    }
 }

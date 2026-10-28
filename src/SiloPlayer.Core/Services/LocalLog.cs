@@ -108,6 +108,23 @@ public static partial class LocalLog
     {
         try
         {
+            AppendTimestampedLines(fileName, messages.Select(message => (DateTime.Now, message)), logDirectory, maxBytes, archiveCount);
+        }
+        catch
+        {
+        }
+    }
+
+    /// <summary>Appends lines stamped with when they were recorded, for callers that queue before writing.</summary>
+    public static void AppendTimestampedLines(
+        string fileName,
+        IEnumerable<(DateTime RecordedAt, string Message)> entries,
+        string? logDirectory = null,
+        long maxBytes = DefaultMaxBytes,
+        int archiveCount = 2)
+    {
+        try
+        {
             if (string.IsNullOrWhiteSpace(fileName))
                 return;
 
@@ -117,8 +134,8 @@ public static partial class LocalLog
             Directory.CreateDirectory(logDirectory);
             var path = Path.Combine(logDirectory, fileName);
 
-            var lines = messages
-                .Select(message => $"[{DateTime.Now:HH:mm:ss.fff}] {RedactSensitiveData(message)}{Environment.NewLine}")
+            var lines = entries
+                .Select(entry => $"[{entry.RecordedAt:HH:mm:ss.fff}] {RedactSensitiveData(entry.Message)}{Environment.NewLine}")
                 .ToArray();
             if (lines.Length == 0)
                 return;

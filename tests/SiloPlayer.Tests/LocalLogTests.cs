@@ -4,6 +4,14 @@ namespace SiloPlayer.Tests;
 
 public sealed class LocalLogTests
 {
+    [Fact]
+    public void NullBatchCannotReplaceTheFailureBeingLogged()
+    {
+        var directory = CreateTempLogDir();
+        try { Assert.Null(Record.Exception(() => LocalLog.AppendLines("failure.txt", null!, directory))); }
+        finally { DeleteTempLogDir(directory); }
+    }
+
     private const string SignedFixtureToken = "eyJhbGciOiJIUzI1NiJ9.eyJmaXh0dXJlIjp0cnVlfQ.c3ludGhldGlj";
 
     [Fact]
