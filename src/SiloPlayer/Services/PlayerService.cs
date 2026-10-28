@@ -48,6 +48,11 @@ public partial class PlayerService : IDisposable
     public event Action<PlaybackAuthorityScope>? RemoteAuthorityEnded;
     private readonly WatchDetailPrefetchCache<WatchDetailResponse> _watchDetailPrefetches =
         new(capacity: 8, lifetime: TimeSpan.FromMinutes(2));
+    // Advances on every progress/watched mutation; each /watch response is
+    // stamped with the revision current when its server read began, so a
+    // snapshot a page still holds is not trusted after a mutation.
+    private readonly UserStateRevision _userStateRevision;
+    private readonly WatchDetailFreshness<WatchDetailResponse> _watchDetailFreshness;
     private readonly SemaphoreSlim _subtitleAppearanceLoadGate = new(1, 1);
     private readonly SemaphoreSlim _playbackDialogGate = new(1, 1);
     private readonly AutoSkipMarkerIdentity _autoSkipMarkerIdentity = new();
@@ -174,7 +179,8 @@ public partial class PlayerService : IDisposable
         _localAuthority = new PlaybackAuthorityScope(apiClient, authService, playbackApi, catalogApi, settingsApi);
         _activeAuthority = _localAuthority;
         _settingsService = settingsService;
-        DetailCacheInvalidation.Attach(_watchDetailPrefetches);
+        _userStateRevision = DetailCacheInvalidation.Attach(_watchDetailPrefetches);
+        _watchDetailFreshness = new(_userStateRevision, finalSaveBarrier: TimeSpan.FromSeconds(5));
         ObserveSubtitlePreferences();
         InitializeConnectionObservation();
 
@@ -314,7 +320,7 @@ public partial class PlayerService : IDisposable
         var task = _watchDetailPrefetches.GetOrAdd(
             cacheKey,
             WatchPrefetchAuthorityKey(authority, profileId),
-            () => authority.PlaybackApi.GetWatchDetailAsync(contentId, libraryId, fileId, CancellationToken.None),
+            () => FetchWatchDetailAfterFinalSaveAsync(authority, contentId, libraryId, fileId, CancellationToken.None),
             DateTimeOffset.UtcNow,
             out var added);
         if (added)
@@ -359,7 +365,7 @@ public partial class PlayerService : IDisposable
 
         try
         {
-            var detail = await authority.PlaybackApi.GetWatchDetailAsync(contentId, libraryId, fileId, ct).ConfigureAwait(false);
+            var detail = await FetchWatchDetailAfterFinalSaveAsync(authority, contentId, libraryId, fileId, ct).ConfigureAwait(false);
             EnsurePreparationAuthority();
             return detail;
         }
@@ -370,7 +376,7 @@ public partial class PlayerService : IDisposable
             // imposing this delay on successful requests.
             await Task.Delay(300, ct).ConfigureAwait(false);
             EnsurePreparationAuthority();
-            var detail = await authority.PlaybackApi.GetWatchDetailAsync(contentId, libraryId, fileId, ct).ConfigureAwait(false);
+            var detail = await FetchWatchDetailAfterFinalSaveAsync(authority, contentId, libraryId, fileId, ct).ConfigureAwait(false);
             EnsurePreparationAuthority();
             return detail;
         }
@@ -382,6 +388,19 @@ public partial class PlayerService : IDisposable
                 throw new OperationCanceledException("Watch preparation authority changed.", ct);
         }
     }
+
+    /// <summary>
+    /// Reads /watch after any pending final progress write (bounded), so a
+    /// replay right after closing does not resume from the pre-close position,
+    /// and stamps the response with the user-state revision of the read.
+    /// </summary>
+    private Task<WatchDetailResponse> FetchWatchDetailAfterFinalSaveAsync(
+        PlaybackAuthorityScope authority, string contentId, int? libraryId, int? fileId, CancellationToken ct)
+        => _watchDetailFreshness.ReadAsync(PendingProgressSave,
+            token => authority.PlaybackApi.GetWatchDetailAsync(contentId, libraryId, fileId, token), ct);
+
+    /// <summary>True when no progress/watched mutation happened since this response's server read.</summary>
+    private bool IsCurrentWatchDetail(WatchDetailResponse detail) => _watchDetailFreshness.IsCurrent(detail);
 
     private async Task ObserveWatchDetailPrefetchAsync(
         string contentId,
@@ -1974,10 +1993,26 @@ public partial class PlayerService : IDisposable
             lock (_bufferingGate) FlushBufferingSummaryCore();
             var retiringManager = _playbackManager;
             var finalPosition = CurrentMediaPosition;
+            var retiringContentId = ContentId;
+            var retiringDuration = CurrentMediaDuration;
             _mpv?.Stop();
             retiringSessionTask = retiringManager.StopSessionAsync(
                 finalPosition > 0 ? ToSessionPosition(finalPosition) : null,
                 isPaused: true);
+            // Switching straight to another item (next/previous episode, a new
+            // title) retires this session without CloseCoreAsync; publish the
+            // same invalidation so its prefetched detail/watch data is dropped.
+            if (!HasRemoteAuthority && !string.IsNullOrEmpty(retiringContentId) && finalPosition > 0)
+            {
+                try
+                {
+                    WeakReferenceMessenger.Default.Send(new PlaybackProgressUpdated(
+                        retiringContentId, finalPosition, retiringDuration,
+                        retiringDuration > 0 && finalPosition >= retiringDuration * 0.9)
+                    { Persisted = retiringSessionTask });
+                }
+                catch (Exception ex) { LogToFile("state_trace.txt", $"Publish progress event error: {ex.Message}"); }
+            }
             PendingProgressSave = PendingProgressSave.IsCompleted
                 ? retiringSessionTask
                 : Task.WhenAll(PendingProgressSave, retiringSessionTask);
@@ -2043,9 +2078,12 @@ public partial class PlayerService : IDisposable
             // On deliberate hover the task is usually already complete, while
             // direct clicks still benefit from this overlap.
             WatchDetailResponse watchDetail;
+            // A page can hold its /watch snapshot across a Reset Progress or
+            // watched toggle; only trust it when no mutation happened since.
             if (prefetchedWatchDetail != null &&
                 string.Equals(prefetchedWatchDetail.ContentId, contentId, StringComparison.Ordinal) &&
-                prefetchedWatchDetail.PreparedLibraryId == libraryId && prefetchedWatchDetail.PreparedFileId == fileId)
+                prefetchedWatchDetail.PreparedLibraryId == libraryId && prefetchedWatchDetail.PreparedFileId == fileId &&
+                IsCurrentWatchDetail(prefetchedWatchDetail))
             {
                 EnsureMpvInitialized();
                 watchDetail = prefetchedWatchDetail;
@@ -6617,7 +6655,8 @@ public partial class PlayerService : IDisposable
             {
                 WeakReferenceMessenger.Default.Send(
                     new PlaybackProgressUpdated(
-                        closedContentId, closedPosition, closedDuration, completed));
+                        closedContentId, closedPosition, closedDuration, completed)
+                    { Persisted = PendingProgressSave });
             }
             catch (Exception ex) { LogToFile("state_trace.txt", $"Publish progress event error: {ex.Message}"); }
         }

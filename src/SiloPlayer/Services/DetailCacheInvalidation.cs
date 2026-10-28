@@ -21,19 +21,50 @@ public static class DetailCacheInvalidation
         // A watched or progress change on an episode also changes its season
         // and series next-up state, so drop every entry; the cache is small.
         messenger.Register<ItemDetailPrefetchCache, MediaSurfaceChanged>(cache, static (owner, _) => owner.Clear());
-        messenger.Register<ItemDetailPrefetchCache, PlaybackProgressUpdated>(cache, static (owner, _) => owner.Clear());
+        messenger.Register<ItemDetailPrefetchCache, PlaybackProgressUpdated>(cache,
+            static (owner, message) => ClearNowAndAfter(message.Persisted, owner.Clear));
     }
 
     /// <summary>
-    /// Playback resumes from the prefetched watch detail's saved position. A
-    /// card that resets progress or marks the title watched after hover must
-    /// not let Play start from, and then re-save, the previous position.
+    /// Playback resumes from the watch detail's saved position. A card or page
+    /// that resets progress or marks the title watched must not let Play start
+    /// from, and then re-save, the previous position. Besides clearing the
+    /// cache, the returned revision advances so callers can reject snapshots
+    /// they already hold. The messenger holds it weakly: keep it referenced.
     /// </summary>
-    public static void Attach<T>(WatchDetailPrefetchCache<T> cache, IMessenger? messenger = null) where T : class
+    public static UserStateRevision Attach<T>(WatchDetailPrefetchCache<T> cache, IMessenger? messenger = null) where T : class
     {
         ArgumentNullException.ThrowIfNull(cache);
         messenger ??= WeakReferenceMessenger.Default;
-        messenger.Register<WatchDetailPrefetchCache<T>, MediaSurfaceChanged>(cache, static (owner, _) => owner.Clear());
-        messenger.Register<WatchDetailPrefetchCache<T>, PlaybackProgressUpdated>(cache, static (owner, _) => owner.Clear());
+        var revision = new UserStateRevision(cache.Clear);
+        messenger.Register<UserStateRevision, MediaSurfaceChanged>(revision, static (owner, _) => owner.Advance());
+        messenger.Register<UserStateRevision, PlaybackProgressUpdated>(revision,
+            static (owner, message) => ClearNowAndAfter(message.Persisted, owner.Advance));
+        return revision;
+    }
+
+    // A player-close message arrives before its final write finishes. Clear
+    // now, and again once the server has the position, so a read started in
+    // between cannot outlive the write.
+    internal static void ClearNowAndAfter(Task persisted, Action clear)
+    {
+        clear();
+        if (!persisted.IsCompleted)
+            _ = persisted.ContinueWith(static (_, state) => ((Action)state!)(), clear,
+                CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+}
+
+/// <summary>Counts profile-state mutations that make held watch snapshots stale.</summary>
+public sealed class UserStateRevision(Action onAdvance)
+{
+    private long _value;
+
+    public long Current => Interlocked.Read(ref _value);
+
+    public void Advance()
+    {
+        Interlocked.Increment(ref _value);
+        onAdvance();
     }
 }
