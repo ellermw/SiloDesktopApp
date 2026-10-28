@@ -3,6 +3,79 @@ namespace SiloPlayer.Tests;
 public sealed class MpvOscScriptTests
 {
     [Fact]
+    public void EveryLocalHelperFunctionIsUsed()
+    {
+        // Dead helpers accumulate silently in the 6,000-line OSC; luacheck
+        // is not available to CI, so check the one class it caught here.
+        // Mentions in comments and strings are not uses.
+        var code = StripLuaCommentsAndStrings(File.ReadAllText(FindOscScriptPath()));
+        var names = System.Text.RegularExpressions.Regex.Matches(code, @"\blocal function ([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+            .Select(match => match.Groups[1].Value).Distinct().ToList();
+        Assert.NotEmpty(names);
+        var unused = names.Where(name => System.Text.RegularExpressions.Regex.Matches(code, $@"\b{name}\b").Count < 2).ToList();
+        Assert.True(unused.Count == 0, "Unused OSC helpers: " + string.Join(", ", unused));
+    }
+
+    [Fact]
+    public void LuaCommentAndStringMentionsAreNotCountedAsUses()
+    {
+        var code = StripLuaCommentsAndStrings("""
+            local function stale() end -- stale
+            --[[ stale ]] local s = "stale" .. 'stale' .. [[stale]] .. [==[stale]==]
+            local t = "a \" stale"
+            local function used() end
+            used()
+            """);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(code, @"\bstale\b"));
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(code, @"\bused\b").Count);
+    }
+
+    private static string StripLuaCommentsAndStrings(string source)
+    {
+        var output = new System.Text.StringBuilder(source.Length);
+        for (var i = 0; i < source.Length;)
+        {
+            if (source[i] == '-' && i + 1 < source.Length && source[i + 1] == '-')
+            {
+                var level = LongBracketLevel(source, i + 2);
+                if (level >= 0) i = SkipLongBracket(source, i + 2, level);
+                else while (i < source.Length && source[i] != '\n') i++;
+                output.Append(' ');
+            }
+            else if (source[i] == '[' && LongBracketLevel(source, i) is var level and >= 0)
+            {
+                i = SkipLongBracket(source, i, level);
+                output.Append(' ');
+            }
+            else if (source[i] is '"' or '\'')
+            {
+                var quote = source[i++];
+                while (i < source.Length && source[i] != quote && source[i] != '\n') i += source[i] == '\\' ? 2 : 1;
+                i++;
+                output.Append(' ');
+            }
+            else output.Append(source[i++]);
+        }
+        return output.ToString();
+    }
+
+    // [[ is level 0, [=[ level 1, and so on; -1 when not a long bracket.
+    private static int LongBracketLevel(string source, int at)
+    {
+        if (at >= source.Length || source[at] != '[') return -1;
+        var level = 0;
+        while (at + 1 + level < source.Length && source[at + 1 + level] == '=') level++;
+        return at + 1 + level < source.Length && source[at + 1 + level] == '[' ? level : -1;
+    }
+
+    private static int SkipLongBracket(string source, int at, int level)
+    {
+        var close = "]" + new string('=', level) + "]";
+        var end = source.IndexOf(close, at + level + 2, StringComparison.Ordinal);
+        return end < 0 ? source.Length : end + close.Length;
+    }
+
+    [Fact]
     public void PostRollCancelsTheCreditsCountdownOwnedByTheForegroundPlayer()
     {
         var script = File.ReadAllText(FindOscScriptPath());
