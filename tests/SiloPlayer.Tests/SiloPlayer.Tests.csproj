@@ -38,6 +38,7 @@
     <Compile Include="..\..\src\SiloPlayer\Services\WatchDetailFreshness.cs" Link="Production\WatchDetailFreshness.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\VirtualCatalogItems.cs" Link="Production\VirtualCatalogItems.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\BulkObservableCollection.cs" Link="Production\BulkObservableCollection.cs" />
+    <Compile Include="..\..\src\SiloPlayer\Helpers\ServerOriginDisplay.cs" Link="Production\ServerOriginDisplay.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\EbookPackageExtractor.cs" Link="Production\EbookPackageExtractor.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\CardOverlayService.cs" Link="Production\CardOverlayService.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\SearchViewModel.cs" Link="Production\SearchViewModel.cs" />
