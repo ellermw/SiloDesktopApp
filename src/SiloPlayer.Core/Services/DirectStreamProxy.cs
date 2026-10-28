@@ -20,7 +20,6 @@ public sealed class DirectStreamProxy : IDisposable
     private readonly string _routeToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
     private readonly ConcurrentDictionary<int, Task> _clientTasks = new();
     private Task? _acceptLoopTask;
-    private Task? _cleanupTask;
     private string? _localUrl;
     private int _nextClientTaskId;
     private bool _disposed;
@@ -105,7 +104,7 @@ public sealed class DirectStreamProxy : IDisposable
         // Do not dispose the CTS or HttpClient while accepted requests are still
         // unwinding. Cleanup is deliberately asynchronous so closing the player
         // cannot block the UI thread on a stalled network operation.
-        _cleanupTask = CleanupAsync(_acceptLoopTask);
+        _ = CleanupAsync(_acceptLoopTask);
 
         _log("Direct stream proxy stopped");
     }
