@@ -10,6 +10,6 @@
 - [x] Verify35's collision/centering failures; choose collision-free wrapper paths and centered inert image layout; commit meaningful archive and WebView regressions.
 - [x] Replace six-hour checks with startup/15-minute discovery and five-minute error retries; show native setup progress rather than very-silent hidden setup. Verify using virtual-time checks, synthetic native notices and actual Windows PowerShell launch configuration without setup execution.
 - [x] Verify current-main combination, build355, run full/relevant native/published checks and seal exact installer bytes.
-- [ ] Merge corrected heads, publish355, verify public assets/updater discovery, record receipts and PR results; release integration lock.
+- [x] Merge corrected heads, publish355, verify public assets/updater discovery, record receipts and PR results; release integration lock.
 
 Scope: destination visibility does not block unknown servers; native origin text replaces the browser address bar's trust signal. SVG tests must establish actual script isolation and image rendering, not merely assert generated strings. Historical full parity/hardware and elevated update installation require their own evidence.
