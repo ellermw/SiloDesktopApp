@@ -8,7 +8,7 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
     private AppUpdateState _state = new();
     private long _lastSuccessfulCheckStamp;
     private ReleaseCheck? _lastCheck;
-    private TimeSpan? _rateLimitedFor;
+    private DateTimeOffset? _rateLimitedUntil;
     private static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(15), RetryInterval = TimeSpan.FromMinutes(5),
         MaximumRateLimitWait = TimeSpan.FromHours(6);
     public AppUpdateState State => Volatile.Read(ref _state);
@@ -24,7 +24,13 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
             while (!ct.IsCancellationRequested)
             {
                 await CheckAsync(ct).ConfigureAwait(false);
-                await Task.Delay(NextCheckDelay(), clock, ct).ConfigureAwait(false);
+                // A skipped check can overlap a manual request or download.
+                // Wait for its result before choosing the next interval.
+                await _operation.WaitAsync(ct).ConfigureAwait(false);
+                TimeSpan delay;
+                try { delay = NextCheckDelay(); }
+                finally { _operation.Release(); }
+                await Task.Delay(delay, clock, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
@@ -34,9 +40,16 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
     // shared hourly budget again. Wait for GitHub's reset, within sane bounds.
     private TimeSpan NextCheckDelay()
     {
+        if (RemainingRateLimitDelay() is { } limited) return limited;
         if (State.Error is null) return CheckInterval;
-        if (_rateLimitedFor is not { } limited) return RetryInterval;
-        return limited < RetryInterval ? RetryInterval : limited > MaximumRateLimitWait ? MaximumRateLimitWait : limited;
+        return RetryInterval;
+    }
+
+    private TimeSpan? RemainingRateLimitDelay()
+    {
+        if (_rateLimitedUntil is not { } until) return null;
+        var remaining = until - (timeProvider ?? TimeProvider.System).GetUtcNow();
+        return remaining > TimeSpan.Zero ? remaining : null;
     }
 
     public async Task CheckAsync(CancellationToken ct = default)
@@ -44,11 +57,20 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
         if (!await _operation.WaitAsync(0, ct).ConfigureAwait(false)) return;
         try
         {
+            // Enforce the deadline at dispatch as well as in the timer: a
+            // manual check can learn a limit after that timer was scheduled.
+            // Download progress/errors are separate from this network limit.
+            if (RemainingRateLimitDelay() is not null)
+            {
+                SetState(State with { IsChecking = false, Error = "Could not check for updates. " + UpdateCheckRateLimitedException.UserMessage });
+                log?.Invoke("check_deferred_rate_limit");
+                return;
+            }
             SetState(State with { IsChecking = true, Error = null });
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
             deadline.CancelAfter(TimeSpan.FromSeconds(12));
             var check = await new GitHubReleaseReader(http, timeProvider).ReadAsync(currentVersion, _lastCheck, deadline.Token).ConfigureAwait(false);
-            _lastCheck = check; _rateLimitedFor = null;
+            _lastCheck = check; _rateLimitedUntil = null;
             var release = check.Release;
             Interlocked.Exchange(ref _lastSuccessfulCheckStamp, System.Diagnostics.Stopwatch.GetTimestamp());
             var same = release is not null && State.Release?.Version == release.Version && State.Release.Sha256 == release.Sha256;
@@ -62,7 +84,10 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
         catch (Exception ex)
         {
             Interlocked.Exchange(ref _lastSuccessfulCheckStamp, 0);
-            _rateLimitedFor = ex is UpdateCheckRateLimitedException limited ? limited.RetryAfter ?? RetryInterval : null;
+            var limited = ex as UpdateCheckRateLimitedException;
+            var wait = limited?.RetryAfter ?? RetryInterval;
+            wait = wait < RetryInterval ? RetryInterval : wait > MaximumRateLimitWait ? MaximumRateLimitWait : wait;
+            _rateLimitedUntil = limited is null ? null : (timeProvider ?? TimeProvider.System).GetUtcNow() + wait;
             log?.Invoke($"check_failed kind={ex.GetType().Name} status={(ex as HttpRequestException)?.StatusCode}");
             SetState(State with { IsChecking = false, Error = ex is OperationCanceledException
                 ? "The update check timed out. Try again." : "Could not check for updates. " + ex.Message });

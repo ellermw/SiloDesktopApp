@@ -37,7 +37,7 @@ public sealed class AppUpdateTests
     [Fact]
     public async Task RepeatedChecksAreConditionalAndKeepTheReleaseOnNotModified()
     {
-        // 304 responses do not count against GitHub's 60/hour unauthenticated limit.
+        // Conditional requests save metadata bytes; unauthenticated 304s still use quota.
         using var wire = new ConditionalRelease(); using var http = new HttpClient(wire);
         var service = new AppUpdateService(http, Path.GetTempPath(), new Version(1, 2, 334));
 

@@ -11,8 +11,9 @@ internal sealed record ReleaseCheck(AppRelease? Release, string? ETag);
 
 /// <summary>GitHub limited unauthenticated checks from this network; retry no sooner than <see cref="RetryAfter"/>.</summary>
 internal sealed class UpdateCheckRateLimitedException(System.Net.HttpStatusCode status, TimeSpan? retryAfter)
-    : HttpRequestException("GitHub is limiting update checks from this network. Silo will try again later.", null, status)
+    : HttpRequestException(UserMessage, null, status)
 {
+    internal const string UserMessage = "GitHub is limiting update checks from this network. Silo will try again later.";
     public TimeSpan? RetryAfter { get; } = retryAfter;
 }
 
@@ -28,8 +29,8 @@ internal sealed class GitHubReleaseReader(HttpClient http, TimeProvider? clock =
 
     /// <summary>
     /// Unauthenticated GitHub API calls share 60 requests an hour per IP
-    /// address. A conditional request answered 304 does not count against
-    /// that limit, so repeated checks reuse <paramref name="previous"/>.
+    /// address. Conditional requests save metadata bytes; the primary-quota
+    /// exemption for 304 requires authentication, which this client does not send.
     /// </summary>
     public async Task<ReleaseCheck> ReadAsync(Version installed, ReleaseCheck? previous, CancellationToken ct)
     {
@@ -71,7 +72,10 @@ internal sealed class GitHubReleaseReader(HttpClient http, TimeProvider? clock =
             return retry.Delta ?? (retry.Date is { } date ? date - now : null);
         if (response.Headers.TryGetValues("X-RateLimit-Reset", out var reset) &&
             long.TryParse(reset.FirstOrDefault(), NumberStyles.None, CultureInfo.InvariantCulture, out var seconds))
-            return DateTimeOffset.FromUnixTimeSeconds(seconds) - now;
+        {
+            try { return DateTimeOffset.FromUnixTimeSeconds(seconds) - now; }
+            catch (ArgumentOutOfRangeException) { return null; }
+        }
         return null;
     }
 
