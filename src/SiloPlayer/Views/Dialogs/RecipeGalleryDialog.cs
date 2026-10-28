@@ -1099,68 +1099,6 @@ public static partial class RecipeGalleryDialog
         _ => type.Replace('_', ' '),
     };
 
-    private static List<EditableFilterGroup> ReadFilterGroups(Dictionary<string, object> config)
-    {
-        if (!config.TryGetValue("groups", out var raw) || raw is null) return [];
-        JsonElement json;
-        if (raw is JsonElement element)
-            json = element;
-        else
-        {
-            try { json = JsonSerializer.SerializeToElement(raw); }
-            catch { return []; }
-        }
-        if (json.ValueKind != JsonValueKind.Array) return [];
-        var result = new List<EditableFilterGroup>();
-        foreach (var groupElement in json.EnumerateArray())
-        {
-            if (groupElement.ValueKind != JsonValueKind.Object) continue;
-            var group = new EditableFilterGroup
-            {
-                Match = groupElement.TryGetProperty("match", out var match) && match.GetString() == "any" ? "any" : "all",
-            };
-            if (groupElement.TryGetProperty("rules", out var rules) && rules.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var ruleElement in rules.EnumerateArray())
-                {
-                    if (ruleElement.ValueKind != JsonValueKind.Object) continue;
-                    var op = ruleElement.TryGetProperty("op", out var opElement)
-                        ? opElement.GetString()
-                        : ruleElement.TryGetProperty("operator", out var legacyOp) ? legacyOp.GetString() : null;
-                    group.Rules.Add(new EditableFilterRule
-                    {
-                        Field = ruleElement.TryGetProperty("field", out var field) ? field.GetString() ?? "genre" : "genre",
-                        Operator = op ?? "contains",
-                        Value = ruleElement.TryGetProperty("value", out var value) ? FormatFilterValue(value) : "",
-                    });
-                }
-            }
-            result.Add(group);
-        }
-        return result;
-    }
-
-    private static object ParseFilterValue(EditableFilterRule rule)
-    {
-        var value = rule.Value.Trim();
-        if (rule.Operator == "between")
-        {
-            var pieces = value.Split([',', '-'], 2, StringSplitOptions.TrimEntries);
-            return pieces.Length == 2
-                ? new[] { ParseFilterScalar(rule.Field, pieces[0]), ParseFilterScalar(rule.Field, pieces[1]) }
-                : new[] { (object)value, value };
-        }
-        return ParseFilterScalar(rule.Field, value);
-    }
-
-    private static object ParseFilterScalar(string field, string value)
-    {
-        if (field == "watched" && bool.TryParse(value, out var boolean)) return boolean;
-        if (field is "year" or "runtime" && int.TryParse(value, out var integer)) return integer;
-        if (field == "rating_imdb" && double.TryParse(value, out var number)) return number;
-        return value;
-    }
-
     private static string FormatFilterValue(JsonElement value)
     {
         if (value.ValueKind == JsonValueKind.Array)
@@ -1252,11 +1190,6 @@ public static partial class RecipeGalleryDialog
         public override string ToString() => Category.Length == 0
             ? Label
             : $"{Category.Replace('_', ' ')} — {Label}";
-    }
-    private sealed class EditableFilterGroup
-    {
-        public string Match { get; set; } = "all";
-        public List<EditableFilterRule> Rules { get; } = [];
     }
     private sealed class EditableFilterRule
     {

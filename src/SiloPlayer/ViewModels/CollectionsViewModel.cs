@@ -377,27 +377,6 @@ public partial class CollectionsViewModel : ObservableObject
         finally { IsCollectionMutationPending = false; }
     }
 
-    public async Task<bool> MoveGroupAsync(CollectionGroup group, int offset)
-    {
-        var ordered = Groups.OrderBy(item => item.SortOrder).ToList();
-        var index = ordered.FindIndex(item => item.Id == group.Id);
-        var target = index + offset;
-        if (index < 0 || target < 0 || target >= ordered.Count) return false;
-
-        (ordered[index], ordered[target]) = (ordered[target], ordered[index]);
-        try
-        {
-            await _collectionsApi.ReorderCollectionGroupsAsync(ordered.Select(item => item.Id).ToList());
-            await LoadCollectionsAsync();
-            return true;
-        }
-        catch (Exception ex)
-        {
-            ErrorMessage = $"Failed to reorder groups: {ex.Message}";
-            return false;
-        }
-    }
-
     public async Task<bool> DropGroupAsync(string sourceId, string targetId)
     {
         var ordered = Groups.OrderBy(item => item.SortOrder).ToList();

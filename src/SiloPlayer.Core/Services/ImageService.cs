@@ -222,13 +222,6 @@ public class ImageService : IDisposable
         }
     }
 
-    public void ClearMemoryCache()
-    {
-        _memoryCache.Clear();
-        while (_evictionOrder.TryDequeue(out _)) { }
-        _currentMemoryBytes = 0;
-    }
-
     private void AddToMemoryCache(string key, byte[] data)
     {
         if (data.Length > _maxMemoryBytes) return;

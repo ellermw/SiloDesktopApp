@@ -392,38 +392,6 @@ public sealed partial class PosterCard : UserControl
         _ = LoadPosterAsync(item, ct);
     }
 
-    public void LoadDeferredPoster()
-    {
-        if (SuppressImageLoading)
-        {
-            _deferredPosterItem = null;
-            return;
-        }
-
-        if (_deferredPosterItem == null || !ReferenceEquals(_deferredPosterItem, MediaItem))
-            return;
-
-        var item = _deferredPosterItem;
-        _deferredPosterItem = null;
-        _loadCts?.Cancel();
-        _loadCts?.Dispose();
-        _loadCts = new CancellationTokenSource();
-        _ = LoadPosterAsync(item, _loadCts.Token);
-    }
-
-    public void LoadDeferredOverlays()
-    {
-        if (_deferredOverlayItem == null || !ReferenceEquals(_deferredOverlayItem, MediaItem))
-            return;
-
-        var item = _deferredOverlayItem;
-        _deferredOverlayItem = null;
-        UpdateBadges(item);
-        var overlayService = App.Services.GetRequiredService<Services.CardOverlayService>();
-        if (!overlayService.IsLoaded && _loadCts is { } owner)
-            _ = EnsureBadgesLoadedAsync(item, owner.Token);
-    }
-
     private async Task EnsureBadgesLoadedAsync(MediaItem item, CancellationToken ct)
     {
         try
@@ -447,17 +415,6 @@ public sealed partial class PosterCard : UserControl
             : MediaItemDisplayText.BuildSubtitle(item, CurrentSortKey);
         if (!DeferOverlayLoading)
             UpdateBadges(item);
-    }
-
-    public void DeferCurrentPosterLoad()
-    {
-        if (SuppressImageLoading || MediaItem == null || PosterImage.Source != null)
-            return;
-
-        _loadCts?.Cancel();
-        _loadCts?.Dispose();
-        _loadCts = null;
-        _deferredPosterItem = MediaItem;
     }
 
     /// <summary>

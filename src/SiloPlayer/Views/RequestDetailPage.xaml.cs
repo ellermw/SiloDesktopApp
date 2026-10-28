@@ -469,30 +469,6 @@ public sealed partial class RequestDetailPage : Page
         RecommendationsSection.Visibility = RecommendationsPanel.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private void Recommendation_Click(object sender, RoutedEventArgs e) { if (sender is FrameworkElement { Tag: RequestMediaResult item }) App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(new RequestDetailNavigation(item.MediaType, item.TmdbId)); }
-    private async void RecommendationRequest_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button { Tag: RequestMediaResult item } button) return;
-        if (item.MediaType == "series") { Recommendation_Click(sender, e); return; }
-        button.IsEnabled = false;
-        button.Content = "Submitting…";
-        try
-        {
-            await _api.CreateAsync(new CreateMediaRequestInput { MediaType = item.MediaType, TmdbId = item.TmdbId, Title = item.Title, Year = item.Year, Overview = item.Overview, PosterPath = item.PosterPath, BackdropPath = item.BackdropPath }, _lifetime.Token);
-            button.Content = "Requested";
-        }
-        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested)
-        {
-            button.IsEnabled = true;
-            button.Content = "Request";
-        }
-        catch (Exception ex)
-        {
-            button.IsEnabled = true;
-            button.Content = "Request";
-            App.Services.GetRequiredService<ToastService>().Error(ex, $"Request failed: {ex.Message}");
-        }
-    }
     private void OpenLibrary_Click(object sender, RoutedEventArgs e) { if (sender is Button { Tag: string id }) App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(id); }
     private async void ExternalLink_Click(object sender, RoutedEventArgs e)
     {
@@ -505,13 +481,6 @@ public sealed partial class RequestDetailPage : Page
     private static Border StatusPill(string text, string tone)
         => ExternalTitleCard.StatusBadge(text);
 
-    private static string StatusTone(string? status) => status switch
-    {
-        "pending" => "amber",
-        "queued" or "downloading" => "sky",
-        "approved" or "completed" => "emerald",
-        _ => "zinc",
-    };
     private Button ExternalLinkButton(string label, string url)
     {
         var button = SecondaryAction("external-link", label, "external-link"); button.Tag = url;

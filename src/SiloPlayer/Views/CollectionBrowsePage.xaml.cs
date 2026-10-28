@@ -464,36 +464,8 @@ public sealed partial class CollectionBrowsePage : Page
             CultureInfo.InvariantCulture,
             out minimumRating);
 
-    private async void ActiveFilterBadge_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button { Tag: FilterToken token }) return;
-        switch (token.Kind)
-        {
-            case "genre":
-                GenresBox.Text = string.Join(", ", GenresBox.Text
-                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .Where(value => !string.Equals(value, token.Value, StringComparison.OrdinalIgnoreCase)));
-                break;
-            case "year_min": YearMinBox.Text = ""; break;
-            case "year_max": YearMaxBox.Text = ""; break;
-            case "rating_imdb": MinimumRatingBox.Text = ""; break;
-            case "content_rating": ContentRatingBox.Text = ""; break;
-            case "original_language": OriginalLanguageBox.Text = ""; break;
-            case "studio": StudioBox.Text = ""; break;
-            case "country": CountryBox.Text = ""; break;
-            case "4k": FourKToggle.IsChecked = false; break;
-            case "hdr": HdrToggle.IsChecked = false; break;
-            case "dolby_vision": DolbyVisionToggle.IsChecked = false; break;
-        }
-        UpdateActiveFilterBadge();
-        await LoadFirstPageAsync();
-    }
-
     private sealed record FilterToken(string Kind, string? Value);
     private sealed record FilterBadge(string Label, FilterToken Token);
-
-    private static string? EmptyToNull(string value)
-        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private void CollectionBrowsePage_SizeChanged(object sender, SizeChangedEventArgs e)
     {
@@ -640,20 +612,6 @@ public sealed partial class CollectionBrowsePage : Page
     private const string SidebarPinsKey = "sidebar_pins";
     private bool _isPinned;
 
-    private async Task SyncPinStateAsync()
-    {
-        if (_currentArgs?.LibraryId == null) return;
-        var libraryKey = _currentArgs.LibraryId.Value.ToString();
-        try
-        {
-            var settingsApi = App.Services.GetRequiredService<SettingsApi>();
-            var entry = await settingsApi.GetSettingAsync(SidebarPinsKey);
-            _isPinned = IsPinnedInMap(entry.Value, libraryKey, _currentArgs.CollectionId);
-        }
-        catch { _isPinned = false; }
-        UpdatePinButtonVisual();
-    }
-
     private async void PinButton_Click(object sender, RoutedEventArgs e)
     {
         if (_currentArgs?.LibraryId == null) return;
@@ -729,15 +687,6 @@ public sealed partial class CollectionBrowsePage : Page
         public string Type { get; set; } = "";
         public string Id { get; set; } = "";
         public string Label { get; set; } = "";
-    }
-
-    private static bool IsPinnedInMap(string? rawJson, string libraryKey, string collectionId)
-    {
-        var map = ParsePinsMap(rawJson);
-        if (!map.TryGetValue(libraryKey, out var list)) return false;
-        return list.Any(p =>
-            string.Equals(p.Type, "collection", StringComparison.OrdinalIgnoreCase)
-            && string.Equals(p.Id, collectionId, StringComparison.Ordinal));
     }
 
     private static Dictionary<string, List<PinEntry>> ParsePinsMap(string? rawJson)

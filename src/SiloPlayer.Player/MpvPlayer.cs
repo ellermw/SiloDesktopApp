@@ -434,36 +434,6 @@ public sealed partial class MpvPlayer : IDisposable
 
     // ── Render size management ───────────────────────────────────────────
 
-    /// <summary>
-    /// Updates the render target size. Call when the display area resizes.
-    /// The new size takes effect on the next frame render.
-    /// </summary>
-    /// <param name="width">New width in physical pixels.</param>
-    /// <param name="height">New height in physical pixels.</param>
-    public void UpdateRenderSize(int width, int height)
-    {
-        if (width <= 0 || height <= 0) return;
-
-        lock (_renderSizeLock)
-        {
-            if (width == _renderWidth && height == _renderHeight)
-                return;
-
-            // Free old pinned buffer
-            if (_frameBufferPin.IsAllocated)
-                _frameBufferPin.Free();
-
-            _renderWidth = width;
-            _renderHeight = height;
-            _stride = _renderWidth * 4;
-            _frameBuffer = new byte[_stride * _renderHeight];
-            _frameBufferPin = GCHandle.Alloc(_frameBuffer, GCHandleType.Pinned);
-        }
-
-        // Signal a re-render at the new size
-        _frameUpdateEvent.Set();
-    }
-
     // ── Render loop ─────────────────────────────────────────────────────
 
     private void OnRenderUpdate(IntPtr ctx)
@@ -631,13 +601,6 @@ public sealed partial class MpvPlayer : IDisposable
         SetNativeString("pause", "yes");
     }
 
-    /// <summary>Toggles the pause state.</summary>
-    public void TogglePause()
-    {
-        ThrowIfNotInitialized();
-        Command("cycle", "pause");
-    }
-
     /// <summary>
     /// Seeks to an absolute position in seconds.
     /// </summary>
@@ -766,21 +729,6 @@ public sealed partial class MpvPlayer : IDisposable
     {
         if (_mpvHandle == IntPtr.Zero) return;
         Command("mouse", x.ToString(), y.ToString());
-    }
-
-    /// <summary>Sends a mouse button press/release to mpv's input system.</summary>
-    public void SendMouseButton(int x, int y, int button, bool isDown)
-    {
-        if (_mpvHandle == IntPtr.Zero) return;
-        var btnName = button switch
-        {
-            0 => "MBTN_LEFT",
-            1 => "MBTN_MID",
-            2 => "MBTN_RIGHT",
-            _ => $"MBTN{button}"
-        };
-        Command("mouse", x.ToString(), y.ToString());
-        Command(isDown ? "keydown" : "keyup", btnName);
     }
 
     /// <summary>Sends a key press to mpv's input system.</summary>

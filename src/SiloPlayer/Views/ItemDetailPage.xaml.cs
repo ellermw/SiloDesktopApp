@@ -3180,11 +3180,6 @@ public sealed partial class ItemDetailPage : Page
         AutomationProperties.SetName(FavoriteButton, ViewModel.IsFavorite ? "Unfavorite" : "Favorite");
     }
 
-    private void UpdateWatchlistButton()
-    {
-        // Legacy — kept for any remaining references but no longer visible.
-    }
-
     /// <summary>
     /// Populate the "More" kebab flyout with secondary actions: Watchlist,
     /// Mark Watched, admin-only Refresh Metadata. Rebuilds each time the
@@ -3606,16 +3601,6 @@ public sealed partial class ItemDetailPage : Page
         }.ShowAsync();
     }
 
-    private static string FormatFileBytes(long bytes)
-    {
-        if (bytes <= 0) return "0 B";
-        string[] units = ["B", "KB", "MB", "GB", "TB"];
-        var value = (double)bytes;
-        var unit = 0;
-        while (value >= 1024 && unit < units.Length - 1) { value /= 1024; unit++; }
-        return $"{value:0.#} {units[unit]}";
-    }
-
     private async Task ShowMediaInfoDialogAsync(int? preferredFileId = null)
     {
         var versions = (_watchDetail?.Versions ?? ViewModel.Item?.Versions ?? [])
@@ -3969,12 +3954,6 @@ public sealed partial class ItemDetailPage : Page
     {
         await ViewModel.ToggleFavoriteCommand.ExecuteAsync(null);
         UpdateFavoriteButton();
-    }
-
-    private async void WatchlistButton_Click(object sender, RoutedEventArgs e)
-    {
-        await ViewModel.ToggleWatchlistCommand.ExecuteAsync(null);
-        UpdateWatchlistButton();
     }
 
     // ===== Download =====
@@ -4392,150 +4371,6 @@ public sealed partial class ItemDetailPage : Page
 
     // ===== Subtitles Section =====
 
-    private async Task LoadSubtitlesSectionAsync(int mediaFileId)
-    {
-        try
-        {
-            var playbackApi = App.Services.GetRequiredService<PlaybackApi>();
-            var response = await playbackApi.GetSubtitlesAsync(mediaFileId);
-
-            if (response.Subtitles.Count == 0)
-            {
-                SubtitlesSection.Visibility = Visibility.Collapsed;
-                return;
-            }
-
-            SubtitlesSection.Visibility = Visibility.Visible;
-            SubtitlesList.Children.Clear();
-
-            foreach (var sub in response.Subtitles)
-            {
-                var row = new Grid { Margin = new Thickness(0, 0, 0, 0) };
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Auto) });
-
-                // Subtitle info
-                var infoPanel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-
-                // Language
-                var langName = Services.PlayerService.LanguageCodeToName(sub.Language);
-                infoPanel.Children.Add(new TextBlock
-                {
-                    Text = langName,
-                    FontSize = 13,
-                    FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-                    Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"],
-                    VerticalAlignment = VerticalAlignment.Center
-                });
-
-                // Codec badge
-                if (!string.IsNullOrEmpty(sub.Codec))
-                {
-                    infoPanel.Children.Add(new Border
-                    {
-                        Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SurfaceBrush"],
-                        CornerRadius = new CornerRadius(4),
-                        Padding = new Thickness(6, 2, 6, 2),
-                        Child = new TextBlock
-                        {
-                            Text = sub.Codec.ToUpperInvariant(),
-                            FontSize = 11,
-                            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SecondaryTextBrush"]
-                        }
-                    });
-                }
-
-                // Source badge
-                if (!string.IsNullOrEmpty(sub.Source))
-                {
-                    infoPanel.Children.Add(new TextBlock
-                    {
-                        Text = sub.Source,
-                        FontSize = 12,
-                        Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
-                        VerticalAlignment = VerticalAlignment.Center
-                    });
-                }
-
-                // Title
-                if (!string.IsNullOrEmpty(sub.Title))
-                {
-                    infoPanel.Children.Add(new TextBlock
-                    {
-                        Text = sub.Title,
-                        FontSize = 12,
-                        Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TertiaryTextBrush"],
-                        VerticalAlignment = VerticalAlignment.Center,
-                        TextTrimming = TextTrimming.CharacterEllipsis,
-                        MaxWidth = 300
-                    });
-                }
-
-                if (sub.Forced)
-                {
-                    infoPanel.Children.Add(new TextBlock
-                    {
-                        Text = "[Forced]",
-                        FontSize = 12,
-                        Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"],
-                        VerticalAlignment = VerticalAlignment.Center
-                    });
-                }
-
-                Grid.SetColumn(infoPanel, 0);
-                row.Children.Add(infoPanel);
-
-                // Delete button
-                var deleteBtn = new Button
-                {
-                    Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-                    Padding = new Thickness(6, 4, 6, 4),
-                    CornerRadius = new CornerRadius(4),
-                    Tag = sub.Id,
-                    Content = new FontIcon
-                    {
-                        Glyph = "\uE74D",
-                        FontSize = 12,
-                        Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["ErrorBrush"]
-                    },
-                    VerticalAlignment = VerticalAlignment.Center
-                };
-                deleteBtn.Click += SubtitleDeleteButton_Click;
-                Grid.SetColumn(deleteBtn, 1);
-                row.Children.Add(deleteBtn);
-
-                SubtitlesList.Children.Add(row);
-            }
-        }
-        catch
-        {
-            SubtitlesSection.Visibility = Visibility.Collapsed;
-        }
-    }
-
-    private async void SubtitleDeleteButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button btn || btn.Tag is not int subtitleId) return;
-
-        try
-        {
-            var playbackApi = App.Services.GetRequiredService<PlaybackApi>();
-            await playbackApi.DeleteSubtitleAsync(subtitleId);
-
-            // Remove the row from UI
-            var parent = btn.Parent as Grid;
-            if (parent != null)
-                SubtitlesList.Children.Remove(parent);
-
-            if (SubtitlesList.Children.Count == 0)
-                SubtitlesSection.Visibility = Visibility.Collapsed;
-        }
-        catch
-        {
-            // Non-fatal
-        }
-    }
-
     // ===== Navigation =====
 
     private static string ExtraKindLabel(string kind) => kind switch
@@ -4808,14 +4643,6 @@ public sealed partial class ItemDetailPage : Page
             nav.Navigate<HomePage>();
     }
 
-    private async void RetryDetailButton_Click(object sender, RoutedEventArgs e)
-    {
-        if (string.IsNullOrWhiteSpace(_currentContentId)) return;
-        await ViewModel.LoadCommand.ExecuteAsync(_currentContentId);
-        if (ViewModel.Item != null)
-            UpdateUI();
-    }
-
     private async void RetrySeasonsButton_Click(object sender, RoutedEventArgs e)
     {
         if (ViewModel.Item?.Type != "series") return;
@@ -4932,16 +4759,6 @@ public sealed partial class ItemDetailPage : Page
         else
         {
             ShowNoPlayableEpisodeToast(ViewModel.Item.Type);
-        }
-    }
-
-    private void EpisodeRow_Tapped(object sender, Microsoft.UI.Xaml.Input.TappedRoutedEventArgs e)
-    {
-        if (sender is FrameworkElement fe && fe.Tag is string contentId)
-        {
-            // Navigate to episode detail page, not directly to player
-            var nav = App.Services.GetRequiredService<NavigationService>();
-            nav.Navigate<ItemDetailPage>(MediaNavigationContext.Detail(contentId, ViewModel.LibraryId));
         }
     }
 
@@ -6065,27 +5882,6 @@ public sealed partial class ItemDetailPage : Page
         return string.IsNullOrEmpty(format) ? name : $"{name} · {format}";
     }
 
-    private static string FormatSubtitleTrackMenuText(VersionSubtitleTrack sub)
-    {
-        var summary = FormatSubtitleTrackSummary(sub);
-        var description = sub.Title?.Trim()
-            ?? sub.EmbeddedTitle?.Trim()
-            ?? sub.FileName?.Trim();
-        if (string.IsNullOrWhiteSpace(description))
-            return summary;
-
-        var normalizedDescription = NormalizeSubtitleDisplayToken(description);
-        var normalizedCodec = NormalizeSubtitleDisplayToken(sub.Codec);
-        var normalizedFormat = NormalizeSubtitleDisplayToken(SubtitleFormatLabel(sub.Codec));
-        var normalizedLanguage = NormalizeSubtitleDisplayToken(MediaLanguageCatalog.Label(sub.Language));
-        if (normalizedDescription == normalizedCodec ||
-            normalizedDescription == normalizedFormat ||
-            normalizedDescription == normalizedLanguage)
-            return summary;
-
-        return $"{summary} — {description}";
-    }
-
     private static Button CreateTrackSelectionRow(
         string title,
         string? description,
@@ -6358,15 +6154,6 @@ public sealed partial class ItemDetailPage : Page
         if (subtitle.HearingImpaired) language += " (SDH)";
         var format = SubtitleFormatLabel(subtitle.Format);
         return string.IsNullOrEmpty(format) ? language : $"{language} · {format}";
-    }
-
-    private static string FormatDownloadedSubtitleMenuText(SubtitleEntry subtitle)
-    {
-        var summary = FormatDownloadedSubtitleSummary(subtitle);
-        var release = DownloadedSubtitleLabel(subtitle);
-        return string.Equals(release, MediaLanguageCatalog.Label(subtitle.Language), StringComparison.OrdinalIgnoreCase)
-            ? summary
-            : $"{summary} — {release}";
     }
 
     private SubtitleEntry? FindDownloadedSubtitle(SubtitleTrackSignature signature)

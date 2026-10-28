@@ -843,43 +843,6 @@ public partial class LibraryViewModel : ObservableObject
             WindowLoaded?.Invoke();
     }
 
-    private async Task LoadInitialPageAsync(int version, CancellationToken ct, bool includeTotal)
-    {
-        if (Library == null) return;
-
-        IsLoading = true;
-        ErrorMessage = null;
-        _loadingPages.Add(0);
-
-        try
-        {
-            var response = await FetchPageAsync(0, includeTotal: includeTotal, ct: ct);
-            if (version != _queryVersion) return;
-
-            _snapshot = response.Snapshot;
-            _pageResponses[0] = response;
-            RecomputeVirtualTotal();
-            Items.SetPage(0, response.Items);
-
-            PageLoaded?.Invoke();
-        }
-        catch (OperationCanceledException) { }
-        catch (Exception ex)
-        {
-            if (version == _queryVersion)
-                ErrorMessage = $"Failed to load catalog: {ex.Message}";
-        }
-        finally
-        {
-            if (version == _queryVersion)
-            {
-                _loadingPages.Remove(0);
-                if (_loadingPages.Count == 0)
-                    IsLoading = false;
-            }
-        }
-    }
-
     private async Task LoadPagesAsync(int startPage, int endPage, int version, CancellationToken ct)
     {
         if (Library == null || version != _queryVersion) return;

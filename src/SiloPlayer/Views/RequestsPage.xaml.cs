@@ -162,13 +162,6 @@ public sealed partial class RequestsPage : Page
         UpdateTabState();
     }
 
-    private async void Refresh_Click(object sender, RoutedEventArgs e)
-    {
-        ViewModel.InvalidateCache();
-        await ViewModel.LoadCommand.ExecuteAsync(null);
-        Render();
-    }
-
     private async void Search_Click(object sender, RoutedEventArgs e)
     {
         await RunSearchAsync();
@@ -345,19 +338,6 @@ public sealed partial class RequestsPage : Page
             MyRequestsList.Children.Add(region);
         }
     }
-    private void AddSummaryChip(string label, int count, string background)
-    {
-        if (count <= 0) return;
-        MineSummaryPanel.Children.Add(new Border
-        {
-            Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(
-                Convert.ToByte(background[1..3], 16), Convert.ToByte(background[3..5], 16),
-                Convert.ToByte(background[5..7], 16), Convert.ToByte(background[7..9], 16))),
-            CornerRadius = new CornerRadius(14),
-            Padding = new Thickness(11, 5, 11, 5),
-            Child = new TextBlock { Text = $"{count}  {label}", FontSize = 12, FontWeight = FontWeights.SemiBold }
-        });
-    }
 
     private void BuildSearchResults()
     {
@@ -471,57 +451,6 @@ public sealed partial class RequestsPage : Page
                 App.Services.GetRequiredService<WatchlistViewModel>().InvalidateExternalTitles();
             } : null);
     }
-    private static Border BuildRequestRibbon(RequestMediaResult result, string label)
-    {
-        var tone = result.Request.Status switch
-        {
-            "pending" => "amber",
-            "queued" or "downloading" => "sky",
-            "approved" or "completed" => "emerald",
-            _ when result.Availability == "available" => "emerald",
-            _ => "zinc",
-        };
-        var (background, foreground, border, dotColor) = RequestStatusColors(tone);
-        var content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        content.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse
-        {
-            Width = 6,
-            Height = 6,
-            Fill = new SolidColorBrush(dotColor),
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        content.Children.Add(new TextBlock
-        {
-            Text = label.ToUpperInvariant(),
-            FontSize = 10,
-            FontWeight = FontWeights.SemiBold,
-            CharacterSpacing = 60,
-            Foreground = new SolidColorBrush(foreground),
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        var ribbon = new Border
-        {
-            Background = new SolidColorBrush(background),
-            BorderBrush = new SolidColorBrush(border),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10),
-            Padding = new Thickness(8, 3, 8, 3),
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(7),
-            Child = content,
-        };
-        AutomationProperties.SetName(ribbon, label);
-        return ribbon;
-    }
-
-    private static (Windows.UI.Color Background, Windows.UI.Color Foreground, Windows.UI.Color Border, Windows.UI.Color Dot) RequestStatusColors(string tone) => tone switch
-    {
-        "amber" => (Microsoft.UI.ColorHelper.FromArgb(191, 69, 26, 3), Microsoft.UI.ColorHelper.FromArgb(255, 254, 243, 199), Microsoft.UI.ColorHelper.FromArgb(77, 251, 191, 36), Microsoft.UI.ColorHelper.FromArgb(255, 252, 211, 77)),
-        "sky" => (Microsoft.UI.ColorHelper.FromArgb(191, 8, 47, 73), Microsoft.UI.ColorHelper.FromArgb(255, 224, 242, 254), Microsoft.UI.ColorHelper.FromArgb(89, 56, 189, 248), Microsoft.UI.ColorHelper.FromArgb(255, 125, 211, 252)),
-        "emerald" => (Microsoft.UI.ColorHelper.FromArgb(204, 2, 44, 34), Microsoft.UI.ColorHelper.FromArgb(255, 209, 250, 229), Microsoft.UI.ColorHelper.FromArgb(77, 52, 211, 153), Microsoft.UI.ColorHelper.FromArgb(255, 110, 231, 183)),
-        _ => (Microsoft.UI.ColorHelper.FromArgb(204, 24, 24, 27), Microsoft.UI.ColorHelper.FromArgb(255, 228, 228, 231), Microsoft.UI.ColorHelper.FromArgb(26, 255, 255, 255), Microsoft.UI.ColorHelper.FromArgb(255, 161, 161, 170)),
-    };
 
     private void BuildBrands()
     {
@@ -661,125 +590,6 @@ public sealed partial class RequestsPage : Page
         Grid.SetColumn(content,1); row.Children.Add(content);
         return new Border { Child=row };
     }
-    private FrameworkElement BuildRequestPosterCard(MediaRequest request)
-    {
-        var panel = new Grid { Width = _requestCardWidth, RowSpacing = 6 };
-        panel.RowDefinitions.Add(new RowDefinition { Height = new GridLength(_requestCardWidth * 1.5) });
-        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        panel.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        var image = new Image { Width = _requestCardWidth, Height = _requestCardWidth * 1.5, Stretch = Stretch.UniformToFill };
-        if (!string.IsNullOrWhiteSpace(request.PosterPath))
-            image.Source = (ImageSource)RemoteImageConverter.Convert(
-                $"https://image.tmdb.org/t/p/w342{request.PosterPath}",
-                typeof(ImageSource),
-                null!,
-                string.Empty);
-        var poster = new Grid { Width = _requestCardWidth, Height = _requestCardWidth * 1.5 };
-        poster.Children.Add(new Border { CornerRadius = new CornerRadius(9), Background = Brush("CardBackgroundBrush"), Child = image });
-        var failed = request.Outcome is "declined" or "cancelled" or "failed";
-        var label = RequestDisplayLabel(request);
-        var tone = failed ? "zinc" : request.Status switch
-        {
-            "pending" => "amber",
-            "queued" or "downloading" => "sky",
-            "approved" or "completed" => "emerald",
-            _ => "zinc",
-        };
-        var (ribbonBackground, ribbonForeground, ribbonBorder, ribbonDot) = RequestStatusColors(tone);
-        var ribbonContent = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-        ribbonContent.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse
-        {
-            Width = 6,
-            Height = 6,
-            Fill = new SolidColorBrush(ribbonDot),
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        ribbonContent.Children.Add(new TextBlock
-        {
-            Text = label.ToUpperInvariant(),
-            FontSize = 10,
-            FontWeight = FontWeights.SemiBold,
-            CharacterSpacing = 60,
-            Foreground = new SolidColorBrush(ribbonForeground),
-        });
-        var ribbon = new Border
-        {
-            Background = new SolidColorBrush(ribbonBackground),
-            BorderBrush = new SolidColorBrush(ribbonBorder),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(10), Padding = new Thickness(8, 3, 8, 3),
-            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top,
-            Margin = new Thickness(8),
-            Child = ribbonContent,
-        };
-        AutomationProperties.SetName(ribbon, label);
-        poster.Children.Add(ribbon);
-        if (label == "Available")
-        {
-            poster.Children.Add(new Border
-            {
-                Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(220, 6, 78, 59)),
-                CornerRadius = new CornerRadius(12), Padding = new Thickness(9, 4, 9, 4),
-                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom,
-                Margin = new Thickness(0, 0, 0, 10),
-                Child = new TextBlock { Text = "✓  Ready to watch", FontSize = 10, FontWeight = FontWeights.SemiBold }
-            });
-        }
-        Grid.SetRow(poster, 0);
-        panel.Children.Add(poster);
-        var title = new TextBlock { Text = request.Title, FontSize = 14, FontWeight = FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis };
-        Grid.SetRow(title, 1);
-        panel.Children.Add(title);
-        var metadata = new TextBlock { Text = $"{request.Year} · {(request.MediaType == "series" ? "Series" : "Movie")}", FontSize = 11, Foreground = Brush("SecondaryTextBrush") };
-        Grid.SetRow(metadata, 2);
-        panel.Children.Add(metadata);
-        var details = new[] { request.OutcomeReason, SiloPlayer.Core.Services.RequestViewerPolicy.DownloadLabel(request.Download), SiloPlayer.Core.Services.RequestViewerPolicy.SeasonProgressLabel(request.SeasonProgress), request.Source == "watchlist" ? "From watchlist" : null, request.LastError }.Where(s => !string.IsNullOrWhiteSpace(s));
-        var detailText = string.Join(" · ", details);
-        if (!string.IsNullOrWhiteSpace(detailText))
-        {
-            var error = new TextBlock { Text = detailText, FontSize = 11, Foreground = Brush(failed ? "ErrorBrush" : "SecondaryTextBrush"), TextWrapping = TextWrapping.Wrap };
-            Grid.SetRow(error, 3);
-            panel.Children.Add(error);
-        }
-
-        var open = new Button
-        {
-            Tag = new RequestDetailNavigation(request.MediaType, request.TmdbId),
-            Style = (Style)Application.Current.Resources["PosterHitTargetButtonStyle"],
-            Padding = new Thickness(0),
-            Background = new SolidColorBrush(Microsoft.UI.Colors.Transparent),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-        };
-        Grid.SetRowSpan(open, 4);
-        AutomationProperties.SetName(open, $"Open {request.Title} request details");
-        open.Click += RequestCard_Click;
-        panel.Children.Add(open);
-
-        if (!string.IsNullOrWhiteSpace(request.LibraryContentId))
-        {
-            var library = new Button
-            {
-                Content = "▥  Library",
-                Tag = request.LibraryContentId,
-                FontSize = 10,
-                FontWeight = FontWeights.SemiBold,
-                Padding = new Thickness(8, 3, 8, 3),
-                CornerRadius = new CornerRadius(10),
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-                Margin = new Thickness(8),
-                Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(220, 20, 20, 22)),
-            };
-            Grid.SetRow(library, 0);
-            AutomationProperties.SetName(library, $"Open {request.Title} in library");
-            library.Tapped += (_, args) => args.Handled = true;
-            library.Click += LibraryBadge_Click;
-            panel.Children.Add(library);
-        }
-        return panel;
-    }
 
     private static string RequestDisplayLabel(MediaRequest request) => SiloPlayer.Core.Services.RequestViewerPolicy.Label(request.Status, request.Outcome, request.State);
 
@@ -794,60 +604,6 @@ public sealed partial class RequestsPage : Page
             runs.Add(first == sorted[i] ? first.ToString() : $"{first}–{sorted[i]}");
         }
         return $"{(sorted.Length == 1 ? "Season" : "Seasons")} {string.Join(", ", runs)}";
-    }
-
-    private Border BuildMediaResultRow(RequestMediaResult result)
-    {
-        var card = BaseCard();
-        card.Tag = new RequestDetailNavigation(result.MediaType, result.TmdbId);
-        card.Tapped += RequestCard_Tapped;
-        var grid = ThreeColumnGrid();
-
-        var info = new StackPanel { Spacing = 6, VerticalAlignment = VerticalAlignment.Center };
-        info.Children.Add(TitleText($"{result.Title}{YearSuffix(result.Year)}"));
-        info.Children.Add(new TextBlock
-        {
-            Text = $"{FormatMediaType(result.MediaType)} - {FormatAvailability(result.Availability)} - {FormatVote(result.VoteAverage)}",
-            FontSize = 12,
-            Foreground = Brush("SecondaryTextBrush"),
-        });
-        if (!string.IsNullOrWhiteSpace(result.Overview))
-        {
-            info.Children.Add(new TextBlock
-            {
-                Text = result.Overview,
-                FontSize = 12,
-                Foreground = Brush("TertiaryTextBrush"),
-                TextWrapping = TextWrapping.Wrap,
-                MaxLines = 2,
-            });
-        }
-
-        Grid.SetColumn(info, 0);
-        grid.Children.Add(info);
-
-        var request = new Button
-        {
-            Content = result.Request.Requestable ? "Request" : RequestUnavailableLabel(result),
-            Tag = result,
-            IsEnabled = result.Request.Requestable,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        request.Click += SubmitRequest_Click;
-        Grid.SetColumn(request, 2);
-        grid.Children.Add(request);
-
-        card.Child = grid;
-        return card;
-    }
-
-    private async void SubmitRequest_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button { Tag: RequestMediaResult result } button) return;
-        button.IsEnabled = false;
-        button.Content = "Sending…";
-        await ViewModel.SubmitRequestCommand.ExecuteAsync(result);
-        Render();
     }
 
     private async void CancelRequest_Click(object sender, RoutedEventArgs e)
@@ -865,40 +621,6 @@ public sealed partial class RequestsPage : Page
         Render();
     }
 
-    private void RequestCard_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is FrameworkElement { Tag: RequestDetailNavigation nav })
-            App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(nav);
-    }
-
-    private void RequestCard_Tapped(object sender, TappedRoutedEventArgs e)
-    {
-        if (sender is FrameworkElement { Tag: RequestDetailNavigation nav })
-            App.Services.GetRequiredService<NavigationService>().Navigate<RequestDetailPage>(nav);
-    }
-
-    private void LibraryBadge_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button { Tag: string contentId } && !string.IsNullOrWhiteSpace(contentId))
-            App.Services.GetRequiredService<NavigationService>().Navigate<ItemDetailPage>(contentId);
-    }
-
-    private static Grid ThreeColumnGrid()
-    {
-        var grid = new Grid { ColumnSpacing = 16 };
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        return grid;
-    }
-
-    private static Border BaseCard() => new()
-    {
-        Background = Brush("CardBackgroundBrush"),
-        CornerRadius = new CornerRadius(8),
-        Padding = new Thickness(16, 12, 16, 12),
-    };
-
     private static TextBlock TitleText(string text) => new()
     {
         Text = text,
@@ -908,36 +630,12 @@ public sealed partial class RequestsPage : Page
         TextTrimming = TextTrimming.CharacterEllipsis,
     };
 
-    private static TextBlock MakeMutedText(string text) => new()
-    {
-        Text = text,
-        Foreground = Brush("SecondaryTextBrush"),
-        FontSize = 13,
-    };
-
     private static Brush Brush(string key) => (Brush)Application.Current.Resources[key];
 
     private static string SelectedTag(ComboBox comboBox, string fallback)
         => comboBox.SelectedItem is ComboBoxItem item && item.Tag is string tag ? tag : fallback;
 
-    private static string YearSuffix(int? year) => year.HasValue && year.Value > 0 ? $" ({year.Value})" : "";
-    private static string DateSuffix(string date) => string.IsNullOrWhiteSpace(date) ? "" : $" - {FormatDate(date)}";
     private static string FormatMediaType(string value) => string.Equals(value, "series", StringComparison.OrdinalIgnoreCase) ? "Series" : "Movie";
-    private static string FormatAvailability(string value) => string.Equals(value, "available", StringComparison.OrdinalIgnoreCase) ? "Already available" : "Missing";
-    private static string FormatStatus(string value) => string.IsNullOrWhiteSpace(value) ? "Unknown" : char.ToUpperInvariant(value[0]) + value[1..];
-    private static string FormatOutcome(string value) => string.IsNullOrWhiteSpace(value) ? "Unknown" : char.ToUpperInvariant(value[0]) + value[1..];
-    private static string FormatVote(double? vote) => vote.HasValue && vote.Value > 0 ? $"{vote.Value:0.0}/10" : "Unrated";
-    private static string RequestUnavailableLabel(RequestMediaResult result)
-        => !string.IsNullOrWhiteSpace(result.Request.Reason) ? result.Request.Reason : "Unavailable";
-    private static string FormatReason(string value) => value switch
-    {
-        "already_requested" => "Already requested",
-        "already_available" => "Available",
-        "requests_disabled" => "Requests disabled",
-        "quota_exceeded" => "Limit reached",
-        "blocked" => "Blocked",
-        _ => "Unavailable"
-    };
 
     private static string FormatDate(string value)
         => DateTime.TryParse(value, out var dt) ? DateTimeDisplay.FormatDate(new DateTimeOffset(dt), medium: true) : value;

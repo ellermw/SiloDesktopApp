@@ -1784,24 +1784,6 @@ public partial class SettingsViewModel : ObservableObject
         }
     }
 
-    public void MoveSectionUp(SettingsSectionEntry section)
-    {
-        var idx = HomeSections.IndexOf(section);
-        if (idx > 0)
-        {
-            HomeSections.Move(idx, idx - 1);
-        }
-    }
-
-    public void MoveSectionDown(SettingsSectionEntry section)
-    {
-        var idx = HomeSections.IndexOf(section);
-        if (idx >= 0 && idx < HomeSections.Count - 1)
-        {
-            HomeSections.Move(idx, idx + 1);
-        }
-    }
-
     public void RemoveSection(SettingsSectionEntry section)
     {
         if (!section.IsCustom) _removedSystemSectionIds.Add(section.Id);
@@ -1812,31 +1794,6 @@ public partial class SettingsViewModel : ObservableObject
     {
         section.Position = HomeSections.Select(row => row.Position).DefaultIfEmpty(-1).Max() + 1;
         HomeSections.Add(section);
-    }
-
-    private static SectionOverride ToWireOverride(RawSectionOverride value) => new()
-    {
-        Id = string.IsNullOrWhiteSpace(value.Id) ? null : value.Id,
-        SectionId = string.IsNullOrWhiteSpace(value.SectionId) ? null : value.SectionId,
-        Position = value.Position,
-        Hidden = value.Hidden,
-        Removed = value.Removed,
-        SectionType = string.IsNullOrWhiteSpace(value.SectionType) ? null : value.SectionType,
-        Title = string.IsNullOrWhiteSpace(value.Title) ? null : value.Title,
-        Featured = value.Featured,
-        ItemLimit = value.ItemLimit,
-        Config = ParseConfig(value.Config),
-        IsUserAdded = value.IsUserAdded,
-        UserSectionType = string.IsNullOrWhiteSpace(value.UserSectionType) ? null : value.UserSectionType,
-        UserConfig = ParseConfig(value.UserConfig),
-        UserTitle = string.IsNullOrWhiteSpace(value.UserTitle) ? null : value.UserTitle,
-    };
-
-    private static Dictionary<string, object>? ParseConfig(string json)
-    {
-        if (string.IsNullOrWhiteSpace(json)) return null;
-        try { return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(json); }
-        catch { return null; }
     }
 
     private (string Scope, string? LibraryId) GetSectionScope()

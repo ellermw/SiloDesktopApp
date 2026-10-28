@@ -1693,35 +1693,6 @@ public sealed partial class LibraryPage : Page,
         App.SetPerfBreadcrumb($"Library render end cards={_visibleLibraryCards.Count} pending={_pendingCardBinds.Count} row={windowStartRow} total={ViewModel.TotalCount}");
     }
 
-    private void UpdateVisibleCardItems()
-    {
-        App.SetPerfBreadcrumb($"Library update visible start cards={_visibleLibraryCards.Count}");
-        foreach (var (index, card) in _visibleLibraryCards)
-        {
-            if (ViewModel.GetWindowItem(index) == null) continue;
-            card.Tag = index;
-            QueueCardBind(index);
-        }
-        App.SetPerfBreadcrumb($"Library update visible end cards={_visibleLibraryCards.Count} pending={_pendingCardBinds.Count}");
-    }
-
-    private void RefreshChangedVirtualItems(int startIndex, int count)
-    {
-        if (startIndex < 0 || count <= 0) return;
-
-        var endIndex = startIndex + count - 1;
-        foreach (var (index, card) in _visibleLibraryCards)
-        {
-            if (index < startIndex || index > endIndex || ViewModel.GetWindowItem(index) == null)
-                continue;
-
-            card.Tag = index;
-            QueueCardBind(index);
-        }
-
-        QueueRenderVirtualGrid(force: true);
-    }
-
     private void EnsureVirtualCardSlots(int requiredCount)
     {
         var started = System.Diagnostics.Stopwatch.StartNew();
@@ -3875,13 +3846,6 @@ public sealed partial class LibraryPage : Page,
             var badge = CreateFilterBadge(label, value, clearAction);
             FilterBadgesPanel.Children.Add(badge);
         }
-    }
-
-    private static string FormatAdvancedRuleValue(object? value)
-    {
-        if (value is System.Collections.IEnumerable values and not string)
-            return string.Join(" – ", values.Cast<object?>().Select(entry => entry?.ToString() ?? ""));
-        return value?.ToString() ?? "";
     }
 
     private Border CreateFilterBadge(string label, string value, Action clearAction)
