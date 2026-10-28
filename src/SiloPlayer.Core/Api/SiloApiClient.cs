@@ -319,7 +319,9 @@ public partial class SiloApiClient
         if (string.IsNullOrWhiteSpace(value)) return null;
         var trimmed = value.Trim();
         if (Services.NativeApiRetirement.IsRetiredResource(trimmed)) return null;
-        if (Uri.TryCreate(trimmed, UriKind.Absolute, out var absolute))
+        // Unix parses "/path" as an absolute file URI; Windows does not.
+        // Root-relative server paths resolve against the server everywhere.
+        if (!trimmed.StartsWith('/') && Uri.TryCreate(trimmed, UriKind.Absolute, out var absolute))
             return absolute.ToString();
 
         string baseUrl;

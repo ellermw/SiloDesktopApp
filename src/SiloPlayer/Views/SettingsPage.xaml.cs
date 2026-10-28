@@ -86,6 +86,7 @@ public sealed partial class SettingsPage : Page
     private bool _suppressEvents = true;
 
     // Language options for preferred audio language.
+    private static readonly SiloPlayer.Converters.UrlToImageSourceConverter AvatarImages = new();
     private static readonly (string Tag, string Label)[] AudioLanguageOptions =
         [("", "Profile default"), ("original", "Original Language"),
          .. MediaLanguageCatalog.All.Select(language => (language.Code, language.Label))];
@@ -931,12 +932,11 @@ _webhookPlexAuthCts?.Cancel();
             CornerRadius = new CornerRadius(16),
             Background = (Brush)Application.Current.Resources["AccentBackgroundBrush"],
         };
-        if (!string.IsNullOrWhiteSpace(profile?.AvatarUrl) &&
-            Uri.TryCreate(profile.AvatarUrl, UriKind.Absolute, out var avatarUri))
+        if (AvatarImages.Convert(profile?.AvatarUrl!, typeof(ImageSource), null!, string.Empty) is ImageSource avatarSource)
         {
             avatarHost.Child = new Image
             {
-                Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(avatarUri),
+                Source = avatarSource,
                 Stretch = Stretch.UniformToFill,
             };
         }
@@ -5952,11 +5952,13 @@ _webhookPlexAuthCts?.Cancel();
                     Foreground = (Microsoft.UI.Xaml.Media.SolidColorBrush)Application.Current.Resources["AccentForegroundBrush"],
                     HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
                 };
-                if (!string.IsNullOrWhiteSpace(profile.AvatarUrl))
+                // Converted sources accept only absolute URLs; a malformed
+                // avatar must not abort the remaining profile cards.
+                if (AvatarImages.Convert(profile.AvatarUrl!, typeof(ImageSource), null!, string.Empty) is ImageSource avatarSource)
                 {
                     avatar.Child = new Image
                     {
-                        Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(new Uri(profile.AvatarUrl)),
+                        Source = avatarSource,
                         Stretch = Stretch.UniformToFill,
                     };
                 }
