@@ -57,12 +57,43 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             Require(wire.Replans.Count == replansAfterBurn,
                 $"Burn-in reloaded in a loop: {wire.Replans.Count - replansAfterBurn} further replans after the reload.");
 
-            // Text while burned in: clear burn-in, then select the text track locally.
+            // Text while burned in: the server grants text instead of burn-in,
+            // then native selection follows the accepted plan after reload.
             var spanish = manager.CurrentSession.SubtitleUrls.Single(t => t.Index == Spanish);
+            var failureMode = Environment.GetEnvironmentVariable("SILO_NATIVE_BURN_FAILURE");
+            var failSwitch = !string.IsNullOrEmpty(failureMode);
+            var startPaused = failureMode?.StartsWith("paused", StringComparison.Ordinal) == true;
+            var selectOff = failureMode?.EndsWith("off", StringComparison.Ordinal) == true;
+            if (failSwitch)
+            {
+                service.SetPaused(startPaused);
+                await Until(() => mpv.IsPaused == startPaused && service.IsPaused == startPaused);
+                wire.FailNextTrackChange = true;
+            }
             var replansBeforeText = wire.Replans.Count;
-            await Loaded(() => service.SetSubtitleTrackAndPersistAsync(Spanish + 1, spanish.Language, spanish));
-            Require(wire.Replans.Count == replansBeforeText + 1 && IsTrackChangeWithoutSubtitle(wire.Replans[^1]),
-                "Text on a burned-in subtitle did not clear burn-in first.");
+            await Loaded(() => selectOff
+                ? service.SetSubtitleTrackAndPersistAsync(0, null, null)
+                : service.SetSubtitleTrackAndPersistAsync(Spanish + 1, spanish.Language, spanish));
+            if (failSwitch)
+            {
+                var expected = selectOff ? -1 : Spanish;
+                await Until(() => !service.IsLoading);
+                Require(!manager.CurrentSession!.IsSubtitleBurnedIn, "Failure recovery retained the outgoing burned-in subtitle.");
+                Require(manager.SubtitleSelectionForLoad == expected,
+                    "Failure recovery lost the viewer's requested subtitle selection.");
+                await Until(() => service.ActiveSubtitleServerIndex == expected &&
+                    (selectOff ? mpv.GetPropertyDouble("sid") <= 0 : NativeSidMatches(service, mpv, Spanish)));
+                await Until(() => mpv.IsPaused == startPaused && service.IsPaused == startPaused);
+                Require(mpv.IsPaused == startPaused && service.IsPaused == startPaused,
+                    "Failure recovery used the helper's temporary pause instead of viewer intent.");
+                Require(selectOff ? mpv.GetPropertyDouble("sid") <= 0 : NativeSidMatches(service, mpv, Spanish),
+                    "Recovered native subtitle selection does not match the accepted plan.");
+                Program.Log($"Subtitle recovery {failureMode}: next-load={manager.SubtitleSelectionForLoad}, active={service.ActiveSubtitleServerIndex}, mode={manager.CurrentSession?.SubtitleMode}, native paused={mpv.IsPaused}, viewer paused={service.IsPaused}.");
+                Program.Log("PASS: failed burned-in subtitle switch retains track and pause intent through actual native recovery.");
+                return;
+            }
+            Require(wire.Replans.Count == replansBeforeText + 1 && SelectedSubtitle(wire.Replans[^1]) == Spanish,
+                "Text on a burned-in subtitle did not replan to the requested text track.");
             await Until(() => service.ActiveSubtitleServerIndex == Spanish && NativeSidMatches(service, mpv, Spanish));
             Require(manager.SubtitleSelectionForLoad == Spanish,
                 $"The Off replan replaced the text pick as the viewer's choice (next load: {manager.SubtitleSelectionForLoad}).");
@@ -174,6 +205,7 @@ internal static class BurnedInSubtitleSwitchNativeFixture
     private sealed class Wire(string origin) : HttpMessageHandler
     {
         private int _subtitle = -1;
+        public bool FailNextTrackChange;
         public List<JsonElement> Replans = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -189,6 +221,11 @@ internal static class BurnedInSubtitleSwitchNativeFixture
             else
             {
                 Replans.Add(body.Clone());
+                if (FailNextTrackChange && body.GetProperty("operation").GetString() == "track_change")
+                {
+                    FailNextTrackChange = false;
+                    throw new InvalidOperationException("Synthetic subtitle replan failure before adoption.");
+                }
                 _subtitle = SelectedSubtitle(body);
             }
             var burned = _subtitle == Dvd;

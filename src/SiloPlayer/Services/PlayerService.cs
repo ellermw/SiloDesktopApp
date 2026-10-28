@@ -1081,9 +1081,9 @@ public partial class PlayerService : IDisposable
         }
         else if (track != null)
         {
-            // A text/PGS track cannot be layered over an HLS stream that is
-            // already burning a different bitmap track into the video. Drop
-            // the burn-in recipe first and select the requested track only
+            // A text/PGS track cannot be layered over a stream that is
+            // already burning a different bitmap track into the video. Replan
+            // to the requested track and select it locally only
             // after the replacement file has loaded. Selecting it before
             // loadfile settles lets mpv discard the new sid and can briefly
             // resume stale frames from the outgoing transport.
@@ -4626,7 +4626,7 @@ public partial class PlayerService : IDisposable
             App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
                 () => App.MainWindowInstance?.ShowLoadingOverlay());
 
-            var replanned = await manager.ReplanSubtitleAsync(track?.Index, position, ct)
+            var replanned = await manager.ReplanSubtitleAsync(track?.Index ?? postLoadSubtitleIndex, position, ct)
                 .ConfigureAwait(false);
             var replannedVersion = Versions.FirstOrDefault(v => v.FileId == replanned.MediaFileId)
                 ?? version;
@@ -4642,12 +4642,6 @@ public partial class PlayerService : IDisposable
             if (_closing || manager.CurrentSession != replanned) return false;
             ApplyPreparedTransport(preparedV3);
             PlayMethod = replanned.PlayMethod;
-            // Clearing burn-in for a text track: the Off replan above made
-            // Off the viewer's choice. Record the text pick again so later
-            // replans and reloads keep it, as for any local text selection.
-            if (track is null && postLoadSubtitleIndex is int textIndex &&
-                replanned.SubtitleUrls.Any(t => t.Index == textIndex))
-                manager.RecordLocalSubtitleSelection(textIndex);
             _pendingInitialServerSubtitleIndex = postLoadSubtitleIndex;
             BeginMpvLoad(preparedV3, restorePaused: wasPaused);
             _mpv.ShowOsdText(track is null ? "Bitmap subtitles off" : $"{track.Label} · burned in", 2500);
@@ -4667,6 +4661,7 @@ public partial class PlayerService : IDisposable
                     "Reconnecting playback",
                     "The subtitle transport switch was interrupted. Restoring playback from your current position…",
                     "warning");
+                _recoveryPauseIntentOverride = wasPaused;
                 _ = RecoverInterruptedStreamAsync(CurrentMediaPosition, "subtitle-switch-failed");
                 // Recovery now owns the transport; callers must not restore
                 // the outgoing stream's position or pause state.

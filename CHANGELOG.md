@@ -2,6 +2,18 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.337 (2026-10-28 — updater installation handoff repair)
+
+- Fix Windows PowerShell converting the update journal's null backup filename to an invalid empty path. The failure previously stopped the helper before setup launched.
+- Add regressions running the real journal functions in Windows PowerShell for existing and missing result files. Preserve atomic writes, path checks, update notifications and manual/automatic modes.
+- Install337 manually once if the old updater closes without installing. Actual elevated installation and reopening remain for owner verification. See [337 scope and verification](docs/releases/1.2.337.md).
+
+## 1.2.336 (2026-10-28 — playback-state test reliability)
+
+- Merge PR31: replace two scheduling-sensitive timing assumptions with a long pending-save barrier and an explicit in-flight read signal. Preserve stale-response/refetch and cross-item independence assertions.
+- Retain335's update-check overlap repair and all existing playback/update functionality. PR31 changes test reliability rather than app behavior.
+- Publish a matching newer installer for testing the in-app upgrade flow. See [336 scope and verification](docs/releases/1.2.336.md).
+
 ## 1.2.335 (2026-10-28 — update-check overlap repair)
 
 - Include merged PR30: Update Now waits for an ongoing release check rather than silently dropping the download. Queued automatic downloads remain cancelable when playback starts, preferences change or Silo closes.
