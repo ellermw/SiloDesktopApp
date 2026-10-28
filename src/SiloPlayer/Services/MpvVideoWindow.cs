@@ -591,7 +591,7 @@ public sealed class MpvVideoWindow : IDisposable
         {
             int x = loWord(lParam), y = hiWord(lParam);
             _mpv?.SendMousePos(x, y);
-            _mpv?.SendScriptMessage("osc-mouse-move", x.ToString(), y.ToString());
+            _mpv?.SendScriptMessage("osc-mouse-move", SiloPlayer.Player.MpvPlayer.FormatCoordinate(x), SiloPlayer.Player.MpvPlayer.FormatCoordinate(y));
 
             // Arm TrackMouseEvent so we get a single WM_MOUSELEAVE when the cursor
             // leaves this window. Without this, the OSC can stay visible forever
@@ -636,8 +636,8 @@ public sealed class MpvVideoWindow : IDisposable
             _lbuttonDownX = x;
             _lbuttonDownY = y;
             _mpv?.SendMousePos(x, y);
-            _mpv?.SendScriptMessage("osc-mouse-move", x.ToString(), y.ToString());
-            _mpv?.SendScriptMessage("osc-mouse-down", x.ToString(), y.ToString());
+            _mpv?.SendScriptMessage("osc-mouse-move", SiloPlayer.Player.MpvPlayer.FormatCoordinate(x), SiloPlayer.Player.MpvPlayer.FormatCoordinate(y));
+            _mpv?.SendScriptMessage("osc-mouse-down", SiloPlayer.Player.MpvPlayer.FormatCoordinate(x), SiloPlayer.Player.MpvPlayer.FormatCoordinate(y));
             _mpv?.SendKeydown("MBTN_LEFT");
         }
         else if (msg == WM_LBUTTONUP)
@@ -645,7 +645,7 @@ public sealed class MpvVideoWindow : IDisposable
             ReleaseCapture();
             int x = loWord(lParam), y = hiWord(lParam);
             _mpv?.SendMousePos(x, y);
-            _mpv?.SendScriptMessage("osc-mouse-up", x.ToString(), y.ToString());
+            _mpv?.SendScriptMessage("osc-mouse-up", SiloPlayer.Player.MpvPlayer.FormatCoordinate(x), SiloPlayer.Player.MpvPlayer.FormatCoordinate(y));
             _mpv?.SendKeyup("MBTN_LEFT");
 
             // Clean click? Delegate hit-check to Lua which toggles pause if
@@ -657,7 +657,7 @@ public sealed class MpvVideoWindow : IDisposable
                 && Math.Abs(dx) <= CleanClickMaxDeltaPx
                 && Math.Abs(dy) <= CleanClickMaxDeltaPx)
             {
-                _mpv?.SendScriptMessage("osc-video-click", x.ToString(), y.ToString());
+                _mpv?.SendScriptMessage("osc-video-click", SiloPlayer.Player.MpvPlayer.FormatCoordinate(x), SiloPlayer.Player.MpvPlayer.FormatCoordinate(y));
             }
             _lbuttonDownTicks = 0;
         }

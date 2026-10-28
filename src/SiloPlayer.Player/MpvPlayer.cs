@@ -765,8 +765,17 @@ public sealed partial class MpvPlayer : IDisposable
     public void SendMousePos(int x, int y)
     {
         if (_mpvHandle == IntPtr.Zero) return;
-        Command("mouse", x.ToString(), y.ToString());
+        Command("mouse", FormatCoordinate(x), FormatCoordinate(y));
     }
+
+    /// <summary>
+    /// Formats a window coordinate for mpv commands and OSC script messages.
+    /// Captured drags report negative coordinates, and cultures such as
+    /// sv-SE, nb-NO and fi-FI format the minus sign as U+2212, which neither
+    /// mpv nor Lua's tonumber parses.
+    /// </summary>
+    public static string FormatCoordinate(int value)
+        => value.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>Sends a mouse button press/release to mpv's input system.</summary>
     public void SendMouseButton(int x, int y, int button, bool isDown)
