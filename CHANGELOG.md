@@ -2,6 +2,13 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.338 (2026-10-28 — subtitle recovery and playback cleanup)
+
+- Fix turning off DVD/DVB burn-in and switching to text subtitles using the server's v3 plan. Preserve text through later quality changes and prevent repeated burn-in reloads.
+- Preserve the requested subtitle and viewer pause state when a subtitle replan fails; add actual-service/native regressions for text/Off while playing and paused.
+- Remove unreachable pre-v3 transport preparation and obsolete throwing API stubs. Update all four native reflection constructors alongside the transport record cleanup.
+- Retain337's updater handoff repair. Older broken helpers need one manual installation; a working337 installation can discover338 for owner testing of the complete upgrade flow. See [scope and limits](docs/releases/1.2.338.md).
+
 ## 1.2.337 (2026-10-28 — updater installation handoff repair)
 
 - Fix Windows PowerShell converting the update journal's null backup filename to an invalid empty path. The failure previously stopped the helper before setup launched.
