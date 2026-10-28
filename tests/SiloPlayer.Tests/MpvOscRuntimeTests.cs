@@ -443,6 +443,60 @@ public sealed class MpvOscRuntimeTests
         Assert.Contains("Video bitrateNot supplied", source);
     }
 
+    [Fact]
+    public void UnchangedControlsDoNotResendTheOverlayEveryTick()
+    {
+        // The 30 Hz tick re-renders the controls. Identical frames must not
+        // issue another synchronous osd-overlay command, while every real
+        // change (first show, resize, hide, show again) still reaches mpv.
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            state.osc_disabled = false
+            local function count() return updates[state.osc_overlay] or 0 end
+            local function ticks(n) for _ = 1, n do osc_test_tick() end end
+            local results = {}
+            local function record(value) table.insert(results, tostring(value)) end
+
+            state.target_alpha, state.current_alpha = 1, 1
+            osc_test_tick()
+            record(count() > 0 and state.osc_overlay.data ~= '')       -- first visible frame is sent
+            local before = count(); ticks(10); record(count() - before) -- steady visible: no resend
+
+            dims = {w = 1280, h = 720}
+            before = count(); osc_test_tick(); record(count() - before) -- resize is sent once
+            record(state.osc_overlay.res_x)
+            before = count(); ticks(10); record(count() - before)
+
+            state.target_alpha, state.current_alpha = 0, 0
+            before = count(); osc_test_tick(); record(count() - before) -- hide is sent once
+            record(state.osc_overlay.data == '' and 'empty' or 'visible')
+            before = count(); ticks(10); record(count() - before)       -- steady hidden: no resend
+
+            state.target_alpha, state.current_alpha = 1, 1
+            before = count(); osc_test_tick(); record(count() - before) -- show again is sent
+            record(state.osc_overlay.data ~= '' and 'nonempty' or 'empty')
+            mp.set_property('user-data/probe-result', table.concat(results, ':'))
+            """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
+            updates, dims = {}, nil
+            local native = mp.get_property_native
+            mp.get_property_native = function(name, fallback)
+                if name == 'osd-dimensions' and dims then return dims end
+                return native(name, fallback)
+            end
+            local create = mp.create_osd_overlay
+            mp.create_osd_overlay = function(kind)
+                local overlay = create(kind)
+                local update = overlay.update
+                overlay.update = function(self)
+                    updates[self] = (updates[self] or 0) + 1
+                    return update(self)
+                end
+                return overlay
+            end
+            """);
+        Assert.Equal("true:0:1:1280:0:1:empty:0:1:nonempty", output);
+    }
+
     private static string CaptureStats(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight,
         bool rtx, string setup = "", int videoBps = 0, int audioBps = 0, string? processor = null, bool neural = false,
         bool rawAss = false, int windowWidth = 3840, int windowHeight = 2160,
