@@ -5898,14 +5898,7 @@ public sealed partial class ItemDetailPage : Page
         // profile pref, else English.
         string? defaultLang = _watchDetail?.EffectiveSubtitleLanguage;
         if (string.IsNullOrWhiteSpace(defaultLang))
-        {
-            try
-            {
-                var s = App.Services.GetService<SettingsViewModel>();
-                defaultLang = s?.SubtitleLanguage;
-            }
-            catch { }
-        }
+            defaultLang = App.Services.GetRequiredService<AuthService>().SelectedProfile?.SubtitleLanguage;
         var dialog = new Controls.SubtitleSearchDialog(
             _selectedVersion.FileId,
             defaultLang,
@@ -6002,16 +5995,14 @@ public sealed partial class ItemDetailPage : Page
         var mode = _watchDetail.EffectiveSubtitleMode;
         var preferredLang = _watchDetail.EffectiveSubtitleLanguage;
         var showForced = _watchDetail.EffectiveShowForcedSubtitles;
-        if (string.IsNullOrEmpty(mode) || preferredLang == null || showForced == null)
+        // Older responses may omit effective values. Use the profile's saved
+        // preferences; a fresh transient SettingsViewModel is never loaded.
+        if (App.Services.GetRequiredService<AuthService>().SelectedProfile is { } profile)
         {
-            try
-            {
-                var settings = App.Services.GetRequiredService<SettingsViewModel>();
-                if (string.IsNullOrEmpty(mode)) mode = settings.SubtitleMode;
-                if (preferredLang == null) preferredLang = settings.SubtitleLanguage;
-                if (showForced == null) showForced = settings.ShowForcedSubtitles;
-            }
-            catch { /* settings unavailable — use defaults below */ }
+            if (string.IsNullOrEmpty(mode)) mode = profile.SubtitleMode;
+            if (preferredLang == null && !string.IsNullOrWhiteSpace(profile.SubtitleLanguage))
+                preferredLang = profile.SubtitleLanguage;
+            showForced ??= profile.ShowForcedSubtitles;
         }
 
         // Audio language for the current version + selected track (drives "same as audio" logic).

@@ -3309,16 +3309,15 @@ public partial class PlayerService : IDisposable
             var mode = watchDetail.EffectiveSubtitleMode;
             var preferredLanguage = watchDetail.EffectiveSubtitleLanguage;
             var showForced = watchDetail.EffectiveShowForcedSubtitles;
-            if (string.IsNullOrWhiteSpace(mode) || preferredLanguage == null || showForced == null)
+            // Older responses may omit effective values. Fall back to the playing
+            // profile's saved preferences (what Settings shows), never to a fresh
+            // transient SettingsViewModel whose unloaded defaults hid forced subtitles.
+            if (_authService.SelectedProfile is { } profile)
             {
-                try
-                {
-                    var settings = HasRemoteAuthority ? null : App.Services.GetService<ViewModels.SettingsViewModel>();
-                    if (string.IsNullOrWhiteSpace(mode)) mode = settings?.SubtitleMode;
-                    if (preferredLanguage == null) preferredLanguage = settings?.SubtitleLanguage;
-                    if (showForced == null) showForced = settings?.ShowForcedSubtitles;
-                }
-                catch { }
+                if (string.IsNullOrWhiteSpace(mode)) mode = profile.SubtitleMode;
+                if (preferredLanguage == null && !string.IsNullOrWhiteSpace(profile.SubtitleLanguage))
+                    preferredLanguage = profile.SubtitleLanguage;
+                showForced ??= profile.ShowForcedSubtitles;
             }
 
             string? audioLanguage = null;
@@ -6384,14 +6383,7 @@ public partial class PlayerService : IDisposable
             var watchDetail = _playbackManager.WatchDetail;
             var preferred = watchDetail?.EffectiveSubtitleLanguage;
             if (string.IsNullOrWhiteSpace(preferred))
-            {
-                try
-                {
-                    var settingsVm = HasRemoteAuthority ? null : App.Services.GetService<SiloPlayer.ViewModels.SettingsViewModel>();
-                    preferred = settingsVm?.SubtitleLanguage;
-                }
-                catch { }
-            }
+                preferred = _authService.SelectedProfile?.SubtitleLanguage;
             var languages = !string.IsNullOrWhiteSpace(preferred)
                 ? new[] { preferred! }
                 : new[] { "en" };
