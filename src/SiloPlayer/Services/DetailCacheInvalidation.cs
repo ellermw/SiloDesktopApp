@@ -23,4 +23,17 @@ public static class DetailCacheInvalidation
         messenger.Register<ItemDetailPrefetchCache, MediaSurfaceChanged>(cache, static (owner, _) => owner.Clear());
         messenger.Register<ItemDetailPrefetchCache, PlaybackProgressUpdated>(cache, static (owner, _) => owner.Clear());
     }
+
+    /// <summary>
+    /// Playback resumes from the prefetched watch detail's saved position. A
+    /// card that resets progress or marks the title watched after hover must
+    /// not let Play start from, and then re-save, the previous position.
+    /// </summary>
+    public static void Attach<T>(WatchDetailPrefetchCache<T> cache, IMessenger? messenger = null) where T : class
+    {
+        ArgumentNullException.ThrowIfNull(cache);
+        messenger ??= WeakReferenceMessenger.Default;
+        messenger.Register<WatchDetailPrefetchCache<T>, MediaSurfaceChanged>(cache, static (owner, _) => owner.Clear());
+        messenger.Register<WatchDetailPrefetchCache<T>, PlaybackProgressUpdated>(cache, static (owner, _) => owner.Clear());
+    }
 }

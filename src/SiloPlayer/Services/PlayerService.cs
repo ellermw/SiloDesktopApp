@@ -174,6 +174,7 @@ public partial class PlayerService : IDisposable
         _localAuthority = new PlaybackAuthorityScope(apiClient, authService, playbackApi, catalogApi, settingsApi);
         _activeAuthority = _localAuthority;
         _settingsService = settingsService;
+        DetailCacheInvalidation.Attach(_watchDetailPrefetches);
         ObserveSubtitlePreferences();
         InitializeConnectionObservation();
 

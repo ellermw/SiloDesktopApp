@@ -1,5 +1,6 @@
 using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
 using SiloPlayer.Services;
@@ -78,6 +79,29 @@ public sealed class DetailCacheInvalidationTests
         await cache.GetAsync("movie-1", CancellationToken.None);
 
         Assert.Equal(2, fetches.Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CardProgressResetAfterHoverDoesNotResumeFromThePrefetchedPosition(bool viaProgressMessage)
+    {
+        // Hover prefetched watch detail at 20:00; the card then reset progress.
+        var cache = new WatchDetailPrefetchCache<WatchDetailResponse>(8, TimeSpan.FromMinutes(2));
+        var messenger = new WeakReferenceMessenger();
+        DetailCacheInvalidation.Attach(cache, messenger);
+        var now = DateTimeOffset.UtcNow;
+        cache.Store("movie-1", "profile", Task.FromResult(new WatchDetailResponse
+        {
+            UserData = new WatchUserData { PositionSeconds = 1200 },
+        }), now);
+
+        if (viaProgressMessage)
+            messenger.Send(new PlaybackProgressUpdated("movie-1", 0, 5400, completed: false));
+        else
+            messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.PlaybackProgress, "movie-1"));
+
+        Assert.Null(await cache.TryGetAsync("movie-1", "profile", now));
     }
 
     private static (ItemDetailPrefetchCache Cache, List<string> Fetches) CreateCache()
