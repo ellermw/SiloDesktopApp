@@ -105,7 +105,15 @@ public static partial class LocalLog
         string? logDirectory = null,
         long maxBytes = DefaultMaxBytes,
         int archiveCount = 2)
-        => AppendTimestampedLines(fileName, messages.Select(message => (DateTime.Now, message)), logDirectory, maxBytes, archiveCount);
+    {
+        try
+        {
+            AppendTimestampedLines(fileName, messages.Select(message => (DateTime.Now, message)), logDirectory, maxBytes, archiveCount);
+        }
+        catch
+        {
+        }
+    }
 
     /// <summary>Appends lines stamped with when they were recorded, for callers that queue before writing.</summary>
     public static void AppendTimestampedLines(
