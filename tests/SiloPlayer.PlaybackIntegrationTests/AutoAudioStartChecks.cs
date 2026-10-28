@@ -37,12 +37,9 @@ internal static class AutoAudioStartChecks
         var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         service.ContentLoaded += () => loaded.TrySetResult();
         int? requestedFile = scenario == "lower-source" ? null : 42;
-        var detail = new WatchDetailResponse
-        {
-            ContentId = "fixture-movie", Type = "movie", PreparedFileId = requestedFile,
-            EffectiveSubtitleMode = "off", EffectiveSubtitleLanguage = "",
-            Versions = [Version(42, 1), Version(43, 0)],
-        };
+        // Use the same authoritative, revision-stamped preparation as a real
+        // detail page. Hand-built snapshots are deliberately refetched.
+        var detail = await service.GetOrFetchWatchDetailAsync("fixture-movie", fileId: requestedFile);
         var play = (Task)Call(service, "PlayCoreAsync", "fixture-movie", true, requestedFile,
             scenario == "explicit" ? (int?)1 : scenario == "explicit-first" ? 0 : null, (int?)-1, null, null, detail, null, null, CancellationToken.None, null)!;
         await play.WaitAsync(TimeSpan.FromSeconds(8));
@@ -86,6 +83,12 @@ internal static class AutoAudioStartChecks
             if (request.RequestUri!.Host != "auto-audio.fixture.invalid") throw new InvalidOperationException("Auto audio fixture attempted external networking.");
             var path = request.RequestUri.AbsolutePath;
             if (path.Contains("audio-prefs")) PreferenceWrites++;
+            if (path.StartsWith("/api/v2/watch/", StringComparison.Ordinal)) return Json(new WatchDetailResponse
+            {
+                ContentId = "fixture-movie", Type = "movie",
+                EffectiveSubtitleMode = "off", EffectiveSubtitleLanguage = "",
+                Versions = [Version(42, 1), Version(43, 0)],
+            });
             if (path == "/api/v2/playback/capabilities") return Json(new { allowed = true, state = "available", installation_id = "11111111-1111-4111-8111-111111111111", protocol_versions = new[] { 3 }, features = new[] { "fixed_media_file_v1", "buffering_quality_v1" } });
             if (path == "/api/v2/settings/values/effective") return Json(new { settings = Array.Empty<object>() });
             if (path == "/api/v2/playback/start")
@@ -108,7 +111,8 @@ internal static class AutoAudioStartChecks
             }
             return Json(new { outcome = "applied" });
         }
-        private static HttpResponseMessage Json(object value) => new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(value), System.Text.Encoding.UTF8, "application/json") };
+        private static HttpResponseMessage Json(object value) => new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(value,
+            new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }), System.Text.Encoding.UTF8, "application/json") };
     }
 
     private sealed class MediaOrigin : IAsyncDisposable

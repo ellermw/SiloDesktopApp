@@ -19,6 +19,12 @@ public sealed class ItemDetailPrefetchCache
     private readonly TimeSpan _ttl;
     private readonly int _capacity;
     private string? _activeContextKey;
+    // Removal sequence: a consumer that awaited a task across a Clear or an
+    // Invalidate of its item must not apply that pre-mutation result.
+    private long _sequence;
+    private long _clearedAt;
+    private readonly Dictionary<string, long> _invalidatedAt = new(StringComparer.Ordinal);
+    private const int MaxReadAttempts = 3;
 
     public ItemDetailPrefetchCache(CatalogApi catalogApi, AuthService authService)
         : this((contentId, cancellationToken) =>
@@ -60,10 +66,37 @@ public sealed class ItemDetailPrefetchCache
         _ = ObservePrefetchAsync(GetOrStart(contentId));
     }
 
+    /// <summary>
+    /// Returns detail that was not invalidated while this caller awaited it.
+    /// Clear() cannot retract a task already handed out, so a result whose
+    /// item was cleared or invalidated during the await is read again; after
+    /// <see cref="MaxReadAttempts"/> reads a <see cref="UserStateChangedException"/>
+    /// is thrown instead of returning state known to be superseded.
+    /// </summary>
     public async Task<MediaItemDetail> GetAsync(
         string contentId,
         CancellationToken cancellationToken)
-        => await GetOrStart(contentId).WaitAsync(cancellationToken).ConfigureAwait(false);
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            long observed;
+            Task<MediaItemDetail> task;
+            lock (_sync)
+            {
+                task = GetOrStart(contentId);
+                observed = _sequence;
+            }
+            var detail = await task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            lock (_sync)
+            {
+                if (!RemovedSince(contentId, observed)) return detail;
+            }
+            if (attempt >= MaxReadAttempts) throw new UserStateChangedException(contentId);
+        }
+    }
+
+    private bool RemovedSince(string contentId, long observed)
+        => _clearedAt > observed || (_invalidatedAt.TryGetValue(contentId, out var at) && at > observed);
 
     public void Invalidate(string? contentId)
     {
@@ -72,6 +105,7 @@ public sealed class ItemDetailPrefetchCache
         {
             EnsureCurrentContext();
             _entries.Remove(contentId);
+            _invalidatedAt[contentId] = ++_sequence;
         }
     }
 
@@ -81,6 +115,7 @@ public sealed class ItemDetailPrefetchCache
         {
             _entries.Clear();
             _activeContextKey = null;
+            MarkClearedLocked();
         }
     }
 
@@ -114,8 +149,15 @@ public sealed class ItemDetailPrefetchCache
             && !string.Equals(_activeContextKey, contextKey, StringComparison.Ordinal))
         {
             _entries.Clear();
+            MarkClearedLocked();
         }
         _activeContextKey = contextKey;
+    }
+
+    private void MarkClearedLocked()
+    {
+        _clearedAt = ++_sequence;
+        _invalidatedAt.Clear(); // a clear supersedes every per-item mark
     }
 
     private static async Task ObservePrefetchAsync(Task<MediaItemDetail> prefetch)

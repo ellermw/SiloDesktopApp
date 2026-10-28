@@ -83,6 +83,13 @@ public sealed class PlaybackProgressUpdated
     public bool Completed { get; }
     public DateTime UpdatedAt { get; }
 
+    /// <summary>
+    /// Completes when the server has the final position. The message is sent
+    /// before that write finishes, so readers that refetch server state should
+    /// do so again after this task.
+    /// </summary>
+    public Task Persisted { get; init; } = Task.CompletedTask;
+
     public PlaybackProgressUpdated(string contentId, double position, double duration, bool completed)
     {
         ContentId = contentId;
