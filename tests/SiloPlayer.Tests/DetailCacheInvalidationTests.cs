@@ -309,6 +309,96 @@ public sealed class DetailCacheInvalidationTests
         Assert.Equal(3, fetches.Count(id => id == "episode-1"));
     }
 
+    [Fact]
+    public async Task DetailNavigationAwaitingAPrefetchDoesNotApplyTheInvalidatedResponse()
+    {
+        // Hover prefetch → navigation awaits it → Favorite added while vm.Item
+        // is still null → the pre-mutation response is released.
+        const string id = "movie:detail-race-fixture";
+        var first = new TaskCompletionSource<MediaItemDetail>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var cache = new ItemDetailPrefetchCache((contentId, _) => Interlocked.Increment(ref reads) == 1
+            ? first.Task
+            : Task.FromResult(Detail(contentId, favorite: true)));
+        var messenger = new WeakReferenceMessenger();
+        DetailCacheInvalidation.Attach(cache, messenger);
+        var client = new SiloPlayer.Core.Api.SiloApiClient(new HttpClient(new RejectingHandler()));
+        client.SetBaseUrl("https://detail-race.invalid");
+        var vm = new SiloPlayer.ViewModels.ItemDetailViewModel(new SiloPlayer.Core.Api.CatalogApi(client), cache);
+        try
+        {
+            cache.Prefetch(id);
+            var navigation = vm.LoadInLibraryAsync(id, null);
+            await Task.Delay(20);
+            Assert.Null(vm.Item);
+            messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.FavoriteAdded, id));
+            first.SetResult(Detail(id, favorite: false));
+            await navigation.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.True(vm.IsFavorite);
+            Assert.True(vm.Item!.UserState!.IsFavorite);
+            Assert.Equal(2, reads);
+        }
+        finally { WeakReferenceMessenger.Default.UnregisterAll(vm); }
+    }
+
+    [Fact]
+    public async Task DetailReadThatKeepsRacingMutationsFailsRetryablyInsteadOfReturningStaleState()
+    {
+        var reads = 0;
+        ItemDetailPrefetchCache? cache = null;
+        cache = new ItemDetailPrefetchCache(async (contentId, _) =>
+        {
+            Interlocked.Increment(ref reads);
+            await Task.Yield();
+            cache!.Invalidate(contentId); // a mutation lands during every read
+            return Detail(contentId, favorite: false);
+        });
+
+        var error = await Assert.ThrowsAsync<UserStateChangedException>(() => cache.GetAsync("movie:busy", CancellationToken.None));
+        Assert.Equal("movie:busy", error.ContentId);
+        Assert.Equal(3, reads);
+    }
+
+    [Fact]
+    public async Task WatchRetryExhaustionFailsRetryablyInsteadOfReturningAStalePosition()
+    {
+        var (freshness, messenger, revision) = CreateFreshness();
+        var server = new FakeWatch { Position = 300 };
+        var reads = 0;
+        var evictions = 0;
+        Task<WatchDetailResponse> Get(CancellationToken ct) => freshness.ReadAsync("episode:a", async token =>
+        {
+            reads++;
+            var response = server.Snapshot("episode:a");
+            await Task.Yield();
+            // The same item changes after every read.
+            messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.PlaybackProgress, "episode:a"));
+            return response;
+        }, ct);
+
+        var error = await Assert.ThrowsAsync<UserStateChangedException>(
+            () => freshness.GetCurrentAsync(Get, _ => evictions++, CancellationToken.None));
+        Assert.Equal("episode:a", error.ContentId);
+        Assert.Equal(3, reads);
+        Assert.Equal(3, evictions); // the last stale result is not left in the cache either
+        GC.KeepAlive(revision);
+    }
+
+    private static MediaItemDetail Detail(string contentId, bool favorite) => new()
+    {
+        ContentId = contentId,
+        Type = "movie",
+        Title = "Fixture",
+        UserState = new MediaItemUserState { IsFavorite = favorite },
+    };
+
+    private sealed class RejectingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => throw new HttpRequestException("Network access is not available in this fixture.");
+    }
+
     private static (WatchDetailFreshness<WatchDetailResponse> Freshness, WeakReferenceMessenger Messenger, UserStateRevision Revision) CreateFreshness()
     {
         var messenger = new WeakReferenceMessenger();

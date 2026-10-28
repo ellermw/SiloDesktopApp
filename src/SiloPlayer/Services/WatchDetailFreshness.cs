@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Services;
 
@@ -60,7 +61,9 @@ public sealed class WatchDetailFreshness<T>(
 
     /// <summary>
     /// Returns a result that was current when returned: a stale cached, in-flight
-    /// or freshly read result is evicted and fetched again (bounded attempts).
+    /// or freshly read result is evicted and fetched again. When every attempt
+    /// came back stale, a <see cref="UserStateChangedException"/> is thrown so
+    /// playback never starts from a saved position already known to be wrong.
     /// </summary>
     public async Task<T> GetCurrentAsync(Func<CancellationToken, Task<T>> get, Action<T> evict, CancellationToken ct, int attempts = 3)
     {
@@ -69,6 +72,11 @@ public sealed class WatchDetailFreshness<T>(
         {
             evict(value);
             value = await get(ct).ConfigureAwait(false);
+        }
+        if (!IsCurrent(value))
+        {
+            evict(value);
+            throw new UserStateChangedException(contentOf(value) ?? "");
         }
         return value;
     }

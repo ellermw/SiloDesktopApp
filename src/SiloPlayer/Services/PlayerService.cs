@@ -2347,6 +2347,8 @@ public partial class PlayerService : IDisposable
                 return ("Transcode limit reached", "This account has reached its active transcode limit. Try direct play or stop another transcode.");
             return ("Playback unavailable", string.IsNullOrWhiteSpace(api.Message) ? "Playback could not start." : api.Message);
         }
+        if (ex is UserStateChangedException)
+            return ("Progress changed", "This title's saved progress changed while playback was starting. Try again.");
         if (ex.Message == "No compatible file version found")
             return ("No compatible version found", "Silo could not find a playable version for this device.");
         if (!string.IsNullOrWhiteSpace(ex.Message))
