@@ -1045,7 +1045,6 @@ public partial class PlayerService : IDisposable
         }
         else
         {
-            ClearEmbeddedSubtitleWindows();
             _mpv?.SetSubtitleTrack(mpvTrackIndex);
         }
 
@@ -4804,30 +4803,16 @@ public partial class PlayerService : IDisposable
 
     // ── Subtitles ────────────────────────────────────────────────────────
 
-    // ── Sliding-window embedded subtitle fetch (webui parity, commit 75ef59b) ──
+    // ── Subtitle sidecars ────────────────────────────────────────────────
     //
-    // Upstream swapped embedded-subtitle extraction for a streaming fetch
-    // bounded by ?duration= (defaults 600s / max 3600s). mpv downloads the
-    // URL once so we need to slide the window ourselves — track each loaded
-    // window (start + duration + mpv sid + base URL) and sub-remove/sub-add
-    // with a new position before the current window runs out. External and
-    // downloaded subs are server-full so they don't need sliding.
+    // mpv fetches a sidecar URL once. The server extracts an embedded text
+    // track as a bounded window only when position/duration are explicit;
+    // without them the URL describes the complete track ("native players fetch
+    // once and must retain cues beyond ten minutes and before a resumed
+    // playback position"). Every sidecar therefore requests the whole track and
+    // is loaded at most once per file, keyed by its server track index.
 
-    private sealed class EmbeddedSubWindow
-    {
-        public int ServerTrackIndex { get; set; }
-        public int Sid { get; set; }
-        public string BaseUrl { get; set; } = "";
-        public string? Label { get; set; }
-        public string? Language { get; set; }
-        public double WindowStart { get; set; }
-        public double WindowDuration { get; set; }
-    }
-
-    private const int SubtitleWindowDurationSeconds = 600;  // Match WebUI sliding-window fetch.
-    private const int SubtitleSlidePreloadSeconds = 120;    // 2-min lead time.
     private readonly object _subtitleTrackStateLock = new();
-    private readonly List<EmbeddedSubWindow> _embeddedSubWindows = [];
     private readonly Dictionary<int, int> _loadedExternalSubtitleSids = [];
 
     private void LoadSubtitles()
@@ -4835,10 +4820,7 @@ public partial class PlayerService : IDisposable
         if (_playbackManager?.CurrentSession == null || _mpv == null) return;
 
         lock (_subtitleTrackStateLock)
-        {
-            _embeddedSubWindows.Clear();
             _loadedExternalSubtitleSids.Clear();
-        }
 
         // Do not eagerly sub-add every server subtitle URL. mpv already sees
         // embedded text tracks on direct/remux playback, and adding all VTT
@@ -4853,12 +4835,6 @@ public partial class PlayerService : IDisposable
             return true;
         var codec = track.Codec?.ToLowerInvariant() ?? "";
         return codec is "dvdsub" or "dvd_subtitle" or "vobsub" or "dvbsub" or "dvb_subtitle";
-    }
-
-    private static bool IsPgsSubtitle(SubtitleTrackInfo track)
-    {
-        var codec = track.Codec?.ToLowerInvariant() ?? "";
-        return codec is "pgs" or "hdmv_pgs_subtitle" or "sup";
     }
 
     private static bool IsTranslatableSubtitleSource(SubtitleTrackInfo track)
@@ -5063,7 +5039,6 @@ public partial class PlayerService : IDisposable
         _activeSubtitleServerIndex = serverTrackIndex;
         if (serverTrackIndex < 0)
         {
-            ClearEmbeddedSubtitleWindows();
             if (persist)
                 await SetSubtitleTrackAndPersistAsync(0, null, null);
             else
@@ -5153,11 +5128,9 @@ public partial class PlayerService : IDisposable
 
         lock (_subtitleTrackStateLock)
         {
-
-            var existing = _embeddedSubWindows.FirstOrDefault(window => window.ServerTrackIndex == track.Index);
-            if (existing != null)
+            if (_loadedExternalSubtitleSids.TryGetValue(track.Index, out var loadedSid))
             {
-                _mpv.SetSubtitleTrack(existing.Sid);
+                _mpv.SetSubtitleTrack(loadedSid);
                 return;
             }
 
@@ -5166,50 +5139,9 @@ public partial class PlayerService : IDisposable
             if (pair == null || string.IsNullOrWhiteSpace(pair.Value.FullUrl))
                 return;
 
-            ClearEmbeddedSubtitleWindows();
             var label = !string.IsNullOrEmpty(track.Label) ? track.Label : track.Language ?? "Unknown";
-            if (IsPgsSubtitle(track))
-            {
-                if (_loadedExternalSubtitleSids.TryGetValue(track.Index, out var loadedSid))
-                {
-                    _mpv.SetSubtitleTrack(loadedSid);
-                    return;
-                }
-                _mpv.AddSubtitle(pair.Value.FullUrl, label, track.Language, select: true);
-                _loadedExternalSubtitleSids[track.Index] = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
-                return;
-            }
-
-            var windowStart = Math.Max(0, CurrentMediaPosition - 30);
-            var windowUrl = AppendPositionDuration(pair.Value.FullUrl, windowStart, SubtitleWindowDurationSeconds);
-            _mpv.AddSubtitle(windowUrl, label, track.Language, select: true);
-            var sid = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
-            _embeddedSubWindows.Add(new EmbeddedSubWindow
-            {
-                ServerTrackIndex = track.Index,
-                Sid = sid,
-                BaseUrl = pair.Value.FullUrl,
-                Label = label,
-                Language = track.Language,
-                WindowStart = windowStart,
-                WindowDuration = SubtitleWindowDurationSeconds,
-            });
-        }
-    }
-
-    private void ClearEmbeddedSubtitleWindows()
-    {
-        lock (_subtitleTrackStateLock)
-        {
-            if (_mpv != null)
-            {
-                foreach (var window in _embeddedSubWindows)
-                {
-                    try { _mpv.RemoveSubtitle(window.Sid); }
-                    catch { }
-                }
-            }
-            _embeddedSubWindows.Clear();
+            _mpv.AddSubtitle(pair.Value.FullUrl, label, track.Language, select: true);
+            _loadedExternalSubtitleSids[track.Index] = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
         }
     }
 
@@ -5232,56 +5164,6 @@ public partial class PlayerService : IDisposable
     private int ResolveNativeEmbeddedCount()
         => _playbackManager?.CurrentSession?.SubtitleUrls?
             .Count(t => string.Equals(t.Source, "embedded", StringComparison.OrdinalIgnoreCase)) ?? 0;
-
-    private static string AppendPositionDuration(string url, double position, int durationSeconds)
-    {
-        var sep = url.Contains('?') ? '&' : '?';
-        return $"{url}{sep}position={position:0.##}&duration={durationSeconds}";
-    }
-
-    /// <summary>
-    /// Called from the UI tick; if the current playback position is near the
-    /// end of any loaded embedded-subtitle window, slide that window forward
-    /// by sub-remove + sub-add with a new position-centered URL. Also called
-    /// on seek past coverage.
-    /// </summary>
-    public void TickSubtitleWindows(double currentPositionSeconds)
-    {
-        lock (_subtitleTrackStateLock)
-        {
-            if (_embeddedSubWindows.Count == 0 || _mpv == null) return;
-
-            foreach (var win in _embeddedSubWindows)
-            {
-                var windowEnd = win.WindowStart + win.WindowDuration;
-            // Slide when we're within SlidePreloadSeconds of the tail OR when
-            // we've seeked past the current window entirely.
-                bool approachingTail = currentPositionSeconds >= windowEnd - SubtitleSlidePreloadSeconds;
-                bool pastWindow = currentPositionSeconds >= windowEnd || currentPositionSeconds < win.WindowStart;
-                if (!(approachingTail || pastWindow)) continue;
-
-            // Fetch the next window centered on the current position. Using
-            // currentPos - 30 ensures cues just before the playhead remain
-            // visible (captions often start slightly before dialogue).
-                var newStart = Math.Max(0, currentPositionSeconds - 30);
-                var newUrl = AppendPositionDuration(win.BaseUrl, newStart, SubtitleWindowDurationSeconds);
-
-                try
-                {
-                    _mpv.RemoveSubtitle(win.Sid);
-                    _mpv.AddSubtitle(newUrl, win.Label, win.Language, select: true);
-                    win.Sid = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
-                    win.WindowStart = newStart;
-                    win.WindowDuration = SubtitleWindowDurationSeconds;
-                }
-                catch
-                {
-                // If the reload fails the track may disappear; next tick will
-                // retry. Non-fatal — playback continues.
-            }
-        }
-    }
-    }
 
     private void SendTitleToOsc()
     {

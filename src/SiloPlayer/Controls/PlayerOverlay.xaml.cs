@@ -444,10 +444,6 @@ public sealed partial class PlayerOverlay : UserControl
         // Report progress to server
         _playerService.Manager?.UpdatePosition(pos, _playerService.Mpv.IsPaused);
 
-        // Slide embedded subtitle windows forward if we're near the tail
-        // (webui parity — upstream streams embedded subs in 10min–1hr windows).
-        _playerService.TickSubtitleWindows(pos);
-
         // Check skip markers
         ApplyAutoSkipMarkers(pos, dur);
         UpdateSkipButtons(pos);
