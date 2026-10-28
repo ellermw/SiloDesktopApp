@@ -7,6 +7,50 @@ namespace SiloPlayer.Tests;
 
 public sealed class AppUpdateExitTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExitHelperJournalReplacesStatusInWindowsPowerShell(bool scheduledJournalExists)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "silo-update-journal-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var journal = Path.Combine(root, "last-result.json");
+        if (scheduledJournalExists) await File.WriteAllTextAsync(journal, """{"state":"scheduled"}""");
+        static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
+        var script = Path.Combine(root, "journal-check.ps1");
+        await File.WriteAllTextAsync(script, $$"""
+            $ErrorActionPreference='Stop'
+            $root={{Quote(root)}}; $Version='1.2.337.0'; $VerifyOnly=$false
+            $tokens=$null; $errors=$null
+            $ast=[Management.Automation.Language.Parser]::ParseFile({{Quote(FindScript())}},[ref]$tokens,[ref]$errors)
+            foreach($name in @('Assert-OrdinaryPath','Write-Result')) {
+                $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
+                if(-not $function){throw 'Missing journal boundary'}
+                . ([scriptblock]::Create($function.Extent.Text))
+            }
+            Write-Result 'waiting' 'Waiting for the synthetic parent.'
+            Write-Result 'installing' 'Synthetic status only; setup is never launched.'
+            Write-Result 'installed' 'Synthetic journal completion.'
+            """);
+        var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"))
+        { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var argument in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script }) start.ArgumentList.Add(argument);
+        try
+        {
+            using var process = Process.Start(start)!;
+            var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.True(process.ExitCode == 0, await output + await error);
+            using var final = JsonDocument.Parse(await File.ReadAllTextAsync(journal));
+            Assert.Equal("installed", final.RootElement.GetProperty("state").GetString());
+            var states = File.ReadLines(Path.Combine(root, "install.log")).Select(line =>
+            { using var json = JsonDocument.Parse(line); return json.RootElement.GetProperty("state").GetString(); }).ToArray();
+            Assert.Equal(new[] { "waiting", "installing", "installed" }, states);
+            Assert.Empty(Directory.EnumerateFiles(root, "result-*.tmp"));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Fact]
     public void InstallGateIsPerInstallAndStableAcrossCase()
     {
