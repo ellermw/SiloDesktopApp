@@ -24,6 +24,7 @@ public sealed partial class WatchTogetherRoomPage : Page
     private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
     public WatchTogetherRoomViewModel ViewModel { get; }
     private bool _subscribed;
+    private long _navigationGeneration;
     private string? _nowPlayingContentId;
     private readonly DispatcherTimer _searchDebounce = new() { Interval = TimeSpan.FromMilliseconds(350) };
     private bool _suppressSearchTextChanged;
@@ -184,6 +185,9 @@ public sealed partial class WatchTogetherRoomPage : Page
         RoomWorkspace.Visibility = Visibility.Visible;
         RoomContent.Visibility = Visibility.Visible;
         TerminalStatePanel.Visibility = Visibility.Collapsed;
+        // Leaving during the awaits below must not let this page re-register
+        // with the coordinator after OnNavigatedFrom unsubscribed it.
+        var navigation = ++_navigationGeneration;
 
         if (!_subscribed)
         {
@@ -195,6 +199,14 @@ public sealed partial class WatchTogetherRoomPage : Page
         await ViewModel.LoadCapabilitiesAsync();
         if (ViewModel.RoomId != args.RoomId || ViewModel.RoomToken != args.RoomAccessToken || ViewModel.ConnectionState == "disconnected")
             await ViewModel.InitializeAsync(args.RoomId, args.RoomAccessToken);
+        // The room socket outlives this page, so the coordinator still adopts
+        // the room; only page work and its auto-start handler require the page.
+        var coordinator = App.Services.GetRequiredService<WatchTogetherCoordinator>();
+        if (navigation != _navigationGeneration)
+        {
+            coordinator.SetActiveRoom(ViewModel);
+            return;
+        }
         _ = RunHostSearchAsync();
         UpdateRoomUi();
         UpdateConnectionUi();
@@ -202,7 +214,6 @@ public sealed partial class WatchTogetherRoomPage : Page
 
         // Register with the playback-sync coordinator so inbound transport
         // commands reach mpv and local playback sessions get attached.
-        var coordinator = App.Services.GetRequiredService<WatchTogetherCoordinator>();
         coordinator.PlaybackStartRequested -= OnCoordinatorStartRequested;
         coordinator.PlaybackStartRequested += OnCoordinatorStartRequested;
         coordinator.SetActiveRoom(ViewModel);
@@ -234,6 +245,7 @@ public sealed partial class WatchTogetherRoomPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+        ++_navigationGeneration;
         if (_subscribed)
         {
             ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
