@@ -64,6 +64,17 @@ public sealed class InstallerPrivilegeTests
         Assert.DoesNotContain("Type: filesandordirs; Name: \"{app}\"", installer);
     }
 
+    [Fact]
+    public void LinkedPathGuardReadsTheErrorCapturedAfterItsOwnApiCall()
+    {
+        // A missing fresh-install folder must report "not found", not an error
+        // left by Setup's own API calls after GetFileAttributesW returned.
+        var installer = ReadRepoFile("installer", "SiloInstaller.iss").ReplaceLineEndings("\n");
+        var linked = installer[installer.IndexOf("function HasLinkedInstallPath(", StringComparison.Ordinal)..installer.IndexOf("function SameInstallDirectory(", StringComparison.Ordinal)];
+        Assert.Contains("ErrorCode := DLLGetLastError;", linked);
+        Assert.DoesNotContain("GetLastError@kernel32", installer);
+    }
+
     private static string ReadRepoFile(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

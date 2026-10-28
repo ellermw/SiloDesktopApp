@@ -89,8 +89,6 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=
 [Code]
 function GuardFileAttributes(const Name: String): Cardinal;
   external 'GetFileAttributesW@kernel32.dll stdcall';
-function GuardLastError: Cardinal;
-  external 'GetLastError@kernel32.dll stdcall';
 
 function HasLinkedInstallPath(Dir: String): Boolean;
 var Attributes, ErrorCode: Cardinal; Parent: String;
@@ -101,7 +99,9 @@ begin
     Attributes := GuardFileAttributes(Dir);
     if Attributes = $FFFFFFFF then
     begin
-      ErrorCode := GuardLastError;
+      // Setup makes its own API calls, so kernel32 GetLastError may already be
+      // overwritten. DLLGetLastError holds the value captured after this call.
+      ErrorCode := DLLGetLastError;
       if (ErrorCode <> 2) and (ErrorCode <> 3) then
       begin Result := True; Exit; end;
     end;
