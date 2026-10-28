@@ -23,7 +23,9 @@ function Write-Result([string]$State,[string]$Message,[string]$GateName='') {
         [IO.File]::WriteAllText($temporary,$json)
         $target=Join-Path $root 'last-result.json'
         Assert-OrdinaryPath $target
-        if ([IO.File]::Exists($target)) {[IO.File]::Replace($temporary,$target,$null)} else {[IO.File]::Move($temporary,$target)}
+        # Windows PowerShell coerces $null string arguments to an empty path.
+        # NullString passes the actual null backup name required by File.Replace.
+        if ([IO.File]::Exists($target)) {[IO.File]::Replace($temporary,$target,[NullString]::Value)} else {[IO.File]::Move($temporary,$target)}
         $logPath=Join-Path $root 'install.log'
         Assert-OrdinaryPath $logPath
         [IO.File]::AppendAllText($logPath,$json+[Environment]::NewLine)
