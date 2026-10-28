@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.406
+
+Record queued playback events at event time, serialize flush completion and remove verified unused code. See [twenty-change record](docs/releases/1.2.406.md).
+
 ## 1.2.386
 
 Gregorian Calendar requests/labels across regional cultures and reliable installer native-error capture. See [eight-change record](docs/releases/1.2.386.md).
