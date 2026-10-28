@@ -23,6 +23,14 @@ public class PlaybackStartResponse
     public bool CanSeekAnywhere { get; set; } = true;
     public string? SelectedSubtitleTrackId { get; set; }
     public string SubtitleMode { get; set; } = "off";
+
+    /// <summary>
+    /// The server composites the selected subtitle into the video (plan
+    /// subtitle mode <c>burn_in</c>). Turning subtitles off or choosing another
+    /// track then needs a replan; a local mpv track switch leaves it on screen.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsSubtitleBurnedIn => string.Equals(SubtitleMode, "burn_in", StringComparison.Ordinal);
     public string? SelectedSubtitleArtifactUrl { get; set; }
     public double SubtitleTimingOriginSeconds { get; set; }
     public string ActiveQuality { get; set; } = "original";

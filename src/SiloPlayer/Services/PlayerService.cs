@@ -1125,7 +1125,7 @@ public partial class PlayerService : IDisposable
             // after the replacement file has loaded. Selecting it before
             // loadfile settles lets mpv discard the new sid and can briefly
             // resume stale frames from the outgoing transport.
-            if (_activeHlsRecipe?.SubtitleBurnIn == true)
+            if (manager?.CurrentSession?.IsSubtitleBurnedIn == true)
             {
                 transportReloadScheduled = await SetBitmapSubtitleBurnInAsync(
                     null,
@@ -1136,7 +1136,7 @@ public partial class PlayerService : IDisposable
                 SelectSubtitleTrack(track);
             }
         }
-        else if (_activeHlsRecipe?.SubtitleBurnIn == true)
+        else if (manager?.CurrentSession?.IsSubtitleBurnedIn == true)
         {
             transportReloadScheduled = await SetBitmapSubtitleBurnInAsync(null);
         }

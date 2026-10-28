@@ -127,6 +127,33 @@ public sealed class PlaybackProtocolV3RecoveryTests
         await manager.StopSessionAsync();
     }
 
+    [Fact]
+    public async Task ServerBurnInIsVisibleOnTheSessionUntilASubtitleReplanClearsIt()
+    {
+        // A DVD/DVB track is composited into the video ("burn_in"). Turning it
+        // off must go back to the server, so the player has to see this state.
+        var handler = new RecoveryPlaybackHandler { SubtitleMode = "burn_in" };
+        using var manager = CreateManager(handler);
+        var burned = await manager.StartSessionAsync(42, forceStartPosition: true, subtitleTrackIndex: 3);
+        Assert.True(burned.IsSubtitleBurnedIn);
+
+        handler.SubtitleMode = "off";
+        var cleared = await manager.ReplanSubtitleAsync(null, 120);
+
+        Assert.False(cleared.IsSubtitleBurnedIn);
+        Assert.Same(cleared, manager.CurrentSession);
+        Assert.Single(handler.ReplanBodies);
+        await manager.StopSessionAsync();
+    }
+
+    [Theory]
+    [InlineData("off", false)]
+    [InlineData("render", false)]
+    [InlineData("convert", false)]
+    [InlineData("burn_in", true)]
+    public void OnlyTheServersBurnInModeCountsAsBurnedIn(string mode, bool burnedIn)
+        => Assert.Equal(burnedIn, new SiloPlayer.Core.Models.Playback.PlaybackStartResponse { SubtitleMode = mode }.IsSubtitleBurnedIn);
+
     private static PlaybackManager CreateManager(HttpMessageHandler handler)
     {
         var apiClient = new SiloApiClient(new HttpClient(handler));
@@ -158,6 +185,7 @@ public sealed class PlaybackProtocolV3RecoveryTests
     {
         private int _planNumber;
         public bool ReturnTerminalOnStart { get; set; }
+        public string SubtitleMode { get; set; } = "off";
         public List<string> StartBodies { get; } = [];
         public List<string> ReplanBodies { get; } = [];
 
@@ -186,13 +214,13 @@ public sealed class PlaybackProtocolV3RecoveryTests
                         """);
                 }
 
-                return JsonResponse(PlayableDecision(NextPlanNumber()));
+                return JsonResponse(PlayableDecision(NextPlanNumber(), SubtitleMode));
             }
 
             if (request.Method == HttpMethod.Post && path == "/api/v2/playback/session-1/replan")
             {
                 ReplanBodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
-                return JsonResponse(PlayableDecision(NextPlanNumber()));
+                return JsonResponse(PlayableDecision(NextPlanNumber(), SubtitleMode));
             }
 
             if (request.Method == HttpMethod.Post && path.EndsWith("/progress", StringComparison.Ordinal))
@@ -212,7 +240,7 @@ public sealed class PlaybackProtocolV3RecoveryTests
             Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
         };
 
-        private static string PlayableDecision(int number) => $$"""
+        private static string PlayableDecision(int number, string subtitleMode) => $$"""
             {
               "protocol_version": 3,
               "server_features": ["playback_plan_v3", "plan_invalidated_v1"],
@@ -228,7 +256,7 @@ public sealed class PlaybackProtocolV3RecoveryTests
                 "timeline": { "source_start_seconds": 0, "stream_origin_seconds": 0, "player_start_seconds": 0, "timeline_offset_seconds": 0, "can_seek_anywhere": true },
                 "selected_tracks": { "audio": { "id": "file:42:audio:0", "index": 0 } },
                 "effective_recipe": { "video_codec": "hevc", "audio_codec": "aac" },
-                "subtitle": { "mode": "off", "inventory": [] },
+                "subtitle": { "mode": "{{subtitleMode}}", "inventory": [] },
                 "available_qualities": [{ "label": "original", "preserves_source": true }],
                 "degradation_warnings": [],
                 "requested_media_file_id": 42,
