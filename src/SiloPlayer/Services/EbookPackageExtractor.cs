@@ -216,10 +216,12 @@ internal static class EbookPackageExtractor
         if (!Path.GetExtension(path).Equals(".svg", StringComparison.OrdinalIgnoreCase)) return relative;
         var source = string.Join('/', relative.Split('/').Select(Uri.EscapeDataString));
         var wrapper = $"silo-svg-page-{index + 1:D4}.html";
+        for (var suffix = 1; File.Exists(Path.Combine(root, wrapper)) || Directory.Exists(Path.Combine(root, wrapper)); suffix++)
+            wrapper = $"silo-svg-page-{index + 1:D4}-{suffix}.html";
         File.WriteAllText(Path.Combine(root, wrapper),
             "<!doctype html><html><head><meta charset=\"utf-8\">" +
             "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src 'self'; style-src 'unsafe-inline'\">" +
-            "<style>html,body{margin:0;height:100%;background:#0e0e0e}" +
+            "<style>html,body{margin:0;height:100%;background:#0e0e0e}body{display:flex;align-items:center;justify-content:center}" +
             "img{display:block;margin:auto;max-width:100%;max-height:100%;object-fit:contain}</style></head>" +
             $"<body><img src=\"{SecurityElement.Escape(source)}\" alt=\"\"></body></html>",
             Encoding.UTF8);

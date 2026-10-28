@@ -45,6 +45,22 @@ public sealed class EbookPackageExtractorTests : IDisposable
     }
 
     [Fact]
+    public void SvgWrapperDoesNotOverwriteArchiveFilesOrCollideWithDirectories()
+    {
+        var target = Path.Combine(_root, "svg-collisions");
+        var svg = System.Text.Encoding.UTF8.GetBytes("<svg xmlns=\"http://www.w3.org/2000/svg\"/>");
+        var original = "archive resource"u8.ToArray();
+        var package = Zip(("001.svg", svg), ("silo-svg-page-0001.html/002.png", [1]),
+            ("silo-svg-page-0001-1.html", original));
+        var book = EbookPackageExtractor.Extract(package, target, "cbz");
+        Assert.Equal("silo-svg-page-0001-2.html", book.Chapters[0].RelativePath);
+        Assert.Equal(original, File.ReadAllBytes(Path.Combine(target, "silo-svg-page-0001-1.html")));
+        Assert.True(File.Exists(Path.Combine(target, "silo-svg-page-0001.html", "002.png")));
+        Assert.Equal(book.Chapters.Select(c => c.RelativePath),
+            EbookPackageExtractor.Extract(package, target, "cbz").Chapters.Select(c => c.RelativePath));
+    }
+
+    [Fact]
     public void ArchiveWithMoreEntriesThanTheLimitIsRejected()
     {
         var target = Path.Combine(_root, "many");
