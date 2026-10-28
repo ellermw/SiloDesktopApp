@@ -105,7 +105,12 @@ public sealed partial class NowListeningHero : UserControl
         _player.PositionChanged -= LivePositionChanged; _player.PauseChanged -= LivePauseChanged;
         _player.ContentLoaded -= LiveContentChanged; _player.ChaptersChanged -= LiveContentChanged;
     }
-    private void LivePositionChanged(double _) => DispatcherQueue.TryEnqueue(UpdateLiveState);
+    // Position arrives per decoded frame; chapter, time-left and progress change at most once a second.
+    private readonly PositionSecondGate _livePositionGate = new();
+    private void LivePositionChanged(double position)
+    {
+        if (_livePositionGate.ShouldUpdate(position)) DispatcherQueue.TryEnqueue(UpdateLiveState);
+    }
     private void LivePauseChanged(bool _) => DispatcherQueue.TryEnqueue(UpdateLiveState);
     private void LiveContentChanged() => DispatcherQueue.TryEnqueue(UpdateLiveState);
     private void UpdateLiveState()

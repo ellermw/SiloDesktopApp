@@ -870,7 +870,12 @@ public sealed partial class ItemDetailPage : Page
     private bool IsActiveAudiobook() => ViewModel.Item?.Type == "audiobook" && _playerService?.IsAudiobook == true
         && _playerService.State != Services.PlayerState.Idle && _playerService.ContentId == ViewModel.Item.ContentId;
     private void OnDetailPauseChanged(bool paused) => DispatcherQueue.TryEnqueue(UpdateActiveAudiobook);
-    private void OnDetailPositionChanged(double position) => DispatcherQueue.TryEnqueue(UpdateActiveAudiobook);
+    // Position arrives per decoded frame for any playing title; the summary shows whole seconds.
+    private readonly PositionSecondGate _detailPositionGate = new();
+    private void OnDetailPositionChanged(double position)
+    {
+        if (_detailPositionGate.ShouldUpdate(position)) DispatcherQueue.TryEnqueue(UpdateActiveAudiobook);
+    }
     private void UpdateActiveAudiobook()
     {
         if (!IsActiveAudiobook()) return;
