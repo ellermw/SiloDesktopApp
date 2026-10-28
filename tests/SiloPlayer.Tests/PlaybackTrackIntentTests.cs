@@ -8,6 +8,32 @@ namespace SiloPlayer.Tests;
 
 public sealed class PlaybackTrackIntentTests
 {
+    [Theory]
+    [InlineData(1)]
+    [InlineData(null)]
+    public async Task FailedSubtitleSwitchRetriesTheViewerChoiceBeforeRecoveringTheOldPlan(int? subtitle)
+    {
+        using var scope = new Fixture();
+        await scope.Manager.StartSessionAsync(42);
+        scope.Wire.FailNextReplan = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => scope.Manager.ReplanSubtitleAsync(subtitle, 19));
+
+        var recovered = await scope.Manager.RecoverPlaybackFailureAsync(19, "playback_interrupted", "subtitle-switch-failed");
+        var retry = scope.Wire.Replans[1];
+        Assert.Equal("track_change", retry.GetProperty("operation").GetString());
+        if (subtitle is int selected)
+        {
+            Assert.Equal(selected, retry.GetProperty("selected_tracks").GetProperty("subtitle").GetProperty("index").GetInt32());
+            Assert.Equal($"sub:42:{selected}", recovered.SelectedSubtitleTrackId);
+        }
+        else
+        {
+            Assert.False(retry.GetProperty("selected_tracks").TryGetProperty("subtitle", out _));
+            Assert.Null(recovered.SelectedSubtitleTrackId);
+        }
+        Assert.Equal(subtitle ?? -1, scope.Manager.SubtitleSelectionForLoad);
+    }
+
     [Fact]
     public async Task ManualVersionPrefersExactRegionalAudioBeforeSameLanguageTitleSimilarity()
     {
@@ -150,6 +176,7 @@ public sealed class PlaybackTrackIntentTests
         public List<JsonElement> Starts = [], Replans = [];
         public List<string> Paths = [];
         public bool BlockNext;
+        public bool FailNextReplan;
         public TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _file = 42, _selected = 0;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -168,6 +195,11 @@ public sealed class PlaybackTrackIntentTests
             else
             {
                 Replans.Add(body);
+                if (FailNextReplan)
+                {
+                    FailNextReplan = false;
+                    throw new InvalidOperationException("Synthetic subtitle replan failure before adoption.");
+                }
                 if (body.GetProperty("selected_tracks").TryGetProperty("subtitle", out var selected)) _selected = selected.GetProperty("index").GetInt32();
                 else if (body.GetProperty("operation").GetString() == "track_change") _selected = -1;
                 if (BlockNext) { BlockNext = false; Entered.SetResult(); await Release.Task.WaitAsync(ct); }
