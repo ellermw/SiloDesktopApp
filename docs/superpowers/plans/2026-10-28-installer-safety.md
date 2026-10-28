@@ -1,0 +1,9 @@
+# Installer/build safety PR37 and PR38
+
+Baseline364/source0226f13; original heads37=604429e,38=e0c2271. Independent review found marker-only ownership and linked-path gaps. Original compiled Inno guard accepts foreign folders with generic uninstall data/copied executable; original PowerShell cleanup deletes a synthetic prior publish containing preserved evidence. Both failures are reproduced under isolated roots.
+
+Keep clean-payload upgrades restricted to registered Silo destinations, reject protected/linked/inaccessible paths, and remove blanket uninstall recursion. Registration is the dedicated-folder ownership contract; it is not a claim that arbitrary additions inside an existing registered payload survive a clean upgrade. A new uninstaller preserves unrelated additions. Existing older uninstallers retain their earlier behavior until replaced.
+
+Builds never delete populated publish directories, including frozen/installed payloads. Blank/default output creates a unique new folder; custom output must be new/empty. Validate all generated bin/obj cleanup boundaries and links; constrain configuration names before cleanup. Preserve pinned dependencies/signing policy and the small PE-header read.
+
+Verify actual Pascal with a lowest-privilege fixture using an unrelated AppId, dummy files and isolated registry identity. It excludes production SDK/firewall/protocol/shortcut/launch actions. Verify fresh install, registered clean upgrade including obsolete-runtime removal, and uninstall preserving a synthetic unrelated file. Compile/build normal/default and custom fresh output; freeze only the final verified release bytes. Full/relevant Windows/native/published tests, independent final reviews, exact-head corrections/merges, matching release/README/checksum and marker receipts finish delivery. Never control or replace the installed app.
