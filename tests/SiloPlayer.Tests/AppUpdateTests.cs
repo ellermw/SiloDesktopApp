@@ -34,6 +34,71 @@ public sealed class AppUpdateTests
         finally { stop.Cancel(); await loop.WaitAsync(TimeSpan.FromSeconds(5)); }
     }
 
+    [Fact]
+    public async Task RepeatedChecksAreConditionalAndKeepTheReleaseOnNotModified()
+    {
+        // Conditional requests save metadata bytes; unauthenticated 304s still use quota.
+        using var wire = new ConditionalRelease(); using var http = new HttpClient(wire);
+        var service = new AppUpdateService(http, Path.GetTempPath(), new Version(1, 2, 334));
+
+        await service.CheckAsync();
+        await service.CheckAsync();
+
+        Assert.Equal(new[] { null, "\"release-335\"" }, wire.IfNoneMatch.ToArray());
+        Assert.Equal(new Version(1, 2, 335, 0), service.State.Release?.Version);
+        Assert.Null(service.State.Error);
+    }
+
+    [Theory]
+    [InlineData("reset", 45, 45)]      // X-RateLimit-Reset 45 min away: wait for it
+    [InlineData("retry-after", 2, 5)]  // never sooner than the normal retry interval
+    [InlineData("retry-after", 2880, 360)] // never longer than six hours
+    public async Task RateLimitedChecksWaitForGitHubsResetInsteadOfRetryingEveryFiveMinutes(string kind, int minutes, int expectedMinutes)
+    {
+        using var clock = new CheckClock(); using var wire = new RateLimitedRelease(kind, TimeSpan.FromMinutes(minutes));
+        using var http = new HttpClient(wire);
+        var service = new AppUpdateService(http, Path.GetTempPath(), new Version(1, 2, 334), timeProvider: clock);
+        using var stop = new CancellationTokenSource();
+        var loop = service.RunAutomaticChecksAsync(stop.Token);
+        try
+        {
+            (await clock.NextAsync()).Fire();
+            var next = await clock.NextAsync();
+            Assert.InRange(next.Due.TotalMinutes, expectedMinutes - 1, expectedMinutes + 0.01);
+            Assert.Contains("limiting update checks", service.State.Error);
+        }
+        finally { stop.Cancel(); await loop.WaitAsync(TimeSpan.FromSeconds(5)); }
+    }
+
+    private sealed class ConditionalRelease : HttpMessageHandler
+    {
+        public List<string?> IfNoneMatch = [];
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var etag = request.Headers.TryGetValues("If-None-Match", out var values) ? values.Single() : null;
+            IfNoneMatch.Add(etag);
+            if (etag == "\"release-335\"") return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotModified));
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(Release()) };
+            response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"release-335\"");
+            return Task.FromResult(response);
+        }
+    }
+
+    private sealed class RateLimitedRelease(string kind, TimeSpan wait) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent("{\"message\":\"API rate limit exceeded\"}") };
+            if (kind == "reset")
+            {
+                response.Headers.Add("X-RateLimit-Remaining", "0");
+                response.Headers.Add("X-RateLimit-Reset", DateTimeOffset.UtcNow.Add(wait).ToUnixTimeSeconds().ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+            else response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(wait);
+            return Task.FromResult(response);
+        }
+    }
+
     private sealed class ChangingRelease(bool fails) : HttpMessageHandler
     {
         public int Checks;

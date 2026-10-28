@@ -83,6 +83,25 @@ internal static class AppUpdateNativeFixture
         var mode = Descendants<ComboBox>((DependencyObject)dialog.Content).Single(x => x.Name == "AppUpdateModeCombo");
         if (mode.SelectedIndex != 0 || services.GetRequiredService<UpdateWire>().Downloads != 0)
             throw new InvalidOperationException("Notification-only mode downloaded automatically.");
+        if (scenario == "rate-limit")
+        {
+            var wire = services.GetRequiredService<UpdateWire>(); wire.LimitMetadata = true;
+            var check = Descendants<Button>(dialog).Single(button => button.Content is string text && text == "Check for updates");
+            Click(check);
+            await Until(() => updates.State.Error?.Contains("limiting update checks", StringComparison.Ordinal) == true
+                && Descendants<TextBlock>((DependencyObject)dialog.Content).Any(text => text.Text.Contains("limiting update checks", StringComparison.Ordinal)));
+            var count = wire.MetadataRequests; Click(check); await Task.Delay(150);
+            if (wire.MetadataRequests != count || !dialog.IsPrimaryButtonEnabled)
+                throw new InvalidOperationException("Rate-limit cooldown allowed another metadata request or disabled the cached manual update.");
+            await CaptureAsync((FrameworkElement)dialog.Content, "rate-limited-update-dialog.png");
+            Click(Descendants<Button>(dialog).Single(button => button.Name == "PrimaryButton"));
+            await closed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var safe = services.GetRequiredService<SafeInstaller>();
+            if (wire.Downloads != 1 || safe.Calls != 1 || !safe.Restart || safe.ConfirmedCloses != 1)
+                throw new InvalidOperationException("Cached manual update failed during a GitHub metadata cooldown.");
+            Program.Log("PASS: actual update dialog explains the rate limit, suppresses repeated checks and retains verified cached manual download/normal-close/restart consent without running setup.");
+            return;
+        }
         if (scenario == "overlap")
         {
             var wire = services.GetRequiredService<UpdateWire>(); wire.HoldMetadata = true;
@@ -230,6 +249,8 @@ internal static class AppUpdateNativeFixture
         public int Downloads;
         public bool HoldDownload;
         public bool HoldMetadata;
+        public bool LimitMetadata;
+        public int MetadataRequests;
         public TaskCompletionSource MetadataEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseMetadata = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource DownloadEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -238,6 +259,13 @@ internal static class AppUpdateNativeFixture
         {
             if (request.RequestUri!.Host == "api.github.com")
             {
+                MetadataRequests++;
+                if (LimitMetadata)
+                {
+                    var limited = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+                    limited.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromMinutes(45));
+                    return limited;
+                }
                 if (HoldMetadata) { MetadataEntered.TrySetResult(); await ReleaseMetadata.Task.WaitAsync(ct); }
                 var json = JsonSerializer.Serialize(new { tag_name = "v1.2.999", draft = false, prerelease = false, body = "## Synthetic changelog\nFixed playback.\n- UI updates", published_at = "2026-10-28T12:00:00Z",
                     assets = new[] { new { name = "SiloInstaller-Windows-x64.exe", state = "uploaded", size = _package.Length, digest = "sha256:" + Convert.ToHexString(SHA256.HashData(_package)), browser_download_url = "https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.999/SiloInstaller-Windows-x64.exe" } } });
