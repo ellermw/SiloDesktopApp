@@ -1508,14 +1508,31 @@ end
 
 local capitalize
 
+-- Each overlay update is a synchronous osd-overlay command that marks the OSD
+-- changed. The tick redraws 30 times per second, so skip updates whose
+-- content and resolution are identical to what mpv already shows.
+local function set_osc_overlay(data, res_x, res_y)
+    local overlay = state.osc_overlay
+    if not overlay then return end
+    if overlay.data == data and overlay.res_x == res_x and overlay.res_y == res_y
+        and overlay.z == 50 and state.osc_overlay_shown then
+        return
+    end
+    overlay.data = data
+    overlay.res_x = res_x
+    overlay.res_y = res_y
+    overlay.z = 50
+    overlay:update()
+    state.osc_overlay_shown = true
+end
+
 local function render_osc()
     if state.current_alpha <= 0.01 then
         remove_chapter_thumbnail_overlay()
         remove_chapter_thumbnail_menu_overlays()
         state.watch_party_actions = {}
         if state.osc_overlay then
-            state.osc_overlay.data = ""
-            state.osc_overlay:update()
+            set_osc_overlay("", state.osc_overlay.res_x, state.osc_overlay.res_y)
         end
         return
     end
@@ -2156,12 +2173,9 @@ local function render_osc()
     -- Update overlay
     if not state.osc_overlay then
         state.osc_overlay = mp.create_osd_overlay("ass-events")
+        state.osc_overlay_shown = false
     end
-    state.osc_overlay.data = ass.text
-    state.osc_overlay.res_x = W
-    state.osc_overlay.res_y = H
-    state.osc_overlay.z = 50
-    state.osc_overlay:update()
+    set_osc_overlay(ass.text, W, H)
 end
 
 --------------------------------------------------------------------------------
@@ -5408,8 +5422,7 @@ local function observe_properties()
         state.osc_disabled = (val == "false")
         if state.osc_disabled then
             if state.osc_overlay then
-                state.osc_overlay.data = ""
-                state.osc_overlay:update()
+                set_osc_overlay("", state.osc_overlay.res_x, state.osc_overlay.res_y)
             end
             if state.stats_overlay then
                 state.stats_overlay.data = ""
@@ -6288,6 +6301,7 @@ local function init()
 
     -- Create overlays
     state.osc_overlay = mp.create_osd_overlay("ass-events")
+    state.osc_overlay_shown = false
     state.stats_overlay = mp.create_osd_overlay("ass-events")
 
     -- Main tick timer (60fps target for smooth animation)
