@@ -160,5 +160,16 @@ public class BufferingQualityTests
             Assert.Equal(-1, method.IndexOf(read, gate, StringComparison.Ordinal));
         }
         Assert.Contains("!ReferenceEquals(_mpv, mpv)", method[gate..]);
+        // Reads outside the gate need their own ordering: a single sample at a
+        // time, dropped when a plan was adopted or ended while libmpv was read.
+        var singleFlight = method.IndexOf("Interlocked.Exchange(ref _bufferingSampling, 1) != 0", StringComparison.Ordinal);
+        var planCapture = method.IndexOf("var plan = Interlocked.Read(ref _bufferingPlanGeneration);", StringComparison.Ordinal);
+        Assert.True(singleFlight >= 0 && singleFlight < planCapture && planCapture < method.IndexOf("ReadMediaNetworkObservation()", StringComparison.Ordinal));
+        Assert.Contains("plan != _bufferingPlanGeneration", method[gate..]);
+        Assert.Contains("Volatile.Write(ref _bufferingSampling, 0);", method);
+        var adopt = source[source.IndexOf("private void AdoptBufferingQualityPlan()", StringComparison.Ordinal)..];
+        Assert.Contains("_bufferingPlanGeneration++;", adopt[..adopt.IndexOf("FlushBufferingSummaryCore();", StringComparison.Ordinal)]);
+        var end = source[source.IndexOf("private void EndBufferingQuality()", StringComparison.Ordinal)..];
+        Assert.Contains("_bufferingPlanGeneration++;", end[..end.IndexOf("SetConnectionMediaActive(false);", StringComparison.Ordinal)]);
     }
 }
