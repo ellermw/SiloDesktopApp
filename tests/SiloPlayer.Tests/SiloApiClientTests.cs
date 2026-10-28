@@ -3,11 +3,34 @@ using System.Text;
 using System.Text.Json;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Playback;
+using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Tests;
 
 public sealed class SiloApiClientTests
 {
+    [Theory]
+    [InlineData(false, "server")]
+    [InlineData(true, "server")]
+    [InlineData(false, "profile")]
+    [InlineData(true, "profile")]
+    [InlineData(false, "account")]
+    [InlineData(true, "account")]
+    public async Task ProfileAvatarResponseCannotCrossTheInitiatingAuthority(bool settings, string change)
+    {
+        var received = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = CreateClient(new DelegateHandler((_, _) => { received.TrySetResult(); return release.Task; }));
+        client.SetBaseUrl("https://avatar-a.invalid");
+        var pending = settings ? new SettingsApi(client).GetProfilesAsync() : new AuthApi(client).GetProfilesAsync();
+        await received.Task;
+        if (change == "server") client.SetBaseUrl("https://avatar-b.invalid");
+        else if (change == "profile") client.SetProfile("other-fixture");
+        else client.BeginAuthenticationSession("synthetic-other-account");
+        release.SetResult(JsonResponse(HttpStatusCode.OK, "{\"items\":[{\"id\":\"a\",\"name\":\"A\",\"avatar_url\":\"/profile-avatars/avatar.svg\"}]}"));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+    }
+
     [Fact]
     public async Task DismissalHttpDiagnostics_CorrelateStatusWithoutLoggingIdentityOrCredentials()
     {
@@ -61,6 +84,59 @@ public sealed class SiloApiClientTests
             client.ResolveServerUrl("https://cdn.example.test/brand.webp"));
         Assert.Null(client.ResolveServerUrl(" "));
     }
+
+    [Theory]
+    [InlineData("/profile-avatars/avatar-3.svg", "https://silo.example.test/profile-avatars/avatar-3.svg")]
+    [InlineData("//cdn.example.test/avatar.png", "https://cdn.example.test/avatar.png")]
+    [InlineData("https://api.dicebear.com/9.x/thumbs/svg?seed=fox", "https://api.dicebear.com/9.x/thumbs/svg?seed=fox")]
+    public void ResolveServerUrl_TreatsRootAndProtocolRelativePathsAsServerUrlsOnEveryPlatform(string value, string expected)
+    {
+        // Unix parses "/path" as file:///path, Windows parses "//host" as a UNC path.
+        var client = CreateClient(new DelegateHandler((_, _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound))));
+        client.SetBaseUrl("https://silo.example.test");
+
+        Assert.Equal(expected, client.ResolveServerUrl(value));
+    }
+
+    [Fact]
+    public async Task ProfilesLeaveTheApiWithAbsoluteAvatarUrls()
+    {
+        const string profile = """{"id":"p1","name":"Preset","avatar_url":"/profile-avatars/avatar-3.svg"}""";
+        var handler = new DelegateHandler((request, _) => Task.FromResult<HttpResponseMessage>(JsonResponse(HttpStatusCode.OK,
+            request.Method == HttpMethod.Get
+                ? "{\"items\":[" + profile + """,{"id":"p2","name":"Generated","avatar_url":"https://api.dicebear.com/9.x/thumbs/svg?seed=fox"},{"id":"p3","name":"None"}]}"""
+                : profile)));
+        var client = CreateClient(handler);
+        client.SetBaseUrl("https://silo.example.test");
+        client.SetAccessToken("access");
+        var auth = new AuthApi(client);
+        var settings = new SettingsApi(client);
+
+        foreach (var profiles in new[] { (await auth.GetProfilesAsync()).Profiles, (await settings.GetProfilesAsync()).Profiles })
+        {
+            Assert.Equal("https://silo.example.test/profile-avatars/avatar-3.svg", profiles[0].AvatarUrl);
+            Assert.Equal("https://api.dicebear.com/9.x/thumbs/svg?seed=fox", profiles[1].AvatarUrl);
+            Assert.Null(profiles[2].AvatarUrl);
+        }
+        foreach (var updated in new[]
+                 {
+                     await auth.CreateProfileAsync("Preset"),
+                     await auth.UpdateProfileAsync("p1", "Preset", null),
+                     await auth.DeleteProfileAvatarAsync("p1"),
+                     await settings.UpdateProfileAsync("p1", new { name = "Preset" }),
+                 })
+            Assert.Equal("https://silo.example.test/profile-avatars/avatar-3.svg", updated.AvatarUrl);
+    }
+
+    [Theory]
+    [InlineData("https://silo.example.test/profile-avatars/avatar-3.svg", true)]
+    [InlineData("https://silo.example.test/profile-avatars/AVATAR-3.SVG?v=2", true)]
+    [InlineData("https://api.dicebear.com/9.x/thumbs/svg?seed=fox&size=128", true)]
+    [InlineData("https://s3.example.test/avatars/1/p-owner/256.jpg", false)]
+    [InlineData("https://other.example.test/9.x/thumbs/svg", false)]
+    public void SvgArtwork_IdentifiesBundledAndGeneratedAvatars(string url, bool expected)
+        => Assert.Equal(expected, SvgArtwork.IsSvgUrl(new Uri(url)));
 
     [Fact]
     public async Task GetAsync_DisposesSuccessfulResponse()

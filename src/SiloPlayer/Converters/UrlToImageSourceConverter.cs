@@ -17,7 +17,7 @@ public sealed class UrlToImageSourceConverter : IValueConverter
 {
     private const int PruneInterval = 64;
     private static readonly ConcurrentDictionary<string, WeakReference<BitmapImage>> Sources = new();
-    private static readonly ConditionalWeakTable<BitmapImage, TaskCompletionSource<bool>> Outcomes = new();
+    private static readonly ConditionalWeakTable<Microsoft.UI.Xaml.Media.ImageSource, TaskCompletionSource<bool>> Outcomes = new();
     private static int _lookupCount;
 
     public object Convert(object value, Type targetType, object parameter, string language)
@@ -31,6 +31,15 @@ public sealed class UrlToImageSourceConverter : IValueConverter
 
         var cacheKey = StableIdentity(uri);
         var dimRequestPoster = parameter is "request-dim";
+        if (!dimRequestPoster && SvgArtwork.IsSvgUrl(uri))
+        {
+            // BitmapImage cannot decode SVG profile avatars.
+            var svg = new SvgImageSource();
+            var svgOutcome = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Outcomes.Add(svg, svgOutcome);
+            _ = PopulateSvgAsync(svg, svg.DispatcherQueue, cacheKey, url, svgOutcome);
+            return svg;
+        }
         // Reuse disk bytes by stable artwork identity, but never attach a
         // renewed URL to an older URL's pending/failed bitmap operation.
         var sourceKey = dimRequestPoster ? url + "|request-dim" : url;
@@ -56,7 +65,7 @@ public sealed class UrlToImageSourceConverter : IValueConverter
         throw new NotSupportedException();
 
     public static Task<bool>? GetLoadOutcome(Microsoft.UI.Xaml.Media.ImageSource? source)
-        => source is BitmapImage bitmap && Outcomes.TryGetValue(bitmap, out var outcome) ? outcome.Task : null;
+        => source != null && Outcomes.TryGetValue(source, out var outcome) ? outcome.Task : null;
 
     private static async Task PopulateAsync(BitmapImage bitmap, DispatcherQueue owner, string cacheKey, string sourceKey, string url, bool dimRequestPoster, TaskCompletionSource<bool> outcome)
     {
@@ -85,6 +94,39 @@ public sealed class UrlToImageSourceConverter : IValueConverter
                 ((ICollection<KeyValuePair<string, WeakReference<BitmapImage>>>)Sources).Remove(new(sourceKey, saved));
             outcome.TrySetResult(loaded);
         }
+    }
+
+    private static async Task PopulateSvgAsync(SvgImageSource svg, DispatcherQueue owner, string cacheKey, string url, TaskCompletionSource<bool> outcome)
+    {
+        var loaded = false;
+        try
+        {
+            var bytes = await App.Services.GetRequiredService<ImageService>().GetImageAsync(
+                cacheKey, "converted", url, App.Services.GetRequiredService<HttpClient>());
+            if (bytes == null || bytes.Length == 0) return;
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            async void Load()
+            {
+                try
+                {
+                    using var stream = new MemoryStream(bytes);
+                    var status = await svg.SetSourceAsync(stream.AsRandomAccessStream());
+                    if (status == SvgImageSourceLoadStatus.Success) completion.TrySetResult();
+                    else completion.TrySetException(new InvalidDataException($"SVG load status {status}."));
+                }
+                catch (Exception error) { completion.TrySetException(error); }
+            }
+            if (owner.HasThreadAccess) Load();
+            else if (!owner.TryEnqueue(Load)) return;
+            await completion.Task;
+            loaded = true;
+        }
+        catch (Exception error)
+        {
+            var identity = System.Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(cacheKey)))[..16];
+            LocalLog.AppendLine("artwork_loading.txt", $"svg_fetch_or_load_failed | artwork={identity} | error={error.GetType().Name} | hresult=0x{error.HResult:X8}");
+        }
+        finally { outcome.TrySetResult(loaded); }
     }
 
     private static Task DecodeOnOwnerAsync(BitmapImage bitmap, DispatcherQueue owner, Windows.Storage.Streams.IRandomAccessStream stream)
