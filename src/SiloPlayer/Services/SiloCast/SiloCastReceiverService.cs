@@ -400,8 +400,16 @@ public sealed class SiloCastReceiverService(SettingsService settings, AuthServic
 
     private bool CanApplyControl(Controller c, PendingAction action)
     {
+        // Only a server-approved handoff session is remotely controllable;
+        // local playback takes control back (see SiloCastStatePolicy).
         lock (_gate) return IsOwner(c) && c.CanControl && SameServer(c, EffectiveServerId) &&
-            action.PlaybackGeneration == _playbackGeneration && ReferenceEquals(action.Authority, player.ActiveAuthority);
+            action.PlaybackGeneration == _playbackGeneration && ReferenceEquals(action.Authority, player.ActiveAuthority) &&
+            _remoteScope != null && ReferenceEquals(action.Authority, _remoteScope);
+    }
+
+    private bool RemotePlaybackActive()
+    {
+        lock (_gate) return _remoteScope != null && ReferenceEquals(player.ActiveAuthority, _remoteScope);
     }
 
     private async Task PrepareHandoffAsync(Controller c, JsonObject offer, CancellationTokenSource owner)
@@ -558,7 +566,8 @@ public sealed class SiloCastReceiverService(SettingsService settings, AuthServic
                 lock (_gate) generation = _playbackGeneration;
                 if (c.CanControl && SameServer(c, EffectiveServerId))
                 {
-                    var state = await _adapter!.StateAsync(c.Lifetime.Token);
+                    var state = SiloCastStatePolicy.ForController(
+                        await _adapter!.StateAsync(c.Lifetime.Token), RemotePlaybackActive());
                     if (c.CanControl && SameServer(c, EffectiveServerId) && generation == _playbackGeneration)
                         await SendAsync(c, "state", "state", state);
                 }
