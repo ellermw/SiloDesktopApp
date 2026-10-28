@@ -321,11 +321,10 @@ public sealed class EventChannelClient : IDisposable
         var catchUp = false;
         while (!ct.IsCancellationRequested)
         {
+            var connectedAt = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
                 await ConnectAndRunOnce(ct, catchUp);
-                // Normal close — reset backoff and reconnect.
-                backoffMs = 1000;
             }
             catch (OperationCanceledException)
             {
@@ -337,6 +336,8 @@ public sealed class EventChannelClient : IDisposable
             {
                 Log($"Connection error: {ex.Message}");
             }
+            backoffMs = ReconnectBackoff.AfterConnection(backoffMs, 1000,
+                System.Diagnostics.Stopwatch.GetElapsedTime(connectedAt));
 
             if (ct.IsCancellationRequested) return;
             if (Interlocked.Exchange(ref _immediateReconnectRequested, 0) != 0)

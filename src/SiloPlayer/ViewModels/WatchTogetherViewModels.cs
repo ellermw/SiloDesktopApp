@@ -607,14 +607,16 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         var authority = _apiClient.CaptureContext();
         while (!ct.IsCancellationRequested && _apiClient.IsCurrentContext(authority))
         {
+            var connectedAt = System.Diagnostics.Stopwatch.GetTimestamp();
             try
             {
                 await ConnectAndRunOnceAsync(ct);
-                backoffMs = 500;
             }
             catch (OperationCanceledException) { return; }
             catch (ApiException ex) when (ex.StatusCode is 401 or 403 or 404 or 409 or 410) { return; }
             catch { /* swallow; reconnect with backoff */ }
+            backoffMs = SiloPlayer.Core.Services.ReconnectBackoff.AfterConnection(backoffMs, 500,
+                System.Diagnostics.Stopwatch.GetElapsedTime(connectedAt));
 
             if (ct.IsCancellationRequested) return;
             if (!string.IsNullOrEmpty(ClosedReason)) return;

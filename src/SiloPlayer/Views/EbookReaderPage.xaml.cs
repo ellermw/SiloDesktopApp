@@ -1102,7 +1102,8 @@ public sealed partial class EbookReaderPage : Page
         {
             var chapter = _book.Chapters[index];
             var path = Path.GetFullPath(Path.Combine(_book.RootDirectory, chapter.RelativePath.Replace('/', Path.DirectorySeparatorChar)));
-            if (!path.StartsWith(Path.GetFullPath(_book.RootDirectory), StringComparison.OrdinalIgnoreCase) || !File.Exists(path)) continue;
+            if (!path.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(_book.RootDirectory)) + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase) || !File.Exists(path)) continue;
             var html = File.ReadAllText(path);
             var text = WebUtility.HtmlDecode(Regex.Replace(Regex.Replace(html, "<(script|style)[^>]*>.*?</\\1>", " ", RegexOptions.IgnoreCase | RegexOptions.Singleline), "<[^>]+>", " "));
             text = Regex.Replace(text, "\\s+", " ").Trim();
