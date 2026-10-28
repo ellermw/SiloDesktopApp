@@ -607,14 +607,16 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         var authority = _apiClient.CaptureContext();
         while (!ct.IsCancellationRequested && _apiClient.IsCurrentContext(authority))
         {
+            long? connectedAt = null;
             try
             {
-                await ConnectAndRunOnceAsync(ct);
-                backoffMs = 500;
+                await ConnectAndRunOnceAsync(ct, () => connectedAt = System.Diagnostics.Stopwatch.GetTimestamp());
             }
             catch (OperationCanceledException) { return; }
             catch (ApiException ex) when (ex.StatusCode is 401 or 403 or 404 or 409 or 410) { return; }
             catch { /* swallow; reconnect with backoff */ }
+            backoffMs = SiloPlayer.Core.Services.ReconnectBackoff.AfterConnection(backoffMs, 500,
+                connectedAt is { } openedAt ? System.Diagnostics.Stopwatch.GetElapsedTime(openedAt) : TimeSpan.Zero);
 
             if (ct.IsCancellationRequested) return;
             if (!string.IsNullOrEmpty(ClosedReason)) return;
@@ -623,7 +625,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
         }
     }
 
-    private async Task ConnectAndRunOnceAsync(CancellationToken ct)
+    private async Task ConnectAndRunOnceAsync(CancellationToken ct, Action? onConnected = null)
     {
         var baseUrl = _apiClient.BaseUrl;
         if (string.IsNullOrEmpty(baseUrl) || string.IsNullOrEmpty(RoomId) || string.IsNullOrEmpty(RoomToken))
@@ -651,6 +653,7 @@ public partial class WatchTogetherRoomViewModel : ObservableObject, IDisposable
             if (_disposed || !_apiClient.IsCurrentContext(authority) || RoomId != roomId ||
                 RoomToken != roomToken || !ReferenceEquals(_ws, ws)) return;
             if (ws.SubProtocol != ticket.Protocol) throw new InvalidOperationException("Room socket protocol was not negotiated.");
+            onConnected?.Invoke();
             await RunOnUiThreadAsync(() => ConnectionState = "connected");
             await RunOnUiThreadAsync(() => StartClockPings(ws));
 

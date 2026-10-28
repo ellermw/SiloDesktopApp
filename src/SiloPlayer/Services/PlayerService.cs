@@ -191,19 +191,80 @@ public partial class PlayerService : IDisposable
 
     /// <summary>
     /// Persist the current <see cref="Volume"/> + <see cref="IsMuted"/> to
-    /// AppSettings. Called from the overlay / mini-bar on every change so
-    /// the next launch restores the same level.
+    /// AppSettings. Callers invoke this on every slider step, key repeat and
+    /// OSC wheel notch, so the synchronous settings write is coalesced to one
+    /// write after input settles; close and shutdown flush immediately.
     /// </summary>
     public void SaveVolumeState()
     {
+        Interlocked.Increment(ref _volumeSaveRevision);
+        ScheduleVolumeSave();
+    }
+
+    private void ScheduleVolumeSave()
+    {
+        if (_volumePersistenceDisposed) { SaveVolumeStateNow(); return; }
+        var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+        if (dispatcher == null) { SaveVolumeStateNow(); return; }
+        if (!dispatcher.HasThreadAccess)
+        {
+            if (!dispatcher.TryEnqueue(ScheduleVolumeSave)) SaveVolumeStateNow();
+            return;
+        }
+        if (_volumeSaveTimer == null)
+        {
+            _volumeSaveTimer = dispatcher.CreateTimer();
+            _volumeSaveTimer.Interval = TimeSpan.FromMilliseconds(500);
+            _volumeSaveTimer.IsRepeating = false;
+            _volumeSaveTimer.Tick += (_, _) => SaveVolumeStateNow();
+        }
+        _volumeSaveTimer.Stop();
+        _volumeSaveTimer.Start();
+    }
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _volumeSaveTimer;
+    private long _volumeSaveRevision;
+    private long _savedVolumeRevision;
+    private volatile bool _volumePersistenceDisposed;
+    private bool HasPendingVolumeSave => Volatile.Read(ref _volumeSaveRevision) != Volatile.Read(ref _savedVolumeRevision);
+
+    private void SaveVolumeStateNow()
+    {
+        try { _volumeSaveTimer?.Stop(); } catch { /* Shutdown may run off the dispatcher. */ }
         try
         {
+            var revision = Volatile.Read(ref _volumeSaveRevision);
             var settings = _settingsService.Load();
             settings.PlayerVolume = Volume;
             settings.PlayerMuted = IsMuted;
             _settingsService.Save(settings);
+            Volatile.Write(ref _savedVolumeRevision, revision);
         }
         catch { /* non-fatal — volume persistence is best-effort */ }
+    }
+
+    private void FlushVolumeStateOnClose()
+    {
+        // A deferred explicit value (including zero/unmuted) is authoritative.
+        // Native getters return default zero when the engine is unavailable.
+        if (HasPendingVolumeSave)
+        {
+            SaveVolumeStateNow();
+            return;
+        }
+        try
+        {
+            if (_mpv == null) return;
+            var volume = _mpv.GetPropertyDouble("volume");
+            var muted = _mpv.GetMute();
+            if (volume > 0 || muted)
+            {
+                Volume = Math.Clamp(volume, 0, 100);
+                IsMuted = muted;
+                SaveVolumeStateNow();
+            }
+        }
+        catch { /* best-effort during teardown */ }
     }
 
     /// <summary>
@@ -1045,7 +1106,6 @@ public partial class PlayerService : IDisposable
         }
         else
         {
-            ClearEmbeddedSubtitleWindows();
             _mpv?.SetSubtitleTrack(mpvTrackIndex);
         }
 
@@ -1418,9 +1478,15 @@ public partial class PlayerService : IDisposable
                 : parts[^1];
     }
 
+    // Chapter rows are read once a second by the live audiobook surfaces and
+    // twice per CurrentAudiobookChapter. Rebuild only when the parts change.
+    private (List<FileVersion> Versions, IReadOnlyList<AudiobookChapterInfo> Chapters)? _audiobookChapterCache;
+
     private IReadOnlyList<AudiobookChapterInfo> BuildAudiobookChapters()
     {
         if (!IsAudiobook) return [];
+        var versions = Versions;
+        if (_audiobookChapterCache is { } cached && ReferenceEquals(cached.Versions, versions)) return cached.Chapters;
         var result = new List<AudiobookChapterInfo>();
         foreach (var part in BuildAudiobookParts())
         {
@@ -1439,6 +1505,7 @@ public partial class PlayerService : IDisposable
                 }
             }
         }
+        _audiobookChapterCache = (versions, result);
         return result;
     }
 
@@ -3310,16 +3377,15 @@ public partial class PlayerService : IDisposable
             var mode = watchDetail.EffectiveSubtitleMode;
             var preferredLanguage = watchDetail.EffectiveSubtitleLanguage;
             var showForced = watchDetail.EffectiveShowForcedSubtitles;
-            if (string.IsNullOrWhiteSpace(mode) || preferredLanguage == null || showForced == null)
+            // Effective response values are authoritative. If omitted, use the
+            // active authority's available cached profile; handoff profiles may
+            // be absent and this cache is not a fresh settings read.
+            if (_authService.SelectedProfile is { } profile)
             {
-                try
-                {
-                    var settings = HasRemoteAuthority ? null : App.Services.GetService<ViewModels.SettingsViewModel>();
-                    if (string.IsNullOrWhiteSpace(mode)) mode = settings?.SubtitleMode;
-                    if (preferredLanguage == null) preferredLanguage = settings?.SubtitleLanguage;
-                    if (showForced == null) showForced = settings?.ShowForcedSubtitles;
-                }
-                catch { }
+                if (string.IsNullOrWhiteSpace(mode)) mode = profile.SubtitleMode;
+                if (preferredLanguage == null && !string.IsNullOrWhiteSpace(profile.SubtitleLanguage))
+                    preferredLanguage = profile.SubtitleLanguage;
+                showForced ??= profile.ShowForcedSubtitles;
             }
 
             string? audioLanguage = null;
@@ -4804,30 +4870,16 @@ public partial class PlayerService : IDisposable
 
     // ── Subtitles ────────────────────────────────────────────────────────
 
-    // ── Sliding-window embedded subtitle fetch (webui parity, commit 75ef59b) ──
+    // ── Subtitle sidecars ────────────────────────────────────────────────
     //
-    // Upstream swapped embedded-subtitle extraction for a streaming fetch
-    // bounded by ?duration= (defaults 600s / max 3600s). mpv downloads the
-    // URL once so we need to slide the window ourselves — track each loaded
-    // window (start + duration + mpv sid + base URL) and sub-remove/sub-add
-    // with a new position before the current window runs out. External and
-    // downloaded subs are server-full so they don't need sliding.
+    // mpv fetches a sidecar URL once. The server extracts an embedded text
+    // track as a bounded window only when position/duration are explicit;
+    // without them the URL describes the complete track ("native players fetch
+    // once and must retain cues beyond ten minutes and before a resumed
+    // playback position"). Every sidecar therefore requests the whole track and
+    // is loaded at most once per file, keyed by its server track index.
 
-    private sealed class EmbeddedSubWindow
-    {
-        public int ServerTrackIndex { get; set; }
-        public int Sid { get; set; }
-        public string BaseUrl { get; set; } = "";
-        public string? Label { get; set; }
-        public string? Language { get; set; }
-        public double WindowStart { get; set; }
-        public double WindowDuration { get; set; }
-    }
-
-    private const int SubtitleWindowDurationSeconds = 600;  // Match WebUI sliding-window fetch.
-    private const int SubtitleSlidePreloadSeconds = 120;    // 2-min lead time.
     private readonly object _subtitleTrackStateLock = new();
-    private readonly List<EmbeddedSubWindow> _embeddedSubWindows = [];
     private readonly Dictionary<int, int> _loadedExternalSubtitleSids = [];
 
     private void LoadSubtitles()
@@ -4835,10 +4887,7 @@ public partial class PlayerService : IDisposable
         if (_playbackManager?.CurrentSession == null || _mpv == null) return;
 
         lock (_subtitleTrackStateLock)
-        {
-            _embeddedSubWindows.Clear();
             _loadedExternalSubtitleSids.Clear();
-        }
 
         // Do not eagerly sub-add every server subtitle URL. mpv already sees
         // embedded text tracks on direct/remux playback, and adding all VTT
@@ -4853,12 +4902,6 @@ public partial class PlayerService : IDisposable
             return true;
         var codec = track.Codec?.ToLowerInvariant() ?? "";
         return codec is "dvdsub" or "dvd_subtitle" or "vobsub" or "dvbsub" or "dvb_subtitle";
-    }
-
-    private static bool IsPgsSubtitle(SubtitleTrackInfo track)
-    {
-        var codec = track.Codec?.ToLowerInvariant() ?? "";
-        return codec is "pgs" or "hdmv_pgs_subtitle" or "sup";
     }
 
     private static bool IsTranslatableSubtitleSource(SubtitleTrackInfo track)
@@ -5063,7 +5106,6 @@ public partial class PlayerService : IDisposable
         _activeSubtitleServerIndex = serverTrackIndex;
         if (serverTrackIndex < 0)
         {
-            ClearEmbeddedSubtitleWindows();
             if (persist)
                 await SetSubtitleTrackAndPersistAsync(0, null, null);
             else
@@ -5116,16 +5158,14 @@ public partial class PlayerService : IDisposable
             return;
         }
 
-        // Remux/HLS transports do not carry the source file's embedded
-        // subtitle streams. Load Silo's advertised sidecar instead. Text
-        // extraction is intentionally windowed by the server, so keep a
-        // bounded window around the playhead and slide it before it expires.
-        // PGS is delivered as a complete .sup sidecar and needs no windowing.
-        if (string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase))
-        {
-            SelectEmbeddedSubtitleSidecar(track);
-            return;
-        }
+        // Remux/HLS need the advertised complete sidecar, as do external tracks.
+        // mpv fetches it once; cached SIDs remain valid until the next file load.
+        SelectSubtitleSidecar(track);
+    }
+
+    private void SelectSubtitleSidecar(SubtitleTrackInfo track)
+    {
+        if (_mpv == null) return;
 
         lock (_subtitleTrackStateLock)
         {
@@ -5136,80 +5176,13 @@ public partial class PlayerService : IDisposable
             }
 
             var pair = _playbackManager?.GetSubtitleUrls()
-                .FirstOrDefault(p => p.Track.Index == track.Index);
+                .FirstOrDefault(candidate => candidate.Track.Index == track.Index);
             if (pair == null || string.IsNullOrWhiteSpace(pair.Value.FullUrl))
                 return;
 
             var label = !string.IsNullOrEmpty(track.Label) ? track.Label : track.Language ?? "Unknown";
             _mpv.AddSubtitle(pair.Value.FullUrl, label, track.Language, select: true);
-            var selectedSid = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
-            _loadedExternalSubtitleSids[track.Index] = selectedSid;
-        }
-    }
-
-    private void SelectEmbeddedSubtitleSidecar(SubtitleTrackInfo track)
-    {
-        if (_mpv == null) return;
-
-        lock (_subtitleTrackStateLock)
-        {
-
-            var existing = _embeddedSubWindows.FirstOrDefault(window => window.ServerTrackIndex == track.Index);
-            if (existing != null)
-            {
-                _mpv.SetSubtitleTrack(existing.Sid);
-                return;
-            }
-
-            var pair = _playbackManager?.GetSubtitleUrls()
-                .FirstOrDefault(candidate => candidate.Track.Index == track.Index);
-            if (pair == null || string.IsNullOrWhiteSpace(pair.Value.FullUrl))
-                return;
-
-            ClearEmbeddedSubtitleWindows();
-            var label = !string.IsNullOrEmpty(track.Label) ? track.Label : track.Language ?? "Unknown";
-            if (IsPgsSubtitle(track))
-            {
-                if (_loadedExternalSubtitleSids.TryGetValue(track.Index, out var loadedSid))
-                {
-                    _mpv.SetSubtitleTrack(loadedSid);
-                    return;
-                }
-                _mpv.AddSubtitle(pair.Value.FullUrl, label, track.Language, select: true);
-                _loadedExternalSubtitleSids[track.Index] = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
-                return;
-            }
-
-            var windowStart = Math.Max(0, CurrentMediaPosition - 30);
-            var windowUrl = AppendPositionDuration(pair.Value.FullUrl, windowStart, SubtitleWindowDurationSeconds);
-            _mpv.AddSubtitle(windowUrl, label, track.Language, select: true);
-            var sid = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
-            _embeddedSubWindows.Add(new EmbeddedSubWindow
-            {
-                ServerTrackIndex = track.Index,
-                Sid = sid,
-                BaseUrl = pair.Value.FullUrl,
-                Label = label,
-                Language = track.Language,
-                WindowStart = windowStart,
-                WindowDuration = SubtitleWindowDurationSeconds,
-            });
-        }
-    }
-
-    private void ClearEmbeddedSubtitleWindows()
-    {
-        lock (_subtitleTrackStateLock)
-        {
-            if (_mpv != null)
-            {
-                foreach (var window in _embeddedSubWindows)
-                {
-                    try { _mpv.RemoveSubtitle(window.Sid); }
-                    catch { }
-                }
-            }
-            _embeddedSubWindows.Clear();
+            _loadedExternalSubtitleSids[track.Index] = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
         }
     }
 
@@ -5232,56 +5205,6 @@ public partial class PlayerService : IDisposable
     private int ResolveNativeEmbeddedCount()
         => _playbackManager?.CurrentSession?.SubtitleUrls?
             .Count(t => string.Equals(t.Source, "embedded", StringComparison.OrdinalIgnoreCase)) ?? 0;
-
-    private static string AppendPositionDuration(string url, double position, int durationSeconds)
-    {
-        var sep = url.Contains('?') ? '&' : '?';
-        return $"{url}{sep}position={position:0.##}&duration={durationSeconds}";
-    }
-
-    /// <summary>
-    /// Called from the UI tick; if the current playback position is near the
-    /// end of any loaded embedded-subtitle window, slide that window forward
-    /// by sub-remove + sub-add with a new position-centered URL. Also called
-    /// on seek past coverage.
-    /// </summary>
-    public void TickSubtitleWindows(double currentPositionSeconds)
-    {
-        lock (_subtitleTrackStateLock)
-        {
-            if (_embeddedSubWindows.Count == 0 || _mpv == null) return;
-
-            foreach (var win in _embeddedSubWindows)
-            {
-                var windowEnd = win.WindowStart + win.WindowDuration;
-            // Slide when we're within SlidePreloadSeconds of the tail OR when
-            // we've seeked past the current window entirely.
-                bool approachingTail = currentPositionSeconds >= windowEnd - SubtitleSlidePreloadSeconds;
-                bool pastWindow = currentPositionSeconds >= windowEnd || currentPositionSeconds < win.WindowStart;
-                if (!(approachingTail || pastWindow)) continue;
-
-            // Fetch the next window centered on the current position. Using
-            // currentPos - 30 ensures cues just before the playhead remain
-            // visible (captions often start slightly before dialogue).
-                var newStart = Math.Max(0, currentPositionSeconds - 30);
-                var newUrl = AppendPositionDuration(win.BaseUrl, newStart, SubtitleWindowDurationSeconds);
-
-                try
-                {
-                    _mpv.RemoveSubtitle(win.Sid);
-                    _mpv.AddSubtitle(newUrl, win.Label, win.Language, select: true);
-                    win.Sid = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
-                    win.WindowStart = newStart;
-                    win.WindowDuration = SubtitleWindowDurationSeconds;
-                }
-                catch
-                {
-                // If the reload fails the track may disappear; next tick will
-                // retry. Non-fatal — playback continues.
-            }
-        }
-    }
-    }
 
     private void SendTitleToOsc()
     {
@@ -6502,14 +6425,7 @@ public partial class PlayerService : IDisposable
             var watchDetail = _playbackManager.WatchDetail;
             var preferred = watchDetail?.EffectiveSubtitleLanguage;
             if (string.IsNullOrWhiteSpace(preferred))
-            {
-                try
-                {
-                    var settingsVm = HasRemoteAuthority ? null : App.Services.GetService<SiloPlayer.ViewModels.SettingsViewModel>();
-                    preferred = settingsVm?.SubtitleLanguage;
-                }
-                catch { }
-            }
+                preferred = _authService.SelectedProfile?.SubtitleLanguage;
             var languages = !string.IsNullOrWhiteSpace(preferred)
                 ? new[] { preferred! }
                 : new[] { "en" };
@@ -6705,27 +6621,7 @@ public partial class PlayerService : IDisposable
             catch (Exception ex) { LogToFile("state_trace.txt", $"Publish progress event error: {ex.Message}"); }
         }
 
-        // Volume persistence: the XAML overlay's VolumeSlider is never the
-        // live source of truth during fullscreen playback — mpv's own Lua OSC
-        // handles the user's volume drag directly on the popup window and
-        // nothing propagates that back to PlayerService.Volume. So before we
-        // stop mpv, pull the CURRENT volume/mute from mpv and persist them.
-        if (_mpv != null)
-        {
-            try
-            {
-                double liveVolume = _mpv.GetPropertyDouble("volume");
-                bool liveMute = _mpv.GetMute();
-                if (liveVolume > 0 || liveMute)
-                {
-                    Volume = Math.Clamp(liveVolume, 0, 100);
-                    IsMuted = liveMute;
-                    SaveVolumeState();
-                    LogToFile("state_trace.txt", $"Persisted volume={Volume:F0} muted={IsMuted} on close");
-                }
-            }
-            catch (Exception ex) { LogToFile("state_trace.txt", $"Volume persist error: {ex.Message}"); }
-        }
+        FlushVolumeStateOnClose();
 
         // Clear the next-episode hint BEFORE stopping mpv. _mpv.Stop()
         // fires end-file → _mpvPlaybackEndedHandler which checks
@@ -6837,6 +6733,8 @@ public partial class PlayerService : IDisposable
 
     public void Dispose()
     {
+        _volumePersistenceDisposed = true;
+        try { _volumeSaveTimer?.Stop(); } catch { /* Dispatcher may be shutting down. */ }
         EndBufferingQuality();
         NetworkInformation.NetworkStatusChanged -= OnPlaybackNetworkChanged;
         _localAuthority.Auth.LoggedOut -= RetireConnectionObservation;
@@ -6863,23 +6761,7 @@ public partial class PlayerService : IDisposable
         if (State == PlayerState.Fullscreen)
             ExitAnyFullscreen();
 
-        // Persist live mpv volume on app shutdown — the user may have
-        // changed it via the Lua OSC and never gone through CloseAsync.
-        if (_mpv != null)
-        {
-            try
-            {
-                double liveVolume = _mpv.GetPropertyDouble("volume");
-                bool liveMute = _mpv.GetMute();
-                if (liveVolume > 0 || liveMute)
-                {
-                    Volume = Math.Clamp(liveVolume, 0, 100);
-                    IsMuted = liveMute;
-                    SaveVolumeState();
-                }
-            }
-            catch { /* best-effort */ }
-        }
+        FlushVolumeStateOnClose();
 
         _videoWindow?.Dispose();
         _videoWindow = null;

@@ -43,27 +43,6 @@ public class WebhookSyncEventLog
     public Dictionary<string, JsonElement>? Attrs { get; set; }
 }
 
-public class WebhookSyncActorMapping
-{
-    public long Id { get; set; }
-    [JsonPropertyName("external_actor_id")] public string ExternalActorId { get; set; } = "";
-    [JsonPropertyName("external_actor_name")] public string ExternalActorName { get; set; } = "";
-    [JsonPropertyName("continuum_profile_id")] public string? ProfileId { get; set; }
-}
-
-public class WebhookSyncDiscoveredActor
-{
-    [JsonPropertyName("external_actor_id")] public string ExternalActorId { get; set; } = "";
-    [JsonPropertyName("external_actor_name")] public string ExternalActorName { get; set; } = "";
-}
-
-public class WebhookSyncActorsResponse
-{
-    public List<WebhookSyncActorMapping> Mappings { get; set; } = [];
-    [JsonPropertyName("discovered_actors")] public List<WebhookSyncDiscoveredActor> DiscoveredActors { get; set; } = [];
-    [JsonPropertyName("account_discovery_available")] public bool AccountDiscoveryAvailable { get; set; }
-}
-
 public class WebhookSyncProfileMapping
 {
     public long Id { get; set; }

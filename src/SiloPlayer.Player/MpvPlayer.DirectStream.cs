@@ -35,6 +35,8 @@ public sealed partial class MpvPlayer
         if (_directOpen == null)
         {
             _directOpen = OpenDirect;
+            using var lease = EnterNative();
+            if (!lease.Active) throw new ObjectDisposedException(nameof(MpvPlayer));
             if (mpv_stream_cb_add_ro(_mpvHandle, "silo-direct", IntPtr.Zero, _directOpen) < 0)
                 throw new InvalidOperationException("Cannot register direct file reader.");
         }
@@ -77,35 +79,52 @@ public sealed partial class MpvPlayer
     private static DirectContext Context(IntPtr cookie) => (DirectContext)GCHandle.FromIntPtr(cookie).Target!;
     // Root every callback for the full native stream lifetime. Callbacks never
     // call mpv: only its own worker thread consumes these reads and seeks.
+    // An exception crossing back into libmpv terminates the process, so every
+    // callback contains its own failures.
     private static readonly DirectRead DirectReadCallback = (cookie, buffer, size) =>
     {
-        var context = Context(cookie);
+        DirectContext? context = null;
         try
         {
+            context = Context(cookie);
             var count = context.Reader.Read(context.Buffer, (int)Math.Min(size, (ulong)context.Buffer.Length));
             Marshal.Copy(context.Buffer, 0, buffer, count);
             return count;
         }
-        catch { return context.Fail(); }
+        catch { return context?.Fail() ?? -1; }
     };
     private static readonly DirectSeek DirectSeekCallback = (cookie, position) =>
     {
-        var context = Context(cookie);
-        try { return context.Reader.Seek(position); } catch { return context.Fail(); }
+        DirectContext? context = null;
+        try { context = Context(cookie); return context.Reader.Seek(position); }
+        catch { return context?.Fail() ?? -1; }
     };
     private static readonly DirectSize DirectSizeCallback = cookie =>
     {
-        var context = Context(cookie);
-        try { return context.Reader.Length; } catch { return context.Fail(); }
+        DirectContext? context = null;
+        try { context = Context(cookie); return context.Reader.Length; }
+        catch { return context?.Fail() ?? -1; }
     };
     private static readonly DirectClose DirectCloseCallback = cookie =>
     {
-        var handle = GCHandle.FromIntPtr(cookie);
-        var context = (DirectContext)handle.Target!;
-        try { context.Reader.Dispose(); }
-        finally { ArrayPool<byte>.Shared.Return(context.Buffer); handle.Free(); }
+        try
+        {
+            var handle = GCHandle.FromIntPtr(cookie);
+            var context = (DirectContext)handle.Target!;
+            try { context.Reader.Dispose(); }
+            catch { /* Closing a failed transport is best effort. */ }
+            finally
+            {
+                try { ArrayPool<byte>.Shared.Return(context.Buffer); }
+                finally { handle.Free(); }
+            }
+        }
+        catch { }
     };
-    private static readonly DirectClose DirectCancelCallback = cookie => Context(cookie).Reader.Cancel();
+    private static readonly DirectClose DirectCancelCallback = cookie =>
+    {
+        try { Context(cookie).Reader.Cancel(); } catch { }
+    };
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate int DirectOpen(IntPtr data, IntPtr uri, IntPtr info);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] private delegate long DirectRead(IntPtr cookie, IntPtr buffer, ulong size);

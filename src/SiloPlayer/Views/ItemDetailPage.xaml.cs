@@ -870,7 +870,12 @@ public sealed partial class ItemDetailPage : Page
     private bool IsActiveAudiobook() => ViewModel.Item?.Type == "audiobook" && _playerService?.IsAudiobook == true
         && _playerService.State != Services.PlayerState.Idle && _playerService.ContentId == ViewModel.Item.ContentId;
     private void OnDetailPauseChanged(bool paused) => DispatcherQueue.TryEnqueue(UpdateActiveAudiobook);
-    private void OnDetailPositionChanged(double position) => DispatcherQueue.TryEnqueue(UpdateActiveAudiobook);
+    // Position arrives per decoded frame for any playing title; the summary shows whole seconds.
+    private readonly PositionSecondGate _detailPositionGate = new();
+    private void OnDetailPositionChanged(double position)
+    {
+        if (_detailPositionGate.ShouldUpdate(position)) DispatcherQueue.TryEnqueue(UpdateActiveAudiobook);
+    }
     private void UpdateActiveAudiobook()
     {
         if (!IsActiveAudiobook()) return;
@@ -5898,14 +5903,7 @@ public sealed partial class ItemDetailPage : Page
         // profile pref, else English.
         string? defaultLang = _watchDetail?.EffectiveSubtitleLanguage;
         if (string.IsNullOrWhiteSpace(defaultLang))
-        {
-            try
-            {
-                var s = App.Services.GetService<SettingsViewModel>();
-                defaultLang = s?.SubtitleLanguage;
-            }
-            catch { }
-        }
+            defaultLang = App.Services.GetRequiredService<AuthService>().SelectedProfile?.SubtitleLanguage;
         var dialog = new Controls.SubtitleSearchDialog(
             _selectedVersion.FileId,
             defaultLang,
@@ -6002,16 +6000,14 @@ public sealed partial class ItemDetailPage : Page
         var mode = _watchDetail.EffectiveSubtitleMode;
         var preferredLang = _watchDetail.EffectiveSubtitleLanguage;
         var showForced = _watchDetail.EffectiveShowForcedSubtitles;
-        if (string.IsNullOrEmpty(mode) || preferredLang == null || showForced == null)
+        // Prefer effective values, then an available cached profile. This cache
+        // can be stale; an absent profile retains the generic defaults below.
+        if (App.Services.GetRequiredService<AuthService>().SelectedProfile is { } profile)
         {
-            try
-            {
-                var settings = App.Services.GetRequiredService<SettingsViewModel>();
-                if (string.IsNullOrEmpty(mode)) mode = settings.SubtitleMode;
-                if (preferredLang == null) preferredLang = settings.SubtitleLanguage;
-                if (showForced == null) showForced = settings.ShowForcedSubtitles;
-            }
-            catch { /* settings unavailable — use defaults below */ }
+            if (string.IsNullOrEmpty(mode)) mode = profile.SubtitleMode;
+            if (preferredLang == null && !string.IsNullOrWhiteSpace(profile.SubtitleLanguage))
+                preferredLang = profile.SubtitleLanguage;
+            showForced ??= profile.ShowForcedSubtitles;
         }
 
         // Audio language for the current version + selected track (drives "same as audio" logic).

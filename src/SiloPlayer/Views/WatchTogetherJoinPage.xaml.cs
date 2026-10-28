@@ -77,9 +77,9 @@ public sealed partial class WatchTogetherJoinPage : Page
     private async Task RenderCreatePartyGlowAsync()
     {
         if (!IsLoaded) return;
-        // An Image without a Source has zero natural size in the auto-sized
-        // card. The content owns the card bounds; use its interior to break
-        // that dependency, then give the decorative image those exact bounds.
+        // The Canvas keeps this decoration out of the card's desired size.
+        // Raster dimensions are rounded up, but must never feed back into the
+        // auto-sized card at fractional monitor scales such as150%.
         var width = (int)Math.Ceiling(CreatePartyPanel.ActualWidth - CreatePartyPanel.BorderThickness.Left - CreatePartyPanel.BorderThickness.Right);
         var height = (int)Math.Ceiling(CreatePartyPanel.ActualHeight - CreatePartyPanel.BorderThickness.Top - CreatePartyPanel.BorderThickness.Bottom);
         if (width <= 0 || height <= 0) return;

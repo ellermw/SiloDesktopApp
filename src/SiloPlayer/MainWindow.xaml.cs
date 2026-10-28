@@ -2105,7 +2105,7 @@ public sealed partial class MainWindow : Window
             NavView.IsPaneVisible = true;
         ApplyResponsiveShellLayout();
         SynchronizeSelectedNavigationItem(e.SourcePageType, e.Parameter);
-        SynchronizeSettingsSidebar();
+        QueueSettingsSidebarSynchronization();
     }
 
     private void ResynchronizeSelectedNavigationItem()

@@ -18,6 +18,7 @@ public partial class PlaybackManager : IDisposable
     private double _lastReportedPosition;
     private bool _isPaused;
     private readonly SemaphoreSlim _progressGuard = new(1, 1);
+    private int _immediateProgressPending;
     private readonly SemaphoreSlim _replanGuard = new(1, 1);
     private int _consecutiveProgressFailures;
     private PlaybackPlanV3? _currentPlanV3;
@@ -719,10 +720,18 @@ public partial class PlaybackManager : IDisposable
         bool isPaused,
         CancellationToken ct = default)
     {
+        ct.ThrowIfCancellationRequested();
         UpdatePosition(position, isPaused);
+        // Scrubbing and repeated skips queue one report per seek, and each
+        // queued report sends the latest position anyway. The next eligible
+        // waiter sends the latest state. A canceled waiter must not
+        // suppress a report that another caller can still deliver.
+        Interlocked.Exchange(ref _immediateProgressPending, 1);
         await _progressGuard.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            if (Interlocked.Exchange(ref _immediateProgressPending, 0) == 0)
+                return;
             var sessionId = _sessionId;
             if (sessionId == null)
                 return;
@@ -732,6 +741,11 @@ public partial class PlaybackManager : IDisposable
                 _isPaused,
                 ct).ConfigureAwait(false);
             _consecutiveProgressFailures = 0;
+        }
+        catch
+        {
+            Interlocked.Exchange(ref _immediateProgressPending, 1);
+            throw;
         }
         finally
         {

@@ -20,5 +20,10 @@
     <!-- Execute the same socket/keepalive regression against the actual installer assembly. -->
     <Compile Include="../SiloPlayer.Tests/EventAccessTransportTests.cs" Link="EventAccessTransportTests.cs" />
     <Compile Include="../SiloPlayer.Tests/PlaybackApiV2Tests.cs" Link="PlaybackApiV2Tests.cs" />
+    <Compile Include="../SiloPlayer.Tests/MpvTeardownRaceTests.cs" Link="MpvTeardownRaceTests.cs" />
+    <Compile Include="../SiloPlayer.Tests/NativeCallbackBoundaryTests.cs" Link="NativeCallbackBoundaryTests.cs" />
+    <Compile Include="../SiloPlayer.Tests/PlaybackPersistenceCostTests.cs" Link="PlaybackPersistenceCostTests.cs" />
+    <Compile Include="../SiloPlayer.Tests/AuthServiceTests.cs" Link="AuthServiceTests.cs" />
+    <Compile Include="../SiloPlayer.Tests/EventChannelRebindTests.cs" Link="EventChannelRebindTests.cs" />
   </ItemGroup>
 </Project>

@@ -9,6 +9,44 @@ using SiloPlayer.Services;
 // connecting to a server, or reading the user's settings.
 var results = Path.Combine(Path.GetTempPath(), "silo-playback-integration-" + Guid.NewGuid().ToString("N"));
 Environment.SetEnvironmentVariable(LocalLog.LogDirectoryEnvironmentVariable, results);
+if (Environment.GetEnvironmentVariable("SILO_SUBTITLE_ONLY") == "1")
+{
+    await EmbeddedSubtitleChecks.RunCueCoverageAsync(results);
+    return;
+}
+var connectionChecks = new SiloPlayer.Tests.EventAccessTransportTests();
+if (Environment.GetEnvironmentVariable("SILO_EVENT_BACKOFF_ONLY") == "1")
+{
+    await connectionChecks.RepeatedShortNormalClosesIncreaseTheReconnectDelay();
+    Console.WriteLine("PASS published playback: repeated short normal closes retain reconnect backoff.");
+    return;
+}
+await EmbeddedSubtitleChecks.RunAsync(results);
+var progressChecks = new SiloPlayer.Tests.PlaybackPersistenceCostTests();
+await progressChecks.ImmediateProgressReportsDuringAScrubBurstCollapseToTheLatestPosition();
+await progressChecks.CanceledNewestReportDoesNotSuppressAnEligibleQueuedReport();
+await progressChecks.AlreadyCanceledReportDoesNotReplaceThePendingPosition();
+Console.WriteLine("PASS published playback: seek reports coalesce without a canceled waiter suppressing eligible progress.");
+var authChecks = new SiloPlayer.Tests.AuthServiceTests();
+await authChecks.ScheduledRefresh_LoadsAuthoritativeAccountAfterRescheduling();
+await authChecks.FailingTokenRefresher_DisposesTheUnauthorizedResponse();
+await authChecks.DisposedScheduledRefreshCannotRotateTokensOrRearmItsSchedule();
+Console.WriteLine("PASS published playback: scheduled refresh reads authoritative account, disposal retires in-flight results and failed refresh releases401 responses.");
+var rebindChecks = new SiloPlayer.Tests.EventChannelRebindTests();
+await rebindChecks.ChannelSetChangesRebindTheOpenSocketWithoutReconnecting();
+await rebindChecks.AChangeQueuedBeforeHelloIsCarriedByTheFirstSubscribe();
+await rebindChecks.ChannelChangeAfterProfileSwitchMintsANewAuthorityTicket();
+await rebindChecks.ReleasingTheLastChannelStillClosesTheSocket();
+Console.WriteLine("PASS published playback: navigation channel changes reuse one current-authority socket; profile changes remint and last release closes it.");
+await connectionChecks.FailedTicketDoesNotStartTheConnectedInterval();
+await connectionChecks.ConnectedIntervalBeginsWithAnActuallyOpenSocket();
+await connectionChecks.RepeatedShortNormalClosesIncreaseTheReconnectDelay();
+Console.WriteLine("PASS published playback: ticket failures do not start uptime, open sockets do, and repeated short normal closes retain reconnect backoff.");
+foreach (var callback in new[] { "DirectReadCallback", "DirectSeekCallback", "DirectSizeCallback", "DirectCloseCallback", "DirectCancelCallback" })
+    new SiloPlayer.Tests.NativeCallbackBoundaryTests().FailedManagedCookieLookupCannotEscapeTheCallback(callback);
+Console.WriteLine("PASS published playback: all five native callback delegates contain a failed managed cookie lookup.");
+await new SiloPlayer.Tests.MpvTeardownRaceTests().ConcurrentPropertyCallsDuringDisposeNeverReachADestroyedHandle();
+Console.WriteLine("PASS published playback: real libmpv concurrent property/command teardown survives25 rounds in the actual application assembly.");
 await IdleRemuxResumeChecks.RunAsync(results);
 await SiloCastScopeChecks.RunAsync(results);
 await AutoAudioStartChecks.RunAsync(results);

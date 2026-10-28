@@ -135,6 +135,11 @@ internal static class AudiobookDetailInteractionsNativeFixture
             Action<double> positionChanged = position => { Property(player, "Position", position); Invoke(activePage, "OnDetailPositionChanged", position); };
             mpv.GetType().GetEvent("PauseChanged")!.AddEventHandler(mpv, pauseChanged);
             mpv.GetType().GetEvent("PositionChanged")!.AddEventHandler(mpv, positionChanged);
+            // Start from an explicit native pause state. Play on an already
+            // unpaused engine need not emit a transition for this fixture's
+            // manually attached PlayerService state to observe.
+            InvokePublic(mpv, "Pause");
+            await UntilAsync(() => (bool)mpv.GetType().GetProperty("IsPaused")!.GetValue(mpv)! && player.IsPaused);
             InvokePublic(mpv, "LoadFile", wave, null, 0d); InvokePublic(mpv, "Play");
             try { await UntilAsync(() => !(bool)mpv.GetType().GetProperty("IsPaused")!.GetValue(mpv)! && !player.IsPaused && player.Position > 0); }
             catch

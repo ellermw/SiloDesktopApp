@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -6,13 +7,10 @@ using static SiloPlayer.Player.MpvInterop;
 namespace SiloPlayer.Player;
 
 /// <summary>
-/// High-level wrapper around libmpv that uses the software render API (MPV_RENDER_API_TYPE_SW).
-/// mpv decodes video (optionally using d3d11va-copy for hardware decode) and renders each frame
-/// into a caller-provided byte buffer. The caller (PlayerService) copies that buffer into a
-/// WriteableBitmap displayed in a XAML Image element.
-///
-/// This completely decouples mpv from WinUI 3's D3D11 compositor, eliminating the thread
-/// contention that blocked the UI when using wid/vo=gpu.
+/// High-level wrapper around libmpv. The app uses <see cref="InitializeWithWindow"/>:
+/// mpv renders with vo=gpu-next/D3D11 into an owned window and draws the Silo OSC.
+/// <see cref="Initialize"/> uses the software render API into a memory buffer
+/// (<see cref="FrameReady"/>); it is kept as the headless native test harness.
 /// </summary>
 public sealed partial class MpvPlayer : IDisposable
 {
@@ -208,7 +206,13 @@ public sealed partial class MpvPlayer : IDisposable
         }
 
         // Create software render context
-        CreateRenderContext();
+        try { CreateRenderContext(); }
+        catch
+        {
+            mpv_terminate_destroy(_mpvHandle);
+            _mpvHandle = IntPtr.Zero;
+            throw;
+        }
 
         // Set update callback (fires from mpv's internal thread when a new frame is ready)
         _updateCallbackDelegate = OnRenderUpdate;
@@ -321,11 +325,15 @@ public sealed partial class MpvPlayer : IDisposable
         SetOption("osc", "no");
         SetOption("osd-level", "1");
 
-        // Load Silo's custom OSC
+        // Load Silo's custom OSC. mpv scripts can run programs, so only the copy
+        // shipped beside the executable is trusted; the source-tree fallback is a
+        // development convenience that must never resolve outside a dev build.
         var exeDir = Path.GetDirectoryName(System.Environment.ProcessPath) ?? "";
         var oscPath = Path.Combine(exeDir, "libs", "mpv", "scripts", "silo-osc.lua");
+#if DEBUG
         if (!File.Exists(oscPath))
             oscPath = Path.Combine(exeDir, "..", "..", "..", "..", "libs", "mpv", "scripts", "silo-osc.lua");
+#endif
         if (File.Exists(oscPath))
             SetOption("scripts", oscPath);
 
@@ -567,7 +575,7 @@ public sealed partial class MpvPlayer : IDisposable
         StartDiagnostics(nativeDirect, startSeconds);
         SetProperty("stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5");
         SetProperty("network-timeout", nativeDirect ? "10" : "30");
-        mpv_set_property_string(_mpvHandle, "http-header-fields",
+        SetNativeString("http-header-fields",
             !nativeDirect && !string.IsNullOrEmpty(authHeader) ? $"Authorization: {authHeader}" : "");
 
         if (nativeDirect) url = PrepareNativeDirectInput(url);
@@ -612,7 +620,7 @@ public sealed partial class MpvPlayer : IDisposable
     {
         ThrowIfNotInitialized();
         _diagnostics?.Record("play_requested", new { position = Position });
-        mpv_set_property_string(_mpvHandle, "pause", "no");
+        SetNativeString("pause", "no");
     }
 
     /// <summary>Pauses playback.</summary>
@@ -620,7 +628,7 @@ public sealed partial class MpvPlayer : IDisposable
     {
         ThrowIfNotInitialized();
         _diagnostics?.Record("pause_requested", new { position = Position });
-        mpv_set_property_string(_mpvHandle, "pause", "yes");
+        SetNativeString("pause", "yes");
     }
 
     /// <summary>Toggles the pause state.</summary>
@@ -656,7 +664,7 @@ public sealed partial class MpvPlayer : IDisposable
     public void SetVolume(double volume)
     {
         ThrowIfNotInitialized();
-        mpv_set_property_string(_mpvHandle, "volume",
+        SetNativeString("volume",
             volume.ToString("F1", System.Globalization.CultureInfo.InvariantCulture));
     }
 
@@ -666,7 +674,7 @@ public sealed partial class MpvPlayer : IDisposable
     public void SetMute(bool mute)
     {
         ThrowIfNotInitialized();
-        mpv_set_property_string(_mpvHandle, "mute", mute ? "yes" : "no");
+        SetNativeString("mute", mute ? "yes" : "no");
     }
 
     /// <summary>
@@ -674,7 +682,8 @@ public sealed partial class MpvPlayer : IDisposable
     /// </summary>
     public bool GetMute()
     {
-        if (_mpvHandle == IntPtr.Zero) return false;
+        using var lease = EnterNative();
+        if (!lease.Active) return false;
         if (mpv_get_property_int(_mpvHandle, "mute", MPV_FORMAT_FLAG, out long val) == 0)
             return val != 0;
         return false;
@@ -683,14 +692,14 @@ public sealed partial class MpvPlayer : IDisposable
     /// <summary>Sets a string property on mpv.</summary>
     public void SetProperty(string name, string value)
     {
-        if (_mpvHandle == IntPtr.Zero) return;
-        mpv_set_property_string(_mpvHandle, name, value);
+        SetNativeString(name, value);
     }
 
     /// <summary>Gets a double property from mpv.</summary>
     public double GetPropertyDouble(string name)
     {
-        if (_mpvHandle == IntPtr.Zero) return 0;
+        using var lease = EnterNative();
+        if (!lease.Active) return 0;
         if (mpv_get_property_double(_mpvHandle, name, MPV_FORMAT_DOUBLE, out double val) == 0)
             return val;
         return 0;
@@ -698,14 +707,16 @@ public sealed partial class MpvPlayer : IDisposable
 
     public bool GetPropertyFlag(string name)
     {
-        if (_mpvHandle == IntPtr.Zero) return false;
-        return mpv_get_property_int(_mpvHandle, name, MPV_FORMAT_FLAG, out var value) == 0 && value != 0;
+        using var lease = EnterNative();
+        return lease.Active && mpv_get_property_int(_mpvHandle, name, MPV_FORMAT_FLAG, out var value) == 0 && value != 0;
     }
 
     /// <summary>Read mpv's actual cached seek ranges rather than guessing from cache duration.</summary>
     public bool IsPositionCached(double seconds)
     {
-        if (_mpvHandle == IntPtr.Zero || !double.IsFinite(seconds)) return false;
+        if (!double.IsFinite(seconds)) return false;
+        using var lease = EnterNative();
+        if (!lease.Active) return false;
         for (var i = 0; i < 32; i++)
         {
             if (mpv_get_property_double(_mpvHandle, $"demuxer-cache-state/seekable-ranges/{i}/start", MPV_FORMAT_DOUBLE, out var start) < 0 ||
@@ -720,6 +731,8 @@ public sealed partial class MpvPlayer : IDisposable
     public IReadOnlyList<int> GetAudioTrackIds()
     {
         ThrowIfNotInitialized();
+        using var lease = EnterNative();
+        if (!lease.Active) throw new ObjectDisposedException(nameof(MpvPlayer));
         if (mpv_get_property_int(_mpvHandle, "track-list/count", MPV_FORMAT_INT64, out var count) < 0)
             throw new InvalidOperationException("The player audio inventory is unavailable.");
         var ids = new List<int>();
@@ -850,7 +863,7 @@ public sealed partial class MpvPlayer : IDisposable
     public void SetSubtitleTrack(int index)
     {
         ThrowIfNotInitialized();
-        mpv_set_property_string(_mpvHandle, "sid", index <= 0 ? "no" : index.ToString());
+        SetNativeString("sid", index <= 0 ? "no" : index.ToString());
     }
 
     /// <summary>
@@ -859,7 +872,7 @@ public sealed partial class MpvPlayer : IDisposable
     public void SetAudioTrack(int index)
     {
         ThrowIfNotInitialized();
-        mpv_set_property_string(_mpvHandle, "aid", index.ToString());
+        SetNativeString("aid", index.ToString());
     }
 
     // ── Command helper ───────────────────────────────────────────────────
@@ -895,7 +908,12 @@ public sealed partial class MpvPlayer : IDisposable
             }
             ptrs[args.Length] = IntPtr.Zero; // null terminator
 
-            int err = mpv_command(_mpvHandle, ptrs);
+            int err;
+            using (var lease = EnterNative())
+            {
+                if (!lease.Active) throw new ObjectDisposedException(nameof(MpvPlayer));
+                err = mpv_command(_mpvHandle, ptrs);
+            }
             if (err < 0)
             {
                 string errMsg = GetErrorString(err);
@@ -1255,6 +1273,49 @@ public sealed partial class MpvPlayer : IDisposable
             throw new InvalidOperationException("MpvPlayer is not initialized. Call Initialize() first.");
     }
 
+    // ── Native call leases ───────────────────────────────────────────────
+
+    // Calls from UI and background threads hold a lease while inside libmpv.
+    // Teardown sets the flag first, so no new call starts, and destroys the
+    // handle only after in-flight calls have returned.
+    private const int NativeTeardownFlag = 1 << 30;
+    private int _nativeLeases;
+
+    private readonly struct NativeLease(MpvPlayer? owner) : IDisposable
+    {
+        public bool Active => owner != null;
+        public void Dispose() => owner?.ExitNative();
+    }
+
+    private NativeLease EnterNative()
+    {
+        if ((Interlocked.Increment(ref _nativeLeases) & NativeTeardownFlag) == 0 && _mpvHandle != IntPtr.Zero)
+            return new NativeLease(this);
+        ExitNative();
+        return default;
+    }
+
+    private void ExitNative() => Interlocked.Decrement(ref _nativeLeases);
+
+    private bool WaitForNativeCallers(TimeSpan timeout)
+    {
+        var deadline = Stopwatch.GetTimestamp() + (long)(timeout.TotalSeconds * Stopwatch.Frequency);
+        var spinner = new SpinWait();
+        while ((Volatile.Read(ref _nativeLeases) & ~NativeTeardownFlag) != 0)
+        {
+            if (timeout != Timeout.InfiniteTimeSpan && Stopwatch.GetTimestamp() > deadline) return false;
+            spinner.SpinOnce(sleep1Threshold: 20);
+        }
+        return true;
+    }
+
+    /// <summary>Sets a string property; silently skipped once teardown has begun.</summary>
+    private void SetNativeString(string name, string value)
+    {
+        using var lease = EnterNative();
+        if (lease.Active) mpv_set_property_string(_mpvHandle, name, value);
+    }
+
     // ── Dispose ──────────────────────────────────────────────────────────
 
     public void Dispose()
@@ -1262,6 +1323,7 @@ public sealed partial class MpvPlayer : IDisposable
         if (_disposed)
             return;
         _disposed = true;
+        Interlocked.Or(ref _nativeLeases, NativeTeardownFlag);
         _diagnostics?.Dispose();
 
         // Clear event subscribers to prevent external memory leaks
@@ -1291,7 +1353,7 @@ public sealed partial class MpvPlayer : IDisposable
         var renderStopped = WaitForThread(_renderThread, TimeSpan.FromSeconds(2));
         var eventStopped = WaitForThread(_eventThread, TimeSpan.FromSeconds(2));
 
-        if (renderStopped && eventStopped)
+        if (renderStopped && eventStopped && WaitForNativeCallers(TimeSpan.FromSeconds(2)))
         {
             CompleteNativeCleanup();
             return;
@@ -1304,6 +1366,7 @@ public sealed partial class MpvPlayer : IDisposable
         {
             WaitForThreadWithoutTimeout(_renderThread);
             WaitForThreadWithoutTimeout(_eventThread);
+            WaitForNativeCallers(Timeout.InfiniteTimeSpan);
             CompleteNativeCleanup();
         })
         {

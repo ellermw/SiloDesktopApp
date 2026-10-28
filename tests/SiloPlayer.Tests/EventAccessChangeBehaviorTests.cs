@@ -53,7 +53,7 @@ public sealed class EventAccessChangeBehaviorTests
 
     private static Task Frame(EventChannelClient client, ClientWebSocket socket, string json)
         => (Task)typeof(EventChannelClient).GetMethod("DispatchFrame", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(client, [socket, json, Array.Empty<string>(), CancellationToken.None])!;
+            .Invoke(client, [socket, json, CancellationToken.None])!;
     private static async Task Until(Func<bool> ready)
     { for (var i = 0; i < 100; i++) { if (ready()) return; await Task.Delay(5); } Assert.True(ready(), "The actual access_changed frame did not produce the required authoritative account read."); }
     private sealed class Wire : HttpMessageHandler

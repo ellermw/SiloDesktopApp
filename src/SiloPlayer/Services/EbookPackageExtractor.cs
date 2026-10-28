@@ -11,11 +11,24 @@ internal sealed record ExtractedEbook(string RootDirectory, IReadOnlyList<EbookR
 
 internal static class EbookPackageExtractor
 {
+    // Book packages come from library files; bound what one archive may expand
+    // to on disk so a malformed or hostile package cannot fill the profile drive.
+    internal const long MaxExtractedBytes = 2L * 1024 * 1024 * 1024;
+    internal const int MaxEntries = 50_000;
+
     private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
         { ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".svg" };
 
     public static ExtractedEbook Extract(byte[] bytes, string targetDirectory, string declaredFormat)
+        => Extract(bytes, targetDirectory, declaredFormat, MaxExtractedBytes, MaxEntries);
+
+    internal static ExtractedEbook Extract(
+        byte[] bytes, string targetDirectory, string declaredFormat, long maxBytes, int maxEntries)
     {
+        // Start from an empty directory: leftovers from an earlier extraction would
+        // otherwise be listed as comic pages or served as book resources.
+        if (Directory.Exists(targetDirectory))
+            Directory.Delete(targetDirectory, recursive: true);
         Directory.CreateDirectory(targetDirectory);
         if (IsPdf(bytes))
         {
@@ -27,7 +40,7 @@ internal static class EbookPackageExtractor
             return ReadFb2(bytes, targetDirectory);
         if (declaredFormat.Equals("cbr", StringComparison.OrdinalIgnoreCase) || IsRar(bytes))
         {
-            ExtractArchive(bytes, targetDirectory);
+            ExtractArchive(bytes, targetDirectory, new ExtractionBudget(maxBytes, maxEntries));
             return ReadComicArchive(targetDirectory);
         }
         if (!IsZip(bytes))
@@ -36,8 +49,10 @@ internal static class EbookPackageExtractor
         using (var archive = new ZipArchive(new MemoryStream(bytes), ZipArchiveMode.Read))
         {
             var root = Path.GetFullPath(targetDirectory) + Path.DirectorySeparatorChar;
+            var budget = new ExtractionBudget(maxBytes, maxEntries);
             foreach (var entry in archive.Entries)
             {
+                budget.CountEntry();
                 if (string.IsNullOrEmpty(entry.Name)) continue;
                 var output = Path.GetFullPath(Path.Combine(targetDirectory, entry.FullName.Replace('/', Path.DirectorySeparatorChar)));
                 if (!output.StartsWith(root, StringComparison.OrdinalIgnoreCase))
@@ -45,7 +60,7 @@ internal static class EbookPackageExtractor
                 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
                 using var input = entry.Open();
                 using var destination = File.Create(output);
-                input.CopyTo(destination);
+                budget.Copy(input, destination);
             }
         }
 
@@ -58,7 +73,7 @@ internal static class EbookPackageExtractor
         return ReadComicArchive(targetDirectory);
     }
 
-    private static void ExtractArchive(byte[] bytes, string targetDirectory)
+    private static void ExtractArchive(byte[] bytes, string targetDirectory, ExtractionBudget budget)
     {
         using var stream = new MemoryStream(bytes);
         using var reader = ReaderFactory.OpenReader(stream);
@@ -66,6 +81,7 @@ internal static class EbookPackageExtractor
         while (reader.MoveToNextEntry())
         {
             var entry = reader.Entry;
+            budget.CountEntry();
             if (entry.IsDirectory) continue;
             var relative = (entry.Key ?? "").Replace('/', Path.DirectorySeparatorChar).Replace('\\', Path.DirectorySeparatorChar);
             var output = Path.GetFullPath(Path.Combine(targetDirectory, relative));
@@ -74,7 +90,7 @@ internal static class EbookPackageExtractor
             Directory.CreateDirectory(Path.GetDirectoryName(output)!);
             using var input = reader.OpenEntryStream();
             using var destination = File.Create(output);
-            input.CopyTo(destination);
+            budget.Copy(input, destination);
         }
     }
 
@@ -200,7 +216,126 @@ internal static class EbookPackageExtractor
         return path;
     }
 
+    private sealed class ExtractionBudget(long maxBytes, int maxEntries)
+    {
+        private readonly byte[] _buffer = new byte[81920];
+        private long _bytes;
+        private int _entries;
+
+        public void CountEntry()
+        {
+            if (++_entries > maxEntries)
+                throw new InvalidDataException("The ebook archive contains too many files.");
+        }
+
+        // Count actual decompressed bytes; archive headers declare sizes the
+        // package author controls.
+        public void Copy(Stream input, Stream destination)
+        {
+            int read;
+            while ((read = input.Read(_buffer, 0, _buffer.Length)) > 0)
+            {
+                _bytes += read;
+                if (_bytes > maxBytes)
+                    throw new InvalidDataException("The ebook archive expands beyond the supported size.");
+                destination.Write(_buffer, 0, read);
+            }
+        }
+    }
+
     private static bool IsZip(byte[] bytes) => bytes.Length >= 4 && bytes[0] == 0x50 && bytes[1] == 0x4B;
     private static bool IsRar(byte[] bytes) => bytes.Length >= 7 && bytes[0] == 0x52 && bytes[1] == 0x61 && bytes[2] == 0x72 && bytes[3] == 0x21;
     private static bool IsPdf(byte[] bytes) => bytes.Length >= 4 && bytes[0] == 0x25 && bytes[1] == 0x50 && bytes[2] == 0x44 && bytes[3] == 0x46;
+}
+
+/// <summary>
+/// Per-open scratch directories with OS-held ownership leases. Only marked,
+/// unlocked directories can be pruned; legacy directories have no ownership
+/// proof and are retained rather than risking another reader's files.
+/// </summary>
+internal static class EbookReaderCache
+{
+    internal const string RootEnvironmentVariable = "SILOPLAYER_READER_CACHE_DIRECTORY";
+    private static readonly object Gate = new();
+    private static readonly Dictionary<string, FileStream> Active = new(StringComparer.OrdinalIgnoreCase);
+
+    public static string DefaultRoot => Environment.GetEnvironmentVariable(RootEnvironmentVariable) is { Length: > 0 } isolated
+        ? Path.GetFullPath(isolated)
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "reader-cache");
+
+    public static string Allocate(string root)
+    {
+        root = Path.GetFullPath(root);
+        var id = Guid.NewGuid().ToString("N");
+        var directory = Path.Combine(root, id);
+        var leaseDirectory = Directory.CreateDirectory(Path.Combine(root, ".leases")).FullName;
+        // The lease lives outside the extraction directory, which Extract clears.
+        var leasePath = Path.Combine(leaseDirectory, id + ".lease");
+        var lease = new FileStream(leasePath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None);
+        try
+        {
+            Directory.CreateDirectory(directory);
+            lock (Gate) Active.Add(directory, lease);
+            return directory;
+        }
+        catch
+        {
+            lease.Dispose();
+            TryPruneLease(root, leasePath);
+            throw;
+        }
+    }
+
+    public static void Release(string directory)
+    {
+        directory = Path.GetFullPath(directory);
+        lock (Gate)
+        {
+            if (!Active.Remove(directory, out var lease)) return;
+            lease.Dispose();
+        }
+        var root = Path.GetDirectoryName(directory)!;
+        TryPruneLease(root, Path.Combine(root, ".leases", Path.GetFileName(directory) + ".lease"));
+    }
+
+    public static async Task ReleaseAfterAsync(string directory, Task writer)
+    {
+        try { await writer.ConfigureAwait(false); }
+        catch { /* Failed or canceled materialization still owns files until it ends. */ }
+        finally { Release(directory); }
+    }
+
+    public static void PruneInactive(string root)
+    {
+        root = Path.GetFullPath(root);
+        string[] leases;
+        try { leases = Directory.GetFiles(Path.Combine(root, ".leases"), "*.lease"); }
+        catch (IOException) { return; }
+        catch (UnauthorizedAccessException) { return; }
+        foreach (var lease in leases) TryPruneLease(root, lease);
+    }
+
+    private static void TryPruneLease(string root, string leasePath)
+    {
+        var id = Path.GetFileNameWithoutExtension(leasePath);
+        if (!Guid.TryParseExact(id, "N", out _)) return;
+        var directory = Path.GetFullPath(Path.Combine(root, id));
+        var rootPrefix = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root)) + Path.DirectorySeparatorChar;
+        if (!directory.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase)) return;
+        try
+        {
+            // Exclusive open fails while any process still owns this reader.
+            using (var lease = new FileStream(leasePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                if (Directory.Exists(directory))
+                {
+                    var isLink = (File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0;
+                    Directory.Delete(directory, recursive: !isLink);
+                }
+            }
+            File.Delete(leasePath);
+        }
+        catch (IOException) { /* Owner active or WebView still holds a file; retry later. */ }
+        catch (UnauthorizedAccessException) { }
+    }
 }

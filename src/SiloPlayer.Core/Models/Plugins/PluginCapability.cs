@@ -1,16 +1,5 @@
 namespace SiloPlayer.Core.Models.Plugins;
 
-public class PluginCapability
-{
-    public string Type { get; set; } = "";
-    public string Id { get; set; } = "";
-    public string DisplayName { get; set; } = "";
-    public string? Description { get; set; }
-    public List<string>? Subscriptions { get; set; }
-    public List<PluginConfigSchema>? ConfigSchema { get; set; }
-    public Dictionary<string, object>? Metadata { get; set; }
-}
-
 public class PluginConfigSchema
 {
     public string Key { get; set; } = "";

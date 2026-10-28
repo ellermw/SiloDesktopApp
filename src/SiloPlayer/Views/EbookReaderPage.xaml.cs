@@ -32,6 +32,7 @@ public sealed partial class EbookReaderPage : Page
     private FileVersion? _selectedVersion;
     private List<FileVersion> _readerFiles = [];
     private byte[]? _sourceBytes;
+    private readonly List<(string Directory, Task Writer)> _readerDirectories = [];
     private MangaChapter? _nextMangaChapter;
     private string _contentId = "";
     private int? _libraryId;
@@ -203,6 +204,13 @@ public sealed partial class EbookReaderPage : Page
             core.WebResourceRequested -= ReaderWebView_WebResourceRequested;
         }
         ReaderWebView.Close();
+        var readerDirectories = _readerDirectories.ToArray();
+        _readerDirectories.Clear();
+        _ = Task.Run(async () =>
+        {
+            foreach (var reader in readerDirectories)
+                await EbookReaderCache.ReleaseAfterAsync(reader.Directory, reader.Writer);
+        });
         base.OnNavigatedFrom(e);
     }
 
@@ -307,14 +315,28 @@ public sealed partial class EbookReaderPage : Page
             ring.IsActive = true;
         LoadingText.Text = "Downloading book…";
         _sourceBytes = await _ebooksApi.ReadFileAsync(_contentId, _fileId, _lifetime.Token);
+        _lifetime.Token.ThrowIfCancellationRequested();
+        if (_leaving) return;
         LoadingText.Text = "Preparing reader…";
-        var cacheRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "reader-cache", SafeName(_contentId), _fileId.ToString(CultureInfo.InvariantCulture));
-        _book = await Task.Run(() => EbookPackageExtractor.Extract(_sourceBytes, cacheRoot, FormatOf(version)), _lifetime.Token);
+        if (_readerDirectories.Count == 0)
+            _ = Task.Run(() => EbookReaderCache.PruneInactive(EbookReaderCache.DefaultRoot));
+        var cacheRoot = EbookReaderCache.Allocate(EbookReaderCache.DefaultRoot);
+        var sourceBytes = _sourceBytes;
+        var format = FormatOf(version);
+        var materialization = Task.Run(async () =>
+        {
+            var book = EbookPackageExtractor.Extract(sourceBytes, cacheRoot, format);
+            _lifetime.Token.ThrowIfCancellationRequested();
+            if (book.Format is "epub" or "pdf")
+                await File.WriteAllBytesAsync(Path.Combine(cacheRoot, "reader-source." + book.Format), sourceBytes, _lifetime.Token);
+            return book;
+        }, _lifetime.Token);
+        _readerDirectories.Add((cacheRoot, materialization));
+        _book = await materialization;
         _lifetime.Token.ThrowIfCancellationRequested();
         if (_leaving) return;
         if (UsesSharedRenderer)
         {
-            await File.WriteAllBytesAsync(Path.Combine(cacheRoot, "reader-source." + _book.Format), _sourceBytes, _lifetime.Token);
             ReaderWebView.CoreWebView2.SetVirtualHostNameToFolderMapping(
                 EbookReaderWebPolicy.BookHost, cacheRoot, CoreWebView2HostResourceAccessKind.Allow);
         }
@@ -1102,7 +1124,8 @@ public sealed partial class EbookReaderPage : Page
         {
             var chapter = _book.Chapters[index];
             var path = Path.GetFullPath(Path.Combine(_book.RootDirectory, chapter.RelativePath.Replace('/', Path.DirectorySeparatorChar)));
-            if (!path.StartsWith(Path.GetFullPath(_book.RootDirectory), StringComparison.OrdinalIgnoreCase) || !File.Exists(path)) continue;
+            if (!path.StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(_book.RootDirectory)) + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase) || !File.Exists(path)) continue;
             var html = File.ReadAllText(path);
             var text = WebUtility.HtmlDecode(Regex.Replace(Regex.Replace(html, "<(script|style)[^>]*>.*?</\\1>", " ", RegexOptions.IgnoreCase | RegexOptions.Singleline), "<[^>]+>", " "));
             text = Regex.Replace(text, "\\s+", " ").Trim();
@@ -1308,7 +1331,6 @@ public sealed partial class EbookReaderPage : Page
         if (LoadingLayer.Children.FirstOrDefault() is StackPanel panel && panel.Children.FirstOrDefault() is ProgressRing ring) ring.IsActive = false;
     }
 
-    private static string SafeName(string value) => string.Concat(value.Select(ch => Path.GetInvalidFileNameChars().Contains(ch) ? '_' : ch));
     private static string SelectedTag(ComboBox combo, string fallback) => (combo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? fallback;
     private static void SetComboByTag(ComboBox combo, string value) => combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().FirstOrDefault(i => string.Equals(i.Tag?.ToString(), value, StringComparison.OrdinalIgnoreCase)) ?? combo.Items[0];
     private static Dictionary<string, JsonElement> ReaderSettingsObject(Dictionary<string, JsonElement> config)

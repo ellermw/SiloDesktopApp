@@ -3,7 +3,7 @@
 
 #define MyAppName "Silo Desktop Player"
 #ifndef MyAppVersion
-#define MyAppVersion "1.2.321"
+#define MyAppVersion "1.2.327"
 #endif
 #define MyAppPublisher "Silo"
 #define MyAppExeName "SiloPlayer.exe"
@@ -76,8 +76,9 @@ Root: HKA; Subkey: "Software\Classes\org.siloserver.silo\shell\open\command"; Va
 [Run]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Silo Desktop SiloCast (Private LAN)"""; Flags: runhidden waituntilterminated
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""Silo Desktop SiloCast (Private LAN)"" dir=in action=allow program=""{app}\{#MyAppExeName}"" enable=yes profile=private remoteip=localsubnet"; Flags: runhidden waituntilterminated
-; Launch app after install
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+; Make Inno's normal postinstall original-user launch policy explicit.
+; Setup started already elevated cannot recover an unelevated caller token.
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Silo Desktop SiloCast (Private LAN)"""; Flags: runhidden waituntilterminated; RunOnceId: "SiloCastPrivateLanFirewall"

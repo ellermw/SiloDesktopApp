@@ -72,15 +72,6 @@ public sealed class EbooksApi(SiloApiClient client)
         return annotation;
     }
 
-    public async Task<EbookReaderAnnotation> UpdateAnnotationAsync(string contentId, string annotationId, object patch, CancellationToken ct = default)
-    {
-        var path = $"/api/v2/ebooks/{Content(contentId)}/annotations/{Content(annotationId)}";
-        var context = client.CaptureContext();
-        var annotation = await client.PatchWithETagAsync<EbookReaderAnnotation>(path, patch, Revision(path), ct);
-        Remember(path, annotation.ETag, context, ct);
-        return annotation;
-    }
-
     public async Task DeleteAnnotationAsync(string contentId, string annotationId, CancellationToken ct = default)
     {
         var path = $"/api/v2/ebooks/{Content(contentId)}/annotations/{Content(annotationId)}";

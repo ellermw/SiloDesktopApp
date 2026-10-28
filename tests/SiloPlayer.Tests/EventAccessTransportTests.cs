@@ -17,6 +17,76 @@ namespace SiloPlayer.Tests;
 
 public sealed class EventAccessTransportTests
 {
+    [Fact]
+    public async Task RepeatedShortNormalClosesIncreaseTheReconnectDelay()
+    {
+        await using var fixture = await Fixture.StartAsync();
+        using var subscription = fixture.Events.Subscribe("notifications");
+        var first = await fixture.NextAsync();
+        await first.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "synthetic short connection", CancellationToken.None);
+        var second = await fixture.NextAsync();
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        await second.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "synthetic short connection", CancellationToken.None);
+        await fixture.NextAsync();
+        Assert.True(System.Diagnostics.Stopwatch.GetElapsedTime(started) >= TimeSpan.FromSeconds(1.7),
+            "The second short normal close reset the reconnect delay instead of retaining the two-second backoff.");
+    }
+
+    [Fact]
+    public async Task FailedTicketDoesNotStartTheConnectedInterval()
+    {
+        using var http = new HttpClient(new FailedTicketHandler());
+        var api = new SiloApiClient(http);
+        api.SetBaseUrl("https://connection-boundary.fixture.invalid");
+        using var auth = new AuthService(api, new(api));
+        auth.SetTokens("synthetic-access", "synthetic-refresh", 86400);
+        auth.SelectProfile("synthetic-profile", "synthetic-proof");
+        using var events = new EventChannelClient(api, auth);
+        PrimeChannel(events);
+        var opened = false;
+        await Assert.ThrowsAsync<ApiException>(() => ConnectOnce(events, CancellationToken.None, () => opened = true));
+        Assert.False(opened);
+    }
+
+    [Fact]
+    public async Task ConnectedIntervalBeginsWithAnActuallyOpenSocket()
+    {
+        await using var fixture = await Fixture.StartAsync();
+        PrimeChannel(fixture.Events);
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var opened = new TaskCompletionSource<WebSocketState>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var run = ConnectOnce(fixture.Events, stop.Token, () => opened.TrySetResult(fixture.Events.CurrentState));
+        try
+        {
+            Assert.Equal(WebSocketState.Open, await opened.Task.WaitAsync(TimeSpan.FromSeconds(3)));
+            await fixture.NextAsync();
+        }
+        finally
+        {
+            stop.Cancel();
+            try { await run.WaitAsync(TimeSpan.FromSeconds(3)); }
+            catch (OperationCanceledException) { }
+        }
+    }
+
+    private static void PrimeChannel(EventChannelClient events)
+        => ((Dictionary<string, int>)typeof(EventChannelClient).GetField("_channelRefs", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .GetValue(events)!)["notifications"] = 1;
+
+    private static Task ConnectOnce(EventChannelClient events, CancellationToken ct, Action opened)
+    {
+        var method = typeof(EventChannelClient).GetMethod("ConnectAndRunOnce", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        Assert.Equal(3, method.GetParameters().Length);
+        return (Task)method.Invoke(events, [ct, false, opened])!;
+    }
+
+    private sealed class FailedTicketHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                { Content = new StringContent("Synthetic ticket unavailable") });
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -58,8 +128,11 @@ public sealed class EventAccessTransportTests
         await Until(() => fixture.AccountReads == 1);
         Assert.Equal(0, invalidations);
         Assert.Equal(1, catchUps);
+        // An intentional channel change rebinds the open socket in place: no new
+        // socket, no catch-up and no app reload.
         using var extra = fixture.Events.Subscribe("history_import");
-        await fixture.NextAsync();
+        await Task.Delay(100);
+        Assert.Equal(2, fixture.Tickets);
         Assert.Equal(0, invalidations);
         Assert.Equal(1, catchUps);
         Assert.Equal(1, fixture.AccountReads);

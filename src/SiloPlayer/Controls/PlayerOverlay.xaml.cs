@@ -233,9 +233,10 @@ public sealed partial class PlayerOverlay : UserControl
         FullscreenIcon.Glyph = isFullscreen
             ? "\uE73F"  // BackToWindow — "exit fullscreen"
             : "\uE740"; // FullScreen — "enter fullscreen"
-        var label = isFullscreen ? "Exit fullscreen" : "Enter fullscreen";
-        AutomationProperties.SetName(FullscreenButton, label);
-        ToolTipService.SetToolTip(FullscreenButton, $"{label} (F)");
+        AutomationProperties.SetName(FullscreenButton, isFullscreen ? "Exit fullscreen" : "Enter fullscreen");
+        // Constant strings: this runs on every 250 ms tick, and a newly formatted
+        // string is a new tooltip value each time even when the text is unchanged.
+        ToolTipService.SetToolTip(FullscreenButton, isFullscreen ? "Exit fullscreen (F)" : "Enter fullscreen (F)");
     }
 
     // ── ContentLoaded / PlaybackEnded handlers ───────────────────────────
@@ -441,12 +442,9 @@ public sealed partial class PlayerOverlay : UserControl
         // repaint after display-mode or window activation changes.
         SyncFullscreenIcon();
 
-        // Report progress to server
-        _playerService.Manager?.UpdatePosition(pos, _playerService.Mpv.IsPaused);
-
-        // Slide embedded subtitle windows forward if we're near the tail
-        // (webui parity — upstream streams embedded subs in 10min–1hr windows).
-        _playerService.TickSubtitleWindows(pos);
+        // Session progress is owned by PlayerService's mpv position/pause handlers,
+        // which convert to session time. Writing the display position here raced
+        // them with a different value (Watch Together room position).
 
         // Check skip markers
         ApplyAutoSkipMarkers(pos, dur);

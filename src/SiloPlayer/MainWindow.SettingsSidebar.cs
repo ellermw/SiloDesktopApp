@@ -11,6 +11,25 @@ public sealed partial class MainWindow
     private object[]? _appSidebarItems;
     private SettingsPage? _settingsSidebarPage;
 
+    private bool _settingsSidebarSynchronizationQueued;
+
+    // Frame navigation is raised synchronously from NavView.ItemInvoked. Swapping
+    // NavView.MenuItems there removes the container NavigationView is still
+    // dispatching, so the swap runs on the next dispatcher turn instead.
+    private void QueueSettingsSidebarSynchronization()
+    {
+        if (_settingsSidebarSynchronizationQueued) return;
+        _settingsSidebarSynchronizationQueued = true;
+        if (DispatcherQueue.TryEnqueue(() =>
+            {
+                _settingsSidebarSynchronizationQueued = false;
+                SynchronizeSettingsSidebar();
+            }))
+            return;
+        _settingsSidebarSynchronizationQueued = false;
+        SynchronizeSettingsSidebar();
+    }
+
     private void SynchronizeSettingsSidebar()
     {
         if (!CanExposeAuthenticatedNavigation || _currentWindowWidth < 1024 || ContentFrame.Content is not SettingsPage page)

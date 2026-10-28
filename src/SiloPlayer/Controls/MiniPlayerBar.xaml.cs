@@ -64,7 +64,6 @@ public sealed partial class MiniPlayerBar : UserControl
     {
         if (_active) return;
         _active = true;
-        _playerService.PositionChanged += OnPositionChanged;
         _playerService.PauseChanged += OnPauseChanged;
         _playerService.SeekPreferencesChanged += OnSeekPreferencesChanged;
         _playerService.AudiobookPresentationChanged += OnAudiobookPresentationChanged;
@@ -96,7 +95,6 @@ public sealed partial class MiniPlayerBar : UserControl
     {
         if (!_active) return;
         _active = false;
-        _playerService.PositionChanged -= OnPositionChanged;
         _playerService.PauseChanged -= OnPauseChanged;
         _playerService.SeekPreferencesChanged -= OnSeekPreferencesChanged;
         _playerService.AudiobookPresentationChanged -= OnAudiobookPresentationChanged;
@@ -162,8 +160,6 @@ public sealed partial class MiniPlayerBar : UserControl
         }
         _suppressSeek = false;
     }
-
-    private void OnPositionChanged(double _) { }
 
     private void OnPauseChanged(bool paused) => DispatcherQueue?.TryEnqueue(UpdatePlayPauseIcon);
 

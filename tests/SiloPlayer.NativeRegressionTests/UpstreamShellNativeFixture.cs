@@ -71,7 +71,9 @@ internal static class UpstreamShellNativeFixture
             Check(page.ActiveSettingsSection == "TitlePages", "Settings selection did not open Title Pages");
             await MediaParityNativeFixture.CaptureAsync(root, "shell-title-pages-1920.png");
             Named<TextBox>("SettingsSidebarSearch").Text = "metadata language";
-            Check(nav.MenuItems.OfType<NavigationViewItem>().Any(item => item.Content as string == "Language & Subtitles"), "Settings search lost control keywords");
+            Check(nav.MenuItems.OfType<NavigationViewItem>().Any(item =>
+                Microsoft.UI.Xaml.Automation.AutomationProperties.GetName(item) == "Language & Subtitles"),
+                "Settings search lost control keywords");
             Check(window.FocusSettingsSidebarSearch(), "Ctrl K could not target hosted search");
             Named<TextBox>("SettingsSidebarSearch").Text = "";
             window.AppWindow.ResizeClient(new(1080, 1080)); await Task.Delay(140);

@@ -50,6 +50,8 @@ internal static class PluginCutoverNativeFixture
                 "The real plugin document did not load relative JS/CSS and the v2 static asset mount");
             Check(server.Requests.Where(r => r.Path.StartsWith("/api/v2/", StringComparison.Ordinal)).All(r => r.OwnerMatches),
                 "Plugin page or resources lost the captured bearer/profile/PIN authority");
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_PLUGIN_HARDENING") == "1")
+                await CheckHardeningAsync(web, external);
             await CheckExternalRedirectAsync(web, page, server, external);
             if (redirectOnly) return;
             await web.ExecuteScriptAsync("document.getElementById('submit').click()");
@@ -80,6 +82,30 @@ internal static class PluginCutoverNativeFixture
             slot.SetValue(null, original);
             Environment.SetEnvironmentVariable("WEBVIEW2_USER_DATA_FOLDER", userData);
         }
+    }
+
+    private static async Task CheckHardeningAsync(WebView2 web, Server external)
+    {
+        var core = web.CoreWebView2;
+        Check(!core.Settings.AreHostObjectsAllowed && !core.Settings.AreDevToolsEnabled,
+            "Plugin WebView still enables host objects or DevTools.");
+        Check(core.Settings.AreDefaultScriptDialogsEnabled, "Plugin hardening disabled supported script dialogs.");
+        var requested = false;
+        var handled = false;
+        core.NewWindowRequested += (_, args) => { requested = true; handled = args.Handled; };
+        await web.ExecuteScriptAsync("window.open('" + external.Origin + "/popup-hardening', '_blank')");
+        await Until(() => requested);
+        Check(handled, "The real popup request was not handled by the plugin page.");
+        await Task.Delay(150);
+        Check(!external.Requests.Any(r => r.Path == "/popup-hardening"), "A blocked popup reached the external origin.");
+        Microsoft.Web.WebView2.Core.CoreWebView2PermissionState? permission = null;
+        core.PermissionRequested += (_, args) => permission = args.State;
+        await web.ExecuteScriptAsync("navigator.geolocation.getCurrentPosition(() => document.body.dataset.permissionProbe='allowed', e => document.body.dataset.permissionProbe=String(e.code), {timeout:2000})");
+        await Until(() => permission != null);
+        Check(permission == Microsoft.Web.WebView2.Core.CoreWebView2PermissionState.Deny,
+            "The real device permission request was not denied by the plugin page.");
+        await UntilScript(web, "document.body.dataset.permissionProbe === '1'");
+        Program.Log("PASS: actual plugin popup suppressed, external popup received no request, geolocation denied, host objects/DevTools disabled and script dialogs preserved.");
     }
 
     private static async Task CheckExternalRedirectAsync(WebView2 web, PluginRoutePage page, Server server, Server external)

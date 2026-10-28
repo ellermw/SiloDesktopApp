@@ -168,12 +168,6 @@ public partial class AuthApi(SiloApiClient client)
 
     // ===== Setup =====
 
-    public Task<LoginResponse> SetupAsync(SetupRequest request, CancellationToken ct = default)
-        => SetupAsync(client.BaseUrl, request, ct);
-
-    public Task<LoginResponse> SetupAsync(string baseUrl, SetupRequest request, CancellationToken ct = default)
-        => client.PostUnauthenticatedAsync<LoginResponse>(baseUrl, "/api/v2/auth/setup", request, ct);
-
     public Task<SetupStatusResponse> GetSetupStatusAsync(CancellationToken ct = default)
         => client.GetUnauthenticatedAsync<SetupStatusResponse>("/api/v2/system/setup", ct);
 
@@ -269,9 +263,6 @@ public partial class AuthApi(SiloApiClient client)
     public Task<DeviceLoginPollResponse> DevicePollAsync(string baseUrl, string deviceCode, CancellationToken ct = default)
         => client.PostUnauthenticatedAsync<DeviceLoginPollResponse>(baseUrl, "/api/v2/auth/device/poll",
             new Dictionary<string, object?> { ["device_code"] = deviceCode }, ct);
-
-    public Task<DeviceLoginCapabilityResponse> GetDeviceCapabilityAsync(CancellationToken ct = default)
-        => client.GetUnauthenticatedAsync<DeviceLoginCapabilityResponse>("/api/v2/auth/device/capability", ct);
 
     public Task DeviceApproveAsync(string? token, string? code, CancellationToken ct = default)
         => client.PostNoContentAsync("/api/v2/auth/device/approve",

@@ -76,9 +76,3 @@ public class DeviceLoginPollResponse
     public bool Temporary { get; set; }
     public string? SessionExpiresAt { get; set; }
 }
-
-public sealed class DeviceLoginCapabilityResponse
-{
-    public bool RemotePlaybackHandoff { get; set; }
-    public List<int> ProtocolVersions { get; set; } = [];
-}

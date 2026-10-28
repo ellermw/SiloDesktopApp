@@ -18,6 +18,7 @@ public class AuthService : IDisposable
     private readonly SemaphoreSlim _refreshGuard = new(1, 1);
     private readonly SemaphoreSlim _accountReadGuard = new(1, 1);
     private long _sessionGeneration;
+    private bool _disposed;
     private string? _sessionServerUrl;
     private static readonly TimeSpan TransientRefreshRetryDelay = TimeSpan.FromSeconds(30);
 
@@ -338,6 +339,7 @@ public class AuthService : IDisposable
         long sessionGenerationSnapshot;
         lock (_stateGate)
         {
+            if (_disposed) return false;
             refreshTokenSnapshot = RefreshToken;
             serverUrlSnapshot = _sessionServerUrl;
             sessionGenerationSnapshot = _sessionGeneration;
@@ -617,7 +619,7 @@ public class AuthService : IDisposable
     private void ScheduleRefreshUnsafe(TimeSpan dueTime)
     {
         CancelRefreshScheduleUnsafe();
-        if (dueTime == Timeout.InfiniteTimeSpan || dueTime <= TimeSpan.Zero)
+        if (_disposed || dueTime == Timeout.InfiniteTimeSpan || dueTime <= TimeSpan.Zero)
             return;
 
         _refreshScheduleCancellation = new CancellationTokenSource();
@@ -631,7 +633,11 @@ public class AuthService : IDisposable
         try
         {
             await _delayAsync(dueTime, ct).ConfigureAwait(false);
-            await TryRefreshAsync(ct).ConfigureAwait(false);
+            // Do not hand the schedule token to the refresh: a successful refresh
+            // reschedules, which cancels this token while the same call still
+            // needs it for the authoritative account read. Session generation
+            // checks already discard a refresh that logout or a new login replaced.
+            await TryRefreshAsync(CancellationToken.None).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -807,6 +813,11 @@ public class AuthService : IDisposable
     {
         lock (_stateGate)
         {
+            if (_disposed) return;
+            _disposed = true;
+            // Invalidate in-flight results without canceling the separate
+            // authoritative read merely because a refresh rescheduled itself.
+            _sessionGeneration++;
             CancelRefreshScheduleUnsafe();
         }
     }

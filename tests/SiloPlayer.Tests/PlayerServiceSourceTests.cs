@@ -111,17 +111,22 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
-    public void HlsAndRemuxEmbeddedSubtitlesUseSlidingSidecarsWhileDirectPlayStaysNative()
+    public void HlsAndRemuxEmbeddedSubtitlesLoadTheCompleteSidecarWhileDirectPlayStaysNative()
     {
         var root = FindRepositoryRoot();
         var source = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlayerService.cs"));
 
         Assert.Contains("CanUseNativeEmbeddedSubtitleTrack()", source, StringComparison.Ordinal);
         Assert.Contains("TransportKind == PlaybackTransportKind.DirectProgressive", source, StringComparison.Ordinal);
-        Assert.Contains("SelectEmbeddedSubtitleSidecar(track)", source, StringComparison.Ordinal);
-        Assert.Contains("AppendPositionDuration(pair.Value.FullUrl, windowStart, SubtitleWindowDurationSeconds)", source, StringComparison.Ordinal);
-        Assert.Contains("ServerTrackIndex = track.Index", source, StringComparison.Ordinal);
-        Assert.Contains("AddSubtitle(newUrl, win.Label, win.Language, select: true)", source, StringComparison.Ordinal);
+        Assert.Contains("SelectSubtitleSidecar(track)", source, StringComparison.Ordinal);
+        // The server windows embedded text extraction only for an explicit
+        // position/duration, and nothing slides a window during playback
+        // (the XAML overlay tick that once did is never activated). A windowed
+        // sidecar therefore lost every cue ~10 minutes after selection.
+        Assert.Contains("_mpv.AddSubtitle(pair.Value.FullUrl, label, track.Language, select: true);", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("AppendPositionDuration", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("&duration=", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("TickSubtitleWindows", source, StringComparison.Ordinal);
     }
 
     [Fact]

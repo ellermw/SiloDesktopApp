@@ -2,6 +2,14 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.327 (2026-10-28 — Watch Party freeze repair and reviewed hardening)
+
+- Fix the reproduced Watch Party layout cycle at150% display scaling by keeping its decorative glow out of card measurement. The owner installed this build and confirmed the freeze is resolved.
+- Incorporate reviewed PRs10–14 and16–23 with corrections: reduce per-navigation work, preserve atomic settings, harden plugin/native playback boundaries, retain reconnect backoff and event subscription authority, load complete subtitle tracks, coalesce playback persistence, bound reader extraction and safely release its cache, and repair scheduled account refresh/disposal.
+- Preserve phone control of PC-started playback; PR15 remains held for an authenticated pairing solution.
+- Publish the unchanged owner-tested installer, SHA256 `2541CB2E8DE9960E745814DB53A7342869F2FCFAF7E2C996A08751FE79F3C545`. Packaged verification:2,251 main tests,16 native groups and33 playback/service groups. See [scope, evidence and limits](docs/releases/1.2.327.md).
+- The separate historical navigation crash and broader hardware/phone interoperability remain outside this repair.
+
 ## 1.2.321 (2026-10-27 — current-server alignment and native v2 cutover)
 
 - Preserve the profile-menu/navigation and initial playback-failure repairs from local311/312.

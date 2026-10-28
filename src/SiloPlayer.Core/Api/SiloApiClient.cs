@@ -626,22 +626,6 @@ public partial class SiloApiClient
         return await response.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false);
     }
 
-    public async Task DeleteWithBodyAsync(string path, object body, CancellationToken ct = default)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Delete, BuildUrl(path));
-        AddHeaders(request);
-        request.Content = CreateJsonContent(body);
-        await SendNoContentAsync(request, ct);
-    }
-
-    public async Task<T> DeleteWithBodyAsync<T>(string path, object body, CancellationToken ct = default)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Delete, BuildUrl(path));
-        AddHeaders(request);
-        request.Content = CreateJsonContent(body);
-        return await SendAsync<T>(request, ct).ConfigureAwait(false);
-    }
-
     public async Task<ApiResponse<T>> GetWithETagAsync<T>(string path, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, BuildUrl(path));
@@ -708,22 +692,6 @@ public partial class SiloApiClient
         AddHeaders(request);
         request.Content = CreateJsonContent(body);
         return await SendAsync<T>(request, ct);
-    }
-
-    /// <summary>
-    /// PUT a multipart/form-data request with a single file field. Used for endpoints
-    /// that expect file uploads (e.g., library poster upload).
-    /// </summary>
-    public async Task PutMultipartNoContentAsync(string path, string fieldName, string fileName, byte[] fileBytes, string contentType, CancellationToken ct = default)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Put, BuildUrl(path));
-        AddHeaders(request);
-        var form = new MultipartFormDataContent();
-        var fileContent = new ByteArrayContent(fileBytes);
-        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
-        form.Add(fileContent, fieldName, fileName);
-        request.Content = form;
-        await SendNoContentAsync(request, ct);
     }
 
     /// <summary>
@@ -897,7 +865,17 @@ public partial class SiloApiClient
             _tokenRefresher != null)
         {
             bool refreshed = false;
-            await _refreshLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await _refreshLock.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                // The 401 was read with ResponseHeadersRead; disposing it returns
+                // the pooled connection instead of pinning it until finalization.
+                response.Dispose();
+                throw;
+            }
             try
             {
                 // Never replay an old request in a replacement user's session. Token
@@ -910,7 +888,15 @@ public partial class SiloApiClient
                     refreshed = !string.Equals(currentContext.AccessToken, sentAccessToken, StringComparison.Ordinal);
                     if (!refreshed)
                     {
-                        refreshed = await _tokenRefresher(ct).ConfigureAwait(false);
+                        try
+                        {
+                            refreshed = await _tokenRefresher(ct).ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            response.Dispose();
+                            throw;
+                        }
                         currentContext = GetRequestContextSnapshot();
                         refreshed = refreshed &&
                             currentContext.AuthenticationGeneration == sentAuthenticationGeneration &&

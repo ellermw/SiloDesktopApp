@@ -86,7 +86,14 @@
                     <Border x:Name="CreatePartyPanel" Grid.Column="0" Background="{StaticResource PartyPanelBrush}"
                             BorderBrush="{StaticResource PartyPanelBorderBrush}" BorderThickness="1"
                             CornerRadius="20" Padding="0">
-                        <Grid><Image x:Name="CreatePartyGlow" IsHitTestVisible="False" Stretch="Fill"/><StackPanel Margin="24" Spacing="20">
+                        <Grid>
+                            <!-- Decoration must not contribute to the auto-sized card.
+                                 At fractional DPI its rounded height otherwise feeds
+                                 back through SizeChanged and grows the card forever. -->
+                            <Canvas IsHitTestVisible="False">
+                                <Image x:Name="CreatePartyGlow" Stretch="Fill" />
+                            </Canvas>
+                            <StackPanel Margin="24" Spacing="20">
                             <StackPanel Spacing="8">
                                 <StackPanel x:Name="StartHeading" Orientation="Horizontal" Spacing="8">
                                     <TextBlock Text="Start a party" FontSize="18" LineHeight="28" LineStackingStrategy="BlockLineHeight" FontWeight="SemiBold"

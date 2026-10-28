@@ -120,18 +120,6 @@ public sealed class NotificationListResponse
     public string? NextCursor { get => Page?.NextCursor; set => Page = new() { NextCursor = value, HasMore = value != null }; }
 }
 
-public sealed class NotificationSyncResponse
-{
-    [JsonPropertyName("items")]
-    public List<AppNotification> Notifications { get; set; } = [];
-    public SiloPlayer.Core.Api.BrowsePage? Page { get; set; }
-    public string? SyncCursor { get; set; }
-    public bool InitialSnapshot { get; set; }
-    [JsonIgnore]
-    public string? NextCursor { get => Page?.NextCursor; set => Page = new() { NextCursor = value, HasMore = value != null }; }
-    public int UnreadCount { get; set; }
-}
-
 public sealed class NotificationUnreadCountResponse
 {
     public int Count { get; set; }
@@ -145,13 +133,6 @@ public sealed class NotificationPreferences
     public bool NotifyWatchlist { get; set; }
     public bool NotifyContinueWatching { get; set; }
     public bool NotifyNextUp { get; set; }
-}
-
-public sealed class NotificationReadEventPayload
-{
-    public string ProfileId { get; set; } = "";
-    public string? Id { get; set; }
-    public bool All { get; set; }
 }
 
 public sealed class NotificationAccountChannelCapability
@@ -323,11 +304,6 @@ public sealed class NotificationWebhookInput
     public bool? NotifyRequests { get; set; }
 }
 
-public sealed class NotificationWebhookListResponse
-{
-    public List<NotificationWebhook> Webhooks { get; set; } = [];
-}
-
 public sealed class NotificationWebhookTestResult
 {
     public bool Ok { get; set; }
@@ -357,20 +333,6 @@ public sealed class ServerNotificationChannel
     public string? LastFailureMessage { get; set; }
     public string CreatedAt { get; set; } = "";
     public string? SigningSecret { get; set; }
-}
-
-public sealed class ServerNotificationChannelInput
-{
-    public string? Name { get; set; }
-    public string? Url { get; set; }
-    public string? Type { get; set; }
-    public bool? Enabled { get; set; }
-    public bool? NotifyNewMovies { get; set; }
-    public bool? NotifyNewEpisodes { get; set; }
-    public bool? NotifyRequestSubmitted { get; set; }
-    public bool? NotifyRequestApproved { get; set; }
-    public bool? NotifyRequestDeclined { get; set; }
-    public bool? NotifyRequestFulfilled { get; set; }
 }
 
 public sealed class ServerNotificationChannelsResponse
@@ -404,9 +366,4 @@ public sealed class WebPushSubscriptionView
             return "Waiting for the first delivery";
         }
     }
-}
-
-public sealed class WebPushSubscriptionsResponse
-{
-    public List<WebPushSubscriptionView> Subscriptions { get; set; } = [];
 }

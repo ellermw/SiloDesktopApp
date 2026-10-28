@@ -29,8 +29,3 @@ public class HistoryImportRun
     public string? StartedAt { get; set; }
     public string? CompletedAt { get; set; }
 }
-
-public class HistoryImportRunsResponse
-{
-    public List<HistoryImportRun> Runs { get; set; } = [];
-}

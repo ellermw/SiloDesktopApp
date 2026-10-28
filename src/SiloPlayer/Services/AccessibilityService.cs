@@ -11,6 +11,7 @@ public sealed class AccessibilityService(SettingsService settingsService, ThemeS
 {
     private sealed record Baseline(double FontSize, FontWeight FontWeight, double LineHeight = 0);
     private readonly ConditionalWeakTable<FrameworkElement, Baseline> _baselines = new();
+    private bool _typographyModified;
 
     public void Apply(string textScale, string textWeight, bool highContrast, DependencyObject? root = null)
     {
@@ -34,18 +35,35 @@ public sealed class AccessibilityService(SettingsService settingsService, ThemeS
         if (root != null) ApplyTypography(root, ScaleFactor(settings.UiTextScale), settings.UiTextWeight == "strong");
     }
 
+    /// <summary>
+    /// Applies saved typography to newly shown content. Brushes are application
+    /// resources already set by <see cref="Apply"/> and ThemeService, so route
+    /// navigation must not persist settings or reapply the theme.
+    /// </summary>
     public void ApplySaved(DependencyObject? root = null)
     {
         var settings = settingsService.Load();
-        Apply(settings.UiTextScale, settings.UiTextWeight, settings.UiHighContrast, root);
+        root ??= App.MainWindowInstance?.Content;
+        if (root == null || !AccessibilityTypographyPolicy.RequiresTreeWalk(
+                settings.UiTextScale, settings.UiTextWeight, _typographyModified))
+            return;
+        ApplyTypography(root, ScaleFactor(NormalizeScale(settings.UiTextScale)), settings.UiTextWeight == "strong");
     }
 
     private void ApplyTypography(DependencyObject node, double scale, bool strong)
     {
+        // Once any element is rewritten, retained pages may hold scaled values
+        // that must be restored even after the preference returns to default.
+        if (scale != 1 || strong) _typographyModified = true;
+        ApplyTypographyTree(node, scale, strong);
+    }
+
+    private void ApplyTypographyTree(DependencyObject node, double scale, bool strong)
+    {
         // Capture/apply descendants while their inherited font is still unscaled.
         // Changing a parent first made newly realized child baselines compound the scale.
         for (var i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++)
-            ApplyTypography(VisualTreeHelper.GetChild(node, i), scale, strong);
+            ApplyTypographyTree(VisualTreeHelper.GetChild(node, i), scale, strong);
 
         if (node is TextBlock text)
         {

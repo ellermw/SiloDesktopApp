@@ -27,6 +27,7 @@ internal static class Program
         // Tests load the real published controls without constructing Silo.App,
         // starting its auth/navigation, or using the user's application data.
         Environment.SetEnvironmentVariable(LocalLog.LogDirectoryEnvironmentVariable, ResultDirectory);
+        Environment.SetEnvironmentVariable("SILOPLAYER_READER_CACHE_DIRECTORY", Path.Combine(ResultDirectory, "reader-cache"));
         AssemblyLoadContext.Default.Resolving += (context, name) =>
         {
             var path = Path.Combine(AppDirectory, name.Name + ".dll");
@@ -145,6 +146,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "request-discover-current")
             {
                 await RequestDiscoverCurrentNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "reader-interop")
+            {
+                await ReaderInteropFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "audiobook-detail-interactions")
+            {
+                await AudiobookDetailInteractionsNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "plugin-cutover")

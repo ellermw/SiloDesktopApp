@@ -50,6 +50,7 @@ internal static class ProfileMenuNavigationNativeFixture
             .AddSingleton<EventChannelClient>().AddSingleton<ThemeService>().AddSingleton<AccessibilityService>()
             .AddSingleton<NavigationService>().AddSingleton<MainViewModel>().AddSingleton<SettingsViewModel>()
             .AddSingleton<ProfileSelectViewModel>().AddSingleton<ServerSelectViewModel>()
+            .AddTransient<WatchTogetherJoinViewModel>()
             .AddSingleton<HomeApi>().AddSingleton<HomeViewModel>().AddTransient<LibraryViewModel>()
             .AddSingleton<CardOverlayService>().AddSingleton<UICustomizationService>().AddSingleton<ToastService>()
             .AddSingleton<EpisodeSpoilerPreferences>().AddSingleton<PlayerService>()
@@ -72,8 +73,27 @@ internal static class ProfileMenuNavigationNativeFixture
             var nav = (NavigationView)root.FindName("NavView");
             nav.Loaded -= (RoutedEventHandler)typeof(MainWindow).GetMethod("NavView_Loaded", Instance)!.CreateDelegate(typeof(RoutedEventHandler), window);
             var navigation = provider.GetRequiredService<NavigationService>();
-            window.AppWindow.Move(new(-20000, -20000)); window.AppWindow.ResizeClient(new(width, 1080)); window.AppWindow.Show(false);
+            var height = int.TryParse(Environment.GetEnvironmentVariable("SILO_NATIVE_PARTY_HEIGHT"), out var partyHeight) ? partyHeight : 1080;
+            var x = int.TryParse(Environment.GetEnvironmentVariable("SILO_NATIVE_WINDOW_X"), out var fixtureX) ? fixtureX : -20000;
+            var y = int.TryParse(Environment.GetEnvironmentVariable("SILO_NATIVE_WINDOW_Y"), out var fixtureY) ? fixtureY : -20000;
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TRANSPARENT_ON_MONITOR") == "1") TransparentFixtureWindow.Configure(window);
+            window.AppWindow.Move(new(x, y)); window.AppWindow.ResizeClient(new(width, height)); window.AppWindow.Show(false);
             await Task.Delay(160); window.RestoreMainPane(); navigation.Navigate<Page>();
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_VOLUME_PERSISTENCE") == "1")
+            {
+                await VolumePersistenceNativeFixture.RunAsync();
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_ACCESSIBILITY_NAVIGATION") == "1")
+            {
+                await AccessibilityNavigationNativeFixture.RunAsync(provider, navigation);
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_WATCH_PARTY_FREEZE") == "1")
+            {
+                await WatchPartyLayoutNativeFixture.RunAsync(window, navigation);
+                return;
+            }
             var footer = (Button)root.FindName("ProfileFooterButton");
             var flyout = (Flyout)root.FindName("ProfileFooterFlyout");
             async Task OpenMenu()
@@ -142,7 +162,8 @@ internal static class ProfileMenuNavigationNativeFixture
             if (request.RequestUri?.Host != "profile-menu.fixture.invalid") throw new InvalidOperationException("External network access blocked.");
             var path = request.RequestUri.AbsolutePath;
             if (path == "/api/v2/auth/logout") Logouts++;
-            const int itemCount = 1;
+            var partyProbe = Environment.GetEnvironmentVariable("SILO_NATIVE_WATCH_PARTY_FREEZE") == "1";
+            var itemCount = partyProbe ? 100 : 1;
             var items = Enumerable.Range(0, itemCount).Select(index => new
             {
                 content_id = index == 0 ? "fixture-movie" : "fixture-movie-" + index, type = "movie", title = index == 0 ? "Fixture movie" : "Fixture movie " + index
@@ -152,8 +173,9 @@ internal static class ProfileMenuNavigationNativeFixture
                 "/api/v2/auth/me" => new { id = "fixture", username = "Fixture", role = "user" },
                 "/api/v2/profiles" => new { items = new object[] { new { id = "first", name = "First", is_primary = true }, new { id = "second", name = "Second", is_primary = false } } },
                 "/api/v2/settings/contract/capabilities" => new { api_version = 1, manifest_revision = 22, client_families = new[] { "desktop", "web" }, supports_batched_effective = true },
-                "/api/v2/home/layout" => new { sections = new[] { new { id = "menu-home", title = "Fixture Home", section_type = "recently_added", item_limit = 20 } } },
+                "/api/v2/home/layout" => new { sections = Enumerable.Range(0, partyProbe ? 4 : 1).Select(index => new { id = index == 0 ? "menu-home" : "menu-home-" + index, title = "Fixture Home " + index, section_type = "recently_added", item_limit = partyProbe ? 100 : 20 }).ToArray() },
                 "/api/v2/home/sections/menu-home/items" => new { id = "menu-home", title = "Fixture Home", section_type = "recently_added", items },
+                var section when section.StartsWith("/api/v2/home/sections/") && section.EndsWith("/items") => new { id = section.Split('/')[5], title = "Fixture Home", section_type = "recently_added", items },
                 "/api/v2/catalog" => new { items, total = itemCount, window_cursor = "fixture-cursor", page = new { has_more = false } },
                 _ => new { items = Array.Empty<object>(), settings = Array.Empty<object>(), sections = Array.Empty<object>(), devices = Array.Empty<object>(), providers = Array.Empty<object>() },
             };

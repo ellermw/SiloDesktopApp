@@ -4,13 +4,15 @@ A native Windows client for [Silo Server](https://github.com/Silo-Server/silo-se
 
 ## Download
 
-[**Download version 1.2.321 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.321/SiloInstaller-Windows-x64.exe)
+[**Download version 1.2.327 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.327/SiloInstaller-Windows-x64.exe)
 
 Requires Windows 10 version 1809 or newer, or Windows 11, and access to a Silo Server. Runtime dependencies are included in the installer.
 
-[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.321) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.321/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
+[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.327) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.327/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
 
-Known issues in 1.2.321: sluggish sidebar navigation and a WinUI crash during navigation remain under investigation. See the [release record](docs/releases/1.2.321.md).
+Version 1.2.327 fixes Watch Party freezing at fractional display scaling and includes navigation, playback, subtitle, settings and reader improvements. See the [release record](docs/releases/1.2.327.md).
+
+Historical navigation slowdown and a separate WinUI navigation crash remain under investigation.
 
 The installer is unsigned, so Windows may display an unknown-publisher warning.
 

@@ -39,8 +39,18 @@ public class SettingsService
                 _cached = new AppSettings();
                 return _cached;
             }
-            var json = File.ReadAllText(_filePath);
-            _cached = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
+            try
+            {
+                var json = File.ReadAllText(_filePath);
+                _cached = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
+            }
+            catch (JsonException)
+            {
+                // A truncated or hand-damaged file must not stop every service
+                // that reads preferences at startup. Keep it for diagnosis.
+                QuarantineCorruptFile();
+                _cached = new AppSettings();
+            }
             return _cached;
         }
     }
@@ -51,8 +61,30 @@ public class SettingsService
         {
             _cached = settings;
             var json = JsonSerializer.Serialize(settings, JsonOptions);
-            File.WriteAllText(_filePath, json);
+            WriteAtomically(json);
         }
+    }
+
+    // Write a complete sibling file, then rename over the original, so a crash
+    // or power loss mid-save leaves either the old or the new settings intact.
+    private void WriteAtomically(string json)
+    {
+        var temporary = _filePath + ".tmp";
+        using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+        using (var writer = new StreamWriter(stream))
+        {
+            writer.Write(json);
+            writer.Flush();
+            stream.Flush(flushToDisk: true);
+        }
+        File.Move(temporary, _filePath, overwrite: true);
+    }
+
+    private void QuarantineCorruptFile()
+    {
+        try { File.Move(_filePath, _filePath + ".corrupt", overwrite: true); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     public void AddServer(string url, string name)

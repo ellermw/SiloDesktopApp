@@ -28,6 +28,11 @@ public sealed class EventChannelClient : IDisposable
     private ApiRequestContext? _activeSocketContext;
     private int _immediateReconnectRequested;
     private bool _hasConnected;
+    // Socket whose hello has been answered with a subscribe frame. Channel-set
+    // changes on that socket are sent as a new subscribe frame (the server
+    // replaces the set and snapshots it) instead of tearing the socket down.
+    private ClientWebSocket? _subscribedSocket;
+    private readonly SemaphoreSlim _sendGate = new(1, 1);
 
     // Ref-counted channel subscriptions — multiple features (settings/import,
     // admin/server-activity, watch-party, …) share a single WebSocket. Each call
@@ -121,7 +126,8 @@ public sealed class EventChannelClient : IDisposable
                 }
                 added.Add(ch);
             }
-            EnsureRunning_NoLock(forceReconnect: changed);
+            if (changed) ApplyChannelChange_NoLock();
+            else EnsureRunning_NoLock(forceReconnect: false);
         }
         return new SubscriptionHandle(this, added);
     }
@@ -139,18 +145,79 @@ public sealed class EventChannelClient : IDisposable
                     else _channelRefs[ch] = count - 1;
                 }
             }
-            if (!changed) return;
-            if (_channelRefs.Count == 0)
+            if (changed) ApplyChannelChange_NoLock();
+        }
+    }
+
+    /// <summary>
+    /// Applies a changed channel set. Pages subscribe on navigation, so this runs
+    /// on ordinary page changes; rebinding the live socket avoids a ticket mint,
+    /// a new handshake and the event gap a reconnect would open each time.
+    /// </summary>
+    private void ApplyChannelChange_NoLock()
+    {
+        if (_channelRefs.Count == 0)
+        {
+            StopInternal_NoLock();
+            return;
+        }
+        if (_reconnectSuppressed || !_authService.IsLoggedIn)
+            return;
+        if (_runTask != null && !_runTask.IsCompleted && _ws is { } ws &&
+            _activeSocketContext is { } context && _apiClient.IsCurrentContext(context))
+        {
+            // Before hello the pending subscribe reads the current set itself.
+            if (ReferenceEquals(_subscribedSocket, ws))
+                _ = ResubscribeAsync(ws, _cts?.Token ?? CancellationToken.None);
+            return;
+        }
+        EnsureRunning_NoLock(forceReconnect: true);
+    }
+
+    private async Task ResubscribeAsync(ClientWebSocket ws, CancellationToken ct)
+    {
+        try
+        {
+            await SendSubscribeAsync(ws, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is OperationCanceledException or WebSocketException or ObjectDisposedException)
+        {
+            // The receive loop observes the broken socket and reconnects with
+            // the current channel set.
+            Log($"Resubscribe skipped: {ex.GetType().Name}");
+        }
+    }
+
+    private async Task SendSubscribeAsync(ClientWebSocket ws, CancellationToken ct)
+    {
+        await _sendGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            // Read the set inside the gate so whichever send runs last carries
+            // the latest set, regardless of the order callers queued.
+            string[] channels;
+            lock (_lock)
             {
-                StopInternal_NoLock();
+                if (!ReferenceEquals(_ws, ws) || _channelRefs.Count == 0) return;
+                if (_activeSocketContext is not { } context || !_apiClient.IsCurrentContext(context))
+                {
+                    EnsureRunning_NoLock(forceReconnect: true);
+                    return;
+                }
+                channels = _channelRefs.Keys.ToArray();
             }
-            else
+            var subscribeMsg = new Dictionary<string, object>
             {
-                // Force reconnect with reduced channel set.
-                CancelCurrentRunLoop_NoLock();
-                _cts = new CancellationTokenSource();
-                _runTask = Task.Run(() => RunLoop(_cts.Token));
-            }
+                ["type"] = "subscribe",
+                ["request_id"] = Guid.NewGuid().ToString("N"),
+                ["channels"] = channels,
+            };
+            await SendJsonAsync(ws, subscribeMsg, ct).ConfigureAwait(false);
+            Log($"Sent subscribe for channels: {string.Join(",", channels)}");
+        }
+        finally
+        {
+            _sendGate.Release();
         }
     }
 
@@ -180,6 +247,7 @@ public sealed class EventChannelClient : IDisposable
         catch { }
         _ws?.Dispose();
         _ws = null;
+        _subscribedSocket = null;
         _runTask = null;
     }
 
@@ -262,8 +330,8 @@ public sealed class EventChannelClient : IDisposable
                 }
             }
 
-            if (changed || _runTask == null || _runTask.IsCompleted)
-                EnsureRunning_NoLock(forceReconnect: changed);
+            if (changed) ApplyChannelChange_NoLock();
+            else EnsureRunning_NoLock(forceReconnect: false);
         }
     }
 
@@ -291,11 +359,7 @@ public sealed class EventChannelClient : IDisposable
             }
             _legacyStartChannels.Clear();
 
-            if (!changed) return;
-            if (_channelRefs.Count == 0)
-                StopInternal_NoLock();
-            else
-                EnsureRunning_NoLock(forceReconnect: true);
+            if (changed) ApplyChannelChange_NoLock();
         }
     }
 
@@ -321,11 +385,10 @@ public sealed class EventChannelClient : IDisposable
         var catchUp = false;
         while (!ct.IsCancellationRequested)
         {
+            long? connectedAt = null;
             try
             {
-                await ConnectAndRunOnce(ct, catchUp);
-                // Normal close — reset backoff and reconnect.
-                backoffMs = 1000;
+                await ConnectAndRunOnce(ct, catchUp, () => connectedAt = System.Diagnostics.Stopwatch.GetTimestamp());
             }
             catch (OperationCanceledException)
             {
@@ -337,6 +400,8 @@ public sealed class EventChannelClient : IDisposable
             {
                 Log($"Connection error: {ex.Message}");
             }
+            backoffMs = ReconnectBackoff.AfterConnection(backoffMs, 1000,
+                connectedAt is { } openedAt ? System.Diagnostics.Stopwatch.GetElapsedTime(openedAt) : TimeSpan.Zero);
 
             if (ct.IsCancellationRequested) return;
             if (Interlocked.Exchange(ref _immediateReconnectRequested, 0) != 0)
@@ -353,7 +418,7 @@ public sealed class EventChannelClient : IDisposable
         }
     }
 
-    private async Task ConnectAndRunOnce(CancellationToken ct, bool catchUp)
+    private async Task ConnectAndRunOnce(CancellationToken ct, bool catchUp, Action? onConnected = null)
     {
         string[] channelsSnapshot;
         lock (_lock)
@@ -391,6 +456,7 @@ public sealed class EventChannelClient : IDisposable
             Log($"Connecting to {logUrl} (channels: {string.Join(",", channelsSnapshot)})");
             await ws.ConnectAsync(new Uri(wsUrl), ct);
             if (!_apiClient.IsCurrentContext(context)) throw new OperationCanceledException("Event authority changed.", ct);
+            onConnected?.Invoke();
             var reconnect = false;
             lock (_lock)
             {
@@ -417,7 +483,7 @@ public sealed class EventChannelClient : IDisposable
 
         try
         {
-            await ReceiveLoop(ws, channelsSnapshot, context, ct);
+            await ReceiveLoop(ws, context, ct);
         }
         finally
         {
@@ -428,15 +494,19 @@ public sealed class EventChannelClient : IDisposable
             }
             catch { }
             ws.Dispose();
-            if (ReferenceEquals(_ws, ws))
-                _ws = null;
+            lock (_lock)
+            {
+                if (ReferenceEquals(_ws, ws))
+                    _ws = null;
+                if (ReferenceEquals(_subscribedSocket, ws))
+                    _subscribedSocket = null;
+            }
             StateChanged?.Invoke(WebSocketState.Closed);
         }
     }
 
     private async Task ReceiveLoop(
         ClientWebSocket ws,
-        string[] channelsToSubscribe,
         ApiRequestContext context,
         CancellationToken ct)
     {
@@ -476,14 +546,13 @@ public sealed class EventChannelClient : IDisposable
             var json = messageBuffer.ToString();
             messageBuffer.Clear();
 
-            await DispatchFrame(ws, json, channelsToSubscribe, ct);
+            await DispatchFrame(ws, json, ct);
         }
     }
 
     private async Task DispatchFrame(
         ClientWebSocket ws,
         string json,
-        string[] channelsToSubscribe,
         CancellationToken ct)
     {
         JsonDocument? doc = null;
@@ -506,14 +575,11 @@ public sealed class EventChannelClient : IDisposable
                     if (root.TryGetProperty("connection_id", out var idEl) && idEl.ValueKind == JsonValueKind.String)
                         _connectionId = idEl.GetString();
                     // Client MUST send subscribe within 5 seconds — send immediately.
-                    var subscribeMsg = new Dictionary<string, object>
+                    lock (_lock)
                     {
-                        ["type"] = "subscribe",
-                        ["request_id"] = Guid.NewGuid().ToString("N"),
-                        ["channels"] = channelsToSubscribe,
-                    };
-                    await SendJsonAsync(ws, subscribeMsg, ct);
-                    Log($"Sent subscribe for channels: {string.Join(",", channelsToSubscribe)}");
+                        if (ReferenceEquals(_ws, ws)) _subscribedSocket = ws;
+                    }
+                    await SendSubscribeAsync(ws, ct);
                     break;
                 }
                 case "subscribed":

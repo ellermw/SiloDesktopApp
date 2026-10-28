@@ -36,14 +36,6 @@ public sealed partial class NotificationsApi(SiloApiClient client)
         return result;
     }
 
-    public Task<NotificationSyncResponse> SyncNotificationsAsync(string? before = null, int limit = 25, CancellationToken ct = default)
-    {
-        var qs = new List<string> { $"limit={limit}" };
-        if (!string.IsNullOrWhiteSpace(before))
-            qs.Add($"cursor={Uri.EscapeDataString(before)}");
-        return client.GetAsync<NotificationSyncResponse>($"/api/v2/notifications/sync?{string.Join("&", qs)}", ct);
-    }
-
     public async Task<int> GetUnreadCountAsync(CancellationToken ct = default)
         => (await GetCurrentAsync<NotificationUnreadCountResponse>("/api/v2/notifications/unread-count", ct)).Count;
 

@@ -86,9 +86,6 @@ public partial class CatalogApi(SiloApiClient client)
         LibraryCacheInvalidated?.Invoke();
     }
 
-    public Task<HomeSectionsResponse> GetLibrarySectionsAsync(int libraryId, CancellationToken ct = default)
-        => client.GetAsync<HomeSectionsResponse>($"/api/v2/library/{libraryId}/sections", ct);
-
     public Task<HomeLayoutResponse> GetLibraryLayoutAsync(int libraryId, CancellationToken ct = default)
         => client.GetAsync<HomeLayoutResponse>($"/api/v2/library/{libraryId}/layout", ct);
 
@@ -368,9 +365,6 @@ public partial class CatalogApi(SiloApiClient client)
 
     // ===== Ratings List =====
 
-    public async Task<RatingListResponse> GetRatingsListAsync(CancellationToken ct = default)
-        => new() { Ratings = await BrowseV2.AllAsync<RatingListItem>(client, "/api/v2/ratings", ct) };
-
     // ===== Watchlist / Favorites Check =====
 
     public Task<bool> GetWatchlistItemAsync(string itemId, CancellationToken ct = default)
@@ -380,9 +374,6 @@ public partial class CatalogApi(SiloApiClient client)
         => GetPersonalListMembershipAsync("favorites", itemId, ct);
 
     // ===== Audio Preferences =====
-
-    public Task<AudioPreferenceResponse> GetAudioPrefsAsync(string seriesId, CancellationToken ct = default)
-        => client.GetAsync<AudioPreferenceResponse>($"/api/v2/audio-prefs/{Uri.EscapeDataString(seriesId)}", ct);
 
     public Task SetAudioPrefsAsync(string seriesId, AudioPreference request, CancellationToken ct = default)
         => client.PutNoContentAsync($"/api/v2/audio-prefs/{Uri.EscapeDataString(seriesId)}", request, ct);
@@ -402,28 +393,6 @@ public partial class CatalogApi(SiloApiClient client)
     }
 
     // ===== Collection Browse (B40 + B41) =====
-
-    /// <summary>
-    /// Browse a user-defined collection's items as a catalog page. Mirrors
-    /// the webui <c>buildCollectionCatalogHref("user_collection", id)</c>.
-    /// </summary>
-    public Task<CatalogResponse> BrowseUserCollectionAsync(string collectionId, string? sort = null, string? order = null, int limit = 60, int offset = 0, CancellationToken ct = default)
-    {
-        var query = $"/api/v2/catalog?source=user_collection&collection_id={Uri.EscapeDataString(collectionId)}&limit={Math.Clamp(limit, 1, 200)}&seek={Math.Max(0, offset)}";
-        if (sort != null) query += $"&sort={Uri.EscapeDataString(BrowseV2.Sort(sort, order))}";
-        return client.GetAsync<CatalogResponse>(query, ct);
-    }
-
-    /// <summary>
-    /// Browse a server-discovered library collection (aka smart collection)
-    /// by its library collection ID.
-    /// </summary>
-    public Task<CatalogResponse> BrowseLibraryCollectionAsync(string collectionId, string? sort = null, string? order = null, int limit = 60, int offset = 0, CancellationToken ct = default)
-    {
-        var query = $"/api/v2/catalog?source=library_collection&collection_id={Uri.EscapeDataString(collectionId)}&limit={Math.Clamp(limit, 1, 200)}&seek={Math.Max(0, offset)}";
-        if (sort != null) query += $"&sort={Uri.EscapeDataString(BrowseV2.Sort(sort, order))}";
-        return client.GetAsync<CatalogResponse>(query, ct);
-    }
 
     // ===== Sync =====
 

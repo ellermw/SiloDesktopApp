@@ -41,6 +41,13 @@ public sealed partial class PluginRoutePage : Page
                 ShowError("The active account or profile changed. Reopen this plugin page to continue.");
                 return;
             }
+            // Popup windows share this profile's cookie jar but none of the
+            // origin/credential filters below, so plugins may not open them.
+            PluginWebView.CoreWebView2.Settings.AreHostObjectsAllowed = false;
+            PluginWebView.CoreWebView2.Settings.AreDevToolsEnabled = false;
+            PluginWebView.CoreWebView2.NewWindowRequested += (_, eventArgs) => eventArgs.Handled = true;
+            PluginWebView.CoreWebView2.PermissionRequested += (_, eventArgs) =>
+                eventArgs.State = CoreWebView2PermissionState.Deny;
             PluginWebView.CoreWebView2.AddWebResourceRequestedFilter(
                 "*",
                 CoreWebView2WebResourceContext.All);
