@@ -26,9 +26,10 @@ public sealed class CurrentServerContractDeltaTests
     [Fact]
     public void PlaybackModelsCarryCurrentSubtitleInventoryIdentity()
     {
-        var start = Read("src", "SiloPlayer.Core", "Models", "Playback", "PlaybackStartRequest.cs");
+        var capabilities = Read("src", "SiloPlayer.Core", "Services", "MpvNativePlaybackCapabilities.cs");
         var response = Read("src", "SiloPlayer.Core", "Models", "Playback", "PlaybackStartResponse.cs");
-        Assert.Contains("SupportsBitmapSubtitleBurnIn", start);
+        // Protocol v3 declares bitmap subtitle support in the playback context.
+        Assert.Contains("EmbeddedBitmap = true", capabilities);
         Assert.Contains("MediaFileId", response);
         var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
         Assert.Contains("SetBitmapSubtitleBurnInAsync", player);

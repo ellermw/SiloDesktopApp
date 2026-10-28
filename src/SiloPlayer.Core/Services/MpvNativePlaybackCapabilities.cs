@@ -84,33 +84,6 @@ public static class MpvNativePlaybackCapabilities
         });
 
     /// <summary>
-    /// Applies the verified native profile to an existing playback request.
-    /// Passthrough is deliberately absent unless the caller supplies codecs
-    /// verified for both the active sink and the configured mpv output path.
-    /// </summary>
-    public static void ApplyTo(
-        PlaybackStartRequest request,
-        AudioPassthroughCapabilities? verifiedPassthrough = null)
-    {
-        ArgumentNullException.ThrowIfNull(request);
-
-        var profile = CreateProfile();
-        request.CodecsVideo = [.. profile.VideoCodecs];
-        request.CodecsAudio = [.. profile.AudioCodecs];
-        request.Containers = [.. profile.Containers];
-        request.MaxResolution = profile.MaxResolution;
-        request.Hdr = profile.Hdr;
-        request.HdrDetails = new HdrCapabilityDetails
-        {
-            Hdr10 = profile.HdrDetails.Hdr10,
-            Hdr10Plus = profile.HdrDetails.Hdr10Plus,
-            Hlg = profile.HdrDetails.Hlg,
-            DolbyVisionProfiles = [.. profile.HdrDetails.DolbyVisionProfiles],
-        };
-        request.AudioPassthrough = SanitizeVerifiedPassthrough(verifiedPassthrough);
-    }
-
-    /// <summary>
     /// Builds the evidence and delivery declarations required by Silo playback
     /// protocol v3. libmpv is a native, general-purpose decoder rather than a
     /// Windows Media Foundation inventory, so the honest evidence tier is
