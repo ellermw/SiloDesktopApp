@@ -18,7 +18,8 @@ public sealed partial class MpvPlayer
     /// </summary>
     public VideoPipelineSnapshot? GetVideoPipelineSnapshot()
     {
-        if (_disposed || _mpvHandle == IntPtr.Zero) return null;
+        using var lease = EnterNative();
+        if (!lease.Active) return null;
         string? Read(string property) => ReadUpscalingProperty(property);
         int? profile = null;
         var trackCount = Math.Clamp((int)GetPropertyDouble("track-list/count"), 0, 128);

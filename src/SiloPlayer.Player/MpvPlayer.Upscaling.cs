@@ -70,6 +70,8 @@ public sealed partial class MpvPlayer
 
     private string? ReadUpscalingProperty(string name)
     {
+        using var lease = EnterNative();
+        if (!lease.Active) return null;
         var ptr = mpv_get_property_string(_mpvHandle, name);
         try { return ptr == IntPtr.Zero ? null : Marshal.PtrToStringUTF8(ptr); }
         finally { if (ptr != IntPtr.Zero) mpv_free(ptr); }

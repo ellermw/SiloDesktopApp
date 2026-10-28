@@ -35,6 +35,8 @@ public sealed partial class MpvPlayer
         if (_directOpen == null)
         {
             _directOpen = OpenDirect;
+            using var lease = EnterNative();
+            if (!lease.Active) throw new ObjectDisposedException(nameof(MpvPlayer));
             if (mpv_stream_cb_add_ro(_mpvHandle, "silo-direct", IntPtr.Zero, _directOpen) < 0)
                 throw new InvalidOperationException("Cannot register direct file reader.");
         }
