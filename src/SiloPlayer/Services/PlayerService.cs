@@ -179,8 +179,9 @@ public partial class PlayerService : IDisposable
         _localAuthority = new PlaybackAuthorityScope(apiClient, authService, playbackApi, catalogApi, settingsApi);
         _activeAuthority = _localAuthority;
         _settingsService = settingsService;
-        _userStateRevision = DetailCacheInvalidation.Attach(_watchDetailPrefetches);
-        _watchDetailFreshness = new(_userStateRevision, finalSaveBarrier: TimeSpan.FromSeconds(5));
+        _userStateRevision = DetailCacheInvalidation.AttachUserStateRevision();
+        _watchDetailFreshness = new(_userStateRevision, finalSaveBarrier: TimeSpan.FromSeconds(5),
+            contentOf: detail => detail.ContentId, seriesOf: detail => detail.SeriesId);
         ObserveSubtitlePreferences();
         InitializeConnectionObservation();
 
@@ -341,7 +342,22 @@ public partial class PlayerService : IDisposable
         => await GetOrFetchWatchDetailCoreAsync(contentId, consumePrefetch: false, ct: ct, libraryId: libraryId, fileId: fileId, authority: _localAuthority)
             .ConfigureAwait(false);
 
-    private async Task<WatchDetailResponse> GetOrFetchWatchDetailCoreAsync(
+    // Every /watch result is revalidated before it becomes playback input: a
+    // cached, in-flight or fresh response whose item changed after its read
+    // began is evicted and read again.
+    private Task<WatchDetailResponse> GetOrFetchWatchDetailCoreAsync(
+        string contentId,
+        bool consumePrefetch,
+        CancellationToken ct,
+        int? libraryId = null,
+        int? fileId = null,
+        PlaybackAuthorityScope? authority = null)
+        => _watchDetailFreshness.GetCurrentAsync(
+            token => GetOrFetchWatchDetailOnceAsync(contentId, consumePrefetch, token, libraryId, fileId, authority),
+            _ => _watchDetailPrefetches.Invalidate(WatchPreparationKey(contentId, libraryId, fileId)),
+            ct);
+
+    private async Task<WatchDetailResponse> GetOrFetchWatchDetailOnceAsync(
         string contentId,
         bool consumePrefetch,
         CancellationToken ct,
@@ -396,7 +412,7 @@ public partial class PlayerService : IDisposable
     /// </summary>
     private Task<WatchDetailResponse> FetchWatchDetailAfterFinalSaveAsync(
         PlaybackAuthorityScope authority, string contentId, int? libraryId, int? fileId, CancellationToken ct)
-        => _watchDetailFreshness.ReadAsync(PendingProgressSave,
+        => _watchDetailFreshness.ReadAsync(contentId,
             token => authority.PlaybackApi.GetWatchDetailAsync(contentId, libraryId, fileId, token), ct);
 
     /// <summary>True when no progress/watched mutation happened since this response's server read.</summary>
@@ -2004,6 +2020,9 @@ public partial class PlayerService : IDisposable
             // same invalidation so its prefetched detail/watch data is dropped.
             if (!HasRemoteAuthority && !string.IsNullOrEmpty(retiringContentId) && finalPosition > 0)
             {
+                // Only a replay of this same item waits for this stop; the
+                // next item's preparation proceeds immediately.
+                _watchDetailFreshness.TrackFinalSave(retiringContentId, retiringSessionTask);
                 try
                 {
                     WeakReferenceMessenger.Default.Send(new PlaybackProgressUpdated(
@@ -6642,7 +6661,8 @@ public partial class PlayerService : IDisposable
                 closedPosition > 0 ? ToSessionPosition(closedPosition) : null,
                 isPaused: true)
             : Task.CompletedTask;
-        PendingProgressSave = Task.WhenAll(PendingProgressSave, sessionStopTask, audiobookProgressTask);
+        var closedFinalSave = Task.WhenAll(sessionStopTask, audiobookProgressTask);
+        PendingProgressSave = Task.WhenAll(PendingProgressSave, closedFinalSave);
 
         // B15 + F4: publish PlaybackProgressUpdated so Home / History /
         // ItemDetail view models reflect the new position without waiting
@@ -6650,13 +6670,14 @@ public partial class PlayerService : IDisposable
         // matching the webui `isCompleted` heuristic.
         if (!HasRemoteAuthority && !string.IsNullOrEmpty(closedContentId) && closedPosition > 0)
         {
+            _watchDetailFreshness.TrackFinalSave(closedContentId, closedFinalSave);
             bool completed = closedDuration > 0 && closedPosition >= closedDuration * 0.9;
             try
             {
                 WeakReferenceMessenger.Default.Send(
                     new PlaybackProgressUpdated(
                         closedContentId, closedPosition, closedDuration, completed)
-                    { Persisted = PendingProgressSave });
+                    { Persisted = closedFinalSave });
             }
             catch (Exception ex) { LogToFile("state_trace.txt", $"Publish progress event error: {ex.Message}"); }
         }

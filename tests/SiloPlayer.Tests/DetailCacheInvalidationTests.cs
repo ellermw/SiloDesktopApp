@@ -81,30 +81,6 @@ public sealed class DetailCacheInvalidationTests
         Assert.Equal(2, fetches.Count);
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task CardProgressResetAfterHoverDoesNotResumeFromThePrefetchedPosition(bool viaProgressMessage)
-    {
-        // Hover prefetched watch detail at 20:00; the card then reset progress.
-        var cache = new WatchDetailPrefetchCache<WatchDetailResponse>(8, TimeSpan.FromMinutes(2));
-        var messenger = new WeakReferenceMessenger();
-        var revision = DetailCacheInvalidation.Attach(cache, messenger);
-        var now = DateTimeOffset.UtcNow;
-        cache.Store("movie-1", "profile", Task.FromResult(new WatchDetailResponse
-        {
-            UserData = new WatchUserData { PositionSeconds = 1200 },
-        }), now);
-
-        if (viaProgressMessage)
-            messenger.Send(new PlaybackProgressUpdated("movie-1", 0, 5400, completed: false));
-        else
-            messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.PlaybackProgress, "movie-1"));
-
-        Assert.Null(await cache.TryGetAsync("movie-1", "profile", now));
-        GC.KeepAlive(revision);
-    }
-
     [Fact]
     public async Task DetailReadDuringASlowFinalSaveIsDroppedOnceTheSaveCompletes()
     {
@@ -124,80 +100,201 @@ public sealed class DetailCacheInvalidationTests
     }
 
     [Fact]
-    public async Task UserStateRevisionAdvancesOnMutationAndAgainWhenTheFinalSaveLands()
+    public void FinalSaveCompletingDuringTheFirstClearStillGetsTheSecondClear()
     {
-        var cache = new WatchDetailPrefetchCache<WatchDetailResponse>(8, TimeSpan.FromMinutes(2));
-        var messenger = new WeakReferenceMessenger();
-        var revision = DetailCacheInvalidation.Attach(cache, messenger);
         var finalSave = new TaskCompletionSource();
+        var clears = 0;
+        DetailCacheInvalidation.ClearNowAndAfter(finalSave.Task, () =>
+        {
+            if (++clears == 1) finalSave.SetResult(); // completes between clear and registration
+        });
+        Assert.Equal(2, clears);
 
-        messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "movie-1"));
-        Assert.Equal(1, revision.Current);
-        messenger.Send(new PlaybackProgressUpdated("movie-1", 10, 5400, completed: false) { Persisted = finalSave.Task });
-        Assert.Equal(2, revision.Current);
-        finalSave.SetResult();
-        Assert.Equal(3, revision.Current);
+        var alreadyDone = 0;
+        DetailCacheInvalidation.ClearNowAndAfter(Task.CompletedTask, () => alreadyDone++);
+        Assert.Equal(1, alreadyDone);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CardProgressResetAfterHoverDoesNotResumeFromThePrefetchedPosition(bool viaProgressMessage)
+    {
+        // Hover prefetched watch detail at 20:00; the card then reset progress.
+        var (freshness, messenger, revision) = CreateFreshness();
+        var server = new FakeWatch { Position = 1200 };
+        var prefetched = await freshness.ReadAsync("episode:a", server.Read("episode:a"), CancellationToken.None);
+        server.Position = 0;
+
+        if (viaProgressMessage)
+            messenger.Send(new PlaybackProgressUpdated("episode:a", 0, 5400, completed: false));
+        else
+            messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.PlaybackProgress, "episode:a"));
+
+        Assert.False(freshness.IsCurrent(prefetched));
+        // Play consumes through the cache: the stale entry is evicted and read again.
+        WatchDetailResponse? cached = prefetched;
+        var played = await freshness.GetCurrentAsync(
+            ct => cached is { } entry ? Task.FromResult(entry) : freshness.ReadAsync("episode:a", server.Read("episode:a"), ct),
+            _ => cached = null, CancellationToken.None);
+        Assert.Equal(0, played.UserData!.PositionSeconds);
         GC.KeepAlive(revision);
-        await Task.CompletedTask;
     }
 
     [Fact]
     public async Task SnapshotHeldByThePageIsRejectedAfterResetProgress()
     {
         // ItemDetailPage keeps its /watch response and passes it to PlayAsync.
-        var revision = new UserStateRevision(() => { });
-        var freshness = new WatchDetailFreshness<WatchDetailResponse>(revision, TimeSpan.FromSeconds(5));
-        var held = await freshness.ReadAsync(Task.CompletedTask,
-            _ => Task.FromResult(new WatchDetailResponse { UserData = new WatchUserData { PositionSeconds = 1200 } }),
-            CancellationToken.None);
+        var (freshness, messenger, revision) = CreateFreshness();
+        var server = new FakeWatch { Position = 1200 };
+        var held = await freshness.ReadAsync("episode:a", server.Read("episode:a"), CancellationToken.None);
         Assert.True(freshness.IsCurrent(held));
 
-        var messenger = new WeakReferenceMessenger();
-        var attached = DetailCacheInvalidation.Attach(new WatchDetailPrefetchCache<WatchDetailResponse>(8, TimeSpan.FromMinutes(2)), messenger);
-        freshness = new WatchDetailFreshness<WatchDetailResponse>(attached, TimeSpan.FromSeconds(5));
-        held = await freshness.ReadAsync(Task.CompletedTask,
-            _ => Task.FromResult(new WatchDetailResponse { UserData = new WatchUserData { PositionSeconds = 1200 } }),
-            CancellationToken.None);
-        messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.PlaybackProgress, "movie-1")); // Reset Progress
+        messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.PlaybackProgress, "episode:a")); // Reset Progress
 
-        Assert.False(freshness.IsCurrent(held)); // Play must refetch instead of resuming at 20:00
-        Assert.False(freshness.IsCurrent(new WatchDetailResponse())); // unstamped snapshots are never trusted
+        Assert.False(freshness.IsCurrent(held)); // PlayCoreAsync refetches instead of resuming at 20:00
+        Assert.False(freshness.IsCurrent(new WatchDetailResponse { ContentId = "episode:a" })); // unstamped is never trusted
+        GC.KeepAlive(revision);
+    }
+
+    [Fact]
+    public async Task SeasonOrSeriesMutationReachesItsEpisodesButNotOtherTitles()
+    {
+        var (freshness, messenger, revision) = CreateFreshness();
+        var server = new FakeWatch { Position = 10 };
+        var episode = await freshness.ReadAsync("episode:show-s01e01", server.Read("episode:show-s01e01", "series:show"), CancellationToken.None);
+        var movie = await freshness.ReadAsync("movie:other", server.Read("movie:other"), CancellationToken.None);
+
+        messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "series:show-S01", "series:show"));
+        Assert.False(freshness.IsCurrent(episode));
+        Assert.True(freshness.IsCurrent(movie));
+
+        // A season id without its series cannot be matched, so it invalidates everything.
+        var again = await freshness.ReadAsync("movie:other", server.Read("movie:other"), CancellationToken.None);
+        messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "series:show-S01"));
+        Assert.False(freshness.IsCurrent(again));
+        GC.KeepAlive(revision);
     }
 
     [Fact]
     public async Task ReplayRightAfterCloseReadsTheServerOnlyAfterTheFinalSave()
     {
-        var serverPosition = 300.0; // before the closing session's final write
+        var (freshness, _, revision) = CreateFreshness();
+        var server = new FakeWatch { Position = 300 }; // before the closing session's final write
         var finalSave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var freshness = new WatchDetailFreshness<WatchDetailResponse>(new UserStateRevision(() => { }), TimeSpan.FromSeconds(5));
+        freshness.TrackFinalSave("episode:a", finalSave.Task);
 
-        var read = freshness.ReadAsync(finalSave.Task,
-            _ => Task.FromResult(new WatchDetailResponse { UserData = new WatchUserData { PositionSeconds = serverPosition } }),
-            CancellationToken.None);
+        var read = freshness.ReadAsync("episode:a", server.Read("episode:a"), CancellationToken.None);
         await Task.Delay(50);
         Assert.False(read.IsCompleted);
-        serverPosition = 1200; // the final write lands
+        server.Position = 1200; // the final write lands
         finalSave.SetResult();
 
         Assert.Equal(1200, (await read).UserData!.PositionSeconds);
+        GC.KeepAlive(revision);
     }
 
     [Fact]
-    public async Task AStuckFinalSaveDelaysTheReadOnlyUntilTheBarrier()
+    public async Task SwitchingToTheNextItemDoesNotWaitForTheOutgoingStopOrDropItsSnapshot()
     {
-        var freshness = new WatchDetailFreshness<WatchDetailResponse>(new UserStateRevision(() => { }), TimeSpan.FromMilliseconds(100));
-        var never = new TaskCompletionSource().Task;
+        // Next Episode: A's stop is still pending; B was prefetched before the switch.
+        var (freshness, messenger, revision) = CreateFreshness();
+        var server = new FakeWatch { Position = 0 };
+        var prefetchedB = await freshness.ReadAsync("episode:b", server.Read("episode:b"), CancellationToken.None);
+        var stopA = new TaskCompletionSource(); // never completes during the test
+        freshness.TrackFinalSave("episode:a", stopA.Task);
+        messenger.Send(new PlaybackProgressUpdated("episode:a", 60, 1300, completed: false) { Persisted = stopA.Task });
+
+        Assert.True(freshness.IsCurrent(prefetchedB));
         var started = System.Diagnostics.Stopwatch.StartNew();
-        var detail = await freshness.ReadAsync(never, _ => Task.FromResult(new WatchDetailResponse()), CancellationToken.None)
+        await freshness.ReadAsync("episode:b", server.Read("episode:b"), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(1));
+        Assert.True(started.ElapsedMilliseconds < 500, $"B waited {started.ElapsedMilliseconds} ms on A's stop");
+
+        var replayA = freshness.ReadAsync("episode:a", server.Read("episode:a"), CancellationToken.None);
+        await Task.Delay(50);
+        Assert.False(replayA.IsCompleted); // only a replay of A waits for A's final write
+        stopA.SetResult();
+        await replayA.WaitAsync(TimeSpan.FromSeconds(5));
+        GC.KeepAlive(revision);
+    }
+
+    [Fact]
+    public async Task AStuckFinalSaveDelaysOnlyItsOwnReadUntilTheBarrier()
+    {
+        var revision = new UserStateRevision();
+        var freshness = new WatchDetailFreshness<WatchDetailResponse>(revision, TimeSpan.FromMilliseconds(100),
+            detail => detail.ContentId, detail => detail.SeriesId);
+        freshness.TrackFinalSave("episode:a", new TaskCompletionSource().Task);
+        var server = new FakeWatch();
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        var detail = await freshness.ReadAsync("episode:a", server.Read("episode:a"), CancellationToken.None)
             .WaitAsync(TimeSpan.FromSeconds(5));
         Assert.True(started.ElapsedMilliseconds >= 90);
         Assert.True(freshness.IsCurrent(detail));
     }
 
     [Fact]
-    public async Task SwitchingDirectlyToAnotherItemInvalidatesLikeClosing()
+    public async Task ResultThatWentStaleDuringItsReadIsFetchedAgainBeforePlayback()
     {
-        // PlayCoreAsync now publishes the retiring session's progress with its stop task.
+        // The read begins at revision 0; Reset Progress lands while the old
+        // position-300 response is still on the wire.
+        var (freshness, messenger, revision) = CreateFreshness();
+        var release = new TaskCompletionSource();
+        var server = new FakeWatch { Position = 300 };
+        var reads = 0;
+        Task<WatchDetailResponse> Get(CancellationToken ct) => freshness.ReadAsync("episode:a", async token =>
+        {
+            if (++reads == 1) { var stale = server.Snapshot("episode:a"); await release.Task; return stale; }
+            return server.Snapshot("episode:a");
+        }, ct);
+
+        var playback = freshness.GetCurrentAsync(Get, _ => { }, CancellationToken.None);
+        messenger.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.PlaybackProgress, "episode:a"));
+        server.Position = 0;
+        release.SetResult();
+
+        var detail = await playback.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, detail.UserData!.PositionSeconds);
+        Assert.Equal(2, reads);
+        GC.KeepAlive(revision);
+    }
+
+    [Fact]
+    public async Task FinalSaveLandingDuringAReadAfterTheBarrierStillForcesARefetch()
+    {
+        // The bounded barrier expired; the save then completes while the
+        // read's response is in flight, so that response is stale.
+        var messenger = new WeakReferenceMessenger();
+        var revision = DetailCacheInvalidation.AttachUserStateRevision(messenger);
+        var freshness = new WatchDetailFreshness<WatchDetailResponse>(revision, TimeSpan.FromMilliseconds(50),
+            detail => detail.ContentId, detail => detail.SeriesId);
+        var finalSave = new TaskCompletionSource();
+        freshness.TrackFinalSave("episode:a", finalSave.Task);
+        messenger.Send(new PlaybackProgressUpdated("episode:a", 1200, 1300, completed: false) { Persisted = finalSave.Task });
+        var server = new FakeWatch { Position = 300 };
+        var release = new TaskCompletionSource();
+        var reads = 0;
+        Task<WatchDetailResponse> Get(CancellationToken ct) => freshness.ReadAsync("episode:a", async token =>
+        {
+            if (++reads == 1) { var stale = server.Snapshot("episode:a"); await release.Task; return stale; }
+            return server.Snapshot("episode:a");
+        }, ct);
+
+        var playback = freshness.GetCurrentAsync(Get, _ => { }, CancellationToken.None);
+        await Task.Delay(150); // past the barrier; first read is in flight
+        server.Position = 1200;
+        finalSave.SetResult(); // advances the revision for episode:a
+        release.SetResult();
+
+        Assert.Equal(1200, (await playback.WaitAsync(TimeSpan.FromSeconds(5))).UserData!.PositionSeconds);
+        Assert.Equal(2, reads);
+        GC.KeepAlive(revision);
+    }
+
+    [Fact]
+    public async Task SwitchingDirectlyToAnotherItemInvalidatesDetailsLikeClosing()
+    {
+        // PlayCoreAsync publishes the retiring session's progress with its stop task.
         var (cache, fetches) = CreateCache();
         var messenger = new WeakReferenceMessenger();
         DetailCacheInvalidation.Attach(cache, messenger);
@@ -212,6 +309,27 @@ public sealed class DetailCacheInvalidationTests
         Assert.Equal(3, fetches.Count(id => id == "episode-1"));
     }
 
+    private static (WatchDetailFreshness<WatchDetailResponse> Freshness, WeakReferenceMessenger Messenger, UserStateRevision Revision) CreateFreshness()
+    {
+        var messenger = new WeakReferenceMessenger();
+        var revision = DetailCacheInvalidation.AttachUserStateRevision(messenger);
+        var freshness = new WatchDetailFreshness<WatchDetailResponse>(revision, TimeSpan.FromSeconds(5),
+            detail => detail.ContentId, detail => detail.SeriesId);
+        return (freshness, messenger, revision);
+    }
+
+    private sealed class FakeWatch
+    {
+        public double Position { get; set; }
+        public WatchDetailResponse Snapshot(string contentId, string? seriesId = null) => new()
+        {
+            ContentId = contentId,
+            SeriesId = seriesId,
+            UserData = new WatchUserData { PositionSeconds = Position },
+        };
+        public Func<CancellationToken, Task<WatchDetailResponse>> Read(string contentId, string? seriesId = null)
+            => _ => Task.FromResult(Snapshot(contentId, seriesId));
+    }
 
     private static (ItemDetailPrefetchCache Cache, List<string> Fetches) CreateCache()
     {
