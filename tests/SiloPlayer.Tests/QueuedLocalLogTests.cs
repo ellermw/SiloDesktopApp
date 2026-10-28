@@ -5,6 +5,49 @@ namespace SiloPlayer.Tests;
 public sealed class QueuedLocalLogTests
 {
     [Fact]
+    public void PeriodicFlushSkipsAnAlreadyDequeuedBlockedWrite()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "silo-periodic-log-" + Guid.NewGuid().ToString("N"));
+        var log = new QueuedLocalLog(directory);
+        var flags = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic;
+        var fileGate = typeof(LocalLog).GetField("s_gate", flags)!.GetValue(null)!;
+        var queue = typeof(QueuedLocalLog).GetField("_queue", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(log)!;
+        var isEmpty = queue.GetType().GetProperty("IsEmpty")!;
+        var tryFlush = typeof(QueuedLocalLog).GetMethod("TryFlush");
+        Task first = Task.CompletedTask;
+        Task<bool> periodic = Task.FromResult(true);
+        using var started = new ManualResetEventSlim();
+        try
+        {
+            log.Enqueue("periodic.txt", "one event");
+            Monitor.Enter(fileGate);
+            try
+            {
+                first = Task.Run(log.Flush);
+                Assert.True(SpinWait.SpinUntil(() => (bool)isEmpty.GetValue(queue)!, TimeSpan.FromSeconds(3)));
+                periodic = Task.Run(() =>
+                {
+                    started.Set();
+                    // Before the repair, PlayerService's periodic callback calls Flush.
+                    if (tryFlush == null) { log.Flush(); return true; }
+                    return (bool)tryFlush.Invoke(log, null)!;
+                });
+                Assert.True(started.Wait(TimeSpan.FromSeconds(3)));
+                Assert.True(periodic.Wait(TimeSpan.FromMilliseconds(100)), "Periodic flush waited behind a stalled disk write.");
+                Assert.False(periodic.Result);
+            }
+            finally { Monitor.Exit(fileGate); }
+            Assert.True(Task.WaitAll([first, periodic], TimeSpan.FromSeconds(3)));
+            Assert.EndsWith("one event", Assert.Single(File.ReadAllLines(Path.Combine(directory, "periodic.txt"))));
+        }
+        finally
+        {
+            Task.WaitAll([first, periodic], TimeSpan.FromSeconds(3));
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
     public void ExplicitFlushWaitsForAnAlreadyDequeuedBlockedWrite()
     {
         var directory = Path.Combine(Path.GetTempPath(), "silo-blocked-log-" + Guid.NewGuid().ToString("N"));

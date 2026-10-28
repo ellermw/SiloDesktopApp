@@ -6869,7 +6869,7 @@ public partial class PlayerService : IDisposable
     }
 
     private static readonly QueuedLocalLog _queuedLog = new();
-    private static readonly Timer _logFlushTimer = new(_ => FlushLogs(), null, 100, 200);
+    private static readonly Timer _logFlushTimer = new(_ => _queuedLog.TryFlush(), null, 100, 200);
 
     private static void FlushLogs() => _queuedLog.Flush();
 
