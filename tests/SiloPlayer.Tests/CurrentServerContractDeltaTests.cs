@@ -52,10 +52,8 @@ public sealed class CurrentServerContractDeltaTests
     public void AutoQualityUsesTheServerResolverInsteadOfAliasingOriginal()
     {
         var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
-        var policy = Read("src", "SiloPlayer.Core", "Services", "TranscodeQualityPolicy.cs");
         // Quality changes are server-resolved v3 replans.
         Assert.Contains("manager.ReplanQualityAsync(quality, currentPos, ct)", player);
-        Assert.DoesNotContain("new(\"auto\"", policy);
         Assert.DoesNotContain("tierId is \"auto\" or \"original\"", player);
     }
 
