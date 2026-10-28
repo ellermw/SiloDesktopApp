@@ -34,7 +34,6 @@ public sealed class HlsProxy : IDisposable
     private TcpListener? _listener;
     private CancellationTokenSource? _cts;
     private Task? _acceptLoopTask;
-    private Task? _cleanupTask;
     private int _port;
     private int _nextClientTaskId;
     private bool _started;
@@ -700,7 +699,7 @@ public sealed class HlsProxy : IDisposable
             return;
         _disposed = true;
         Stop();
-        _cleanupTask = CleanupAsync(_acceptLoopTask, _cts);
+        _ = CleanupAsync(_acceptLoopTask, _cts);
         _cts = null;
         _acceptLoopTask = null;
     }
