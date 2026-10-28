@@ -76,7 +76,7 @@ public sealed class WatchTogetherCurrentParityTests
         var page = File.ReadAllText(SourcePath("src", "SiloPlayer", "Views", "WatchTogetherRoomPage.xaml.cs"));
         var navigatedTo = page[page.IndexOf("protected override async void OnNavigatedTo(", StringComparison.Ordinal)..page.IndexOf("private void OnCoordinatorStartRequested(", StringComparison.Ordinal)];
         var navigatedFrom = page[page.IndexOf("protected override void OnNavigatedFrom(", StringComparison.Ordinal)..];
-        var initialized = navigatedTo.IndexOf("await ViewModel.InitializeAsync(", StringComparison.Ordinal);
+        var initialized = navigatedTo.IndexOf("await joiningRoom.InitializeCurrentJoinAsync(", StringComparison.Ordinal);
         var staleCheck = navigatedTo.IndexOf("if (navigation != _navigationGeneration)", StringComparison.Ordinal);
         var subscribe = navigatedTo.IndexOf("coordinator.PlaybackStartRequested += OnCoordinatorStartRequested;", StringComparison.Ordinal);
 
