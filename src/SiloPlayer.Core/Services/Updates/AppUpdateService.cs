@@ -11,6 +11,21 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
     public string CacheDirectory => Path.GetFullPath(cacheDirectory);
     public event Action<AppUpdateState>? Changed;
 
+    public async Task RunAutomaticChecksAsync(CancellationToken ct)
+    {
+        try
+        {
+            var clock = timeProvider ?? TimeProvider.System;
+            await Task.Delay(TimeSpan.FromSeconds(5), clock, ct).ConfigureAwait(false);
+            while (!ct.IsCancellationRequested)
+            {
+                await CheckAsync(ct).ConfigureAwait(false);
+                await Task.Delay(State.Error is null ? TimeSpan.FromMinutes(15) : TimeSpan.FromMinutes(5), clock, ct).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
     public async Task CheckAsync(CancellationToken ct = default)
     {
         if (!await _operation.WaitAsync(0, ct).ConfigureAwait(false)) return;

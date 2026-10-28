@@ -39,6 +39,13 @@ function Wait-UpdateSetup([Diagnostics.Process]$Process,[int]$WarningAfterMillis
     try {& $OnLongRunning} finally {$Process.WaitForExit()}
     return $true
 }
+function New-UpdateSetupStartInfo([string]$Package,[string]$AppDirectory,[string]$InstallerLog) {
+    $start=New-Object Diagnostics.ProcessStartInfo
+    # Keep the launcher hidden, but show Inno Setup's installation progress.
+    $start.FileName=$Package; $start.UseShellExecute=$true; $start.Verb='runas'; $start.WindowStyle='Normal'
+    $start.Arguments='/SILENT /SUPPRESSMSGBOXES /SP- /NORESTART /NOCLOSEAPPLICATIONS /NOFORCECLOSEAPPLICATIONS /NORESTARTAPPLICATIONS /DIR="'+$AppDirectory+'" /LOG="'+$InstallerLog+'"'
+    return $start
+}
 try {
     $parsed=$null
     if (-not [version]::TryParse($Version,[ref]$parsed) -or $parsed.Build -lt 0 -or $parsed.Revision -lt 0 -or
@@ -107,11 +114,9 @@ try {
     }
     if ($VerifyOnly) {Write-Result 'verified-gate' 'Package and exit gate verified; no installation was launched.' $gateName;exit 0}
     Write-Result 'installing' 'Installing the verified update.' $gateName
-    $start=New-Object Diagnostics.ProcessStartInfo
-    $start.FileName=$package; $start.UseShellExecute=$true; $start.Verb='runas'; $start.WindowStyle='Hidden'
     $installerLog=Join-Path $root ('installer-'+[Guid]::NewGuid().ToString('N')+'.log')
     Assert-OrdinaryPath $installerLog
-    $start.Arguments='/VERYSILENT /SUPPRESSMSGBOXES /SP- /NORESTART /NOCLOSEAPPLICATIONS /NOFORCECLOSEAPPLICATIONS /NORESTARTAPPLICATIONS /DIR="'+$appDirectory+'" /LOG="'+$installerLog+'"'
+    $start=New-UpdateSetupStartInfo $package $appDirectory $installerLog
     $setup=[Diagnostics.Process]::Start($start)
     try {
         $longRunning=Wait-UpdateSetup -Process $setup -OnLongRunning {Write-Result 'installing' 'The installer is still running. Waiting safely without restarting Silo.' $gateName | Out-Null}

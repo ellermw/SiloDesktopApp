@@ -64,13 +64,8 @@ public sealed partial class MainWindow
     {
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(15), ct);
             await Task.Run(() => _appUpdates!.CleanupInstalledPackages(), ct);
-            while (!ct.IsCancellationRequested)
-            {
-                await _appUpdates!.CheckAsync(ct);
-                await Task.Delay(TimeSpan.FromHours(6), ct);
-            }
+            await _appUpdates!.RunAutomaticChecksAsync(ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "background_update_check"); }

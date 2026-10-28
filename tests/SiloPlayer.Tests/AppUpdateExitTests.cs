@@ -7,6 +7,45 @@ namespace SiloPlayer.Tests;
 
 public sealed class AppUpdateExitTests
 {
+    [Fact]
+    public async Task ExitHelperShowsInstallationProgressWhilePreservingItsSafetyArguments()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "silo-setup-presentation-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
+        var script = Path.Combine(root, "presentation.ps1");
+        await File.WriteAllTextAsync(script, $$"""
+            $ErrorActionPreference='Stop'
+            $tokens=$null; $errors=$null
+            $ast=[Management.Automation.Language.Parser]::ParseFile({{Quote(FindScript())}},[ref]$tokens,[ref]$errors)
+            if($errors.Count){throw 'Helper has parsing errors'}
+            $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'New-UpdateSetupStartInfo'},$true)
+            . ([scriptblock]::Create($function.Extent.Text))
+            $start=New-UpdateSetupStartInfo 'C:\Synthetic Cache\setup.exe' 'C:\Synthetic App' 'C:\Synthetic Log\setup.log'
+            @{file=$start.FileName;visible=$start.WindowStyle.ToString();shell=$start.UseShellExecute;verb=$start.Verb;arguments=$start.Arguments}|ConvertTo-Json -Compress
+            """);
+        var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"))
+        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script }) start.ArgumentList.Add(arg);
+        try
+        {
+            using var process = Process.Start(start)!;
+            var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            Assert.True(process.ExitCode == 0, await output + await error);
+            using var result = JsonDocument.Parse(await output); var p = result.RootElement;
+            Assert.Equal("Normal", p.GetProperty("visible").GetString());
+            Assert.True(p.GetProperty("shell").GetBoolean()); Assert.Equal("runas", p.GetProperty("verb").GetString());
+            Assert.Equal("C:\\Synthetic Cache\\setup.exe", p.GetProperty("file").GetString());
+            var arguments = p.GetProperty("arguments").GetString()!;
+            Assert.Contains("/SILENT ", arguments); Assert.DoesNotContain("/VERYSILENT", arguments);
+            Assert.Contains("/NOCLOSEAPPLICATIONS /NOFORCECLOSEAPPLICATIONS /NORESTARTAPPLICATIONS", arguments);
+            Assert.Contains("/DIR=\"C:\\Synthetic App\"", arguments);
+            Assert.Contains("/LOG=\"C:\\Synthetic Log\\setup.log\"", arguments);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

@@ -42,6 +42,25 @@ internal static class AppUpdateNativeFixture
         window.Closed += (_, _) => closed.TrySetResult();
         var nav = (NavigationView)root.FindName("NavView"); nav.IsPaneVisible = true; nav.IsPaneOpen = true;
         var updates = services.GetRequiredService<AppUpdateService>();
+        if (scenario == "background")
+        {
+            using var stop = new CancellationTokenSource();
+            var loop = (Task)typeof(MainWindow).GetMethod("RunUpdateChecksAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(window, [stop.Token])!;
+            try
+            {
+                var until = DateTime.UtcNow.AddSeconds(10);
+                while (updates.State.Release is null && DateTime.UtcNow < until) await Task.Delay(25);
+                await Until(() => ((Button)root.FindName("UpdateAvailableButton")).Visibility == Visibility.Visible
+                    && Descendants<TextBlock>(root).Any(text => text.Text == "Silo 1.2.999 is available."));
+                if (services.GetRequiredService<UpdateWire>().Downloads != 0 || services.GetRequiredService<SafeInstaller>().Calls != 0)
+                    throw new InvalidOperationException("Notification-only background discovery downloaded or installed without consent.");
+                await CaptureAsync(root, "automatic-update-notice.png");
+                Program.Log("PASS: actual background scheduler discovers the update and renders the green persistent indicator and actionable toast without a manual check, download or installation.");
+            }
+            finally { stop.Cancel(); await loop; }
+            return;
+        }
         await updates.CheckAsync();
         var indicator = root.FindName("UpdateAvailableButton") as Button
             ?? throw new InvalidOperationException("The persistent update indicator is missing.");

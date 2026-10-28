@@ -9,6 +9,62 @@ namespace SiloPlayer.Tests;
 
 public sealed class AppUpdateTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AutomaticChecksDiscoverNewReleasesWithoutManualInputAndRetryFailures(bool firstCheckFails)
+    {
+        using var clock = new CheckClock(); using var wire = new ChangingRelease(firstCheckFails);
+        using var http = new HttpClient(wire);
+        var service = new AppUpdateService(http, Path.GetTempPath(), new Version(1, 2, 334), timeProvider: clock);
+        using var stop = new CancellationTokenSource();
+        var loop = service.RunAutomaticChecksAsync(stop.Token);
+        try
+        {
+            var first = await clock.NextAsync(); Assert.Equal(TimeSpan.FromSeconds(5), first.Due); first.Fire();
+            var next = await clock.NextAsync();
+            Assert.Equal(firstCheckFails ? TimeSpan.FromMinutes(5) : TimeSpan.FromMinutes(15), next.Due);
+            Assert.Null(service.State.Release); Assert.Equal(1, wire.Checks);
+            next.Fire();
+            var after = await clock.NextAsync();
+            Assert.Equal(TimeSpan.FromMinutes(15), after.Due);
+            Assert.Equal(new Version(1, 2, 335, 0), service.State.Release?.Version);
+            Assert.Equal(2, wire.Checks); Assert.Null(service.State.Error);
+        }
+        finally { stop.Cancel(); await loop.WaitAsync(TimeSpan.FromSeconds(5)); }
+    }
+
+    private sealed class ChangingRelease(bool fails) : HttpMessageHandler
+    {
+        public int Checks;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var first = Interlocked.Increment(ref Checks) == 1;
+            return Task.FromResult(new HttpResponseMessage(first && fails ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK)
+            { Content = new StringContent(first ? Release(tag: "v1.2.334") : Release()) });
+        }
+    }
+
+    private sealed class CheckClock : TimeProvider, IDisposable
+    {
+        private readonly global::System.Threading.Channels.Channel<Pending> _pending = global::System.Threading.Channels.Channel.CreateUnbounded<Pending>();
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new Pending(callback, state, dueTime); _pending.Writer.TryWrite(timer); return timer;
+        }
+        public async Task<Pending> NextAsync() => await _pending.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        public void Dispose() { }
+        public sealed class Pending(TimerCallback callback, object? state, TimeSpan due) : ITimer
+        {
+            public TimeSpan Due => due;
+            private bool _disposed;
+            public void Fire() { if (!_disposed) callback(state); }
+            public bool Change(TimeSpan dueTime, TimeSpan period) => throw new NotSupportedException();
+            public void Dispose() => _disposed = true;
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+        }
+    }
+
     internal const string Digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     internal const string AssetUrl = "https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.335/SiloInstaller-Windows-x64.exe";
 
