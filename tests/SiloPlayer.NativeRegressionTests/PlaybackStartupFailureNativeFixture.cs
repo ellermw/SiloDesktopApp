@@ -72,7 +72,7 @@ internal static class PlaybackStartupFailureNativeFixture
             var preparedType = typeof(PlayerService).GetNestedType("PreparedPlaybackTransport", BindingFlags.NonPublic)!;
             var url = media.Origin + "/stream/direct/fixture";
             var prepared = Activator.CreateInstance(preparedType, Flags | BindingFlags.Public, null,
-                [PlaybackTransportPlanner.Plan("direct", url), url, mode == "initial" ? 649.47d : 0d, 0d, 0d, (double?)1200d, true, null], null)!;
+                [PlaybackTransportPlanner.Plan("direct", url), url, mode == "initial" ? 649.47d : 0d, 0d, 0d, (double?)1200d, true], null)!;
             if (mode == "stale")
             {
                 // Queue the old attempt's terminal UI action, then synchronously

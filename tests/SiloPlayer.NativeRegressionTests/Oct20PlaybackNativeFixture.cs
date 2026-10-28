@@ -40,7 +40,7 @@ internal static class Oct20PlaybackNativeFixture
         }
         var preparedType = typeof(PlayerService).GetNestedType("PreparedPlaybackTransport", BindingFlags.NonPublic)!;
         var prepared = Activator.CreateInstance(preparedType, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
-            null, [PlaybackTransportPlanner.Plan("direct", wave), wave, 0d, 0d, 0d, (double?)60d, true, null], null)!;
+            null, [PlaybackTransportPlanner.Plan("direct", wave), wave, 0d, 0d, 0d, (double?)60d, true], null)!;
         Call(service, "WireMpvEvents");
         Call(service, "ApplyPreparedTransport", prepared);
         await LoadAsync(room: true, pauseDuringLoad: null);

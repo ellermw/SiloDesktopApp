@@ -33,8 +33,8 @@ public sealed class PlaybackSeekBehaviorTests
 
         Assert.Contains("PlaybackTransportPlanner.Plan(session)", source);
         Assert.Contains("PlaybackTransportKind.DirectProgressive", source);
-        Assert.Contains("MpvLoadStartSeconds: mediaStartSeconds", source);
-        Assert.Contains("TimelineOffsetSeconds: mediaStartSeconds", source);
+        // v3: direct streams start at the resume point on the plan's timeline.
+        Assert.Contains("PlaybackTimeline.ToPlayerTime(mediaStartSeconds, session.TimelineOffsetSeconds)", source);
         Assert.Contains("BeginMpvLoad(prepared, restorePaused: IsWatchTogetherPlayback);", source);
         Assert.Contains("prepared.Plan.TransportKind == PlaybackTransportKind.DirectProgressive", source);
         Assert.Contains("? TimeSpan.FromSeconds(15)", source);

@@ -249,7 +249,6 @@ public sealed class PlayerServiceSourceTests
             "Services",
             "PlayerService.cs"));
 
-        Assert.Contains("Failed to prepare HLS playback.", source);
         Assert.DoesNotContain(
             """
             LogToFile("player_transcode_error.txt", ex.ToString());
@@ -493,7 +492,7 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
-    public void QualitySwitchFailureKeepsOrRecoversTheExistingPlaybackSession()
+    public void QualitySwitchFailureKeepsTheExistingPlaybackSession()
     {
         var source = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
@@ -508,8 +507,7 @@ public sealed class PlayerServiceSourceTests
         Assert.True(methodEnd > methodStart);
 
         var method = source[methodStart..methodEnd];
-        Assert.Contains("if (!transportReplaced)", method);
-        Assert.Contains("RecoverInterruptedStreamAsync(currentPos, \"quality-switch-failed\")", method);
+        Assert.Contains("ShowNotice(title, detail, \"error\");", method);
         Assert.DoesNotContain("ShowPlaybackError(\"Transcode failed\"", method);
     }
 
@@ -525,7 +523,6 @@ public sealed class PlayerServiceSourceTests
 
         Assert.Contains("var replacementAccepted = false;", source, StringComparison.Ordinal);
         Assert.Contains("RecoverInterruptedStreamAsync(currentPos, \"version-switch-failed\")", source, StringComparison.Ordinal);
-        Assert.Contains("RecoverInterruptedStreamAsync(currentPos, \"quality-reset-failed\")", source, StringComparison.Ordinal);
         Assert.Contains("var transportMutationAttempted = false;", source, StringComparison.Ordinal);
         Assert.Contains("RecoverInterruptedStreamAsync(CurrentMediaPosition, \"subtitle-switch-failed\")", source, StringComparison.Ordinal);
     }
@@ -740,7 +737,7 @@ public sealed class PlayerServiceSourceTests
     }
 
     [Fact]
-    public void AcceptedHlsAudioSwitchRecoversInsteadOfLeavingAnInvalidatedStream()
+    public void AudioSwitchReplansTheV3SessionAndNeverPatchesAudioOnTheServer()
     {
         var source = File.ReadAllText(Path.Combine(
             FindRepositoryRoot(),
@@ -753,11 +750,11 @@ public sealed class PlayerServiceSourceTests
         Assert.True(methodStart >= 0 && methodEnd > methodStart);
         var method = source[methodStart..methodEnd];
 
-        Assert.Contains("var serverTransportChanged = false;", method, StringComparison.Ordinal);
-        Assert.Contains("manager.ApplyAudioChange(response);", method, StringComparison.Ordinal);
-        Assert.Contains("serverTransportChanged = true;", method, StringComparison.Ordinal);
-        Assert.Contains("RecoverInterruptedStreamAsync(currentPos, \"audio-switch-failed\")", method, StringComparison.Ordinal);
-        Assert.Contains("if (serverTransportChanged && CurrentSwitch())", method, StringComparison.Ordinal);
+        // Every session is protocol v3: audio changes go through a replan.
+        // The pre-v3 PATCH /audio path (and its recovery) no longer exists.
+        Assert.Contains("manager.ReplanAudioAsync(trackIndex, currentPos, ct)", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("ChangeAudioTrackAsync", method, StringComparison.Ordinal);
+        Assert.DoesNotContain("ApplyAudioChange", method, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -991,24 +988,13 @@ public sealed class PlayerServiceSourceTests
             "Services",
             "PlayerService.cs"));
 
+        // v3 plans carry the transport-local start and timeline offset.
         Assert.Contains(
-            "MpvLoadStartSeconds: Math.Max(0, transcodeResponse.PlayerStartSeconds)",
-            source,
-            StringComparison.Ordinal);
-        Assert.DoesNotContain(
-            "MpvLoadStartSeconds: transcodeResponse.CanSeekAnywhere",
+            ": Math.Max(0, session.PlayerStartSeconds),",
             source,
             StringComparison.Ordinal);
         Assert.Contains(
-            "response.StreamOriginSeconds",
-            source,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "response.TimelineOffsetSeconds",
-            source,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "var canSeekAnywhere = response.CanSeekAnywhere ?? !copyWindow;",
+            "TimelineOffsetSeconds: Math.Max(0, session.TimelineOffsetSeconds),",
             source,
             StringComparison.Ordinal);
         Assert.Contains(
@@ -1017,10 +1003,6 @@ public sealed class PlayerServiceSourceTests
             StringComparison.Ordinal);
         Assert.Contains(
             "PlaybackTimeline.ToPlayerTime(",
-            source,
-            StringComparison.Ordinal);
-        Assert.Contains(
-            "MpvLoadStartSeconds: playerStart",
             source,
             StringComparison.Ordinal);
     }
@@ -1038,10 +1020,8 @@ public sealed class PlayerServiceSourceTests
         Assert.True(
             source.Split("_activeQualityTier = \"original\";", StringSplitOptions.None).Length - 1 >= 3,
             "The quality tier must be initialized and reset at both playback start and teardown.");
-        Assert.Contains(
-            "TranscodeQualityPolicy.ResolveInitialVideoTier(",
-            source,
-            StringComparison.Ordinal);
+        // The v3 plan reports the active quality; the client does not pick one.
+        Assert.Contains("_activeQualityTier = session.ActiveQuality;", source, StringComparison.Ordinal);
     }
 
     [Fact]

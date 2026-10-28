@@ -196,15 +196,7 @@ public partial class PlaybackManager : IDisposable
 
         LogToStateTrace($"StartSession response: play_method={response.PlayMethod}, session={response.SessionId}, position={response.Position:F1}");
 
-        var url = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
-        if (response.ProtocolVersion < 3 &&
-            response.PlayMethod == "remux" &&
-            response.Position > 0 &&
-            !PlaybackTransportPlanner.IsHlsStreamUrl(response.StreamUrl))
-            url += (url.Contains('?') ? "&" : "?") + "seek=" +
-                response.Position.ToString("F3", System.Globalization.CultureInfo.InvariantCulture);
-
-        StreamUrl = url;
+        StreamUrl = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
         StartProgressReporting();
         _ = RecordRouteEventAsync(response, "plan_selected");
         return response;
@@ -696,23 +688,6 @@ public partial class PlaybackManager : IDisposable
     {
         _lastReportedPosition = position;
         _isPaused = isPaused;
-    }
-
-    public void ApplyAudioChange(ChangeAudioResponse response)
-    {
-        ArgumentNullException.ThrowIfNull(response);
-        if (CurrentSession == null) return;
-
-        CurrentSession.AudioTrackIndex = response.AudioTrackIndex;
-        if (!string.IsNullOrWhiteSpace(response.PlayMethod))
-            CurrentSession.PlayMethod = response.PlayMethod;
-        if (!string.IsNullOrWhiteSpace(response.StreamUrl))
-        {
-            CurrentSession.StreamUrl = response.StreamUrl;
-            StreamUrl = PlaybackDeliveryUrl.Resolve(_apiClient.BaseUrl, response.StreamUrl);
-        }
-        if (response.PlaybackInfo != null)
-            CurrentSession.PlaybackInfo = response.PlaybackInfo;
     }
 
     public async Task ReportProgressNowAsync(

@@ -38,12 +38,6 @@ public partial class PlaybackApi(SiloApiClient client)
 
     public Task<PlaybackMutationReceipt> StopPlaybackAsync(string sessionId, CancellationToken ct = default)
         => StopV2Async(sessionId, ct);
-    public Task<TranscodeStartResponse> StartTranscodeAsync(TranscodeStartRequest request, CancellationToken ct = default)
-        => throw new NotSupportedException("Playback API v2 changes delivery through a playback replan.");
-
-    public Task<ChangeAudioResponse> ChangeAudioTrackAsync(string sessionId, int trackIndex, double position, CancellationToken ct = default)
-        => throw new NotSupportedException("Playback API v2 changes audio through a playback replan.");
-
     public Task<SubtitleAiStatus> GetSubtitleAiStatusAsync(CancellationToken ct = default)
         => client.GetAsync<SubtitleAiStatus>("/api/v2/subtitles/ai/status", ct);
 
@@ -271,15 +265,3 @@ public class SubtitleLanguageDetection
     public string Source { get; set; } = "";
 }
 
-public class ChangeAudioResponse
-{
-    public int AudioTrackIndex { get; set; }
-    public string PlayMethod { get; set; } = "";
-    public string StreamUrl { get; set; } = "";
-    public string SwitchMode { get; set; } = "";
-    public double? PlayerStartSeconds { get; set; }
-    public double? StreamOriginSeconds { get; set; }
-    public double? TimelineOffsetSeconds { get; set; }
-    public bool? CanSeekAnywhere { get; set; }
-    public PlaybackInfo? PlaybackInfo { get; set; }
-}
