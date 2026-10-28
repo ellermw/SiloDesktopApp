@@ -855,110 +855,6 @@ public sealed partial class SettingsPage
         ((StackPanel)group.Child).Children.Add(row);
     }
 
-    private void AddDeviceToggle(Border group, SettingsApi api, UserDevice device,
-        IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, string key,
-        string label, string description, bool fallback)
-    {
-        var row = SettingsRow(label, description, out var controls);
-        AddChangedHereIndicator(row, controls, api, device, values, key);
-        var toggle = new ToggleSwitch { OnContent = "", OffContent = "", IsOn = ReadDeviceBool(values, key, fallback) };
-        toggle.Toggled += async (_, _) =>
-        {
-            toggle.IsEnabled = false;
-            try { await api.SetContractSettingValueAsync(key, "profile_device", toggle.IsOn, device.DeviceId, device.ProfileId); }
-            catch (Exception ex) { Toast($"Could not save {label}: {ex.Message}", error: true); }
-            finally { toggle.IsEnabled = true; }
-        };
-        controls.Children.Add(toggle);
-        ((StackPanel)group.Child).Children.Add(row);
-    }
-
-    private void AddDeviceSelect(Border group, SettingsApi api, UserDevice device,
-        IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, string key,
-        string label, string description, (string Value, string Label)[] options, bool numeric = false)
-    {
-        var row = SettingsRow(label, description, out var controls);
-        AddChangedHereIndicator(row, controls, api, device, values, key);
-        var combo = new ComboBox { MinWidth = 220 };
-        foreach (var option in options)
-            combo.Items.Add(new ComboBoxItem { Content = option.Label, Tag = option.Value });
-        var current = ReadDeviceScalar(values, key);
-        SelectComboBoxByTag(combo, current);
-        combo.SelectionChanged += async (_, _) =>
-        {
-            if (combo.SelectedItem is not ComboBoxItem { Tag: string selected }) return;
-            combo.IsEnabled = false;
-            try
-            {
-                if (numeric && string.IsNullOrEmpty(selected))
-                    await api.DeleteContractSettingValueAsync(key, "profile_device", device.DeviceId, device.ProfileId);
-                else
-                    await api.SetContractSettingValueAsync(key, "profile_device",
-                        numeric && int.TryParse(selected, out var number) ? number : selected, device.DeviceId, device.ProfileId);
-            }
-            catch (Exception ex) { Toast($"Could not save {label}: {ex.Message}", error: true); }
-            finally { combo.IsEnabled = true; }
-        };
-        controls.Children.Add(combo);
-        ((StackPanel)group.Child).Children.Add(row);
-    }
-
-    private void AddDeviceNumber(Border group, SettingsApi api, UserDevice device,
-        IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, string key,
-        string label, string description, double minimum, double maximum, string unit = "Milliseconds")
-    {
-        var row = SettingsRow(label, description, out var controls);
-        AddChangedHereIndicator(row, controls, api, device, values, key);
-        var box = new NumberBox
-        {
-            Minimum = minimum,
-            Maximum = maximum,
-            SmallChange = 50,
-            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
-            Value = double.TryParse(ReadDeviceScalar(values, key), out var value) ? value : 0,
-            Width = 150,
-            Header = unit,
-        };
-        box.ValueChanged += async (_, args) =>
-        {
-            if (double.IsNaN(args.NewValue)) return;
-            box.IsEnabled = false;
-            try { await api.SetContractSettingValueAsync(key, "profile_device", (int)args.NewValue, device.DeviceId, device.ProfileId); }
-            catch (Exception ex) { Toast($"Could not save {label}: {ex.Message}", error: true); }
-            finally { box.IsEnabled = true; }
-        };
-        controls.Children.Add(box);
-        ((StackPanel)group.Child).Children.Add(row);
-    }
-
-    private void AddDeviceDecimal(Border group, SettingsApi api, UserDevice device,
-        IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, string key,
-        string label, string description, double minimum, double maximum, double step, string unit)
-    {
-        var row = SettingsRow(label, description, out var controls);
-        AddChangedHereIndicator(row, controls, api, device, values, key);
-        var box = new NumberBox
-        {
-            Minimum = minimum,
-            Maximum = maximum,
-            SmallChange = step,
-            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact,
-            Value = double.TryParse(ReadDeviceScalar(values, key), out var value) ? value : 1,
-            Width = 150,
-            Header = unit,
-        };
-        box.ValueChanged += async (_, args) =>
-        {
-            if (double.IsNaN(args.NewValue)) return;
-            box.IsEnabled = false;
-            try { await api.SetContractSettingValueAsync(key, "profile_device", args.NewValue, device.DeviceId, device.ProfileId); }
-            catch (Exception ex) { Toast($"Could not save {label}: {ex.Message}", error: true); }
-            finally { box.IsEnabled = true; }
-        };
-        controls.Children.Add(box);
-        ((StackPanel)group.Child).Children.Add(row);
-    }
-
     private void AddDevicePanelButton(Border group, SettingsApi api, UserDevice device,
         IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, string key,
         string label, string description, string buttonText)
@@ -1170,24 +1066,6 @@ public sealed partial class SettingsPage
         if (age.TotalDays < 1) return $"{(int)age.TotalHours} hours ago";
         return $"{(int)age.TotalDays} days ago";
     }
-
-    private static string ReadDeviceScalar(IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, string key)
-    {
-        if (!values.TryGetValue(key, out var entry)) return "";
-        return entry.Value.ValueKind switch
-        {
-            JsonValueKind.String => entry.Value.GetString() ?? "",
-            JsonValueKind.Number => entry.Value.GetRawText(),
-            JsonValueKind.True => "true",
-            JsonValueKind.False => "false",
-            _ => "",
-        };
-    }
-
-    private static bool ReadDeviceBool(IReadOnlyDictionary<string, ContractEffectiveSettingEntry> values, string key, bool fallback)
-        => values.TryGetValue(key, out var entry) && entry.Value.ValueKind is JsonValueKind.True or JsonValueKind.False
-            ? entry.Value.GetBoolean()
-            : fallback;
 
     private async Task<bool> ConfirmAsync(string title, string message)
     {

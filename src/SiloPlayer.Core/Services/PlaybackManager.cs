@@ -490,13 +490,6 @@ public partial class PlaybackManager : IDisposable
         }
     }
 
-    private PlaybackTrackIdentityV3 FindSubtitleIdentity(int combinedIndex)
-    {
-        var track = _currentPlanV3?.Subtitle.Inventory.FirstOrDefault(item => item.CombinedIndex == combinedIndex)
-            ?? throw new InvalidOperationException("The selected subtitle is no longer available in the active playback plan.");
-        return new PlaybackTrackIdentityV3 { Id = track.TrackId, Index = track.CombinedIndex };
-    }
-
     private async Task<PlaybackStartResponse> ReplanAsync(
         string operation,
         double positionSeconds,

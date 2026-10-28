@@ -176,18 +176,8 @@ public sealed partial class LoginPage : Page
     private async void StartDeviceLoginButton_Click(object sender, RoutedEventArgs e)
         => await ViewModel.StartDeviceLoginAsync();
 
-    private void ShowDeviceFallbackButton_Click(object sender, RoutedEventArgs e)
-        => ViewModel.ShowDeviceFallback = true;
-
     private void RestartDeviceLoginButton_Click(object sender, RoutedEventArgs e)
         => ViewModel.CancelDeviceLogin(clearSession: true);
-
-    private async void OpenDeviceVerificationButton_Click(object sender, RoutedEventArgs e)
-    {
-        var url = ViewModel.DeviceSession?.VerificationUri;
-        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
-            await Windows.System.Launcher.LaunchUriAsync(uri);
-    }
 
 
 }

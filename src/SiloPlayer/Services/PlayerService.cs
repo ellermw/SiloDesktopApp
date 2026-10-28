@@ -1207,19 +1207,6 @@ public partial class PlayerService : IDisposable
     private bool CaptureUserPausedState()
         => (_mpv?.IsPaused ?? IsPaused) && _mpv?.IsBufferingForCache != true;
 
-    /// <summary>
-    /// Change the active audio track AND persist the choice. The index is
-    /// 1-based to match mpv's <c>aid</c> property.
-    /// </summary>
-    public async Task SetAudioTrackAndPersistAsync(int mpvTrackIndex, string? language)
-    {
-        var trackIndex = Math.Max(0, mpvTrackIndex - 1);
-        var preference = CaptureAudioPreference(trackIndex, language);
-        _playbackManager?.RecordLocalAudioSelection(trackIndex);
-        _mpv?.SetAudioTrack(mpvTrackIndex);
-        await PersistAudioPreferenceAsync(preference);
-    }
-
     // ── State ────────────────────────────────────────────────────────────
 
     public PlayerState State { get; private set; } = PlayerState.Idle;
@@ -3101,24 +3088,6 @@ public partial class PlayerService : IDisposable
             dispatcher.TryEnqueue(() => _ = CloseAsync());
         else
             _ = CloseAsync();
-    }
-
-    /// <summary>
-    /// Hide the mpv popup window without changing player state. Used by
-    /// MainWindow when the Playing Next cinematic fires — the main window
-    /// needs to be visible so the overlay Grid shows, but we don't want
-    /// to fully tear down the player (state stays Expanded) in case the
-    /// user hits "Play Now" and we resume straight into the next episode.
-    /// </summary>
-    public void HideVideoPopup()
-    {
-        _videoWindow?.Hide();
-    }
-
-    /// <summary>Re-show the mpv popup window (complement to <see cref="HideVideoPopup"/>).</summary>
-    public void ShowVideoPopup()
-    {
-        _videoWindow?.Show();
     }
 
     /// <summary>Reset all next-episode fields to their default null state.</summary>
@@ -5202,10 +5171,6 @@ public partial class PlayerService : IDisposable
         return 0;
     }
 
-    private int ResolveNativeEmbeddedCount()
-        => _playbackManager?.CurrentSession?.SubtitleUrls?
-            .Count(t => string.Equals(t.Source, "embedded", StringComparison.OrdinalIgnoreCase)) ?? 0;
-
     private void SendTitleToOsc()
     {
         if (_mpv == null) return;
@@ -6412,69 +6377,6 @@ public partial class PlayerService : IDisposable
         _mpv?.SendScriptMessage("osc-set-subtitle-ai-available", available ? "true" : "false");
     }
 
-    private async Task SearchAndDownloadSubtitlesAsync()
-    {
-        if (_playbackManager?.CurrentSession == null) return;
-        var fileId = _playbackManager.CurrentSession.MediaFileId;
-
-        try
-        {
-            // Use the series/profile-effective subtitle language (set by the
-            // server on each watch response) instead of hardcoded English.
-            // Falls back to "en" when no preference is set at any level.
-            var watchDetail = _playbackManager.WatchDetail;
-            var preferred = watchDetail?.EffectiveSubtitleLanguage;
-            if (string.IsNullOrWhiteSpace(preferred))
-                preferred = _authService.SelectedProfile?.SubtitleLanguage;
-            var languages = !string.IsNullOrWhiteSpace(preferred)
-                ? new[] { preferred! }
-                : new[] { "en" };
-
-            _mpv?.ShowOsdText($"Searching {languages[0].ToUpperInvariant()} subtitles…", 2000);
-            var results = await _playbackApi.SearchSubtitlesAsync(fileId, languages);
-            if (results.Results.Count == 0)
-            {
-                // Widen the search to English if the preferred language found nothing.
-                if (languages[0] != "en")
-                {
-                    _mpv?.ShowOsdText($"No {languages[0].ToUpperInvariant()} subs — trying EN…", 2000);
-                    results = await _playbackApi.SearchSubtitlesAsync(fileId, ["en"]);
-                }
-                if (results.Results.Count == 0)
-                {
-                    _mpv?.ShowOsdText("No subtitles found", 3000);
-                    return;
-                }
-            }
-
-            // Pick best by score, then prefer matching language, then prefer
-            // non-hearing-impaired (matches what upstream's auto-pick would do
-            // when no user interaction is possible over the mpv fullscreen).
-            var best = results.Results
-                .OrderByDescending(r => r.Score)
-                .ThenByDescending(r => string.Equals(r.Language, languages[0], StringComparison.OrdinalIgnoreCase))
-                .ThenBy(r => r.HearingImpaired)
-                .First();
-            var download = await _playbackApi.DownloadSubtitleAsync(fileId, best);
-            var label = string.IsNullOrEmpty(best.ReleaseName)
-                ? $"{best.Language.ToUpperInvariant()} ({best.Provider})"
-                : $"{best.Language.ToUpperInvariant()} · {best.ReleaseName}";
-            _mpv?.ShowOsdText($"Downloaded: {label}", 3000);
-
-            // Reload subtitles
-            _ = Task.Run(LoadSubtitles);
-            SendSubtitleListToOsc();
-            var subtitleId = download.Subtitle?.Id ?? download.Id;
-            if (subtitleId > 0 && _subtitleSyncCts is { } syncOwner)
-                await ReadSubtitleSyncAsync("stored-" + subtitleId, syncOwner.Token, watch: true);
-        }
-        catch (Exception ex)
-        {
-            LogToFile("player_subtitle_error.txt", ex.ToString());
-            _mpv?.ShowOsdText("Subtitle search failed", 3000);
-        }
-    }
-
     private void ToggleFullscreenFromOsc()
     {
         if (_videoWindow == null) return;
@@ -7276,19 +7178,6 @@ public partial class PlayerService : IDisposable
         {
             LogToFile("state_trace.txt", $"markers_updated handling failed: {ex.Message}");
         }
-    }
-
-    private static TimeRange? ReadMarkerRange(JsonElement element)
-    {
-        if (element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
-            return null;
-        if (element.ValueKind != JsonValueKind.Object)
-            return null;
-        if (!element.TryGetProperty("start", out var startEl) || !startEl.TryGetDouble(out var start))
-            return null;
-        if (!element.TryGetProperty("end", out var endEl) || !endEl.TryGetDouble(out var end))
-            return null;
-        return end > start ? new TimeRange { Start = start, End = end } : null;
     }
 
     private static string FormatMarker(TimeRange? marker)

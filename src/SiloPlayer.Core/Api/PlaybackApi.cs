@@ -140,9 +140,6 @@ public partial class PlaybackApi(SiloApiClient client)
     public Task<SubtitleListResponse> GetSubtitlesAsync(int mediaFileId, CancellationToken ct = default)
         => client.GetAsync<SubtitleListResponse>($"/api/v2/subtitles/{mediaFileId}", ct);
 
-    public Task DeleteSubtitleAsync(long id, CancellationToken ct = default)
-        => client.DeleteAsync($"/api/v2/subtitles/stored/{id}", ct);
-
     public Task<SubtitleSearchResponse> SearchSubtitlesAsync(int mediaFileId, string[] languages, CancellationToken ct = default)
         => client.PostAsync<SubtitleSearchResponse>("/api/v2/subtitles/search",
             new Dictionary<string, object?>

@@ -337,11 +337,6 @@ public sealed partial class NotificationsPage : Page
         SeriesView.Visibility = _showSeries ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private static Brush GetTabBrush(bool active)
-        => active
-            ? (Brush)Application.Current.Resources["SurfaceBrush"]
-            : new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-
     private void NotificationRow_Loaded(object sender, RoutedEventArgs e)
     {
         if (sender is Grid row) UpdateNotificationRow(row);

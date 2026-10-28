@@ -272,16 +272,6 @@ public partial class SiloApiClient
     public void SetProfileVerificationRequiredHandler(Action<ProfileVerificationContext> handler) =>
         _profileVerificationRequired = handler;
 
-    public bool IsCurrentProfileContext(ProfileVerificationContext context)
-    {
-        lock (_authStateGate)
-        {
-            return _authenticationGeneration == context.AuthenticationGeneration &&
-                _requestContextGeneration == context.RequestContextGeneration &&
-                string.Equals(_profileId, context.ProfileId, StringComparison.Ordinal);
-        }
-    }
-
     public bool TryClearProfile(ProfileVerificationContext context)
     {
         lock (_authStateGate)
@@ -558,16 +548,6 @@ public partial class SiloApiClient
         return await SendAsync<T>(request, ct);
     }
 
-    public async Task<T> PutBytesAsync<T>(string path, ReadOnlyMemory<byte> body,
-        string contentType = "application/octet-stream", CancellationToken ct = default)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Put, BuildUrl(path));
-        AddHeaders(request);
-        request.Content = new ByteArrayContent(body.ToArray());
-        request.Content.Headers.ContentType = new MediaTypeHeaderValue(contentType);
-        return await SendAsync<T>(request, ct);
-    }
-
     public async Task PutNoContentAsync(string path, object? body = null, CancellationToken ct = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Put, BuildUrl(path));
@@ -594,11 +574,6 @@ public partial class SiloApiClient
         string path, object body, string fileFieldName, string fileName,
         byte[] fileBytes, string contentType, CancellationToken ct = default)
         => SendJsonWithFileAsync<T>(HttpMethod.Put, path, body, fileFieldName, fileName, fileBytes, contentType, ct);
-
-    public Task<T> PostJsonWithFileAsync<T>(
-        string path, object body, string fileFieldName, string fileName,
-        byte[] fileBytes, string contentType, CancellationToken ct = default)
-        => SendJsonWithFileAsync<T>(HttpMethod.Post, path, body, fileFieldName, fileName, fileBytes, contentType, ct);
 
     private async Task<T> SendJsonWithFileAsync<T>(
         HttpMethod method, string path, object body, string fileFieldName,
@@ -647,9 +622,6 @@ public partial class SiloApiClient
         request.Content = form;
         return await SendAsync<T>(request, ct).ConfigureAwait(false);
     }
-
-    public Task<T> PatchWithETagAsync<T>(string path, object body, string etag, CancellationToken ct = default)
-        => SendConditionalAsync<T>(HttpMethod.Patch, path, body, etag, ct);
 
     public Task<T> PutWithETagAsync<T>(string path, object body, string etag, CancellationToken ct = default)
         => SendConditionalAsync<T>(HttpMethod.Put, path, body, etag, ct);

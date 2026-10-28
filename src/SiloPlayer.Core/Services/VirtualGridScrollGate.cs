@@ -22,29 +22,6 @@ public static class VirtualGridScrollGate
         return Math.Max(0, (int)Math.Floor(Math.Max(0, verticalOffset) / rowHeight));
     }
 
-    public static bool HasFirstVisibleRowChanged(
-        int? previousRow,
-        double verticalOffset,
-        double rowHeight,
-        out int currentRow)
-    {
-        currentRow = GetFirstVisibleRow(verticalOffset, rowHeight);
-        return previousRow != currentRow;
-    }
-
-    public static double GetRelativeItemTop(
-        int itemIndex,
-        int columns,
-        int windowStartRow,
-        double rowHeight)
-    {
-        if (columns <= 0 || rowHeight <= 0)
-            return 0;
-
-        var itemRow = Math.Max(0, itemIndex / columns);
-        return Math.Max(0, itemRow - Math.Max(0, windowStartRow)) * rowHeight;
-    }
-
     public static int GetVisibleRowCount(double viewportHeight, double rowHeight, double verticalOffset = 0)
     {
         if (viewportHeight <= 0 || rowHeight <= 0)
@@ -52,15 +29,6 @@ public static class VirtualGridScrollGate
 
         var partialFirstRow = Math.Max(0, verticalOffset) % rowHeight;
         return Math.Max(1, (int)Math.Ceiling((viewportHeight + partialFirstRow) / rowHeight));
-    }
-
-    public static int GetMaxFirstVisibleRow(int totalItems, int columns, int visibleRows)
-    {
-        if (totalItems <= 0 || columns <= 0)
-            return 0;
-
-        var totalRows = (int)Math.Ceiling(totalItems / (double)columns);
-        return Math.Max(0, totalRows - Math.Max(1, visibleRows));
     }
 
     public static (int StartIndex, int EndIndex) ClampRealizedItemRange(
@@ -107,20 +75,5 @@ public static class VirtualGridScrollGate
             startIndex,
             endIndex,
             Math.Max(columns, maxItems));
-    }
-
-    public static (double Left, double Top) GetSlotPosition(
-        int slotIndex,
-        int columns,
-        double itemWidth,
-        double columnGap,
-        double rowHeight)
-    {
-        if (slotIndex < 0 || columns <= 0 || itemWidth <= 0 || rowHeight <= 0)
-            return (0, 0);
-
-        var column = slotIndex % columns;
-        var row = slotIndex / columns;
-        return (column * (itemWidth + columnGap), row * rowHeight);
     }
 }
