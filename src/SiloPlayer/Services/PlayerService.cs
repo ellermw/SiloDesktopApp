@@ -4956,6 +4956,10 @@ public partial class PlayerService : IDisposable
     /// canonical position and pause state. PGS deliberately does not use this
     /// path because libmpv can render the server's .sup sidecar directly.
     /// </summary>
+    /// <returns>
+    /// True when a transport reload or recovery now owns playback, so the
+    /// caller must not restore the outgoing stream's position or pause state.
+    /// </returns>
     private async Task<bool> SetBitmapSubtitleBurnInAsync(
         SubtitleTrackInfo? track,
         int? postLoadSubtitleIndex = null)
@@ -4999,6 +5003,12 @@ public partial class PlayerService : IDisposable
                 if (_closing || manager.CurrentSession != replanned) return false;
                 ApplyPreparedTransport(preparedV3);
                 PlayMethod = replanned.PlayMethod;
+                // Clearing burn-in for a text track: the Off replan above made
+                // Off the viewer's choice. Record the text pick again so later
+                // replans and reloads keep it, as for any local text selection.
+                if (track is null && postLoadSubtitleIndex is int textIndex &&
+                    replanned.SubtitleUrls.Any(t => t.Index == textIndex))
+                    manager.RecordLocalSubtitleSelection(textIndex);
                 _pendingInitialServerSubtitleIndex = postLoadSubtitleIndex;
                 BeginMpvLoad(preparedV3, restorePaused: wasPaused);
                 _mpv.ShowOsdText(track is null ? "Bitmap subtitles off" : $"{track.Label} · burned in", 2500);
@@ -5115,6 +5125,9 @@ public partial class PlayerService : IDisposable
                     "The subtitle transport switch was interrupted. Restoring playback from your current position…",
                     "warning");
                 _ = RecoverInterruptedStreamAsync(CurrentMediaPosition, "subtitle-switch-failed");
+                // Recovery now owns the transport; callers must not restore
+                // the outgoing stream's position or pause state.
+                return true;
             }
             else
             {
@@ -5175,6 +5188,12 @@ public partial class PlayerService : IDisposable
         if (_mpv == null) return;
         if (IsUnsupportedBitmapSubtitle(track))
         {
+            // After a burn-in reload, the post-load selection lands here with
+            // the track the plan already burns in. Replanning again would
+            // reload and reselect it indefinitely.
+            if (_playbackManager?.CurrentSession is { IsSubtitleBurnedIn: true } burned &&
+                string.Equals(burned.SelectedSubtitleTrackId, track.TrackId, StringComparison.Ordinal))
+                return;
             _ = SetBitmapSubtitleBurnInAsync(track);
             return;
         }
