@@ -4,7 +4,7 @@
 # Usage: pwsh -File installer/build.ps1
 
 param(
-    [string]$Configuration = "Release",
+    [ValidateSet('Debug','Release')][string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
     [string]$PublishDirectory = "",
     [string]$SigningCertificateThumbprint = $env:SILO_SIGNING_CERT_THUMBPRINT,
@@ -16,7 +16,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $InstallerDir = $PSScriptRoot
 $PublishDir = if ([string]::IsNullOrWhiteSpace($PublishDirectory)) {
-    "$InstallerDir\publish"
+    Join-Path $InstallerDir ('publish-' + [Guid]::NewGuid().ToString('N'))
 } elseif ([System.IO.Path]::IsPathRooted($PublishDirectory)) {
     $PublishDirectory
 } else {
@@ -24,6 +24,49 @@ $PublishDir = if ([string]::IsNullOrWhiteSpace($PublishDirectory)) {
 }
 $OutputDir = "$InstallerDir\output"
 $ProjectPath = "$RepoRoot\src\SiloPlayer\SiloPlayer.csproj"
+
+function Assert-NoLinkedPublishPath {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $current=[IO.Path]::GetFullPath($Path)
+    while($current) {
+        try {
+            if(([IO.File]::GetAttributes($current) -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "Refusing a linked build path: '$current'."
+            }
+        } catch [IO.FileNotFoundException] { } catch [IO.DirectoryNotFoundException] { }
+        $current=[IO.Path]::GetDirectoryName($current)
+    }
+}
+
+function Get-DedicatedPublishDirectory {
+    param([Parameter(Mandatory=$true)][string]$Path,[Parameter(Mandatory=$true)][string]$RepositoryRoot)
+    $fullPath=[IO.Path]::GetFullPath($Path)
+    Assert-NoLinkedPublishPath $fullPath
+    $trimmed=$fullPath.TrimEnd('\','/')
+    $repository=[IO.Path]::GetFullPath($RepositoryRoot).TrimEnd('\','/')
+    $separator=[IO.Path]::DirectorySeparatorChar
+    if([string]::IsNullOrEmpty($trimmed) -or
+        $trimmed -eq [IO.Path]::GetPathRoot($fullPath).TrimEnd('\','/') -or
+        ($repository+$separator).StartsWith($trimmed+$separator,[StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing a publish directory that is a filesystem root or contains the repository."
+    }
+    $protected=@([Environment]::GetFolderPath('Windows'),[Environment]::GetFolderPath('ProgramFiles'),
+        [Environment]::GetFolderPath('ProgramFilesX86'),(Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'SiloPlayer'))
+    foreach($location in $protected) {
+        if([string]::IsNullOrWhiteSpace($location)){continue}
+        $location=[IO.Path]::GetFullPath($location).TrimEnd('\','/')
+        if($trimmed.Equals($location,[StringComparison]::OrdinalIgnoreCase) -or
+            ($trimmed+$separator).StartsWith($location+$separator,[StringComparison]::OrdinalIgnoreCase)) {
+            throw 'System, installed-application and account-data directories cannot be build outputs.'
+        }
+    }
+    if([IO.File]::Exists($fullPath) -or
+        ((Test-Path -LiteralPath $fullPath) -and (Get-ChildItem -LiteralPath $fullPath -Force|Select-Object -First 1))) {
+        throw "Refusing to overwrite populated output '$fullPath'. Existing files, installed players and frozen publishes are preserved. Choose a new or empty folder."
+    }
+    return $fullPath
+}
+$PublishDir=Get-DedicatedPublishDirectory -Path $PublishDir -RepositoryRoot $RepoRoot
 
 $SigningCertificate = $null
 if (-not [string]::IsNullOrWhiteSpace($SigningCertificateThumbprint)) {
@@ -92,33 +135,7 @@ if ($WinAppSdkActualSha256 -ne $WinAppSdkInstallerSha256) {
 }
 
 Write-Host "=== Publishing app ($Configuration, $Runtime) ==="
-# The publish directory is deleted recursively. Only accept a dedicated output
-# folder: never a drive root, the repository or one of its ancestors, or an
-# existing folder that holds anything other than an earlier Silo publish.
-function Clear-DedicatedPublishDirectory {
-    param(
-        [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$RepositoryRoot
-    )
-
-    $fullPath = [System.IO.Path]::GetFullPath($Path)
-    $trimmed = $fullPath.TrimEnd('\', '/')
-    $repository = [System.IO.Path]::GetFullPath($RepositoryRoot).TrimEnd('\', '/')
-    $separator = [System.IO.Path]::DirectorySeparatorChar
-    if ([string]::IsNullOrEmpty($trimmed) -or
-        $trimmed -eq [System.IO.Path]::GetPathRoot($fullPath).TrimEnd('\', '/') -or
-        ($repository + $separator).StartsWith($trimmed + $separator, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing to use '$fullPath' as the publish directory: it is a drive root or contains the repository."
-    }
-    if ((Test-Path -LiteralPath $fullPath) -and
-        (Get-ChildItem -LiteralPath $fullPath -Force | Select-Object -First 1) -and
-        -not (Test-Path -LiteralPath (Join-Path $fullPath "SiloPlayer.exe"))) {
-        throw "Refusing to delete '$fullPath': it already contains files that are not a Silo publish. Choose a new or empty folder."
-    }
-    if (Test-Path -LiteralPath $fullPath) { Remove-Item -LiteralPath $fullPath -Recurse -Force }
-    return $fullPath
-}
-$PublishDir = Clear-DedicatedPublishDirectory -Path $PublishDir -RepositoryRoot $RepoRoot
+# Publishing starts from new/empty output; previous payloads are never deleted.
 
 # Clean obj/{Release,x64/Release} and bin/{Release,x64/Release} for the app project
 # to force every .xbf to recompile against the current XamlTypeInfo.g.cs. WinUI 3's
@@ -135,9 +152,26 @@ $CleanPaths = @(
     (Join-Path $AppProjectDir "bin\x64\$Configuration")
 )
 foreach ($p in $CleanPaths) {
-    if (Test-Path $p) {
+    $clean=[IO.Path]::GetFullPath($p)
+    if(!$clean.StartsWith([IO.Path]::GetFullPath($AppProjectDir)+'\',[StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Generated cleanup path escaped the application project.'
+    }
+    Assert-NoLinkedPublishPath $clean
+    if(Test-Path -LiteralPath $clean) {
+        $pending=New-Object 'Collections.Generic.Stack[string]'
+        $pending.Push($clean)
+        while($pending.Count) {
+            foreach($item in Get-ChildItem -LiteralPath $pending.Pop() -Force) {
+                if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){throw 'Generated cleanup contains a linked entry.'}
+                if($item.PSIsContainer){$pending.Push($item.FullName)}
+            }
+        }
+    }
+}
+foreach ($p in $CleanPaths) {
+    if (Test-Path -LiteralPath $p) {
         Write-Host "Cleaning $p"
-        Remove-Item -Recurse -Force $p
+        Remove-Item -LiteralPath $p -Recurse -Force
     }
 }
 
