@@ -7,6 +7,10 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
     private readonly SemaphoreSlim _operation = new(1, 1);
     private AppUpdateState _state = new();
     private long _lastSuccessfulCheckStamp;
+    private ReleaseCheck? _lastCheck;
+    private TimeSpan? _rateLimitedFor;
+    private static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(15), RetryInterval = TimeSpan.FromMinutes(5),
+        MaximumRateLimitWait = TimeSpan.FromHours(6);
     public AppUpdateState State => Volatile.Read(ref _state);
     public string CacheDirectory => Path.GetFullPath(cacheDirectory);
     public event Action<AppUpdateState>? Changed;
@@ -20,10 +24,19 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
             while (!ct.IsCancellationRequested)
             {
                 await CheckAsync(ct).ConfigureAwait(false);
-                await Task.Delay(State.Error is null ? TimeSpan.FromMinutes(15) : TimeSpan.FromMinutes(5), clock, ct).ConfigureAwait(false);
+                await Task.Delay(NextCheckDelay(), clock, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
+    // A rate-limited network is not retried every five minutes: that spends the
+    // shared hourly budget again. Wait for GitHub's reset, within sane bounds.
+    private TimeSpan NextCheckDelay()
+    {
+        if (State.Error is null) return CheckInterval;
+        if (_rateLimitedFor is not { } limited) return RetryInterval;
+        return limited < RetryInterval ? RetryInterval : limited > MaximumRateLimitWait ? MaximumRateLimitWait : limited;
     }
 
     public async Task CheckAsync(CancellationToken ct = default)
@@ -34,7 +47,9 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
             SetState(State with { IsChecking = true, Error = null });
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
             deadline.CancelAfter(TimeSpan.FromSeconds(12));
-            var release = await new GitHubReleaseReader(http).ReadAsync(currentVersion, deadline.Token).ConfigureAwait(false);
+            var check = await new GitHubReleaseReader(http, timeProvider).ReadAsync(currentVersion, _lastCheck, deadline.Token).ConfigureAwait(false);
+            _lastCheck = check; _rateLimitedFor = null;
+            var release = check.Release;
             Interlocked.Exchange(ref _lastSuccessfulCheckStamp, System.Diagnostics.Stopwatch.GetTimestamp());
             var same = release is not null && State.Release?.Version == release.Version && State.Release.Sha256 == release.Sha256;
             SetState(new AppUpdateState(release, ReadyInstaller: same ? State.ReadyInstaller : null));
@@ -47,6 +62,7 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
         catch (Exception ex)
         {
             Interlocked.Exchange(ref _lastSuccessfulCheckStamp, 0);
+            _rateLimitedFor = ex is UpdateCheckRateLimitedException limited ? limited.RetryAfter ?? RetryInterval : null;
             log?.Invoke($"check_failed kind={ex.GetType().Name} status={(ex as HttpRequestException)?.StatusCode}");
             SetState(State with { IsChecking = false, Error = ex is OperationCanceledException
                 ? "The update check timed out. Try again." : "Could not check for updates. " + ex.Message });

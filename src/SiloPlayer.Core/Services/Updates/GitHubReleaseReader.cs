@@ -6,7 +6,17 @@ using SiloPlayer.Core.Models.Updates;
 
 namespace SiloPlayer.Core.Services.Updates;
 
-internal sealed class GitHubReleaseReader(HttpClient http)
+/// <summary>A release check result and the validator that lets GitHub answer the next check with 304.</summary>
+internal sealed record ReleaseCheck(AppRelease? Release, string? ETag);
+
+/// <summary>GitHub limited unauthenticated checks from this network; retry no sooner than <see cref="RetryAfter"/>.</summary>
+internal sealed class UpdateCheckRateLimitedException(System.Net.HttpStatusCode status, TimeSpan? retryAfter)
+    : HttpRequestException("GitHub is limiting update checks from this network. Silo will try again later.", null, status)
+{
+    public TimeSpan? RetryAfter { get; } = retryAfter;
+}
+
+internal sealed class GitHubReleaseReader(HttpClient http, TimeProvider? clock = null)
 {
     internal const long MaximumInstallerBytes = 512L * 1024 * 1024;
     internal const int MaximumMetadataBytes = 512 * 1024;
@@ -14,13 +24,26 @@ internal sealed class GitHubReleaseReader(HttpClient http)
     internal const string RepositoryUrl = "https://github.com/ellermw/SiloDesktopApp";
 
     public async Task<AppRelease?> ReadAsync(Version installed, CancellationToken ct)
+        => (await ReadAsync(installed, previous: null, ct).ConfigureAwait(false)).Release;
+
+    /// <summary>
+    /// Unauthenticated GitHub API calls share 60 requests an hour per IP
+    /// address. A conditional request answered 304 does not count against
+    /// that limit, so repeated checks reuse <paramref name="previous"/>.
+    /// </summary>
+    public async Task<ReleaseCheck> ReadAsync(Version installed, ReleaseCheck? previous, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get,
             "https://api.github.com/repos/ellermw/SiloDesktopApp/releases/latest");
         request.Headers.UserAgent.ParseAdd("SiloDesktopApp/" + installed);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         request.Headers.Add("X-GitHub-Api-Version", "2026-03-10");
+        if (previous?.ETag is { } etag) request.Headers.TryAddWithoutValidation("If-None-Match", etag);
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotModified && previous is not null)
+            return previous;
+        if (response.StatusCode is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.TooManyRequests && IsRateLimited(response))
+            throw new UpdateCheckRateLimitedException(response.StatusCode, RetryDelay(response));
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException($"GitHub returned HTTP {(int)response.StatusCode}.", null, response.StatusCode);
         if (response.Content.Headers.ContentLength is > MaximumMetadataBytes)
@@ -34,7 +57,27 @@ internal sealed class GitHubReleaseReader(HttpClient http)
             if (bytes.Length + read > MaximumMetadataBytes) throw new InvalidDataException("Update metadata is too large.");
             bytes.Write(buffer, 0, read);
         }
-        using var json = JsonDocument.Parse(bytes.ToArray(), new JsonDocumentOptions { MaxDepth = 24 });
+        return new ReleaseCheck(Parse(bytes.ToArray(), installed), response.Headers.ETag?.ToString());
+    }
+
+    private static bool IsRateLimited(HttpResponseMessage response)
+        => response.StatusCode == System.Net.HttpStatusCode.TooManyRequests || response.Headers.RetryAfter is not null ||
+            (response.Headers.TryGetValues("X-RateLimit-Remaining", out var remaining) && remaining.FirstOrDefault() == "0");
+
+    private TimeSpan? RetryDelay(HttpResponseMessage response)
+    {
+        var now = (clock ?? TimeProvider.System).GetUtcNow();
+        if (response.Headers.RetryAfter is { } retry)
+            return retry.Delta ?? (retry.Date is { } date ? date - now : null);
+        if (response.Headers.TryGetValues("X-RateLimit-Reset", out var reset) &&
+            long.TryParse(reset.FirstOrDefault(), NumberStyles.None, CultureInfo.InvariantCulture, out var seconds))
+            return DateTimeOffset.FromUnixTimeSeconds(seconds) - now;
+        return null;
+    }
+
+    private static AppRelease? Parse(byte[] metadata, Version installed)
+    {
+        using var json = JsonDocument.Parse(metadata, new JsonDocumentOptions { MaxDepth = 24 });
         var root = json.RootElement;
         if (root.GetProperty("draft").GetBoolean() || root.GetProperty("prerelease").GetBoolean()) return null;
         var tag = root.GetProperty("tag_name").GetString() ?? "";
