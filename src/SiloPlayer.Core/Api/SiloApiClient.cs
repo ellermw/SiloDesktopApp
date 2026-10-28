@@ -897,7 +897,17 @@ public partial class SiloApiClient
             _tokenRefresher != null)
         {
             bool refreshed = false;
-            await _refreshLock.WaitAsync(ct).ConfigureAwait(false);
+            try
+            {
+                await _refreshLock.WaitAsync(ct).ConfigureAwait(false);
+            }
+            catch
+            {
+                // The 401 was read with ResponseHeadersRead; disposing it returns
+                // the pooled connection instead of pinning it until finalization.
+                response.Dispose();
+                throw;
+            }
             try
             {
                 // Never replay an old request in a replacement user's session. Token
@@ -910,7 +920,15 @@ public partial class SiloApiClient
                     refreshed = !string.Equals(currentContext.AccessToken, sentAccessToken, StringComparison.Ordinal);
                     if (!refreshed)
                     {
-                        refreshed = await _tokenRefresher(ct).ConfigureAwait(false);
+                        try
+                        {
+                            refreshed = await _tokenRefresher(ct).ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            response.Dispose();
+                            throw;
+                        }
                         currentContext = GetRequestContextSnapshot();
                         refreshed = refreshed &&
                             currentContext.AuthenticationGeneration == sentAuthenticationGeneration &&

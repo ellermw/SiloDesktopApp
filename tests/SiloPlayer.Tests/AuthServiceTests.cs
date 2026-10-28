@@ -53,6 +53,76 @@ public sealed class AuthServiceTests
     }
 
     [Fact]
+    public async Task ScheduledRefresh_LoadsAuthoritativeAccountAfterRescheduling()
+    {
+        var releaseFirstDelay = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var accountRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var delayCall = 0;
+        Task ControlledDelay(TimeSpan dueTime, CancellationToken ct)
+            => Interlocked.Increment(ref delayCall) == 1
+                ? releaseFirstDelay.Task.WaitAsync(ct)
+                : Task.Delay(Timeout.InfiniteTimeSpan, ct);
+
+        var handler = new DelegateHandler((request, _) =>
+        {
+            if (request.RequestUri?.AbsolutePath == "/api/v2/auth/refresh")
+                return Task.FromResult(JsonResponse(
+                    """{"access_token":"new-access","refresh_token":"new-refresh","expires_in":86400}"""));
+
+            accountRead.TrySetResult();
+            return Task.FromResult(JsonResponse(
+                """{"id":"1","username":"tester","role":"admin","permissions":[]}"""));
+        });
+        var apiClient = new SiloApiClient(new HttpClient(handler));
+        apiClient.SetBaseUrl("https://example.test");
+        using var authService = new AuthService(
+            apiClient,
+            new AuthApi(apiClient),
+            credentialStore: null,
+            ControlledDelay);
+        var userChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        authService.SetTokens("old-access", "old-refresh", expiresIn: 100);
+        authService.UserChanged += () =>
+        {
+            if (authService.CurrentUser?.Role == "admin") userChanged.TrySetResult();
+        };
+
+        releaseFirstDelay.TrySetResult();
+
+        await accountRead.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await userChanged.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal("new-refresh", authService.RefreshToken);
+        Assert.Equal("tester", authService.CurrentUser?.Username);
+    }
+
+    [Fact]
+    public async Task FailingTokenRefresher_DisposesTheUnauthorizedResponse()
+    {
+        var content = new TrackingContent();
+        var handler = new DelegateHandler((_, _) => Task.FromResult(
+            new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = content }));
+        var apiClient = new SiloApiClient(new HttpClient(handler));
+        apiClient.SetBaseUrl("https://example.test");
+        apiClient.SetTokenRefresher(_ => throw new InvalidOperationException("refresh failed"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => apiClient.GetAsync<Dictionary<string, object>>("/api/v2/account/me"));
+
+        Assert.True(content.Disposed);
+    }
+
+    private sealed class TrackingContent : StringContent
+    {
+        public TrackingContent() : base("{}", Encoding.UTF8, "application/json") { }
+        public bool Disposed { get; private set; }
+        protected override void Dispose(bool disposing)
+        {
+            Disposed = true;
+            base.Dispose(disposing);
+        }
+    }
+
+    [Fact]
     public async Task ConcurrentTryRefreshAsync_ReusesSingleRotatingRefreshToken()
     {
         var refreshCalls = 0;

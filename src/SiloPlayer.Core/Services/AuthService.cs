@@ -631,7 +631,11 @@ public class AuthService : IDisposable
         try
         {
             await _delayAsync(dueTime, ct).ConfigureAwait(false);
-            await TryRefreshAsync(ct).ConfigureAwait(false);
+            // Do not hand the schedule token to the refresh: a successful refresh
+            // reschedules, which cancels this token while the same call still
+            // needs it for the authoritative account read. Session generation
+            // checks already discard a refresh that logout or a new login replaced.
+            await TryRefreshAsync(CancellationToken.None).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
