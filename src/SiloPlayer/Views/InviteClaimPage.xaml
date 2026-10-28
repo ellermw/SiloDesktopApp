@@ -53,8 +53,7 @@
                                Foreground="{StaticResource PrimaryTextBrush}" />
                     <!-- A silo://invite link can name any server; show which one. -->
                     <TextBlock x:Name="ServerOriginText" FontFamily="Consolas" FontSize="12"
-                               TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}"
-                               AutomationProperties.Name="Server address" />
+                               TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
                     <TextBlock Text="Choose a password and you’re in. You’ll sign in with your email address."
                                FontSize="14" LineHeight="24" TextWrapping="Wrap"
                                Foreground="{StaticResource SecondaryTextBrush}" />

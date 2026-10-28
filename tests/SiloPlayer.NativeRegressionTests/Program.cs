@@ -148,6 +148,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await RequestDiscoverCurrentNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "security-origins")
+            {
+                await ServerOriginSecurityNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "reader-interop")
             {
                 await ReaderInteropFixture.RunAsync(parent);

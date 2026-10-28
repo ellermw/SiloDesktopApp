@@ -60,8 +60,7 @@
                         <TextBlock
                             x:Name="ServerOriginText"
                             FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
-                            Foreground="{StaticResource SecondaryTextBrush}"
-                            AutomationProperties.Name="Server address" />
+                            Foreground="{StaticResource SecondaryTextBrush}" />
 
                         <TextBlock
                             Text="{x:Bind ViewModel.LoginSubtitle, Mode=OneWay}"
