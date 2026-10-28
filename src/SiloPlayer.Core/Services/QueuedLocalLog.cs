@@ -21,17 +21,29 @@ public sealed class QueuedLocalLog(string? logDirectory = null, Func<DateTime>? 
         // timer flush still holds dequeued lines that are not yet written.
         lock (_flushGate)
         {
-            if (_queue.IsEmpty)
-                return;
-            var batches = new Dictionary<string, List<(DateTime, string)>>();
-            while (_queue.TryDequeue(out var entry))
-            {
-                if (!batches.TryGetValue(entry.File, out var list))
-                    batches[entry.File] = list = [];
-                list.Add((entry.RecordedAt, entry.Line));
-            }
-            foreach (var (fileName, lines) in batches)
-                LocalLog.AppendTimestampedLines(fileName, lines, logDirectory);
+            FlushPending();
         }
+    }
+
+    /// <summary>Periodic callers skip an active flush instead of occupying another worker while disk I/O stalls.</summary>
+    public bool TryFlush()
+    {
+        if (!Monitor.TryEnter(_flushGate)) return false;
+        try { FlushPending(); return true; }
+        finally { Monitor.Exit(_flushGate); }
+    }
+
+    private void FlushPending()
+    {
+        if (_queue.IsEmpty) return;
+        var batches = new Dictionary<string, List<(DateTime, string)>>();
+        while (_queue.TryDequeue(out var entry))
+        {
+            if (!batches.TryGetValue(entry.File, out var list))
+                batches[entry.File] = list = [];
+            list.Add((entry.RecordedAt, entry.Line));
+        }
+        foreach (var (fileName, lines) in batches)
+            LocalLog.AppendTimestampedLines(fileName, lines, logDirectory);
     }
 }
