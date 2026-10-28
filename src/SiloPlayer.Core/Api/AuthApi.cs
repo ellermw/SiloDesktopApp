@@ -182,32 +182,6 @@ public partial class AuthApi(SiloApiClient client)
         return client.GetUnauthenticatedAsync<ServerIdentity>("/api/v2/system/identity", ct);
     }
 
-    public async Task<Uri> StartOAuthAsync(int installationId, CancellationToken ct = default)
-    {
-        if (installationId <= 0)
-            throw new ArgumentOutOfRangeException(nameof(installationId));
-        if (string.IsNullOrWhiteSpace(client.BaseUrl))
-            throw new InvalidOperationException("Server URL is not configured.");
-
-        using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
-        using var request = new HttpRequestMessage(
-            HttpMethod.Post,
-            $"{client.BaseUrl}/api/v2/auth/oauth/{installationId}/init");
-        using var response = await http.SendAsync(request, ct);
-
-        if ((int)response.StatusCode is >= 300 and < 400 && response.Headers.Location != null)
-        {
-            var location = response.Headers.Location;
-            return location.IsAbsoluteUri ? location : new Uri(new Uri(client.BaseUrl), location);
-        }
-
-        var message = await response.Content.ReadAsStringAsync(ct);
-        throw new ApiException(
-            "oauth_init_failed",
-            string.IsNullOrWhiteSpace(message) ? "Failed to start OAuth sign-in." : message.Trim(),
-            (int)response.StatusCode);
-    }
-
     public Task<OAuthCompleteResponse> CompleteOAuthAsync(string code, CancellationToken ct = default)
         => CompleteOAuthAsync(client.BaseUrl, code, ct);
 
