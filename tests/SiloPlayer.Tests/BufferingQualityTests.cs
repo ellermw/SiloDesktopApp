@@ -139,4 +139,26 @@ public class BufferingQualityTests
         Assert.True(NativeBufferingSignalPolicy.IsOutage(true,false,15000,true));
         Assert.False(NativeBufferingSignalPolicy.IsOutage(false,true,5000));
     }
+
+    [Fact]
+    public void BufferingObservationReadsLibMpvBeforeTakingTheGateTheUiThreadShares()
+    {
+        // libmpv property reads may wait for a busy core; the UI thread takes
+        // _bufferingGate for pill reads, key handling and Keep/obscure updates.
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root != null && !File.Exists(Path.Combine(root.FullName, "SiloPlayer.sln"))) root = root.Parent;
+        Assert.NotNull(root);
+        var source = File.ReadAllText(Path.Combine(root.FullName, "src", "SiloPlayer", "Services", "PlayerService.BufferingQuality.cs"));
+        var start = source.IndexOf("private void ObserveBufferingQuality()", StringComparison.Ordinal);
+        var method = source[start..source.IndexOf("public void SetBufferingPillObscured(", start, StringComparison.Ordinal)];
+        var gate = method.IndexOf("lock (_bufferingGate)", StringComparison.Ordinal);
+        Assert.True(gate > 0);
+        foreach (var read in new[] { "ReadMediaNetworkObservation()", "CaptureUserPausedState()", "CurrentMediaPosition", "IsBufferingForCache" })
+        {
+            var at = method.IndexOf(read, StringComparison.Ordinal);
+            Assert.True(at >= 0 && at < gate, read + " must be read before the buffering gate.");
+            Assert.Equal(-1, method.IndexOf(read, gate, StringComparison.Ordinal));
+        }
+        Assert.Contains("!ReferenceEquals(_mpv, mpv)", method[gate..]);
+    }
 }

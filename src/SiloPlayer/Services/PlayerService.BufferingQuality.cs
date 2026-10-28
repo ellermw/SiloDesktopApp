@@ -88,13 +88,18 @@ public partial class PlayerService
     {
         BufferingQualityAction? action;
         BufferingActionOwner? actionOwner;
+        var mpv = _mpv;
+        if (Volatile.Read(ref _bufferingController) == null || mpv == null || _closing || State == PlayerState.Idle) return;
+        // libmpv reads can wait for a busy player core. Take them before the
+        // gate that UI-thread pill reads and key handling also take.
+        var now = Environment.TickCount64;
+        var sample = mpv.ReadMediaNetworkObservation();
+        var paused = _restorePausedAfterLoad ?? CaptureUserPausedState();
+        var position = CurrentMediaPosition;
+        var cacheWait = mpv.IsBufferingForCache;
         lock (_bufferingGate)
         {
-            if (_bufferingController == null || _mpv == null || _closing || State == PlayerState.Idle || !ReferenceEquals(_bufferingManager, _playbackManager)) return;
-            var now = Environment.TickCount64;
-            var sample = _mpv.ReadMediaNetworkObservation();
-            var paused = _restorePausedAfterLoad ?? CaptureUserPausedState();
-            var position = CurrentMediaPosition;
+            if (_bufferingController == null || !ReferenceEquals(_mpv, mpv) || _closing || State == PlayerState.Idle || !ReferenceEquals(_bufferingManager, _playbackManager)) return;
             var jump = _bufferingLastPosition is double previous && Math.Abs(position - previous) > Math.Max(4, (now - _bufferingLastPositionAt) / 1000d * 3);
             _bufferingLastPosition = position; _bufferingLastPositionAt = now;
             var seeking = sample.Seeking || jump || _qualitySwitchActive || (_switchingContent && _transportHasFirstOutput) || !double.IsFinite(sample.BufferedSeconds);
@@ -106,7 +111,7 @@ public partial class PlayerService
                 rate = kbps >= 100 ? (int)Math.Min(kbps, 1000000) : null;
             }
             if (rate != null) _bufferingLastDataAt = now;
-            var wait = _mpv.IsBufferingForCache || (!_transportHasFirstOutput && IsLoading);
+            var wait = cacheWait || (!_transportHasFirstOutput && IsLoading);
             var silence = sample.SinceLastByteMs ?? now - _bufferingLastDataAt;
             var segmented = _bufferingSession?.Delivery is "server_transcode_hls" or "server_remux_hls";
             var outage = NativeBufferingSignalPolicy.IsOutage(wait, sample.TransportFailing, silence, segmented);
