@@ -37,6 +37,11 @@ public sealed partial class LoginPage : Page
             ViewModel.ServerUrl = server.Url;
             ViewModel.ServerName = server.Name;
         }
+        // Password submission uses AuthService's configured API destination,
+        // including returns from recovery/device pages without server metadata.
+        ViewModel.ServerUrl = App.Services.GetRequiredService<AuthService>().ConfiguredServerUrl;
+        ServerOriginText.Text = ServerOriginDisplay.Format(ViewModel.ServerUrl);
+        ServerOriginText.Visibility = ServerOriginText.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
 
         // Surface the selected server's display name in the card header (web parity:
         // web uses the server branding name as the auth card title).

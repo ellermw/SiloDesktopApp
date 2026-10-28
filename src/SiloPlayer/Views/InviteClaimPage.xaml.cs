@@ -32,6 +32,7 @@ public sealed partial class InviteClaimPage : Page
         }
 
         _navigation = navigation;
+        ServerOriginText.Text = ServerOriginDisplay.Format(navigation.ServerUrl);
         await ViewModel.LoadAsync(navigation);
         UpdateState();
         if (ViewModel.Invitation != null) PasswordBox.Focus(FocusState.Programmatic);

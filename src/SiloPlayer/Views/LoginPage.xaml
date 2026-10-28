@@ -56,6 +56,12 @@
                             Foreground="{StaticResource PrimaryTextBrush}"
                             CharacterSpacing="-40" />
 
+                        <!-- The server this password goes to; its name and artwork are server-provided. -->
+                        <TextBlock
+                            x:Name="ServerOriginText"
+                            FontFamily="Consolas" FontSize="12" TextWrapping="Wrap"
+                            Foreground="{StaticResource SecondaryTextBrush}" />
+
                         <TextBlock
                             Text="{x:Bind ViewModel.LoginSubtitle, Mode=OneWay}"
                             Style="{StaticResource SecondaryTextStyle}"
