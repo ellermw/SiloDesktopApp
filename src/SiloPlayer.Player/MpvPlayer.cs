@@ -6,13 +6,10 @@ using static SiloPlayer.Player.MpvInterop;
 namespace SiloPlayer.Player;
 
 /// <summary>
-/// High-level wrapper around libmpv that uses the software render API (MPV_RENDER_API_TYPE_SW).
-/// mpv decodes video (optionally using d3d11va-copy for hardware decode) and renders each frame
-/// into a caller-provided byte buffer. The caller (PlayerService) copies that buffer into a
-/// WriteableBitmap displayed in a XAML Image element.
-///
-/// This completely decouples mpv from WinUI 3's D3D11 compositor, eliminating the thread
-/// contention that blocked the UI when using wid/vo=gpu.
+/// High-level wrapper around libmpv. The app uses <see cref="InitializeWithWindow"/>:
+/// mpv renders with vo=gpu-next/D3D11 into an owned window and draws the Silo OSC.
+/// <see cref="Initialize"/> uses the software render API into a memory buffer
+/// (<see cref="FrameReady"/>); it is kept as the headless native test harness.
 /// </summary>
 public sealed partial class MpvPlayer : IDisposable
 {
@@ -208,7 +205,13 @@ public sealed partial class MpvPlayer : IDisposable
         }
 
         // Create software render context
-        CreateRenderContext();
+        try { CreateRenderContext(); }
+        catch
+        {
+            mpv_terminate_destroy(_mpvHandle);
+            _mpvHandle = IntPtr.Zero;
+            throw;
+        }
 
         // Set update callback (fires from mpv's internal thread when a new frame is ready)
         _updateCallbackDelegate = OnRenderUpdate;
@@ -321,11 +324,15 @@ public sealed partial class MpvPlayer : IDisposable
         SetOption("osc", "no");
         SetOption("osd-level", "1");
 
-        // Load Silo's custom OSC
+        // Load Silo's custom OSC. mpv scripts can run programs, so only the copy
+        // shipped beside the executable is trusted; the source-tree fallback is a
+        // development convenience that must never resolve outside a dev build.
         var exeDir = Path.GetDirectoryName(System.Environment.ProcessPath) ?? "";
         var oscPath = Path.Combine(exeDir, "libs", "mpv", "scripts", "silo-osc.lua");
+#if DEBUG
         if (!File.Exists(oscPath))
             oscPath = Path.Combine(exeDir, "..", "..", "..", "..", "libs", "mpv", "scripts", "silo-osc.lua");
+#endif
         if (File.Exists(oscPath))
             SetOption("scripts", oscPath);
 
