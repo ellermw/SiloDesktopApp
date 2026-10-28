@@ -32,7 +32,7 @@ public sealed class CurrentServerContractDeltaTests
         Assert.Contains("MediaFileId", response);
         var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
         Assert.Contains("SetBitmapSubtitleBurnInAsync", player);
-        Assert.Contains("manager.ReplanSubtitleAsync(track?.Index, position, ct)", player);
+        Assert.Contains("manager.ReplanSubtitleAsync(track?.Index ?? postLoadSubtitleIndex, position, ct)", player);
         Assert.Contains("Pgs deliberately does not use this", player, StringComparison.OrdinalIgnoreCase);
     }
 
