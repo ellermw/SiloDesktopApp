@@ -34,6 +34,7 @@
     <Compile Include="..\..\src\SiloPlayer\ViewModels\CalendarViewModel.cs" Link="Production\CalendarViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\AccountPasswordViewModel.cs" Link="Production\AccountPasswordViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\Messaging\MediaSurfaceMessages.cs" Link="Production\MediaSurfaceMessages.cs" />
+    <Compile Include="..\..\src\SiloPlayer\Services\DetailCacheInvalidation.cs" Link="Production\DetailCacheInvalidation.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\VirtualCatalogItems.cs" Link="Production\VirtualCatalogItems.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\BulkObservableCollection.cs" Link="Production\BulkObservableCollection.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\EbookPackageExtractor.cs" Link="Production\EbookPackageExtractor.cs" />

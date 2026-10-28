@@ -300,7 +300,14 @@ public partial class App : Application
         // Populated lazily on first PosterCard bind.
         services.AddSingleton<CardOverlayService>();
         services.AddSingleton<UICustomizationService>();
-        services.AddSingleton<ItemDetailPrefetchCache>();
+        services.AddSingleton(provider =>
+        {
+            var cache = new ItemDetailPrefetchCache(
+                provider.GetRequiredService<CatalogApi>(),
+                provider.GetRequiredService<AuthService>());
+            DetailCacheInvalidation.Attach(cache);
+            return cache;
+        });
         services.AddSingleton<EpisodeSpoilerPreferences>();
 
         // Player service (owns mpv lifecycle, not tied to page navigation)
