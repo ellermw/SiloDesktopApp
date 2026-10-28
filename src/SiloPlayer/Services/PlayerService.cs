@@ -191,11 +191,31 @@ public partial class PlayerService : IDisposable
 
     /// <summary>
     /// Persist the current <see cref="Volume"/> + <see cref="IsMuted"/> to
-    /// AppSettings. Called from the overlay / mini-bar on every change so
-    /// the next launch restores the same level.
+    /// AppSettings. Callers invoke this on every slider step, key repeat and
+    /// OSC wheel notch, so the synchronous settings write is coalesced to one
+    /// write after input settles; close and shutdown flush immediately.
     /// </summary>
     public void SaveVolumeState()
     {
+        var dispatcher = App.MainWindowInstance?.DispatcherQueue;
+        if (dispatcher == null) { SaveVolumeStateNow(); return; }
+        if (!dispatcher.HasThreadAccess) { dispatcher.TryEnqueue(SaveVolumeState); return; }
+        if (_volumeSaveTimer == null)
+        {
+            _volumeSaveTimer = dispatcher.CreateTimer();
+            _volumeSaveTimer.Interval = TimeSpan.FromMilliseconds(500);
+            _volumeSaveTimer.IsRepeating = false;
+            _volumeSaveTimer.Tick += (_, _) => SaveVolumeStateNow();
+        }
+        _volumeSaveTimer.Stop();
+        _volumeSaveTimer.Start();
+    }
+
+    private Microsoft.UI.Dispatching.DispatcherQueueTimer? _volumeSaveTimer;
+
+    private void SaveVolumeStateNow()
+    {
+        try { _volumeSaveTimer?.Stop(); } catch { /* Shutdown may run off the dispatcher. */ }
         try
         {
             var settings = _settingsService.Load();
@@ -1418,9 +1438,15 @@ public partial class PlayerService : IDisposable
                 : parts[^1];
     }
 
+    // Chapter rows are read once a second by the live audiobook surfaces and
+    // twice per CurrentAudiobookChapter. Rebuild only when the parts change.
+    private (List<FileVersion> Versions, IReadOnlyList<AudiobookChapterInfo> Chapters)? _audiobookChapterCache;
+
     private IReadOnlyList<AudiobookChapterInfo> BuildAudiobookChapters()
     {
         if (!IsAudiobook) return [];
+        var versions = Versions;
+        if (_audiobookChapterCache is { } cached && ReferenceEquals(cached.Versions, versions)) return cached.Chapters;
         var result = new List<AudiobookChapterInfo>();
         foreach (var part in BuildAudiobookParts())
         {
@@ -1439,6 +1465,7 @@ public partial class PlayerService : IDisposable
                 }
             }
         }
+        _audiobookChapterCache = (versions, result);
         return result;
     }
 
@@ -6720,7 +6747,7 @@ public partial class PlayerService : IDisposable
                 {
                     Volume = Math.Clamp(liveVolume, 0, 100);
                     IsMuted = liveMute;
-                    SaveVolumeState();
+                    SaveVolumeStateNow();
                     LogToFile("state_trace.txt", $"Persisted volume={Volume:F0} muted={IsMuted} on close");
                 }
             }
@@ -6875,7 +6902,7 @@ public partial class PlayerService : IDisposable
                 {
                     Volume = Math.Clamp(liveVolume, 0, 100);
                     IsMuted = liveMute;
-                    SaveVolumeState();
+                    SaveVolumeStateNow();
                 }
             }
             catch { /* best-effort */ }
