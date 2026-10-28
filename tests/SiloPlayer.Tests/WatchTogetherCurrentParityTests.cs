@@ -67,6 +67,24 @@ public sealed class WatchTogetherCurrentParityTests
         Assert.Contains("ShowTerminalState", code);
     }
 
+    [Fact]
+    public void LeavingTheRoomPageDuringLoadCannotReattachItsAutoStartHandler()
+    {
+        // OnNavigatedFrom unsubscribes the auto-start handler. A continuation
+        // that resumes afterwards must not re-add it: the stale page shares the
+        // coordinator's ActiveRoom view model and would start playback again.
+        var page = File.ReadAllText(SourcePath("src", "SiloPlayer", "Views", "WatchTogetherRoomPage.xaml.cs"));
+        var navigatedTo = page[page.IndexOf("protected override async void OnNavigatedTo(", StringComparison.Ordinal)..page.IndexOf("private void OnCoordinatorStartRequested(", StringComparison.Ordinal)];
+        var navigatedFrom = page[page.IndexOf("protected override void OnNavigatedFrom(", StringComparison.Ordinal)..];
+        var initialized = navigatedTo.IndexOf("await joiningRoom.InitializeCurrentJoinAsync(", StringComparison.Ordinal);
+        var staleCheck = navigatedTo.IndexOf("if (navigation != _navigationGeneration)", StringComparison.Ordinal);
+        var subscribe = navigatedTo.IndexOf("coordinator.PlaybackStartRequested += OnCoordinatorStartRequested;", StringComparison.Ordinal);
+
+        Assert.Contains("var navigation = ++_navigationGeneration;", navigatedTo);
+        Assert.True(initialized >= 0 && initialized < staleCheck && staleCheck < subscribe);
+        Assert.Contains("++_navigationGeneration;", navigatedFrom[..navigatedFrom.IndexOf("PlaybackStartRequested -= OnCoordinatorStartRequested", StringComparison.Ordinal)]);
+    }
+
     private static string SourcePath(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);

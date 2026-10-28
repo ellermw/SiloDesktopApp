@@ -22,8 +22,9 @@ namespace SiloPlayer.Views;
 public sealed partial class WatchTogetherRoomPage : Page
 {
     private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
-    public WatchTogetherRoomViewModel ViewModel { get; }
+    public WatchTogetherRoomViewModel ViewModel { get; private set; }
     private bool _subscribed;
+    private long _navigationGeneration;
     private string? _nowPlayingContentId;
     private readonly DispatcherTimer _searchDebounce = new() { Interval = TimeSpan.FromMilliseconds(350) };
     private bool _suppressSearchTextChanged;
@@ -184,6 +185,33 @@ public sealed partial class WatchTogetherRoomPage : Page
         RoomWorkspace.Visibility = Visibility.Visible;
         RoomContent.Visibility = Visibility.Visible;
         TerminalStatePanel.Visibility = Visibility.Collapsed;
+        // Leaving during the awaits below must not let this page re-register
+        // with the coordinator after OnNavigatedFrom unsubscribed it.
+        var navigation = ++_navigationGeneration;
+        var coordinator = App.Services.GetRequiredService<WatchTogetherCoordinator>();
+        var activeRoom = coordinator.ActiveRoom;
+        var join = coordinator.BeginRoomJoin();
+        if (ReferenceEquals(ViewModel, activeRoom)
+            && (ViewModel.RoomId != args.RoomId || ViewModel.RoomToken != args.RoomAccessToken))
+        {
+            if (_subscribed)
+            {
+                ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+                ViewModel.Suggestions.CollectionChanged -= Suggestions_CollectionChanged;
+                _subscribed = false;
+            }
+            ViewModel = App.Services.GetRequiredService<WatchTogetherRoomViewModel>();
+            SuggestionsRepeater.ItemsSource = ViewModel.Suggestions;
+            Bindings.Update();
+        }
+
+        var joiningRoom = ViewModel;
+        bool OwnsJoin()
+        {
+            if (coordinator.IsCurrentRoomJoin(join)) return true;
+            if (!ReferenceEquals(coordinator.ActiveRoom, joiningRoom)) joiningRoom.Dispose();
+            return false;
+        }
 
         if (!_subscribed)
         {
@@ -192,9 +220,18 @@ public sealed partial class WatchTogetherRoomPage : Page
             _subscribed = true;
         }
 
-        await ViewModel.LoadCapabilitiesAsync();
-        if (ViewModel.RoomId != args.RoomId || ViewModel.RoomToken != args.RoomAccessToken || ViewModel.ConnectionState == "disconnected")
-            await ViewModel.InitializeAsync(args.RoomId, args.RoomAccessToken);
+        await joiningRoom.LoadCapabilitiesAsync();
+        if (!OwnsJoin()) return;
+        if (joiningRoom.RoomId != args.RoomId || joiningRoom.RoomToken != args.RoomAccessToken || joiningRoom.ConnectionState == "disconnected" || !joiningRoom.CanAdoptRoom)
+            await joiningRoom.InitializeCurrentJoinAsync(args.RoomId, args.RoomAccessToken, () => coordinator.IsCurrentRoomJoin(join));
+        if (!OwnsJoin()) return;
+        // The room socket outlives this page, so the coordinator still adopts
+        // the room; only page work and its auto-start handler require the page.
+        if (navigation != _navigationGeneration)
+        {
+            coordinator.TryAdoptRoom(joiningRoom, join);
+            return;
+        }
         _ = RunHostSearchAsync();
         UpdateRoomUi();
         UpdateConnectionUi();
@@ -202,10 +239,10 @@ public sealed partial class WatchTogetherRoomPage : Page
 
         // Register with the playback-sync coordinator so inbound transport
         // commands reach mpv and local playback sessions get attached.
-        var coordinator = App.Services.GetRequiredService<WatchTogetherCoordinator>();
         coordinator.PlaybackStartRequested -= OnCoordinatorStartRequested;
         coordinator.PlaybackStartRequested += OnCoordinatorStartRequested;
-        coordinator.SetActiveRoom(ViewModel);
+        if (!coordinator.TryAdoptRoom(joiningRoom, join))
+            coordinator.PlaybackStartRequested -= OnCoordinatorStartRequested;
     }
 
     /// <summary>
@@ -215,25 +252,27 @@ public sealed partial class WatchTogetherRoomPage : Page
     /// </summary>
     private void OnCoordinatorStartRequested(string contentId)
     {
+        var requestedRoom = ViewModel;
         DispatcherQueue.TryEnqueue(async () =>
         {
             try
             {
                 var player = App.Services.GetRequiredService<SiloPlayer.Services.PlayerService>();
                 var coordinator = App.Services.GetRequiredService<WatchTogetherCoordinator>();
-                if (player.HasRemoteAuthority || !ReferenceEquals(coordinator.ActiveRoom, ViewModel)) return;
-                var room = ViewModel.Room;
+                if (player.HasRemoteAuthority || !ReferenceEquals(coordinator.ActiveRoom, requestedRoom)) return;
+                var room = requestedRoom.Room;
                 if (room?.Phase != "playing" || room.SelectedContentId != contentId) return;
                 await player.PlayAsync(contentId, fileId: room.SelectedFileId,
                     startPositionOverride: room.AnchorPositionSeconds);
             }
-            catch (Exception error) { ViewModel.ErrorMessage = $"Could not start room playback: {error.Message}"; }
+            catch (Exception error) { requestedRoom.ErrorMessage = $"Could not start room playback: {error.Message}"; }
         });
     }
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         base.OnNavigatedFrom(e);
+        ++_navigationGeneration;
         if (_subscribed)
         {
             ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
