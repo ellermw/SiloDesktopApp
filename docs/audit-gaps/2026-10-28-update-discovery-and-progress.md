@@ -1,0 +1,11 @@
+# Automatic update discovery and installation visibility
+
+The owner reported that the update installed successfully, but they had to check manually and saw no installation window after Silo closed.
+
+The installed diagnostic log records a successful current-version check at11:39:37, followed by discovery of339 at13:13:46 during the reported manual check. Source339 checks after15 seconds at startup and then waits six hours between attempts. A release published during that interval is not discovered until another check. There is no push channel. Existing green indicators/toast cannot present a release the client has not fetched. This establishes a discovery latency defect; it does not establish a failure of every previous notification.
+
+Separately, the actual helper starts setup with `WindowStyle=Hidden` and `/VERYSILENT`, explicitly suppressing progress.355 uses `WindowStyle=Normal` and `/SILENT`, which displays Inno Setup progress, while retaining UAC, verified package identity, parent/normal-close confirmation, installation gate and no-force-close/no-restart protections.
+
+The scheduler now checks five seconds after startup, every15 minutes after a successful check, and five minutes after failures. Virtual-time tests start with no update (or an error), advance the scheduled retry and discover the new release without manual input; cancellation stops the loop. The native fixture invokes the actual MainWindow background-check method and verifies its visible green indicator and actionable toast without calling CheckAsync, downloading or scheduling setup. Windows PowerShell executes the actual launch-configuration function against synthetic paths and checks progress visibility and safety arguments without running an installer.
+
+Evidence: `D:\SiloPlayer\.codex-tmp\security-pr-finalization-oct28`. Release payload verification is under its installer355 subdirectory. Historical raw evidence is preserved. Current output is a polling notification, so publication is not instant discovery. Playback notifications retain the existing idle toast policy and persistent update state. An older installed helper determines presentation for the update that replaces it;355's visible setup applies to updates launched after355 is installed. Actual elevated progress/reopening requires a separate owner observation.

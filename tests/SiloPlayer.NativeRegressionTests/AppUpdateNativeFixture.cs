@@ -53,6 +53,11 @@ internal static class AppUpdateNativeFixture
                 while (updates.State.Release is null && DateTime.UtcNow < until) await Task.Delay(25);
                 await Until(() => ((Button)root.FindName("UpdateAvailableButton")).Visibility == Visibility.Visible
                     && Descendants<TextBlock>(root).Any(text => text.Text == "Silo 1.2.999 is available."));
+                await Task.Delay(400); // Allow the toast's260ms entry animation to finish before capture.
+                DependencyObject toast = Descendants<TextBlock>(root).Single(text => text.Text == "Silo 1.2.999 is available.");
+                while (toast is not Border) toast = VisualTreeHelper.GetParent(toast)
+                    ?? throw new InvalidOperationException("Update toast is detached.");
+                if (((Border)toast).Opacity < .9) throw new InvalidOperationException("Automatic update toast remains transparent.");
                 if (services.GetRequiredService<UpdateWire>().Downloads != 0 || services.GetRequiredService<SafeInstaller>().Calls != 0)
                     throw new InvalidOperationException("Notification-only background discovery downloaded or installed without consent.");
                 await CaptureAsync(root, "automatic-update-notice.png");
