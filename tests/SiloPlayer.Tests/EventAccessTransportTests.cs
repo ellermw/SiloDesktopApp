@@ -58,8 +58,11 @@ public sealed class EventAccessTransportTests
         await Until(() => fixture.AccountReads == 1);
         Assert.Equal(0, invalidations);
         Assert.Equal(1, catchUps);
+        // An intentional channel change rebinds the open socket in place: no new
+        // socket, no catch-up and no app reload.
         using var extra = fixture.Events.Subscribe("history_import");
-        await fixture.NextAsync();
+        await Task.Delay(100);
+        Assert.Equal(2, fixture.Tickets);
         Assert.Equal(0, invalidations);
         Assert.Equal(1, catchUps);
         Assert.Equal(1, fixture.AccountReads);
