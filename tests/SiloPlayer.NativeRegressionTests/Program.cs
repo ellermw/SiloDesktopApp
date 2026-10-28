@@ -148,6 +148,13 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await RequestDiscoverCurrentNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "comic-svg-security")
+            {
+                await SvgComicSecurityNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed.");
+                Application.Current.Exit();
+                return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "security-origins")
             {
                 await ServerOriginSecurityNativeFixture.RunAsync(parent);

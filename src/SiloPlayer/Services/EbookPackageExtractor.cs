@@ -200,11 +200,32 @@ internal static class EbookPackageExtractor
         var chapters = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
             .Where(path => ImageExtensions.Contains(Path.GetExtension(path)))
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-            .Select((path, index) => new EbookReaderChapter($"Page {index + 1}", Path.GetRelativePath(root, path).Replace('\\', '/')))
+            .Select((path, index) => new EbookReaderChapter($"Page {index + 1}", ComicPage(root, path, index)))
             .ToList();
         if (chapters.Count == 0)
             throw new InvalidDataException("The comic archive contains no readable images.");
         return new ExtractedEbook(root, chapters, "cbz");
+    }
+
+    // The reader navigates straight to each page on its trusted origin. An SVG
+    // opened that way is a document whose scripts run there; shown through
+    // <img> it is inert, so SVG pages get a wrapper page.
+    private static string ComicPage(string root, string path, int index)
+    {
+        var relative = Path.GetRelativePath(root, path).Replace('\\', '/');
+        if (!Path.GetExtension(path).Equals(".svg", StringComparison.OrdinalIgnoreCase)) return relative;
+        var source = string.Join('/', relative.Split('/').Select(Uri.EscapeDataString));
+        var wrapper = $"silo-svg-page-{index + 1:D4}.html";
+        for (var suffix = 1; File.Exists(Path.Combine(root, wrapper)) || Directory.Exists(Path.Combine(root, wrapper)); suffix++)
+            wrapper = $"silo-svg-page-{index + 1:D4}-{suffix}.html";
+        File.WriteAllText(Path.Combine(root, wrapper),
+            "<!doctype html><html><head><meta charset=\"utf-8\">" +
+            "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; img-src 'self'; style-src 'unsafe-inline'\">" +
+            "<style>html,body{margin:0;height:100%;background:#0e0e0e}body{display:flex;align-items:center;justify-content:center}" +
+            "img{display:block;margin:auto;max-width:100%;max-height:100%;object-fit:contain}</style></head>" +
+            $"<body><img src=\"{SecurityElement.Escape(source)}\" alt=\"\"></body></html>",
+            Encoding.UTF8);
+        return wrapper;
     }
 
     private static string SafeCombine(string root, string relative)
