@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 
 namespace SiloPlayer.Core.Services;
@@ -7,6 +8,12 @@ public static partial class LocalLog
     public const long DefaultMaxBytes = 2 * 1024 * 1024;
     public const string LogDirectoryEnvironmentVariable = "SILOPLAYER_LOG_DIRECTORY";
     private static readonly object s_gate = new();
+    // A contended managed wait on an STA thread (the WinUI UI thread) enters a
+    // COM modal loop (CoWaitForMultipleHandles) for as long as another thread
+    // writes to disk. Such threads hand contended lines to a background writer.
+    private static Func<bool> s_avoidBlockingWait = () => Thread.CurrentThread.GetApartmentState() == ApartmentState.STA;
+    private static readonly ConcurrentQueue<(string Path, long MaxBytes, int ArchiveCount, string Text)> s_deferred = new();
+    private static int s_drainingDeferred;
     private static readonly AsyncLocal<string?> s_operation = new();
     private static readonly AsyncLocal<string?> s_operationDirectory = new();
 
@@ -88,11 +95,7 @@ public static partial class LocalLog
             var path = Path.Combine(logDirectory, fileName);
             var line = $"[{DateTime.Now:HH:mm:ss.fff}] {RedactSensitiveData(message)}{Environment.NewLine}";
 
-            lock (s_gate)
-            {
-                RotateIfNeeded(path, maxBytes, archiveCount);
-                File.AppendAllText(path, line);
-            }
+            Write(path, maxBytes, archiveCount, line);
         }
         catch
         {
@@ -140,11 +143,7 @@ public static partial class LocalLog
             if (lines.Length == 0)
                 return;
 
-            lock (s_gate)
-            {
-                RotateIfNeeded(path, maxBytes, archiveCount);
-                File.AppendAllText(path, string.Concat(lines));
-            }
+            Write(path, maxBytes, archiveCount, string.Concat(lines));
         }
         catch
         {
@@ -179,6 +178,60 @@ public static partial class LocalLog
             : Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "SiloPlayer");
+    }
+
+    private static void Write(string path, long maxBytes, int archiveCount, string text)
+    {
+        if (s_avoidBlockingWait())
+        {
+            // Lines already handed off keep their place ahead of later ones.
+            if (!s_deferred.IsEmpty || !Monitor.TryEnter(s_gate))
+            {
+                s_deferred.Enqueue((path, maxBytes, archiveCount, text));
+                if (Interlocked.Exchange(ref s_drainingDeferred, 1) == 0)
+                    ThreadPool.UnsafeQueueUserWorkItem(_ => DrainDeferred(), null);
+                return;
+            }
+        }
+        else
+        {
+            Monitor.Enter(s_gate);
+        }
+        try
+        {
+            RotateIfNeeded(path, maxBytes, archiveCount);
+            File.AppendAllText(path, text);
+        }
+        finally
+        {
+            Monitor.Exit(s_gate);
+        }
+    }
+
+    private static void DrainDeferred()
+    {
+        while (true)
+        {
+            while (s_deferred.TryDequeue(out var entry))
+            {
+                try
+                {
+                    lock (s_gate)
+                    {
+                        RotateIfNeeded(entry.Path, entry.MaxBytes, entry.ArchiveCount);
+                        File.AppendAllText(entry.Path, entry.Text);
+                    }
+                }
+                catch
+                {
+                }
+            }
+            Volatile.Write(ref s_drainingDeferred, 0);
+            // A line queued after the last dequeue but before the reset above
+            // saw the drain flag still set; reclaim it rather than strand it.
+            if (s_deferred.IsEmpty || Interlocked.Exchange(ref s_drainingDeferred, 1) != 0)
+                return;
+        }
     }
 
     private static void RotateIfNeeded(string path, long maxBytes, int archiveCount)
