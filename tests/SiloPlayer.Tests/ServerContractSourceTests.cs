@@ -205,7 +205,6 @@ public sealed class ServerContractSourceTests
     {
         var root = FindRepositoryRoot();
         var playbackWebSocket = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer", "Services", "PlaybackWebSocket.cs"));
-        var playbackRequest = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Models", "Playback", "PlaybackStartRequest.cs"));
         var playbackV3 = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Models", "Playback", "PlaybackProtocolV3.cs"));
         var playbackResponse = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Models", "Playback", "PlaybackStartResponse.cs"));
         var playbackManager = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Services", "PlaybackManager.cs"));
@@ -214,9 +213,8 @@ public sealed class ServerContractSourceTests
         Assert.Contains("/control/ws", playbackWebSocket);
         Assert.DoesNotContain("/api/v1/playback/ws/", playbackWebSocket);
 
-        Assert.Contains("PreserveDirectAudioSelection", playbackRequest);
-        Assert.Contains("AudioPassthroughCapabilities", playbackRequest);
-        Assert.Contains("HdrCapabilityDetails", playbackRequest);
+        Assert.Contains("AudioPassthroughCapabilitiesV3? AudioPassthrough", playbackV3);
+        Assert.Contains("HdrCapabilityDetails? HdrDetails", playbackV3);
         Assert.Contains("public sealed class PlaybackStartRequestV3", playbackV3);
         Assert.Contains("public int ProtocolVersion { get; set; } = 3", playbackV3);
         Assert.Contains("public string? AudioTrackId", playbackV3);

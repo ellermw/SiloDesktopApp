@@ -108,28 +108,28 @@ public sealed class MpvNativePlaybackCapabilitiesTests
     }
 
     [Fact]
-    public void ApplyTo_UsesFreshCollectionsAndDoesNotClaimPassthroughByDefault()
+    public void ProtocolV3_UsesFreshCollectionsAndDoesNotClaimPassthroughByDefault()
     {
-        var first = new PlaybackStartRequest();
-        var second = new PlaybackStartRequest();
+        var (first, firstContext) = MpvNativePlaybackCapabilities.CreateProtocolV3Profile("test");
+        var (second, secondContext) = MpvNativePlaybackCapabilities.CreateProtocolV3Profile("test");
 
-        MpvNativePlaybackCapabilities.ApplyTo(first);
-        MpvNativePlaybackCapabilities.ApplyTo(second);
         first.CodecsVideo.Remove("hevc");
         first.HdrDetails!.DolbyVisionProfiles.Clear();
+        firstContext.Deliveries["original_http"].VideoCodecs.Remove("hevc");
 
         Assert.Contains("hevc", second.CodecsVideo);
+        Assert.Contains("hevc", secondContext.Deliveries["original_http"].VideoCodecs);
         Assert.Equal([5, 7, 8], second.HdrDetails!.DolbyVisionProfiles);
         Assert.Null(first.AudioPassthrough);
         Assert.Null(second.AudioPassthrough);
+        Assert.Empty(secondContext.Deliveries["original_http"].AudioPassthroughCodecs);
         Assert.Equal("2160p", second.MaxResolution);
         Assert.True(second.Hdr);
     }
 
     [Fact]
-    public void ApplyTo_SanitizesOnlyExplicitlyVerifiedBitstreamCodecs()
+    public void ProtocolV3_SanitizesOnlyExplicitlyVerifiedBitstreamCodecs()
     {
-        var request = new PlaybackStartRequest();
         var sink = new AudioPassthroughCapabilities
         {
             PassthroughCodecs = [" TRUEHD ", "dts", "DTS", "aac", "", "eac3"],
@@ -137,11 +137,12 @@ public sealed class MpvNativePlaybackCapabilitiesTests
             SpatializerEnabled = true,
         };
 
-        MpvNativePlaybackCapabilities.ApplyTo(request, sink);
+        var (capabilities, context) = MpvNativePlaybackCapabilities.CreateProtocolV3Profile("test", sink);
 
-        Assert.Equal(["truehd", "dts", "eac3"], request.AudioPassthrough!.PassthroughCodecs);
-        Assert.Equal(32, request.AudioPassthrough.MaxChannels);
-        Assert.True(request.AudioPassthrough.SpatializerEnabled);
+        Assert.Equal(["truehd", "dts", "eac3"], capabilities.AudioPassthrough!.PassthroughCodecs);
+        Assert.Equal(32, capabilities.AudioPassthrough.MaxChannels);
+        Assert.True(capabilities.AudioPassthrough.SpatializerEnabled);
+        Assert.Equal(["truehd", "dts", "eac3"], context.Deliveries["original_http"].AudioPassthroughCodecs);
     }
 
     [Fact]
