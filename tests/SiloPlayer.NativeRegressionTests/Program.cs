@@ -261,6 +261,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await CalendarDateOct20NativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "calendar-culture")
+            {
+                await CalendarCultureNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct20-detail-cards")
             {
                 await Oct20DetailCardsNativeFixture.RunAsync(parent);

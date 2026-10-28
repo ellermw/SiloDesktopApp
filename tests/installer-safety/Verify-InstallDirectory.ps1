@@ -46,7 +46,15 @@ RestartApplications=no
 $guard
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var GuardResult: String;
+    Attributes, FileError, PathError: Cardinal;
 begin
+  Attributes := GuardFileAttributes('$quoted\native-missing.txt');
+  FileError := DLLGetLastError;
+  if Attributes <> `$FFFFFFFF then RaiseException('Missing fixture file unexpectedly exists');
+  Attributes := GuardFileAttributes('$quoted\native-missing-parent\file.txt');
+  PathError := DLLGetLastError;
+  if Attributes <> `$FFFFFFFF then RaiseException('Missing fixture parent unexpectedly exists');
+  SaveStringToFile('$quoted\native-errors.txt', IntToStr(FileError) + ',' + IntToStr(PathError), False);
   GuardResult := GuardPrepareToInstall(NeedsRestart);
   if GuardResult = '' then SaveStringToFile('$quoted\verdict.txt', 'allowed', False)
   else SaveStringToFile('$quoted\verdict.txt', 'refused', False);
@@ -90,6 +98,7 @@ try {
   if(!$process.WaitForExit(30000)){throw 'Isolated guard probe did not finish'}
   if(!(Test-Path -LiteralPath $verdict)){throw "No native guard verdict for $($case.name); exit=$($process.ExitCode)"}
   $actual=[IO.File]::ReadAllText($verdict)
+  if([IO.File]::ReadAllText("$result\native-errors.txt") -ne '2,3'){throw 'Inno did not capture ERROR_FILE_NOT_FOUND/ERROR_PATH_NOT_FOUND immediately after the native calls'}
   $preserved=$case.name -in @('new','empty') -or ([IO.File]::ReadAllText("$target\unrelated.txt") -eq 'preserve this synthetic file')
   $receipts += [pscustomobject]@{name=$case.name;expected=$case.expected;actual=$actual;preserved=$preserved;passed=($actual -eq $case.expected -and $preserved);exitCode=$process.ExitCode}
  }

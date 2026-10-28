@@ -3,7 +3,7 @@
 
 #define MyAppName "Silo Desktop Player"
 #ifndef MyAppVersion
-#define MyAppVersion "1.2.378"
+#define MyAppVersion "1.2.386"
 #endif
 #define MyAppPublisher "Silo"
 #define MyAppExeName "SiloPlayer.exe"

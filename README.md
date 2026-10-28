@@ -4,13 +4,13 @@ A native Windows client for [Silo Server](https://github.com/Silo-Server/silo-se
 
 ## Download
 
-[**Download version 1.2.378 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.378/SiloInstaller-Windows-x64.exe)
+[**Download version 1.2.386 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.386/SiloInstaller-Windows-x64.exe)
 
 Requires Windows 10 version 1809 or newer, or Windows 11, and access to a Silo Server. Runtime dependencies are included in the installer.
 
-[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.378) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.378/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
+[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.386) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.386/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
 
-Version 1.2.378 hardens installer/build directory safety and preserves unrelated additions on uninstall. It retains automatic update notices, visible progress and rate-limit protection. If an older installation closes without installing an update, install this version manually once. See the [14-change release record](docs/releases/1.2.378.md).
+Version 1.2.386 fixes Calendar dates and labels under non-Gregorian regional settings and improves installer error capture. It retains installer safety, automatic update notices, visible progress and rate-limit protection. If an older installation closes without installing an update, install this version manually once. See the [8-change release record](docs/releases/1.2.386.md).
 
 Historical navigation slowdown and a separate WinUI navigation crash remain under investigation.
 

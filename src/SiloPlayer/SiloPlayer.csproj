@@ -28,9 +28,9 @@
         <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
 
         <!-- Version -->
-    <Version>1.2.378</Version>
-    <FileVersion>1.2.378.0</FileVersion>
-    <AssemblyVersion>1.2.378.0</AssemblyVersion>
+    <Version>1.2.386</Version>
+    <FileVersion>1.2.386.0</FileVersion>
+    <AssemblyVersion>1.2.386.0</AssemblyVersion>
 
         <!-- App Options -->
         <ApplicationIcon>Assets\app.ico</ApplicationIcon>

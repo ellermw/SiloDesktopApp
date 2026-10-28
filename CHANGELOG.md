@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.386
+
+Gregorian Calendar requests/labels across regional cultures and reliable installer native-error capture. See [eight-change record](docs/releases/1.2.386.md).
+
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
 ## 1.2.339 (2026-10-28 — subtitle recovery ownership)
