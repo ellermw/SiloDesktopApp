@@ -198,7 +198,9 @@ public sealed class DetailCacheInvalidationTests
     public async Task SwitchingToTheNextItemDoesNotWaitForTheOutgoingStopOrDropItsSnapshot()
     {
         // Next Episode: A's stop is still pending; B was prefetched before the switch.
-        var (freshness, messenger, revision) = CreateFreshness();
+        // An hour-long barrier makes waiting on A's stop hang rather than merely
+        // run slow, so no wall-clock bound is needed (those flake under load).
+        var (freshness, messenger, revision) = CreateFreshness(TimeSpan.FromHours(1));
         var server = new FakeWatch { Position = 0 };
         var prefetchedB = await freshness.ReadAsync("episode:b", server.Read("episode:b"), CancellationToken.None);
         var stopA = new TaskCompletionSource(); // never completes during the test
@@ -206,9 +208,7 @@ public sealed class DetailCacheInvalidationTests
         messenger.Send(new PlaybackProgressUpdated("episode:a", 60, 1300, completed: false) { Persisted = stopA.Task });
 
         Assert.True(freshness.IsCurrent(prefetchedB));
-        var started = System.Diagnostics.Stopwatch.StartNew();
-        await freshness.ReadAsync("episode:b", server.Read("episode:b"), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(1));
-        Assert.True(started.ElapsedMilliseconds < 500, $"B waited {started.ElapsedMilliseconds} ms on A's stop");
+        await freshness.ReadAsync("episode:b", server.Read("episode:b"), CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(30));
 
         var replayA = freshness.ReadAsync("episode:a", server.Read("episode:a"), CancellationToken.None);
         await Task.Delay(50);
@@ -273,15 +273,18 @@ public sealed class DetailCacheInvalidationTests
         messenger.Send(new PlaybackProgressUpdated("episode:a", 1200, 1300, completed: false) { Persisted = finalSave.Task });
         var server = new FakeWatch { Position = 300 };
         var release = new TaskCompletionSource();
+        var inFlight = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var reads = 0;
         Task<WatchDetailResponse> Get(CancellationToken ct) => freshness.ReadAsync("episode:a", async token =>
         {
-            if (++reads == 1) { var stale = server.Snapshot("episode:a"); await release.Task; return stale; }
+            if (++reads == 1) { var stale = server.Snapshot("episode:a"); inFlight.SetResult(); await release.Task; return stale; }
             return server.Snapshot("episode:a");
         }, ct);
 
         var playback = freshness.GetCurrentAsync(Get, _ => { }, CancellationToken.None);
-        await Task.Delay(150); // past the barrier; first read is in flight
+        // The read callback runs only after the barrier, so this proves the
+        // first read is past it and in flight (a fixed delay flakes under load).
+        await inFlight.Task.WaitAsync(TimeSpan.FromSeconds(30));
         server.Position = 1200;
         finalSave.SetResult(); // advances the revision for episode:a
         release.SetResult();
@@ -399,11 +402,11 @@ public sealed class DetailCacheInvalidationTests
             => throw new HttpRequestException("Network access is not available in this fixture.");
     }
 
-    private static (WatchDetailFreshness<WatchDetailResponse> Freshness, WeakReferenceMessenger Messenger, UserStateRevision Revision) CreateFreshness()
+    private static (WatchDetailFreshness<WatchDetailResponse> Freshness, WeakReferenceMessenger Messenger, UserStateRevision Revision) CreateFreshness(TimeSpan? finalSaveBarrier = null)
     {
         var messenger = new WeakReferenceMessenger();
         var revision = DetailCacheInvalidation.AttachUserStateRevision(messenger);
-        var freshness = new WatchDetailFreshness<WatchDetailResponse>(revision, TimeSpan.FromSeconds(5),
+        var freshness = new WatchDetailFreshness<WatchDetailResponse>(revision, finalSaveBarrier ?? TimeSpan.FromSeconds(5),
             detail => detail.ContentId, detail => detail.SeriesId);
         return (freshness, messenger, revision);
     }
