@@ -443,6 +443,69 @@ public sealed class MpvOscRuntimeTests
         Assert.Contains("Video bitrateNot supplied", source);
     }
 
+    [Fact]
+    public void MediaAndServerTrackTextCannotInjectAssOverrideTags()
+    {
+        // Track titles come from media-file metadata and tier labels from the
+        // server. Neither may restyle the HUD or break lines through ASS tags.
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            osc_test_layout()
+            local hostile = '{\\fs400\\c&H0000FF&}Evil\\NLine\\h'
+            state.active_subtitle = 0
+            state.subtitle_tracks = {
+                {index=0, language=hostile, label=hostile, source='external', codec=hostile},
+                {index=1, language='en', label=string.rep('é', 60), source='external', codec='srt'},
+            }
+            state.subtitle_menu_visible = true
+            osc_test_render_subtitles()
+            state.subtitle_menu_visible = false
+            state.audio_tracks = {{index=0, language=hostile, title='Main', codec='aac', layout=hostile}}
+            state.active_audio = 0
+            state.audio_menu_visible = true
+            osc_test_render_audio()
+            state.audio_menu_visible = false
+            state.quality_info = {qualities={{id='t1', label=hostile}}, versions={{file_id=1, label=hostile}, {file_id=2, label='Other'}}, active_file_id=1}
+            state.active_quality = 't1'
+            state.quality_menu_visible = true
+            osc_test_render_quality()
+            local rendered = table.concat(captured, '\n')
+            local function count(needle)
+                local n, from = 0, 1
+                while true do
+                    local i = rendered:find(needle, from, true)
+                    if not i then return n end
+                    n, from = n + 1, i + 1
+                end
+            end
+            local raw_tag = rendered:find('{\\fs400', 1, true) ~= nil
+            local raw_break = rendered:find('Evil\\NLine', 1, true) ~= nil
+            local raw_hard_space = rendered:find('Line\\h', 1, true) ~= nil
+            -- Escaped override block, literal break and hard space, in each of
+            -- the subtitle, audio and quality menus (at least three copies).
+            local escaped_tags = count('\\{\\\239\187\191fs400')
+            local literal_breaks = count('Evil\\\239\187\191NLine')
+            local split_utf8 = rendered:find('\195…', 1, true) ~= nil
+            local whole_utf8 = rendered:find('é…', 1, true) ~= nil
+            mp.set_property('user-data/probe-result', table.concat({tostring(raw_tag), tostring(raw_break),
+                tostring(raw_hard_space), tostring(escaped_tags >= 3), tostring(literal_breaks >= 3),
+                tostring(split_utf8), tostring(whole_utf8)}, ':'))
+            """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
+            captured = {}
+            local create = mp.create_osd_overlay
+            mp.create_osd_overlay = function(kind)
+                local overlay = create(kind)
+                local update = overlay.update
+                overlay.update = function(self)
+                    if self.data and self.data ~= '' then table.insert(captured, self.data) end
+                    return update(self)
+                end
+                return overlay
+            end
+            """);
+        Assert.Equal("false:false:false:true:true:false:true", output);
+    }
+
     private static string CaptureStats(int sourceWidth, int sourceHeight, int outputWidth, int outputHeight,
         bool rtx, string setup = "", int videoBps = 0, int audioBps = 0, string? processor = null, bool neural = false,
         bool rawAss = false, int windowWidth = 3840, int windowHeight = 2160,
@@ -486,7 +549,7 @@ public sealed class MpvOscRuntimeTests
             {{beforeScript}}
             local source = assert(io.open([[{{script}}]], 'r'))
             local code = source:read('*a'); source:close()
-            assert(loadstring(code .. '\nosc_test_state = state; osc_test_check = check_skip_markers; osc_test_quality = quality_choices_available; osc_test_activate = activate_controller_focus; osc_test_layout = compute_layout; osc_test_tick = tick; osc_test_menu_activate = activate_keyboard_menu_item; osc_test_menu_items = keyboard_menu_items; osc_test_mouse_down = handle_mouse_down'))()
+            assert(loadstring(code .. '\nosc_test_state = state; osc_test_check = check_skip_markers; osc_test_quality = quality_choices_available; osc_test_activate = activate_controller_focus; osc_test_layout = compute_layout; osc_test_tick = tick; osc_test_menu_activate = activate_keyboard_menu_item; osc_test_menu_items = keyboard_menu_items; osc_test_mouse_down = handle_mouse_down; osc_test_render_subtitles = render_subtitle_menu; osc_test_render_audio = render_audio_menu; osc_test_render_quality = render_quality_menu'))()
             mp.add_timeout(0.05, function()
                 local ok, err = pcall(function()
                     {{setup}}
