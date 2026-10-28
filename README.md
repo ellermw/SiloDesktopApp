@@ -4,13 +4,13 @@ A native Windows client for [Silo Server](https://github.com/Silo-Server/silo-se
 
 ## Download
 
-[**Download version 1.2.338 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.338/SiloInstaller-Windows-x64.exe)
+[**Download version 1.2.339 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.339/SiloInstaller-Windows-x64.exe)
 
 Requires Windows 10 version 1809 or newer, or Windows 11, and access to a Silo Server. Runtime dependencies are included in the installer.
 
-[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.338) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.338/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
+[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.339) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.339/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
 
-Version 1.2.338 repairs burned-in subtitle switching and recovery, and removes obsolete playback paths. It retains337's Windows PowerShell updater repair. If an older installation downloads an update and closes without installing it, install this version manually once. The complete elevated installation and reopening flow remains under verification. See the [release record](docs/releases/1.2.338.md).
+Version 1.2.339 repairs burned-in subtitle switching and recovery, and removes obsolete playback paths. It retains337's Windows PowerShell updater repair. If an older installation downloads an update and closes without installing it, install this version manually once. The complete elevated installation and reopening flow remains under verification. See the [release record](docs/releases/1.2.339.md).
 
 Historical navigation slowdown and a separate WinUI navigation crash remain under investigation.
 

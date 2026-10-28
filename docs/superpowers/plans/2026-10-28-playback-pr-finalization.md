@@ -24,6 +24,8 @@
 - [x] Request the actual desired subtitle in the v3 replan, retry an unaccepted subtitle request through track_change during recovery, transfer the captured pause intent; verify green and normal transitions.
 - [x] Commit/push corrected PR32, fold it into corrected PR33, verify four repaired native callers and independent Standards/Spec reviews; report work on both PRs.
 - [x] Prepare338 from the combined current-main source; run full tests and relevant exact-payload native/published regressions, seal matching installer.
-- [ ] Merge verified exact heads, publish338 and README/download/checksum, verify public asset bytes/discovery, record delivery and clear the integration lock.
+- [ ] Merge verified exact heads, publish339 and README/download/checksum, verify public asset bytes/discovery, record delivery and clear the integration lock.
 
 Ruling: retry pending subtitle changes with track_change specifically for subtitle-switch-failed. Current official server f133b241f3526604aedb0791b39e65dac6edc18a treats omitted subtitles as Off only for track_change; failure recovery otherwise preserves outgoing intent. Avoid changing general decoder/stream recovery behavior. Two Core cases and the native failed text switch failed before the repair;11 Core intent cases and five actual native scenarios pass after it. Final release repeats the scenarios against the packaged combined payload.
+
+Ruling: preserve338 as an unpublished candidate after the late held-gate regression. Correct queue ownership and playback lifetime first, verify red/green and cancellation/retirement, then deliver339. Independent Standards/Spec review of642f9e0 found no introduced defect; final339 verification repeats the relevant scenarios against its exact payload.

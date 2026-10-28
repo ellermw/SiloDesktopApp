@@ -2,7 +2,15 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.339 (2026-10-28 — subtitle recovery ownership)
+
+- Include corrected PRs32/33 and all338 candidate changes below.
+- Queue a failed subtitle switch behind active stream recovery, retain its pause intent until ownership is acquired, and discard canceled or retired owners. Add overlap and lifetime native regressions.
+- Supersede the unpublished338 candidate, which exposed this additional overlap case before release. Retain337's updater repair for owner testing of the next published upgrade.
+
 ## 1.2.338 (2026-10-28 — subtitle recovery and playback cleanup)
+
+Unpublished candidate, superseded by339 after the recovery-overlap regression was identified.
 
 - Fix turning off DVD/DVB burn-in and switching to text subtitles using the server's v3 plan. Preserve text through later quality changes and prevent repeated burn-in reloads.
 - Preserve the requested subtitle and viewer pause state when a subtitle replan fails; add actual-service/native regressions for text/Off while playing and paused.
