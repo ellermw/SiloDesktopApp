@@ -92,7 +92,33 @@ if ($WinAppSdkActualSha256 -ne $WinAppSdkInstallerSha256) {
 }
 
 Write-Host "=== Publishing app ($Configuration, $Runtime) ==="
-if (Test-Path $PublishDir) { Remove-Item -Recurse -Force $PublishDir }
+# The publish directory is deleted recursively. Only accept a dedicated output
+# folder: never a drive root, the repository or one of its ancestors, or an
+# existing folder that holds anything other than an earlier Silo publish.
+function Clear-DedicatedPublishDirectory {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot
+    )
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    $trimmed = $fullPath.TrimEnd('\', '/')
+    $repository = [System.IO.Path]::GetFullPath($RepositoryRoot).TrimEnd('\', '/')
+    $separator = [System.IO.Path]::DirectorySeparatorChar
+    if ([string]::IsNullOrEmpty($trimmed) -or
+        $trimmed -eq [System.IO.Path]::GetPathRoot($fullPath).TrimEnd('\', '/') -or
+        ($repository + $separator).StartsWith($trimmed + $separator, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to use '$fullPath' as the publish directory: it is a drive root or contains the repository."
+    }
+    if ((Test-Path -LiteralPath $fullPath) -and
+        (Get-ChildItem -LiteralPath $fullPath -Force | Select-Object -First 1) -and
+        -not (Test-Path -LiteralPath (Join-Path $fullPath "SiloPlayer.exe"))) {
+        throw "Refusing to delete '$fullPath': it already contains files that are not a Silo publish. Choose a new or empty folder."
+    }
+    if (Test-Path -LiteralPath $fullPath) { Remove-Item -LiteralPath $fullPath -Recurse -Force }
+    return $fullPath
+}
+$PublishDir = Clear-DedicatedPublishDirectory -Path $PublishDir -RepositoryRoot $RepoRoot
 
 # Clean obj/{Release,x64/Release} and bin/{Release,x64/Release} for the app project
 # to force every .xbf to recompile against the current XamlTypeInfo.g.cs. WinUI 3's
@@ -171,7 +197,9 @@ $MpvInfo = Get-Item -LiteralPath $MpvDll
 if ($MpvInfo.Length -lt 10MB) {
     throw "Published libmpv-2.dll is only $($MpvInfo.Length) bytes. Run 'git lfs checkout -- libs/mpv/libmpv-2.dll' before packaging."
 }
-$MpvHeader = [System.IO.File]::ReadAllBytes($MpvDll)[0..1]
+$MpvHeader = [byte[]]::new(2)
+$MpvStream = [System.IO.File]::OpenRead($MpvDll)
+try { $null = $MpvStream.Read($MpvHeader, 0, 2) } finally { $MpvStream.Dispose() }
 if ($MpvHeader[0] -ne 0x4D -or $MpvHeader[1] -ne 0x5A) {
     throw "Published libmpv-2.dll is not a Windows PE binary."
 }
