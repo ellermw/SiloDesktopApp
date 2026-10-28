@@ -3,6 +3,19 @@ namespace SiloPlayer.Tests;
 public sealed class MpvOscScriptTests
 {
     [Fact]
+    public void EveryLocalHelperFunctionIsUsed()
+    {
+        // Dead helpers accumulate silently in the 6,000-line OSC; luacheck
+        // is not available to CI, so check the one class it caught here.
+        var script = File.ReadAllText(FindOscScriptPath());
+        var names = System.Text.RegularExpressions.Regex.Matches(script, @"\blocal function ([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+            .Select(match => match.Groups[1].Value).Distinct().ToList();
+        Assert.NotEmpty(names);
+        var unused = names.Where(name => System.Text.RegularExpressions.Regex.Matches(script, $@"\b{name}\b").Count < 2).ToList();
+        Assert.True(unused.Count == 0, "Unused OSC helpers: " + string.Join(", ", unused));
+    }
+
+    [Fact]
     public void PostRollCancelsTheCreditsCountdownOwnedByTheForegroundPlayer()
     {
         var script = File.ReadAllText(FindOscScriptPath());

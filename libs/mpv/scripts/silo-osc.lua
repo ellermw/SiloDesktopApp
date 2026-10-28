@@ -415,13 +415,6 @@ local function consume_video_click()
     state.ignore_video_click_until = mp.get_time() + 0.5
 end
 
-local function resume_after_seek()
-    mp.set_property_bool("pause", false)
-    mp.add_timeout(0.10, function() mp.set_property_bool("pause", false) end)
-    mp.add_timeout(0.35, function() mp.set_property_bool("pause", false) end)
-    mp.add_timeout(0.75, function() mp.set_property_bool("pause", false) end)
-end
-
 local function seek_and_resume(target, flags)
     local was_paused = mp.get_property_bool("pause")
     mp.commandv("script-message", "silo-seek-absolute", tostring(target), tostring(not was_paused))
@@ -487,11 +480,6 @@ local function point_in_rect(px, py, rect)
        and py >= rect.y and py <= rect.y + rect.h
 end
 
--- Lerp
-local function lerp(a, b, t)
-    return a + (b - a) * t
-end
-
 -- ASS color tag from BGR hex string
 local function ass_color(bgr_hex)
     return "\\1c&H" .. bgr_hex .. "&"
@@ -505,11 +493,6 @@ end
 -- ASS alpha tag (primary fill)
 local function ass_alpha(hex_alpha)
     return "\\1a&H" .. hex_alpha .. "&"
-end
-
--- ASS full alpha (all components)
-local function ass_all_alpha(hex_alpha)
-    return "\\1a&H" .. hex_alpha .. "&\\2a&H" .. hex_alpha .. "&\\3a&H" .. hex_alpha .. "&\\4a&H" .. hex_alpha .. "&"
 end
 
 -- Blend alpha hex with master opacity (0..1)
@@ -655,29 +638,6 @@ local function draw_text(ass, x, y, text, font_size, color, alpha, master_alpha,
         font_size,
         fn_tag, b_tag,
         ass_color(color), ass_alpha(a),
-        text
-    ))
-end
-
--- Draw text with border/shadow for readability
-local function draw_text_bordered(ass, x, y, text, font_size, color, alpha, bord_color, bord_alpha, master_alpha, alignment, font_name, bold)
-    local a = blend_alpha(alpha, master_alpha)
-    local ba = blend_alpha(bord_alpha, master_alpha)
-    local an = alignment or 5
-    local fn = font_name or ""
-    local b_tag = ""
-    if bold then b_tag = "\\b1" end
-    local fn_tag = ""
-    if fn ~= "" then fn_tag = "\\fn" .. fn end
-    ass:new_event()
-    ass:pos(math.floor(x), math.floor(y))
-    ass:append(string.format(
-        "{\\an%d\\bord1.5\\shad0\\fs%d%s%s%s%s%s%s}%s",
-        an,
-        font_size,
-        fn_tag, b_tag,
-        ass_color(color), ass_alpha(a),
-        ass_bord_color(bord_color), "\\3a&H" .. ba .. "&",
         text
     ))
 end
@@ -1086,7 +1046,6 @@ end
 
 -- Fullscreen icon (four corner brackets)
 local function draw_fullscreen_icon(ass, cx, cy, size, color, alpha, master_alpha, is_fullscreen)
-    local a = blend_alpha(alpha, master_alpha)
     local s = size * 0.28
     local t = math.max(size * 0.07, 2)  -- line thickness
     local corner_len = s * 0.6
@@ -2883,7 +2842,6 @@ local function render_subtitle_menu()
         if selected_sync.reload then sync_rows = sync_rows + 1 end
     end
     local action_count = (state.subtitle_ai_available and 4 or 3) + sync_rows
-    local fixed_rows = 1 + action_count -- Off + delay/search/appearance/optional AI
     -- Keep the entire popup above the seek bar's pointer target. Deriving the
     -- track window from the screen height alone can make a clamped popup cover
     -- the timeline on shorter/windowed playback surfaces.
@@ -5044,7 +5002,6 @@ local function handle_mouse_down()
 
     -- Subtitle menu click handling
     if state.subtitle_menu_visible then
-        local handled = false
         for _, item in ipairs(state.subtitle_menu_items) do
             if point_in_rect(mx, my, item) then
                 if item.action == "sync" or item.action == "reset_timing" or item.action == "sync_reload" then
@@ -5336,8 +5293,7 @@ local function handle_wheel_down()
     show_osc()
 end
 
--- Double-click for fullscreen (track timing of clicks)
-local last_click_time = 0
+-- Double-click for fullscreen
 local function handle_mbtn_left_dbl()
     if state.playback_failure_visible then return end
     mp.commandv("script-message", "silo-fullscreen-toggle")
