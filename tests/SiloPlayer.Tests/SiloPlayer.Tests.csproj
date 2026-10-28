@@ -12,6 +12,7 @@
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="6.0.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="SharpCompress" Version="0.49.1" />
     <PackageReference Include="xunit" Version="2.5.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" />
   </ItemGroup>
@@ -35,6 +36,7 @@
     <Compile Include="..\..\src\SiloPlayer\Messaging\MediaSurfaceMessages.cs" Link="Production\MediaSurfaceMessages.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\VirtualCatalogItems.cs" Link="Production\VirtualCatalogItems.cs" />
     <Compile Include="..\..\src\SiloPlayer\Helpers\BulkObservableCollection.cs" Link="Production\BulkObservableCollection.cs" />
+    <Compile Include="..\..\src\SiloPlayer\Services\EbookPackageExtractor.cs" Link="Production\EbookPackageExtractor.cs" />
     <Compile Include="..\..\src\SiloPlayer\Services\CardOverlayService.cs" Link="Production\CardOverlayService.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\SearchViewModel.cs" Link="Production\SearchViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\SmartCollectionWizardViewModel.cs" Link="Production\SmartCollectionWizardViewModel.cs" />

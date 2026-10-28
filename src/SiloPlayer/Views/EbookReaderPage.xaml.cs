@@ -32,6 +32,7 @@ public sealed partial class EbookReaderPage : Page
     private FileVersion? _selectedVersion;
     private List<FileVersion> _readerFiles = [];
     private byte[]? _sourceBytes;
+    private readonly List<string> _readerDirectories = [];
     private MangaChapter? _nextMangaChapter;
     private string _contentId = "";
     private int? _libraryId;
@@ -203,6 +204,9 @@ public sealed partial class EbookReaderPage : Page
             core.WebResourceRequested -= ReaderWebView_WebResourceRequested;
         }
         ReaderWebView.Close();
+        var readerDirectories = _readerDirectories.ToArray();
+        _readerDirectories.Clear();
+        _ = Task.Run(() => { foreach (var directory in readerDirectories) EbookReaderCache.Release(directory); });
         base.OnNavigatedFrom(e);
     }
 
@@ -308,7 +312,10 @@ public sealed partial class EbookReaderPage : Page
         LoadingText.Text = "Downloading book…";
         _sourceBytes = await _ebooksApi.ReadFileAsync(_contentId, _fileId, _lifetime.Token);
         LoadingText.Text = "Preparing reader…";
-        var cacheRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SiloPlayer", "reader-cache", SafeName(_contentId), _fileId.ToString(CultureInfo.InvariantCulture));
+        if (_readerDirectories.Count == 0)
+            _ = Task.Run(() => EbookReaderCache.PruneInactive(EbookReaderCache.DefaultRoot));
+        var cacheRoot = EbookReaderCache.Allocate(EbookReaderCache.DefaultRoot);
+        _readerDirectories.Add(cacheRoot);
         _book = await Task.Run(() => EbookPackageExtractor.Extract(_sourceBytes, cacheRoot, FormatOf(version)), _lifetime.Token);
         _lifetime.Token.ThrowIfCancellationRequested();
         if (_leaving) return;
@@ -1308,7 +1315,6 @@ public sealed partial class EbookReaderPage : Page
         if (LoadingLayer.Children.FirstOrDefault() is StackPanel panel && panel.Children.FirstOrDefault() is ProgressRing ring) ring.IsActive = false;
     }
 
-    private static string SafeName(string value) => string.Concat(value.Select(ch => Path.GetInvalidFileNameChars().Contains(ch) ? '_' : ch));
     private static string SelectedTag(ComboBox combo, string fallback) => (combo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? fallback;
     private static void SetComboByTag(ComboBox combo, string value) => combo.SelectedItem = combo.Items.OfType<ComboBoxItem>().FirstOrDefault(i => string.Equals(i.Tag?.ToString(), value, StringComparison.OrdinalIgnoreCase)) ?? combo.Items[0];
     private static Dictionary<string, JsonElement> ReaderSettingsObject(Dictionary<string, JsonElement> config)
