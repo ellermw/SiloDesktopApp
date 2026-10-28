@@ -2,6 +2,12 @@
 
 Historical release notes for Silo Desktop Player. The current installer and project status are documented in [README.md](README.md).
 
+## 1.2.335 (2026-10-28 — update-check overlap repair)
+
+- Include merged PR30: Update Now waits for an ongoing release check rather than silently dropping the download. Queued automatic downloads remain cancelable when playback starts, preferences change or Silo closes.
+- Retain the native regression exercising the real Check for updates and Update Now buttons with a held synthetic response. Published334 fails this check; the corrected payload downloads, verifies and schedules once.
+- Preserve all334 update notifications, in-app changelogs, manual access and normal-exit automatic installation behavior. See [335 scope and verification](docs/releases/1.2.335.md).
+
 ## 1.2.334 (2026-10-28 — desktop updates and reviewed audit corrections)
 
 - Add green update notifications and persistent update access, in-app release notes, and manual Update Now. Notification-only is the default; optional automatic mode downloads while playback is idle and installs after a normal exit. Both modes always notify and allow manual updating before automatic installation.

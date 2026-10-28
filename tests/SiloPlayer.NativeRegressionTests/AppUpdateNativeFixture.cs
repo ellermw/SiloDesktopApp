@@ -59,6 +59,23 @@ internal static class AppUpdateNativeFixture
         var mode = Descendants<ComboBox>((DependencyObject)dialog.Content).Single(x => x.Name == "AppUpdateModeCombo");
         if (mode.SelectedIndex != 0 || services.GetRequiredService<UpdateWire>().Downloads != 0)
             throw new InvalidOperationException("Notification-only mode downloaded automatically.");
+        if (scenario == "overlap")
+        {
+            var wire = services.GetRequiredService<UpdateWire>(); wire.HoldMetadata = true;
+            Click(Descendants<Button>(dialog).Single(button => button.Content is string text && text == "Check for updates"));
+            await wire.MetadataEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Click(Descendants<Button>(dialog).Single(button => button.Name == "PrimaryButton"));
+            await Task.Delay(100);
+            if (closed.Task.IsCompleted || wire.Downloads != 0) throw new InvalidOperationException("Update did not wait for the held check.");
+            wire.ReleaseMetadata.TrySetResult();
+            try { await closed.Task.WaitAsync(TimeSpan.FromSeconds(8)); }
+            catch (TimeoutException) { throw new InvalidOperationException("Update Now was dropped while Check for updates was running."); }
+            var safe = services.GetRequiredService<SafeInstaller>();
+            if (wire.Downloads != 1 || safe.Calls != 1 || safe.ConfirmedCloses != 1 || !safe.Restart)
+                throw new InvalidOperationException("Overlapping Update Now did not download, verify and schedule exactly once.");
+            Program.Log("PASS: actual Check for updates/Update Now overlap downloads, verifies and schedules exactly once without executing setup.");
+            return;
+        }
         if (scenario == "later")
         {
             var wire = services.GetRequiredService<UpdateWire>(); wire.HoldDownload = true;
@@ -188,12 +205,16 @@ internal static class AppUpdateNativeFixture
         private readonly byte[] _package = "Synthetic update, never executable"u8.ToArray();
         public int Downloads;
         public bool HoldDownload;
+        public bool HoldMetadata;
+        public TaskCompletionSource MetadataEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseMetadata = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource DownloadEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseDownload = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host == "api.github.com")
             {
+                if (HoldMetadata) { MetadataEntered.TrySetResult(); await ReleaseMetadata.Task.WaitAsync(ct); }
                 var json = JsonSerializer.Serialize(new { tag_name = "v1.2.999", draft = false, prerelease = false, body = "## Synthetic changelog\nFixed playback.\n- UI updates", published_at = "2026-10-28T12:00:00Z",
                     assets = new[] { new { name = "SiloInstaller-Windows-x64.exe", state = "uploaded", size = _package.Length, digest = "sha256:" + Convert.ToHexString(SHA256.HashData(_package)), browser_download_url = "https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.999/SiloInstaller-Windows-x64.exe" } } });
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
