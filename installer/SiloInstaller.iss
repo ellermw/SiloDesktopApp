@@ -84,6 +84,42 @@ Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: no
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Silo Desktop SiloCast (Private LAN)"""; Flags: runhidden waituntilterminated; RunOnceId: "SiloCastPrivateLanFirewall"
 
 [Code]
+// [InstallDelete] empties {app} and [UninstallDelete] removes it, both with
+// administrator rights. That is only safe for a folder that holds Silo alone.
+// A typed folder that already contains other files (Inno only warns "folder
+// exists") would otherwise lose them. Upgrades keep working: their folder
+// already contains Silo or its uninstall data.
+function DirectoryHasForeignContent(const Dir: String): Boolean;
+var
+  FindRec: TFindRec;
+begin
+  Result := False;
+  if not DirExists(Dir) then Exit;
+  if FileExists(AddBackslash(Dir) + '{#MyAppExeName}') or FileExists(AddBackslash(Dir) + 'unins000.dat') then Exit;
+  if FindFirst(AddBackslash(Dir) + '*', FindRec) then
+  begin
+    try
+      repeat
+        if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+          Result := True;
+      until Result or not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
+// Runs for interactive and silent installs before any file is deleted.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Dir: String;
+begin
+  Result := '';
+  Dir := ExpandConstant('{app}');
+  if DirectoryHasForeignContent(Dir) then
+    Result := 'The folder "' + Dir + '" already contains other files. {#MyAppName} replaces everything in its installation folder, so choose a new or empty folder.';
+end;
+
 procedure InstallWindowsAppRuntime;
 var
   ResultCode: Integer;

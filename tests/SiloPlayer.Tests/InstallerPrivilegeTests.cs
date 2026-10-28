@@ -16,6 +16,22 @@ public sealed class InstallerPrivilegeTests
         Assert.DoesNotContain("runascurrentuser", launch);
     }
 
+    [Fact]
+    public void InstallFolderWipeIsLimitedToFoldersThatHoldOnlySilo()
+    {
+        // [InstallDelete] {app}\* and [UninstallDelete] {app} run elevated. A
+        // typed, already populated folder must be refused before either runs.
+        var installer = ReadRepoFile("installer", "SiloInstaller.iss").ReplaceLineEndings("\n");
+        Assert.Contains("Type: filesandordirs; Name: \"{app}\\*\"", installer);
+        var prepare = installer[installer.IndexOf("function PrepareToInstall(", StringComparison.Ordinal)..];
+        Assert.Contains("DirectoryHasForeignContent(Dir)", prepare[..prepare.IndexOf("end;", StringComparison.Ordinal)]);
+        var guard = installer[installer.IndexOf("function DirectoryHasForeignContent(", StringComparison.Ordinal)..installer.IndexOf("function PrepareToInstall(", StringComparison.Ordinal)];
+        // An existing Silo installation (upgrades, the in-app updater's /DIR) stays allowed.
+        Assert.Contains("'{#MyAppExeName}'", guard);
+        Assert.Contains("'unins000.dat'", guard);
+        Assert.Contains("FindFirst(AddBackslash(Dir) + '*', FindRec)", guard);
+    }
+
     private static string ReadRepoFile(params string[] parts)
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
