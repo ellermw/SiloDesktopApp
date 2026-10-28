@@ -1119,13 +1119,13 @@ public partial class PlayerService : IDisposable
         }
         else if (track != null)
         {
-            // A text/PGS track cannot be layered over an HLS stream that is
-            // already burning a different bitmap track into the video. Drop
-            // the burn-in recipe first and select the requested track only
+            // A text/PGS track cannot be layered over a stream that is
+            // already burning a different bitmap track into the video. Replan
+            // to the requested track and select it locally only
             // after the replacement file has loaded. Selecting it before
             // loadfile settles lets mpv discard the new sid and can briefly
             // resume stale frames from the outgoing transport.
-            if (_activeHlsRecipe?.SubtitleBurnIn == true)
+            if (manager?.CurrentSession?.IsSubtitleBurnedIn == true)
             {
                 transportReloadScheduled = await SetBitmapSubtitleBurnInAsync(
                     null,
@@ -1136,7 +1136,7 @@ public partial class PlayerService : IDisposable
                 SelectSubtitleTrack(track);
             }
         }
-        else if (_activeHlsRecipe?.SubtitleBurnIn == true)
+        else if (manager?.CurrentSession?.IsSubtitleBurnedIn == true)
         {
             transportReloadScheduled = await SetBitmapSubtitleBurnInAsync(null);
         }
@@ -4956,6 +4956,10 @@ public partial class PlayerService : IDisposable
     /// canonical position and pause state. PGS deliberately does not use this
     /// path because libmpv can render the server's .sup sidecar directly.
     /// </summary>
+    /// <returns>
+    /// True when a transport reload or recovery now owns playback, so the
+    /// caller must not restore the outgoing stream's position or pause state.
+    /// </returns>
     private async Task<bool> SetBitmapSubtitleBurnInAsync(
         SubtitleTrackInfo? track,
         int? postLoadSubtitleIndex = null)
@@ -4983,7 +4987,7 @@ public partial class PlayerService : IDisposable
                 App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
                     () => App.MainWindowInstance?.ShowLoadingOverlay());
 
-                var replanned = await manager.ReplanSubtitleAsync(track?.Index, position, ct)
+                var replanned = await manager.ReplanSubtitleAsync(track?.Index ?? postLoadSubtitleIndex, position, ct)
                     .ConfigureAwait(false);
                 var replannedVersion = Versions.FirstOrDefault(v => v.FileId == replanned.MediaFileId)
                     ?? version;
@@ -5114,7 +5118,11 @@ public partial class PlayerService : IDisposable
                     "Reconnecting playback",
                     "The subtitle transport switch was interrupted. Restoring playback from your current position…",
                     "warning");
+                _recoveryPauseIntentOverride = wasPaused;
                 _ = RecoverInterruptedStreamAsync(CurrentMediaPosition, "subtitle-switch-failed");
+                // Recovery now owns the transport; callers must not restore
+                // the outgoing stream's position or pause state.
+                return true;
             }
             else
             {
@@ -5175,6 +5183,12 @@ public partial class PlayerService : IDisposable
         if (_mpv == null) return;
         if (IsUnsupportedBitmapSubtitle(track))
         {
+            // After a burn-in reload, the post-load selection lands here with
+            // the track the plan already burns in. Replanning again would
+            // reload and reselect it indefinitely.
+            if (_playbackManager?.CurrentSession is { IsSubtitleBurnedIn: true } burned &&
+                string.Equals(burned.SelectedSubtitleTrackId, track.TrackId, StringComparison.Ordinal))
+                return;
             _ = SetBitmapSubtitleBurnInAsync(track);
             return;
         }

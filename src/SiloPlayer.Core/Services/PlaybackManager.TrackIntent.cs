@@ -70,6 +70,11 @@ public partial class PlaybackManager
         }
     }
     private long CaptureSubtitleRevision() { lock (_trackIntentGate) return _subtitleRevision; }
+    private bool HasPendingSubtitleSelection()
+    {
+        lock (_trackIntentGate)
+            return _hasViewerSubtitle && _subtitleRevision > _subtitleSentRevision;
+    }
     private long CaptureAudioRevision() { lock (_trackIntentGate) return _audioRevision; }
     private void AcknowledgeAudioIntent(long revision) { lock (_trackIntentGate) _audioSentRevision = Math.Max(_audioSentRevision, revision); }
     private void AcknowledgeSubtitleIntent(long revision) { lock (_trackIntentGate) _subtitleSentRevision = Math.Max(_subtitleSentRevision, revision); }

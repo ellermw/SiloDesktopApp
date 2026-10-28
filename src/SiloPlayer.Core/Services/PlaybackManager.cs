@@ -408,6 +408,13 @@ public partial class PlaybackManager : IDisposable
         CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
+        // A failed track-change request has not granted the viewer's choice.
+        // Retry that change before considering the outgoing plan a failed route.
+        // In particular, only track_change gives an omitted subtitle the meaning Off.
+        if (message == "subtitle-switch-failed" && HasPendingSubtitleSelection())
+            return ReplanAsync("track_change", positionSeconds, _qualityPreferenceV3,
+                selectedTracks => { }, failure: null, ct);
+
         // A byte-stream interruption does not invalidate codec/container support.
         // Replanning marks original_http as failed and unnecessarily escalates to
         // remux. Reopen the same executable direct plan at the requested position.
