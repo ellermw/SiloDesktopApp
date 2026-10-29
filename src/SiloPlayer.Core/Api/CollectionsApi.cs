@@ -216,6 +216,22 @@ public class CollectionsApi(SiloApiClient client)
         RememberBaseline($"/api/v2/collections/{Uri.EscapeDataString(collectionId)}/items/order", new { ordered_ids = existing.Items.OrderBy(i => i.Position).Select(i => i.MediaItemId).Where(id => id != itemId).Append(itemId).ToArray() }, context);
     }
 
+    /// <summary>
+    /// Adds at a position the caller derived from server positions it already
+    /// holds (as the WebUI editor does), without re-reading every page of the
+    /// collection. A remembered order baseline gains the item at its end.
+    /// </summary>
+    public async Task AddCollectionItemAtAsync(string collectionId, string itemId, int position, CancellationToken ct = default)
+    {
+        if (position < 0) throw new ArgumentOutOfRangeException(nameof(position));
+        var context = client.CaptureContext();
+        var orderPath = $"/api/v2/collections/{Uri.EscapeDataString(collectionId)}/items/order";
+        _baselines.TryGetValue(orderPath, out var baseline);
+        await client.PutNoContentAsync($"/api/v2/collections/{Uri.EscapeDataString(collectionId)}/items/{Uri.EscapeDataString(itemId)}", new { position }, ct);
+        if (baseline.Context == context && baseline.Fingerprint != null)
+            RememberBaseline(orderPath, new { ordered_ids = JsonSerializer.Deserialize<string[]>(baseline.Fingerprint)!.Where(id => id != itemId).Append(itemId).ToArray() }, context);
+    }
+
     public async Task RemoveCollectionItemAsync(string collectionId, string itemId, CancellationToken ct = default)
     {
         var context = client.CaptureContext();
