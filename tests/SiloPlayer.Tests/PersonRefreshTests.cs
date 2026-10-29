@@ -55,7 +55,8 @@ public sealed class PersonRefreshTests
         {
             await vm.LoadCommand.ExecuteAsync("person-a");
             var film = Assert.Single(vm.Filmography);
-            await updated.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            // The observer's first poll is a real 3 s delay; leave room under full-suite load.
+            await updated.Task.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.Equal("https://images.test/new.jpg", vm.Person!.PhotoUrl);
             Assert.Same(film, Assert.Single(vm.Filmography));
             Assert.Equal(initiallyComplete ? 0 : 1, refreshes);
@@ -91,13 +92,25 @@ public sealed class PersonRefreshTests
             Id = "person-a", Bio = "Initial", BirthDate = "1980-01-01", PhotoUrl = "https://images.test/old.jpg"
         }, cts.Token).GetAsyncEnumerator();
         var pending = observer.MoveNextAsync().AsTask();
-        await requested.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        if (change == "server") client.SetBaseUrl("https://other-server.test");
-        else if (change == "profile") client.SetProfile("another-profile");
-        else cts.Cancel();
-        response.SetResult(Json("{\"id\":\"person-a\",\"bio\":\"Stale\"}"));
-        if (change == "cancel") await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await pending);
-        else Assert.False(await pending);
+        try
+        {
+            // The first poll follows a real 3 s delay; leave room under full-suite load.
+            await requested.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            if (change == "server") client.SetBaseUrl("https://other-server.test");
+            else if (change == "profile") client.SetProfile("another-profile");
+            else cts.Cancel();
+            response.SetResult(Json("{\"id\":\"person-a\",\"bio\":\"Stale\"}"));
+            if (change == "cancel") await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await pending);
+            else Assert.False(await pending);
+        }
+        finally
+        {
+            // Disposing an iterator during MoveNextAsync throws NotSupportedException,
+            // which would replace the real failure. Let the pending move finish first.
+            cts.Cancel();
+            response.TrySetResult(Json("{}"));
+            try { await pending; } catch (Exception) when (!pending.IsCompletedSuccessfully) { }
+        }
     }
 
     [Fact]
