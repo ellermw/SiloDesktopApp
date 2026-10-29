@@ -3,7 +3,7 @@
   <ItemGroup><PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" /><PackageReference Include="xunit" Version="2.5.3" /><PackageReference Include="xunit.runner.visualstudio" Version="2.5.3" /><Using Include="Xunit" /></ItemGroup>
   <ItemGroup><ProjectReference Include="../../src/SiloPlayer.Core/SiloPlayer.Core.csproj" /></ItemGroup>
   <Target Name="BuildLauncherFixtures" AfterTargets="Build">
-    <MSBuild Projects="../../src/SiloPlayer.Launcher/SiloPlayer.Launcher.csproj;../SiloPlayer.LauncherFixture/SiloPlayer.LauncherFixture.csproj" Targets="Build" Properties="Configuration=$(Configuration)" />
+    <MSBuild Projects="../../src/SiloPlayer.Launcher/SiloPlayer.Launcher.csproj;../SiloPlayer.LauncherFixture/SiloPlayer.LauncherFixture.csproj" Targets="Restore;Build" Properties="Configuration=$(Configuration)" />
     <ItemGroup>
       <LauncherFiles Include="../../src/SiloPlayer.Launcher/bin/$(Configuration)/net8.0-windows10.0.22621.0/win-x64/**/*" />
       <ClientFiles Include="../SiloPlayer.LauncherFixture/bin/$(Configuration)/net8.0-windows10.0.22621.0/win-x64/*" />
