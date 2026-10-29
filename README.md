@@ -4,13 +4,13 @@ A native Windows client for [Silo Server](https://github.com/Silo-Server/silo-se
 
 ## Download
 
-[**Download version 1.2.505 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.505/SiloInstaller-Windows-x64.exe)
+[**Download version 1.2.511 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.511/SiloInstaller-Windows-x64.exe)
 
 Requires Windows 10 version 1809 or newer, or Windows 11, and access to a Silo Server. Runtime dependencies are included in the installer.
 
-[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.505) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.505/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
+[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.511) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.511/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
 
-Version 1.2.505 adds centered update windows and changed-file updates that prepare the next version while Silo stays open until the final restart. It also preserves playback when selecting subtitles, corrects pending subtitle selection ownership, and improves image caching, collection editing and sign-in reliability. Existing legacy installations require one full installer migration; compatible484 or newer installations can reuse unchanged files. See the [41-change release record](docs/releases/1.2.505.md).
+Version 1.2.511 adds centered update windows and changed-file updates that prepare the next version while Silo stays open until the final restart. It also preserves playback when selecting subtitles, corrects pending subtitle selection ownership, and improves image caching, collection editing and sign-in reliability. Existing legacy installations require one full installer migration; compatible484 or newer installations can reuse unchanged files. See the [47-change release record](docs/releases/1.2.511.md).
 
 Historical navigation slowdown and a separate WinUI navigation crash remain under investigation.
 

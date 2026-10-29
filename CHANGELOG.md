@@ -1,8 +1,12 @@
 # Changelog
 
-## 1.2.505
+## 1.2.511
 
-Centered update windows, keep-open changed-file updates, subtitle continuity and corrected audit PR52–59: bounded artwork caching, crash logging, server upload limits, collection append performance, safe external links and identity-owned Plex/Emby sign-in. See the [41-change record](docs/releases/1.2.505.md).
+Centered keep-open incremental updates, subtitle continuity and corrected audit PR52–59, including complete replacement-load ownership, latest bitmap plan/prefs and genuine pause intent. See the [47-change record](docs/releases/1.2.511.md).
+
+## 1.2.505 (unpublished)
+
+Withheld source/tag baseline; no505 release was published. Superseded by511. Centered update windows, keep-open changed-file updates, subtitle continuity and audit PR52–59: bounded artwork caching, crash logging, server upload limits, collection append performance, safe external links and identity-owned Plex/Emby sign-in. See the [41-change record](docs/releases/1.2.505.md).
 
 ## 1.2.464
 
