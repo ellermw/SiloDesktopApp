@@ -87,8 +87,17 @@ public sealed partial class AppUpdateService
             entered = true;
             var release = State.Release;
             if (release is null) return;
+            if(RemainingRateLimitDelay() is not null) throw new InvalidOperationException(UpdateCheckRateLimitedException.UserMessage);
             SetState(State with { IsDownloading = true, Error = null });
             log?.Invoke($"download_start version={release.Version} automatic={_automaticTransfer}");
+            if(PreferIncrementalUpdates)
+            {
+                if(release.Incremental is null) throw new InvalidDataException("This release requires a full installer migration. Open the release page to install it manually.");
+                var package=await new IncrementalUpdateClient(http,cacheDirectory,InstalledPayloadDirectory,log).PrepareAsync(release,
+                    progress=>SetState(State with {PreparationProgress=progress,DownloadedBytes=progress.CompletedBytes}),deadline.Token).ConfigureAwait(false);
+                SetState(State with {IsDownloading=false,PreparedPackage=package,ReadyInstaller=null,Error=null});
+                return;
+            }
             var lastProgress = System.Diagnostics.Stopwatch.GetTimestamp();
             var path = await new AppUpdateDownloader(http, cacheDirectory, log).DownloadAsync(release,
                 bytes =>
@@ -112,7 +121,13 @@ public sealed partial class AppUpdateService
         catch (Exception ex)
         {
             log?.Invoke($"download_failed kind={ex.GetType().Name} status={(ex as HttpRequestException)?.StatusCode}");
-            SetState(State with { IsDownloading = false, ReadyInstaller = null, Error = "Could not download the update. " + ex.Message });
+            if(ex is UpdateCheckRateLimitedException limited)
+            {
+                var wait=limited.RetryAfter ?? RetryInterval;
+                wait=wait<RetryInterval ? RetryInterval : wait>MaximumRateLimitWait ? MaximumRateLimitWait : wait;
+                lock(_cooldownGate)_rateLimitedUntil=(timeProvider??TimeProvider.System).GetUtcNow()+wait;
+            }
+            SetState(State with { IsDownloading = false, ReadyInstaller = null, PreparedPackage=null, Error = "Could not download the update. " + ex.Message });
         }
         finally
         {
@@ -131,18 +146,24 @@ public sealed partial class AppUpdateService
     public async Task<bool> ReverifyReadyAsync(CancellationToken ct = default)
     {
         var state = State;
-        if (state.Release is null || state.ReadyInstaller is null) return false;
+        if (state.Release is null || (state.ReadyInstaller is null && state.PreparedPackage is null)) return false;
         try
         {
-            if (await AppUpdateDownloader.VerifyAsync(state.ReadyInstaller, state.Release, ct).ConfigureAwait(false)) return true;
+            if(state.PreparedPackage is { } prepared)
+            {
+                if(state.Release.Incremental is { } assets && prepared.ManifestSha256.Equals(assets.ManifestSha256,StringComparison.OrdinalIgnoreCase)
+                    && await new IncrementalUpdateClient(http,cacheDirectory,InstalledPayloadDirectory,log).VerifyPreparedAsync(prepared,ct).ConfigureAwait(false))return true;
+            }
+            else if (await AppUpdateDownloader.VerifyAsync(state.ReadyInstaller!, state.Release, ct).ConfigureAwait(false)) return true;
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { log?.Invoke("ready_verification_failed kind=" + ex.GetType().Name); }
-        SetState(State with { ReadyInstaller = null, Error = "The downloaded update could not be verified. Download it again." });
+        SetState(State with { ReadyInstaller = null, PreparedPackage=null, Error = "The downloaded update could not be verified. Download it again." });
         return false;
     }
 
     public bool ShouldInstallOnExit => Mode == AppUpdateMode.Automatic && State.Release is not null
-        && State.ReadyInstaller is not null && Interlocked.Read(ref _lastSuccessfulCheckStamp) is > 0 and var checkedAt
+        && RemainingRateLimitDelay() is null
+        && (State.ReadyInstaller is not null || State.PreparedPackage is not null) && Interlocked.Read(ref _lastSuccessfulCheckStamp) is > 0 and var checkedAt
         && System.Diagnostics.Stopwatch.GetElapsedTime(checkedAt) < TimeSpan.FromHours(24);
 }

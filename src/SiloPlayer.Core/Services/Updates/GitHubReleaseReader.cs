@@ -112,8 +112,67 @@ internal sealed class GitHubReleaseReader(HttpClient http, TimeProvider? clock =
             var length = char.IsHighSurrogate(releaseNotes[32767]) ? 32767 : 32768;
             releaseNotes = releaseNotes[..length] + "\n\nAdditional release notes are available on GitHub.";
         }
-        return new AppRelease(version, tag, releaseNotes,
+        var release = new AppRelease(version, tag, releaseNotes,
             published, url, digest[7..].ToLowerInvariant(), size);
+        var manifestAssets = root.GetProperty("assets").EnumerateArray().Where(a => a.GetProperty("name").GetString() == UpdateManifestValidation.ManifestName).ToArray();
+        var packAssets = root.GetProperty("assets").EnumerateArray().Where(a => a.GetProperty("name").GetString() == UpdateManifestValidation.PackName).ToArray();
+        if (manifestAssets.Length != 0 || packAssets.Length != 0)
+        {
+            try
+            {
+                if (manifestAssets.Length != 1 || packAssets.Length != 1) throw new InvalidDataException("The incremental assets are incomplete or duplicated.");
+                var manifest = ReadIncrementalAsset(manifestAssets[0], tag, UpdateManifestValidation.ManifestName, UpdateManifestValidation.MaximumManifestBytes);
+                var pack = ReadIncrementalAsset(packAssets[0], tag, UpdateManifestValidation.PackName, UpdateManifestValidation.MaximumPackBytes);
+                release = release with { Incremental = new(manifest.Url, manifest.Hash, manifest.Size, pack.Url, pack.Hash, pack.Size) };
+            }
+            catch (Exception ex) when (ex is InvalidDataException or KeyNotFoundException or InvalidOperationException or FormatException)
+            {
+                // Optional new assets cannot hide an otherwise valid full installer from legacy callers.
+                // Incremental authority separately requires a complete validated pair below.
+            }
+        }
+        return release;
+    }
+
+    private static (Uri Url, string Hash, long Size) ReadIncrementalAsset(JsonElement asset, string tag, string name, long maximum)
+    {
+        var digest = asset.GetProperty("digest").GetString() ?? "";
+        var size = asset.GetProperty("size").GetInt64();
+        if (asset.GetProperty("state").GetString() != "uploaded" || size <= 0 || size > maximum ||
+            !digest.StartsWith("sha256:", StringComparison.Ordinal) || !UpdateManifestValidation.IsHash(digest[7..]) ||
+            !Uri.TryCreate(asset.GetProperty("browser_download_url").GetString(), UriKind.Absolute, out var url) ||
+            url.AbsoluteUri != $"{RepositoryUrl}/releases/download/{tag}/{name}")
+            throw new InvalidDataException("The incremental asset identity is invalid.");
+        return (url, digest[7..].ToLowerInvariant(), size);
+    }
+
+    internal void ThrowIfRateLimited(HttpResponseMessage response)
+    {
+        if (response.StatusCode is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.TooManyRequests && IsRateLimited(response))
+            throw new UpdateCheckRateLimitedException(response.StatusCode, RetryDelay(response));
+    }
+
+    internal async Task<AppRelease> ReadTagAsync(string tag, CancellationToken ct)
+    {
+        if (tag.Length > 64 || !Regex.IsMatch(tag, @"^v?\d+\.\d+\.\d+(?:\.\d+)?$", RegexOptions.CultureInvariant))
+            throw new InvalidDataException("Invalid release tag.");
+        if (http.DefaultRequestHeaders.Authorization is not null) throw new InvalidDataException("Update authority must be unauthenticated.");
+        var uri = new Uri("https://api.github.com/repos/ellermw/SiloDesktopApp/releases/tags/" + tag);
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        request.Headers.UserAgent.ParseAdd("SiloDesktopApp-Updater");
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        request.Headers.Add("X-GitHub-Api-Version", "2026-03-10");
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        if (response.RequestMessage?.RequestUri is { } final && final != uri) throw new InvalidDataException("Release authority redirected.");
+        ThrowIfRateLimited(response);
+        if (response.StatusCode != System.Net.HttpStatusCode.OK) throw new HttpRequestException("Could not establish release authority.", null, response.StatusCode);
+        if (response.Content.Headers.ContentLength > MaximumMetadataBytes) throw new InvalidDataException("Update metadata is too large.");
+        await using var body = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        var bytes = await UpdateManifestValidation.ReadBoundedAsync(body, MaximumMetadataBytes, ct).ConfigureAwait(false);
+        var release = Parse(bytes, new Version(0, 0, 0, 0)) ?? throw new InvalidDataException("Release is not eligible for installation.");
+        if (release.Tag != tag) throw new InvalidDataException("Release tag identity mismatch.");
+        IncrementalUpdateTransport.ValidateAssets(release);
+        return release;
     }
 
     internal static Version Normalize(Version version) => new(version.Major, version.Minor,

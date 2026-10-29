@@ -9,10 +9,22 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
     private long _lastSuccessfulCheckStamp;
     private ReleaseCheck? _lastCheck;
     private DateTimeOffset? _rateLimitedUntil;
+    private readonly object _cooldownGate=new();
     private static readonly TimeSpan CheckInterval = TimeSpan.FromMinutes(15), RetryInterval = TimeSpan.FromMinutes(5),
         MaximumRateLimitWait = TimeSpan.FromHours(6);
     public AppUpdateState State => Volatile.Read(ref _state);
     public string CacheDirectory => Path.GetFullPath(cacheDirectory);
+    public bool PreferIncrementalUpdates { get; init; }
+    public string InstalledPayloadDirectory { get; init; } = AppContext.BaseDirectory;
+    public string? InstallationRoot { get; init; }
+    public void ApplyAuthorityCooldown(DateTimeOffset? until)
+    {
+        var now=(timeProvider??TimeProvider.System).GetUtcNow();
+        if(until is null || until<=now)return;
+        var bounded=until>now+MaximumRateLimitWait ? now+MaximumRateLimitWait : until.Value;
+        lock(_cooldownGate)if(_rateLimitedUntil is null || _rateLimitedUntil<bounded)_rateLimitedUntil=bounded;
+        SetState(State with{Error="Could not check for updates. "+UpdateCheckRateLimitedException.UserMessage});
+    }
     public event Action<AppUpdateState>? Changed;
 
     public async Task RunAutomaticChecksAsync(CancellationToken ct)
@@ -47,9 +59,14 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
 
     private TimeSpan? RemainingRateLimitDelay()
     {
+        lock(_cooldownGate)
+        {
+        if(InstallationRoot is { } root && UpdateAuthorityCooldown.Read(root,timeProvider) is { } external
+            && (_rateLimitedUntil is null || _rateLimitedUntil<external))_rateLimitedUntil=external;
         if (_rateLimitedUntil is not { } until) return null;
         var remaining = until - (timeProvider ?? TimeProvider.System).GetUtcNow();
         return remaining > TimeSpan.Zero ? remaining : null;
+        }
     }
 
     public async Task CheckAsync(CancellationToken ct = default)
@@ -70,11 +87,14 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
             deadline.CancelAfter(TimeSpan.FromSeconds(12));
             var check = await new GitHubReleaseReader(http, timeProvider).ReadAsync(currentVersion, _lastCheck, deadline.Token).ConfigureAwait(false);
-            _lastCheck = check; _rateLimitedUntil = null;
+            _lastCheck = check; lock(_cooldownGate)_rateLimitedUntil = null;
             var release = check.Release;
             Interlocked.Exchange(ref _lastSuccessfulCheckStamp, System.Diagnostics.Stopwatch.GetTimestamp());
-            var same = release is not null && State.Release?.Version == release.Version && State.Release.Sha256 == release.Sha256;
-            SetState(new AppUpdateState(release, ReadyInstaller: same ? State.ReadyInstaller : null));
+            var previous=State;
+            var same = release is not null && previous.Release?.Version == release.Version && previous.Release.Sha256 == release.Sha256
+                && previous.Release.Incremental == release.Incremental;
+            SetState(new AppUpdateState(release, ReadyInstaller: same ? previous.ReadyInstaller : null)
+                { PreparedPackage=same ? previous.PreparedPackage : null, PreparationProgress=same ? previous.PreparationProgress : null });
             log?.Invoke($"check_ok version={release?.Version.ToString() ?? "current"}");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -87,7 +107,7 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
             var limited = ex as UpdateCheckRateLimitedException;
             var wait = limited?.RetryAfter ?? RetryInterval;
             wait = wait < RetryInterval ? RetryInterval : wait > MaximumRateLimitWait ? MaximumRateLimitWait : wait;
-            _rateLimitedUntil = limited is null ? null : (timeProvider ?? TimeProvider.System).GetUtcNow() + wait;
+            lock(_cooldownGate)_rateLimitedUntil = limited is null ? null : (timeProvider ?? TimeProvider.System).GetUtcNow() + wait;
             log?.Invoke($"check_failed kind={ex.GetType().Name} status={(ex as HttpRequestException)?.StatusCode}");
             SetState(State with { IsChecking = false, Error = ex is OperationCanceledException
                 ? "The update check timed out. Try again." : "Could not check for updates. " + ex.Message });

@@ -432,11 +432,11 @@ public sealed partial class MainWindow : Window
     {
         if (_receiverShutdownStarted) return;
         _receiverShutdownStarted = true;
+        if(!await PrepareAppUpdateExitAsync()){_receiverShutdownStarted=false;return;}
         try { await App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().ShutdownAsync(); }
         catch (Exception ex) { LocalLog.AppendLine("silocast.txt", $"shutdown_failed | {ex.GetType().Name}"); }
         finally
         {
-            await PrepareAppUpdateExitAsync();
             _receiverShutdownComplete = true;
             Close();
         }

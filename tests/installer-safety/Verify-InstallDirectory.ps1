@@ -119,6 +119,8 @@ $fullKey='Software\Microsoft\Windows\CurrentVersion\Uninstall\'+$fullId+'_is1'
 $fullTarget=Join-Path $result 'full-install'
 [IO.File]::WriteAllText("$result\dummy-payload.bin",'synthetic payload; never executed')
 $fullGuard=$guard.Replace('function GuardPrepareToInstall(','function PrepareToInstall(')
+$installDelete=[regex]::Match($source,'(?ms)^\[InstallDelete\]\s*\r?\n(.*?)(?=^\[|\z)').Value
+$uninstallLogMode=[regex]::Match($source,'(?m)^UninstallLogMode=.*$').Value
 $fullTemplate=@"
 #define MyAppExeName "SiloPlayer.exe"
 #define MyAppName "Silo Desktop Player"
@@ -137,35 +139,63 @@ CreateAppDir=yes
 DisableProgramGroupPage=yes
 CloseApplications=no
 RestartApplications=no
-[InstallDelete]
-Type: filesandordirs; Name: "{app}\*"
+UNINSTALL_LOG_MODE_PLACEHOLDER
+INSTALL_DELETE_PLACEHOLDER
 [Files]
 Source: "$result\dummy-payload.bin"; DestDir: "{app}"; DestName: "SiloPlayer.exe"
+VERSION_PLACEHOLDER
 UNINSTALL_PLACEHOLDER
 [Code]
 $fullGuard
 "@
 foreach($variant in @('Legacy','Current')){
  $delete=if($variant -eq 'Legacy'){"[UninstallDelete]`nType: filesandordirs; Name: `"{app}`""}else{''}
- $script=$fullTemplate.Replace('FullFixturePLACEHOLDER','FullFixture'+$variant).Replace('UNINSTALL_PLACEHOLDER',$delete)
+ $installDeleteSection=if($variant -eq 'Legacy'){"[InstallDelete]`nType: filesandordirs; Name: `"{app}\*`""}else{$installDelete}
+ $versionFile=if($variant -eq 'Current'){"Source: `"$result\dummy-payload.bin`"; DestDir: `"{app}\versions\1.2.999.0`"; DestName: `"SiloPlayer.exe`""}else{''}
+ $logMode=if($variant -eq 'Current'){$uninstallLogMode}else{''}
+ $script=$fullTemplate.Replace('FullFixturePLACEHOLDER','FullFixture'+$variant).Replace('UNINSTALL_PLACEHOLDER',$delete).Replace('INSTALL_DELETE_PLACEHOLDER',$installDeleteSection).Replace('VERSION_PLACEHOLDER',$versionFile).Replace('UNINSTALL_LOG_MODE_PLACEHOLDER',$logMode)
  [IO.File]::WriteAllText("$result\FullFixture$variant.iss",$script)
  & $iscc "$result\FullFixture$variant.iss" *> "$result\full-$variant-compile.log"
  if($LASTEXITCODE -ne 0){throw "Isolated $variant fixture did not compile"}
 }
 foreach($variant in @('Legacy','Current')){
- if($variant -eq 'Current'){[IO.File]::WriteAllText("$fullTarget\obsolete-runtime.dll",'old synthetic runtime')}
+ if($variant -eq 'Current'){
+  [IO.File]::WriteAllText("$fullTarget\unknown-old-runtime.dll",'unknown legacy file; preserve')
+  [IO.File]::WriteAllText("$fullTarget\keep-through-upgrade.txt",'preserve unknown addition through migration')
+ }
  $process=Start-Process -FilePath "$result\FullFixture$variant.exe" -WindowStyle Hidden -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/SP-','/NORESTART',('/DIR="'+$fullTarget+'"'),('/LOG="'+$result+'\full-'+$variant+'.log"')) -PassThru
  if(!$process.WaitForExit(30000) -or $process.ExitCode -ne 0){throw "Isolated $variant installation failed"}
  if(!(Test-Path -LiteralPath "$fullTarget\SiloPlayer.exe")){throw 'Isolated fixture payload missing'}
 }
-if(Test-Path -LiteralPath "$fullTarget\obsolete-runtime.dll"){throw 'Registered clean-payload upgrade left an obsolete runtime'}
+if(!(Test-Path -LiteralPath "$fullTarget\unknown-old-runtime.dll") -or !(Test-Path -LiteralPath "$fullTarget\keep-through-upgrade.txt")){
+ throw 'Side-by-side migration erased files that are not in its owned inventory'
+}
+if(!(Test-Path -LiteralPath "$fullTarget\versions\1.2.999.0\SiloPlayer.exe")){throw 'Versioned dummy client was not installed'}
+[IO.File]::WriteAllText("$fullTarget\versions\1.2.999.0\keep-with-version.txt",'preserve foreign version addition')
 [IO.File]::WriteAllText("$fullTarget\keep-on-uninstall.txt",'preserve synthetic personal file')
 $process=Start-Process -FilePath "$fullTarget\unins000.exe" -WindowStyle Hidden -ArgumentList @('/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART',('/LOG="'+$result+'\full-uninstall.log"')) -PassThru
 if(!$process.WaitForExit(30000) -or $process.ExitCode -ne 0){throw 'Isolated uninstall failed'}
-if(!(Test-Path -LiteralPath "$fullTarget\keep-on-uninstall.txt") -or (Test-Path -LiteralPath "$fullTarget\SiloPlayer.exe")){
+# Inno's installed stub may return while its temporary child still owns the
+# uninstall log. Wait for actual successful completion and the closed handle;
+# otherwise the xUnit caller races that child while removing its evidence root.
+$logFinished=$false
+$logDeadline=[DateTime]::UtcNow.AddSeconds(5)
+do {
+ try {
+  $stream=[IO.File]::Open("$result\full-uninstall.log",[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
+  try {$reader=New-Object IO.StreamReader($stream);try{$text=$reader.ReadToEnd()}finally{$reader.Dispose()}}finally{$stream.Dispose()}
+  $logFinished=$text.Contains('Uninstallation process succeeded.') -and $text.Contains('Log closed.')
+ } catch [IO.IOException] { }
+ if(!$logFinished){[Threading.Thread]::Sleep(20)}
+} until($logFinished -or [DateTime]::UtcNow -ge $logDeadline)
+if(!$logFinished){throw 'The isolated uninstall child did not finish and close its log'}
+if(!(Test-Path -LiteralPath "$fullTarget\keep-on-uninstall.txt") -or
+ !(Test-Path -LiteralPath "$fullTarget\versions\1.2.999.0\keep-with-version.txt") -or
+ (Test-Path -LiteralPath "$fullTarget\versions\1.2.999.0\SiloPlayer.exe") -or
+ (Test-Path -LiteralPath "$fullTarget\SiloPlayer.exe")){
  throw 'Uninstall did not preserve an unrelated addition while removing installed files'
 }
 $hash=[Security.Cryptography.SHA256]::Create();$stream=[IO.File]::OpenRead($sourcePath)
 try{$sourceHash=[BitConverter]::ToString($hash.ComputeHash($stream)).Replace('-','')}finally{$stream.Dispose();$hash.Dispose()}
-[pscustomobject]@{appId=$fullId;setupPrivileges='lowest';sourceSha256=$sourceHash;productionIdentityMatchesUpdater=$true;freshInstall=$true;registeredUpgrade=$true;obsoletePayloadRemoved=$true;foreignFilePreservedOnUninstall=$true;productionAppChanged=$false}|ConvertTo-Json|Set-Content "$result\install-upgrade-uninstall.json"
-Write-Output 'PASS: isolated fresh install, registered clean upgrade and uninstall preserve the unrelated addition.'
+[pscustomobject]@{appId=$fullId;setupPrivileges='lowest';sourceSha256=$sourceHash;productionIdentityMatchesUpdater=$true;freshInstall=$true;registeredUpgrade=$true;foreignFilePreservedOnUpgrade=$true;versionedPayloadRemoved=$true;foreignFilePreservedOnUninstall=$true;uninstallLogClosedBeforeCleanup=$true;productionAppChanged=$false}|ConvertTo-Json|Set-Content "$result\install-upgrade-uninstall.json"
+Write-Output 'PASS: isolated fresh install, registered migration and logged-file uninstall preserve unrelated additions.'

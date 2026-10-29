@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Core.Services.Updates;
 using SiloPlayer.Helpers;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
@@ -220,7 +221,9 @@ public partial class App : Application
             new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, AutomaticDecompression = System.Net.DecompressionMethods.None })
                 { Timeout = Timeout.InfiniteTimeSpan },
             Path.Combine(appDataDir, "updates"), typeof(App).Assembly.GetName().Version!,
-            message => LocalLog.AppendLine("updates.txt", message)));
+            message => LocalLog.AppendLine("updates.txt", message))
+            {PreferIncrementalUpdates=UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!) is { } updateRoot && SideBySideInstallation.ReadState(updateRoot) is not null,
+                InstalledPayloadDirectory=AppContext.BaseDirectory,InstallationRoot=UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!)});
         services.AddSingleton<IAppUpdateInstaller>(new WindowsAppUpdateInstaller(Path.Combine(appDataDir, "updates")));
         services.AddSingleton<CredentialStore>();
         services.AddSingleton<ICredentialStore>(sp => sp.GetRequiredService<CredentialStore>());

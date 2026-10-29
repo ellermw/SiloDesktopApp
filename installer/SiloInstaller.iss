@@ -3,10 +3,13 @@
 
 #define MyAppName "Silo Desktop Player"
 #ifndef MyAppVersion
-#define MyAppVersion "1.2.464"
+#define MyAppVersion "1.2.484"
 #endif
 #define MyAppPublisher "Silo"
 #define MyAppExeName "SiloPlayer.exe"
+#ifndef MyAppFourPartVersion
+#define MyAppFourPartVersion MyAppVersion + ".0"
+#endif
 #ifndef SiloUninstallKey
 #define SiloUninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\{B8E2F4A1-3C5D-4E6F-9A1B-2D3E4F5A6B7C}_is1"
 #endif
@@ -25,7 +28,7 @@ AllowNoIcons=yes
 OutputDir=output
 OutputBaseFilename=SiloInstaller-{#MyAppVersion}-Setup
 SetupIconFile=..\src\SiloPlayer\Assets\app.ico
-UninstallDisplayIcon={app}\Assets\app.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
@@ -35,6 +38,10 @@ PrivilegesRequired=admin
 DisableProgramGroupPage=yes
 CloseApplications=force
 RestartApplications=no
+; Discard historical broad UninstallDelete directives from legacy releases.
+; Current files are logged anew; incremental files have validated inventories.
+UninstallLogMode=overwrite
+SetupMutex=Global\SiloDesktopInstaller-B8E2F4A1-3C5D-4E6F-9A1B-2D3E4F5A6B7C
 #ifdef LocalSigning
 SignTool=localtesting
 #endif
@@ -45,15 +52,9 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional options:"; Flags: checkedonce
 
-[InstallDelete]
-; Upgrades must start from a clean application payload. Earlier QA builds
-; changed publish modes and left stale DLL/deps/runtime files beside the new
-; EXE, which can break playback and trigger Smart App Control on obsolete files.
-; User data lives in %LOCALAPPDATA%\SiloPlayer, not under {app}.
-Type: filesandordirs; Name: "{app}\*"
-
 [Files]
-; Main application files from publish output
+; Root bootstrap plus a private version directory. Never wipe the root or
+; previous versions: only logged and validated inventory-owned files are ours.
 Source: "{#PublishSourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Windows App SDK runtime installer
@@ -62,28 +63,32 @@ Source: "deps\windowsappruntimeinstall-x64.exe"; DestDir: "{tmp}"; Flags: delete
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\Assets\app.ico"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Registry]
 ; Native invitation deep links emitted by the current Silo WebUI.
 Root: HKA; Subkey: "Software\Classes\silo"; ValueType: string; ValueData: "URL:Silo invitation"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\silo"; ValueName: "URL Protocol"; ValueType: string; ValueData: ""
-Root: HKA; Subkey: "Software\Classes\silo\DefaultIcon"; ValueType: string; ValueData: "{app}\Assets\app.ico,0"
+Root: HKA; Subkey: "Software\Classes\silo\DefaultIcon"; ValueType: string; ValueData: "{app}\{#MyAppExeName},0"
 Root: HKA; Subkey: "Software\Classes\silo\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 ; Public Silo native OAuth PKCE callbacks return to the existing single-instance activation pipe.
 Root: HKA; Subkey: "Software\Classes\org.siloserver.silo"; ValueType: string; ValueData: "URL:Silo sign-in"; Flags: uninsdeletekey
 Root: HKA; Subkey: "Software\Classes\org.siloserver.silo"; ValueName: "URL Protocol"; ValueType: string; ValueData: ""
-Root: HKA; Subkey: "Software\Classes\org.siloserver.silo\DefaultIcon"; ValueType: string; ValueData: "{app}\Assets\app.ico,0"
+Root: HKA; Subkey: "Software\Classes\org.siloserver.silo\DefaultIcon"; ValueType: string; ValueData: "{app}\{#MyAppExeName},0"
 Root: HKA; Subkey: "Software\Classes\org.siloserver.silo\shell\open\command"; ValueType: string; ValueData: """{app}\{#MyAppExeName}"" ""%1"""
 
 [Run]
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Silo Desktop SiloCast (Private LAN)"""; Flags: runhidden waituntilterminated
-Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""Silo Desktop SiloCast (Private LAN)"" dir=in action=allow program=""{app}\{#MyAppExeName}"" enable=yes profile=private remoteip=localsubnet"; Flags: runhidden waituntilterminated
+; Multiple same-name rules retain the old live client's authorization until
+; successful activation. Uninstall deletes all entries with this exact name.
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""Silo Desktop SiloCast (Private LAN)"" dir=in action=allow program=""{app}\versions\{#MyAppFourPartVersion}\{#MyAppExeName}"" enable=yes profile=private remoteip=localsubnet"; Flags: runhidden waituntilterminated
 ; Make Inno's normal postinstall original-user launch policy explicit.
 ; Setup started already elevated cannot recover an unelevated caller token.
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent runasoriginaluser
 
 [UninstallRun]
+; Run while the trusted bootstrap/runtime is still present. It validates each
+; updater-owned inventory and retains foreign, modified or in-use files.
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--silo-uninstall-owned"; Flags: runhidden waituntilterminated; RunOnceId: "SiloOwnedVersions"
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""Silo Desktop SiloCast (Private LAN)"""; Flags: runhidden waituntilterminated; RunOnceId: "SiloCastPrivateLanFirewall"
 
 [Code]
@@ -197,7 +202,7 @@ begin
     HasLinkedInstallPath(Dir) then
   begin Result := 'Choose a dedicated local folder, not a system, account, data or linked directory.'; Exit; end;
   if DirectoryHasForeignContent(Dir) then
-    Result := 'The folder "' + Dir + '" is not a verified Silo installation or contains linked files. Choose a new or empty folder. Registered Silo upgrades replace their dedicated application payload.';
+    Result := 'The folder "' + Dir + '" is not a verified Silo installation or contains linked files. Choose a new or empty folder. Registered Silo upgrades retain previous versions and unrelated additions.';
 end;
 
 procedure InstallWindowsAppRuntime;
@@ -211,6 +216,19 @@ begin
   if ResultCode <> 0 then
     RaiseException(Format(
       'The Windows App SDK runtime installer failed with code %d. {#MyAppName} cannot start without it.', [ResultCode]));
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+begin
+  if CurStep <> ssPostInstall then Exit;
+  WizardForm.StatusLabel.Caption := 'Verifying the installed Silo version...';
+  if not Exec(ExpandConstant('{app}\{#MyAppExeName}'),
+              '--silo-initialize', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    RaiseException('The Silo installation verifier could not be started.');
+  if ResultCode <> 0 then
+    RaiseException('The installed Silo version could not be verified. The previous version has not been selected away. Run the installer again to repair it.');
 end;
 
 // Inno removes installed files from its own log. Do not recursively erase

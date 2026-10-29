@@ -6,6 +6,58 @@ namespace SiloPlayer.Tests;
 public sealed class InstallerBuildPublishDirectoryTests
 {
     [Fact]
+    public async Task MismatchedOrAmbiguousVersionStampsCannotReachTheBuild()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "silo-build-stamps-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        var script = Path.Combine(root, "probe.ps1");
+        File.WriteAllText(script, $$"""
+            $ErrorActionPreference='Stop'
+            $tokens=$null;$errors=$null
+            $ast=[Management.Automation.Language.Parser]::ParseFile({{Quote(FindBuildScript())}},[ref]$tokens,[ref]$errors)
+            if($errors.Count){throw 'build.ps1 has parsing errors'}
+            $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-StampedAppVersion'},$true)
+            if(!$function){throw 'Version stamp preflight missing'}
+            . ([scriptblock]::Create($function.Extent.Text))
+            $root={{Quote(root)}}
+            $cases=@(
+                @{version='1.2.999';file='1.2.999.0';assembly='1.2.999.0';inno='1.2.999';duplicate=$false;allowed=$true},
+                @{version='1.2.999';file='1.2.998.0';assembly='1.2.999.0';inno='1.2.999';duplicate=$false;allowed=$false},
+                @{version='1.2.999';file='1.2.999.0';assembly='1.2.998.0';inno='1.2.999';duplicate=$false;allowed=$false},
+                @{version='1.2.999';file='1.2.999.0';assembly='1.2.999.0';inno='1.2.998';duplicate=$false;allowed=$false},
+                @{version='1.2.999';file='1.2.999.0';assembly='1.2.999.0';inno='1.2.999';duplicate=$true;allowed=$false},
+                @{version='1.2.999.0';file='1.2.999.0';assembly='1.2.999.0';inno='1.2.999';duplicate=$false;allowed=$false},
+                @{version='';file='1.2.999.0';assembly='1.2.999.0';inno='1.2.999';duplicate=$false;allowed=$false},
+                @{version='1.2.999';file='';assembly='1.2.999.0';inno='1.2.999';duplicate=$false;allowed=$false}
+            )
+            $results=@()
+            foreach($case in $cases){
+                $xml='<Project><PropertyGroup><Version>'+ $case.version +'</Version><FileVersion>'+ $case.file +'</FileVersion><AssemblyVersion>'+ $case.assembly +'</AssemblyVersion></PropertyGroup>'
+                if($case.duplicate){$xml+='<PropertyGroup><Version>1.2.999</Version></PropertyGroup>'}
+                [IO.File]::WriteAllText("$root\project.csproj",$xml+'</Project>')
+                [IO.File]::WriteAllText("$root\installer.iss",'#define MyAppVersion "'+$case.inno+'"')
+                try {$version=Get-StampedAppVersion -Project "$root\project.csproj" -InstallerSource "$root\installer.iss";$allowed=$version -eq '1.2.999'} catch {$allowed=$false}
+                $results+=($allowed -eq $case.allowed)
+            }
+            ConvertTo-Json -Compress -InputObject $results
+            """);
+        try
+        {
+            var start = new ProcessStartInfo(PowerShellPath())
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script }) start.ArgumentList.Add(arg);
+            using var process = Process.Start(start)!;
+            var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.True(process.ExitCode == 0, await output + await error);
+            var results = JsonSerializer.Deserialize<bool[]>(await output)!;
+            Assert.Equal(8, results.Length);
+            Assert.All(results, Assert.True);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
     public async Task PublishAliasesProtectedPathsAndConfigurationTraversalAreRefused()
     {
         var root = Path.Combine(Path.GetTempPath(), "silo-publish-alias-" + Guid.NewGuid().ToString("N"));

@@ -2,11 +2,15 @@
 # Builds the Silo Desktop Player installer.
 # Prerequisites: dotnet SDK, Inno Setup 6
 # Usage: pwsh -File installer/build.ps1
+# PublishDirectory is the fresh installation-layout root, with the client under
+# versions/<four-part-version>/ and its updater host under Updater/. Use a fresh
+# InstallerOutputDirectory to preserve a prior attempt at the same version.
 
 param(
     [ValidateSet('Debug','Release')][string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
     [string]$PublishDirectory = "",
+    [string]$InstallerOutputDirectory = "",
     [string]$SigningCertificateThumbprint = $env:SILO_SIGNING_CERT_THUMBPRINT,
     [string]$TimestampServer = "http://timestamp.digicert.com",
     [switch]$AllowSelfSignedSignatures
@@ -24,6 +28,8 @@ $PublishDir = if ([string]::IsNullOrWhiteSpace($PublishDirectory)) {
 }
 $OutputDir = "$InstallerDir\output"
 $ProjectPath = "$RepoRoot\src\SiloPlayer\SiloPlayer.csproj"
+$HostProjectPath = "$RepoRoot\src\SiloPlayer.UpdateHost\SiloPlayer.UpdateHost.csproj"
+$LauncherProjectPath = "$RepoRoot\src\SiloPlayer.Launcher\SiloPlayer.Launcher.csproj"
 
 function Assert-NoLinkedPublishPath {
     param([Parameter(Mandatory=$true)][string]$Path)
@@ -67,6 +73,37 @@ function Get-DedicatedPublishDirectory {
     return $fullPath
 }
 $PublishDir=Get-DedicatedPublishDirectory -Path $PublishDir -RepositoryRoot $RepoRoot
+$PublishRoot=$PublishDir
+if (-not [string]::IsNullOrWhiteSpace($InstallerOutputDirectory)) {
+    $OutputDir=Get-DedicatedPublishDirectory -Path $InstallerOutputDirectory -RepositoryRoot $RepoRoot
+}
+
+# Reject mismatched stamps before dependency downloads, native loading or builds.
+function Get-StampedAppVersion {
+    param([Parameter(Mandatory=$true)][string]$Project,[Parameter(Mandatory=$true)][string]$InstallerSource)
+    $xml=[xml](Get-Content -LiteralPath $Project -Raw)
+    $version=@($xml.Project.PropertyGroup.Version | Where-Object { $_ })
+    $fileVersion=@($xml.Project.PropertyGroup.FileVersion | Where-Object { $_ })
+    $assemblyVersion=@($xml.Project.PropertyGroup.AssemblyVersion | Where-Object { $_ })
+    if ($version.Count -ne 1 -or $version[0] -notmatch '^\d+\.\d+\.\d+$' -or
+        $fileVersion.Count -ne 1 -or $assemblyVersion.Count -ne 1 -or
+        $fileVersion[0] -ne ($version[0]+'.0') -or $assemblyVersion[0] -ne ($version[0]+'.0')) {
+        throw 'Version, FileVersion and AssemblyVersion must be deliberately stamped together.'
+    }
+    $innoVersion=[regex]::Match([IO.File]::ReadAllText($InstallerSource),'#define MyAppVersion "([^"]+)"').Groups[1].Value
+    if ($innoVersion -ne $version[0]) { throw 'The Inno version must match all app and helper versions before building.' }
+    return [string]$version[0]
+}
+$AppVersion=Get-StampedAppVersion -Project $ProjectPath -InstallerSource "$InstallerDir\SiloInstaller.iss"
+foreach($helper in @($HostProjectPath,$LauncherProjectPath)) {
+    $helperVersion=Get-StampedAppVersion -Project $helper -InstallerSource "$InstallerDir\SiloInstaller.iss"
+    if ($helperVersion -ne $AppVersion) { throw 'The client, updater and launcher must have matching version stamps.' }
+}
+$FourPartVersion=$AppVersion+'.0'
+$ExpectedSetup=Join-Path $OutputDir "SiloInstaller-$AppVersion-Setup.exe"
+if (Test-Path -LiteralPath $ExpectedSetup) { throw 'Preserve the existing versioned installer. Choose a fresh InstallerOutputDirectory.' }
+$UpdateAssetDir=Get-DedicatedPublishDirectory -Path (Join-Path $OutputDir "update-$AppVersion") -RepositoryRoot $RepoRoot
+$PublishDir=Join-Path $PublishRoot "versions\$FourPartVersion"
 
 $SigningCertificate = $null
 if (-not [string]::IsNullOrWhiteSpace($SigningCertificateThumbprint)) {
@@ -136,6 +173,11 @@ if ($WinAppSdkActualSha256 -ne $WinAppSdkInstallerSha256) {
 
 Write-Host "=== Publishing app ($Configuration, $Runtime) ==="
 # Publishing starts from new/empty output; previous payloads are never deleted.
+$BuildMutex=New-Object Threading.Mutex($false,'SiloOct18Build')
+$BuildMutexOwned=$false
+try {
+try { $null=$BuildMutex.WaitOne() } catch [Threading.AbandonedMutexException] { }
+$BuildMutexOwned=$true
 
 # Clean obj/{Release,x64/Release} and bin/{Release,x64/Release} for the app project
 # to force every .xbf to recompile against the current XamlTypeInfo.g.cs. WinUI 3's
@@ -188,6 +230,28 @@ dotnet publish $ProjectPath `
 if ($LASTEXITCODE -ne 0) {
     Write-Error "dotnet publish failed"
     exit 1
+}
+
+# The host has its own WinUI PRI and self-contained runtime. Keeping it below
+# Updater avoids resource-name and assembly collisions with the running client.
+dotnet publish $HostProjectPath -c $Configuration -r $Runtime --self-contained `
+    -p:Platform=x64 -p:PublishSingleFile=false -p:PublishTrimmed=false -p:PublishReadyToRun=false `
+    -p:Version=$AppVersion -p:FileVersion=$FourPartVersion -p:AssemblyVersion=$FourPartVersion `
+    -o (Join-Path $PublishDir 'Updater')
+if ($LASTEXITCODE -ne 0) { throw 'The finite updater host could not be published.' }
+
+# Only the stable launcher/runtime is shared. Protocol1 updates leave these
+# bootstrap files immutable; a future bootstrap change needs a full installer.
+dotnet publish $LauncherProjectPath -c $Configuration -r $Runtime --self-contained `
+    -p:PublishSingleFile=false -p:PublishTrimmed=false -p:PublishReadyToRun=false `
+    -p:Version=$AppVersion -p:FileVersion=$FourPartVersion -p:AssemblyVersion=$FourPartVersion `
+    -o $PublishRoot
+if ($LASTEXITCODE -ne 0) { throw 'The stable launcher could not be published.' }
+$LauncherAppHost=Join-Path $PublishRoot 'SiloPlayer.Launcher.exe'
+if (-not (Test-Path -LiteralPath $LauncherAppHost)) { throw 'The stable launcher apphost is missing.' }
+Move-Item -LiteralPath $LauncherAppHost -Destination (Join-Path $PublishRoot 'SiloPlayer.exe')
+if ([Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $PublishRoot 'SiloPlayer.exe')).FileVersion -ne $FourPartVersion) {
+    throw 'The stable launcher does not carry the file version required by the legacy updater.'
 }
 
 # A user-only desktop build must never package a removed administration,
@@ -249,7 +313,7 @@ if ($SourceMpvHash -ne $PublishedMpvHash) {
 
 if ($SigningCertificate) {
     Write-Host "=== Signing locally produced and unsigned application binaries ==="
-    $PublishBinaries = Get-ChildItem $PublishDir -Recurse -File -Include *.exe,*.dll
+    $PublishBinaries = Get-ChildItem $PublishRoot -Recurse -File -Include *.exe,*.dll
     foreach ($binary in $PublishBinaries) {
         if ((Get-AuthenticodeSignature -LiteralPath $binary.FullName).Status -eq
             [System.Management.Automation.SignatureStatus]::NotSigned) {
@@ -258,7 +322,7 @@ if ($SigningCertificate) {
         }
     }
 
-    $unsignedPublishedBinaries = Get-ChildItem $PublishDir -Recurse -File -Include *.exe,*.dll |
+    $unsignedPublishedBinaries = Get-ChildItem $PublishRoot -Recurse -File -Include *.exe,*.dll |
         Where-Object {
             (Get-AuthenticodeSignature -LiteralPath $_.FullName).Status -ne
                 [System.Management.Automation.SignatureStatus]::Valid
@@ -297,11 +361,24 @@ if (-not (Test-Path $IconDest)) {
     $null = New-Item -ItemType Directory -Path "$PublishDir\Assets" -Force
     Copy-Item "$RepoRoot\src\SiloPlayer\Assets\app.ico" $IconDest
 }
+$BootstrapAssets=Join-Path $PublishRoot 'Assets'
+$null=New-Item -ItemType Directory -Path $BootstrapAssets -Force
+Copy-Item -LiteralPath $IconDest -Destination (Join-Path $BootstrapAssets 'app.ico')
+
+# Build the manifest/pack after signing and all content copies, from the exact
+# version-local bytes used by the full installer. Bootstrap is immutable in v1.
+dotnet run --project "$RepoRoot\tools\SiloUpdatePack\SiloUpdatePack.csproj" -c $Configuration -- `
+    --client $PublishDir --output $UpdateAssetDir --version $FourPartVersion
+if ($LASTEXITCODE -ne 0) { throw 'The incremental update assets could not be built.' }
+$ControlDirectory=Join-Path $PublishRoot '.silo-update'
+$null=New-Item -ItemType Directory -Path $ControlDirectory
+Copy-Item -LiteralPath (Join-Path $UpdateAssetDir 'SiloUpdate-Windows-x64.manifest.json') `
+    -Destination (Join-Path $ControlDirectory 'initial.manifest.json')
 
 Write-Host "=== Compiling installer ==="
 if (-not (Test-Path $OutputDir)) { $null = New-Item -ItemType Directory -Path $OutputDir }
 
-$IsccArguments = @("/DPublishSourceDir=$PublishDir")
+$IsccArguments = @("/DPublishSourceDir=$PublishRoot", "/DMyAppVersion=$AppVersion", "/DMyAppFourPartVersion=$FourPartVersion", "/O$OutputDir")
 if ($SigningCertificate) {
     $InnoSignScript = Join-Path $InstallerDir "sign-file.ps1"
     # Reuse the exact PowerShell host that successfully signed the payload.
@@ -325,10 +402,8 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Inno Setup writes a versioned filename (SiloInstaller-{version}-Setup.exe).
-# Pick the most recent one from the output directory.
-$SetupExe = Get-ChildItem "$OutputDir\SiloInstaller-*-Setup.exe" -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending |
-    Select-Object -First 1
+# Read only this invocation's expected file, never an older successful build.
+$SetupExe = Get-Item -LiteralPath $ExpectedSetup -ErrorAction SilentlyContinue
 if ($SetupExe) {
     if ($SigningCertificate) {
         $setupSignature = Get-AuthenticodeSignature -LiteralPath $SetupExe.FullName
@@ -356,13 +431,33 @@ if ($SetupExe) {
     }
 
     $SizeMB = [math]::Round($SetupExe.Length / 1MB, 1)
+    $ManifestPath=Join-Path $UpdateAssetDir 'SiloUpdate-Windows-x64.manifest.json'
+    $PackPath=Join-Path $UpdateAssetDir 'SiloUpdate-Windows-x64.pack'
+    [pscustomobject]@{
+        version=$AppVersion;fileVersion=$FourPartVersion;bootstrapProtocol=1
+        publishRoot=$PublishRoot;clientDirectory=$PublishDir
+        installerPath=$SetupExe.FullName;installerSha256=$VersionedHash;installerBytes=$SetupExe.Length
+        manifestPath=$ManifestPath;manifestSha256=(Get-FileHash -LiteralPath $ManifestPath).Hash
+        packPath=$PackPath;packSha256=(Get-FileHash -LiteralPath $PackPath).Hash;packBytes=(Get-Item -LiteralPath $PackPath).Length
+        launcherSha256=(Get-FileHash -LiteralPath (Join-Path $PublishRoot 'SiloPlayer.exe')).Hash
+        clientSha256=(Get-FileHash -LiteralPath (Join-Path $PublishDir 'SiloPlayer.dll')).Hash
+        hostSha256=(Get-FileHash -LiteralPath (Join-Path $PublishDir 'Updater\SiloPlayer.UpdateHost.exe')).Hash
+        engineSha256=$PublishedMpvHash
+    } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $OutputDir "SiloInstaller-$AppVersion-build.json")
     Write-Host ""
     Write-Host "=== Installer built successfully ==="
     Write-Host "  Output: $($SetupExe.FullName)"
     Write-Host "  Stable: $StableSetupExe"
     Write-Host "  SHA256: $VersionedHash"
     Write-Host "  Size:   $SizeMB MB"
+    Write-Host "  Layout: $PublishRoot"
+    Write-Host "  Client: $PublishDir"
+    Write-Host "  Assets: $UpdateAssetDir"
 } else {
     Write-Error "Installer output not found"
     exit 1
+}
+} finally {
+    if ($BuildMutexOwned) { $BuildMutex.ReleaseMutex() }
+    $BuildMutex.Dispose()
 }

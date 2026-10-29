@@ -5002,6 +5002,10 @@ local function handle_mouse_down()
 
     -- Subtitle menu click handling
     if state.subtitle_menu_visible then
+        -- Selection closes the popup on mouse-down. The native window still
+        -- sends osc-video-click on mouse-up, so this menu must retain the
+        -- click even after its visible flag has been cleared.
+        consume_video_click()
         for _, item in ipairs(state.subtitle_menu_items) do
             if point_in_rect(mx, my, item) then
                 if item.action == "sync" or item.action == "reset_timing" or item.action == "sync_reload" then

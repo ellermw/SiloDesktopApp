@@ -7,7 +7,7 @@ public static class AppUpdateInstallGate
 {
     public static string NameFor(string executable)
     {
-        var folder = Path.GetDirectoryName(Path.GetFullPath(executable))!
+        var folder = (UpdateInstallation.FindRegisteredRoot(executable) ?? Path.GetDirectoryName(Path.GetFullPath(executable))!)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).ToUpperInvariant();
         return @"Global\SiloDesktopUpdate-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(folder)))[..16];
     }

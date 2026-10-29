@@ -4,6 +4,113 @@ namespace SiloPlayer.Tests;
 
 public sealed class MpvOscRuntimeTests
 {
+    [Theory]
+    [InlineData("off", false, false)]
+    [InlineData("select", false, false)]
+    [InlineData("off", true, false)]
+    [InlineData("select", true, false)]
+    [InlineData("off", false, true)]
+    [InlineData("select", false, true)]
+    [InlineData("off", true, true)]
+    [InlineData("select", true, true)]
+    [InlineData("dismiss", false, false)]
+    [InlineData("dismiss", true, false)]
+    public void SubtitleMouseSelectionConsumesTheFollowingVideoClick(string action, bool paused, bool room)
+    {
+        // The native window sends mouse-down, mouse-up, then video-click for
+        // one quick click. A subtitle row closes its popup on mouse-down;
+        // video-click must still belong to that row after the popup closes.
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local state = osc_test_state
+            state.osc_disabled = false
+            state.visible, state.current_alpha, state.target_alpha = true, 1, 1
+            state.subtitle_tracks = {
+                {index=0, language='en', source='external', codec='srt'},
+                {index=1, language='es', source='external', codec='srt'}
+            }
+            state.active_subtitle = 1
+            state.watch_party = {{(room ? "{visible=true, is_host=false, guest_control_policy='host_only'}" : "nil")}}
+            mp.set_property_bool('pause', {{paused.ToString().ToLowerInvariant()}})
+            osc_test_layout()
+            probe_time = 100
+            for i = 1, 3 do
+                state.subtitle_menu_visible = true
+                osc_test_render_subtitles()
+                local row
+                for _, item in ipairs(state.subtitle_menu_items) do
+                    if item.action == '{{(action == "dismiss" ? "select" : action)}}' then row = item; break end
+                end
+                assert(row, 'subtitle row missing')
+                local x, y = {{(action == "dismiss" ? "100, 100" : "row.x + row.w/2, row.y + row.h/2")}}
+                handlers['osc-mouse-down'](tostring(x), tostring(y))
+                probe_time = probe_time + .1
+                handlers['osc-mouse-up'](tostring(x), tostring(y))
+                handlers['osc-video-click'](tostring(x), tostring(y))
+            end
+            local result = table.concat(intents, ',')..':'..tostring(state.subtitle_menu_visible)..':'..tostring(mp.get_property_bool('pause'))
+            -- Once the menu click expires, a new click on empty video still
+            -- requests the normal host-controlled pause action.
+            probe_time = probe_time + .6
+            intents = {}
+            handlers['osc-video-click']('100', '100')
+            mp.set_property('user-data/probe-result', result..':'..table.concat(intents, ','))
+            """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
+            handlers, intents = {}, {}
+            local get_time = mp.get_time
+            mp.get_time = function() return probe_time or get_time() end
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and (args[2] == 'silo-subtitle-select' or args[2] == 'silo-pause-toggle') then
+                    table.insert(intents, args[2]..(args[3] and '='..args[3] or ''))
+                    return
+                end
+                return command(...)
+            end
+            """);
+        var selection = $"silo-subtitle-select={(action == "off" ? -1 : 0)}";
+        var expected = action == "dismiss" ? "" : $"{selection},{selection},{selection}";
+        Assert.Equal($"{expected}:false:{paused.ToString().ToLowerInvariant()}:silo-pause-toggle", output);
+    }
+
+    [Theory]
+    [InlineData("off", false)]
+    [InlineData("select", false)]
+    [InlineData("off", true)]
+    [InlineData("select", true)]
+    public void SubtitleKeyboardSelectionPreservesPauseIntent(string action, bool paused)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local state = osc_test_state
+            state.subtitle_menu_visible = true
+            state.subtitle_tracks = { {index=1, language='es', source='external', codec='srt'} }
+            state.active_subtitle = 0
+            state.keyboard_menu_kind = 'subtitles'
+            mp.set_property_bool('pause', {{paused.ToString().ToLowerInvariant()}})
+            osc_test_layout()
+            osc_test_render_subtitles()
+            for i, item in ipairs(osc_test_menu_items('subtitles', state.subtitle_menu_items)) do
+                if item.action == '{{action}}' then state.keyboard_menu_index = i; break end
+            end
+            assert(osc_test_menu_activate(), 'keyboard menu was not activated')
+            mp.set_property('user-data/probe-result', table.concat(intents, ',')..':'..tostring(state.subtitle_menu_visible)..':'..tostring(mp.get_property_bool('pause')))
+            """, rawAss: true, resultProperty: "user-data/probe-result", beforeScript: """
+            intents = {}
+            local command = mp.commandv
+            mp.commandv = function(...)
+                local args = {...}
+                if args[1] == 'script-message' and (args[2] == 'silo-subtitle-select' or args[2] == 'silo-pause-toggle') then
+                    table.insert(intents, args[2]..(args[3] and '='..args[3] or ''))
+                    return
+                end
+                return command(...)
+            end
+            """);
+        Assert.Equal($"silo-subtitle-select={(action == "off" ? -1 : 1)}:false:{paused.ToString().ToLowerInvariant()}", output);
+    }
+
     [Fact]
     public void SubtitleDelayKeysSendBoundedExplicitIntentOnlyAfterPreferencesLoad()
     {

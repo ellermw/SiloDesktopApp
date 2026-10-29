@@ -8,7 +8,7 @@ using SiloPlayer.Core.Services.Updates;
 
 namespace SiloPlayer.Services;
 
-public sealed class WindowsAppUpdateInstaller(string cacheDirectory) : IAppUpdateInstaller
+public sealed partial class WindowsAppUpdateInstaller(string cacheDirectory) : IAppUpdateInstaller, IStagedAppUpdateInstaller
 {
     private string? _closeConfirmation;
     private string? _handoffToken;
@@ -19,6 +19,7 @@ public sealed class WindowsAppUpdateInstaller(string cacheDirectory) : IAppUpdat
         {
             var executable = Environment.ProcessPath;
             if (executable is null || !Path.GetFileName(executable).Equals("SiloPlayer.exe", StringComparison.OrdinalIgnoreCase)) return false;
+            if(UpdateInstallation.FindRegisteredRoot(executable) is not null)return true;
             foreach (var hive in new[] { RegistryHive.LocalMachine, RegistryHive.CurrentUser })
             {
                 try
@@ -76,6 +77,7 @@ public sealed class WindowsAppUpdateInstaller(string cacheDirectory) : IAppUpdat
 
     public void ConfirmNormalClose()
     {
+        ConfirmStagedClose();
         var path = Interlocked.Exchange(ref _closeConfirmation, null);
         if (path is null || _handoffToken is null) return;
         AppUpdateDownloader.EnsureOrdinaryPath(path);

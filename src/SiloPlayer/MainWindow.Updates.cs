@@ -57,6 +57,7 @@ public sealed partial class MainWindow
     {
         RootGrid.Loaded -= AppUpdateRootLoaded;
         ReadUpdateResult();
+        _=NotifySideBySideStartupAsync();
         RefreshUpdatePresentation();
     }
 
@@ -104,7 +105,7 @@ public sealed partial class MainWindow
         }
         RefreshUpdateDialog();
         _appUpdates.SetPlaybackActive(_playerService.State != PlayerState.Idle || _playerService.IsLoading);
-        if (state.Release is not null && !state.IsChecking && !state.IsDownloading && state.ReadyInstaller is null && state.Error is null
+        if (state.Release is not null && !state.IsChecking && !state.IsDownloading && state.ReadyInstaller is null && state.PreparedPackage is null && state.Error is null
             && _appUpdates.Mode == AppUpdateMode.Automatic && _playerService.State == PlayerState.Idle && !_playerService.IsLoading)
             _ = _appUpdates.DownloadAsync(automatic: true, ct: _appUpdateLifetime!.Token);
     }
@@ -148,12 +149,15 @@ public sealed partial class MainWindow
         panel.Children.Add(_updateModeCombo);
         panel.Children.Add(new TextBlock { Text = "Both modes notify you and let you update manually. Automatic downloads pause for playback and install only after normal app exit. Windows may request administrator approval.",
             TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
-        panel.Children.Add(new TextBlock { Text = "Update now closes Silo and restarts it after installation. Any current playback will be stopped and saved.", TextWrapping = TextWrapping.Wrap, FontSize = 12 });
+        panel.Children.Add(new TextBlock { Text = "Silo stays open while the update is prepared and installed. Playback is saved before the final restart.", TextWrapping = TextWrapping.Wrap, FontSize = 12 });
         var check = new Button { Content = "Check for updates", HorizontalAlignment = HorizontalAlignment.Left };
         check.Click += async (_, _) => { await _appUpdates.CheckAsync(_appUpdateLifetime!.Token); RefreshUpdateDialog(); };
         panel.Children.Add(check);
         var dialog = new ContentDialog { Title = "Silo updates", XamlRoot = RootGrid.XamlRoot, Content = panel,
-            CloseButtonText = "Later", PrimaryButtonText = "Update now", DefaultButton = ContentDialogButton.Close, MinWidth = 0, MaxWidth = 720 };
+            CloseButtonText = "Later", PrimaryButtonText = "Update now", DefaultButton = ContentDialogButton.Close, MinWidth = 0 };
+        // The outer dialog covers the complete XamlRoot. Constraining its width
+        // centers the surface in a smaller left-aligned overlay after a resize.
+        dialog.Resources["ContentDialogMaxWidth"]=720d;
         _appUpdateDialog = dialog;
         dialog.PrimaryButtonClick += InstallAppUpdate_Click;
         dialog.Closing += (_, _) => { if (!_manualUpdateRequested) _manualUpdateConsent?.Cancel(); };
@@ -177,12 +181,12 @@ public sealed partial class MainWindow
         if (_appUpdateDialog is null || _appUpdates is null || _updateStatusText is null) return;
         var state = _appUpdates.State;
         _updateStatusText.Text = state.Error ?? (state.IsChecking ? "Checking for updates…" : state.IsDownloading
-            ? $"Downloading {state.DownloadedBytes / 1048576.0:0.0} / {state.Release!.Size / 1048576.0:0.0} MB…"
-            : state.Release is null ? "You're up to date." : state.ReadyInstaller is not null ? "Ready to update to " + state.Release.Version.ToString(3)
+            ? state.PreparationProgress is { } prep ? $"{prep.Stage} · {prep.CompletedFiles}/{prep.TotalFiles} files · {prep.CompletedBytes/1048576.0:0.0} MB downloaded" : $"Downloading {state.DownloadedBytes / 1048576.0:0.0} / {state.Release!.Size / 1048576.0:0.0} MB…"
+            : state.Release is null ? "You're up to date." : state.ReadyInstaller is not null || state.PreparedPackage is not null ? "Ready to update to " + state.Release.Version.ToString(3)
             : "Update available: " + state.Release.Version.ToString(3));
         _updateStatusText.Foreground = state.Error is null ? UpdateGreen : (Brush)Application.Current.Resources["SecondaryTextBrush"];
         _updateProgress!.Visibility = state.IsDownloading ? Visibility.Visible : Visibility.Collapsed;
-        _updateProgress.Value = state.Release is { Size: > 0 } release ? 100d * state.DownloadedBytes / release.Size : 0;
+        _updateProgress.Value = state.PreparationProgress is {TotalFiles:>0} prepared ? 100d*prepared.CompletedFiles/prepared.TotalFiles : state.Release is { Size: > 0 } release ? 100d * state.DownloadedBytes / release.Size : 0;
         _appUpdateDialog.IsPrimaryButtonEnabled = state.Release is not null && !_updateDialogBusy;
         _appUpdateDialog.PrimaryButtonText = _updateDialogBusy ? "Preparing update…" : state.IsDownloading ? "Update when ready" : "Update now";
         foreach (var child in ((StackPanel)_appUpdateDialog.Content).Children)
@@ -215,6 +219,15 @@ public sealed partial class MainWindow
             await _appUpdates.DownloadAsync(ct: consent.Token).WaitAsync(consent.Token);
             if (!await _appUpdates.ReverifyReadyAsync(consent.Token)) return;
             consent.Token.ThrowIfCancellationRequested();
+            if(_appUpdates.State is {PreparedPackage:{ } package,Release:{ } release})
+            {
+                var staged=App.Services.GetService<IAppUpdateInstaller>() as IStagedAppUpdateInstaller;
+                if(staged is null || !await staged.PrepareAsync(release,package,true,_updateHwnd.ToInt64(),consent.Token))
+                {
+                    _appUpdates.ApplyAuthorityCooldown(staged?.AuthorityCooldownUntil);
+                    App.Services.GetRequiredService<ToastService>().Error(_appUpdates.State.Error??"The update could not start. You can retry or use the full installer from the release page.");return;
+                }
+            }
             _manualUpdateRequested = true;
             sender.Hide(); await CloseWithAppUpdatesAsync();
         }
@@ -223,27 +236,45 @@ public sealed partial class MainWindow
         finally { _manualUpdateConsent = null; _updateDialogBusy = false; RefreshUpdateDialog(); }
     }
 
-    private async Task PrepareAppUpdateExitAsync()
+    private async Task<bool> PrepareAppUpdateExitAsync()
     {
-        if (_appUpdates is null) return;
+        if (_appUpdates is null) return true;
+        var closeArmed=false;
+        var allowClose=!_manualUpdateRequested || _updateSessionEnding;
         LocalLog.AppendLine("updates.txt", $"exit_requested manual={_manualUpdateRequested} automaticEligible={_appUpdates.ShouldInstallOnExit} sessionEnding={_updateSessionEnding} closeGuard={_updateCloseGuardAvailable}");
-        _appUpdateLifetime?.Cancel();
         try
         {
-            await _appUpdateLoop;
             await _appUpdates.StopAsync();
-            if (!_manualUpdateRequested && !_updateCloseGuardAvailable) return;
-            if (_updateSessionEnding || (!_manualUpdateRequested && !_appUpdates.ShouldInstallOnExit)) return;
+            if (!_manualUpdateRequested && !_updateCloseGuardAvailable) return allowClose;
+            if (_updateSessionEnding || (!_manualUpdateRequested && !_appUpdates.ShouldInstallOnExit)) return allowClose;
             var installer = App.Services.GetService<IAppUpdateInstaller>();
-            if (installer?.IsSupported != true || !await _appUpdates.ReverifyReadyAsync()) return;
+            if (installer?.IsSupported != true || !await _appUpdates.ReverifyReadyAsync()) return allowClose;
+            if(_appUpdates.State is {PreparedPackage:{ } package,Release:{ } release} && installer is IStagedAppUpdateInstaller staged)
+            {
+                if(!staged.HasPreparedHandoff && !await staged.PrepareAsync(release,package,_manualUpdateRequested,_updateHwnd.ToInt64(),CancellationToken.None))
+                {_appUpdates.ApplyAuthorityCooldown(staged.AuthorityCooldownUntil);return allowClose;}
+            }
             using var drain = new CancellationTokenSource(TimeSpan.FromSeconds(5));
             await _playerService.CloseAsync().WaitAsync(drain.Token);
             await _playerService.PendingProgressSave.WaitAsync(drain.Token);
+            if(installer is IStagedAppUpdateInstaller stagedInstaller && stagedInstaller.HasPreparedHandoff)
+            {stagedInstaller.ArmNormalClose();closeArmed=true;allowClose=true;}
             var state = _appUpdates.State;
             if (state.Release is not null && state.ReadyInstaller is not null)
-                await installer.ScheduleAsync(state.Release, state.ReadyInstaller, _manualUpdateRequested, CancellationToken.None);
+                allowClose=await installer.ScheduleAsync(state.Release, state.ReadyInstaller, _manualUpdateRequested, CancellationToken.None) || !_manualUpdateRequested;
+            return allowClose;
         }
-        catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "close_update_handoff"); }
+        catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "close_update_handoff");return allowClose; }
+        finally
+        {
+            if(!closeArmed && App.Services.GetService<IAppUpdateInstaller>() is IStagedAppUpdateInstaller abandoned)abandoned.CancelPreparedHandoff();
+            if(allowClose){_appUpdateLifetime?.Cancel();await _appUpdateLoop;}
+            else
+            {
+                _manualUpdateRequested=false;
+                App.Services.GetRequiredService<ToastService>().Error("The update was deferred because playback could not be saved or the update could not be verified. Silo is still open; try again when ready.");
+            }
+        }
     }
 
     private void DetachAppUpdates()

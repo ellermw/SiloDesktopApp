@@ -110,8 +110,8 @@ public sealed class AppUpdateRateLimitTests
             wire.Limited = true; await service.CheckAsync(); Assert.Equal(2, wire.Checks);
             if (download)
             {
-                await service.DownloadAsync(); Assert.NotNull(service.State.ReadyInstaller);
-                Assert.Null(service.State.Error); // Download success must not erase GitHub's cooldown.
+                await service.DownloadAsync(); Assert.Null(service.State.ReadyInstaller);
+                Assert.NotNull(service.State.Error); Assert.Equal(0,wire.Downloads); // Downloads respect the same absolute cooldown.
             }
             await service.CheckAsync(); Assert.Equal(2, wire.Checks); // Manual checks also respect it.
             regular.Fire(); var retry = await clock.NextAsync();
@@ -120,7 +120,7 @@ public sealed class AppUpdateRateLimitTests
             var after = await clock.NextAsync(); Assert.Equal(TimeSpan.FromMinutes(15), after.Due);
             Assert.Equal(3, wire.Checks); Assert.Null(service.State.Error);
             Assert.NotNull(service.State.Release);
-            if (download) { Assert.NotNull(service.State.ReadyInstaller); Assert.Equal(1, wire.Downloads); }
+            if (download) { await service.DownloadAsync(); Assert.NotNull(service.State.ReadyInstaller); Assert.Equal(1, wire.Downloads); }
         }
         finally { stop.Cancel(); await loop.WaitAsync(TimeSpan.FromSeconds(5)); if (Directory.Exists(directory)) Directory.Delete(directory, true); }
     }

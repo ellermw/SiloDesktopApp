@@ -1,4 +1,4 @@
-
+﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
@@ -10,6 +10,10 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SiloPlayer.Core", "src\SiloPlayer.Core\SiloPlayer.Core.csproj", "{430BE031-AF93-4EE9-A1B1-1BB36C4A08ED}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SiloPlayer.Player", "src\SiloPlayer.Player\SiloPlayer.Player.csproj", "{4E76FF84-5B1D-4FF8-8A9B-692006E99883}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SiloPlayer.Launcher", "src\SiloPlayer.Launcher\SiloPlayer.Launcher.csproj", "{72C92611-A666-46A4-B8B6-7DFC002F2BB6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SiloPlayer.UpdateHost", "src\SiloPlayer.UpdateHost\SiloPlayer.UpdateHost.csproj", "{CB674A77-8BAA-4914-A933-A77A3FDFDD6B}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -46,10 +50,28 @@ Global
 		{4E76FF84-5B1D-4FF8-8A9B-692006E99883}.Release|Any CPU.Build.0 = Release|Any CPU
 		{4E76FF84-5B1D-4FF8-8A9B-692006E99883}.Release|x64.ActiveCfg = Release|Any CPU
 		{4E76FF84-5B1D-4FF8-8A9B-692006E99883}.Release|x64.Build.0 = Release|Any CPU
+		{72C92611-A666-46A4-B8B6-7DFC002F2BB6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{72C92611-A666-46A4-B8B6-7DFC002F2BB6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{72C92611-A666-46A4-B8B6-7DFC002F2BB6}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{72C92611-A666-46A4-B8B6-7DFC002F2BB6}.Debug|x64.Build.0 = Debug|Any CPU
+		{72C92611-A666-46A4-B8B6-7DFC002F2BB6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{72C92611-A666-46A4-B8B6-7DFC002F2BB6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{72C92611-A666-46A4-B8B6-7DFC002F2BB6}.Release|x64.ActiveCfg = Release|Any CPU
+		{72C92611-A666-46A4-B8B6-7DFC002F2BB6}.Release|x64.Build.0 = Release|Any CPU
+		{CB674A77-8BAA-4914-A933-A77A3FDFDD6B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{CB674A77-8BAA-4914-A933-A77A3FDFDD6B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{CB674A77-8BAA-4914-A933-A77A3FDFDD6B}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{CB674A77-8BAA-4914-A933-A77A3FDFDD6B}.Debug|x64.Build.0 = Debug|Any CPU
+		{CB674A77-8BAA-4914-A933-A77A3FDFDD6B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{CB674A77-8BAA-4914-A933-A77A3FDFDD6B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{CB674A77-8BAA-4914-A933-A77A3FDFDD6B}.Release|x64.ActiveCfg = Release|Any CPU
+		{CB674A77-8BAA-4914-A933-A77A3FDFDD6B}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{1E666BC1-DB15-4E62-B815-519DF18086CD} = {B5A93CC5-4B9B-43D1-A00A-45BC028193C0}
 		{430BE031-AF93-4EE9-A1B1-1BB36C4A08ED} = {B5A93CC5-4B9B-43D1-A00A-45BC028193C0}
 		{4E76FF84-5B1D-4FF8-8A9B-692006E99883} = {B5A93CC5-4B9B-43D1-A00A-45BC028193C0}
+		{72C92611-A666-46A4-B8B6-7DFC002F2BB6} = {B5A93CC5-4B9B-43D1-A00A-45BC028193C0}
+		{CB674A77-8BAA-4914-A933-A77A3FDFDD6B} = {B5A93CC5-4B9B-43D1-A00A-45BC028193C0}
 	EndGlobalSection
 EndGlobal

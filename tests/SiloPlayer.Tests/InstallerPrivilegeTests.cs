@@ -6,7 +6,8 @@ public sealed class InstallerPrivilegeTests
     public async Task ActualInnoGuardsAndIsolatedUpgradePreserveForeignData()
     {
         var script = FindRepoPath("tests", "installer-safety", "Verify-InstallDirectory.ps1");
-        var evidence = Environment.GetEnvironmentVariable("SILO_INSTALLER_TEST_RESULT_DIRECTORY");
+        var configuredEvidence = Environment.GetEnvironmentVariable("SILO_INSTALLER_TEST_RESULT_DIRECTORY");
+        var evidence = string.IsNullOrWhiteSpace(configuredEvidence) ? null : configuredEvidence;
         var root = evidence ?? Path.Combine(Path.GetTempPath(), "silo-inno-runtime-" + Guid.NewGuid().ToString("N"));
         var start = new System.Diagnostics.ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"))
         { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -19,6 +20,7 @@ public sealed class InstallerPrivilegeTests
             Assert.True(process.ExitCode == 0, await output + await error);
             using var receipt = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "install-upgrade-uninstall.json")));
             Assert.True(receipt.RootElement.GetProperty("foreignFilePreservedOnUninstall").GetBoolean());
+            Assert.True(receipt.RootElement.GetProperty("uninstallLogClosedBeforeCleanup").GetBoolean());
             Assert.False(receipt.RootElement.GetProperty("productionAppChanged").GetBoolean());
         }
         finally { if (evidence is null && Directory.Exists(root)) Directory.Delete(root, true); }
@@ -49,12 +51,16 @@ public sealed class InstallerPrivilegeTests
     }
 
     [Fact]
-    public void InstallFolderWipeIsLimitedToFoldersThatHoldOnlySilo()
+    public void SideBySideMigrationRetainsUnknownFilesAndDropsLegacyUninstallWipes()
     {
-        // Clean-payload upgrades require Silo registration; uninstall removes
-        // logged files rather than recursively wiping unrelated additions.
+        // A registered root is not proof that every later addition is ours.
+        // The executable runtime fixture exercises retained legacy uninstall
+        // directives, unknown root files and additions inside a version folder.
         var installer = ReadRepoFile("installer", "SiloInstaller.iss").ReplaceLineEndings("\n");
-        Assert.Contains("Type: filesandordirs; Name: \"{app}\\*\"", installer);
+        Assert.DoesNotContain("Type: filesandordirs; Name: \"{app}\\*\"", installer);
+        Assert.Contains("UninstallLogMode=overwrite", installer);
+        Assert.Contains("--silo-initialize", installer);
+        Assert.Contains("--silo-uninstall-owned", installer);
         var prepare = installer[installer.IndexOf("function PrepareToInstall(", StringComparison.Ordinal)..];
         Assert.Contains("DirectoryHasForeignContent(Dir)", prepare[..prepare.IndexOf("procedure InstallWindowsAppRuntime;", StringComparison.Ordinal)]);
         var guard = installer[installer.IndexOf("function DirectoryHasForeignContent(", StringComparison.Ordinal)..installer.IndexOf("function PrepareToInstall(", StringComparison.Ordinal)];
