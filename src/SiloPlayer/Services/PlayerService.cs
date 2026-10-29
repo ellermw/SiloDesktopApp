@@ -1097,9 +1097,11 @@ public partial class PlayerService : IDisposable
             else
             {
                 var selected = _activeSubtitleServerIndex;
+                var sidecarGeneration = CurrentSubtitleSidecarGeneration();
                 await PrefetchSubtitleSidecarAsync(track);
-                // A newer selection or file owns the subtitle state now.
-                if (_activeSubtitleServerIndex != selected || !ReferenceEquals(manager, _playbackManager)) return;
+                // A newer selection or file load owns the subtitle state now.
+                if (_activeSubtitleServerIndex != selected || !ReferenceEquals(manager, _playbackManager) ||
+                    CurrentSubtitleSidecarGeneration() != sidecarGeneration) return;
                 SelectSubtitleTrack(track);
             }
         }
@@ -4587,9 +4589,17 @@ public partial class PlayerService : IDisposable
     {
         if (_playbackManager?.CurrentSession == null || _mpv == null) return;
 
+        lock (_subtitleSyncGate)
         lock (_subtitleTrackStateLock)
         {
             _loadedExternalSubtitleSids.Clear();
+            // Same-session reloads keep the subtitle-sync lifecycle alive, so
+            // remove this file's downloads here instead of accumulating them.
+            foreach (var path in _prefetchedSubtitleFiles.Values)
+            {
+                _subtitleSyncFiles.Remove(path);
+                try { File.Delete(path); } catch { }
+            }
             _prefetchedSubtitleFiles.Clear();
             _subtitleSidecarGeneration++;
         }
@@ -4750,8 +4760,12 @@ public partial class PlayerService : IDisposable
         else
         {
             var manager = _playbackManager;
+            var sidecarGeneration = CurrentSubtitleSidecarGeneration();
             await PrefetchSubtitleSidecarAsync(track);
-            if (_activeSubtitleServerIndex != serverTrackIndex || !ReferenceEquals(manager, _playbackManager)) return;
+            // Same-session reloads keep the index and manager; the file load
+            // generation still identifies an initializer that was superseded.
+            if (_activeSubtitleServerIndex != serverTrackIndex || !ReferenceEquals(manager, _playbackManager) ||
+                CurrentSubtitleSidecarGeneration() != sidecarGeneration) return;
             SelectSubtitleTrack(track);
         }
         _mpv?.SendScriptMessage(
@@ -4820,6 +4834,11 @@ public partial class PlayerService : IDisposable
     /// remote text sidecar off that thread first; SelectSubtitleSidecar then adds
     /// the local file. Any failure keeps the previous URL path.
     /// </summary>
+    private long CurrentSubtitleSidecarGeneration()
+    {
+        lock (_subtitleTrackStateLock) return _subtitleSidecarGeneration;
+    }
+
     private async Task PrefetchSubtitleSidecarAsync(SubtitleTrackInfo track)
     {
         if (_mpv == null || IsUnsupportedBitmapSubtitle(track) ||
@@ -4846,8 +4865,21 @@ public partial class PlayerService : IDisposable
             using var response = await SubtitleSyncDownloadClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, bounded.Token);
             if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > SubtitleSidecarFile.MaxBytes) return;
             var extension = SubtitleSidecarFile.Extension(response.Content.Headers.ContentType?.MediaType, url, track.Codec);
-            var bytes = await response.Content.ReadAsByteArrayAsync(bounded.Token);
-            if (extension == null || bytes.Length == 0 || bytes.Length > SubtitleSidecarFile.MaxBytes) return;
+            if (extension == null) return;
+            // Chunked or mislabeled bodies are capped while reading, not after buffering.
+            using var buffer = new MemoryStream();
+            await using (var body = await response.Content.ReadAsStreamAsync(bounded.Token))
+            {
+                var chunk = new byte[81920];
+                int read;
+                while ((read = await body.ReadAsync(chunk, bounded.Token)) > 0)
+                {
+                    if (buffer.Length + read > SubtitleSidecarFile.MaxBytes) return;
+                    buffer.Write(chunk, 0, read);
+                }
+            }
+            var bytes = buffer.ToArray();
+            if (bytes.Length == 0) return;
             path = Path.Combine(Path.GetTempPath(), "silo-subtitle-" + Guid.NewGuid().ToString("N") + extension);
             await File.WriteAllBytesAsync(path, bytes, bounded.Token);
             lock (_subtitleSyncGate)
