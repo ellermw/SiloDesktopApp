@@ -311,6 +311,8 @@ public sealed class ImageServiceTests
     [InlineData("text/html")]
     [InlineData("application/json")]
     [InlineData("application/problem+json")]
+    [InlineData("application/problem+xml")]
+    [InlineData("application/rss+xml")]
     public async Task GetImageDiskPathAsync_DoesNotCacheADocumentReturnedWithSuccess(string mediaType)
     {
         var cacheDir = CreateTempCacheDir();
@@ -357,6 +359,76 @@ public sealed class ImageServiceTests
 
             Assert.NotNull(path);
             Assert.Equal(new byte[] { 1, 2, 3, 4 }, await File.ReadAllBytesAsync(path));
+        }
+        finally
+        {
+            DeleteTempCacheDir(cacheDir);
+        }
+    }
+
+    [Theory]
+    [InlineData("<!DOCTYPE html><html><body>Sign in</body></html>")]
+    [InlineData("\uFEFF \r\n<html lang=\"en\">")]
+    [InlineData("{\"error\":\"expired\"}")]
+    [InlineData("  [1,2]")]
+    public async Task GetImageDiskPathAsync_DoesNotCacheAnUntypedDocument(string body)
+    {
+        var cacheDir = CreateTempCacheDir();
+        try
+        {
+            using var service = new ImageService(cacheDir);
+            using var http = new HttpClient(new DelegateHandler((_, _) =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes(body)) };
+                return Task.FromResult(response);
+            }));
+
+            var path = await service.GetImageDiskPathAsync("movie-1", "poster", "https://cdn.example.test/poster.jpg", http);
+
+            Assert.Null(path);
+            Assert.Empty(Directory.EnumerateFiles(cacheDir));
+        }
+        finally
+        {
+            DeleteTempCacheDir(cacheDir);
+        }
+    }
+
+    [Theory]
+    [InlineData(false, "<!doctype html><title>Portal</title>")]
+    [InlineData(false, "{\"error\":\"not found\"}")]
+    [InlineData(true, "123456789")]
+    public async Task CachedEntriesFromBeforeTheChecksAreReplacedOnFirstUse(bool viaBytes, string legacyBody)
+    {
+        var cacheDir = CreateTempCacheDir();
+        try
+        {
+            const string url = "https://cdn.example.test/poster.jpg";
+            string diskPath;
+            using (var seeding = new ImageService(cacheDir))
+            using (var seedHttp = new HttpClient(new DelegateHandler((_, _) => Task.FromResult(ImageResponse()))))
+                diskPath = (await seeding.GetImageDiskPathAsync("movie-1", "poster", url, seedHttp))!;
+            // An earlier version stored whatever the server returned.
+            await File.WriteAllTextAsync(diskPath, legacyBody);
+
+            var requests = 0;
+            using var service = new ImageService(cacheDir, maxImageBytes: 8);
+            using var http = new HttpClient(new DelegateHandler((_, _) =>
+            {
+                Interlocked.Increment(ref requests);
+                return Task.FromResult(ImageResponse());
+            }));
+
+            if (viaBytes)
+                Assert.Equal(new byte[] { 1, 2, 3, 4 }, await service.GetImageAsync("movie-1", "poster", url, http));
+            else
+                Assert.Equal(diskPath, await service.GetImageDiskPathAsync("movie-1", "poster", url, http));
+
+            Assert.Equal(new byte[] { 1, 2, 3, 4 }, await File.ReadAllBytesAsync(diskPath));
+            Assert.Equal(1, requests);
+            // A checked, valid entry is reused without another request.
+            Assert.Equal(diskPath, await service.GetImageDiskPathAsync("movie-1", "poster", url, http));
+            Assert.Equal(1, requests);
         }
         finally
         {

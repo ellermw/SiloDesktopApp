@@ -11,6 +11,9 @@ public class ImageService : IDisposable
     private readonly long _maxDiskBytes;
     private readonly int _maxNegativeCacheEntries;
     private readonly long _maxImageBytes;
+    // Entries written before downloads were checked may hold a document or an
+    // oversized body. Each cached file is checked once per process.
+    private readonly ConcurrentDictionary<string, byte> _checkedDiskFiles = new();
     private readonly ConcurrentDictionary<string, byte[]> _memoryCache = new();
     private readonly ConcurrentQueue<string> _evictionOrder = new();
     private long _currentMemoryBytes;
@@ -58,7 +61,7 @@ public class ImageService : IDisposable
         return Task.Run(async () =>
         {
             var diskPath = GetDiskPath(cacheKey);
-            if (File.Exists(diskPath))
+            if (IsUsableDiskFile(diskPath))
             {
                 var diskBytes = await File.ReadAllBytesAsync(diskPath, ct).ConfigureAwait(false);
                 TouchDiskFile(diskPath);
@@ -103,7 +106,7 @@ public class ImageService : IDisposable
         return Task.Run(async () =>
         {
             var diskPath = GetDiskPath(cacheKey);
-            if (File.Exists(diskPath))
+            if (IsUsableDiskFile(diskPath))
             {
                 TouchDiskFile(diskPath);
                 return (string?)diskPath;
@@ -175,7 +178,7 @@ public class ImageService : IDisposable
         try
         {
             // Double-check after acquiring lock
-            if (File.Exists(diskPath))
+            if (IsUsableDiskFile(diskPath))
             {
                 TouchDiskFile(diskPath);
                 return diskPath;
@@ -228,7 +231,7 @@ public class ImageService : IDisposable
                 await fileStream.FlushAsync(ct).ConfigureAwait(false);
             }
 
-            if (!withinLimit)
+            if (!withinLimit || LooksLikeDocument(tempPath))
             {
                 File.Delete(tempPath);
                 tempPath = null;
@@ -238,6 +241,7 @@ public class ImageService : IDisposable
 
             File.Move(tempPath, diskPath, overwrite: true);
             tempPath = null;
+            _checkedDiskFiles.TryAdd(diskPath, 0);
             ScheduleTrimDiskCache();
             return diskPath;
         }
@@ -264,8 +268,51 @@ public class ImageService : IDisposable
         return mediaType.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
             || mediaType.Equals("application/json", StringComparison.OrdinalIgnoreCase)
             || mediaType.Equals("application/xml", StringComparison.OrdinalIgnoreCase)
-            || mediaType.Equals("application/xhtml+xml", StringComparison.OrdinalIgnoreCase)
-            || mediaType.EndsWith("+json", StringComparison.OrdinalIgnoreCase);
+            || (mediaType.StartsWith("application/", StringComparison.OrdinalIgnoreCase)
+                && (mediaType.EndsWith("+json", StringComparison.OrdinalIgnoreCase)
+                    || mediaType.EndsWith("+xml", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private bool IsUsableDiskFile(string diskPath)
+    {
+        var file = new FileInfo(diskPath);
+        if (!file.Exists) return false;
+        if (_checkedDiskFiles.ContainsKey(diskPath)) return true;
+        if (file.Length <= _maxImageBytes && !LooksLikeDocument(diskPath))
+        {
+            _checkedDiskFiles.TryAdd(diskPath, 0);
+            return true;
+        }
+        try { File.Delete(diskPath); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        return false;
+    }
+
+    /// <summary>
+    /// True for an HTML page or JSON body, whatever its declared type. No image
+    /// format starts with these bytes. XML is not sniffed: SVG starts the same way.
+    /// </summary>
+    internal static bool LooksLikeDocument(string path)
+    {
+        Span<byte> head = stackalloc byte[64];
+        int length;
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            length = stream.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+        var text = head[..length];
+        if (text.Length >= 3 && text[0] == 0xEF && text[1] == 0xBB && text[2] == 0xBF) text = text[3..];
+        while (text.Length > 0 && text[0] is (byte)' ' or (byte)'\t' or (byte)'\r' or (byte)'\n') text = text[1..];
+        if (text.Length == 0) return false;
+        if (text[0] is (byte)'{' or (byte)'[') return true;
+        var prefix = System.Text.Encoding.ASCII.GetString(text[..Math.Min(text.Length, 14)]).ToLowerInvariant();
+        return prefix.StartsWith("<!doctype html", StringComparison.Ordinal)
+            || prefix.StartsWith("<html", StringComparison.Ordinal);
     }
 
     private void AddToMemoryCache(string key, byte[] data)
