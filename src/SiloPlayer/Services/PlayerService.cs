@@ -1099,10 +1099,22 @@ public partial class PlayerService : IDisposable
                 var selected = _activeSubtitleServerIndex;
                 var sidecarGeneration = CurrentSubtitleSidecarGeneration();
                 await PrefetchSubtitleSidecarAsync(track);
-                // A newer selection or file load owns the subtitle state now.
-                if (_activeSubtitleServerIndex != selected || !ReferenceEquals(manager, _playbackManager) ||
-                    CurrentSubtitleSidecarGeneration() != sidecarGeneration) return;
-                SelectSubtitleTrack(track);
+                // A newer selection owns the subtitle state and its preference.
+                if (_activeSubtitleServerIndex != selected || !ReferenceEquals(manager, _playbackManager)) return;
+                if (CurrentSubtitleSidecarGeneration() != sidecarGeneration)
+                {
+                    // A file load replaced the subtitle tracks during the download. It
+                    // applies the recorded selection and restores playback itself;
+                    // the choice is still persisted below.
+                    transportReloadScheduled = true;
+                }
+                else
+                {
+                    // The viewer may have paused or sought during the download.
+                    wasPaused = CaptureUserPausedState();
+                    position = CurrentMediaPosition;
+                    SelectSubtitleTrack(track);
+                }
             }
         }
         else if (manager?.CurrentSession?.IsSubtitleBurnedIn == true)
