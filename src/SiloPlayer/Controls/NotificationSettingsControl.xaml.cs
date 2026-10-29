@@ -3,6 +3,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using SiloPlayer.Core.Models.Notifications;
+using SiloPlayer.Core.Services;
 using SiloPlayer.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.System;
@@ -146,7 +147,8 @@ public sealed partial class NotificationSettingsControl : UserControl
     private async void LinkDiscord_Click(object sender, RoutedEventArgs e)
     {
         var url = await ViewModel.StartDiscordLinkAsync();
-        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        // The authorization URL comes from the server: open web links only.
+        if (ExternalBrowserUrlPolicy.TryGetSafeUri(url, out var uri))
             await Launcher.LaunchUriAsync(uri);
     }
 
