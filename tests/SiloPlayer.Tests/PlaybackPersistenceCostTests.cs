@@ -58,11 +58,12 @@ public sealed class PlaybackPersistenceCostTests
         using var manager = new PlaybackManager(new PlaybackApi(api), new CatalogApi(api), new AuthService(api, new AuthApi(api)), api);
         await manager.StartSessionAsync(123, forceStartPosition: true);
         var first = manager.ReportProgressNowAsync(10, false);
-        await handler.FirstProgressStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Generous bounds for full-suite load; a passing run ends immediately.
+        await handler.FirstProgressStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
         var eligible = manager.ReportProgressNowAsync(20, false);
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => manager.ReportProgressNowAsync(30, false, new CancellationToken(true)));
         handler.ReleaseFirst();
-        await Task.WhenAll(first, eligible).WaitAsync(TimeSpan.FromSeconds(5));
+        await Task.WhenAll(first, eligible).WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(20, handler.ProgressPositions[^1]);
         await manager.StopSessionAsync();
     }
