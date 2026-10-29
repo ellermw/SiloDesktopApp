@@ -307,6 +307,117 @@ public sealed class ImageServiceTests
         }
     }
 
+    [Theory]
+    [InlineData("text/html")]
+    [InlineData("application/json")]
+    [InlineData("application/problem+json")]
+    public async Task GetImageDiskPathAsync_DoesNotCacheADocumentReturnedWithSuccess(string mediaType)
+    {
+        var cacheDir = CreateTempCacheDir();
+        try
+        {
+            using var service = new ImageService(cacheDir);
+            using var http = new HttpClient(new DelegateHandler((_, _) =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("<!doctype html><title>Sign in</title>") };
+                response.Content.Headers.ContentType = new(mediaType);
+                return Task.FromResult(response);
+            }));
+
+            var path = await service.GetImageDiskPathAsync("movie-1", "poster", "https://cdn.example.test/poster.jpg", http);
+
+            Assert.Null(path);
+            Assert.Empty(Directory.EnumerateFiles(cacheDir));
+        }
+        finally
+        {
+            DeleteTempCacheDir(cacheDir);
+        }
+    }
+
+    [Theory]
+    [InlineData("image/svg+xml")]
+    [InlineData("image/jpeg")]
+    [InlineData("application/octet-stream")]
+    [InlineData("binary/octet-stream")]
+    public async Task GetImageDiskPathAsync_CachesImageAndUntypedBinaryResponses(string mediaType)
+    {
+        var cacheDir = CreateTempCacheDir();
+        try
+        {
+            using var service = new ImageService(cacheDir);
+            using var http = new HttpClient(new DelegateHandler((_, _) =>
+            {
+                var response = ImageResponse();
+                response.Content.Headers.ContentType = new(mediaType);
+                return Task.FromResult(response);
+            }));
+
+            var path = await service.GetImageDiskPathAsync("movie-1", "poster", "https://cdn.example.test/poster", http);
+
+            Assert.NotNull(path);
+            Assert.Equal(new byte[] { 1, 2, 3, 4 }, await File.ReadAllBytesAsync(path));
+        }
+        finally
+        {
+            DeleteTempCacheDir(cacheDir);
+        }
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task GetImageAsync_RejectsBodiesOverTheImageLimit(bool declaresLength)
+    {
+        var cacheDir = CreateTempCacheDir();
+        try
+        {
+            using var service = new ImageService(cacheDir, maxImageBytes: 8);
+            using var http = new HttpClient(new DelegateHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = declaresLength
+                    ? new ByteArrayContent(new byte[9])
+                    : new StreamContent(new UnknownLengthStream(new byte[64 * 1024 * 3]))
+            })));
+
+            var bytes = await service.GetImageAsync("movie-1", "poster", "https://cdn.example.test/trailer.mkv", http);
+
+            Assert.Null(bytes);
+            Assert.Empty(Directory.EnumerateFiles(cacheDir));
+        }
+        finally
+        {
+            DeleteTempCacheDir(cacheDir);
+        }
+    }
+
+    [Fact]
+    public async Task GetImageAsync_AcceptsABodyExactlyAtTheImageLimit()
+    {
+        var cacheDir = CreateTempCacheDir();
+        try
+        {
+            using var service = new ImageService(cacheDir, maxImageBytes: 8);
+            using var http = new HttpClient(new DelegateHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new UnknownLengthStream(new byte[8]))
+            })));
+
+            var bytes = await service.GetImageAsync("movie-1", "poster", "https://cdn.example.test/poster.jpg", http);
+
+            Assert.Equal(8, bytes?.Length);
+        }
+        finally
+        {
+            DeleteTempCacheDir(cacheDir);
+        }
+    }
+
+    private sealed class UnknownLengthStream(byte[] data) : MemoryStream(data)
+    {
+        public override bool CanSeek => false;
+    }
+
     private static string CreateTempCacheDir()
     {
         var path = Path.Combine(Path.GetTempPath(), "SiloPlayer.Tests", Guid.NewGuid().ToString("N"));

@@ -10,6 +10,7 @@ public class ImageService : IDisposable
     private readonly long _maxMemoryBytes;
     private readonly long _maxDiskBytes;
     private readonly int _maxNegativeCacheEntries;
+    private readonly long _maxImageBytes;
     private readonly ConcurrentDictionary<string, byte[]> _memoryCache = new();
     private readonly ConcurrentQueue<string> _evictionOrder = new();
     private long _currentMemoryBytes;
@@ -27,12 +28,14 @@ public class ImageService : IDisposable
         string diskCacheDir,
         long maxMemoryCacheBytes = 200 * 1024 * 1024,
         long maxDiskCacheBytes = 2L * 1024 * 1024 * 1024,
-        int maxNegativeCacheEntries = 2048)
+        int maxNegativeCacheEntries = 2048,
+        long maxImageBytes = 64 * 1024 * 1024)
     {
         _diskCacheDir = diskCacheDir;
         _maxMemoryBytes = maxMemoryCacheBytes;
         _maxDiskBytes = maxDiskCacheBytes;
         _maxNegativeCacheEntries = Math.Max(0, maxNegativeCacheEntries);
+        _maxImageBytes = maxImageBytes;
         Directory.CreateDirectory(diskCacheDir);
     }
 
@@ -186,9 +189,20 @@ public class ImageService : IDisposable
                 return null;
             }
 
+            // The disk file has no expiry, so a proxy or captive-portal page
+            // returned with 200 would replace the artwork until the cache is
+            // trimmed. An untyped body stays allowed; many CDNs omit the type.
+            if (IsDocumentMediaType(response.Content.Headers.ContentType?.MediaType)
+                || response.Content.Headers.ContentLength > _maxImageBytes)
+            {
+                SetNegativeCache(negativeCacheKey);
+                return null;
+            }
+
             RemoveNegativeCache(negativeCacheKey);
 
             tempPath = $"{diskPath}.{Guid.NewGuid():N}.tmp";
+            var withinLimit = true;
             await using (var remoteStream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
             await using (var fileStream = new FileStream(
                 tempPath,
@@ -198,8 +212,28 @@ public class ImageService : IDisposable
                 bufferSize: 64 * 1024,
                 options: FileOptions.Asynchronous | FileOptions.SequentialScan))
             {
-                await remoteStream.CopyToAsync(fileStream, ct).ConfigureAwait(false);
+                // Callers read the whole file into memory; bound bodies that
+                // omit or misreport their length.
+                var buffer = new byte[64 * 1024];
+                int read;
+                while ((read = await remoteStream.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                {
+                    if (fileStream.Length + read > _maxImageBytes)
+                    {
+                        withinLimit = false;
+                        break;
+                    }
+                    await fileStream.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                }
                 await fileStream.FlushAsync(ct).ConfigureAwait(false);
+            }
+
+            if (!withinLimit)
+            {
+                File.Delete(tempPath);
+                tempPath = null;
+                SetNegativeCache(negativeCacheKey);
+                return null;
             }
 
             File.Move(tempPath, diskPath, overwrite: true);
@@ -220,6 +254,18 @@ public class ImageService : IDisposable
         {
             _downloadLock.Release();
         }
+    }
+
+    private static bool IsDocumentMediaType(string? mediaType)
+    {
+        if (string.IsNullOrWhiteSpace(mediaType)) return false;
+        mediaType = mediaType.Trim();
+        // image/svg+xml is an image; text/* and JSON/XML/HTML documents are not.
+        return mediaType.StartsWith("text/", StringComparison.OrdinalIgnoreCase)
+            || mediaType.Equals("application/json", StringComparison.OrdinalIgnoreCase)
+            || mediaType.Equals("application/xml", StringComparison.OrdinalIgnoreCase)
+            || mediaType.Equals("application/xhtml+xml", StringComparison.OrdinalIgnoreCase)
+            || mediaType.EndsWith("+json", StringComparison.OrdinalIgnoreCase);
     }
 
     private void AddToMemoryCache(string key, byte[] data)
