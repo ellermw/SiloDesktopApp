@@ -80,7 +80,7 @@ internal static class RelayLoadOwnershipNativeFixture
             foreach (var item in wire.Operations) Program.Log("Relay plan " + item);
             foreach (var item in origin.Requests) Program.Log("Relay origin " + item);
             Program.Log($"Relay outcome: pre-release={beforeReleasePlan}, pending-pause={pendingPause}, final-plan={manager.CurrentSession?.PlanId}, native-paused={mpv.IsPaused}, managed-paused={service.IsPaused}, errors={errors}, recoveries={wire.Recoveries}.");
-            Require(wire.Recoveries == 0 && manager.CurrentSession?.PlanId == "plan-b", "A retired relay failure recovered over the accepted replacement plan.");
+            Require(errors == 0 && wire.Recoveries == 0 && manager.CurrentSession?.PlanId == "plan-b", "A retired relay failure affected the accepted replacement plan.");
             Require(mpv.IsPaused && service.IsPaused, "The paused replacement resumed after retiring the outgoing relay.");
             Program.Log("PASS: paused fallback relay replacement retains plan B and pause intent without recovering an obsolete A failure.");
         }
