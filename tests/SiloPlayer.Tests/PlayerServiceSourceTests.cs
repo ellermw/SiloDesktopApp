@@ -123,7 +123,9 @@ public sealed class PlayerServiceSourceTests
         // position/duration, and nothing slides a window during playback
         // (the XAML overlay tick that once did is never activated). A windowed
         // sidecar therefore lost every cue ~10 minutes after selection.
-        Assert.Contains("_mpv.AddSubtitle(pair.Value.FullUrl, label, track.Language, select: true);", source, StringComparison.Ordinal);
+        // The complete-track URL is added directly, or downloaded whole first.
+        Assert.Contains("var source = _prefetchedSubtitleFiles.TryGetValue(track.Index, out var local) ? local : pair.Value.FullUrl;", source, StringComparison.Ordinal);
+        Assert.Contains("_mpv.AddSubtitle(source, label, track.Language, select: true);", source, StringComparison.Ordinal);
         Assert.DoesNotContain("AppendPositionDuration", source, StringComparison.Ordinal);
         Assert.DoesNotContain("&duration=", source, StringComparison.Ordinal);
         Assert.DoesNotContain("TickSubtitleWindows", source, StringComparison.Ordinal);
@@ -1272,5 +1274,33 @@ public sealed class PlayerServiceSourceTests
         }
 
         throw new InvalidOperationException("Could not find repository root.");
+    }
+
+    [Fact]
+    public void RemoteSidecarsAreDownloadedBeforeTheSynchronousSubAdd()
+    {
+        // libmpv's synchronous sub-add of an HTTP URL blocks its caller (the UI
+        // thread for player-overlay selections) for the whole download.
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var prefetch = source[source.IndexOf("private async Task PrefetchSubtitleSidecarAsync(", StringComparison.Ordinal)..];
+        prefetch = prefetch[..prefetch.IndexOf("private int ResolveNativeEmbeddedSid(", StringComparison.Ordinal)];
+        // Same request mpv makes: no account header for worker/CDN sidecars.
+        Assert.Contains("SubtitleSyncDownloadClient.GetAsync(url,", prefetch, StringComparison.Ordinal);
+        Assert.DoesNotContain("CreateAuthenticatedRequest", prefetch, StringComparison.Ordinal);
+        Assert.Contains("generation != _subtitleSidecarGeneration", prefetch, StringComparison.Ordinal);
+        Assert.Contains("_subtitleSyncFiles.Add(path);", prefetch, StringComparison.Ordinal);
+
+        var persist = source[source.IndexOf("public async Task SetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)", StringComparison.Ordinal)..];
+        AssertPrefetchedThenCurrentBeforeSelection(persist, "_activeSubtitleServerIndex != selected");
+        var byIndex = source[source.IndexOf("private async Task SelectSubtitleByServerIndexAsync(", StringComparison.Ordinal)..];
+        AssertPrefetchedThenCurrentBeforeSelection(byIndex, "_activeSubtitleServerIndex != serverTrackIndex");
+    }
+
+    private static void AssertPrefetchedThenCurrentBeforeSelection(string method, string currentCheck)
+    {
+        var select = method.IndexOf("SelectSubtitleTrack(track);", StringComparison.Ordinal);
+        var prefetch = method.LastIndexOf("await PrefetchSubtitleSidecarAsync(track);", select, StringComparison.Ordinal);
+        var current = method.IndexOf(currentCheck, prefetch, StringComparison.Ordinal);
+        Assert.True(prefetch >= 0 && prefetch < current && current < select);
     }
 }
