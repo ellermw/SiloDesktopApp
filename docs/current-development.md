@@ -1,4 +1,8 @@
-# Current development — verified1.2.505 delivery
+# Current development — published464;505 withheld pending subtitle load-boundary correction
+
+**October29 publication withheld:** final refresh revealed PR52 threadPRRT_kwDOS5hFiM6xiMLb/comment4411892639: BeginMpvLoad does not retire pending subtitle initialization until FILE_LOADED. Source/tag505 were pushed before that refresh was inspected; no505 GitHub release was created or published. Preserve its complete sealed installer/payload/evidence as an unpublished rejected baseline. A focused actual-runtime correction and forward version increment are in progress before another full build and release. Published remains464; owner-installed484 stays open and untouched. The marker integration lock belongs to this foreground run. The505 verification below records the previous scoped evidence; it does not certify this newly identified loading interval.
+
+## Preserved505 verification (unpublished; superseded by the correction in progress)
 
 **October29 combined delivery:** the owner reports local484 installed and in use and requested continued PR work, clearing the earlier publication hold. This clean checkout retains the owner-approved centered windows, keep-open changed-file updater and subtitle popup continuity. PR52–59 original heads plus focused corrections7a3d6bb/b4c6415/6d5e8f0 and committed actual collection-editor regressions are integrated. [Forty-one concrete changes](releases/1.2.505.md) over published464 give505; tests, test seams, fixture corrections and builds add no increments. All client/host/launcher/Inno stamps match505. Verified source before delivery receipts:f16c53aa0d233f7ea0a970b63e438d3729104c1f; tagv1.2.505 identifies release source. Public receipts follow publication below.
 
