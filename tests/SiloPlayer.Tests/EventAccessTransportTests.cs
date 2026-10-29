@@ -57,15 +57,29 @@ public sealed class EventAccessTransportTests
         // path still ends as soon as the socket opens and stop is cancelled.
         using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var opened = new TaskCompletionSource<WebSocketState>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cancellationBoundary = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Events.StateChanged += state =>
+        {
+            // This event runs after the connection cancellation check and before
+            // the first ReceiveAsync. Pin the formerly intermittent cleanup race.
+            if (state != WebSocketState.Open) return;
+            stop.Cancel();
+            cancellationBoundary.TrySetResult();
+        };
         var run = ConnectOnce(fixture.Events, stop.Token, () => opened.TrySetResult(fixture.Events.CurrentState));
         try
         {
             Assert.Equal(WebSocketState.Open, await opened.Task.WaitAsync(TimeSpan.FromSeconds(20)));
-            await fixture.NextAsync();
+            await cancellationBoundary.Task.WaitAsync(TimeSpan.FromSeconds(20));
         }
         finally
         {
             stop.Cancel();
+            // This private-method fixture bypasses the normal run-loop owner.
+            // Cancellation between receive iterations leaves the socket open;
+            // disposing the client supplies the normal Abort before awaiting it,
+            // rather than waiting for this silent fixture peer's close handshake.
+            fixture.Events.Dispose();
             try { await run.WaitAsync(TimeSpan.FromSeconds(20)); }
             catch (OperationCanceledException) { }
         }
