@@ -34,8 +34,9 @@ public static partial class LocalLog
     }
 
     /// <summary>
-    /// Until disposed, this thread's appends reach the file before returning,
-    /// even on the UI thread. The write is made directly rather than by waiting
+    /// Until disposed, this thread's appends attempt a direct file write before
+    /// returning, even on the UI thread. A file-sharing failure falls back to
+    /// the best-effort queue. The write does not wait
     /// on the shared writer, so it does not enter a COM modal loop. For crash
     /// handlers, after which the process may end before the queue drains.
     /// </summary>
