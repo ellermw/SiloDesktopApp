@@ -69,6 +69,8 @@ public partial class App : Application
         this.UnhandledException += (sender, args) =>
         {
             args.Handled = true;
+            // The process can still end after this handler; queued lines would be lost.
+            using var writeThrough = LocalLog.BeginWriteThrough();
             LocalLog.AppendLines("crash.txt", new[]
             {
                 $"utc={DateTime.UtcNow:O} version={typeof(App).Assembly.GetName().Version}",
@@ -78,6 +80,19 @@ public partial class App : Application
             LocalLog.AppendLines("crash.txt", GetUiDiagnosticSnapshot());
             if (args.Exception != null)
                 LocalLog.AppendException("crash.txt", args.Exception, "App.UnhandledException");
+        };
+
+        // Exceptions on worker threads bypass Application.UnhandledException and end the process.
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+        {
+            using var writeThrough = LocalLog.BeginWriteThrough();
+            LocalLog.AppendLines("crash.txt", new[]
+            {
+                $"utc={DateTime.UtcNow:O} version={typeof(App).Assembly.GetName().Version} terminating={args.IsTerminating}",
+                "last UI operation=" + LocalLog.RedactDiagnosticText(PerfBreadcrumb),
+            });
+            if (args.ExceptionObject is Exception exception)
+                LocalLog.AppendException("crash.txt", exception, "AppDomain.UnhandledException");
         };
 
         TaskScheduler.UnobservedTaskException += (_, args) =>
