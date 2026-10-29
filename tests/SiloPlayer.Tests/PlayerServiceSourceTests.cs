@@ -1297,6 +1297,13 @@ public sealed class PlayerServiceSourceTests
         load = load[..load.IndexOf("private static bool IsUnsupportedBitmapSubtitle(", StringComparison.Ordinal)];
         Assert.Contains("_subtitleSyncFiles.Remove(path);", load, StringComparison.Ordinal);
         Assert.Contains("File.Delete(path);", load, StringComparison.Ordinal);
+        // Close, dispose and session changes delete every sync file, prefetched sidecars
+        // included: forget them and reject downloads still in flight.
+        var sync = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.SubtitleSync.cs"));
+        var stop = sync[sync.IndexOf("private void StopSubtitleSync()", StringComparison.Ordinal)..];
+        stop = stop[..stop.IndexOf("private void EnsureSubtitleSync()", StringComparison.Ordinal)];
+        var invalidate = stop.IndexOf("lock (_subtitleTrackStateLock) { _prefetchedSubtitleFiles.Clear(); _subtitleSidecarGeneration++; }", StringComparison.Ordinal);
+        Assert.InRange(invalidate, stop.IndexOf("lock (_subtitleSyncGate)", StringComparison.Ordinal), stop.IndexOf("_subtitleSyncFiles.Clear();", StringComparison.Ordinal));
 
         var persist = source[source.IndexOf("public async Task SetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)", StringComparison.Ordinal)..];
         AssertPrefetchedThenCurrentBeforeSelection(persist, "_activeSubtitleServerIndex != selected");
