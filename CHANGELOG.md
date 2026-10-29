@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.464
+
+Serialize the entire playback watchdog callback and remove a misleading test-only Lua identifier heuristic. See [follow-up record](docs/releases/1.2.464.md).
+
 ## 1.2.463
 
 Logging and buffering-control responsiveness, Windows-safe save suggestions, responsive thumbnail decoding and OSC cleanup. See [33-change record](docs/releases/1.2.463.md).
