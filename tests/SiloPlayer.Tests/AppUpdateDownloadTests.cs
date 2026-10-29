@@ -34,13 +34,15 @@ public sealed class AppUpdateDownloadTests : IDisposable
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         wire.BeforeMetadata = async ct => { entered.TrySetResult(); await release.Task.WaitAsync(ct); };
         var check = service.CheckAsync();
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Generous bounds: hashing and file moves run on a pool that the full
+        // parallel suite can starve; a passing run still ends immediately.
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // The periodic six-hour check, or the dialog's own Check button, is in
         // flight when the user presses Update now.
         var download = service.DownloadAsync();
         release.TrySetResult();
-        await download.WaitAsync(TimeSpan.FromSeconds(5)); await check;
+        await download.WaitAsync(TimeSpan.FromSeconds(30)); await check;
 
         Assert.Equal(1, wire.Downloads);
         Assert.NotNull(service.State.ReadyInstaller);
