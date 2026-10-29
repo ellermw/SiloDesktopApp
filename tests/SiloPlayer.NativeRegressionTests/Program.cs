@@ -231,6 +231,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await SubtitleSidecarOwnershipNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "relay-load-ownership")
+            {
+                await RelayLoadOwnershipNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct24-shell")
             {
                 await Oct24ShellNativeFixture.RunAsync();
