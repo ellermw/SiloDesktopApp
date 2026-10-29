@@ -1,12 +1,10 @@
 # Changelog
 
-## 1.2.511
+Published release history. The [current download](README.md#download) and [Latest release](https://github.com/ellermw/SiloDesktopApp/releases/latest) are **1.2.511**. Unpublished candidates are retained separately in [historical development handoffs](docs/archive/2026-10-29-development-handoffs.md); candidate 1.2.505 was superseded without a public release.
+
+## 1.2.511 — current
 
 Centered keep-open incremental updates, subtitle continuity and corrected audit PR52–59, including complete replacement-load ownership, latest bitmap plan/prefs and genuine pause intent. See the [47-change record](docs/releases/1.2.511.md).
-
-## 1.2.505 (unpublished)
-
-Withheld source/tag baseline; no505 release was published. Superseded by511. Centered update windows, keep-open changed-file updates, subtitle continuity and audit PR52–59: bounded artwork caching, crash logging, server upload limits, collection append performance, safe external links and identity-owned Plex/Emby sign-in. See the [41-change record](docs/releases/1.2.505.md).
 
 ## 1.2.464
 

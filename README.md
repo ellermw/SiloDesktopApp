@@ -4,13 +4,17 @@ A native Windows client for [Silo Server](https://github.com/Silo-Server/silo-se
 
 ## Download
 
+**Current release: 1.2.511** · [View latest release](https://github.com/ellermw/SiloDesktopApp/releases/latest)
+
 [**Download version 1.2.511 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.511/SiloInstaller-Windows-x64.exe)
 
 Requires Windows 10 version 1809 or newer, or Windows 11, and access to a Silo Server. Runtime dependencies are included in the installer.
 
 [Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.511) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.511/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
 
-Version 1.2.511 adds centered update windows and changed-file updates that prepare the next version while Silo stays open until the final restart. It also preserves playback when selecting subtitles, corrects pending subtitle selection ownership, and improves image caching, collection editing and sign-in reliability. Existing legacy installations require one full installer migration; compatible484 or newer installations can reuse unchanged files. See the [47-change release record](docs/releases/1.2.511.md).
+Version 1.2.511 adds centered update windows and changed-file updates that prepare the next version while Silo stays open until the final restart. It also preserves playback when selecting subtitles, corrects pending subtitle selection ownership, and improves image caching, collection editing and sign-in reliability. Existing legacy installations require one full installer migration; compatible 1.2.484 or newer installations can reuse unchanged files. See the [47-change release record](docs/releases/1.2.511.md).
+
+The download above and GitHub's **Latest** release identify the supported current version. Older releases, tags and version numbers in past commit messages are historical records. Development candidates are not additional update channels.
 
 Historical navigation slowdown and a separate WinUI navigation crash remain under investigation.
 
