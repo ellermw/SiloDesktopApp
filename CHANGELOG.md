@@ -1,8 +1,12 @@
 # Changelog
 
-Published release history. The [current download](README.md#download) and [Latest release](https://github.com/ellermw/SiloDesktopApp/releases/latest) are **1.2.515**. Unpublished candidates are retained separately in [historical development handoffs](docs/archive/2026-10-29-development-handoffs.md); candidate 1.2.505 was superseded without a public release.
+Published release history. The [current download](README.md#download) and [Latest release](https://github.com/ellermw/SiloDesktopApp/releases/latest) are **1.2.516**. Unpublished candidates are retained separately in [historical development handoffs](docs/archive/2026-10-29-development-handoffs.md); candidate 1.2.505 was superseded without a public release.
 
-## 1.2.515 — current
+## 1.2.516 — current
+
+Keep Check for updates visible above the update footer while long notes and preferences scroll within the dialog. Resize and live metadata refresh remain supported. See the [one-change record](docs/releases/1.2.516.md).
+
+## 1.2.515
 
 Use the bundled Silo icon on the separate update progress window. The corrected helper presents future updates after it is installed. Main also includes PR #60's test-only deadline adjustments, with no behavior increment. See the [one-change record](docs/releases/1.2.515.md).
 

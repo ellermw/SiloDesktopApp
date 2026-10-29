@@ -4,17 +4,17 @@ A native Windows client for [Silo Server](https://github.com/Silo-Server/silo-se
 
 ## Download
 
-**Current release: 1.2.515** · [View latest release](https://github.com/ellermw/SiloDesktopApp/releases/latest)
+**Current release: 1.2.516** · [View latest release](https://github.com/ellermw/SiloDesktopApp/releases/latest)
 
-[**Download version 1.2.515 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.515/SiloInstaller-Windows-x64.exe)
+[**Download version 1.2.516 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.516/SiloInstaller-Windows-x64.exe)
 
 Requires Windows 10 version 1809 or newer, or Windows 11, and access to a Silo Server. Runtime dependencies are included in the installer.
 
-[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.515) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.515/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
+[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.516) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.516/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
 
-Version 1.2.515 adds the Silo icon to the separate **Updating Silo** window's title bar and taskbar. Updates use the currently installed helper, so the window installing this release may retain the old generic icon; updates started after the corrected helper is installed use the Silo icon. See the [release record](docs/releases/1.2.515.md).
+Version 1.2.516 keeps **Check for updates** visible above **Update now** and **Later**. Long release notes and preferences scroll within the window, and the dialog adapts when you resize Silo. The new layout takes effect after installing this version. See the [release record](docs/releases/1.2.516.md).
 
-The main app's Silo icon and stable taskbar identity, centered keep-open updates and subtitle continuity are retained. For pins created before 1.2.514, unpin the old entry once, launch updated Silo and pin it again. Legacy installations require one full installer migration; compatible versioned installations reuse unchanged files.
+The Silo icons, stable taskbar identity, centered keep-open updates and subtitle continuity are retained. For pins created before 1.2.514, unpin the old entry once, launch updated Silo and pin it again. The progress window uses the currently installed helper; updates started after 1.2.515's helper is installed use its corrected Silo icon. Legacy installations require one full installer migration; compatible versioned installations reuse unchanged files.
 
 The download above and GitHub's **Latest** release identify the supported current version. Older releases, tags and version numbers in past commit messages are historical records. Development candidates are not additional update channels.
 
