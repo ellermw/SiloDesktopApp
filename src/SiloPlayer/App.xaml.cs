@@ -29,6 +29,7 @@ public partial class App : Application
 
     public App()
     {
+        TaskbarIdentity.InitializeProcess();
         this.InitializeComponent();
         _services = ConfigureServices();
 

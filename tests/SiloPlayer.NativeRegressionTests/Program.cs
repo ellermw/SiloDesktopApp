@@ -407,9 +407,14 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 parent.Children.Clear(); await Task.Delay(100);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "taskbar-identity")
+            {
+                await TaskbarIdentityNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "server-favicon")
             {
-                await ServerFaviconNativeFixture.RunAsync(_window);
+                await TaskbarIdentityNativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "settings-visual-regressions")

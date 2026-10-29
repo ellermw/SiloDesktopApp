@@ -102,7 +102,7 @@ public sealed partial class MainWindow : Window
             AppWindow.TitleBar.ExtendsContentIntoTitleBar = false;
         }
 
-        SetWindowIcon(null);
+        TaskbarIdentity.ApplyToWindow(this);
 
         _navigationService = App.Services.GetRequiredService<NavigationService>();
         _viewModel = App.Services.GetRequiredService<MainViewModel>();
@@ -2372,7 +2372,6 @@ public sealed partial class MainWindow : Window
         CancelShellHydration();
         ReleaseNotificationSubscription();
         _brandingLoadGate.Cancel();
-        SetWindowIcon(null);
     }
 
     private void NavView_PaneClosing(
@@ -2715,7 +2714,6 @@ public sealed partial class MainWindow : Window
     private void ResetShellBranding()
     {
         _brandingLoadGate.Cancel();
-        SetWindowIcon(null);
         var isLightAppearance = ThemeService.IsLightAppearance(_themeService.CurrentTheme);
         var defaultWordmark = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(
             new Uri(isLightAppearance
@@ -2727,36 +2725,6 @@ public sealed partial class MainWindow : Window
         MobileSiloWordmarkImage.Source = defaultWordmark;
         SiloMarkImage.Source = defaultMark;
         DocumentTitle.SetServerName("Silo");
-    }
-
-    private void SetWindowIcon(string? iconPath)
-    {
-        var fallback = Path.Combine(Path.GetDirectoryName(Environment.ProcessPath) ?? "", "Assets", "app.ico");
-        try { AppWindow?.SetIcon(iconPath ?? fallback); }
-        catch (Exception ex)
-        {
-            LocalLog.AppendException("branding.txt", ex, "window_favicon_apply");
-            if (iconPath is null) return;
-            try { AppWindow?.SetIcon(fallback); }
-            catch (Exception fallbackError) { LocalLog.AppendException("branding.txt", fallbackError, "window_favicon_fallback"); }
-        }
-    }
-
-    private async Task LoadWindowIconAsync(string shellKey, int brandingLoadVersion, string? faviconUrl, CancellationToken ct)
-    {
-        try
-        {
-            var path = await ServerWindowIcon.GetIconPathAsync(App.Services.GetRequiredService<ImageService>(),
-                App.Services.GetRequiredService<HttpClient>(), shellKey, faviconUrl, ct).ConfigureAwait(false);
-            if (!IsCurrentShellHydration(shellKey, ct) || !_brandingLoadGate.IsCurrent(brandingLoadVersion)) return;
-            DispatcherQueue.TryEnqueue(() =>
-            {
-                if (IsCurrentShellHydration(shellKey, ct) && _brandingLoadGate.IsCurrent(brandingLoadVersion))
-                    SetWindowIcon(path);
-            });
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-        catch (Exception ex) { LocalLog.AppendException("branding.txt", ex, "window_favicon_refresh"); }
     }
 
     private async Task LoadShellBrandingAsync(
@@ -2774,9 +2742,6 @@ public sealed partial class MainWindow : Window
         var markUrl = _apiClient.ResolveServerUrl(assetChoice.MarkUrl);
         var imageService = App.Services.GetRequiredService<ImageService>();
         var httpClient = App.Services.GetRequiredService<HttpClient>();
-        // Favicon loading cannot hold up the sidebar wordmark/mark.
-        _ = LoadWindowIconAsync(shellKey, brandingLoadVersion,
-            _apiClient.ResolveServerUrl(branding.FaviconUrl), cancellationToken);
         var wordmarkPathTask = Uri.TryCreate(wordmarkUrl, UriKind.Absolute, out _)
             ? imageService.GetImageDiskPathAsync(shellKey, "server-wordmark", wordmarkUrl!, httpClient, cancellationToken)
             : Task.FromResult<string?>(null);
