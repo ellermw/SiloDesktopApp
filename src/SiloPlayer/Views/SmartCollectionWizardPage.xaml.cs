@@ -3,6 +3,7 @@ using Microsoft.UI.Text;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
 using Windows.ApplicationModel.DataTransfer;
 using Microsoft.UI.Xaml.Input;
@@ -484,9 +485,9 @@ public sealed partial class SmartCollectionWizardPage : Page
             var file = await picker.PickSingleFileAsync();
             if (file == null) return;
             var properties = await file.GetBasicPropertiesAsync();
-            if (properties.Size > 20 * 1024 * 1024)
+            if (properties.Size > CollectionArtworkLimits.MaximumBytes)
             {
-                SetArtworkStatus("Image must be smaller than 20 MB.");
+                SetArtworkStatus(CollectionArtworkLimits.OversizeMessage);
                 return;
             }
             var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file);
@@ -551,7 +552,7 @@ public sealed partial class SmartCollectionWizardPage : Page
         {
             var file = (await e.DataView.GetStorageItemsAsync()).OfType<Windows.Storage.StorageFile>().FirstOrDefault();
             if (file == null || !new[] { ".jpg", ".jpeg", ".png", ".webp" }.Contains(file.FileType.ToLowerInvariant())) { SetArtworkStatus("Choose a JPG, PNG, or WebP image."); return; }
-            if ((await file.GetBasicPropertiesAsync()).Size > 20 * 1024 * 1024) { SetArtworkStatus("Image must be smaller than 20 MB."); return; }
+            if ((await file.GetBasicPropertiesAsync()).Size > CollectionArtworkLimits.MaximumBytes) { SetArtworkStatus(CollectionArtworkLimits.OversizeMessage); return; }
             var buffer = await Windows.Storage.FileIO.ReadBufferAsync(file); ViewModel.SetPosterFile(file.Name, buffer.ToArray(), file.ContentType); SetArtworkStatus(file.Name); await UpdatePosterPreviewAsync();
         }
         catch (Exception ex) { SetArtworkStatus(ex.Message); }
