@@ -42,7 +42,13 @@ public sealed class UrlToImageSourceConverter : IValueConverter
         }
         // Reuse disk bytes by stable artwork identity, but never attach a
         // renewed URL to an older URL's pending/failed bitmap operation.
-        var sourceKey = dimRequestPoster ? url + "|request-dim" : url;
+        // Code-built responsive cards can request their logical display width.
+        // Existing XAML callers retain their physical342 decode budget.
+        var logicalWidth = parameter is double width && double.IsFinite(width) && width > 0 && width <= int.MaxValue
+            ? (int)Math.Ceiling(width) : 0;
+        var decodeWidth = logicalWidth > 0 ? logicalWidth : 342;
+        var decodeType = logicalWidth > 0 ? DecodePixelType.Logical : DecodePixelType.Physical;
+        var sourceKey = (dimRequestPoster ? url + "|request-dim" : url) + $"|decode:{decodeType}:{decodeWidth}";
         if (Interlocked.Increment(ref _lookupCount) % PruneInterval == 0)
             PruneDeadSources();
 
@@ -53,7 +59,7 @@ public sealed class UrlToImageSourceConverter : IValueConverter
             RemoveDeadEntry(sourceKey, existing);
         }
 
-        var bitmap = new BitmapImage { DecodePixelWidth = 342 };
+        var bitmap = new BitmapImage { DecodePixelWidth = decodeWidth, DecodePixelType = decodeType };
         var outcome = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         Outcomes.Add(bitmap, outcome);
         Sources[sourceKey] = new WeakReference<BitmapImage>(bitmap);

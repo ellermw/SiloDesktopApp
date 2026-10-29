@@ -97,7 +97,7 @@ public sealed class CodeRabbitFollowUpRegressionTests
         Assert.Contains("PruneDeadSources();", source, StringComparison.Ordinal);
         Assert.Contains("private static void PruneDeadSources()", source, StringComparison.Ordinal);
         Assert.Contains("RemoveDeadEntry(sourceKey, existing);", source, StringComparison.Ordinal);
-        Assert.Contains("var sourceKey = dimRequestPoster ? url + \"|request-dim\" : url;", source, StringComparison.Ordinal);
+        Assert.Contains("var sourceKey = (dimRequestPoster ? url + \"|request-dim\" : url) + $\"|decode:{decodeType}:{decodeWidth}\";", source, StringComparison.Ordinal);
         Assert.Contains("ReferenceEquals(current, bitmap)", source, StringComparison.Ordinal);
         Assert.Contains(".Remove(new(sourceKey, saved))", source, StringComparison.Ordinal);
         Assert.Contains("GetImageAsync(cacheKey, \"converted\", url, httpClient)", source, StringComparison.Ordinal);

@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Text;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Media.Imaging;
 using SiloPlayer.Controls;
 using SiloPlayer.Converters;
 using SiloPlayer.Core.Models.Collections;
@@ -87,7 +88,7 @@ public sealed partial class CollectionsPage
         var width = PosterWidth;
         var poster = new Border { Width = width, Height = width * 1.5, CornerRadius = new CornerRadius(16), Background = (Brush)Application.Current.Resources["SurfaceBrush"], BorderThickness = new(1), BorderBrush = CollectionPosterBorder() };
         if (!string.IsNullOrWhiteSpace(collection.PosterUrl))
-            poster.Child = new Image { Stretch = Stretch.UniformToFill, Source = (ImageSource)new UrlToImageSourceConverter().Convert(collection.PosterUrl, typeof(ImageSource), null!, "") };
+            poster.Child = new Image { Stretch = Stretch.UniformToFill, Source = (ImageSource)new UrlToImageSourceConverter().Convert(collection.PosterUrl, typeof(ImageSource), width, "") };
         else poster.Child = new TextBlock { Text = collection.Title, FontSize = 14, TextWrapping = TextWrapping.Wrap, MaxLines = 3, Margin = new Thickness(12), TextAlignment = TextAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
         poster.Loaded += (_, _) => ClipCollectionPoster(poster); poster.SizeChanged += (_, _) => ClipCollectionPoster(poster);
         var copy = new StackPanel(); copy.Children.Add(poster);
@@ -97,7 +98,13 @@ public sealed partial class CollectionsPage
         AutomationProperties.SetName(open, "Open " + collection.Title);
         open.Click += (_, _) => App.Services.GetRequiredService<NavigationService>().Navigate<CollectionBrowsePage>(new CollectionBrowsePage.NavArgs { CollectionId = collection.Id, Title = collection.Title, Subtitle = library == null ? "Server collection" : library.LibraryName + " collection", IsUserCollection = false, LibraryId = library?.LibraryId });
         var layer = new Grid(); layer.Children.Add(open); var card = new Border { Child = layer, Tag = collection }; ConfigurePosterImageHover(card, poster);
-        card.SizeChanged += (_, _) => { if (card.ActualWidth > 0 && Math.Abs(poster.Width - card.ActualWidth) > .5) { poster.Width = card.ActualWidth; poster.Height = card.ActualWidth * 1.5; } };
+        card.SizeChanged += (_, _) =>
+        {
+            if (card.ActualWidth <= 0 || Math.Abs(poster.Width - card.ActualWidth) <= .5) return;
+            poster.Width = card.ActualWidth; poster.Height = card.ActualWidth * 1.5;
+            if (poster.Child is Image { Source: BitmapImage bitmap } image && bitmap.DecodePixelWidth != (int)Math.Ceiling(card.ActualWidth))
+                image.Source = (ImageSource)new UrlToImageSourceConverter().Convert(collection.PosterUrl!, typeof(ImageSource), card.ActualWidth, "");
+        };
         if (library != null && App.MainWindowInstance is MainWindow window)
         {
             var pinned = window.IsSidebarPin(library.LibraryId, "collection", collection.Id);
