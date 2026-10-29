@@ -266,6 +266,21 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await CalendarCultureNativeFixture.RunAsync();
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "buffering-gate")
+            {
+                await BufferingGateNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "collection-thumbnails")
+            {
+                await CollectionThumbnailNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "save-picker")
+            {
+                await SavePickerNativeFixture.RunAsync(parent, _window);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "queued-player-log")
             {
                 await QueuedPlayerLogNativeFixture.RunAsync();

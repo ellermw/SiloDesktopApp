@@ -4,13 +4,13 @@ A native Windows client for [Silo Server](https://github.com/Silo-Server/silo-se
 
 ## Download
 
-[**Download version 1.2.430 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.430/SiloInstaller-Windows-x64.exe)
+[**Download version 1.2.463 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.463/SiloInstaller-Windows-x64.exe)
 
 Requires Windows 10 version 1809 or newer, or Windows 11, and access to a Silo Server. Runtime dependencies are included in the installer.
 
-[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.430) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.430/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
+[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.463) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.463/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
 
-Version 1.2.430 fixes relative/SVG profile avatars in Settings and prevents stale room navigation from taking over a newer room. It retains installer safety, automatic update notices, visible progress and rate-limit protection. If an older installation closes without installing an update, install this version manually once. See the [24-change release record](docs/releases/1.2.430.md).
+Version 1.2.463 improves logging and buffering-control responsiveness, validates save-dialog filenames, sizes collection thumbnails to their cards, and removes unused player-overlay code. It retains installer safety and automatic update notices. See the [33-change release record](docs/releases/1.2.463.md).
 
 Historical navigation slowdown and a separate WinUI navigation crash remain under investigation.
 
