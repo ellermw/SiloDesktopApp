@@ -123,7 +123,9 @@ public sealed class PlayerServiceSourceTests
         // position/duration, and nothing slides a window during playback
         // (the XAML overlay tick that once did is never activated). A windowed
         // sidecar therefore lost every cue ~10 minutes after selection.
-        Assert.Contains("_mpv.AddSubtitle(pair.Value.FullUrl, label, track.Language, select: true);", source, StringComparison.Ordinal);
+        // The complete-track URL is added directly, or downloaded whole first.
+        Assert.Contains("var source = _prefetchedSubtitleFiles.TryGetValue(track.Index, out var local) ? local : pair.Value.FullUrl;", source, StringComparison.Ordinal);
+        Assert.Contains("_mpv.AddSubtitle(source, label, track.Language, select: true);", source, StringComparison.Ordinal);
         Assert.DoesNotContain("AppendPositionDuration", source, StringComparison.Ordinal);
         Assert.DoesNotContain("&duration=", source, StringComparison.Ordinal);
         Assert.DoesNotContain("TickSubtitleWindows", source, StringComparison.Ordinal);
@@ -1272,5 +1274,62 @@ public sealed class PlayerServiceSourceTests
         }
 
         throw new InvalidOperationException("Could not find repository root.");
+    }
+
+    [Fact]
+    public void RemoteSidecarsAreDownloadedBeforeTheSynchronousSubAdd()
+    {
+        // libmpv's synchronous sub-add of an HTTP URL blocks its caller (the UI
+        // thread for player-overlay selections) for the whole download.
+        var source = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var prefetch = source[source.IndexOf("private async Task PrefetchSubtitleSidecarAsync(", StringComparison.Ordinal)..];
+        prefetch = prefetch[..prefetch.IndexOf("private int ResolveNativeEmbeddedSid(", StringComparison.Ordinal)];
+        // Same request mpv makes: no account header for worker/CDN sidecars.
+        Assert.Contains("SubtitleSyncDownloadClient.GetAsync(url,", prefetch, StringComparison.Ordinal);
+        Assert.DoesNotContain("CreateAuthenticatedRequest", prefetch, StringComparison.Ordinal);
+        Assert.Contains("generation != _subtitleSidecarGeneration", prefetch, StringComparison.Ordinal);
+        Assert.Contains("_subtitleSyncFiles.Add(path);", prefetch, StringComparison.Ordinal);
+        // The size cap applies while reading, not after buffering the body.
+        Assert.DoesNotContain("ReadAsByteArrayAsync", prefetch, StringComparison.Ordinal);
+        Assert.Contains("if (buffer.Length + read > SubtitleSidecarFile.MaxBytes) return;", prefetch, StringComparison.Ordinal);
+        // Same-session reloads delete and unregister this file's downloads.
+        var load = source[source.IndexOf("private void LoadSubtitles()", StringComparison.Ordinal)..];
+        load = load[..load.IndexOf("private static bool IsUnsupportedBitmapSubtitle(", StringComparison.Ordinal)];
+        Assert.Contains("_subtitleSyncFiles.Remove(path);", load, StringComparison.Ordinal);
+        Assert.Contains("File.Delete(path);", load, StringComparison.Ordinal);
+        // Close, dispose and session changes delete every sync file, prefetched sidecars
+        // included: forget them and reject downloads still in flight.
+        var sync = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.SubtitleSync.cs"));
+        var stop = sync[sync.IndexOf("private void StopSubtitleSync()", StringComparison.Ordinal)..];
+        stop = stop[..stop.IndexOf("private void EnsureSubtitleSync()", StringComparison.Ordinal)];
+        var invalidate = stop.IndexOf("lock (_subtitleTrackStateLock) { _prefetchedSubtitleFiles.Clear(); _subtitleSidecarGeneration++; }", StringComparison.Ordinal);
+        Assert.InRange(invalidate, stop.IndexOf("lock (_subtitleSyncGate)", StringComparison.Ordinal), stop.IndexOf("_subtitleSyncFiles.Clear();", StringComparison.Ordinal));
+
+        var persist = source[source.IndexOf("public async Task SetSubtitleTrackAndPersistAsync(int mpvTrackIndex, string? language, SubtitleTrackInfo? track)", StringComparison.Ordinal)..];
+        AssertPrefetchedThenCurrentBeforeSelection(persist, "_activeSubtitleServerIndex != selected");
+        var persistSelect = persist.IndexOf("SelectSubtitleTrack(track);", StringComparison.Ordinal);
+        var persistPrefetch = persist.LastIndexOf("await PrefetchSubtitleSidecarAsync(track);", persistSelect, StringComparison.Ordinal);
+        // Restoration uses the state from just before the sub-add, not from before the download.
+        Assert.InRange(persist.IndexOf("wasPaused = CaptureUserPausedState();", persistPrefetch, StringComparison.Ordinal), persistPrefetch, persistSelect);
+        Assert.InRange(persist.IndexOf("position = CurrentMediaPosition;", persistPrefetch, StringComparison.Ordinal), persistPrefetch, persistSelect);
+        // A superseding file load hands restoration to the reload but still persists the choice.
+        var loadChanged = persist.IndexOf("CurrentSubtitleSidecarGeneration() != sidecarGeneration", persistPrefetch, StringComparison.Ordinal);
+        var handOff = persist.IndexOf("transportReloadScheduled = true;", loadChanged, StringComparison.Ordinal);
+        Assert.InRange(handOff, loadChanged, persistSelect);
+        Assert.DoesNotContain("return;", persist[loadChanged..persistSelect], StringComparison.Ordinal);
+        Assert.True(persist.IndexOf("SaveSubtitlePrefsAsync(", persistSelect, StringComparison.Ordinal) > persistSelect);
+        var byIndex = source[source.IndexOf("private async Task SelectSubtitleByServerIndexAsync(", StringComparison.Ordinal)..];
+        AssertPrefetchedThenCurrentBeforeSelection(byIndex, "_activeSubtitleServerIndex != serverTrackIndex");
+    }
+
+    private static void AssertPrefetchedThenCurrentBeforeSelection(string method, string currentCheck)
+    {
+        var select = method.IndexOf("SelectSubtitleTrack(track);", StringComparison.Ordinal);
+        var prefetch = method.LastIndexOf("await PrefetchSubtitleSidecarAsync(track);", select, StringComparison.Ordinal);
+        var captured = method.LastIndexOf("var sidecarGeneration = CurrentSubtitleSidecarGeneration();", prefetch, StringComparison.Ordinal);
+        var current = method.IndexOf(currentCheck, prefetch, StringComparison.Ordinal);
+        var loadCurrent = method.IndexOf("CurrentSubtitleSidecarGeneration() != sidecarGeneration", prefetch, StringComparison.Ordinal);
+        // A superseded file load (same session and index) must not select either.
+        Assert.True(captured >= 0 && captured < prefetch && prefetch < current && current < select && prefetch < loadCurrent && loadCurrent < select);
     }
 }

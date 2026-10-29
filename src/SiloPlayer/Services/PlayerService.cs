@@ -1096,7 +1096,25 @@ public partial class PlayerService : IDisposable
             }
             else
             {
-                SelectSubtitleTrack(track);
+                var selected = _activeSubtitleServerIndex;
+                var sidecarGeneration = CurrentSubtitleSidecarGeneration();
+                await PrefetchSubtitleSidecarAsync(track);
+                // A newer selection owns the subtitle state and its preference.
+                if (_activeSubtitleServerIndex != selected || !ReferenceEquals(manager, _playbackManager)) return;
+                if (CurrentSubtitleSidecarGeneration() != sidecarGeneration)
+                {
+                    // A file load replaced the subtitle tracks during the download. It
+                    // applies the recorded selection and restores playback itself;
+                    // the choice is still persisted below.
+                    transportReloadScheduled = true;
+                }
+                else
+                {
+                    // The viewer may have paused or sought during the download.
+                    wasPaused = CaptureUserPausedState();
+                    position = CurrentMediaPosition;
+                    SelectSubtitleTrack(track);
+                }
             }
         }
         else if (manager?.CurrentSession?.IsSubtitleBurnedIn == true)
@@ -4574,13 +4592,29 @@ public partial class PlayerService : IDisposable
 
     private readonly object _subtitleTrackStateLock = new();
     private readonly Dictionary<int, int> _loadedExternalSubtitleSids = [];
+    // Remote text sidecars downloaded for this file, keyed by server track
+    // index. The files are deleted with the subtitle-sync files.
+    private readonly Dictionary<int, string> _prefetchedSubtitleFiles = [];
+    private long _subtitleSidecarGeneration;
 
     private void LoadSubtitles()
     {
         if (_playbackManager?.CurrentSession == null || _mpv == null) return;
 
+        lock (_subtitleSyncGate)
         lock (_subtitleTrackStateLock)
+        {
             _loadedExternalSubtitleSids.Clear();
+            // Same-session reloads keep the subtitle-sync lifecycle alive, so
+            // remove this file's downloads here instead of accumulating them.
+            foreach (var path in _prefetchedSubtitleFiles.Values)
+            {
+                _subtitleSyncFiles.Remove(path);
+                try { File.Delete(path); } catch { }
+            }
+            _prefetchedSubtitleFiles.Clear();
+            _subtitleSidecarGeneration++;
+        }
 
         // Do not eagerly sub-add every server subtitle URL. mpv already sees
         // embedded text tracks on direct/remux playback, and adding all VTT
@@ -4736,8 +4770,17 @@ public partial class PlayerService : IDisposable
         if (persist)
             await SetSubtitleTrackAndPersistAsync(mpvTrackIndex, track.Language, track);
         else
+        {
+            var manager = _playbackManager;
+            var sidecarGeneration = CurrentSubtitleSidecarGeneration();
+            await PrefetchSubtitleSidecarAsync(track);
+            // Same-session reloads keep the index and manager; the file load
+            // generation still identifies an initializer that was superseded.
+            if (_activeSubtitleServerIndex != serverTrackIndex || !ReferenceEquals(manager, _playbackManager) ||
+                CurrentSubtitleSidecarGeneration() != sidecarGeneration) return;
             SelectSubtitleTrack(track);
-        _mpv.SendScriptMessage(
+        }
+        _mpv?.SendScriptMessage(
             "osc-set-active-subtitle",
             serverTrackIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
@@ -4791,9 +4834,80 @@ public partial class PlayerService : IDisposable
                 return;
 
             var label = !string.IsNullOrEmpty(track.Label) ? track.Label : track.Language ?? "Unknown";
-            _mpv.AddSubtitle(pair.Value.FullUrl, label, track.Language, select: true);
+            var source = _prefetchedSubtitleFiles.TryGetValue(track.Index, out var local) ? local : pair.Value.FullUrl;
+            _mpv.AddSubtitle(source, label, track.Language, select: true);
             _loadedExternalSubtitleSids[track.Index] = Math.Max(1, (int)Math.Round(_mpv.GetPropertyDouble("sid")));
         }
+    }
+
+    /// <summary>
+    /// A synchronous libmpv sub-add of an HTTP URL blocks its caller for the
+    /// whole download (the UI thread for player-overlay selections). Download a
+    /// remote text sidecar off that thread first; SelectSubtitleSidecar then adds
+    /// the local file. Any failure keeps the previous URL path.
+    /// </summary>
+    private long CurrentSubtitleSidecarGeneration()
+    {
+        lock (_subtitleTrackStateLock) return _subtitleSidecarGeneration;
+    }
+
+    private async Task PrefetchSubtitleSidecarAsync(SubtitleTrackInfo track)
+    {
+        if (_mpv == null || IsUnsupportedBitmapSubtitle(track) ||
+            string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase) && CanUseNativeEmbeddedSubtitleTrack())
+            return;
+        long generation;
+        Uri url;
+        lock (_subtitleTrackStateLock)
+        {
+            if (_loadedExternalSubtitleSids.ContainsKey(track.Index) || _prefetchedSubtitleFiles.ContainsKey(track.Index)) return;
+            var pair = _playbackManager?.GetSubtitleUrls().FirstOrDefault(candidate => candidate.Track.Index == track.Index);
+            if (pair == null || !Uri.TryCreate(pair.Value.FullUrl, UriKind.Absolute, out var parsed) ||
+                parsed.Scheme is not ("http" or "https") || SubtitleSidecarFile.Extension(null, parsed, track.Codec) == null)
+                return;
+            url = parsed;
+            generation = _subtitleSidecarGeneration;
+        }
+        string? path = null;
+        try
+        {
+            // Same request mpv would make: the URL carries any account token,
+            // and worker/CDN sidecars must never receive an Authorization header.
+            using var bounded = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            using var response = await SubtitleSyncDownloadClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, bounded.Token);
+            if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > SubtitleSidecarFile.MaxBytes) return;
+            var extension = SubtitleSidecarFile.Extension(response.Content.Headers.ContentType?.MediaType, url, track.Codec);
+            if (extension == null) return;
+            // Chunked or mislabeled bodies are capped while reading, not after buffering.
+            using var buffer = new MemoryStream();
+            await using (var body = await response.Content.ReadAsStreamAsync(bounded.Token))
+            {
+                var chunk = new byte[81920];
+                int read;
+                while ((read = await body.ReadAsync(chunk, bounded.Token)) > 0)
+                {
+                    if (buffer.Length + read > SubtitleSidecarFile.MaxBytes) return;
+                    buffer.Write(chunk, 0, read);
+                }
+            }
+            var bytes = buffer.ToArray();
+            if (bytes.Length == 0) return;
+            path = Path.Combine(Path.GetTempPath(), "silo-subtitle-" + Guid.NewGuid().ToString("N") + extension);
+            await File.WriteAllBytesAsync(path, bytes, bounded.Token);
+            lock (_subtitleSyncGate)
+            lock (_subtitleTrackStateLock)
+            {
+                if (generation != _subtitleSidecarGeneration || _prefetchedSubtitleFiles.ContainsKey(track.Index)) return;
+                _prefetchedSubtitleFiles[track.Index] = path;
+                _subtitleSyncFiles.Add(path);
+                path = null;
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or IOException or UnauthorizedAccessException)
+        {
+            LogToFile("state_trace.txt", $"Subtitle sidecar prefetch skipped: {ex.GetType().Name}");
+        }
+        finally { if (path != null) try { File.Delete(path); } catch { } }
     }
 
     private int ResolveNativeEmbeddedSid(SubtitleTrackInfo track)
