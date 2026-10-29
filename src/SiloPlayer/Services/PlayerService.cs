@@ -1068,6 +1068,7 @@ public partial class PlayerService : IDisposable
         var manager = _playbackManager;
         var ownerToken = _authorityLifetimeCts.Token;
         var mpv = _mpv;
+        var selectionLoadGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
         var preferenceOwner = authority.ApiClient.CaptureContext();
         var key = GetPrefsKey();
         _activeSubtitleServerIndex = mpvTrackIndex <= 0 || track == null ? -1 : track.Index;
@@ -1146,7 +1147,8 @@ public partial class PlayerService : IDisposable
         // issuing Play/Pause while a replacement transport is still loading.
         if (_closing || ownerToken.IsCancellationRequested || !ReferenceEquals(authority, _activeAuthority) ||
             !ReferenceEquals(manager, _playbackManager)) return;
-        if (!transportReloadScheduled)
+        if (!transportReloadScheduled && !_switchingContent && !IsLoading &&
+            selectionLoadGeneration == Volatile.Read(ref _loadedMediaInitGeneration))
             RestorePlaybackStateAfterSubtitleChange(wasPaused, position, allowSeek: true);
 
         if (string.IsNullOrEmpty(key)) return;
