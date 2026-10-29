@@ -2,6 +2,7 @@ using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Tests;
 
+[Collection("LocalLog serialization")]
 public sealed class QueuedLocalLogTests
 {
     [Fact]

@@ -3,6 +3,10 @@ using SiloPlayer.Core.Services;
 
 namespace SiloPlayer.Tests;
 
+[CollectionDefinition("LocalLog serialization", DisableParallelization = true)]
+public sealed class LocalLogSerializationCollection { }
+
+[Collection("LocalLog serialization")]
 public sealed class LocalLogStaWriteTests
 {
     [Fact]
@@ -14,13 +18,13 @@ public sealed class LocalLogStaWriteTests
         var original = seam.GetValue(null);
         var uiThreadId = -1;
         Thread? uiThread = null;
+        var goFirst = new ManualResetEventSlim();
+        var goLater = new ManualResetEventSlim();
         seam.SetValue(null, new Func<bool>(() => Environment.CurrentManagedThreadId == Volatile.Read(ref uiThreadId)));
         try
         {
             // Not disposed: on failure the worker may still be signalling them.
-            var goFirst = new ManualResetEventSlim();
             var firstWritten = new ManualResetEventSlim();
-            var goLater = new ManualResetEventSlim();
             var laterWritten = new ManualResetEventSlim();
             uiThread = new Thread(() =>
             {
@@ -50,15 +54,178 @@ public sealed class LocalLogStaWriteTests
 
             Assert.True(uiThread.Join(TimeSpan.FromSeconds(3)));
             var path = Path.Combine(directory, "ui.txt");
-            Assert.True(SpinWait.SpinUntil(() => File.Exists(path) && File.ReadAllLines(path).Length == 3, TimeSpan.FromSeconds(5)), "Deferred lines were not written.");
+            WaitForDeferredDrain();
+            Assert.Equal(3, File.ReadAllLines(path).Length);
             Assert.Equal(["first", "second", "third"], File.ReadAllLines(path).Select(line => line[(line.IndexOf(']') + 2)..]));
         }
         finally
         {
+            goFirst.Set();
+            goLater.Set();
             uiThread?.Join(TimeSpan.FromSeconds(5));
             seam.SetValue(null, original);
+            WaitForDeferredDrain();
             try { if (Directory.Exists(directory)) Directory.Delete(directory, true); } catch (IOException) { }
         }
+    }
+
+    [Fact]
+    public void LaterUiWriteCannotOvertakeAnAlreadyDequeuedWrite()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "silo-inflight-log-" + Guid.NewGuid().ToString("N"));
+        var flags = BindingFlags.Static | BindingFlags.NonPublic;
+        var gate = typeof(LocalLog).GetField("s_gate", flags)!.GetValue(null)!;
+        var seam = typeof(LocalLog).GetField("s_avoidBlockingWait", flags)!;
+        var original = seam.GetValue(null);
+        var uiThreadId = -1;
+        seam.SetValue(null, new Func<bool>(() => Environment.CurrentManagedThreadId == Volatile.Read(ref uiThreadId)));
+        try
+        {
+            Monitor.Enter(gate);
+            try
+            {
+                // Only this caller gets the UI behavior; unrelated test workers remain synchronous.
+                var first = new Thread(() =>
+                {
+                    Volatile.Write(ref uiThreadId, Environment.CurrentManagedThreadId);
+                    LocalLog.AppendLine("order.txt", "first", directory);
+                }) { IsBackground = true };
+                first.Start();
+                Assert.True(first.Join(TimeSpan.FromSeconds(3)));
+                var queue = typeof(LocalLog).GetField("s_deferred", flags)!.GetValue(null)!;
+                var isEmpty = queue.GetType().GetProperty("IsEmpty")!;
+                Assert.True(SpinWait.SpinUntil(() => (bool)isEmpty.GetValue(queue)!, TimeSpan.FromSeconds(3)),
+                    "The worker did not take the first line into flight.");
+
+                // Reentrant ownership exposes the empty-queue bypass deterministically:
+                // the earlier writer is waiting on this gate, while this caller can enter it.
+                Volatile.Write(ref uiThreadId, Environment.CurrentManagedThreadId);
+                LocalLog.AppendLine("order.txt", "second", directory);
+                Assert.False(File.Exists(Path.Combine(directory, "order.txt")),
+                    "A later UI write overtook the earlier in-flight line.");
+            }
+            finally { Monitor.Exit(gate); }
+
+            WaitForDeferredDrain();
+            Assert.Equal(["first", "second"], File.ReadAllLines(Path.Combine(directory, "order.txt"))
+                .Select(line => line[(line.IndexOf(']') + 2)..]));
+        }
+        finally
+        {
+            seam.SetValue(null, original);
+            WaitForDeferredDrain();
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    public void ExplicitStaFlushWaitsUntilItsBatchIsWritten()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "silo-sta-flush-" + Guid.NewGuid().ToString("N"));
+        var gate = typeof(LocalLog).GetField("s_gate", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+        var log = new QueuedLocalLog(directory);
+        var queue = typeof(QueuedLocalLog).GetField("_queue", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(log)!;
+        var isEmpty = queue.GetType().GetProperty("IsEmpty")!;
+        using var started = new ManualResetEventSlim();
+        using var returned = new ManualResetEventSlim();
+        Exception? failure = null;
+        var sta = new Thread(() =>
+        {
+            try
+            {
+                Assert.Equal(ApartmentState.STA, Thread.CurrentThread.GetApartmentState());
+                started.Set();
+                log.Flush();
+                Assert.EndsWith("queued event", Assert.Single(File.ReadAllLines(Path.Combine(directory, "flush.txt"))));
+            }
+            catch (Exception exception) { failure = exception; }
+            finally { returned.Set(); }
+        }) { IsBackground = true };
+        sta.SetApartmentState(ApartmentState.STA);
+        try
+        {
+            log.Enqueue("flush.txt", "queued event");
+            Monitor.Enter(gate);
+            try
+            {
+                sta.Start();
+                Assert.True(started.Wait(TimeSpan.FromSeconds(3)));
+                Assert.True(SpinWait.SpinUntil(() => (bool)isEmpty.GetValue(queue)!, TimeSpan.FromSeconds(3)),
+                    "The STA flush did not dequeue its batch.");
+                Assert.False(returned.Wait(TimeSpan.FromMilliseconds(200)),
+                    "Explicit STA Flush returned before the blocked batch reached the file.");
+            }
+            finally { Monitor.Exit(gate); }
+            Assert.True(sta.Join(TimeSpan.FromSeconds(5)));
+            Assert.Null(failure);
+        }
+        finally
+        {
+            if ((sta.ThreadState & ThreadState.Unstarted) == 0) sta.Join(TimeSpan.FromSeconds(5));
+            WaitForDeferredDrain();
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    public void ActualStaAppendsCaptureTimestampRedactionOperationDirectoryAndRotation()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "silo-sta-capture-" + Guid.NewGuid().ToString("N"));
+        var gate = typeof(LocalLog).GetField("s_gate", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
+        Exception? failure = null;
+        var sta = new Thread(() =>
+        {
+            try
+            {
+                Assert.Equal(ApartmentState.STA, Thread.CurrentThread.GetApartmentState());
+                using (LocalLog.BeginOperation("sta-fixture", directory))
+                {
+                    var entries = new List<(DateTime, string)>
+                    {
+                        (new DateTime(2026, 10, 28, 10, 11, 12, 345), "first /media?token=fixture-secret")
+                    };
+                    LocalLog.AppendTimestampedLines("capture.txt", entries, maxBytes: 1, archiveCount: 1);
+                    entries[0] = (DateTime.MinValue, "mutated after handoff");
+                    LocalLog.AppendLine("capture.txt", "second", maxBytes: 1, archiveCount: 1);
+                }
+                Assert.Null(LocalLog.CurrentOperationId);
+            }
+            catch (Exception exception) { failure = exception; }
+        }) { IsBackground = true };
+        sta.SetApartmentState(ApartmentState.STA);
+        try
+        {
+            Monitor.Enter(gate);
+            try
+            {
+                sta.Start();
+                Assert.True(sta.Join(TimeSpan.FromSeconds(3)), "Ordinary STA appends waited on the disk gate.");
+                Assert.Null(failure);
+                Assert.False(File.Exists(Path.Combine(directory, "capture.txt")));
+            }
+            finally { Monitor.Exit(gate); }
+            WaitForDeferredDrain();
+            Assert.Equal("[10:11:12.345] first /media?token=<redacted>",
+                Assert.Single(File.ReadAllLines(Path.Combine(directory, "capture.txt.1"))));
+            Assert.EndsWith("second", Assert.Single(File.ReadAllLines(Path.Combine(directory, "capture.txt"))));
+            Assert.False(File.Exists(Path.Combine(directory, "capture.txt.2")));
+        }
+        finally
+        {
+            if ((sta.ThreadState & ThreadState.Unstarted) == 0) sta.Join(TimeSpan.FromSeconds(5));
+            WaitForDeferredDrain();
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    private static void WaitForDeferredDrain()
+    {
+        var flags = BindingFlags.Static | BindingFlags.NonPublic;
+        var drain = typeof(LocalLog).GetField("s_drainingDeferred", flags)!;
+        var queue = typeof(LocalLog).GetField("s_deferred", flags)!.GetValue(null)!;
+        var isEmpty = queue.GetType().GetProperty("IsEmpty")!;
+        Assert.True(SpinWait.SpinUntil(() => (int)drain.GetValue(null)! == 0 && (bool)isEmpty.GetValue(queue)!, TimeSpan.FromSeconds(5)),
+            "The background log worker did not finish before fixture cleanup.");
     }
 
     [Fact]

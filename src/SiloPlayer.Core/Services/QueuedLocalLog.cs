@@ -44,6 +44,6 @@ public sealed class QueuedLocalLog(string? logDirectory = null, Func<DateTime>? 
             list.Add((entry.RecordedAt, entry.Line));
         }
         foreach (var (fileName, lines) in batches)
-            LocalLog.AppendTimestampedLines(fileName, lines, logDirectory);
+            LocalLog.AppendTimestampedLinesAndWait(fileName, lines, logDirectory);
     }
 }

@@ -10,9 +10,13 @@ public static partial class LocalLog
     private static readonly object s_gate = new();
     // A contended managed wait on an STA thread (the WinUI UI thread) enters a
     // COM modal loop (CoWaitForMultipleHandles) for as long as another thread
-    // writes to disk. Such threads hand contended lines to a background writer.
+    // writes to disk. Ordinary STA appends hand off without waiting.
     private static Func<bool> s_avoidBlockingWait = () => Thread.CurrentThread.GetApartmentState() == ApartmentState.STA;
-    private static readonly ConcurrentQueue<(string Path, long MaxBytes, int ArchiveCount, string Text)> s_deferred = new();
+    private sealed record PendingWrite(string Path, long MaxBytes, int ArchiveCount, string Text)
+    {
+        internal TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+    private static readonly ConcurrentQueue<PendingWrite> s_deferred = new();
     private static int s_drainingDeferred;
     private static readonly AsyncLocal<string?> s_operation = new();
     private static readonly AsyncLocal<string?> s_operationDirectory = new();
@@ -91,7 +95,6 @@ public static partial class LocalLog
             fileName = Path.GetFileName(fileName);
             logDirectory ??= s_operationDirectory.Value ?? ResolveDefaultLogDirectory();
 
-            Directory.CreateDirectory(logDirectory);
             var path = Path.Combine(logDirectory, fileName);
             var line = $"[{DateTime.Now:HH:mm:ss.fff}] {RedactSensitiveData(message)}{Environment.NewLine}";
 
@@ -124,7 +127,23 @@ public static partial class LocalLog
         IEnumerable<(DateTime RecordedAt, string Message)> entries,
         string? logDirectory = null,
         long maxBytes = DefaultMaxBytes,
-        int archiveCount = 2)
+        int archiveCount = 2) =>
+        AppendTimestampedLinesCore(fileName, entries, logDirectory, maxBytes, archiveCount, waitForCompletion: false);
+
+    // Explicit queued flushes retain their completion guarantee even on STA callers.
+    internal static void AppendTimestampedLinesAndWait(
+        string fileName,
+        IEnumerable<(DateTime RecordedAt, string Message)> entries,
+        string? logDirectory = null) =>
+        AppendTimestampedLinesCore(fileName, entries, logDirectory, DefaultMaxBytes, 2, waitForCompletion: true);
+
+    private static void AppendTimestampedLinesCore(
+        string fileName,
+        IEnumerable<(DateTime RecordedAt, string Message)> entries,
+        string? logDirectory,
+        long maxBytes,
+        int archiveCount,
+        bool waitForCompletion)
     {
         try
         {
@@ -134,7 +153,6 @@ public static partial class LocalLog
             fileName = Path.GetFileName(fileName);
             logDirectory ??= s_operationDirectory.Value ?? ResolveDefaultLogDirectory();
 
-            Directory.CreateDirectory(logDirectory);
             var path = Path.Combine(logDirectory, fileName);
 
             var lines = entries
@@ -143,7 +161,7 @@ public static partial class LocalLog
             if (lines.Length == 0)
                 return;
 
-            Write(path, maxBytes, archiveCount, string.Concat(lines));
+            Write(path, maxBytes, archiveCount, string.Concat(lines), waitForCompletion);
         }
         catch
         {
@@ -180,32 +198,16 @@ public static partial class LocalLog
                 "SiloPlayer");
     }
 
-    private static void Write(string path, long maxBytes, int archiveCount, string text)
+    private static void Write(string path, long maxBytes, int archiveCount, string text, bool waitForCompletion = false)
     {
-        if (s_avoidBlockingWait())
-        {
-            // Lines already handed off keep their place ahead of later ones.
-            if (!s_deferred.IsEmpty || !Monitor.TryEnter(s_gate))
-            {
-                s_deferred.Enqueue((path, maxBytes, archiveCount, text));
-                if (Interlocked.Exchange(ref s_drainingDeferred, 1) == 0)
-                    ThreadPool.UnsafeQueueUserWorkItem(_ => DrainDeferred(), null);
-                return;
-            }
-        }
-        else
-        {
-            Monitor.Enter(s_gate);
-        }
-        try
-        {
-            RotateIfNeeded(path, maxBytes, archiveCount);
-            File.AppendAllText(path, text);
-        }
-        finally
-        {
-            Monitor.Exit(s_gate);
-        }
+        // All writers share the FIFO, including entries already dequeued by the
+        // worker. A later caller cannot bypass one that is waiting on s_gate.
+        var entry = new PendingWrite(path, maxBytes, archiveCount, text);
+        s_deferred.Enqueue(entry);
+        if (Interlocked.Exchange(ref s_drainingDeferred, 1) == 0)
+            ThreadPool.UnsafeQueueUserWorkItem(_ => DrainDeferred(), null);
+        if (waitForCompletion || !s_avoidBlockingWait())
+            entry.Completion.Task.GetAwaiter().GetResult();
     }
 
     private static void DrainDeferred()
@@ -218,6 +220,7 @@ public static partial class LocalLog
                 {
                     lock (s_gate)
                     {
+                        Directory.CreateDirectory(Path.GetDirectoryName(entry.Path)!);
                         RotateIfNeeded(entry.Path, entry.MaxBytes, entry.ArchiveCount);
                         File.AppendAllText(entry.Path, entry.Text);
                     }
@@ -225,6 +228,7 @@ public static partial class LocalLog
                 catch
                 {
                 }
+                finally { entry.Completion.SetResult(); }
             }
             Volatile.Write(ref s_drainingDeferred, 0);
             // A line queued after the last dequeue but before the reset above
