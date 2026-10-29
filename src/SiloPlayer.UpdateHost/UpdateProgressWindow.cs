@@ -24,6 +24,14 @@ public sealed class UpdateProgressWindow : Window
     public UpdateProgressWindow(bool restart,long owner)
     {
         Title="Updating Silo";
+        try
+        {
+            // The client owns Assets; this assembly lives in its Updater subfolder.
+            // Resolve from the loaded helper, not its caller's working directory.
+            AppWindow.SetIcon(Path.GetFullPath(Path.Combine(
+                Path.GetDirectoryName(typeof(UpdateProgressWindow).Assembly.Location)!, "..", "Assets", "app.ico")));
+        }
+        catch(Exception ex) { Console.Error.WriteLine($"Updater window icon unavailable: {ex.GetType().Name}"); }
         var panel=new StackPanel{Spacing=18,Padding=new Thickness(28),RequestedTheme=ElementTheme.Dark,
             Background=new SolidColorBrush(ColorHelper.FromArgb(255,24,27,32))};
         panel.Children.Add(new TextBlock{Text="Updating Silo",FontSize=24,FontWeight=Microsoft.UI.Text.FontWeights.SemiBold,Foreground=new SolidColorBrush(Colors.White)});

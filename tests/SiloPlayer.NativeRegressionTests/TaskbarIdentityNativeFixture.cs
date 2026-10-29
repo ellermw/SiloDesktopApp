@@ -133,9 +133,9 @@ internal static class TaskbarIdentityNativeFixture
         Program.Log("PASS: synthetic registered versions share a stable launcher/icon; legacy, missing-launcher, development and unrelated-root cases retain safe targets.");
     }
 
-    private static string IconFingerprint(IntPtr hwnd)
+    internal static string IconFingerprint(IntPtr hwnd, nint size = 1)
     {
-        var icon = SendMessage(hwnd, 0x007F, 1, 0); // WM_GETICON / ICON_BIG
+        var icon = SendMessage(hwnd, 0x007F, size, 0); // WM_GETICON / ICON_BIG or ICON_SMALL
         if (icon == IntPtr.Zero || !GetIconInfo(icon, out var info)) throw new InvalidOperationException("No real window icon.");
         try
         {

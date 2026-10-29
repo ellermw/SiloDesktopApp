@@ -310,6 +310,11 @@ internal static class AppUpdateNativeFixture
         try
         {
             progressWindow.AppWindow.Show(false);
+            var progressHwnd = WinRT.Interop.WindowNative.GetWindowHandle(progressWindow);
+            foreach (var size in new nint[] { 0, 1 })
+                if (TaskbarIdentityNativeFixture.IconFingerprint(progressHwnd, size) != TaskbarIdentityNativeFixture.IconFingerprint(hwnd, size))
+                    throw new InvalidOperationException("Updater title-bar/taskbar icon differs from the bundled Silo icon.");
+            Program.Log("PASS: actual updater window uses bundled Silo pixels for small title-bar and large taskbar icons.");
             foreach (var point in new[] { (X: 140, Y: 120, Width: 1000, Height: 800), (X: 260, Y: 160, Width: 620, Height: 700), (X: -220, Y: -150, Width: 700, Height: 650) })
             {
                 owner.AppWindow.Move(new(point.X, point.Y)); owner.AppWindow.ResizeClient(new(point.Width, point.Height));
