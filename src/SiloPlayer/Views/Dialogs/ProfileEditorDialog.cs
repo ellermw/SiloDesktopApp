@@ -676,6 +676,12 @@ public sealed class ProfileEditorDialog
             WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance!));
         StorageFile? file = await picker.PickSingleFileAsync();
         if (file == null) return;
+        // The server refuses larger avatars; do not read and upload them first.
+        if ((await file.GetBasicPropertiesAsync()).Size > ProfileAvatarLimits.MaximumBytes)
+        {
+            ShowValidation(ProfileAvatarLimits.OversizeMessage);
+            return;
+        }
 
         var buffer = await FileIO.ReadBufferAsync(file);
         _avatarFileBytes = buffer.ToArray();
