@@ -18,6 +18,7 @@ public static partial class LocalLog
     }
     private static readonly ConcurrentQueue<PendingWrite> s_deferred = new();
     private static int s_drainingDeferred;
+    [ThreadStatic] private static bool t_writeThrough;
     private static readonly AsyncLocal<string?> s_operation = new();
     private static readonly AsyncLocal<string?> s_operationDirectory = new();
 
@@ -30,6 +31,24 @@ public static partial class LocalLog
         s_operation.Value = operationId;
         s_operationDirectory.Value = logDirectory ?? previousDirectory;
         return new OperationScope(previous, previousDirectory);
+    }
+
+    /// <summary>
+    /// Until disposed, this thread's appends reach the file before returning,
+    /// even on the UI thread. The write is made directly rather than by waiting
+    /// on the shared writer, so it does not enter a COM modal loop. For crash
+    /// handlers, after which the process may end before the queue drains.
+    /// </summary>
+    public static IDisposable BeginWriteThrough()
+    {
+        var previous = t_writeThrough;
+        t_writeThrough = true;
+        return new WriteThroughScope(previous);
+    }
+
+    private sealed class WriteThroughScope(bool previous) : IDisposable
+    {
+        public void Dispose() => t_writeThrough = previous;
     }
 
     private sealed class OperationScope(string? previous, string? previousDirectory) : IDisposable
@@ -202,12 +221,32 @@ public static partial class LocalLog
     {
         // All writers share the FIFO, including entries already dequeued by the
         // worker. A later caller cannot bypass one that is waiting on s_gate.
+        if (t_writeThrough && TryWriteThrough(path, maxBytes, archiveCount, text))
+            return;
         var entry = new PendingWrite(path, maxBytes, archiveCount, text);
         s_deferred.Enqueue(entry);
         if (Interlocked.Exchange(ref s_drainingDeferred, 1) == 0)
             ThreadPool.UnsafeQueueUserWorkItem(_ => DrainDeferred(), null);
         if (waitForCompletion || !s_avoidBlockingWait())
             entry.Completion.Task.GetAwaiter().GetResult();
+    }
+
+    private static bool TryWriteThrough(string path, long maxBytes, int archiveCount, string text)
+    {
+        // Not under s_gate: the worker may hold it for another file. A file the
+        // worker is writing at this moment fails with a sharing violation and
+        // falls back to the queue.
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            RotateIfNeeded(path, maxBytes, archiveCount);
+            File.AppendAllText(path, text);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     private static void DrainDeferred()

@@ -218,6 +218,79 @@ public sealed class LocalLogStaWriteTests
         }
     }
 
+    [Fact]
+    public void WriteThroughUiAppendsReachTheFileBeforeReturningWithoutWaitingOnTheWorker()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "silo-crash-log-" + Guid.NewGuid().ToString("N"));
+        var flags = BindingFlags.Static | BindingFlags.NonPublic;
+        var gate = typeof(LocalLog).GetField("s_gate", flags)!.GetValue(null)!;
+        var seam = typeof(LocalLog).GetField("s_avoidBlockingWait", flags)!;
+        var original = seam.GetValue(null);
+        var uiThreadId = -1;
+        seam.SetValue(null, new Func<bool>(() => Environment.CurrentManagedThreadId == Volatile.Read(ref uiThreadId)));
+        try
+        {
+            string[]? crashSeenByHandler = null;
+            var ui = new Thread(() =>
+            {
+                Volatile.Write(ref uiThreadId, Environment.CurrentManagedThreadId);
+                using (LocalLog.BeginWriteThrough())
+                {
+                    LocalLog.AppendLine("crash.txt", "fatal /media?token=fixture-secret", directory);
+                    LocalLog.AppendException("crash.txt", new InvalidOperationException("boom"), "fixture", logDirectory: directory);
+                    var crash = Path.Combine(directory, "crash.txt");
+                    crashSeenByHandler = File.Exists(crash) ? File.ReadAllLines(crash) : [];
+                }
+                LocalLog.AppendLine("after.txt", "queued again", directory);
+            }) { IsBackground = true };
+
+            // The worker holds the gate for another file, as during a slow disk write.
+            Monitor.Enter(gate);
+            try
+            {
+                ui.Start();
+                Assert.True(ui.Join(TimeSpan.FromSeconds(3)), "A write-through append waited behind the held log gate.");
+                Assert.NotNull(crashSeenByHandler);
+                Assert.NotEmpty(crashSeenByHandler!);
+                Assert.EndsWith("fatal /media?token=<redacted>", crashSeenByHandler![0]);
+                Assert.Contains(crashSeenByHandler, line => line.Contains("message=boom", StringComparison.Ordinal));
+                Assert.DoesNotContain(crashSeenByHandler, line => line.Contains("fixture-secret", StringComparison.Ordinal));
+                // The scope ended: ordinary UI appends hand off again.
+                Assert.False(File.Exists(Path.Combine(directory, "after.txt")));
+            }
+            finally { Monitor.Exit(gate); }
+
+            WaitForDeferredDrain();
+            Assert.EndsWith("queued again", Assert.Single(File.ReadAllLines(Path.Combine(directory, "after.txt"))));
+        }
+        finally
+        {
+            seam.SetValue(null, original);
+            WaitForDeferredDrain();
+            if (Directory.Exists(directory)) Directory.Delete(directory, true);
+        }
+    }
+
+    [Fact]
+    public void CrashHandlersWriteThroughAndWorkerThreadFailuresAreRecorded()
+    {
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root != null && !File.Exists(Path.Combine(root.FullName, "src", "SiloPlayer", "App.xaml.cs"))) root = root.Parent;
+        Assert.NotNull(root);
+        var app = File.ReadAllText(Path.Combine(root!.FullName, "src", "SiloPlayer", "App.xaml.cs"));
+
+        var xaml = app.IndexOf("this.UnhandledException +=", StringComparison.Ordinal);
+        var domain = app.IndexOf("AppDomain.CurrentDomain.UnhandledException +=", StringComparison.Ordinal);
+        Assert.True(xaml >= 0 && domain >= 0);
+        foreach (var start in new[] { xaml, domain })
+        {
+            var scope = app.IndexOf("LocalLog.BeginWriteThrough()", start, StringComparison.Ordinal);
+            var firstWrite = app.IndexOf("LocalLog.Append", start, StringComparison.Ordinal);
+            Assert.True(scope > start && scope < firstWrite, "A crash handler appends before entering write-through.");
+        }
+        Assert.Contains("\"AppDomain.UnhandledException\"", app);
+    }
+
     private static void WaitForDeferredDrain()
     {
         var flags = BindingFlags.Static | BindingFlags.NonPublic;
