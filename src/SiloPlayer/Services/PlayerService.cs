@@ -1067,6 +1067,7 @@ public partial class PlayerService : IDisposable
         var authority = _activeAuthority;
         var manager = _playbackManager;
         var ownerToken = _authorityLifetimeCts.Token;
+        var mpv = _mpv;
         var preferenceOwner = authority.ApiClient.CaptureContext();
         var key = GetPrefsKey();
         _activeSubtitleServerIndex = mpvTrackIndex <= 0 || track == null ? -1 : track.Index;
@@ -1098,10 +1099,14 @@ public partial class PlayerService : IDisposable
             {
                 var selected = _activeSubtitleServerIndex;
                 var sidecarGeneration = CurrentSubtitleSidecarGeneration();
+                var loadedMediaGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
                 await PrefetchSubtitleSidecarAsync(track);
                 // A newer selection owns the subtitle state and its preference.
-                if (_activeSubtitleServerIndex != selected || !ReferenceEquals(manager, _playbackManager)) return;
-                if (CurrentSubtitleSidecarGeneration() != sidecarGeneration)
+                if (_activeSubtitleServerIndex != selected || !ReferenceEquals(manager, _playbackManager) ||
+                    !ReferenceEquals(mpv, _mpv) || _closing || ownerToken.IsCancellationRequested ||
+                    !ReferenceEquals(authority, _activeAuthority)) return;
+                if (CurrentSubtitleSidecarGeneration() != sidecarGeneration ||
+                    Volatile.Read(ref _loadedMediaInitGeneration) != loadedMediaGeneration)
                 {
                     // A file load replaced the subtitle tracks during the download. It
                     // applies the recorded selection and restores playback itself;
@@ -4740,15 +4745,26 @@ public partial class PlayerService : IDisposable
 
     private async Task SelectSubtitleByServerIndexAsync(int serverTrackIndex, bool persist = true)
     {
-        if (_mpv == null) return;
+        var mpv = _mpv;
+        if (mpv == null || _closing) return;
+        var manager = _playbackManager;
+        var authority = _activeAuthority;
+        var ownerToken = _authorityLifetimeCts.Token;
+        var sidecarGeneration = CurrentSubtitleSidecarGeneration();
+        var loadedMediaGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
+        bool CurrentSelection() => !_closing && !ownerToken.IsCancellationRequested &&
+            ReferenceEquals(mpv, _mpv) && ReferenceEquals(manager, _playbackManager) &&
+            ReferenceEquals(authority, _activeAuthority) && _activeSubtitleServerIndex == serverTrackIndex &&
+            CurrentSubtitleSidecarGeneration() == sidecarGeneration &&
+            Volatile.Read(ref _loadedMediaInitGeneration) == loadedMediaGeneration;
         _activeSubtitleServerIndex = serverTrackIndex;
         if (serverTrackIndex < 0)
         {
             if (persist)
                 await SetSubtitleTrackAndPersistAsync(0, null, null);
             else
-                _mpv.SetSubtitleTrack(0);
-            _mpv.SendScriptMessage("osc-set-active-subtitle", "-1");
+                mpv.SetSubtitleTrack(0);
+            if (CurrentSelection()) mpv.SendScriptMessage("osc-set-active-subtitle", "-1");
             return;
         }
 
@@ -4757,8 +4773,8 @@ public partial class PlayerService : IDisposable
         if (track == null)
         {
             // Pre-play embedded selection still passes an embedded ordinal.
-            _mpv.SetSubtitleTrack(serverTrackIndex + 1);
-            _mpv.SendScriptMessage(
+            mpv.SetSubtitleTrack(serverTrackIndex + 1);
+            mpv.SendScriptMessage(
                 "osc-set-active-subtitle",
                 serverTrackIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
             return;
@@ -4771,16 +4787,17 @@ public partial class PlayerService : IDisposable
             await SetSubtitleTrackAndPersistAsync(mpvTrackIndex, track.Language, track);
         else
         {
-            var manager = _playbackManager;
-            var sidecarGeneration = CurrentSubtitleSidecarGeneration();
             await PrefetchSubtitleSidecarAsync(track);
             // Same-session reloads keep the index and manager; the file load
             // generation still identifies an initializer that was superseded.
             if (_activeSubtitleServerIndex != serverTrackIndex || !ReferenceEquals(manager, _playbackManager) ||
-                CurrentSubtitleSidecarGeneration() != sidecarGeneration) return;
+                CurrentSubtitleSidecarGeneration() != sidecarGeneration || !CurrentSelection()) return;
             SelectSubtitleTrack(track);
         }
-        _mpv?.SendScriptMessage(
+        // Persistent selection can also return after a newer choice or file
+        // load wins. Publish only for the owner that still controls this file.
+        if (!CurrentSelection()) return;
+        mpv.SendScriptMessage(
             "osc-set-active-subtitle",
             serverTrackIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
@@ -4857,6 +4874,7 @@ public partial class PlayerService : IDisposable
             string.Equals(track.Source, "embedded", StringComparison.OrdinalIgnoreCase) && CanUseNativeEmbeddedSubtitleTrack())
             return;
         long generation;
+        var loadedMediaGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
         Uri url;
         lock (_subtitleTrackStateLock)
         {
@@ -4897,7 +4915,9 @@ public partial class PlayerService : IDisposable
             lock (_subtitleSyncGate)
             lock (_subtitleTrackStateLock)
             {
-                if (generation != _subtitleSidecarGeneration || _prefetchedSubtitleFiles.ContainsKey(track.Index)) return;
+                if (generation != _subtitleSidecarGeneration ||
+                    loadedMediaGeneration != Volatile.Read(ref _loadedMediaInitGeneration) ||
+                    _closing || _prefetchedSubtitleFiles.ContainsKey(track.Index)) return;
                 _prefetchedSubtitleFiles[track.Index] = path;
                 _subtitleSyncFiles.Add(path);
                 path = null;
