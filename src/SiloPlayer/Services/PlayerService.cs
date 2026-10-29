@@ -1071,7 +1071,8 @@ public partial class PlayerService : IDisposable
         var selectionLoadGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
         var preferenceOwner = authority.ApiClient.CaptureContext();
         var key = GetPrefsKey();
-        _activeSubtitleServerIndex = mpvTrackIndex <= 0 || track == null ? -1 : track.Index;
+        var selectedSubtitleIndex = mpvTrackIndex <= 0 || track == null ? -1 : track.Index;
+        _activeSubtitleServerIndex = selectedSubtitleIndex;
         if (manager?.CurrentSession?.ProtocolVersion >= 3)
             manager.RecordLocalSubtitleSelection(_activeSubtitleServerIndex < 0 ? null : _activeSubtitleServerIndex);
         var deferLocalSelection = _switchingContent || IsLoading;
@@ -1146,7 +1147,7 @@ public partial class PlayerService : IDisposable
         // restores the captured user state. Never race that authority by
         // issuing Play/Pause while a replacement transport is still loading.
         if (_closing || ownerToken.IsCancellationRequested || !ReferenceEquals(authority, _activeAuthority) ||
-            !ReferenceEquals(manager, _playbackManager)) return;
+            !ReferenceEquals(manager, _playbackManager) || _activeSubtitleServerIndex != selectedSubtitleIndex) return;
         if (!transportReloadScheduled && !_switchingContent && !IsLoading &&
             selectionLoadGeneration == Volatile.Read(ref _loadedMediaInitGeneration))
             RestorePlaybackStateAfterSubtitleChange(wasPaused, position, allowSeek: true);
@@ -4682,16 +4683,27 @@ public partial class PlayerService : IDisposable
         SubtitleTrackInfo? track,
         int? postLoadSubtitleIndex = null)
     {
-        if (_mpv == null || _playbackManager?.CurrentSession is not { } session) return false;
-        await CancelAndDrainTransportRestartsAsync();
         var manager = _playbackManager;
-        var wasPaused = CaptureUserPausedState();
+        var mpv = _mpv;
+        if (mpv == null || manager?.CurrentSession is not { } session) return false;
+        var authority = _activeAuthority;
+        var authorityToken = _authorityLifetimeCts.Token;
         var ct = _playbackCts?.Token ?? CancellationToken.None;
+        bool CurrentOwner() => !_closing && !ct.IsCancellationRequested && !authorityToken.IsCancellationRequested &&
+            ReferenceEquals(authority, _activeAuthority) && ReferenceEquals(manager, _playbackManager) && ReferenceEquals(mpv, _mpv);
+        await CancelAndDrainTransportRestartsAsync(ct);
+        if (!CurrentOwner()) return false;
+        // BeginMpvLoad freezes the outgoing stream. A subtitle replan during
+        // that load must retain its viewer intent, not the temporary freeze.
+        var wasPaused = (_switchingContent || IsLoading) && _restorePausedAfterLoad is bool pendingPause
+            ? pendingPause : CaptureUserPausedState();
+        int? requestedIndex = track?.Index ?? postLoadSubtitleIndex;
         var transportMutationAttempted = false;
         await _transportRestartGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (manager?.CurrentSession != session || _mpv == null) return false;
+            if (!CurrentOwner() || manager?.CurrentSession != session || _mpv == null ||
+                _activeSubtitleServerIndex != (requestedIndex ?? -1)) return false;
             var version = Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
                 ?? Versions.FirstOrDefault(v => v.FileId == (_requestedMediaFileId ?? 0))
                 ?? throw new InvalidOperationException("The subtitle source version is unavailable.");
@@ -4703,25 +4715,41 @@ public partial class PlayerService : IDisposable
             App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
                 () => App.MainWindowInstance?.ShowLoadingOverlay());
 
-            var replanned = await manager.ReplanSubtitleAsync(track?.Index ?? postLoadSubtitleIndex, position, ct)
-                .ConfigureAwait(false);
-            var replannedVersion = Versions.FirstOrDefault(v => v.FileId == replanned.MediaFileId)
-                ?? version;
-            var streamUrl = manager.StreamUrl
-                ?? throw new InvalidOperationException("No stream URL was returned for the subtitle switch.");
-            var preparedV3 = await PreparePlaybackTransportAsync(
-                replanned,
-                replannedVersion,
-                streamUrl,
-                position,
-                ct).ConfigureAwait(false);
-            ct.ThrowIfCancellationRequested();
-            if (_closing || manager.CurrentSession != replanned) return false;
+            PlaybackStartResponse replanned;
+            PreparedPlaybackTransport preparedV3;
+            while (true)
+            {
+                replanned = await manager.ReplanSubtitleAsync(requestedIndex, position, ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                if (!CurrentOwner() || manager.CurrentSession != replanned) return false;
+                if (_activeSubtitleServerIndex != (requestedIndex ?? -1))
+                {
+                    // The server accepted the old request. Bring its plan to
+                    // the latest choice before loading any burned-in pixels.
+                    requestedIndex = _activeSubtitleServerIndex < 0 ? null : _activeSubtitleServerIndex;
+                    postLoadSubtitleIndex = requestedIndex;
+                    continue;
+                }
+                var replannedVersion = Versions.FirstOrDefault(v => v.FileId == replanned.MediaFileId) ?? version;
+                var streamUrl = manager.StreamUrl
+                    ?? throw new InvalidOperationException("No stream URL was returned for the subtitle switch.");
+                preparedV3 = await PreparePlaybackTransportAsync(replanned, replannedVersion, streamUrl, position, ct).ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
+                if (!CurrentOwner() || manager.CurrentSession != replanned) return false;
+                if (_activeSubtitleServerIndex == (requestedIndex ?? -1)) break;
+                // Only this still-current accepted plan owns these unused
+                // proxies. A replacement owner retires its own resources.
+                StopDirectStreamProxy(); StopHlsProxy();
+                requestedIndex = _activeSubtitleServerIndex < 0 ? null : _activeSubtitleServerIndex;
+                postLoadSubtitleIndex = requestedIndex;
+            }
             ApplyPreparedTransport(preparedV3);
             PlayMethod = replanned.PlayMethod;
             _pendingInitialServerSubtitleIndex = postLoadSubtitleIndex;
             BeginMpvLoad(preparedV3, restorePaused: wasPaused);
-            _mpv.ShowOsdText(track is null ? "Bitmap subtitles off" : $"{track.Label} · burned in", 2500);
+            var finalTrack = replanned.SubtitleUrls.FirstOrDefault(candidate => candidate.Index == requestedIndex);
+            _mpv.ShowOsdText(replanned.IsSubtitleBurnedIn && finalTrack != null
+                ? $"{finalTrack.Label} · burned in" : "Bitmap subtitles off", 2500);
             SendQualityInfoToOsc();
             return true;
         }

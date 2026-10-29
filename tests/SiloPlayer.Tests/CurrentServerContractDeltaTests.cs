@@ -33,7 +33,8 @@ public sealed class CurrentServerContractDeltaTests
         Assert.Contains("MediaFileId", response);
         var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
         Assert.Contains("SetBitmapSubtitleBurnInAsync", player);
-        Assert.Contains("manager.ReplanSubtitleAsync(track?.Index ?? postLoadSubtitleIndex, position, ct)", player);
+        Assert.Contains("int? requestedIndex = track?.Index ?? postLoadSubtitleIndex", player);
+        Assert.Contains("manager.ReplanSubtitleAsync(requestedIndex, position, ct)", player);
         Assert.Contains("Pgs deliberately does not use this", player, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -43,7 +44,7 @@ public sealed class CurrentServerContractDeltaTests
         var player = Read("src", "SiloPlayer", "Services", "PlayerService.cs");
         Assert.Contains("postLoadSubtitleIndex: track.Index", player);
         Assert.Contains("_pendingInitialServerSubtitleIndex = postLoadSubtitleIndex", player);
-        Assert.Contains("if (!transportReloadScheduled)", player);
+        Assert.Contains("if (!transportReloadScheduled && !_switchingContent && !IsLoading &&", player);
         Assert.Contains("SelectSubtitleByServerIndexAsync", player);
         // Burn-in is detected from the v3 plan's subtitle mode.
         Assert.Contains("manager?.CurrentSession?.IsSubtitleBurnedIn == true", player);
