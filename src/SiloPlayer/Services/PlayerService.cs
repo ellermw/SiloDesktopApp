@@ -85,6 +85,7 @@ public partial class PlayerService : IDisposable
     private readonly PlaybackStallDetector _stallDetector =
         DirectPlaybackRecoveryPolicy.CreateStallDetector();
     private Timer? _stallWatchdogTimer;
+    private int _stallWatchdogChecking;
     private long _stallRecoveryLastAttemptMs;
     private bool _displayRequestActive;
     private string _activeQualityTier = "original";
@@ -2642,6 +2643,10 @@ public partial class PlayerService : IDisposable
 
     private void CheckPlaybackStall()
     {
+        // Timer callbacks may overlap when a native read outlasts the period.
+        // Own the whole callback, including detector/recovery bookkeeping after
+        // the buffering sample, without making UI callers wait for the owner.
+        if (Interlocked.CompareExchange(ref _stallWatchdogChecking, 1, 0) != 0) return;
         try
         {
             ObserveBufferingQuality();
@@ -2698,6 +2703,7 @@ public partial class PlayerService : IDisposable
         {
             LogToFile("state_trace.txt", $"Playback stall watchdog error: {ex.Message}");
         }
+        finally { Volatile.Write(ref _stallWatchdogChecking, 0); }
     }
 
     private Task RecoverInterruptedStreamAsync(double currentPosition, string reason)

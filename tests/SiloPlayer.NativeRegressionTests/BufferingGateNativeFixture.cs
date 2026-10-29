@@ -18,9 +18,46 @@ internal static class BufferingGateNativeFixture
         using var mpv = new MpvPlayer();
         Set(player, "_mpv", mpv);
         Set(player, "<State>k__BackingField", PlayerState.Minimized);
-        if (Environment.GetEnvironmentVariable("SILO_BUFFERING_GATE_PHASE") == "publish")
+        if (Environment.GetEnvironmentVariable("SILO_BUFFERING_GATE_PHASE") == "watchdog")
+            await WatchdogAsync(player);
+        else if (Environment.GetEnvironmentVariable("SILO_BUFFERING_GATE_PHASE") == "publish")
             await PublicationAsync(player);
         else await ObservationAsync(player);
+    }
+
+    private static async Task WatchdogAsync(PlayerService player)
+    {
+        using var entered = new ManualResetEventSlim(); using var release = new ManualResetEventSlim();
+        var detector = (PlaybackStallDetector)Get(player, "_stallDetector")!;
+        detector.Reset(321);
+        Set(player, "_bufferingController", Prompt());
+        var reads = 0;
+        Set(player, "_readBufferingNetwork", new Func<MpvPlayer, (long?, double?, double, double?, bool, bool)>(_ =>
+        {
+            Interlocked.Increment(ref reads); entered.Set();
+            if (!release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException();
+            return (1024, 1000, 1, 0, false, false);
+        }));
+        var first = Task.Run(() => Invoke(player, "CheckPlaybackStall"));
+        try
+        {
+            Check(await Task.Run(() => entered.Wait(TimeSpan.FromSeconds(3))), "Watchdog did not reach the held native boundary.");
+            var second = Task.Run(() => Invoke(player, "CheckPlaybackStall"));
+            Check(await Task.WhenAny(second, Task.Delay(150)) == second, "Overlapping watchdog callback waited instead of skipping.");
+            var observedPosition = (double)Get(detector, "_lastPosition")!;
+            Program.Log($"Held first watchdog: native reads={reads}, detector position={observedPosition}.");
+            Check(reads == 1 && observedPosition == 321, "Overlapping watchdog bypassed sampler ownership and mutated the stall detector.");
+            release.Set(); await first;
+            Check((double)Get(detector, "_lastPosition")! == 0, "The owning watchdog did not finish its detector observation.");
+        }
+        finally { release.Set(); await first; }
+        // An exception must release the callback-wide claim, not disable future checks.
+        reads = 0;
+        Set(player, "_readBufferingNetwork", new Func<MpvPlayer, (long?, double?, double, double?, bool, bool)>(_ =>
+        { Interlocked.Increment(ref reads); throw new InvalidOperationException("synthetic native read failure"); }));
+        Invoke(player, "CheckPlaybackStall"); Invoke(player, "CheckPlaybackStall");
+        Check(reads == 2, "A failed watchdog retained single-flight ownership.");
+        Program.Log("PASS: actual watchdog callback skips all overlapping work and releases ownership after native read failure.");
     }
 
     private static BufferingQualityController Prompt()
