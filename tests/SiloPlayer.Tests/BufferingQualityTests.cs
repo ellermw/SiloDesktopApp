@@ -153,7 +153,7 @@ public class BufferingQualityTests
         var method = source[start..source.IndexOf("public void SetBufferingPillObscured(", start, StringComparison.Ordinal)];
         var gate = method.IndexOf("lock (_bufferingGate)", StringComparison.Ordinal);
         Assert.True(gate > 0);
-        foreach (var read in new[] { "ReadMediaNetworkObservation()", "CaptureUserPausedState()", "CurrentMediaPosition", "IsBufferingForCache" })
+        foreach (var read in new[] { "_readBufferingNetwork(mpv)", "CaptureUserPausedState()", "CurrentMediaPosition", "IsBufferingForCache" })
         {
             var at = method.IndexOf(read, StringComparison.Ordinal);
             Assert.True(at >= 0 && at < gate, read + " must be read before the buffering gate.");
@@ -164,7 +164,7 @@ public class BufferingQualityTests
         // time, dropped when a plan was adopted or ended while libmpv was read.
         var singleFlight = method.IndexOf("Interlocked.Exchange(ref _bufferingSampling, 1) != 0", StringComparison.Ordinal);
         var planCapture = method.IndexOf("var plan = Interlocked.Read(ref _bufferingPlanGeneration);", StringComparison.Ordinal);
-        Assert.True(singleFlight >= 0 && singleFlight < planCapture && planCapture < method.IndexOf("ReadMediaNetworkObservation()", StringComparison.Ordinal));
+        Assert.True(singleFlight >= 0 && singleFlight < planCapture && planCapture < method.IndexOf("_readBufferingNetwork(mpv)", StringComparison.Ordinal));
         Assert.Contains("plan != _bufferingPlanGeneration", method[gate..]);
         Assert.Contains("Volatile.Write(ref _bufferingSampling, 0);", method);
         var adopt = source[source.IndexOf("private void AdoptBufferingQualityPlan()", StringComparison.Ordinal)..];

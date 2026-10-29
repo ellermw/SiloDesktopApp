@@ -23,6 +23,12 @@ public partial class PlayerService
     private int _bufferingSampling;
     private long _bufferingPlanGeneration;
     private string? _publishedBufferingPill;
+    // Keep the synchronous native boundary separate from controller bookkeeping.
+    private Func<SiloPlayer.Player.MpvPlayer, (long? Bytes, double? InputBytesPerSecond, double BufferedSeconds, double? SinceLastByteMs, bool TransportFailing, bool Seeking)> _readBufferingNetwork = static player => player.ReadMediaNetworkObservation();
+    private Action<SiloPlayer.Player.MpvPlayer, string> _writeBufferingPill = static (player, pill) => player.SendScriptMessage("osc-buffering-quality", pill);
+    private sealed record BufferingPillPublication(SiloPlayer.Player.MpvPlayer Player, string Text, long Generation);
+    private BufferingPillPublication? _pendingBufferingPill;
+    private bool _bufferingPillPublishing;
     private sealed record BufferingActionOwner(PlaybackManager Manager, PlaybackStartResponse Session,
         PlaybackAuthorityScope Authority, BufferingQualityController Controller);
     public event Action? BufferingQualityChanged;
@@ -74,7 +80,7 @@ public partial class PlayerService
             _bufferingPlanGeneration++;
             FlushBufferingSummaryCore();
             var manager = _playbackManager;
-            if (manager?.CurrentSession is not { } session || !manager.SupportsBufferingQuality) { _bufferingController = null; PublishBufferingPillCore(); return; }
+            if (manager?.CurrentSession is not { } session || !manager.SupportsBufferingQuality) { _bufferingController = null; PublishBufferingPillCore(force: true); return; }
             if (!ReferenceEquals(_bufferingManager, manager) || _bufferingSession?.PlaybackAttemptId != session.PlaybackAttemptId)
                 _bufferingController = new(manager.BufferingQualityMode);
             _bufferingController ??= new(manager.BufferingQualityMode);
@@ -87,7 +93,7 @@ public partial class PlayerService
                 session.ActiveQuality, delivered, session.AvailableQualities,
                 plan?.DegradationWarnings.Any(w => w.Code == "quality_reduction_unavailable") == true), Environment.TickCount64);
             _nativeMediaMeter.Reset(); _bufferingLastDataAt = Environment.TickCount64; _bufferingLastPosition = null;
-            PublishBufferingPillCore();
+            PublishBufferingPillCore(force: true);
         }
     }
     private void ObserveBufferingQuality()
@@ -104,11 +110,11 @@ public partial class PlayerService
             var plan = Interlocked.Read(ref _bufferingPlanGeneration);
             // libmpv reads can wait for a busy player core. Take them before the
             // gate that UI-thread pill reads and key handling also take.
-            var now = Environment.TickCount64;
-            var sample = mpv.ReadMediaNetworkObservation();
+            var sample = _readBufferingNetwork(mpv);
             var paused = _restorePausedAfterLoad ?? CaptureUserPausedState();
             var position = CurrentMediaPosition;
             var cacheWait = mpv.IsBufferingForCache;
+            var now = Environment.TickCount64;
             lock (_bufferingGate)
             {
                 if (plan != _bufferingPlanGeneration || _bufferingController == null || !ReferenceEquals(_mpv, mpv) || _closing || State == PlayerState.Idle || !ReferenceEquals(_bufferingManager, _playbackManager)) return;
@@ -206,13 +212,42 @@ public partial class PlayerService
         }
         finally { Interlocked.Exchange(ref _bufferingActionRunning, 0); }
     }
-    private void PublishBufferingPillCore()
+    private void PublishBufferingPillCore(bool force = false)
     {
         var pill = _bufferingObscured || IsWatchTogetherPlayback ? null : _bufferingController?.Pill;
-        if (_publishedBufferingPill == pill) return;
+        if (!force && _publishedBufferingPill == pill) return;
         _publishedBufferingPill = pill;
-        _mpv?.SendScriptMessage("osc-buffering-quality", pill ?? "");
+        // Called with the controller gate held. Only capture managed state here:
+        // mpv_command can block just like mpv_get_property. One worker sends
+        // outside the UI gate, coalescing pending updates without reordering an
+        // in-flight send and the latest replacement/clear.
+        _pendingBufferingPill = _mpv is { } player ? new(player, pill ?? "", _bufferingPlanGeneration) : null;
+        if (!_bufferingPillPublishing && _pendingBufferingPill != null)
+        {
+            _bufferingPillPublishing = true;
+            ThreadPool.QueueUserWorkItem(_ => DrainBufferingPill());
+        }
         App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() => BufferingQualityChanged?.Invoke());
+    }
+    private void DrainBufferingPill()
+    {
+        while (true)
+        {
+            BufferingPillPublication publication;
+            lock (_bufferingGate)
+            {
+                if (_pendingBufferingPill is not { } pending)
+                {
+                    _bufferingPillPublishing = false;
+                    return;
+                }
+                _pendingBufferingPill = null;
+                if (pending.Generation != _bufferingPlanGeneration || !ReferenceEquals(pending.Player, _mpv)) continue;
+                publication = pending;
+            }
+            try { _writeBufferingPill(publication.Player, publication.Text); }
+            catch (Exception ex) { LogToFile("state_trace.txt", $"Buffering pill publication failed: {ex.GetType().Name}"); }
+        }
     }
     private void FlushBufferingSummaryCore()
     {
@@ -223,7 +258,7 @@ public partial class PlayerService
     }
     private void EndBufferingQuality()
     {
-        lock (_bufferingGate) { _bufferingPlanGeneration++; FlushBufferingSummaryCore(); _bufferingController = null; _bufferingManager = null; _bufferingSession = null; PublishBufferingPillCore(); }
+        lock (_bufferingGate) { _bufferingPlanGeneration++; FlushBufferingSummaryCore(); _bufferingController = null; _bufferingManager = null; _bufferingSession = null; PublishBufferingPillCore(force: true); }
         SetConnectionMediaActive(false);
     }
 }
