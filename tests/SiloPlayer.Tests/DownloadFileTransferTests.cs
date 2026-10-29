@@ -17,22 +17,103 @@ public sealed class DownloadFileTransferTests : IDisposable
     public void SafeFileNameGivesSaveDialogsAWindowsBasename(string? name, string expected)
         => Assert.Equal(expected, DownloadFileTransfer.SafeFileName(name, "download.mkv"));
 
+    [Theory]
+    [InlineData(null, "../CON: bad?.mkv", "CON_ bad_.mkv")]
+    [InlineData("...", "../COM¹.epub", "_COM¹.epub")]
+    [InlineData(null, "...", "download")]
+    public void SafeFileNameSanitizesFallbackToo(string? name, string fallback, string expected)
+        => Assert.Equal(expected, DownloadFileTransfer.SafeFileName(name, fallback));
+
     [Fact]
-    public void EverySaveDialogSuggestsASanitizedServerFileName()
+    public void DirectSaveSuggestionBoundsNameAndPreservesExtension()
     {
-        // version.FileName is the server's own basename (Linux names may hold ':' or '?').
-        var root = new DirectoryInfo(AppContext.BaseDirectory);
-        while (root != null && !File.Exists(Path.Combine(root.FullName, "SiloPlayer.sln"))) root = root.Parent;
-        Assert.NotNull(root);
-        foreach (var page in new[] { "ItemDetailPage.xaml.cs", "EbookReaderPage.xaml.cs", "DownloadsPage.xaml.cs" })
-        {
-            var source = File.ReadAllText(Path.Combine(root.FullName, "src", "SiloPlayer", "Views", page));
-            foreach (var assignment in System.Text.RegularExpressions.Regex.Matches(source, @"SuggestedFileName\s*=\s*([^;]+);").Select(match => match.Groups[1].Value.Trim().TrimEnd('}').Trim()))
-                Assert.True(assignment.Contains("SafeFileName(", StringComparison.Ordinal) || assignment is "suggestedName" or "suggested",
-                    $"{page}: SuggestedFileName = {assignment}");
-            if (page == "EbookReaderPage.xaml.cs") Assert.Contains("var suggested = DownloadFileTransfer.SafeFileName(", source);
-        }
+        var result = DownloadFileTransfer.SafeFileName(new string('x', 300) + ".epub", "book");
+        Assert.True(result.Length <= 180, $"Suggested {result.Length} UTF-16 units");
+        Assert.EndsWith(".epub", result);
     }
+
+    [Fact]
+    public void ResponseSuggestionDoesNotSplitSupplementaryCharacters()
+    {
+        using var response = Response([1]);
+        response.Content.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment")
+        { FileNameStar = new string('x', 175) + "😀" + new string('y', 20) + ".mp4" };
+        var result = DownloadFileTransfer.GetSuggestedFileName(response.Content.Headers);
+        Assert.True(result.Length <= 180);
+        Assert.DoesNotContain("\uD83D.mp4", result);
+        Assert.EndsWith(".mp4", result);
+    }
+
+    [Fact]
+    public void ResponseSuggestionDoesNotLeaveSpaceBeforePreservedExtensionAfterTruncation()
+    {
+        using var response = Response([1]);
+        response.Content.Headers.ContentDisposition = new ContentDispositionHeaderValue("attachment")
+        { FileNameStar = new string('x', 175) + " " + new string('y', 20) + ".mp4" };
+        Assert.Equal(new string('x', 175) + ".mp4", DownloadFileTransfer.GetSuggestedFileName(response.Content.Headers));
+    }
+
+    [Theory]
+    [InlineData("movie.mk?v", "Movie", "mkv", null, "movie.mk_v.mkv", ".mkv")]
+    [InlineData("movie", "Movie", "mk?v", null, "movie.bin", ".bin")]
+    [InlineData(null, "../CON: bad?", "../../mp4", null, "CON_ bad_.bin", ".bin")]
+    [InlineData("movie", "Movie", "mkv", "video/mp4", "movie.mkv", ".mkv")]
+    [InlineData("movie", "Movie", null, "video/mp4", "movie.mp4", ".mp4")]
+    [InlineData("movie.MKV", "Movie", "mp4", "video/mp4", "movie.MKV", ".MKV")]
+    [InlineData("movie.extensiontoolong", "Movie", null, "video/mp4", "movie.extensiontoolong.mp4", ".mp4")]
+    [InlineData(null, "../COM¹.epub", null, null, "_COM¹.epub", ".epub")]
+    [InlineData("LPT².pdf", "book", null, null, "_LPT².pdf", ".pdf")]
+    [InlineData("COM³.txt", "book", null, null, "_COM³.txt", ".txt")]
+    public void SaveSuggestionResolvesOneSafeNameAndExtension(string? name, string fallback, string? container,
+        string? mime, string expectedName, string expectedExtension)
+    {
+        var suggestion = DownloadFileTransfer.GetSaveFileSuggestion(name, fallback, container, mime);
+        Assert.Equal(expectedName, suggestion.FileName);
+        Assert.Equal(expectedExtension, suggestion.Extension);
+    }
+
+    [Theory]
+    [InlineData("Spider.Man", "mkv", "Spider.Man.mkv", ".mkv")]
+    [InlineData("Avatar.2", "mkv", "Avatar.2.mkv", ".mkv")]
+    [InlineData("Movie.mp4", "mkv", "Movie.mp4.mkv", ".mkv")]
+    [InlineData("Avatar.2", "mk?v", "Avatar.2.bin", ".bin")]
+    public void SaveSuggestionTreatsDottedTitlesAsStems(string title, string container, string expectedName,
+        string expectedExtension)
+    {
+        var suggestion = DownloadFileTransfer.GetSaveFileSuggestion(null, title, container, fallbackIsStem: true);
+        Assert.Equal(expectedName, suggestion.FileName);
+        Assert.Equal(expectedExtension, suggestion.Extension);
+    }
+
+    [Theory]
+    [InlineData("...", "Spider.Man.mkv", ".mkv")]
+    [InlineData("/srv/media/...", "Spider.Man.mkv", ".mkv")]
+    [InlineData(@"D:\Media\...", "Spider.Man.mkv", ".mkv")]
+    [InlineData("/srv/media/", "Spider.Man.mkv", ".mkv")]
+    [InlineData("\"...\"", "Spider.Man.mkv", ".mkv")]
+    [InlineData("Spider.Man.mkv", "Spider.Man.mkv", ".mkv")]
+    [InlineData("/srv/media/Spider.Man.mp4", "Spider.Man.mp4", ".mp4")]
+    public void SaveSuggestionUsesTitleStemOnlyWhenSanitizedOriginalNameIsUnusable(string name,
+        string expectedName, string expectedExtension)
+    {
+        var suggestion = DownloadFileTransfer.GetSaveFileSuggestion(name, "Spider.Man", "mkv", fallbackIsStem: true);
+        Assert.Equal(expectedName, suggestion.FileName);
+        Assert.Equal(expectedExtension, suggestion.Extension);
+    }
+
+    [Theory]
+    [InlineData(0xD83D)]
+    [InlineData(0xDE00)]
+    public void SafeFileNameReplacesAnUnpairedSurrogate(int character)
+        => Assert.Equal("_.mp4", DownloadFileTransfer.SafeFileName((char)character + ".mp4", "download"));
+
+    [Fact]
+    public void SafeFileNamePreservesCompleteSurrogatePairs()
+        => Assert.Equal("😀.mp4", DownloadFileTransfer.SafeFileName("😀.mp4", "download"));
+
+    [Fact]
+    public void TruncatingTrailingSpacesCannotIntroduceAReservedDeviceName()
+        => Assert.Equal("_CON.mp4", DownloadFileTransfer.SafeFileName("CON" + new string(' ', 180) + "X.mp4", "download"));
 
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "SiloDownloadTests-" + Guid.NewGuid().ToString("N"));
 

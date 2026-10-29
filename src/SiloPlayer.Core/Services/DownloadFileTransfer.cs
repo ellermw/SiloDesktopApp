@@ -12,34 +12,71 @@ public static class DownloadFileTransfer
     /// </summary>
     public static string SafeFileName(string? name, string fallback)
     {
-        name = (name ?? "").Trim().Trim('"').Replace('\\', '/').Split('/').Last();
-        name = new string(name.Select(c => c < 32 || "<>:\"/\\|?*".Contains(c) ? '_' : c).ToArray()).Trim(' ', '.');
-        if (string.IsNullOrWhiteSpace(name)) name = fallback;
+        name = SanitizeBaseName(name);
+        if (string.IsNullOrWhiteSpace(name)) name = SanitizeBaseName(fallback);
+        if (string.IsNullOrWhiteSpace(name)) name = "download";
 
+        var extension = Path.GetExtension(name);
+        if (!IsSafeExtension(extension)) extension = "";
+        return BoundFileName(name, extension);
+    }
+
+    private static bool IsReservedBaseName(string name)
+    {
         var stem = name.Split('.')[0].TrimEnd(' ');
-        if (stem.Equals("CON", StringComparison.OrdinalIgnoreCase)
+        return stem.Equals("CON", StringComparison.OrdinalIgnoreCase)
             || stem.Equals("PRN", StringComparison.OrdinalIgnoreCase)
             || stem.Equals("AUX", StringComparison.OrdinalIgnoreCase)
             || stem.Equals("NUL", StringComparison.OrdinalIgnoreCase)
             || stem.Equals("CONIN$", StringComparison.OrdinalIgnoreCase)
             || stem.Equals("CONOUT$", StringComparison.OrdinalIgnoreCase)
             || (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase)
-                || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && "123456789¹²³".Contains(stem[3])))
-            name = "_" + name;
-        return name;
+                || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && "123456789¹²³".Contains(stem[3]));
     }
 
-    public static string GetSuggestedFileName(HttpContentHeaders headers)
+    private static string SanitizeBaseName(string? name)
     {
-        var disposition = headers.ContentDisposition;
-        var name = disposition?.FileNameStar;
-        if (string.IsNullOrWhiteSpace(name)) name = disposition?.FileName;
-        name = SafeFileName(name, "download");
-
-        var extension = Path.GetExtension(name);
-        if (extension.Length < 2 || extension.Length > 12 || !extension[1..].All(char.IsAsciiLetterOrDigit))
+        name = (name ?? "").Trim().Trim('"').Replace('\\', '/').Split('/').Last();
+        var characters = name.ToCharArray();
+        for (var i = 0; i < characters.Length; i++)
         {
-            extension = headers.ContentType?.MediaType?.ToLowerInvariant() switch
+            var c = characters[i];
+            if (char.IsHighSurrogate(c) && i + 1 < characters.Length && char.IsLowSurrogate(characters[i + 1]))
+            { i++; continue; }
+            if (c < 32 || "<>:\"/\\|?*".Contains(c) || char.IsSurrogate(c)) characters[i] = '_';
+        }
+        return new string(characters).Trim(' ', '.');
+    }
+
+    private static bool IsSafeExtension(string extension)
+        => extension.Length is >= 2 and <= 12 && extension[0] == '.' && extension[1..].All(char.IsAsciiLetterOrDigit);
+
+    private static string BoundFileName(string name, string extension)
+    {
+        var stem = extension.Length == 0 ? name : name[..^extension.Length];
+        var length = Math.Min(stem.Length, 180 - extension.Length);
+        if (length > 0 && char.IsHighSurrogate(stem[length - 1])) length--;
+        stem = stem[..length].TrimEnd(' ', '.');
+        // Truncation and trimming can themselves expose a reserved device stem.
+        if (IsReservedBaseName(stem)) return BoundFileName("_" + stem + extension, extension);
+        return (stem.Length == 0 ? "download" : stem) + extension;
+    }
+
+    /// <summary>
+    /// Resolve the name and FileTypeChoices extension as one safe save-dialog suggestion.
+    /// Set fallbackIsStem when fallback dots are title text rather than a file extension.
+    /// </summary>
+    public static (string FileName, string Extension) GetSaveFileSuggestion(string? name, string fallback,
+        string? fallbackExtension = null, string? mediaType = null, bool fallbackIsStem = false)
+    {
+        name = SanitizeBaseName(name);
+        var hasOriginalName = !string.IsNullOrWhiteSpace(name);
+        name = SafeFileName(name, fallback);
+        var extension = fallbackIsStem && !hasOriginalName ? "" : Path.GetExtension(name);
+        if (!IsSafeExtension(extension))
+        {
+            extension = "." + (fallbackExtension ?? "").Trim().TrimStart('.');
+            if (!IsSafeExtension(extension)) extension = mediaType?.ToLowerInvariant() switch
             {
                 "video/mp4" or "audio/mp4" => ".mp4",
                 "video/x-matroska" or "audio/x-matroska" => ".mkv",
@@ -54,8 +91,15 @@ public static class DownloadFileTransfer
             };
             name += extension;
         }
-        if (name.Length > 180) name = name[..(180 - extension.Length)] + extension;
-        return name;
+        return (BoundFileName(name, extension), extension);
+    }
+
+    public static string GetSuggestedFileName(HttpContentHeaders headers)
+    {
+        var disposition = headers.ContentDisposition;
+        var name = disposition?.FileNameStar;
+        if (string.IsNullOrWhiteSpace(name)) name = disposition?.FileName;
+        return GetSaveFileSuggestion(name, "download", mediaType: headers.ContentType?.MediaType).FileName;
     }
 
     public static void EnsureSuccessfulResponse(HttpResponseMessage response)

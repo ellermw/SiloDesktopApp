@@ -1283,14 +1283,21 @@ public sealed partial class EbookReaderPage : Page
             .Navigate<EbookReaderPage>(new EbookReaderNavigation(_nextMangaChapter.ContentId, LibraryId: _libraryId));
     }
 
+    private static Windows.Storage.Pickers.FileSavePicker CreateReaderDownloadPicker(FileVersion version, string? title)
+    {
+        var format = FormatOf(version).ToLowerInvariant();
+        var basename = DownloadFileTransfer.SafeFileName(version.FileName ?? version.FilePath ?? title, "book");
+        var extension = DownloadFileTransfer.GetSaveFileSuggestion(null, "book", format).Extension;
+        var suggestion = DownloadFileTransfer.GetSaveFileSuggestion(Path.GetFileNameWithoutExtension(basename) + extension, "book");
+        var picker = new Windows.Storage.Pickers.FileSavePicker { SuggestedFileName = suggestion.FileName };
+        picker.FileTypeChoices.Add("Book file", [suggestion.Extension]);
+        return picker;
+    }
+
     private async void Download_Click(object sender, RoutedEventArgs e)
     {
         if (_sourceBytes == null || _selectedVersion == null || App.MainWindowInstance == null) return;
-        var format = FormatOf(_selectedVersion).ToLowerInvariant();
-        var suggested = DownloadFileTransfer.SafeFileName(
-            Path.GetFileNameWithoutExtension(_selectedVersion.FileName ?? _selectedVersion.FilePath ?? _item?.Title ?? "book"), "book");
-        var picker = new Windows.Storage.Pickers.FileSavePicker { SuggestedFileName = suggested };
-        picker.FileTypeChoices.Add(format.ToUpperInvariant(), [$".{format}"]);
+        var picker = CreateReaderDownloadPicker(_selectedVersion, _item?.Title);
         WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance));
         var file = await picker.PickSaveFileAsync();
         if (file != null) await Windows.Storage.FileIO.WriteBytesAsync(file, _sourceBytes);

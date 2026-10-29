@@ -4061,21 +4061,24 @@ public sealed partial class ItemDetailPage : Page
         await dialog.ShowAsync();
     }
 
+    private static Windows.Storage.Pickers.FileSavePicker CreateDirectDownloadPicker(FileVersion version, string title)
+    {
+        var fallbackExtension = string.IsNullOrWhiteSpace(version.Container) ? "mkv" : version.Container;
+        var suggestion = DownloadFileTransfer.GetSaveFileSuggestion(version.FileName, title, fallbackExtension,
+            fallbackIsStem: true);
+        var picker = new Windows.Storage.Pickers.FileSavePicker { SuggestedFileName = suggestion.FileName };
+        picker.FileTypeChoices.Add("Media file", [suggestion.Extension]);
+        return picker;
+    }
+
     private async Task<bool> SaveDirectDownloadAsync(FileVersion version, string title)
     {
         var toast = App.Services.GetRequiredService<Services.ToastService>();
         try
         {
-            var picker = new Windows.Storage.Pickers.FileSavePicker();
+            var picker = CreateDirectDownloadPicker(version, title);
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance!);
             WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
-            var extension = Path.GetExtension(version.FileName);
-            if (string.IsNullOrWhiteSpace(extension))
-                extension = string.IsNullOrWhiteSpace(version.Container) ? ".mkv" : $".{version.Container.TrimStart('.')}";
-            picker.SuggestedFileName = DownloadFileTransfer.SafeFileName(
-                string.IsNullOrWhiteSpace(version.FileName) ? $"{title}{extension}" : version.FileName,
-                "download" + extension);
-            picker.FileTypeChoices.Add("Media file", [extension]);
             var file = await picker.PickSaveFileAsync();
             if (file == null) return false;
 

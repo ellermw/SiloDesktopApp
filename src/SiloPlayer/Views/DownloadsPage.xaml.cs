@@ -277,15 +277,11 @@ public sealed partial class DownloadsPage : Page
                 suggestedName = DownloadFileTransfer.GetSuggestedFileName(metadata.Content.Headers);
             }
             EnsureCurrentContext();
-            var picker = new Windows.Storage.Pickers.FileSavePicker();
+            var picker = CreateDownloadPicker(suggestedName);
 
             // Initialize the picker with the window handle (required for WinUI 3)
             var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(App.MainWindowInstance!);
             WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
-
-            var ext = System.IO.Path.GetExtension(suggestedName);
-            picker.SuggestedFileName = suggestedName;
-            picker.FileTypeChoices.Add("Media File", [ext]);
 
             var file = await picker.PickSaveFileAsync();
             if (file == null) return; // User cancelled
@@ -322,6 +318,14 @@ public sealed partial class DownloadsPage : Page
             _activeSaves.Remove(downloadId);
             QueueDownloadBuild();
         }
+    }
+
+    private static Windows.Storage.Pickers.FileSavePicker CreateDownloadPicker(string suggestedName)
+    {
+        var suggestion = DownloadFileTransfer.GetSaveFileSuggestion(suggestedName, "download");
+        var picker = new Windows.Storage.Pickers.FileSavePicker { SuggestedFileName = suggestion.FileName };
+        picker.FileTypeChoices.Add("Media File", [suggestion.Extension]);
+        return picker;
     }
 
     private async void DeleteButton_Click(object sender, RoutedEventArgs e)
