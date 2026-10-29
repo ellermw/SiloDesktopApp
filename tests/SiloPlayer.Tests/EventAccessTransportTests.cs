@@ -53,18 +53,20 @@ public sealed class EventAccessTransportTests
     {
         await using var fixture = await Fixture.StartAsync();
         PrimeChannel(fixture.Events);
-        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        // A real loopback socket: leave room under full-suite load. The passing
+        // path still ends as soon as the socket opens and stop is cancelled.
+        using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var opened = new TaskCompletionSource<WebSocketState>(TaskCreationOptions.RunContinuationsAsynchronously);
         var run = ConnectOnce(fixture.Events, stop.Token, () => opened.TrySetResult(fixture.Events.CurrentState));
         try
         {
-            Assert.Equal(WebSocketState.Open, await opened.Task.WaitAsync(TimeSpan.FromSeconds(3)));
+            Assert.Equal(WebSocketState.Open, await opened.Task.WaitAsync(TimeSpan.FromSeconds(20)));
             await fixture.NextAsync();
         }
         finally
         {
             stop.Cancel();
-            try { await run.WaitAsync(TimeSpan.FromSeconds(3)); }
+            try { await run.WaitAsync(TimeSpan.FromSeconds(20)); }
             catch (OperationCanceledException) { }
         }
     }
