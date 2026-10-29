@@ -518,7 +518,9 @@ public sealed class DirectStreamRelayTests
             rangeHeader: null,
             writeHeadersAsync: null,
             CancellationToken.None);
-        await reconnectRequested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // Only a 100 ms retry delay precedes the reconnect, but a starved pool
+        // under full-suite load has exceeded 5 s here.
+        await reconnectRequested.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         Assert.True(relay.IsRecovering);
         Assert.NotNull(relay.RecoveryElapsed);
