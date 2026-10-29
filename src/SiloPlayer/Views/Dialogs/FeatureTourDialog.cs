@@ -134,7 +134,8 @@ public sealed class FeatureTourDialog : ContentDialog
                 };
                 button.Click += async (_, _) =>
                 {
-                    if (Uri.TryCreate(link.Url, UriKind.Absolute, out var uri))
+                    // Server-supplied: open web links only, never another protocol handler.
+                    if (ExternalBrowserUrlPolicy.TryGetSafeUri(link.Url, out var uri))
                         await Launcher.LaunchUriAsync(uri);
                 };
                 links.Children.Add(button);

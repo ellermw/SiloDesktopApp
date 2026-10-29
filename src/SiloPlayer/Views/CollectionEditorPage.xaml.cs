@@ -518,14 +518,15 @@ public sealed partial class CollectionEditorPage : Page
         var haloTo = source switch { "tmdb" or "tmdb_list" => Windows.UI.Color.FromArgb(46, 16, 185, 129), _ => Windows.UI.Color.FromArgb(46, 249, 115, 22) };
         ImportedSourceBanner.Background = new LinearGradientBrush { StartPoint = new(0, 0), EndPoint = new(1, 1), GradientStops = { new() { Color = haloFrom, Offset = 0 }, new() { Color = Microsoft.UI.Colors.Transparent, Offset = .38 }, new() { Color = Microsoft.UI.Colors.Transparent, Offset = .62 }, new() { Color = haloTo, Offset = 1 } } };
         ImportedSourceBanner.BorderBrush = (Brush)Application.Current.Resources["BorderBrush"];
-        OpenSourceButton.Visibility = source is "mdblist" or "tmdb_list" && Uri.TryCreate(ViewModel.SourceUrl, UriKind.Absolute, out _)
+        OpenSourceButton.Visibility = source is "mdblist" or "tmdb_list" && ExternalBrowserUrlPolicy.TryGetSafeUri(ViewModel.SourceUrl, out _)
             ? Visibility.Visible
             : Visibility.Collapsed;
     }
 
     private async void OpenSource_Click(object sender, RoutedEventArgs e)
     {
-        if (Uri.TryCreate(ViewModel.SourceUrl, UriKind.Absolute, out var sourceUri))
+        // The source URL is stored collection data: never launch a non-web protocol handler.
+        if (ExternalBrowserUrlPolicy.TryGetSafeUri(ViewModel.SourceUrl, out var sourceUri))
             await Windows.System.Launcher.LaunchUriAsync(sourceUri);
     }
 
