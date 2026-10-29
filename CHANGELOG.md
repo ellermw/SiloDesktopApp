@@ -1,8 +1,12 @@
 # Changelog
 
-Published release history. The [current download](README.md#download) and [Latest release](https://github.com/ellermw/SiloDesktopApp/releases/latest) are **1.2.511**. Unpublished candidates are retained separately in [historical development handoffs](docs/archive/2026-10-29-development-handoffs.md); candidate 1.2.505 was superseded without a public release.
+Published release history. The [current download](README.md#download) and [Latest release](https://github.com/ellermw/SiloDesktopApp/releases/latest) are **1.2.514**. Unpublished candidates are retained separately in [historical development handoffs](docs/archive/2026-10-29-development-handoffs.md); candidate 1.2.505 was superseded without a public release.
 
-## 1.2.511 — current
+## 1.2.514 — current
+
+Keep the bundled Silo icon independent of server branding, align window/shortcut taskbar identities, and target the stable launcher when pinning a running window. Existing pins may need one unpin/re-pin after updating. See the [three-change record](docs/releases/1.2.514.md).
+
+## 1.2.511
 
 Centered keep-open incremental updates, subtitle continuity and corrected audit PR52–59, including complete replacement-load ownership, latest bitmap plan/prefs and genuine pause intent. See the [47-change record](docs/releases/1.2.511.md).
 
