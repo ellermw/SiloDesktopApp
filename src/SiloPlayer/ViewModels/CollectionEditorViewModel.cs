@@ -438,11 +438,13 @@ public partial class CollectionEditorViewModel : ObservableObject
                 {
                     var addedIds = new List<string>(ManualItems.Count);
                     var failed = 0;
+                    // The new collection is empty: staged items take positions in order.
+                    var position = 0;
                     foreach (var item in ManualItems)
                     {
                         try
                         {
-                            await _collectionsApi.AddCollectionItemAsync(created.Id, item.MediaItemId);
+                            await _collectionsApi.AddCollectionItemAtAsync(created.Id, item.MediaItemId, position++);
                             addedIds.Add(item.MediaItemId);
                             _originalManualItemIds.Add(item.MediaItemId);
                         }
@@ -663,8 +665,11 @@ public partial class CollectionEditorViewModel : ObservableObject
         IsManualMutationPending = true; ErrorMessage = null;
         try
         {
-            if (IsEditing && !string.IsNullOrWhiteSpace(CollectionId)) await _collectionsApi.AddCollectionItemAsync(CollectionId, item.ContentId);
-            ManualItems.Add(new CollectionItem { MediaItemId = item.ContentId, ContentId = item.ContentId, Title = item.Title, Year = item.Year, Type = item.Type, PosterUrl = item.PosterUrl, Position = ManualItems.Count });
+            // Loaded items carry their server positions, so the next one is known
+            // without re-reading the whole collection for every add.
+            var position = ManualItems.Count == 0 ? 0 : ManualItems.Max(existing => existing.Position) + 1;
+            if (IsEditing && !string.IsNullOrWhiteSpace(CollectionId)) await _collectionsApi.AddCollectionItemAtAsync(CollectionId, item.ContentId, position);
+            ManualItems.Add(new CollectionItem { MediaItemId = item.ContentId, ContentId = item.ContentId, Title = item.Title, Year = item.Year, Type = item.Type, PosterUrl = item.PosterUrl, Position = position });
             if (IsEditing) _originalManualItemIds.Add(item.ContentId);
             await RefreshManualOrderEligibilityAsync();
         }

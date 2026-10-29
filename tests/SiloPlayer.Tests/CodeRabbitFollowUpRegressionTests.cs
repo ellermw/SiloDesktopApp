@@ -17,7 +17,7 @@ public sealed class CodeRabbitFollowUpRegressionTests
         Assert.InRange(editMode, create + 1, manualItems - 1);
         Assert.InRange(baselineReset, create + 1, manualItems - 1);
 
-        var addItem = source.IndexOf("await _collectionsApi.AddCollectionItemAsync(created.Id, item.MediaItemId);", manualItems, StringComparison.Ordinal);
+        var addItem = source.IndexOf("await _collectionsApi.AddCollectionItemAtAsync(created.Id, item.MediaItemId, position++);", manualItems, StringComparison.Ordinal);
         var trackPersistedItem = source.IndexOf("_originalManualItemIds.Add(item.MediaItemId);", addItem, StringComparison.Ordinal);
         var reorder = source.IndexOf("await _collectionsApi.ReorderCollectionItemsAsync(created.Id, addedIds);", addItem, StringComparison.Ordinal);
         Assert.True(addItem >= 0 && trackPersistedItem > addItem && reorder > trackPersistedItem);
