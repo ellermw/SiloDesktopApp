@@ -1888,6 +1888,7 @@ public partial class SettingsViewModel : ObservableObject
         if (EmbyConnectLoginPending) return;
         EmbyConnectLoginPending = true;
         ErrorMessage = null;
+        var context = _historyImportApi.CaptureContext();
         try
         {
             var response = await _historyImportApi.EmbyConnectLoginAsync(new EmbyConnectLoginRequest
@@ -1895,6 +1896,7 @@ public partial class SettingsViewModel : ObservableObject
                 Username = EmbyConnectUsername,
                 Password = EmbyConnectPassword,
             });
+            if (!_historyImportApi.IsCurrentContext(context)) return;
             EmbyConnectSessionId = response.ConnectSessionId;
             EmbyConnectServers.Clear();
             foreach (var server in response.Servers)
@@ -1904,7 +1906,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            ErrorMessage = $"Emby Connect login failed: {ex.Message}";
+            if (_historyImportApi.IsCurrentContext(context)) ErrorMessage = $"Emby Connect login failed: {ex.Message}";
         }
         finally
         {
@@ -1921,9 +1923,13 @@ public partial class SettingsViewModel : ObservableObject
         PlexAuthPending = true;
         PlexAuthError = null;
         PlexAuthStatus = "Requesting PIN...";
+        // Settings stays cached across profile and server changes; an approval
+        // still pending then belongs to the previous account.
+        var context = _historyImportApi.CaptureContext();
         try
         {
             var pinResponse = await _historyImportApi.PlexAuthPinAsync();
+            if (!_historyImportApi.IsCurrentContext(context)) { PlexAuthStatus = ""; return; }
             PlexSessionId = pinResponse.SessionId;
             PlexAuthStatus = $"Waiting for approval in browser (PIN: {pinResponse.PinCode})";
 
@@ -1952,7 +1958,9 @@ public partial class SettingsViewModel : ObservableObject
             for (int i = 0; i < 60; i++)
             {
                 await Task.Delay(2000);
+                if (!_historyImportApi.IsCurrentContext(context)) { PlexAuthStatus = ""; return; }
                 var checkResponse = await _historyImportApi.PlexAuthCheckAsync(new PlexCheckRequest { SessionId = pinResponse.SessionId });
+                if (!_historyImportApi.IsCurrentContext(context)) { PlexAuthStatus = ""; return; }
                 if (checkResponse.Authenticated)
                 {
                     PlexAuthStatus = "Connected";
@@ -1970,7 +1978,7 @@ public partial class SettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             PlexAuthStatus = "";
-            PlexAuthError = $"Plex sign-in failed: {ex.Message}";
+            if (_historyImportApi.IsCurrentContext(context)) PlexAuthError = $"Plex sign-in failed: {ex.Message}";
         }
         finally
         {
