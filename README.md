@@ -4,13 +4,13 @@ A native Windows client for [Silo Server](https://github.com/Silo-Server/silo-se
 
 ## Download
 
-[**Download version 1.2.464 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.464/SiloInstaller-Windows-x64.exe)
+[**Download version 1.2.505 for Windows x64**](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.505/SiloInstaller-Windows-x64.exe)
 
 Requires Windows 10 version 1809 or newer, or Windows 11, and access to a Silo Server. Runtime dependencies are included in the installer.
 
-[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.464) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.464/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
+[Release notes](https://github.com/ellermw/SiloDesktopApp/releases/tag/v1.2.505) · [SHA-256 checksum](https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.505/SiloInstaller-Windows-x64.exe.sha256) · [All releases](https://github.com/ellermw/SiloDesktopApp/releases)
 
-Version 1.2.464 improves logging and buffering-control responsiveness, validates save-dialog filenames, sizes collection thumbnails to their cards, and removes unused player-overlay code. It retains installer safety and automatic update notices. This also serializes the complete playback watchdog callback. See the [follow-up release record](docs/releases/1.2.464.md).
+Version 1.2.505 adds centered update windows and changed-file updates that prepare the next version while Silo stays open until the final restart. It also preserves playback when selecting subtitles, corrects pending subtitle selection ownership, and improves image caching, collection editing and sign-in reliability. Existing legacy installations require one full installer migration; compatible484 or newer installations can reuse unchanged files. See the [41-change release record](docs/releases/1.2.505.md).
 
 Historical navigation slowdown and a separate WinUI navigation crash remain under investigation.
 
@@ -29,7 +29,7 @@ The installer is unsigned, so Windows may display an unknown-publisher warning.
 - Profiles, Requests, Collections, personal lists, Calendar and Notifications.
 - Audio-track and subtitle selection, playback quality controls, and audiobook and reader support.
 - Built-in SiloCast receiver for mobile remote control, plus optional experimental AI upscaling.
-- Update notifications and in-app release notes, with manual updating or optional background download and installation when you close Silo.
+- Update notifications, in-app release notes and compatible changed-file updates, with continuous progress until the final restart or optional installation when you close Silo.
 
 SiloCast is enabled by default unless you previously disabled it. Keep the desktop app running and the phone and PC on the same Private local network. Its toggle is under **Settings → Playback → Desktop playback → Allow SiloCast control**. Physical phone compatibility testing remains ongoing.
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.505
+
+Centered update windows, keep-open changed-file updates, subtitle continuity and corrected audit PR52–59: bounded artwork caching, crash logging, server upload limits, collection append performance, safe external links and identity-owned Plex/Emby sign-in. See the [41-change record](docs/releases/1.2.505.md).
+
 ## 1.2.464
 
 Serialize the entire playback watchdog callback and remove a misleading test-only Lua identifier heuristic. See [follow-up record](docs/releases/1.2.464.md).
