@@ -17,6 +17,7 @@ public sealed partial class MainWindow
     private CancellationTokenSource? _appUpdateLifetime;
     private Task _appUpdateLoop = Task.CompletedTask;
     private ContentDialog? _appUpdateDialog;
+    private StackPanel? _updateBodyPanel;
     private TextBlock? _updateStatusText;
     private ProgressBar? _updateProgress;
     private ComboBox? _updateModeCombo;
@@ -121,6 +122,7 @@ public sealed partial class MainWindow
         if (_appUpdates is null || _appUpdateDialog is not null) return;
         var state = _appUpdates.State;
         var panel = new StackPanel { Spacing = 14, MinWidth = 0, MaxWidth = 640 };
+        _updateBodyPanel = panel;
         var versions = new TextBlock { Text = "Installed version " + typeof(App).Assembly.GetName().Version!.ToString(3), FontSize = 13, TextWrapping = TextWrapping.Wrap };
         panel.Children.Add(versions);
         panel.Children.Add(new TextBlock { Name = "AppUpdatePublishedDate", Text = state.Release is null ? "" : "Published " + Helpers.DateTimeDisplay.FormatDate(state.Release.PublishedAt), FontSize = 12 });
@@ -130,7 +132,7 @@ public sealed partial class MainWindow
         panel.Children.Add(_updateProgress);
         var notes = new TextBlock { Name = "AppUpdateReleaseNotes", Text = state.Release?.Notes ?? "No new release notes are available yet.",
             TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true, FontSize = 13 };
-        panel.Children.Add(new ScrollViewer { Content = notes, MaxHeight = 300, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
+        panel.Children.Add(notes);
         panel.Children.Add(new HyperlinkButton { Name = "AppUpdateFullRelease", Content = "Full release notes on GitHub",
             HorizontalAlignment = HorizontalAlignment.Left, Visibility = state.Release is null ? Visibility.Collapsed : Visibility.Visible,
             NavigateUri = state.Release is null ? null : new Uri("https://github.com/ellermw/SiloDesktopApp/releases/tag/" + Uri.EscapeDataString(state.Release.Tag)) });
@@ -150,10 +152,16 @@ public sealed partial class MainWindow
         panel.Children.Add(new TextBlock { Text = "Both modes notify you and let you update manually. Automatic downloads pause for playback and install only after normal app exit. Windows may request administrator approval.",
             TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
         panel.Children.Add(new TextBlock { Text = "Silo stays open while the update is prepared and installed. Playback is saved before the final restart.", TextWrapping = TextWrapping.Wrap, FontSize = 12 });
-        var check = new Button { Content = "Check for updates", HorizontalAlignment = HorizontalAlignment.Left };
+        var check = new Button { Name = "AppUpdateCheckButton", Content = "Check for updates", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 14, 0, 0) };
         check.Click += async (_, _) => { await _appUpdates.CheckAsync(_appUpdateLifetime!.Token); RefreshUpdateDialog(); };
-        panel.Children.Add(check);
-        var dialog = new ContentDialog { Title = "Silo updates", XamlRoot = RootGrid.XamlRoot, Content = panel,
+        var scroll = new ScrollViewer { Name = "AppUpdateBodyScroll", Content = panel, MinWidth = 0, MinHeight = 0,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        var content = new Grid { Name = "AppUpdateDialogLayout", MinWidth = 0, MaxWidth = 640 };
+        content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        content.Children.Add(scroll); Grid.SetRow(check, 1); content.Children.Add(check);
+        var dialog = new ContentDialog { Title = "Silo updates", XamlRoot = RootGrid.XamlRoot, Content = content,
             CloseButtonText = "Later", PrimaryButtonText = "Update now", DefaultButton = ContentDialogButton.Close, MinWidth = 0 };
         // The outer dialog covers the complete XamlRoot. Constraining its width
         // centers the surface in a smaller left-aligned overlay after a resize.
@@ -161,9 +169,15 @@ public sealed partial class MainWindow
         _appUpdateDialog = dialog;
         dialog.PrimaryButtonClick += InstallAppUpdate_Click;
         dialog.Closing += (_, _) => { if (!_manualUpdateRequested) _manualUpdateConsent?.Cancel(); };
-        RefreshUpdateDialog();
+        // Reserve space for the dialog title, action footer and outer margins.
+        // A finite body viewport keeps long notes/preferences scrollable while
+        // Check for updates stays outside the scroller and above the footer.
+        void SizeBody() => content.MaxHeight = Math.Max(0, Math.Min(480, (RootGrid.XamlRoot?.Size.Height ?? RootGrid.ActualHeight) - 240));
+        SizeChangedEventHandler resized = (_, _) => SizeBody();
+        RootGrid.SizeChanged += resized;
         try
         {
+            SizeBody(); RefreshUpdateDialog();
             var show = dialog.ShowAsync();
             if (manualCheck) _ = _appUpdates.CheckAsync(_appUpdateLifetime!.Token);
             await show;
@@ -171,14 +185,15 @@ public sealed partial class MainWindow
         catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "show_update_dialog"); }
         finally
         {
+            RootGrid.SizeChanged -= resized;
             if (!_manualUpdateRequested) _manualUpdateConsent?.Cancel();
-            _appUpdateDialog = null; _updateModeCombo = null; _updateStatusText = null; _updateProgress = null;
+            _appUpdateDialog = null; _updateBodyPanel = null; _updateModeCombo = null; _updateStatusText = null; _updateProgress = null;
         }
     }
 
     private void RefreshUpdateDialog()
     {
-        if (_appUpdateDialog is null || _appUpdates is null || _updateStatusText is null) return;
+        if (_appUpdateDialog is null || _appUpdates is null || _updateStatusText is null || _updateBodyPanel is null) return;
         var state = _appUpdates.State;
         _updateStatusText.Text = state.Error ?? (state.IsChecking ? "Checking for updates…" : state.IsDownloading
             ? state.PreparationProgress is { } prep ? $"{prep.Stage} · {prep.CompletedFiles}/{prep.TotalFiles} files · {prep.CompletedBytes/1048576.0:0.0} MB downloaded" : $"Downloading {state.DownloadedBytes / 1048576.0:0.0} / {state.Release!.Size / 1048576.0:0.0} MB…"
@@ -189,9 +204,9 @@ public sealed partial class MainWindow
         _updateProgress.Value = state.PreparationProgress is {TotalFiles:>0} prepared ? 100d*prepared.CompletedFiles/prepared.TotalFiles : state.Release is { Size: > 0 } release ? 100d * state.DownloadedBytes / release.Size : 0;
         _appUpdateDialog.IsPrimaryButtonEnabled = state.Release is not null && !_updateDialogBusy;
         _appUpdateDialog.PrimaryButtonText = _updateDialogBusy ? "Preparing update…" : state.IsDownloading ? "Update when ready" : "Update now";
-        foreach (var child in ((StackPanel)_appUpdateDialog.Content).Children)
+        foreach (var child in _updateBodyPanel.Children)
         {
-            if (child is ScrollViewer { Content: TextBlock notes }) notes.Text = state.Release?.Notes ?? "No new release notes are available.";
+            if (child is TextBlock { Name: "AppUpdateReleaseNotes" } notes) notes.Text = state.Release?.Notes ?? "No new release notes are available.";
             if (child is TextBlock { Name: "AppUpdatePublishedDate" } date) date.Text = state.Release is null ? "" : "Published " + Helpers.DateTimeDisplay.FormatDate(state.Release.PublishedAt);
             if (child is HyperlinkButton { Name: "AppUpdateFullRelease" } link)
             {

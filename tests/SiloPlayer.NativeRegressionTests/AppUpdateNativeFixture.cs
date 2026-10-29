@@ -44,6 +44,9 @@ internal static class AppUpdateNativeFixture
         window.Closed += (_, _) => closed.TrySetResult();
         var nav = (NavigationView)root.FindName("NavView"); nav.IsPaneVisible = true; nav.IsPaneOpen = true;
         var updates = services.GetRequiredService<AppUpdateService>();
+        if (scenario == "content-fit")
+            services.GetRequiredService<UpdateWire>().Notes = "## Synthetic changelog\n" + string.Join("\n\n", Enumerable.Repeat(
+                "Long release notes describe the update in readable text. Preferences and update controls must remain reachable when this content exceeds the available window height.", 30));
         if (scenario == "background")
         {
             using var stop = new CancellationTokenSource();
@@ -87,6 +90,14 @@ internal static class AppUpdateNativeFixture
         var notes = Descendants<TextBlock>((DependencyObject)dialog.Content).Single(x => x.Name == "AppUpdateReleaseNotes");
         if (!notes.Text.Contains("Synthetic changelog", StringComparison.Ordinal)) throw new InvalidOperationException("In-app changelog is missing.");
         await CaptureAsync((FrameworkElement)dialog.Content, "update-dialog.png");
+        if (scenario == "content-fit")
+        {
+            await CheckDialogContentFitAsync(window, root, dialog, updates, services.GetRequiredService<UpdateWire>());
+            if (services.GetRequiredService<UpdateWire>().Downloads != 0 || services.GetRequiredService<SafeInstaller>().Calls != 0)
+                throw new InvalidOperationException("Dialog fit verification downloaded or installed an update.");
+            dialog.Hide(); await Until(() => field.GetValue(window) is null);
+            return;
+        }
         if (scenario == "host-centering")
         {
             dialog.Hide(); await Until(() => field.GetValue(window) is null);
@@ -412,6 +423,66 @@ internal static class AppUpdateNativeFixture
         }
     }
 
+    private static async Task CheckDialogContentFitAsync(MainWindow window, FrameworkElement root, ContentDialog dialog, AppUpdateService updates, UpdateWire wire)
+    {
+        var surface = Descendants<Border>(dialog).Single(x => x.Name == "BackgroundElement");
+        var check = Descendants<Button>(dialog).Single(x => x.Content as string == "Check for updates");
+        var primary = Descendants<Button>(dialog).Single(x => x.Name == "PrimaryButton");
+        var later = Descendants<Button>(dialog).Single(x => x.Name == "CloseButton");
+        var mode = Descendants<ComboBox>(dialog).Single(x => x.Name == "AppUpdateModeCombo");
+        var sizes = new[] { (3840, 2160), (1920, 1080), (1280, 720), (900, 540), (460, 700) };
+        foreach (var (width, height) in sizes)
+        {
+            window.AppWindow.ResizeClient(new(width, height));
+            await Task.Delay(180); root.UpdateLayout(); dialog.UpdateLayout();
+            AssertVisible(check); AssertVisible(primary); AssertVisible(later);
+            var before = Box(check);
+            var scroll = Descendants<ScrollViewer>(dialog.Content as DependencyObject ?? dialog)
+                .SingleOrDefault(x => x.Content is StackPanel panel && Descendants<ComboBox>(panel).Contains(mode));
+            if (scroll is null || scroll.ScrollableHeight <= 0)
+                throw new InvalidOperationException("Long update content has no bounded body scroller containing its preferences.");
+            scroll.ChangeView(null, scroll.ScrollableHeight, null, true);
+            await Task.Delay(100);
+            if (Math.Abs(Box(check).Y - before.Y) > 1)
+                throw new InvalidOperationException("Check for updates moves out of reach when the body scrolls.");
+            mode.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+            await Task.Delay(100); AssertVisible(mode);
+            check.Focus(FocusState.Programmatic);
+            await Task.Delay(50); AssertVisible(check);
+            scroll.ChangeView(null, 0, null, true);
+            if (width is 3840 or 900 or 460) await CaptureAsync(dialog, $"update-content-fit-{width}.png");
+            Program.Log($"PASS: long update content {width}x{height}, raster={root.XamlRoot.RasterizationScale:R}; Check and footer fully visible, preferences scroll/focus into view.");
+        }
+        foreach (var text in Descendants<TextBlock>(dialog.Content as DependencyObject ?? dialog)) text.FontSize *= 1.5;
+        window.AppWindow.ResizeClient(new(900, 600));
+        await Task.Delay(200); dialog.UpdateLayout();
+        AssertVisible(check); AssertVisible(primary); AssertVisible(later);
+        mode.StartBringIntoView(new BringIntoViewOptions { AnimationDesired = false });
+        await Task.Delay(100); AssertVisible(mode);
+        wire.Notes = "## Synthetic changelog after recheck\nA short release summary.";
+        var requests = wire.MetadataRequests; Click(check);
+        await Until(() => wire.MetadataRequests > requests && !updates.State.IsChecking);
+        await Until(() => Descendants<TextBlock>(dialog).Any(x => x.Name == "AppUpdateReleaseNotes" && x.Text.Contains("after recheck")));
+        AssertVisible(check); AssertVisible(primary); AssertVisible(later);
+        await CaptureAsync(dialog, "update-content-fit-large-text-refreshed.png");
+        Program.Log("PASS: enlarged body text and live metadata recheck preserve complete Check/Update/Later controls and refresh the release notes without closing the dialog.");
+
+        Windows.Foundation.Rect Box(FrameworkElement item) => item.TransformToVisual(null).TransformBounds(new(0, 0, item.ActualWidth, item.ActualHeight));
+        void AssertVisible(FrameworkElement item)
+        {
+            var bounds = Box(item); var outer = Box(surface);
+            if (bounds.Width <= 0 || bounds.Height <= 0 || bounds.X < outer.X - 1 || bounds.Y < outer.Y - 1 || bounds.Right > outer.Right + 1 || bounds.Bottom > outer.Bottom + 1)
+                throw new InvalidOperationException($"Update control {item.Name}/{(item as Button)?.Content} exceeds the dialog: {bounds}; surface={outer}.");
+            for (DependencyObject? parent = VisualTreeHelper.GetParent(item); parent is not null; parent = VisualTreeHelper.GetParent(parent))
+                if (parent is FrameworkElement clip && (parent is ScrollViewer || parent.GetType().Name == "ScrollContentPresenter"))
+                {
+                    var viewport = Box(clip);
+                    if (bounds.Y < viewport.Y - 1 || bounds.Bottom > viewport.Bottom + 1)
+                        throw new InvalidOperationException($"Update control {item.Name}/{(item as Button)?.Content} is clipped by {clip.Name}/{parent.GetType().Name}: {bounds}; viewport={viewport}.");
+                }
+        }
+    }
+
     private static void Click(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SendMessageW")]
     private static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
@@ -470,6 +541,7 @@ internal static class AppUpdateNativeFixture
         public bool HoldMetadata;
         public bool LimitMetadata;
         public int MetadataRequests;
+        public string Notes = "## Synthetic changelog\nFixed playback.\n- UI updates";
         public TaskCompletionSource MetadataEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseMetadata = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource DownloadEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -486,7 +558,7 @@ internal static class AppUpdateNativeFixture
                     return limited;
                 }
                 if (HoldMetadata) { MetadataEntered.TrySetResult(); await ReleaseMetadata.Task.WaitAsync(ct); }
-                var json = JsonSerializer.Serialize(new { tag_name = "v1.2.999", draft = false, prerelease = false, body = "## Synthetic changelog\nFixed playback.\n- UI updates", published_at = "2026-10-28T12:00:00Z",
+                var json = JsonSerializer.Serialize(new { tag_name = "v1.2.999", draft = false, prerelease = false, body = Notes, published_at = "2026-10-28T12:00:00Z",
                     assets = new[] { new { name = "SiloInstaller-Windows-x64.exe", state = "uploaded", size = _package.Length, digest = "sha256:" + Convert.ToHexString(SHA256.HashData(_package)), browser_download_url = "https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.999/SiloInstaller-Windows-x64.exe" } } });
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
             }
