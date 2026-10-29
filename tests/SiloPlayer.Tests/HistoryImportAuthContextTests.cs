@@ -20,15 +20,15 @@ public sealed class HistoryImportAuthContextTests
         // clears PlexSessionId/PlexOAuthServers for the new account. A poll for the
         // previous account must not refill them or keep sending checks.
         var plex = Method("PlexAuthStartAsync");
-        var capture = plex.IndexOf("var context = _historyImportApi.CaptureContext();", StringComparison.Ordinal);
-        var pin = plex.IndexOf("await _historyImportApi.PlexAuthPinAsync()", StringComparison.Ordinal);
+        var capture = plex.IndexOf("var context = _historyImportApi.CaptureIdentityContext();", StringComparison.Ordinal);
+        var pin = plex.IndexOf("await _historyImportApi.PlexAuthPinAsync(context)", StringComparison.Ordinal);
         Assert.InRange(capture, 0, pin);
-        Assert.InRange(plex.IndexOf("IsCurrentContext(context)", pin, StringComparison.Ordinal), pin, plex.IndexOf("PlexSessionId = pinResponse.SessionId;", StringComparison.Ordinal));
+        Assert.InRange(plex.IndexOf("IsCurrentIdentityContext(context)", pin, StringComparison.Ordinal), pin, plex.IndexOf("PlexSessionId = pinResponse.SessionId;", StringComparison.Ordinal));
         var delay = plex.IndexOf("await Task.Delay(2000);", StringComparison.Ordinal);
         var check = plex.IndexOf("await _historyImportApi.PlexAuthCheckAsync(", StringComparison.Ordinal);
         var servers = plex.IndexOf("PlexOAuthServers.Clear();", StringComparison.Ordinal);
-        Assert.InRange(plex.IndexOf("IsCurrentContext(context)", delay, StringComparison.Ordinal), delay, check);
-        Assert.InRange(plex.IndexOf("IsCurrentContext(context)", check, StringComparison.Ordinal), check, servers);
+        Assert.InRange(plex.IndexOf("IsCurrentIdentityContext(context)", delay, StringComparison.Ordinal), delay, check);
+        Assert.InRange(plex.IndexOf("IsCurrentIdentityContext(context)", check, StringComparison.Ordinal), check, servers);
     }
 
     [Fact]
@@ -36,7 +36,7 @@ public sealed class HistoryImportAuthContextTests
     {
         var emby = Method("EmbyConnectLoginAsync");
         var login = emby.IndexOf("await _historyImportApi.EmbyConnectLoginAsync(", StringComparison.Ordinal);
-        Assert.InRange(emby.IndexOf("var context = _historyImportApi.CaptureContext();", StringComparison.Ordinal), 0, login);
-        Assert.InRange(emby.IndexOf("IsCurrentContext(context)", login, StringComparison.Ordinal), login, emby.IndexOf("EmbyConnectSessionId = response.ConnectSessionId;", StringComparison.Ordinal));
+        Assert.InRange(emby.IndexOf("var context = _historyImportApi.CaptureIdentityContext();", StringComparison.Ordinal), 0, login);
+        Assert.InRange(emby.IndexOf("IsCurrentIdentityContext(context)", login, StringComparison.Ordinal), login, emby.IndexOf("EmbyConnectSessionId = response.ConnectSessionId;", StringComparison.Ordinal));
     }
 }

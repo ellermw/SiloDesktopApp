@@ -308,6 +308,7 @@ public partial class SettingsViewModel : ObservableObject
     private readonly ThemeService _themeService;
     private readonly SettingsService _settingsService;
     private readonly AccessibilityService _accessibilityService;
+    private readonly Action<Uri> _openHistoryImportApproval;
     private Profile? _profile;
     private bool _suppressSave;
 
@@ -315,6 +316,16 @@ public partial class SettingsViewModel : ObservableObject
         HistoryImportApi historyImportApi, WatchProvidersApi watchProvidersApi,
         AuthService authService, ThemeService themeService, SettingsService settingsService,
         AccessibilityService accessibilityService)
+        : this(settingsApi, catalogApi, authApi, historyImportApi, watchProvidersApi, authService, themeService,
+            settingsService, accessibilityService, uri =>
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(uri.AbsoluteUri) { UseShellExecute = true }))
+    {
+    }
+
+    public SettingsViewModel(SettingsApi settingsApi, CatalogApi catalogApi, AuthApi authApi,
+        HistoryImportApi historyImportApi, WatchProvidersApi watchProvidersApi,
+        AuthService authService, ThemeService themeService, SettingsService settingsService,
+        AccessibilityService accessibilityService, Action<Uri> openHistoryImportApproval)
     {
         _settingsApi = settingsApi;
         _catalogApi = catalogApi;
@@ -325,6 +336,7 @@ public partial class SettingsViewModel : ObservableObject
         _themeService = themeService;
         _settingsService = settingsService;
         _accessibilityService = accessibilityService;
+        _openHistoryImportApproval = openHistoryImportApproval ?? throw new ArgumentNullException(nameof(openHistoryImportApproval));
     }
 
     /// <summary>Theme service for populating theme list and applying themes.</summary>
@@ -1888,15 +1900,15 @@ public partial class SettingsViewModel : ObservableObject
         if (EmbyConnectLoginPending) return;
         EmbyConnectLoginPending = true;
         ErrorMessage = null;
-        var context = _historyImportApi.CaptureContext();
+        var context = _historyImportApi.CaptureIdentityContext();
         try
         {
-            var response = await _historyImportApi.EmbyConnectLoginAsync(new EmbyConnectLoginRequest
+            var response = await _historyImportApi.EmbyConnectLoginAsync(context, new EmbyConnectLoginRequest
             {
                 Username = EmbyConnectUsername,
                 Password = EmbyConnectPassword,
             });
-            if (!_historyImportApi.IsCurrentContext(context)) return;
+            if (!_historyImportApi.IsCurrentIdentityContext(context)) return;
             EmbyConnectSessionId = response.ConnectSessionId;
             EmbyConnectServers.Clear();
             foreach (var server in response.Servers)
@@ -1906,7 +1918,7 @@ public partial class SettingsViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            if (_historyImportApi.IsCurrentContext(context)) ErrorMessage = $"Emby Connect login failed: {ex.Message}";
+            if (_historyImportApi.IsCurrentIdentityContext(context)) ErrorMessage = $"Emby Connect login failed: {ex.Message}";
         }
         finally
         {
@@ -1925,11 +1937,11 @@ public partial class SettingsViewModel : ObservableObject
         PlexAuthStatus = "Requesting PIN...";
         // Settings stays cached across profile and server changes; an approval
         // still pending then belongs to the previous account.
-        var context = _historyImportApi.CaptureContext();
+        var context = _historyImportApi.CaptureIdentityContext();
         try
         {
-            var pinResponse = await _historyImportApi.PlexAuthPinAsync();
-            if (!_historyImportApi.IsCurrentContext(context)) { PlexAuthStatus = ""; return; }
+            var pinResponse = await _historyImportApi.PlexAuthPinAsync(context);
+            if (!_historyImportApi.IsCurrentIdentityContext(context)) { PlexAuthStatus = ""; return; }
             PlexSessionId = pinResponse.SessionId;
             PlexAuthStatus = $"Waiting for approval in browser (PIN: {pinResponse.PinCode})";
 
@@ -1942,10 +1954,7 @@ public partial class SettingsViewModel : ObservableObject
 
             try
             {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(approvalUri.AbsoluteUri)
-                {
-                    UseShellExecute = true,
-                });
+                _openHistoryImportApproval(approvalUri);
             }
             catch (Exception ex)
             {
@@ -1958,9 +1967,9 @@ public partial class SettingsViewModel : ObservableObject
             for (int i = 0; i < 60; i++)
             {
                 await Task.Delay(2000);
-                if (!_historyImportApi.IsCurrentContext(context)) { PlexAuthStatus = ""; return; }
-                var checkResponse = await _historyImportApi.PlexAuthCheckAsync(new PlexCheckRequest { SessionId = pinResponse.SessionId });
-                if (!_historyImportApi.IsCurrentContext(context)) { PlexAuthStatus = ""; return; }
+                if (!_historyImportApi.IsCurrentIdentityContext(context)) { PlexAuthStatus = ""; return; }
+                var checkResponse = await _historyImportApi.PlexAuthCheckAsync(context, new PlexCheckRequest { SessionId = pinResponse.SessionId });
+                if (!_historyImportApi.IsCurrentIdentityContext(context)) { PlexAuthStatus = ""; return; }
                 if (checkResponse.Authenticated)
                 {
                     PlexAuthStatus = "Connected";
@@ -1978,7 +1987,7 @@ public partial class SettingsViewModel : ObservableObject
         catch (Exception ex)
         {
             PlexAuthStatus = "";
-            if (_historyImportApi.IsCurrentContext(context)) PlexAuthError = $"Plex sign-in failed: {ex.Message}";
+            if (_historyImportApi.IsCurrentIdentityContext(context)) PlexAuthError = $"Plex sign-in failed: {ex.Message}";
         }
         finally
         {

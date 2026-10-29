@@ -6,6 +6,8 @@ public class HistoryImportApi(SiloApiClient client)
 {
     public ApiRequestContext CaptureContext() => client.CaptureContext();
     public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
+    public ApiIdentityContext CaptureIdentityContext() => client.CaptureIdentityContext();
+    public bool IsCurrentIdentityContext(ApiIdentityContext context) => client.IsCurrentIdentityContext(context);
     public Task<List<HistoryImportSource>> GetImportSourcesAsync(CancellationToken ct = default)
         => client.GetAllItemsAsync<HistoryImportSource>("/api/v2/history-imports/sources", ct);
 
@@ -17,6 +19,15 @@ public class HistoryImportApi(SiloApiClient client)
 
     public Task<PlexCheckResponse> PlexAuthCheckAsync(PlexCheckRequest request, CancellationToken ct = default)
         => client.PostAsync<PlexCheckResponse>("/api/v2/history-imports/plex/auth/check", request, ct);
+
+    public Task<EmbyConnectLoginResponse> EmbyConnectLoginAsync(ApiIdentityContext owner, EmbyConnectLoginRequest request, CancellationToken ct = default)
+        => client.SendIdentityBoundRequestAsync<EmbyConnectLoginResponse>(owner, HttpMethod.Post, "/api/v2/history-imports/emby-connect/login", request, ct);
+
+    public Task<PlexPinResponse> PlexAuthPinAsync(ApiIdentityContext owner, CancellationToken ct = default)
+        => client.SendIdentityBoundRequestAsync<PlexPinResponse>(owner, HttpMethod.Post, "/api/v2/history-imports/plex/auth/pin", null, ct);
+
+    public Task<PlexCheckResponse> PlexAuthCheckAsync(ApiIdentityContext owner, PlexCheckRequest request, CancellationToken ct = default)
+        => client.SendIdentityBoundRequestAsync<PlexCheckResponse>(owner, HttpMethod.Post, "/api/v2/history-imports/plex/auth/check", request, ct);
 
     public async Task<List<HistoryImportRun>> GetImportRunsAsync(int limit = 20, CancellationToken ct = default)
         => (await client.GetAsync<ApiCollectionPage<HistoryImportRun>>($"/api/v2/history-imports/runs?limit={Math.Clamp(limit, 1, 200)}", ct)).Items;
