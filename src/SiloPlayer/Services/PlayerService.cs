@@ -1073,6 +1073,9 @@ public partial class PlayerService : IDisposable
         _activeSubtitleServerIndex = mpvTrackIndex <= 0 || track == null ? -1 : track.Index;
         if (manager?.CurrentSession?.ProtocolVersion >= 3)
             manager.RecordLocalSubtitleSelection(_activeSubtitleServerIndex < 0 ? null : _activeSubtitleServerIndex);
+        var deferLocalSelection = _switchingContent || IsLoading;
+        if (deferLocalSelection || _pendingInitialServerSubtitleIndex.HasValue)
+            _pendingInitialServerSubtitleIndex = _activeSubtitleServerIndex;
         var wasPaused = CaptureUserPausedState();
         var position = CurrentMediaPosition;
         var transportReloadScheduled = false;
@@ -1094,6 +1097,12 @@ public partial class PlayerService : IDisposable
                 transportReloadScheduled = await SetBitmapSubtitleBurnInAsync(
                     null,
                     postLoadSubtitleIndex: track.Index);
+            }
+            else if (deferLocalSelection)
+            {
+                // The latest manual choice wins over an older pending choice,
+                // but only FILE_LOADED may select or restore the new file.
+                transportReloadScheduled = true;
             }
             else
             {
@@ -1128,7 +1137,8 @@ public partial class PlayerService : IDisposable
         }
         else
         {
-            _mpv?.SetSubtitleTrack(mpvTrackIndex);
+            if (deferLocalSelection) transportReloadScheduled = true;
+            else _mpv?.SetSubtitleTrack(mpvTrackIndex);
         }
 
         // BeginMpvLoad deliberately pauses the outgoing stream and FileLoaded
@@ -2372,6 +2382,9 @@ public partial class PlayerService : IDisposable
         var sessionId = manager.SessionId
             ?? throw new InvalidOperationException("The playback session ended before media loading began.");
 
+        // Retire the outgoing file's asynchronous subtitle work before loadfile:
+        // the next FILE_LOADED can be delayed by the replacement HTTP stream.
+        CancelPendingLoadedMediaInitialization();
         CancelPendingFileLoadTimeout();
         var playbackToken = _playbackCts?.Token ?? CancellationToken.None;
         var ownerCts = CancellationTokenSource.CreateLinkedTokenSource(playbackToken);
@@ -4752,7 +4765,7 @@ public partial class PlayerService : IDisposable
         var ownerToken = _authorityLifetimeCts.Token;
         var sidecarGeneration = CurrentSubtitleSidecarGeneration();
         var loadedMediaGeneration = Volatile.Read(ref _loadedMediaInitGeneration);
-        bool CurrentSelection() => !_closing && !ownerToken.IsCancellationRequested &&
+        bool CurrentSelection() => !_closing && !_switchingContent && !IsLoading && !ownerToken.IsCancellationRequested &&
             ReferenceEquals(mpv, _mpv) && ReferenceEquals(manager, _playbackManager) &&
             ReferenceEquals(authority, _activeAuthority) && _activeSubtitleServerIndex == serverTrackIndex &&
             CurrentSubtitleSidecarGeneration() == sidecarGeneration &&
@@ -4773,6 +4786,11 @@ public partial class PlayerService : IDisposable
         if (track == null)
         {
             // Pre-play embedded selection still passes an embedded ordinal.
+            if (_switchingContent || IsLoading)
+            {
+                _pendingInitialServerSubtitleIndex = serverTrackIndex;
+                return;
+            }
             mpv.SetSubtitleTrack(serverTrackIndex + 1);
             mpv.SendScriptMessage(
                 "osc-set-active-subtitle",
