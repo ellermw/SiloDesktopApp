@@ -108,7 +108,7 @@ public sealed partial class MainWindow
         }
         RefreshUpdateDialog();
         _appUpdates.SetPlaybackActive(_playerService.State != PlayerState.Idle || _playerService.IsLoading);
-        if (state.Release is not null && !state.IsChecking && !state.IsDownloading && state.ReadyInstaller is null && state.PreparedPackage is null && state.Error is null
+        if (state.Release is not null && !state.RequiresFullInstaller && !state.IsChecking && !state.IsDownloading && state.ReadyInstaller is null && state.PreparedPackage is null && state.Error is null
             && _appUpdates.Mode == AppUpdateMode.Automatic && _playerService.State == PlayerState.Idle && !_playerService.IsLoading)
             _ = _appUpdates.DownloadAsync(automatic: true, ct: _appUpdateLifetime!.Token);
     }

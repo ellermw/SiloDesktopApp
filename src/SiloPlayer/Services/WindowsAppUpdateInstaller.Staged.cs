@@ -34,8 +34,24 @@ public sealed partial class WindowsAppUpdateInstaller
                 "--restart",restart?"yes":"no","--owner",ownerWindow.ToString(CultureInfo.InvariantCulture)})start.ArgumentList.Add(arg);
             using var process=Process.Start(start)??throw new IOException("The update window could not start.");
             using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);deadline.CancelAfter(TimeSpan.FromMinutes(20));
-            await pipe.WaitForConnectionAsync(deadline.Token);
-            UpdatePipeIdentity.Authenticate(pipe,true,process.Id,process.StartTime.ToUniversalTime().Ticks,host);
+            var hostStart=process.StartTime.ToUniversalTime().Ticks;
+            using(var connectionLifetime=CancellationTokenSource.CreateLinkedTokenSource(deadline.Token))
+            {
+                var connection=pipe.WaitForConnectionAsync(connectionLifetime.Token);
+                var exited=process.WaitForExitAsync(connectionLifetime.Token);
+                if(await Task.WhenAny(connection,exited)==exited && !connection.IsCompletedSuccessfully)
+                {
+                    connectionLifetime.Cancel();
+                    try { await connection; } catch(OperationCanceledException) { }
+                    deadline.Token.ThrowIfCancellationRequested();
+                    LocalLog.AppendLine("updates.txt","staged_handoff_host_exited code="+process.ExitCode);
+                    throw new IOException("The update window closed before connecting. Open update details to retry.");
+                }
+                await connection;
+                connectionLifetime.Cancel();
+                try { await exited; } catch(OperationCanceledException) { }
+            }
+            UpdatePipeIdentity.Authenticate(pipe,true,process.Id,hostStart,host);
             var visible=false;
             while(true)
             {

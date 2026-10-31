@@ -11,7 +11,7 @@ namespace SiloPlayer.Core.Services.Updates;
 internal sealed partial class GitHubReleaseReader
 {
     private const string CatalogUrl = "https://api.github.com/repos/ellermw/SiloDesktopApp/releases?per_page=100&page=";
-    private const int MaximumCatalogPages = 10, MaximumCatalogPageBytes = 2 * 1024 * 1024;
+    private const int MaximumCatalogPages = 2, MaximumCatalogPageBytes = 2 * 1024 * 1024;
 
     internal static bool TryReleaseIdentity(string tag, bool prerelease, out Version numeric, out ReleaseVersion? semantic)
     {
@@ -42,10 +42,14 @@ internal sealed partial class GitHubReleaseReader
         var current = semanticInstalled ?? ReleaseVersion.Parse($"{installed.Major}.{installed.Minor}.{Math.Max(0, installed.Build)}");
         var pages = new List<ReleaseCatalogPage>();
         AppRelease? best = stable.Release;
+        using var catalogDeadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        catalogDeadline.CancelAfter(TimeSpan.FromSeconds(6));
+        try
+        {
         for (var page = 1; page <= MaximumCatalogPages; page++)
         {
             var cached = previous?.Pages.ElementAtOrDefault(page - 1);
-            var catalog = await ReadCatalogPageAsync(page, cached, ct).ConfigureAwait(false);
+            var catalog = await ReadCatalogPageAsync(page, cached, catalogDeadline.Token).ConfigureAwait(false);
             pages.Add(catalog);
             using var document = JsonDocument.Parse(catalog.Metadata, new JsonDocumentOptions { MaxDepth = 24 });
             if (document.RootElement.ValueKind != JsonValueKind.Array || document.RootElement.GetArrayLength() > 100)
@@ -69,7 +73,18 @@ internal sealed partial class GitHubReleaseReader
             }
             if (!catalog.HasNext) return new(best, null) { Channel = AppUpdateChannel.Beta, Stable = stable, Pages = pages };
         }
-        throw new InvalidDataException("The release catalog exceeds the supported update-check limit.");
+        // Creation order is not semantic order: inspect both recent pages, but
+        // never walk an unbounded historical catalog on a periodic check.
+        return new(best, null) { Channel = AppUpdateChannel.Beta, Stable = stable, Pages = pages };
+        }
+        catch (Exception ex) when (stable.Release is not null && ex is not UpdateCheckRateLimitedException && !ct.IsCancellationRequested
+            && (ex is HttpRequestException or InvalidDataException or JsonException or OperationCanceledException))
+        {
+            // Keep independently validated Latest authority if optional Beta
+            // discovery is unavailable. Rate-limit exceptions still propagate
+            // so the service preserves the shared GitHub cooldown.
+            return new(stable.Release, null) { Channel = AppUpdateChannel.Beta, Stable = stable };
+        }
     }
 
     private async Task<ReleaseCatalogPage> ReadCatalogPageAsync(int page, ReleaseCatalogPage? previous, CancellationToken ct)

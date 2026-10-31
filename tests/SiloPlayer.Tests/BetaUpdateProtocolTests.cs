@@ -143,6 +143,34 @@ public sealed class BetaUpdateProtocolTests : IDisposable
         Assert.False(service.ShouldInstallOnExit); // A full migration requires an explicit manual choice.
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AutomaticMigrationDefersFullInstallerUntilExplicitManualDownload(bool unsupportedProtocol)
+    {
+        var source = await ArrangeAsync("1.2.518-beta.2", "1.2.518-beta.12");
+        if (unsupportedProtocol)
+        {
+            var path = Path.Combine(source.Assets, UpdateManifestValidation.ManifestName);
+            var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!; json["BootstrapProtocol"] = 2;
+            await File.WriteAllTextAsync(path, json.ToJsonString());
+        }
+        using var wire = new Assets("1.2.518-beta.12", unsupportedProtocol ? source.Assets : null);
+        using var http = new HttpClient(wire);
+        var service = await CreateAsync(http, "1.2.518-beta.2", "1.2.518-beta.12", source.Client);
+        service.SetMode(AppUpdateMode.Automatic);
+        await service.CheckAsync(); await service.DownloadAsync(automatic: true);
+        Assert.Null(service.State.Error); Assert.True(service.State.RequiresFullInstaller);
+        Assert.False(service.State.IsDownloading); Assert.Null(service.State.ReadyInstaller);
+        Assert.Null(service.State.PreparedPackage); Assert.False(service.ShouldInstallOnExit);
+        Assert.Equal(0, wire.FullInstallerRequests);
+        await service.DownloadAsync(automatic: true);
+        Assert.Equal(0, wire.FullInstallerRequests);
+        await service.DownloadAsync();
+        Assert.Null(service.State.Error); Assert.NotNull(service.State.ReadyInstaller);
+        Assert.Equal(1, wire.FullInstallerRequests); Assert.False(service.ShouldInstallOnExit);
+    }
+
     [Fact]
     public async Task InterruptedSkippedBetaPreparationCanRetryWithoutIntermediateVersionsOrLostPreferences()
     {

@@ -53,6 +53,31 @@ public sealed class UpdateChannelTests : IDisposable
     }
 
     [Fact]
+    public async Task BetaChecksUseAtMostThreeRequestsEvenWhenTheCatalogHasMorePages()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.2")], SecondPage = [Release("1.2.518-beta.12")], MorePages = true };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        for (var i = 0; i < 2; i++)
+        {
+            var before = wire.Requests.Count;
+            await service.CheckAsync();
+            Assert.Null(service.State.Error); Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+            Assert.Equal(3, wire.Requests.Count - before);
+        }
+    }
+
+    [Fact]
+    public async Task UnavailableBetaCatalogKeepsIndependentlyValidatedStableOffer()
+    {
+        using var wire = new Wire { Stable = Release("1.2.518") };
+        wire.BeforeCatalog = _ => throw new HttpRequestException("Synthetic catalog failure");
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal("1.2.518", service.State.Release?.DisplayVersion);
+    }
+
+    [Fact]
     public async Task StableSwitchWaitsWithoutDowngradeAndLaterPromotesTheSameBetaCore()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var service = Create(http, "1.2.518-beta.12");
@@ -265,7 +290,7 @@ public sealed class UpdateChannelTests : IDisposable
     {
         public JsonObject Stable = Release("1.2.517");
         public JsonObject[] Catalog = [], SecondPage = [];
-        public bool Conditional, BadLink, Limited, ForceStableNotModified;
+        public bool Conditional, BadLink, Limited, ForceStableNotModified, MorePages;
         public string? NextLink;
         public Func<CancellationToken, Task>? BeforeCatalog, BeforeAsset;
         public List<(string Url, string? ETag)> Requests = [];
@@ -285,6 +310,8 @@ public sealed class UpdateChannelTests : IDisposable
             if (!latest && !second && (SecondPage.Length != 0 || BadLink)) response.Headers.TryAddWithoutValidation("Link", BadLink
                 ? "<https://evil.invalid/releases?page=2>; rel=\"next\""
                 : NextLink ?? "<https://api.github.com/repos/ellermw/SiloDesktopApp/releases?per_page=100&page=2>; rel=\"next\"");
+            if (second && MorePages) response.Headers.TryAddWithoutValidation("Link",
+                "<https://api.github.com/repos/ellermw/SiloDesktopApp/releases?per_page=100&page=3>; rel=\"next\"");
             return response;
         }
     }

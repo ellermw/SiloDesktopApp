@@ -67,7 +67,7 @@ public sealed partial class AppUpdateService
                 if (!automatic) _automaticTransfer = false;
                 return _transfer;
             }
-            if (automatic && (Mode != AppUpdateMode.Automatic || _playbackActive)) return Task.CompletedTask;
+            if (automatic && (Mode != AppUpdateMode.Automatic || _playbackActive || State.RequiresFullInstaller)) return Task.CompletedTask;
             _automaticTransfer = automatic;
             return _transfer = DownloadCoreAsync(ct);
         }
@@ -109,7 +109,10 @@ public sealed partial class AppUpdateService
                 }
                 // A missing or independently verified incompatible protocol can use
                 // the separately hashed installer. Corruption never takes this path.
-                SetState(State with {RequiresFullInstaller=true,PreparedPackage=null,PreparationProgress=null,DownloadedBytes=0}, expectedChannelEpoch: epoch);
+                bool deferFullInstaller;
+                lock (_transferGate) deferFullInstaller = _automaticTransfer;
+                SetState(State with {RequiresFullInstaller=true,PreparedPackage=null,PreparationProgress=null,DownloadedBytes=0,IsDownloading=!deferFullInstaller}, expectedChannelEpoch: epoch);
+                if (deferFullInstaller) return;
             }
             var lastProgress = System.Diagnostics.Stopwatch.GetTimestamp();
             var path = await new AppUpdateDownloader(http, cacheDirectory, log).DownloadAsync(release,

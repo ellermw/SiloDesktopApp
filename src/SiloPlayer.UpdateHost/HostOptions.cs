@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
+using SiloPlayer.Core.Models.Updates;
 
 namespace SiloPlayer.UpdateHost;
 
@@ -14,7 +15,13 @@ internal sealed record HostOptions(bool Worker,string AppPipe,string WorkerPipe,
         string Get(string key)=>values.TryGetValue(key,out var value)?value:throw new InvalidDataException();
         foreach(var key in values.Keys)if(key is not ("--worker" or "--app-pipe" or "--worker-pipe" or "--parent" or "--parent-start" or "--package" or "--tag" or "--restart" or "--owner" or "--broker" or "--broker-start"))throw new InvalidDataException();
         foreach(var pipe in new[]{Get("--app-pipe"),Get("--worker-pipe")})if(!Regex.IsMatch(pipe,@"^SiloUpdate-[a-f0-9]{32}$"))throw new InvalidDataException();
-        var tag=Get("--tag");if(!Regex.IsMatch(tag,@"^v?\d+\.\d+\.\d+(?:\.\d+)?$"))throw new InvalidDataException();
+        var tag=Get("--tag");
+        if(!Regex.IsMatch(tag,@"\Av?\d+\.\d+\.\d+(?:\.\d+)?\z"))
+        {
+            if(!ReleaseVersion.TryParse(tag.StartsWith('v') ? tag[1..] : tag,out var release) || !release.IsPrerelease)
+                throw new InvalidDataException();
+            _=release.GetWindowsVersion(); // Enforce canonical beta sequencing and Windows bounds.
+        }
         return new(values.GetValueOrDefault("--worker")=="yes",Get("--app-pipe"),Get("--worker-pipe"),int.Parse(Get("--parent"),CultureInfo.InvariantCulture),
             long.Parse(Get("--parent-start"),CultureInfo.InvariantCulture),Path.GetFullPath(Get("--package")),tag,Get("--restart")=="yes",
             long.Parse(Get("--owner"),CultureInfo.InvariantCulture),int.Parse(values.GetValueOrDefault("--broker","0"),CultureInfo.InvariantCulture),
