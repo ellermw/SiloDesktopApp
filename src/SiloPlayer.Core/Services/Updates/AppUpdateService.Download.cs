@@ -103,7 +103,24 @@ public sealed partial class AppUpdateService
                 {
                     try
                     {
-                        var package=await new IncrementalUpdateClient(http,cacheDirectory,InstalledPayloadDirectory,log).PrepareAsync(release,
+                        var client = new IncrementalUpdateClient(http, cacheDirectory, InstalledPayloadDirectory, log);
+                        var semantic = IncrementalUpdateTransport.ValidateAssets(release);
+                        var assets = release.Incremental;
+                        // Re-clicks verify the ready payload once, without fetching the
+                        // manifest or walking the pack/object preparation caches again.
+                        if (State.PreparedPackage is { } prepared
+                            && prepared.ManifestSha256.Equals(assets.ManifestSha256, StringComparison.OrdinalIgnoreCase)
+                            && prepared.Manifest.Version == GitHubReleaseReader.Normalize(release.Version).ToString(4)
+                            && prepared.Manifest.PackSize == assets.PackSize
+                            && prepared.Manifest.PackSha256.Equals(assets.PackSha256, StringComparison.OrdinalIgnoreCase)
+                            && (semantic?.IsPrerelease != true || prepared.Manifest.ReleaseVersion is not null)
+                            && (semantic is null || prepared.Manifest.ReleaseVersion is null || prepared.Manifest.ReleaseVersion == semantic.Text)
+                            && await client.VerifyPreparedAsync(prepared, deadline.Token).ConfigureAwait(false))
+                        {
+                            SetState(State with {IsDownloading=false,ReadyInstaller=null,RequiresFullInstaller=false,Error=null}, expectedChannelEpoch: epoch);
+                            return;
+                        }
+                        var package=await client.PrepareAsync(release,
                             progress=>SetState(State with {PreparationProgress=progress,DownloadedBytes=progress.CompletedBytes}, expectedChannelEpoch: epoch),deadline.Token).ConfigureAwait(false);
                         SetState(State with {IsDownloading=false,PreparedPackage=package,ReadyInstaller=null,RequiresFullInstaller=false,Error=null}, expectedChannelEpoch: epoch);
                         return;

@@ -133,6 +133,34 @@ public sealed class IncrementalUpdateTests
         Assert.Empty(fixture.Ranges);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UpdateNowReclickReverifiesPreparedPayloadWithoutRepeatingPreparation(bool tamper)
+    {
+        using var fixture = new Fixture(); using var http = new HttpClient(fixture);
+        var service = new AppUpdateService(http, fixture.Tree.Path("cache"), new Version(1, 2, 464))
+        { PreferIncrementalUpdates = true, InstalledPayloadDirectory = fixture.Tree.Path("absent") };
+        await service.CheckAsync();
+        await service.DownloadAsync();
+        Assert.Null(service.State.Error);
+        var prepared = Assert.IsType<PreparedUpdatePackage>(service.State.PreparedPackage);
+        var manifestRequests = fixture.ManifestRequests;
+        Assert.Equal(1, manifestRequests);
+        fixture.Ranges.Clear();
+        if (tamper) File.WriteAllBytes(Path.Combine(prepared.Directory, "client", "SiloPlayer.exe"), [0, 0, 0, 0]);
+
+        await service.DownloadAsync();
+
+        Assert.Null(service.State.Error);
+        Assert.False(service.State.IsDownloading);
+        Assert.NotNull(service.State.PreparedPackage);
+        Assert.Equal(manifestRequests + (tamper ? 1 : 0), fixture.ManifestRequests);
+        Assert.Empty(fixture.Ranges);
+        if (!tamper) Assert.Same(prepared, service.State.PreparedPackage);
+        Assert.True(await service.ReverifyReadyAsync());
+    }
+
     [Fact]
     public void StartupCleanupKeepsOnlyTheTwoMostRecentIncrementalCaches()
     {
@@ -299,6 +327,7 @@ public sealed class IncrementalUpdateTests
         internal int FullRequests;
         internal long FullBytes;
         internal int AuthorityRequests;
+        internal int ManifestRequests;
         private readonly string? fault;
         private readonly byte[] manifestBytes;
         internal Fixture(string? fault = null)
@@ -351,7 +380,10 @@ public sealed class IncrementalUpdateTests
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(metadata) });
             }
             if (request.RequestUri!.AbsolutePath.EndsWith(UpdateManifestValidation.ManifestName))
+            {
+                ManifestRequests++;
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(manifestBytes) });
+            }
             var range = request.Headers.Range?.Ranges.SingleOrDefault();
             var response = new HttpResponseMessage(range is null || fault == "no-range" ? HttpStatusCode.OK : HttpStatusCode.PartialContent);
             if (range is null) { FullRequests++; FullBytes += Pack.Length; }

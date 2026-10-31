@@ -1,6 +1,6 @@
-# Windows Stable/Beta release contract — local implementation
+# Windows Stable/Beta release contract
 
-This interface belongs to the Windows client/updater. OpenClaw/Mission Control owns batching, auditing, QA approvals and promotion. This task does not deploy that system, modify its files or the production Codex heartbeat, or publish a stable release. Base/public baseline is 1.2.516; production remains there until an authorized delivery.
+This interface belongs to the Windows client/updater. PR #62 adds the opt-in Beta channel on base `fdccad18` (abbreviated commit ID). Its app/helper source version and installer defaults are `1.2.517`, numeric `1.2.517.0`. These source stamps do not assert that a package has been built or published. The examples below describe the release identity contract, not additional artifacts shipped by this PR.
 
 ## Release identities
 
@@ -40,22 +40,16 @@ The manifest is a complete inventory, not an ordered delta chain. Each installed
 
 An unavailable or explicitly unsupported incremental migration can use an independently verified full installer. Hash/path/version tampering and arbitrary transport failures stay failures rather than triggering a silent fallback. A versioned full migration requires manual consent, registered-root targeting, normal playback-save/close confirmation and original-user restart through the stable root launcher. Automatic mode neither downloads a full migration installer for a versioned installation nor silently runs it on exit; downloading and installing that fallback require explicit manual choices. Existing legacy full-installer update semantics remain supported.
 
-## Channel changes and coordination
+## Channel changes
 
 Stable is the default for existing/missing/invalid preferences. Beta is opt-in and shows a warning. Selection persists across restarts/upgrades without changing account/profile/playback data. A channel change cancels and retires old checks, downloads and prepared offers. ETags are scoped to their endpoint/channel; shared absolute authority cooldowns survive changes. Beta->Stable never silently downgrades: an ahead-of-stable beta waits for a suitable approved stable version.
 
-The production heartbeat, remote main/release and installed app are outside this local task. The owner explicitly forbids pushes, publication and other remote writes until further instruction. This contract is a local handoff for the owner to share; this task has not messaged the orchestration chat or modified its files. The prior heartbeat path was absent during a read-only check; no automation mutation was attempted.
-
-## Local candidate and rollout
-
-The local candidate is `1.2.523-beta.1`, mapped numeric `1.2.522.1`, based on published 1.2.516/docs main `a83b3e2158983159baac0bc4ad46c8422d6fcffd`. Source remains uncommitted on `codex/stable-beta-updates`. Production remains 1.2.516; do not mark this candidate Latest or publish it under the current owner hold.
-
-Seven concrete behavior additions over 516 determine the candidate patch: semantic identity/mapping integrity; eligible Beta/approved Stable discovery with major guard; tolerant persisted channel preference; cancellation/cache retirement during channel changes; semantic manifest binding and direct skipped-version staging; explicitly verified manual full migration; native channel/warning/version/success presentation. Tests, packaging and verification attempts add no increments.
+## Rollout
 
 Existing clients have no Beta preference and continue receiving approved stable updates. They must first receive a channel-capable client **and its matching version-local helper** through an approved stable update or an owner-run full installer before opting into Beta. The root Protocol1 launcher stays immutable for compatible changed-file updates. A stable promotion is a newly stamped/verified stable artifact, not a metadata-only relabel of this Beta. Both fresh and upgraded preferences default Stable unless a valid Beta selection was saved; installing a Beta manually does not opt in on the user's behalf.
 
-The supported local build is `installer/build.ps1`, with fresh publish and installer output directories. It preflights semantic/FileVersion/AssemblyVersion/Inno stamps before dependency work and passes both `--version` (numeric) and `--release-version` (semantic) to SiloUpdatePack. The tool refuses disagreement before creating output. Its existing numeric API/CLI remains available for legacy stable fixtures. New Beta manifests must use the semantic overload/option.
+The supported build entry point is `installer/build.ps1`, with fresh publish and installer output directories. It preflights semantic/FileVersion/AssemblyVersion/Inno stamps before dependency work and passes both `--version` (numeric) and `--release-version` (semantic) to SiloUpdatePack. The tool refuses disagreement before creating output. Its existing numeric API/CLI remains available for legacy stable fixtures. New Beta manifests must use the semantic overload/option.
 
-Final local artifact and test receipts are recorded in [current-development](current-development.md) and the evidence root `D:\SiloPlayer\.codex-tmp\stable-beta-updates-oct29`. Synthetic tests do not establish production UAC, alternate-admin behavior, installation completion/reopening or phone/hardware behavior. No setup or installed-player control is part of this delivery.
+[Current development](current-development.md) records the PR's source identity. Build, test and package verification results must be tied to the actual release source and artifacts. Synthetic tests alone do not establish production UAC, alternate-admin behavior, installation completion/reopening or phone/hardware behavior.
 
 References: [SemVer2](https://semver.org/spec/v2.0.0.html), [GitHub Releases API](https://docs.github.com/en/rest/releases/releases), [Windows VERSIONINFO](https://learn.microsoft.com/en-us/windows/win32/menurc/versioninfo-resource), [Inno numeric file version](https://jrsoftware.org/ishelp/topic_setup_versioninfoversion.htm), [Inno numeric product version](https://jrsoftware.org/ishelp/topic_setup_versioninfoproductversion.htm).
