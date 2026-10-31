@@ -142,15 +142,30 @@ public sealed class AppUpdateDownloadTests : IDisposable
         await service.CheckAsync(); Assert.False(service.ShouldInstallOnExit); Assert.Null(service.State.Release);
     }
 
-    [Fact]
-    public async Task FailedMetadataRevalidationDisarmsExitButKeepsManualUpdateAccess()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedMetadataRevalidationDisarmsExitButKeepsManualUpdateAccess(bool timeout)
     {
         using var wire = new Wire(); using var http = new HttpClient(wire);
         var service = Create(http); service.SetMode(AppUpdateMode.Automatic);
         await service.CheckAsync(); await service.DownloadAsync(); Assert.True(service.ShouldInstallOnExit);
-        wire.Metadata = AppUpdateTests.Release(digest: "invalid");
+        var readyInstaller = Assert.IsType<string>(service.State.ReadyInstaller);
+        if (timeout) wire.BeforeMetadata = _ => throw new TaskCanceledException("Synthetic authority timeout.");
+        else wire.Metadata = AppUpdateTests.Release(digest: "invalid");
         await service.CheckAsync();
+        Assert.NotNull(service.State.Error);
         Assert.False(service.ShouldInstallOnExit); Assert.NotNull(service.State.Release);
+        Assert.Equal(readyInstaller, service.State.ReadyInstaller);
+        Assert.True(await service.ReverifyReadyAsync());
+        Assert.False(service.ShouldInstallOnExit);
+
+        wire.BeforeMetadata = null;
+        wire.Metadata = null;
+        await service.CheckAsync();
+        Assert.Null(service.State.Error);
+        Assert.Equal(readyInstaller, service.State.ReadyInstaller);
+        Assert.True(service.ShouldInstallOnExit);
     }
 
     [Theory]
