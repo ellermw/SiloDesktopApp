@@ -85,13 +85,25 @@ function Get-StampedAppVersion {
     $version=@($xml.Project.PropertyGroup.Version | Where-Object { $_ })
     $fileVersion=@($xml.Project.PropertyGroup.FileVersion | Where-Object { $_ })
     $assemblyVersion=@($xml.Project.PropertyGroup.AssemblyVersion | Where-Object { $_ })
-    if ($version.Count -ne 1 -or $version[0] -notmatch '^\d+\.\d+\.\d+$' -or
-        $fileVersion.Count -ne 1 -or $assemblyVersion.Count -ne 1 -or
-        $fileVersion[0] -ne ($version[0]+'.0') -or $assemblyVersion[0] -ne ($version[0]+'.0')) {
+    if ($version.Count -ne 1 -or $version[0] -cnotmatch '\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-beta\.([1-9][0-9]*))?\z') {
+        throw 'The release must use canonical M.m.P or M.m.P-beta.N.'
+    }
+    $major=[int]$Matches[1];$minor=[int]$Matches[2];$patch=[int]$Matches[3];$beta=if($Matches[4]){[int]$Matches[4]}else{0}
+    # A future major needs a deliberate owner-approved contract change here.
+    if($major -ne 1 -or $minor -gt 65534 -or $patch -gt 65534 -or $beta -gt 65534 -or ($beta -gt 0 -and $patch -lt 1)) {
+        throw 'The release exceeds the approved major or Windows version contract.'
+    }
+    $numeric=if($beta -gt 0){"$major.$minor.$($patch-1).$beta"}else{"$major.$minor.$patch.0"}
+    if ($fileVersion.Count -ne 1 -or $assemblyVersion.Count -ne 1 -or
+        $fileVersion[0] -ne $numeric -or $assemblyVersion[0] -ne $numeric) {
         throw 'Version, FileVersion and AssemblyVersion must be deliberately stamped together.'
     }
-    $innoVersion=[regex]::Match([IO.File]::ReadAllText($InstallerSource),'#define MyAppVersion "([^"]+)"').Groups[1].Value
-    if ($innoVersion -ne $version[0]) { throw 'The Inno version must match all app and helper versions before building.' }
+    $inno=[IO.File]::ReadAllText($InstallerSource)
+    $innoVersions=[regex]::Matches($inno,'(?m)^#define MyAppVersion "([^"]+)"\s*$')
+    $innoNumeric=[regex]::Matches($inno,'(?m)^#define MyAppFourPartVersion "([^"]+)"\s*$')
+    if ($innoVersions.Count -ne 1 -or $innoVersions[0].Groups[1].Value -ne $version[0] -or
+        ($innoNumeric.Count -gt 0 -and ($innoNumeric.Count -ne 1 -or $innoNumeric[0].Groups[1].Value -ne $numeric)) -or
+        ($beta -gt 0 -and $innoNumeric.Count -ne 1)) { throw 'The Inno semantic/numeric versions must match all app and helper versions before building.' }
     return [string]$version[0]
 }
 $AppVersion=Get-StampedAppVersion -Project $ProjectPath -InstallerSource "$InstallerDir\SiloInstaller.iss"
@@ -99,7 +111,7 @@ foreach($helper in @($HostProjectPath,$LauncherProjectPath)) {
     $helperVersion=Get-StampedAppVersion -Project $helper -InstallerSource "$InstallerDir\SiloInstaller.iss"
     if ($helperVersion -ne $AppVersion) { throw 'The client, updater and launcher must have matching version stamps.' }
 }
-$FourPartVersion=$AppVersion+'.0'
+$FourPartVersion=[string](([xml](Get-Content -LiteralPath $ProjectPath -Raw)).Project.PropertyGroup.FileVersion|Where-Object{$_})
 $ExpectedSetup=Join-Path $OutputDir "SiloInstaller-$AppVersion-Setup.exe"
 if (Test-Path -LiteralPath $ExpectedSetup) { throw 'Preserve the existing versioned installer. Choose a fresh InstallerOutputDirectory.' }
 $UpdateAssetDir=Get-DedicatedPublishDirectory -Path (Join-Path $OutputDir "update-$AppVersion") -RepositoryRoot $RepoRoot
@@ -368,7 +380,7 @@ Copy-Item -LiteralPath $IconDest -Destination (Join-Path $BootstrapAssets 'app.i
 # Build the manifest/pack after signing and all content copies, from the exact
 # version-local bytes used by the full installer. Bootstrap is immutable in v1.
 dotnet run --project "$RepoRoot\tools\SiloUpdatePack\SiloUpdatePack.csproj" -c $Configuration -- `
-    --client $PublishDir --output $UpdateAssetDir --version $FourPartVersion
+    --client $PublishDir --output $UpdateAssetDir --version $FourPartVersion --release-version $AppVersion
 if ($LASTEXITCODE -ne 0) { throw 'The incremental update assets could not be built.' }
 $ControlDirectory=Join-Path $PublishRoot '.silo-update'
 $null=New-Item -ItemType Directory -Path $ControlDirectory

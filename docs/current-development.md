@@ -1,5 +1,21 @@
 # Current development — 1.2.516
 
+## Local channel implementation — not published
+
+The owner requested Stable/Beta update channels, then explicitly instructed **keep everything local until further notice: no pushes, releases or remote writes**. Do not modify the production heartbeat. Published source/version/installer below remain authoritative for production.
+
+Local source: `C:\Users\Michael\.codex\worktrees\stable-beta-updates\SiloPlayer`, branch `codex/stable-beta-updates`, base `a83b3e2158983159baac0bc4ad46c8422d6fcffd`; feature source is uncommitted. The marker records the foreground integration owner and publication hold. Never build over the prior update-dialog-fit worktree or frozen artifacts.
+
+Completed local candidate **1.2.523-beta.1**, numeric **1.2.522.1**; seven concrete changes over 516 are itemized in the [local delivery record](releases/local-1.2.523-beta.1.md). [Release contract](update-release-contract.md), [plan](superpowers/plans/2026-10-29-stable-beta-updates.md) and [design](superpowers/specs/2026-10-29-stable-beta-updates-design.md) remain local for the owner to share. Diagnostic ui-red516-client/ui-green516-client builds are preserved and are not delivery packages.
+
+The feature includes Stable-default/Beta opt-in persistence, semantic ordering/identity, bounded GitHub catalog authority, no automatic MAJOR change or silent downgrade, channel cancellation/cache retirement, direct skipped-version hash reuse, explicit verified full migration and semantic native success feedback. Installer: `D:\SiloPlayer\.codex-tmp\stable-beta-updates-oct29\installer523-beta1-final\installer\SiloInstaller-1.2.523-beta.1-Setup.exe`; **235,295,332 bytes**, SHA256 **03A7EBBCA018B07A8BA46857FED97768DBAE5F51A20D61F17E87FE8B740AB6E6**. Frozen layout is this worktree's `installer\publish-1.2.523-beta.1-channels-final` (1,026 files; numeric client 817 files). No setup was launched.
+
+Verification: **2,674 main/16 protocol/32 staging tests**, **55 scoped native groups** (51 r3 + 3 r4 + 1 r5), **33 packaged playback groups**, **3 existing + 1 sealed Beta consumer builds**. Independent Standards/Spec have no remaining findings. All product inputs/packaged files remain unchanged; only the native test fixture changed after sealing, with original/final hashes, scoped re-verification and independent review. Final receipt binds 1,602 source inputs at `D:\SiloPlayer\.codex-tmp\stable-beta-updates-oct29\installer523-beta1-final\final-local-receipt.json`. The sealed app prepares from preserved 516 with 805/817 reusable files, 12 ranges/3,804,921 pack bytes, no full download and repeat zero objects through synthetic local HTTP; independent tag authority and all prepared files reverify. Actual production UAC/completion/reopening remain unobserved.
+
+Source remains uncommitted and publication/remote writes remain on owner hold after local delivery. No heartbeat/orchestrator or other-chat mutation occurred. The previous automation path was absent during a read-only check; it was not recreated. Keep all frozen artifacts, failed/red evidence and the original dirty owner worktree. Future integration requires fresh owner authorization and combined verification, not merely the earlier automation's publication authority.
+
+## Published baseline
+
 Updated October 29, 2026. **1.2.516 is the current published release.** README download, GitHub Latest and app/launcher/updater/installer stamps agree.
 
 ## Source and delivery

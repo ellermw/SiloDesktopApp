@@ -7,7 +7,13 @@ using SiloPlayer.Core.Models.Updates;
 namespace SiloPlayer.Core.Services.Updates;
 
 /// <summary>A release check result and the validator that lets GitHub answer the next check with 304.</summary>
-internal sealed record ReleaseCheck(AppRelease? Release, string? ETag);
+internal sealed record ReleaseCheck(AppRelease? Release, string? ETag)
+{
+    internal AppUpdateChannel Channel { get; init; }
+    internal ReleaseCheck? Stable { get; init; }
+    internal IReadOnlyList<ReleaseCatalogPage> Pages { get; init; } = [];
+}
+internal sealed record ReleaseCatalogPage(byte[] Metadata, string? ETag, bool HasNext);
 
 /// <summary>GitHub limited unauthenticated checks from this network; retry no sooner than <see cref="RetryAfter"/>.</summary>
 internal sealed class UpdateCheckRateLimitedException(System.Net.HttpStatusCode status, TimeSpan? retryAfter)
@@ -17,7 +23,7 @@ internal sealed class UpdateCheckRateLimitedException(System.Net.HttpStatusCode 
     public TimeSpan? RetryAfter { get; } = retryAfter;
 }
 
-internal sealed class GitHubReleaseReader(HttpClient http, TimeProvider? clock = null)
+internal sealed partial class GitHubReleaseReader(HttpClient http, TimeProvider? clock = null)
 {
     internal const long MaximumInstallerBytes = 512L * 1024 * 1024;
     internal const int MaximumMetadataBytes = 512 * 1024;
@@ -34,6 +40,7 @@ internal sealed class GitHubReleaseReader(HttpClient http, TimeProvider? clock =
     /// </summary>
     public async Task<ReleaseCheck> ReadAsync(Version installed, ReleaseCheck? previous, CancellationToken ct)
     {
+        if (http.DefaultRequestHeaders.Authorization is not null) throw new InvalidDataException("Update authority must be unauthenticated.");
         using var request = new HttpRequestMessage(HttpMethod.Get,
             "https://api.github.com/repos/ellermw/SiloDesktopApp/releases/latest");
         request.Headers.UserAgent.ParseAdd("SiloDesktopApp/" + installed);
@@ -41,7 +48,8 @@ internal sealed class GitHubReleaseReader(HttpClient http, TimeProvider? clock =
         request.Headers.Add("X-GitHub-Api-Version", "2026-03-10");
         if (previous?.ETag is { } etag) request.Headers.TryAddWithoutValidation("If-None-Match", etag);
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-        if (response.StatusCode == System.Net.HttpStatusCode.NotModified && previous is not null)
+        if (response.RequestMessage?.RequestUri is { } final && final != request.RequestUri) throw new InvalidDataException("Release authority redirected.");
+        if (response.StatusCode == System.Net.HttpStatusCode.NotModified && previous?.ETag is not null)
             return previous;
         if (response.StatusCode is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.TooManyRequests && IsRateLimited(response))
             throw new UpdateCheckRateLimitedException(response.StatusCode, RetryDelay(response));
@@ -79,16 +87,18 @@ internal sealed class GitHubReleaseReader(HttpClient http, TimeProvider? clock =
         return null;
     }
 
-    private static AppRelease? Parse(byte[] metadata, Version installed)
+    private static AppRelease? Parse(byte[] metadata, Version installed, bool allowPrerelease = false)
     {
         using var json = JsonDocument.Parse(metadata, new JsonDocumentOptions { MaxDepth = 24 });
         var root = json.RootElement;
-        if (root.GetProperty("draft").GetBoolean() || root.GetProperty("prerelease").GetBoolean()) return null;
+        var prerelease = root.GetProperty("prerelease").GetBoolean();
+        if (root.GetProperty("draft").GetBoolean() || (prerelease && !allowPrerelease)) return null;
         var tag = root.GetProperty("tag_name").GetString() ?? "";
-        if (tag.Length > 64 || !Regex.IsMatch(tag, @"^v?\d+\.\d+\.\d+(?:\.\d+)?$", RegexOptions.CultureInvariant)
-            || !Version.TryParse(tag.TrimStart('v'), out var version))
+        if (!TryReleaseIdentity(tag, prerelease, out var version, out var semantic))
             throw new InvalidDataException("The release has an unsupported version.");
         version = Normalize(version);
+        // A major migration is a separately owner-approved operation, never an update-channel choice.
+        if (installed.Major != 0 && version.Major != installed.Major) return null;
         if (version <= Normalize(installed)) return null;
         var matches = root.GetProperty("assets").EnumerateArray()
             .Where(asset => asset.GetProperty("name").GetString() == InstallerName).ToArray();
@@ -113,7 +123,7 @@ internal sealed class GitHubReleaseReader(HttpClient http, TimeProvider? clock =
             releaseNotes = releaseNotes[..length] + "\n\nAdditional release notes are available on GitHub.";
         }
         var release = new AppRelease(version, tag, releaseNotes,
-            published, url, digest[7..].ToLowerInvariant(), size);
+            published, url, digest[7..].ToLowerInvariant(), size) { SemanticVersion = semantic };
         var manifestAssets = root.GetProperty("assets").EnumerateArray().Where(a => a.GetProperty("name").GetString() == UpdateManifestValidation.ManifestName).ToArray();
         var packAssets = root.GetProperty("assets").EnumerateArray().Where(a => a.GetProperty("name").GetString() == UpdateManifestValidation.PackName).ToArray();
         if (manifestAssets.Length != 0 || packAssets.Length != 0)
@@ -129,6 +139,7 @@ internal sealed class GitHubReleaseReader(HttpClient http, TimeProvider? clock =
             {
                 // Optional new assets cannot hide an otherwise valid full installer from legacy callers.
                 // Incremental authority separately requires a complete validated pair below.
+                release = release with { HasInvalidIncrementalAssets = true };
             }
         }
         return release;
@@ -154,7 +165,7 @@ internal sealed class GitHubReleaseReader(HttpClient http, TimeProvider? clock =
 
     internal async Task<AppRelease> ReadTagAsync(string tag, CancellationToken ct)
     {
-        if (tag.Length > 64 || !Regex.IsMatch(tag, @"^v?\d+\.\d+\.\d+(?:\.\d+)?$", RegexOptions.CultureInvariant))
+        if (!TryReleaseIdentity(tag, tag.Contains('-'), out _, out _))
             throw new InvalidDataException("Invalid release tag.");
         if (http.DefaultRequestHeaders.Authorization is not null) throw new InvalidDataException("Update authority must be unauthenticated.");
         var uri = new Uri("https://api.github.com/repos/ellermw/SiloDesktopApp/releases/tags/" + tag);
@@ -169,7 +180,7 @@ internal sealed class GitHubReleaseReader(HttpClient http, TimeProvider? clock =
         if (response.Content.Headers.ContentLength > MaximumMetadataBytes) throw new InvalidDataException("Update metadata is too large.");
         await using var body = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
         var bytes = await UpdateManifestValidation.ReadBoundedAsync(body, MaximumMetadataBytes, ct).ConfigureAwait(false);
-        var release = Parse(bytes, new Version(0, 0, 0, 0)) ?? throw new InvalidDataException("Release is not eligible for installation.");
+        var release = Parse(bytes, new Version(0, 0, 0, 0), allowPrerelease: true) ?? throw new InvalidDataException("Release is not eligible for installation.");
         if (release.Tag != tag) throw new InvalidDataException("Release tag identity mismatch.");
         IncrementalUpdateTransport.ValidateAssets(release);
         return release;

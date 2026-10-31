@@ -1,5 +1,6 @@
 param([int]$ParentPid, [long]$ParentStartTicks, [string]$Version, [string]$Sha256,
-    [long]$ExpectedSize, [string]$AppPath, [switch]$Restart, [switch]$VerifyOnly, [string]$ValidationRoot, [string]$HandoffToken, [switch]$ValidateExitGate)
+    [long]$ExpectedSize, [string]$AppPath, [switch]$Restart, [switch]$VerifyOnly, [string]$ValidationRoot, [string]$HandoffToken, [switch]$ValidateExitGate,
+    [string]$InstallRoot)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2
 $root=$null; $gate=$null; $gateOwned=$false; $packageStream=$null; $failureState='failed'
@@ -14,6 +15,32 @@ function Assert-OrdinaryPath([string]$Path) {
         } catch [IO.FileNotFoundException] { } catch [IO.DirectoryNotFoundException] { }
         $current=[IO.Path]::GetDirectoryName($current)
     }
+}
+function Get-UpdateInstallationPaths([string]$SourceApp,[string]$RegisteredRoot,[string]$TargetVersion) {
+    foreach($value in @($SourceApp,$RegisteredRoot)){
+        if($value -and ($value.Replace('/','\').Split('\') | Where-Object {$_ -eq '.' -or $_ -eq '..'})){throw 'Update paths cannot contain relative segments.'}
+    }
+    $source=[IO.Path]::GetFullPath($SourceApp)
+    if([IO.Path]::GetFileName($source) -ine 'SiloPlayer.exe'){throw 'Unexpected application executable.'}
+    $directory=[IO.Path]::GetDirectoryName($source).TrimEnd([char[]]'\/')
+    $install=if($RegisteredRoot){[IO.Path]::GetFullPath($RegisteredRoot).TrimEnd([char[]]'\/')}else{$directory}
+    Assert-OrdinaryPath $source; Assert-OrdinaryPath $install
+    $numeric=$null
+    if(![version]::TryParse($TargetVersion,[ref]$numeric) -or $numeric.Revision -lt 0 -or $numeric.ToString(4) -cne $TargetVersion -or
+        $numeric.Major -gt 65534 -or $numeric.Minor -gt 65534 -or $numeric.Build -gt 65534 -or $numeric.Revision -gt 65534){throw 'Invalid numeric target version.'}
+    $versioned=$false;$sourceVersion=$null;$target=$source
+    if($directory -ine $install){
+        $prefix=$install+[IO.Path]::DirectorySeparatorChar
+        if(!$source.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'The source is outside the registered installation.'}
+        $relative=$source.Substring($prefix.Length).Replace('/','\').Split('\')
+        $previous=$null
+        if($relative.Length -ne 3 -or $relative[0] -ine 'versions' -or ![version]::TryParse($relative[1],[ref]$previous) -or
+            $previous.Revision -lt 0 -or $previous.ToString(4) -cne $relative[1]){throw 'Invalid versioned installation source.'}
+        if($numeric.Major -ne $previous.Major -or $numeric -le $previous){throw 'Automatic major changes and downgrades are not supported.'}
+        $versioned=$true;$sourceVersion=$relative[1]
+        $target=Join-Path (Join-Path (Join-Path $install 'versions') $TargetVersion) 'SiloPlayer.exe'
+    }
+    return @{Root=$install;Source=$source;Target=$target;Restart=(Join-Path $install 'SiloPlayer.exe');Versioned=$versioned;SourceVersion=$sourceVersion}
 }
 function Write-Result([string]$State,[string]$Message,[string]$GateName='') {
     $result=@{state=$State;message=$Message;version=$Version;utc=[DateTime]::UtcNow.ToString('o');gate=$GateName}
@@ -57,11 +84,13 @@ try {
     $root=if($VerifyOnly -and $ValidationRoot){[IO.Path]::GetFullPath($ValidationRoot)}else{
         Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'SiloPlayer\updates'
     }
-    $app=[IO.Path]::GetFullPath($AppPath)
-    if ([IO.Path]::GetFileName($app) -ine 'SiloPlayer.exe') {throw 'Unexpected application executable.'}
-    $appDirectory=[IO.Path]::GetDirectoryName($app).TrimEnd([char[]]'\/')
+    $paths=Get-UpdateInstallationPaths $AppPath $InstallRoot $Version
+    $app=$paths.Source;$appDirectory=$paths.Root
     $hash=[Security.Cryptography.SHA256]::Create()
-    try {$gateName='Global\SiloDesktopUpdate-'+([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($appDirectory.ToUpperInvariant()))).Replace('-','').Substring(0,16))}finally{$hash.Dispose()}
+    # The versioned full installer must acquire the ordinary mutation lock to
+    # initialize its final layout. Keep a distinct client-start gate across setup.
+    $gatePrefix=if($paths.Versioned){'Global\SiloDesktopFullUpdate-'}else{'Global\SiloDesktopUpdate-'}
+    try {$gateName=$gatePrefix+([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($appDirectory.ToUpperInvariant()))).Replace('-','').Substring(0,16))}finally{$hash.Dispose()}
     $package=Join-Path (Join-Path $root $Version) 'SiloInstaller-Windows-x64.exe'
     Assert-OrdinaryPath $package
     $packageStream=[IO.File]::Open($package,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
@@ -109,7 +138,7 @@ try {
         try {
             try {$runningPath=$running.MainModule.FileName}
             catch {if($running.HasExited){continue};$failureState='deferred';throw 'Another Silo process cannot be checked. Update postponed.'}
-            if($runningPath -ieq $app){$failureState='deferred';throw 'Another Silo instance is open. Update postponed.'}
+            if($runningPath -ieq $app -or ($paths.Versioned -and $runningPath.StartsWith($appDirectory+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase))){$failureState='deferred';throw 'Another Silo instance is open. Update postponed.'}
         }finally{$running.Dispose()}
     }
     if ($VerifyOnly) {Write-Result 'verified-gate' 'Package and exit gate verified; no installation was launched.' $gateName;exit 0}
@@ -125,10 +154,16 @@ try {
         if($setup.ExitCode -ne 0){throw ('The installer exited with code '+$setup.ExitCode+'. Retry the staged installer.')}
     }finally{$setup.Dispose()}
     $installed=$null
-    if(-not [version]::TryParse([Diagnostics.FileVersionInfo]::GetVersionInfo($app).FileVersion,[ref]$installed) -or $installed -ne $parsed){throw 'The installed version could not be verified. Retry the staged installer.'}
+    Assert-OrdinaryPath $paths.Target
+    if(-not [version]::TryParse([Diagnostics.FileVersionInfo]::GetVersionInfo($paths.Target).FileVersion,[ref]$installed) -or $installed -ne $parsed){throw 'The installed version could not be verified. Retry the staged installer.'}
+    if($paths.Versioned){
+        $statePath=Join-Path $appDirectory '.silo-update\state.json';Assert-OrdinaryPath $statePath
+        $state=[IO.File]::ReadAllText($statePath)|ConvertFrom-Json
+        if([string]$state.ActiveVersion -cne $Version){throw 'The new installation was not activated. Retry the staged installer.'}
+    }
     Write-Result 'installed' 'Update installed successfully.' $gateName
     $gate.ReleaseMutex();$gateOwned=$false
-    if($Restart){$null=[Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo -Property @{FileName=$app;UseShellExecute=$true}))}
+    if($Restart){Assert-OrdinaryPath $paths.Restart;$null=[Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo -Property @{FileName=$paths.Restart;UseShellExecute=$true}))}
     exit 0
 } catch {
     $errorObject=$_.Exception
