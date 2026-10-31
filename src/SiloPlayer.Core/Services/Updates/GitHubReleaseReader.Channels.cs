@@ -77,12 +77,12 @@ internal sealed partial class GitHubReleaseReader
         // never walk an unbounded historical catalog on a periodic check.
         return new(best, null) { Channel = AppUpdateChannel.Beta, Stable = stable, Pages = pages };
         }
-        catch (Exception ex) when (stable.Release is not null && ex is not UpdateCheckRateLimitedException && !ct.IsCancellationRequested
+        catch (Exception ex) when (ex is not UpdateCheckRateLimitedException && !ct.IsCancellationRequested
             && (ex is HttpRequestException or InvalidDataException or JsonException or OperationCanceledException))
         {
-            // Keep independently validated Latest authority if optional Beta
-            // discovery is unavailable. Rate-limit exceptions still propagate
-            // so the service preserves the shared GitHub cooldown.
+            // Keep the independently validated Latest result, including no offer,
+            // if optional Beta discovery is unavailable. Rate-limit exceptions
+            // still propagate so the service preserves the shared GitHub cooldown.
             return new(stable.Release, null) { Channel = AppUpdateChannel.Beta, Stable = stable };
         }
     }

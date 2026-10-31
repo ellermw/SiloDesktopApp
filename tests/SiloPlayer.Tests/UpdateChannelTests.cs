@@ -77,6 +77,41 @@ public sealed class UpdateChannelTests : IDisposable
         Assert.Null(service.State.Error); Assert.Equal("1.2.518", service.State.Release?.DisplayVersion);
     }
 
+    [Theory]
+    [InlineData("http")]
+    [InlineData("invalid-data")]
+    [InlineData("json")]
+    [InlineData("deadline")]
+    public async Task UnavailableBetaCatalogWithoutANewerStableIsNotAHardCheckError(string failure)
+    {
+        using var wire = new Wire();
+        wire.BeforeCatalog = _ => throw (failure switch
+        {
+            "http" => new HttpRequestException("Synthetic catalog failure"),
+            "invalid-data" => new InvalidDataException("Synthetic oversized catalog"),
+            "json" => new JsonException("Synthetic malformed catalog"),
+            _ => (Exception)new OperationCanceledException("Synthetic catalog deadline")
+        });
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Null(service.State.Release);
+        Assert.Equal(2, wire.Requests.Count);
+    }
+
+    [Fact]
+    public async Task CatalogRateLimitWithoutANewerStableStillAppliesSharedCooldown()
+    {
+        using var wire = new Wire();
+        wire.BeforeCatalog = _ => throw new UpdateCheckRateLimitedException(HttpStatusCode.TooManyRequests, TimeSpan.FromHours(1));
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        await service.CheckAsync();
+        Assert.NotNull(service.State.Error); Assert.Null(service.State.Release);
+        await service.CheckAsync();
+        Assert.Equal(2, wire.Requests.Count);
+    }
+
     [Fact]
     public async Task StableSwitchWaitsWithoutDowngradeAndLaterPromotesTheSameBetaCore()
     {
@@ -190,7 +225,9 @@ public sealed class UpdateChannelTests : IDisposable
         using var wire = new Wire { BadLink = true, Catalog = [Release("1.2.518-beta.12")] };
         using var http = new HttpClient(wire); var service = Create(http);
         await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
-        Assert.NotNull(service.State.Error); Assert.Null(service.State.Release);
+        // Reject the untrusted hint without turning optional discovery into a hard error.
+        Assert.Null(service.State.Error); Assert.Null(service.State.Release);
+        Assert.Equal(2, wire.Requests.Count);
         Assert.All(wire.Requests, r => Assert.StartsWith("https://api.github.com/repos/ellermw/SiloDesktopApp/releases", r.Url));
     }
 
