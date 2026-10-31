@@ -43,6 +43,39 @@ public sealed class UpdateChannelTests : IDisposable
     }
 
     [Fact]
+    public async Task ANewChannelIsNotReportedAsCurrentBeforeItsFirstCheckCompletes()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        Assert.Null(service.State.Release);
+        Assert.Contains("has not been checked", service.State.Error!);
+        await service.CheckAsync();
+        Assert.Null(service.State.Error);
+        Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+    }
+
+    [Fact]
+    public async Task APostSwitchCheckWaitsForAnOverlappingOperationInsteadOfBeingDropped()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.BeforeCatalog = async ct => { entered.TrySetResult(); await finish.Task.WaitAsync(ct); };
+        var automatic = service.CheckAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var postSwitch = service.CheckAsync();
+        try { Assert.False(postSwitch.IsCompleted); }
+        finally { finish.TrySetResult(); }
+        await Task.WhenAll(automatic, postSwitch).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Null(service.State.Error);
+        Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+        Assert.Equal(4, wire.Requests.Count);
+    }
+
+    [Fact]
     public async Task CatalogPaginationAndPrecedenceDoNotDependOnPublicationOrder()
     {
         using var wire = new Wire { Catalog = [Release("1.2.518-beta.2")], SecondPage = [Release("1.2.518-beta.12")] };
@@ -348,6 +381,7 @@ public sealed class UpdateChannelTests : IDisposable
         var second = service.SetChannelAsync(AppUpdateChannel.Beta);
         finish.TrySetResult(); await Task.WhenAll(check, first, second).WaitAsync(TimeSpan.FromSeconds(10));
         Assert.Equal(AppUpdateChannel.Beta, service.Channel); Assert.False(service.IsChangingChannel); Assert.Null(service.State.Release);
+        Assert.Contains("has not been checked", service.State.Error!);
         wire.BeforeCatalog = null; await service.CheckAsync();
         Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
     }

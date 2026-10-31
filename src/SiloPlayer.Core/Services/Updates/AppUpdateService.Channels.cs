@@ -16,6 +16,8 @@ public sealed partial class AppUpdateService
     public bool IsChangingChannel => Volatile.Read(ref _changingChannel) != 0;
     public string InstalledDisplayVersion => InstalledReleaseVersion?.Text ?? currentVersion.ToString(currentVersion.Revision > 0 ? 4 : 3);
 
+    private static AppUpdateState UncheckedChannelState() => new(Error: "The selected update channel has not been checked yet. Check for updates.");
+
     public async Task SetChannelAsync(AppUpdateChannel channel, CancellationToken ct = default)
     {
         channel = Enum.IsDefined(channel) ? channel : AppUpdateChannel.Stable;
@@ -27,7 +29,7 @@ public sealed partial class AppUpdateService
             Volatile.Write(ref _channel, (int)channel);
             Volatile.Write(ref _changingChannel, 1);
             // Withdraw consent/authority immediately, before waiting out old IO.
-            Volatile.Write(ref _state, new AppUpdateState());
+            Volatile.Write(ref _state, UncheckedChannelState());
         }
         NotifyChanged(State);
         var entered = false;
@@ -38,7 +40,7 @@ public sealed partial class AppUpdateService
             if (epoch != Volatile.Read(ref _channelEpoch)) return;
             _lastCheck = null; // A validator belongs only to its old endpoint/representation.
             Interlocked.Exchange(ref _lastSuccessfulCheckStamp, 0);
-            SetState(new AppUpdateState(), expectedChannelEpoch: epoch);
+            SetState(UncheckedChannelState(), expectedChannelEpoch: epoch);
         }
         finally
         {

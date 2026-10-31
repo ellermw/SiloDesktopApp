@@ -31,6 +31,18 @@ public sealed class BetaUpdateProtocolTests : IDisposable
     }
 
     [Theory]
+    [InlineData("1.2.517.1")]
+    [InlineData("1.2.517.12")]
+    [InlineData("1.2.517.65534")]
+    public async Task NumericOnlyBuilderRejectsReservedBetaRevisionsBeforeCreatingOutput(string numeric)
+    {
+        var output = Path.Combine(sandbox, "rejected-assets");
+        await Assert.ThrowsAsync<InvalidDataException>(() => UpdatePackBuilder.BuildAsync(
+            Path.Combine(sandbox, "absent-payload"), null, output, Version.Parse(numeric)));
+        Assert.False(Directory.Exists(output));
+    }
+
+    [Theory]
     [InlineData("1.2.518-beta.2")]
     [InlineData("1.2.518")]
     [InlineData("v1.2.518-beta.12")]
@@ -241,7 +253,7 @@ public sealed class BetaUpdateProtocolTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(client, "data.bin"), "unchanged common payload");
         await File.WriteAllTextAsync(Path.Combine(Root, "SiloPlayer.Launcher.dll"), "immutable synthetic Protocol1 bootstrap");
         await File.WriteAllTextAsync(Path.Combine(sandbox, "synthetic-user-settings.json"), "synthetic profile=viewer; subtitle=Spanish; volume=42");
-        var baseline = await UpdatePackBuilder.BuildAsync(client, null, Path.Combine(sandbox, "baseline-pack"), numeric);
+        var baseline = await UpdatePackBuilder.BuildAsync(client, null, Path.Combine(sandbox, "baseline-pack"), ReleaseVersion.Parse(installed));
         SideBySideInstallation.Initialize(Root, baseline);
         var fresh = Path.Combine(sandbox, "new-client"); Directory.CreateDirectory(fresh);
         foreach (var file in Directory.EnumerateFiles(client).Where(f => !Path.GetFileName(f).StartsWith('.'))) File.Copy(file, Path.Combine(fresh, Path.GetFileName(file)));

@@ -71,8 +71,14 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
 
     public async Task CheckAsync(CancellationToken ct = default)
     {
-        if (!await _operation.WaitAsync(0, ct).ConfigureAwait(false)) return;
         var epoch = Volatile.Read(ref _channelEpoch);
+        // A post-switch/manual check must not be silently dropped behind other IO.
+        if (!await _operation.WaitAsync(TimeSpan.FromSeconds(12), ct).ConfigureAwait(false))
+        {
+            SetState(State with { Error = "The update check could not start because another update operation is still running. Try again." }, expectedChannelEpoch: epoch);
+            return;
+        }
+        epoch = Volatile.Read(ref _channelEpoch);
         try
         {
             if (IsChangingChannel) return;
@@ -110,7 +116,7 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            SetState(State with { IsChecking = false }, expectedChannelEpoch: epoch);
+            SetState(State with { IsChecking = false, Error = "The update check was canceled. Try again." }, expectedChannelEpoch: epoch);
         }
         catch (Exception ex)
         {

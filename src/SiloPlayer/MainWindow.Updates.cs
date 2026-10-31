@@ -352,18 +352,22 @@ public sealed partial class MainWindow
             AppUpdateDownloader.EnsureOrdinaryPath(path);
             if (!File.Exists(path) || new FileInfo(path).Length > 65536) return;
             using var json = JsonDocument.Parse(File.ReadAllText(path));
+            // Consume once before interpreting identity or presenting feedback.
+            File.Delete(path);
             var state = json.RootElement.GetProperty("state").GetString();
             var message = json.RootElement.GetProperty("message").GetString() ?? "Open update details to try again.";
             if (state == "installed")
             {
-                var installed = ReleaseVersion.FromAssembly(typeof(App).Assembly);
-                if (!json.RootElement.TryGetProperty("version", out var resultVersion)
-                    || !Version.TryParse(resultVersion.GetString(), out var numeric) || numeric != installed.GetWindowsVersion())
-                    throw new InvalidDataException("The full-update result does not match the installed release.");
-                App.Services.GetRequiredService<ToastService>().Success("Silo was updated successfully to " + installed.Text + (installed.IsPrerelease ? " (Beta)" : "") + ".");
+                ReleaseVersion? installed = null;
+                try { installed = ReleaseVersion.FromAssembly(typeof(App).Assembly); }
+                catch (InvalidDataException ex) { LocalLog.AppendException("updates.txt", ex, "update_result_identity"); }
+                if (installed is not null && json.RootElement.TryGetProperty("version", out var resultVersion)
+                    && resultVersion.ValueKind == JsonValueKind.String
+                    && Version.TryParse(resultVersion.GetString(), out var numeric) && numeric == installed.GetWindowsVersion())
+                    App.Services.GetRequiredService<ToastService>().Success("Silo was updated successfully to " + installed.Text + (installed.IsPrerelease ? " (Beta)" : "") + ".");
+                else App.Services.GetRequiredService<ToastService>().Warning("Previous update: " + message);
             }
             else App.Services.GetRequiredService<ToastService>().Warning("Previous update: " + message);
-            File.Delete(path);
         }
         catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "read_update_result"); }
     }

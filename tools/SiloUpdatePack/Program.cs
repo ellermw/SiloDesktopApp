@@ -13,6 +13,7 @@ try
         !options.TryGetValue("--version", out var value) || !Version.TryParse(value, out var version) || version.Revision < 0 || version.ToString(4) != value)
         throw new ArgumentException("Expected --client PATH [--bootstrap PATH] --output FRESH_DIR --version 1.2.N.0.");
     var semantic = options.TryGetValue("--release-version", out var text) ? ReleaseVersion.Parse(text) : null;
+    if (semantic is null && version.Revision != 0) throw new InvalidDataException("A nonzero revision requires --release-version with the matching beta identity.");
     if (semantic is not null && semantic.GetWindowsVersion() != version) throw new InvalidDataException("Semantic and numeric package versions disagree.");
     var manifest = semantic is null
         ? await UpdatePackBuilder.BuildAsync(client, options.GetValueOrDefault("--bootstrap"), output, version)

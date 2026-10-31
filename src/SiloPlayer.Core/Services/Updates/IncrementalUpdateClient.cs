@@ -16,7 +16,9 @@ public sealed class IncrementalUpdateClient(HttpClient http, string cacheDirecto
         var identity = release.Incremental!.ManifestSha256.ToLowerInvariant();
         var folder = Path.Combine(Path.GetFullPath(cacheDirectory), "incremental-" + identity);
         UpdateManifestValidation.EnsureOrdinaryPath(folder);
+        CleanupCache(cacheDirectory, identity, log);
         Directory.CreateDirectory(folder);
+        Directory.SetLastWriteTimeUtc(folder, DateTime.UtcNow);
         // Cache identity is in the directory name, so partial objects cannot be adopted across manifests.
         var prepared = Path.Combine(folder, "prepared"); var objects = Path.Combine(folder, "objects");
         foreach (var directory in new[] { prepared, objects })
@@ -83,6 +85,48 @@ public sealed class IncrementalUpdateClient(HttpClient http, string cacheDirecto
         if (!await VerifyPreparedAsync(package, ct).ConfigureAwait(false)) throw new InvalidDataException("The prepared update could not be verified.");
         log?.Invoke($"incremental_verified version={manifest.Version} downloaded_bytes={networkBytes} files={completed}");
         return package;
+    }
+
+    // Keep at most two manifest caches, including the one being prepared/offered.
+    // Run under the service's operation gate so eviction cannot race its downloads.
+    internal static void CleanupCache(string cacheDirectory, string? retainedIdentity, Action<string>? log)
+    {
+        try
+        {
+            var root = Path.GetFullPath(cacheDirectory);
+            UpdateManifestValidation.EnsureOrdinaryPath(root);
+            if (!Directory.Exists(root)) return;
+            var retainedName = retainedIdentity is null ? null : "incremental-" + retainedIdentity;
+            var candidates = Directory.EnumerateDirectories(root)
+                .Where(path => Path.GetFileName(path) is var name && name.StartsWith("incremental-", StringComparison.Ordinal)
+                    && UpdateManifestValidation.IsHash(name["incremental-".Length..]))
+                .OrderByDescending(Directory.GetLastWriteTimeUtc).ToArray();
+            var keep = retainedName is null ? 2 : 1;
+            foreach (var folder in candidates)
+            {
+                if (Path.GetFileName(folder).Equals(retainedName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (keep-- > 0) continue;
+                try
+                {
+                    // Refuse linked trees, including links nested below prepared/objects.
+                    var pending = new Stack<string>(); pending.Push(folder);
+                    var entries = 0;
+                    while (pending.TryPop(out var directory))
+                    {
+                        UpdateManifestValidation.EnsureOrdinaryPath(directory);
+                        foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
+                        {
+                            if (++entries > 16384) throw new InvalidDataException("Too many cache entries to clean safely.");
+                            UpdateManifestValidation.EnsureOrdinaryPath(entry);
+                            if (Directory.Exists(entry)) pending.Push(entry);
+                        }
+                    }
+                    Directory.Delete(folder, recursive: true);
+                }
+                catch (Exception ex) { log?.Invoke("incremental_cache_cleanup_deferred kind=" + ex.GetType().Name); }
+            }
+        }
+        catch (Exception ex) { log?.Invoke("incremental_cache_cleanup_failed kind=" + ex.GetType().Name); }
     }
 
     public async Task<bool> VerifyPreparedAsync(PreparedUpdatePackage package, CancellationToken ct)

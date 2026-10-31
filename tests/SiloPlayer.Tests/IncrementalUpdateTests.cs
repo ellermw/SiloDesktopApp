@@ -106,6 +106,50 @@ public sealed class IncrementalUpdateTests
         Assert.False(await client.VerifyPreparedAsync(result, default));
     }
 
+    [Fact]
+    public async Task PreparationEvictsOldManifestsButRetainsTheCurrentCacheAndOneRecentCache()
+    {
+        using var fixture = new Fixture(); using var http = new HttpClient(fixture);
+        var cache = fixture.Tree.Path("cache");
+        var current = Path.Combine(cache, "incremental-" + fixture.Release.Incremental!.ManifestSha256.ToLowerInvariant());
+        var old = Path.Combine(cache, "incremental-" + new string('b', 64));
+        var recent = Path.Combine(cache, "incremental-" + new string('c', 64));
+        var unrelated = Path.Combine(cache, "incremental-not-a-manifest");
+        foreach (var folder in new[] { current, old, recent, unrelated })
+        {
+            Directory.CreateDirectory(Path.Combine(folder, "prepared", "client"));
+            File.WriteAllText(Path.Combine(folder, "prepared", "client", "payload.bin"), "cached payload");
+        }
+        Directory.SetLastWriteTimeUtc(current, DateTime.UtcNow.AddDays(-3));
+        Directory.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddDays(-2));
+        Directory.SetLastWriteTimeUtc(recent, DateTime.UtcNow.AddDays(-1));
+        var client = new IncrementalUpdateClient(http, cache, fixture.Tree.Path("absent"));
+        var prepared = await client.PrepareAsync(fixture.Release, _ => { }, default);
+        Assert.False(Directory.Exists(old)); Assert.True(Directory.Exists(recent));
+        Assert.True(Directory.Exists(unrelated)); Assert.True(Directory.Exists(current));
+        Assert.True(await client.VerifyPreparedAsync(prepared, default));
+        fixture.Ranges.Clear();
+        await client.PrepareAsync(fixture.Release, _ => { }, default);
+        Assert.Empty(fixture.Ranges);
+    }
+
+    [Fact]
+    public void StartupCleanupKeepsOnlyTheTwoMostRecentIncrementalCaches()
+    {
+        using var tree = new Tree(); using var http = new HttpClient();
+        var cache = tree.Path("cache");
+        var folders = Enumerable.Range(0, 4).Select(i => Path.Combine(cache, "incremental-" + i.ToString("x64"))).ToArray();
+        for (var i = 0; i < folders.Length; i++)
+        {
+            Directory.CreateDirectory(Path.Combine(folders[i], "objects"));
+            File.WriteAllText(Path.Combine(folders[i], "objects", "cached.object"), "cached bytes");
+            Directory.SetLastWriteTimeUtc(folders[i], DateTime.UtcNow.AddDays(i - 4));
+        }
+        new AppUpdateService(http, cache, new Version(1, 2, 465, 0)).CleanupInstalledPackages();
+        Assert.False(Directory.Exists(folders[0])); Assert.False(Directory.Exists(folders[1]));
+        Assert.True(Directory.Exists(folders[2])); Assert.True(Directory.Exists(folders[3]));
+    }
+
     [Theory]
     [InlineData("wrong-range")]
     [InlineData("wrong-total")]

@@ -65,7 +65,21 @@ internal static class AppUpdateNativeFixture
                 ?? throw new InvalidOperationException("Success feedback is detached.");
             if (((Border)successToast).Opacity < .9) throw new InvalidOperationException("Success feedback remains transparent.");
             await CaptureAsync(root, "full-update-success.png");
-            Program.Log("PASS: full-update success uses the verified installed semantic identity/designation and is consumed once without setup.");
+            foreach (var recorded in new object?[] { null, "not-a-version", "0.0.0.0", 42 })
+            {
+                var message = "Synthetic unverified update result: " + (recorded?.ToString() ?? "missing version");
+                var feedback = new Dictionary<string, object?> { ["state"] = "installed", ["message"] = message };
+                if (recorded is not null) feedback["version"] = recorded;
+                await File.WriteAllTextAsync(result, JsonSerializer.Serialize(feedback));
+                read.Invoke(window, null);
+                var warning = "Previous update: " + message;
+                await Until(() => Descendants<TextBlock>(root).Any(x => x.Text == warning));
+                if (File.Exists(result)) throw new InvalidOperationException("Unverified full-update result was not consumed.");
+                read.Invoke(window, null);
+                if (Descendants<TextBlock>(root).Count(x => x.Text == warning) != 1)
+                    throw new InvalidOperationException("Unverified update feedback repeated.");
+            }
+            Program.Log("PASS: full-update success uses the verified installed semantic identity/designation; missing, malformed and mismatched result versions warn and are consumed once without setup.");
             return;
         }
         if (scenario == "channels")

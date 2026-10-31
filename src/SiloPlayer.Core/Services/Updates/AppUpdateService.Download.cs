@@ -12,10 +12,12 @@ public sealed partial class AppUpdateService
     public AppUpdateMode Mode { get; private set; }
     public void CleanupInstalledPackages()
     {
+        if (!_operation.Wait(0)) return;
         try
         {
             var root = Path.GetFullPath(cacheDirectory); AppUpdateDownloader.EnsureOrdinaryPath(root);
             if (!Directory.Exists(root)) return;
+            IncrementalUpdateClient.CleanupCache(root, State.Release?.Incremental?.ManifestSha256, log);
             foreach (var folder in Directory.EnumerateDirectories(root).Take(32))
             {
                 if (!Version.TryParse(Path.GetFileName(folder), out var version) || GitHubReleaseReader.Normalize(version) > GitHubReleaseReader.Normalize(currentVersion)) continue;
@@ -36,6 +38,7 @@ public sealed partial class AppUpdateService
             }
         }
         catch (Exception ex) { log?.Invoke("cache_cleanup_failed kind=" + ex.GetType().Name); }
+        finally { _operation.Release(); }
     }
 
     public void SetMode(AppUpdateMode mode)

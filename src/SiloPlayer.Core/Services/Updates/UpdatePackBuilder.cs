@@ -14,6 +14,8 @@ public static class UpdatePackBuilder
     private static async Task<UpdateManifest> BuildCoreAsync(string clientDirectory, string? bootstrapDirectory, string outputDirectory,
         Version version, string? releaseVersion, CancellationToken ct)
     {
+        if (releaseVersion is null && version.Revision > 0)
+            throw new InvalidDataException("A nonzero revision requires the semantic release identity.");
         var output = Path.GetFullPath(outputDirectory);
         UpdateManifestValidation.EnsureOrdinaryPath(output);
         if (Directory.Exists(output) || File.Exists(output)) throw new IOException("Pack output must be a fresh directory.");
