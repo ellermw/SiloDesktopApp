@@ -74,6 +74,44 @@ public sealed class BetaUpdateProtocolTests : IDisposable
         Assert.Equal(new[] { source.Numeric, expectedNumeric }.Order(), Directory.GetDirectories(Path.Combine(Root, "versions")).Select(Path.GetFileName).Order());
     }
 
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData("1.2.518", true)]
+    [InlineData("1.2.519", false)]
+    [InlineData("1.2.518-beta.1", false)]
+    public async Task LegacyFourPartStableTagAcceptsOnlyNumericallyMatchingManifestIdentity(string? identity, bool accepted)
+    {
+        var source = await ArrangeAsync("1.2.517", "1.2.518");
+        var path = Path.Combine(source.Assets, UpdateManifestValidation.ManifestName);
+        var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
+        if (identity is null) json.AsObject().Remove("ReleaseVersion");
+        else json["ReleaseVersion"] = identity;
+        await File.WriteAllTextAsync(path, json.ToJsonString());
+        using var wire = new Assets("1.2.518.0", source.Assets);
+        using var http = new HttpClient(wire);
+        var service = await CreateAsync(http, "1.2.517", "1.2.518.0", source.Client);
+        await service.CheckAsync();
+        Assert.Equal("v1.2.518.0", service.State.Release?.Tag);
+        await service.DownloadAsync();
+        if (accepted)
+        {
+            Assert.Null(service.State.Error);
+            var package = Assert.IsType<PreparedUpdatePackage>(service.State.PreparedPackage);
+            Assert.Equal("1.2.518.0", package.Manifest.Version);
+            Assert.Equal(identity, package.Manifest.ReleaseVersion);
+            Assert.True(await service.ReverifyReadyAsync());
+            var authority = await new IncrementalReleaseAuthority(http).FetchAsync("v1.2.518.0", Path.Combine(sandbox, "authority"), default);
+            Assert.Equal(identity, authority.Manifest.ReleaseVersion);
+        }
+        else
+        {
+            Assert.NotNull(service.State.Error);
+            Assert.Null(service.State.PreparedPackage);
+        }
+        Assert.Null(service.State.ReadyInstaller);
+        Assert.Equal(0, wire.FullInstallerRequests);
+    }
+
     [Fact]
     public async Task PrivilegedAuthorityIndependentlyRechecksThePublishedBetaTagAndManifest()
     {

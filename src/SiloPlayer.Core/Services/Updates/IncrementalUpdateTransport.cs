@@ -72,8 +72,10 @@ internal static class IncrementalUpdateTransport
         var manifest = UpdateManifestValidation.Parse(bytes, compatibilityProbe: true);
         if (manifest.Version != GitHubReleaseReader.Normalize(release.Version).ToString(4) || manifest.PackSize != assets.PackSize ||
             !manifest.PackSha256.Equals(assets.PackSha256, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Manifest release/pack identity mismatch.");
+        // Parse already binds any manifest ReleaseVersion to its numeric Version.
+        // Legacy four-part stable tags have only that numeric identity to compare.
         if ((semantic?.IsPrerelease == true && manifest.ReleaseVersion is null)
-            || (manifest.ReleaseVersion is not null && manifest.ReleaseVersion != semantic?.Text))
+            || (semantic is not null && manifest.ReleaseVersion is not null && manifest.ReleaseVersion != semantic.Text))
             throw new InvalidDataException("Manifest semantic release identity mismatch.");
         if (manifest.Schema != 1 || manifest.BootstrapProtocol != 1 || !manifest.BackwardCompatibleData)
             throw new UpdateMigrationRequiredException();
