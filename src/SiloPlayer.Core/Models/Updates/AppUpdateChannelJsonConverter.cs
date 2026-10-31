@@ -6,6 +6,9 @@ namespace SiloPlayer.Core.Models.Updates;
 /// <summary>An unknown channel must not quarantine unrelated profile/playback preferences.</summary>
 public sealed class AppUpdateChannelJsonConverter : JsonConverter<AppUpdateChannel>
 {
+    // Receive JSON null too; the serializer otherwise rejects it for a value type.
+    public override bool HandleNull => true;
+
     public override AppUpdateChannel Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
     {
         if (reader.TokenType == JsonTokenType.Number && reader.TryGetInt32(out var number) && Enum.IsDefined(typeof(AppUpdateChannel), number))

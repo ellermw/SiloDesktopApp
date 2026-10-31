@@ -220,6 +220,18 @@ public partial class App : Application
         _uiLagTimer.Start();
     }
 
+    // A stamp mismatch disables semantic channel identity; it must not fail
+    // service resolution (and with it MainWindow construction) at startup.
+    private static SiloPlayer.Core.Models.Updates.ReleaseVersion? ReadInstalledReleaseVersion()
+    {
+        try { return SiloPlayer.Core.Models.Updates.ReleaseVersion.FromAssembly(typeof(App).Assembly); }
+        catch (InvalidDataException ex)
+        {
+            LocalLog.AppendLine("updates.txt", "installed_identity_invalid " + ex.Message);
+            return null;
+        }
+    }
+
     private static IServiceProvider ConfigureServices()
     {
         var services = new ServiceCollection();
@@ -239,7 +251,7 @@ public partial class App : Application
             Path.Combine(appDataDir, "updates"), typeof(App).Assembly.GetName().Version!,
             message => LocalLog.AppendLine("updates.txt", message))
             {Channel=provider.GetRequiredService<SettingsService>().Load().UpdateChannel,
-                InstalledReleaseVersion=SiloPlayer.Core.Models.Updates.ReleaseVersion.FromAssembly(typeof(App).Assembly),
+                InstalledReleaseVersion=ReadInstalledReleaseVersion(),
                 PreferIncrementalUpdates=UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!) is { } updateRoot && SideBySideInstallation.ReadState(updateRoot) is not null,
                 InstalledPayloadDirectory=AppContext.BaseDirectory,InstallationRoot=UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!)});
         services.AddSingleton<IAppUpdateInstaller>(new WindowsAppUpdateInstaller(Path.Combine(appDataDir, "updates")));

@@ -52,14 +52,20 @@ internal sealed partial class GitHubReleaseReader
                 throw new InvalidDataException("Invalid release catalog.");
             foreach (var entry in document.RootElement.EnumerateArray())
             {
-                if (entry.GetProperty("draft").GetBoolean() || !entry.GetProperty("prerelease").GetBoolean()) continue;
-                var tag = entry.GetProperty("tag_name").GetString() ?? "";
+                if (entry.ValueKind != JsonValueKind.Object
+                    || !entry.TryGetProperty("draft", out var draft) || draft.ValueKind != JsonValueKind.False
+                    || !entry.TryGetProperty("prerelease", out var prerelease) || prerelease.ValueKind != JsonValueKind.True
+                    || !entry.TryGetProperty("tag_name", out var tagName) || tagName.ValueKind != JsonValueKind.String) continue;
+                var tag = tagName.GetString() ?? "";
                 if (!TryReleaseIdentity(tag, true, out var numeric, out var semantic) || semantic is null
                     || semantic.Major != current.Major || semantic.CompareTo(current) <= 0 || numeric <= Normalize(installed)) continue;
                 if (best is not null && semantic.CompareTo(best.SemanticVersion ?? ReleaseVersion.Parse($"{best.Version.Major}.{best.Version.Minor}.{best.Version.Build}")) <= 0) continue;
                 // Validate the actual selected release, including the mandatory
-                // installer and all authority bounds. Invalid new assets fail closed.
-                best = Parse(Encoding.UTF8.GetBytes(entry.GetRawText()), installed, allowPrerelease: true);
+                // installer and all authority bounds. Invalid new assets fail closed
+                // for that release only: it is ineligible, and the already-validated
+                // Stable or a lower valid Beta remains the offer.
+                try { best = Parse(Encoding.UTF8.GetBytes(entry.GetRawText()), installed, allowPrerelease: true) ?? best; }
+                catch (Exception ex) when (ex is InvalidDataException or KeyNotFoundException or InvalidOperationException or FormatException) { }
             }
             if (!catalog.HasNext) return new(best, null) { Channel = AppUpdateChannel.Beta, Stable = stable, Pages = pages };
         }

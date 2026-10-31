@@ -34,10 +34,12 @@ public sealed partial class SettingsPage
         _syncingUpdateSettings = true;
         try { AppUpdateSettingsModeCombo.SelectedIndex = (int)_settingsUpdates.Mode; AppUpdateSettingsChannelCombo.SelectedIndex = (int)_settingsUpdates.Channel; }
         finally { _syncingUpdateSettings = false; }
-        var installed = _settingsUpdates.InstalledReleaseVersion ?? ReleaseVersion.FromAssembly(typeof(App).Assembly);
-        AppUpdateInstalledVersionText.Text = $"Installed version {installed.Text} · {installed.Designation}";
+        // A missing/inconsistent stamped identity leaves only the numeric version.
+        var installed = _settingsUpdates.InstalledReleaseVersion;
+        AppUpdateInstalledVersionText.Text = installed is null ? $"Installed version {_settingsUpdates.InstalledDisplayVersion}"
+            : $"Installed version {installed.Text} · {installed.Designation}";
         AppUpdateSettingsChannelCombo.IsEnabled = !_settingsUpdates.IsChangingChannel;
-        AppUpdateSettingsBetaWarning.Visibility = _settingsUpdates.Channel == AppUpdateChannel.Beta || installed.IsPrerelease ? Visibility.Visible : Visibility.Collapsed;
+        AppUpdateSettingsBetaWarning.Visibility = _settingsUpdates.Channel == AppUpdateChannel.Beta || installed?.IsPrerelease == true ? Visibility.Visible : Visibility.Collapsed;
         var state = _settingsUpdates.State;
         AppUpdateSettingsStatus.Text = state.Error ?? (_settingsUpdates.IsChangingChannel ? "Switching update channel…" : state.IsChecking ? "Checking for updates…" : state.IsDownloading ? "Downloading update in the background…"
             : state.Release is null ? state.ChannelNotice ?? "No newer release is currently available."

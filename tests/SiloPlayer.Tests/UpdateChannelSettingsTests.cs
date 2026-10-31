@@ -41,7 +41,7 @@ public sealed class UpdateChannelSettingsTests : IDisposable
     {
         await WriteExistingAsync(JsonNode.Parse(value), true); var loaded = new SettingsService(root).Load();
         Assert.Equal(AppUpdateChannel.Stable, loaded.UpdateChannel); AssertPreserved(loaded);
-        Assert.Empty(Directory.EnumerateFiles(root, "settings.corrupt*"));
+        Assert.Empty(Directory.EnumerateFiles(root, "settings*.corrupt*"));
     }
 
     [Fact]

@@ -125,8 +125,9 @@ public sealed partial class MainWindow
         var state = _appUpdates.State;
         var panel = new StackPanel { Spacing = 14, MinWidth = 0, MaxWidth = 640 };
         _updateBodyPanel = panel;
-        var installed = _appUpdates.InstalledReleaseVersion ?? ReleaseVersion.FromAssembly(typeof(App).Assembly);
-        var versions = new TextBlock { Text = $"Installed version {installed.Text} · {installed.Designation}", FontSize = 13, TextWrapping = TextWrapping.Wrap };
+        var installed = _appUpdates.InstalledReleaseVersion;
+        var versions = new TextBlock { Text = installed is null ? $"Installed version {_appUpdates.InstalledDisplayVersion}"
+            : $"Installed version {installed.Text} · {installed.Designation}", FontSize = 13, TextWrapping = TextWrapping.Wrap };
         panel.Children.Add(versions);
         panel.Children.Add(new TextBlock { Name = "AppUpdatePublishedDate", Text = state.Release is null ? "" : "Published " + Helpers.DateTimeDisplay.FormatDate(state.Release.PublishedAt), FontSize = 12 });
         _updateStatusText = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = UpdateGreen, FontSize = 14 };

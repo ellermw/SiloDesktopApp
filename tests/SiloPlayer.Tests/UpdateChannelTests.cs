@@ -99,15 +99,53 @@ public sealed class UpdateChannelTests : IDisposable
     [InlineData("url")]
     [InlineData("digest")]
     [InlineData("duplicate")]
+    [InlineData("pending")]
+    [InlineData("missing")]
     public async Task ManipulatedChosenBetaAssetsFailAuthorityValidation(string kind)
     {
-        var item = Release("1.2.518-beta.12"); var asset = item["assets"]![0]!;
+        var item = ManipulatedBeta("1.2.518-beta.12", kind);
+        using var wire = new Wire { Catalog = [item] }; using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        // The invalid release is ineligible; it is never offered and cannot deny the channel.
+        Assert.Null(service.State.Release); Assert.Null(service.State.Error);
+    }
+
+    [Theory]
+    [InlineData("url")]
+    [InlineData("digest")]
+    [InlineData("duplicate")]
+    [InlineData("pending")]
+    [InlineData("missing")]
+    public async Task AnInvalidNewerBetaDoesNotHideTheValidatedStableOrALowerValidBeta(string kind)
+    {
+        using var wire = new Wire { Stable = Release("1.2.518"), Catalog = [ManipulatedBeta("1.2.519-beta.2", kind), Release("1.2.519-beta.1")] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal("1.2.519-beta.1", service.State.Release?.DisplayVersion);
+        wire.Catalog = [ManipulatedBeta("1.2.519-beta.2", kind)]; await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal("1.2.518", service.State.Release?.DisplayVersion);
+    }
+
+    [Fact]
+    public async Task CatalogEntriesMissingFlagsOrTagAreSkipped()
+    {
+        var noDraft = Release("1.2.519-beta.1"); noDraft.Remove("draft");
+        var noTag = Release("1.2.519-beta.2"); noTag.Remove("tag_name");
+        using var wire = new Wire { Stable = Release("1.2.518"), Catalog = [noDraft, noTag] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal("1.2.518", service.State.Release?.DisplayVersion);
+    }
+
+    private static JsonObject ManipulatedBeta(string version, string kind)
+    {
+        var item = Release(version); var asset = item["assets"]![0]!;
         if (kind == "url") asset["browser_download_url"] = "https://evil.invalid/setup.exe";
         if (kind == "digest") asset["digest"] = "sha256:invalid";
         if (kind == "duplicate") item["assets"]!.AsArray().Add(asset.DeepClone());
-        using var wire = new Wire { Catalog = [item] }; using var http = new HttpClient(wire); var service = Create(http);
-        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
-        Assert.Null(service.State.Release); Assert.NotNull(service.State.Error);
+        if (kind == "pending") asset["state"] = "starter";
+        if (kind == "missing") item["assets"] = new JsonArray();
+        return item;
     }
 
     [Theory]
