@@ -417,6 +417,21 @@ if ($LASTEXITCODE -ne 0) {
 # Read only this invocation's expected file, never an older successful build.
 $SetupExe = Get-Item -LiteralPath $ExpectedSetup -ErrorAction SilentlyContinue
 if ($SetupExe) {
+    # Verify the compiled /D identity, not just the source-script defaults, before
+    # creating the public installer alias or recording a successful build.
+    $ManifestPath=Join-Path $UpdateAssetDir 'SiloUpdate-Windows-x64.manifest.json'
+    $BuiltManifest=Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+    $InitialManifest=Get-Content -LiteralPath (Join-Path $ControlDirectory 'initial.manifest.json') -Raw | ConvertFrom-Json
+    $SetupVersionInfo=[Diagnostics.FileVersionInfo]::GetVersionInfo($SetupExe.FullName)
+    $SetupFileVersion='{0}.{1}.{2}.{3}' -f $SetupVersionInfo.FileMajorPart,$SetupVersionInfo.FileMinorPart,$SetupVersionInfo.FileBuildPart,$SetupVersionInfo.FilePrivatePart
+    $SetupProductVersion='{0}.{1}.{2}.{3}' -f $SetupVersionInfo.ProductMajorPart,$SetupVersionInfo.ProductMinorPart,$SetupVersionInfo.ProductBuildPart,$SetupVersionInfo.ProductPrivatePart
+    $PayloadVersions=@(Get-ChildItem -LiteralPath (Join-Path $PublishRoot 'versions') -Directory -Force)
+    if ($BuiltManifest.Version -cne $FourPartVersion -or $InitialManifest.Version -cne $FourPartVersion -or
+        $SetupFileVersion -cne $FourPartVersion -or $SetupProductVersion -cne $FourPartVersion -or
+        $PayloadVersions.Count -ne 1 -or $PayloadVersions[0].Name -cne $FourPartVersion -or
+        -not (Test-Path -LiteralPath (Join-Path $PayloadVersions[0].FullName 'SiloPlayer.exe') -PathType Leaf)) {
+        throw 'The compiled installer, manifests and version-local payload must share the mapped numeric version.'
+    }
     if ($SigningCertificate) {
         $setupSignature = Get-AuthenticodeSignature -LiteralPath $SetupExe.FullName
         if ($setupSignature.Status -ne [System.Management.Automation.SignatureStatus]::Valid -or
