@@ -21,7 +21,9 @@ public sealed partial class MainWindow
     private TextBlock? _updateStatusText;
     private ProgressBar? _updateProgress;
     private ComboBox? _updateModeCombo;
-    private bool _refreshingUpdateMode;
+    private ComboBox? _updateChannelCombo;
+    private TextBlock? _updateBetaWarning, _updateFullInstallerNote, _updateKeepOpenNote;
+    private bool _refreshingUpdatePreferences;
     private bool _manualUpdateRequested;
     private bool _updateSessionEnding;
     private bool _updateCloseGuardAvailable;
@@ -100,7 +102,7 @@ public sealed partial class MainWindow
             if (_announcedUpdate != key)
             {
                 _announcedUpdate = key;
-                App.Services.GetRequiredService<ToastService>().Success($"Silo {state.Release.Version.ToString(3)} is available.",
+                App.Services.GetRequiredService<ToastService>().Success($"Silo {state.Release.DisplayVersion}{(state.Release.IsBeta ? " (Beta)" : "")} is available.",
                     "View update", () => ShowAppUpdateDialogAsync());
             }
         }
@@ -123,7 +125,8 @@ public sealed partial class MainWindow
         var state = _appUpdates.State;
         var panel = new StackPanel { Spacing = 14, MinWidth = 0, MaxWidth = 640 };
         _updateBodyPanel = panel;
-        var versions = new TextBlock { Text = "Installed version " + typeof(App).Assembly.GetName().Version!.ToString(3), FontSize = 13, TextWrapping = TextWrapping.Wrap };
+        var installed = _appUpdates.InstalledReleaseVersion ?? ReleaseVersion.FromAssembly(typeof(App).Assembly);
+        var versions = new TextBlock { Text = $"Installed version {installed.Text} · {installed.Designation}", FontSize = 13, TextWrapping = TextWrapping.Wrap };
         panel.Children.Add(versions);
         panel.Children.Add(new TextBlock { Name = "AppUpdatePublishedDate", Text = state.Release is null ? "" : "Published " + Helpers.DateTimeDisplay.FormatDate(state.Release.PublishedAt), FontSize = 12 });
         _updateStatusText = new TextBlock { TextWrapping = TextWrapping.Wrap, Foreground = UpdateGreen, FontSize = 14 };
@@ -143,15 +146,34 @@ public sealed partial class MainWindow
         _updateModeCombo.SelectedIndex = (int)_appUpdates.Mode;
         _updateModeCombo.SelectionChanged += (_, _) =>
         {
-            if (_refreshingUpdateMode || _updateModeCombo.SelectedIndex < 0) return;
+            if (_refreshingUpdatePreferences || _updateModeCombo.SelectedIndex < 0) return;
             var mode = (AppUpdateMode)_updateModeCombo.SelectedIndex;
             var preferences = App.Services.GetRequiredService<SettingsService>(); var config = preferences.Load(); config.UpdateMode = mode; preferences.Save(config);
             _appUpdates.SetMode(mode);
         };
         panel.Children.Add(_updateModeCombo);
+        var updateService = _appUpdates;
+        var channelCombo = new ComboBox { Name = "AppUpdateChannelCombo", Header = "Update channel", HorizontalAlignment = HorizontalAlignment.Stretch };
+        channelCombo.Items.Add("Stable (default)"); channelCombo.Items.Add("Beta"); channelCombo.SelectedIndex = (int)updateService.Channel;
+        _updateChannelCombo = channelCombo;
+        AutomationProperties.SetName(channelCombo, "Desktop update channel");
+        channelCombo.SelectionChanged += async (_, _) =>
+        {
+            if (_refreshingUpdatePreferences || channelCombo.SelectedIndex < 0 || _updateDialogBusy) return;
+            var channel = (AppUpdateChannel)channelCombo.SelectedIndex;
+            var preferences = App.Services.GetRequiredService<SettingsService>(); var config = preferences.Load(); config.UpdateChannel = channel; preferences.Save(config);
+            try { await updateService.SetChannelAsync(channel, _appUpdateLifetime!.Token); await updateService.CheckAsync(_appUpdateLifetime.Token); }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "dialog_update_channel"); }
+        };
+        panel.Children.Add(channelCombo);
+        _updateBetaWarning = new TextBlock { Name = "AppUpdateBetaWarning", Text = "Beta releases may contain bugs. Choose Stable for regular approved updates.",
+            FontSize = 12, TextWrapping = TextWrapping.Wrap, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] };
+        panel.Children.Add(_updateBetaWarning);
         panel.Children.Add(new TextBlock { Text = "Both modes notify you and let you update manually. Automatic downloads pause for playback and install only after normal app exit. Windows may request administrator approval.",
             TextWrapping = TextWrapping.Wrap, FontSize = 12, Foreground = (Brush)Application.Current.Resources["SecondaryTextBrush"] });
-        panel.Children.Add(new TextBlock { Text = "Silo stays open while the update is prepared and installed. Playback is saved before the final restart.", TextWrapping = TextWrapping.Wrap, FontSize = 12 });
+        _updateKeepOpenNote = new TextBlock { Text = "Silo stays open while a compatible update is prepared and installed. Playback is saved before the final restart.", TextWrapping = TextWrapping.Wrap, FontSize = 12 };
+        panel.Children.Add(_updateKeepOpenNote);
         var check = new Button { Name = "AppUpdateCheckButton", Content = "Check for updates", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 14, 0, 0) };
         check.Click += async (_, _) => { await _appUpdates.CheckAsync(_appUpdateLifetime!.Token); RefreshUpdateDialog(); };
         var scroll = new ScrollViewer { Name = "AppUpdateBodyScroll", Content = panel, MinWidth = 0, MinHeight = 0,
@@ -160,7 +182,10 @@ public sealed partial class MainWindow
         var content = new Grid { Name = "AppUpdateDialogLayout", MinWidth = 0, MaxWidth = 640 };
         content.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        content.Children.Add(scroll); Grid.SetRow(check, 1); content.Children.Add(check);
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        _updateFullInstallerNote = new TextBlock { Name = "AppUpdateFullInstallerNote", Text = "This update needs the full installer. Silo must close first; playback will be saved. Choose Install full update to continue.",
+            TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 14, 0, 0), Visibility = Visibility.Collapsed };
+        content.Children.Add(scroll); Grid.SetRow(_updateFullInstallerNote, 1); content.Children.Add(_updateFullInstallerNote); Grid.SetRow(check, 2); content.Children.Add(check);
         var dialog = new ContentDialog { Title = "Silo updates", XamlRoot = RootGrid.XamlRoot, Content = content,
             CloseButtonText = "Later", PrimaryButtonText = "Update now", DefaultButton = ContentDialogButton.Close, MinWidth = 0 };
         // The outer dialog covers the complete XamlRoot. Constraining its width
@@ -188,6 +213,7 @@ public sealed partial class MainWindow
             RootGrid.SizeChanged -= resized;
             if (!_manualUpdateRequested) _manualUpdateConsent?.Cancel();
             _appUpdateDialog = null; _updateBodyPanel = null; _updateModeCombo = null; _updateStatusText = null; _updateProgress = null;
+            _updateChannelCombo = null; _updateBetaWarning = null; _updateFullInstallerNote = null; _updateKeepOpenNote = null;
         }
     }
 
@@ -195,15 +221,20 @@ public sealed partial class MainWindow
     {
         if (_appUpdateDialog is null || _appUpdates is null || _updateStatusText is null || _updateBodyPanel is null) return;
         var state = _appUpdates.State;
-        _updateStatusText.Text = state.Error ?? (state.IsChecking ? "Checking for updates…" : state.IsDownloading
+        _updateStatusText.Text = state.Error ?? (_appUpdates.IsChangingChannel ? "Switching update channel…" : state.IsChecking ? "Checking for updates…" : state.IsDownloading
             ? state.PreparationProgress is { } prep ? $"{prep.Stage} · {prep.CompletedFiles}/{prep.TotalFiles} files · {prep.CompletedBytes/1048576.0:0.0} MB downloaded" : $"Downloading {state.DownloadedBytes / 1048576.0:0.0} / {state.Release!.Size / 1048576.0:0.0} MB…"
-            : state.Release is null ? "You're up to date." : state.ReadyInstaller is not null || state.PreparedPackage is not null ? "Ready to update to " + state.Release.Version.ToString(3)
-            : "Update available: " + state.Release.Version.ToString(3));
+            : state.Release is null ? state.ChannelNotice ?? "You're up to date." : state.ReadyInstaller is not null || state.PreparedPackage is not null ? "Ready to update to " + state.Release.DisplayVersion + (state.Release.IsBeta ? " · Beta" : " · Stable")
+            : "Update available: " + state.Release.DisplayVersion + (state.Release.IsBeta ? " · Beta" : " · Stable"));
         _updateStatusText.Foreground = state.Error is null ? UpdateGreen : (Brush)Application.Current.Resources["SecondaryTextBrush"];
         _updateProgress!.Visibility = state.IsDownloading ? Visibility.Visible : Visibility.Collapsed;
         _updateProgress.Value = state.PreparationProgress is {TotalFiles:>0} prepared ? 100d*prepared.CompletedFiles/prepared.TotalFiles : state.Release is { Size: > 0 } release ? 100d * state.DownloadedBytes / release.Size : 0;
-        _appUpdateDialog.IsPrimaryButtonEnabled = state.Release is not null && !_updateDialogBusy;
-        _appUpdateDialog.PrimaryButtonText = _updateDialogBusy ? "Preparing update…" : state.IsDownloading ? "Update when ready" : "Update now";
+        _appUpdateDialog.IsPrimaryButtonEnabled = state.Release is not null && !_updateDialogBusy && !_appUpdates.IsChangingChannel;
+        _appUpdateDialog.PrimaryButtonText = _updateDialogBusy ? "Preparing update…" : state.IsDownloading ? "Update when ready"
+            : state.RequiresFullInstaller ? state.ReadyInstaller is not null ? "Install full update" : "Download full update" : "Update now";
+        if (_updateChannelCombo is not null) _updateChannelCombo.IsEnabled = !_updateDialogBusy && !_appUpdates.IsChangingChannel;
+        if (_updateBetaWarning is not null) _updateBetaWarning.Visibility = _appUpdates.Channel == AppUpdateChannel.Beta || _appUpdates.InstalledReleaseVersion?.IsPrerelease == true ? Visibility.Visible : Visibility.Collapsed;
+        if (_updateFullInstallerNote is not null) _updateFullInstallerNote.Visibility = state.RequiresFullInstaller ? Visibility.Visible : Visibility.Collapsed;
+        if (_updateKeepOpenNote is not null) _updateKeepOpenNote.Visibility = state.RequiresFullInstaller ? Visibility.Collapsed : Visibility.Visible;
         foreach (var child in _updateBodyPanel.Children)
         {
             if (child is TextBlock { Name: "AppUpdateReleaseNotes" } notes) notes.Text = state.Release?.Notes ?? "No new release notes are available.";
@@ -214,14 +245,16 @@ public sealed partial class MainWindow
                 link.NavigateUri = state.Release is null ? null : new Uri("https://github.com/ellermw/SiloDesktopApp/releases/tag/" + Uri.EscapeDataString(state.Release.Tag));
             }
         }
-        _refreshingUpdateMode = true;
-        try { _updateModeCombo!.SelectedIndex = (int)_appUpdates.Mode; } finally { _refreshingUpdateMode = false; }
+        _refreshingUpdatePreferences = true;
+        try { _updateModeCombo!.SelectedIndex = (int)_appUpdates.Mode; if (_updateChannelCombo is not null) _updateChannelCombo.SelectedIndex = (int)_appUpdates.Channel; }
+        finally { _refreshingUpdatePreferences = false; }
     }
 
     private async void InstallAppUpdate_Click(ContentDialog sender, ContentDialogButtonClickEventArgs args)
     {
         args.Cancel = true;
         if (_appUpdates is null || _updateDialogBusy) return;
+        var fullMigrationConfirmed = _appUpdates.State.RequiresFullInstaller && _appUpdates.State.ReadyInstaller is not null;
         if (App.Services.GetService<IAppUpdateInstaller>()?.IsSupported != true)
         {
             App.Services.GetRequiredService<ToastService>().Error("Install Silo using its Windows installer before using in-app updates."); return;
@@ -234,6 +267,9 @@ public sealed partial class MainWindow
             await _appUpdates.DownloadAsync(ct: consent.Token).WaitAsync(consent.Token);
             if (!await _appUpdates.ReverifyReadyAsync(consent.Token)) return;
             consent.Token.ThrowIfCancellationRequested();
+            // Discovering a full migration is not consent to close. Show the
+            // verified package and close/save explanation, then require its action.
+            if (_appUpdates.State.RequiresFullInstaller && !fullMigrationConfirmed) return;
             if(_appUpdates.State is {PreparedPackage:{ } package,Release:{ } release})
             {
                 var staged=App.Services.GetService<IAppUpdateInstaller>() as IStagedAppUpdateInstaller;
@@ -315,7 +351,14 @@ public sealed partial class MainWindow
             using var json = JsonDocument.Parse(File.ReadAllText(path));
             var state = json.RootElement.GetProperty("state").GetString();
             var message = json.RootElement.GetProperty("message").GetString() ?? "Open update details to try again.";
-            if (state == "installed") App.Services.GetRequiredService<ToastService>().Success(message);
+            if (state == "installed")
+            {
+                var installed = ReleaseVersion.FromAssembly(typeof(App).Assembly);
+                if (!json.RootElement.TryGetProperty("version", out var resultVersion)
+                    || !Version.TryParse(resultVersion.GetString(), out var numeric) || numeric != installed.GetWindowsVersion())
+                    throw new InvalidDataException("The full-update result does not match the installed release.");
+                App.Services.GetRequiredService<ToastService>().Success("Silo was updated successfully to " + installed.Text + (installed.IsPrerelease ? " (Beta)" : "") + ".");
+            }
             else App.Services.GetRequiredService<ToastService>().Warning("Previous update: " + message);
             File.Delete(path);
         }

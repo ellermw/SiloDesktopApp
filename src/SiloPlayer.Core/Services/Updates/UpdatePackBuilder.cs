@@ -5,8 +5,14 @@ using System.Text.Json;
 namespace SiloPlayer.Core.Services.Updates;
 public static class UpdatePackBuilder
 {
-    public static async Task<UpdateManifest> BuildAsync(string clientDirectory, string? bootstrapDirectory, string outputDirectory,
-        Version version, CancellationToken ct = default)
+    public static Task<UpdateManifest> BuildAsync(string clientDirectory, string? bootstrapDirectory, string outputDirectory,
+        Version version, CancellationToken ct = default) => BuildCoreAsync(clientDirectory, bootstrapDirectory, outputDirectory, version, null, ct);
+
+    public static Task<UpdateManifest> BuildAsync(string clientDirectory, string? bootstrapDirectory, string outputDirectory,
+        ReleaseVersion release, CancellationToken ct = default) => BuildCoreAsync(clientDirectory, bootstrapDirectory, outputDirectory, release.GetWindowsVersion(), release.Text, ct);
+
+    private static async Task<UpdateManifest> BuildCoreAsync(string clientDirectory, string? bootstrapDirectory, string outputDirectory,
+        Version version, string? releaseVersion, CancellationToken ct)
     {
         var output = Path.GetFullPath(outputDirectory);
         UpdateManifestValidation.EnsureOrdinaryPath(output);
@@ -52,7 +58,7 @@ public static class UpdatePackBuilder
         }
         await using var completed = File.OpenRead(packPath);
         var manifest = new UpdateManifest(1, GitHubReleaseReader.Normalize(version).ToString(4), completed.Length,
-            Convert.ToHexString(await SHA256.HashDataAsync(completed, ct).ConfigureAwait(false)), entries);
+            Convert.ToHexString(await SHA256.HashDataAsync(completed, ct).ConfigureAwait(false)), entries) { ReleaseVersion = releaseVersion };
         UpdateManifestValidation.Validate(manifest);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(manifest);
         if (bytes.Length > UpdateManifestValidation.MaximumManifestBytes) throw new InvalidDataException("Generated manifest is too large.");

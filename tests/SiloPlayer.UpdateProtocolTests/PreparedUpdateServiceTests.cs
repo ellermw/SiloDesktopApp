@@ -53,12 +53,13 @@ public sealed class PreparedUpdateServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Side_by_side_policy_without_compatible_assets_keeps_client_open_for_manual_recovery()
+    public async Task Side_by_side_full_fallback_rejects_unverified_installer_and_keeps_manual_recovery()
     {
         using var wire=new Assets(null); using var http=new HttpClient(wire);
         var service=new AppUpdateService(http,root,new Version(1,2,464,0)){PreferIncrementalUpdates=true};
         await service.CheckAsync(); await service.DownloadAsync();
-        Assert.NotNull(service.State.Error); Assert.Null(service.State.ReadyInstaller); Assert.Equal(0,wire.PackRequests);
+        Assert.NotNull(service.State.Error); Assert.Null(service.State.ReadyInstaller); Assert.Equal(1,wire.PackRequests);
+        Assert.True(service.State.RequiresFullInstaller); Assert.False(service.ShouldInstallOnExit);
     }
 
     private sealed class Assets(string? directory) : HttpMessageHandler
@@ -79,7 +80,7 @@ public sealed class PreparedUpdateServiceTests : IDisposable
                 }
                 bytes=JsonSerializer.SerializeToUtf8Bytes(new{tag_name="v1.2.500",draft=false,prerelease=false,body="synthetic notes",published_at="2026-10-29T10:00:00Z",assets});
             }
-            else { if(!request.RequestUri.AbsolutePath.EndsWith(".json"))PackRequests++; bytes=File.ReadAllBytes(Path.Combine(directory!,Path.GetFileName(request.RequestUri.AbsolutePath))); }
+            else { if(!request.RequestUri.AbsolutePath.EndsWith(".json"))PackRequests++; bytes=directory is null ? new byte[]{1,2,3} : File.ReadAllBytes(Path.Combine(directory,Path.GetFileName(request.RequestUri.AbsolutePath))); }
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK){Content=new ByteArrayContent(bytes)});
         }
     }

@@ -883,7 +883,7 @@
                 <Border x:Name="AppUpdatesSettingsCard" Style="{StaticResource SettingsGroupStyle}" Visibility="Collapsed">
                     <StackPanel Spacing="14">
                         <TextBlock Text="Silo desktop updates" FontSize="14" FontWeight="SemiBold" Foreground="{StaticResource PrimaryTextBrush}" />
-                        <TextBlock x:Name="AppUpdateInstalledVersionText" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
+                        <TextBlock x:Name="AppUpdateInstalledVersionText" FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
                         <TextBlock Text="Always notify me about new releases. Choose whether Silo also downloads updates in the background and installs them when I close the app. You can review the changelog and update manually in either mode."
                                    FontSize="13" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
                         <ComboBox x:Name="AppUpdateSettingsModeCombo" SelectionChanged="AppUpdateSettingsModeChanged" HorizontalAlignment="Stretch" MaxWidth="560"
@@ -891,6 +891,13 @@
                             <ComboBoxItem Content="Notify me; I'll choose when to update" />
                             <ComboBoxItem Content="Download automatically; install when I close Silo" />
                         </ComboBox>
+                        <ComboBox x:Name="AppUpdateSettingsChannelCombo" Header="Update channel" SelectionChanged="AppUpdateSettingsChannelChanged"
+                                  HorizontalAlignment="Stretch" MaxWidth="560" AutomationProperties.Name="Desktop update channel">
+                            <ComboBoxItem Content="Stable (default)" />
+                            <ComboBoxItem Content="Beta" />
+                        </ComboBox>
+                        <TextBlock x:Name="AppUpdateSettingsBetaWarning" Visibility="Collapsed" Text="Beta releases may contain bugs. Choose Stable for regular approved updates."
+                                   FontSize="12" TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" />
                         <TextBlock x:Name="AppUpdateSettingsStatus" TextWrapping="Wrap" FontSize="13" Foreground="{StaticResource SecondaryTextBrush}" />
                         <Button Content="Check for updates / view changelog" Click="AppUpdateSettingsDetails_Click" HorizontalAlignment="Left" />
                         <TextBlock Text="Automatic downloads defer to playback. Windows may request administrator approval to install."

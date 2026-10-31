@@ -32,15 +32,29 @@ public sealed partial class SettingsPage
     {
         if (_settingsUpdates is null) return;
         _syncingUpdateSettings = true;
-        try { AppUpdateSettingsModeCombo.SelectedIndex = (int)_settingsUpdates.Mode; }
+        try { AppUpdateSettingsModeCombo.SelectedIndex = (int)_settingsUpdates.Mode; AppUpdateSettingsChannelCombo.SelectedIndex = (int)_settingsUpdates.Channel; }
         finally { _syncingUpdateSettings = false; }
-        AppUpdateInstalledVersionText.Text = "Installed version " + typeof(App).Assembly.GetName().Version!.ToString(3);
+        var installed = _settingsUpdates.InstalledReleaseVersion ?? ReleaseVersion.FromAssembly(typeof(App).Assembly);
+        AppUpdateInstalledVersionText.Text = $"Installed version {installed.Text} · {installed.Designation}";
+        AppUpdateSettingsChannelCombo.IsEnabled = !_settingsUpdates.IsChangingChannel;
+        AppUpdateSettingsBetaWarning.Visibility = _settingsUpdates.Channel == AppUpdateChannel.Beta || installed.IsPrerelease ? Visibility.Visible : Visibility.Collapsed;
         var state = _settingsUpdates.State;
-        AppUpdateSettingsStatus.Text = state.Error ?? (state.IsChecking ? "Checking for updates…" : state.IsDownloading ? "Downloading update in the background…"
-            : state.Release is null ? "No newer release is currently available." : state.ReadyInstaller is not null ? "Update ready; view the changelog or update now."
-            : "Update available: " + state.Release.Version.ToString(3));
+        AppUpdateSettingsStatus.Text = state.Error ?? (_settingsUpdates.IsChangingChannel ? "Switching update channel…" : state.IsChecking ? "Checking for updates…" : state.IsDownloading ? "Downloading update in the background…"
+            : state.Release is null ? state.ChannelNotice ?? "No newer release is currently available."
+            : state.RequiresFullInstaller ? "A full installer is required. View update details to review and confirm closing Silo."
+            : $"{(state.ReadyInstaller is not null || state.PreparedPackage is not null ? "Update ready" : "Update available")}: {state.Release.DisplayVersion} · {(state.Release.IsBeta ? "Beta" : "Stable")}");
         AppUpdateSettingsStatus.Foreground = state.Release is not null ? Helpers.AppUpdateAppearance.Green()
             : (Brush)Application.Current.Resources["SecondaryTextBrush"];
+    }
+
+    private async void AppUpdateSettingsChannelChanged(object sender, SelectionChangedEventArgs args)
+    {
+        if (_syncingUpdateSettings || _settingsUpdates is not { } updates || AppUpdateSettingsChannelCombo.SelectedIndex < 0) return;
+        var channel = (AppUpdateChannel)AppUpdateSettingsChannelCombo.SelectedIndex;
+        var preferences = App.Services.GetRequiredService<SettingsService>(); var settings = preferences.Load();
+        settings.UpdateChannel = channel; preferences.Save(settings);
+        try { await updates.SetChannelAsync(channel); await updates.CheckAsync(); }
+        catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "settings_update_channel"); }
     }
 
     private void AppUpdateSettingsModeChanged(object sender, SelectionChangedEventArgs args)

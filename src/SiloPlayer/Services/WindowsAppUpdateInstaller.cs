@@ -39,12 +39,33 @@ public sealed partial class WindowsAppUpdateInstaller(string cacheDirectory) : I
         try
         {
             if (!IsSupported) throw new InvalidOperationException("Install updates from the registered Silo desktop installation.");
+            if (!GitHubReleaseReader.TryReleaseIdentity(release.Tag, release.IsBeta, out var numeric, out var semantic)
+                || numeric != GitHubReleaseReader.Normalize(release.Version)
+                || (release.SemanticVersion is { } declared && declared.Text != semantic?.Text)
+                || numeric.Major != typeof(App).Assembly.GetName().Version!.Major
+                || numeric <= GitHubReleaseReader.Normalize(typeof(App).Assembly.GetName().Version!))
+                throw new InvalidDataException("The full update release identity is invalid or not newer.");
             var root = Path.GetFullPath(cacheDirectory);
             var expected = Path.Combine(root, GitHubReleaseReader.Normalize(release.Version).ToString(), GitHubReleaseReader.InstallerName);
             if (!Path.GetFullPath(installerPath).Equals(expected, StringComparison.OrdinalIgnoreCase)
                 || !await AppUpdateDownloader.VerifyAsync(expected, release, ct))
                 throw new InvalidDataException("The staged installer could not be verified.");
+            var pe = FileVersionInfo.GetVersionInfo(expected);
+            if (new Version(pe.FileMajorPart, pe.FileMinorPart, pe.FileBuildPart, pe.FilePrivatePart) != numeric)
+                throw new InvalidDataException("The installer version does not match the verified release.");
+            var installationRoot = UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!)
+                ?? throw new InvalidOperationException("The registered installation was not found.");
+            var versioned = !SameDirectory(installationRoot, AppContext.BaseDirectory);
             var helper = Path.Combine(AppContext.BaseDirectory, "Updates", "UpdateOnExit.ps1");
+            if (versioned)
+            {
+                await Task.Run(() => UpdateInstallation.RequireProtectedMachineInstallation(installationRoot, AppContext.BaseDirectory), ct);
+                var sourceVersion = Path.GetFileName(Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory));
+                if (SideBySideInstallation.ReadState(installationRoot)?.ActiveVersion != sourceVersion
+                    || !SideBySideInstallation.VerifyInstalledClientFile(installationRoot, sourceVersion, "SiloPlayer.exe").Equals(Environment.ProcessPath, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("The original installed client changed.");
+                helper = SideBySideInstallation.VerifyInstalledClientFile(installationRoot, sourceVersion, "Updates/UpdateOnExit.ps1");
+            }
             AppUpdateDownloader.EnsureOrdinaryPath(helper);
             var script = Path.Combine(Path.GetDirectoryName(expected)!, "UpdateOnExit-" + Guid.NewGuid().ToString("N") + ".ps1");
             File.Copy(helper, script, overwrite: false);
@@ -57,6 +78,7 @@ public sealed partial class WindowsAppUpdateInstaller(string cacheDirectory) : I
                 "-ParentPid", current.Id.ToString(CultureInfo.InvariantCulture), "-ParentStartTicks", current.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture),
                 "-Version", release.Version.ToString(), "-Sha256", release.Sha256, "-ExpectedSize", release.Size.ToString(CultureInfo.InvariantCulture), "-AppPath", Environment.ProcessPath!, "-HandoffToken", handoffToken })
                 start.ArgumentList.Add(arg);
+            if (versioned) { start.ArgumentList.Add("-InstallRoot"); start.ArgumentList.Add(installationRoot); }
             if (restart) start.ArgumentList.Add("-Restart");
             ct.ThrowIfCancellationRequested();
             await WriteResultAsync(root, "scheduled", "The update will install after Silo closes.", release.Version.ToString(), ct);

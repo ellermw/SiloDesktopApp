@@ -72,34 +72,41 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
     public async Task CheckAsync(CancellationToken ct = default)
     {
         if (!await _operation.WaitAsync(0, ct).ConfigureAwait(false)) return;
+        var epoch = Volatile.Read(ref _channelEpoch);
         try
         {
+            if (IsChangingChannel) return;
+            if (InstalledReleaseVersion is { } identity && identity.GetWindowsVersion() != GitHubReleaseReader.Normalize(currentVersion))
+                throw new InvalidDataException("The installed semantic and Windows versions disagree.");
             // Enforce the deadline at dispatch as well as in the timer: a
             // manual check can learn a limit after that timer was scheduled.
             // Download progress/errors are separate from this network limit.
             if (RemainingRateLimitDelay() is not null)
             {
-                SetState(State with { IsChecking = false, Error = "Could not check for updates. " + UpdateCheckRateLimitedException.UserMessage });
+                SetState(State with { IsChecking = false, Error = "Could not check for updates. " + UpdateCheckRateLimitedException.UserMessage }, expectedChannelEpoch: epoch);
                 log?.Invoke("check_deferred_rate_limit");
                 return;
             }
-            SetState(State with { IsChecking = true, Error = null });
+            SetState(State with { IsChecking = true, Error = null }, expectedChannelEpoch: epoch);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
             deadline.CancelAfter(TimeSpan.FromSeconds(12));
-            var check = await new GitHubReleaseReader(http, timeProvider).ReadAsync(currentVersion, _lastCheck, deadline.Token).ConfigureAwait(false);
+            var check = await new GitHubReleaseReader(http, timeProvider).ReadForChannelAsync(currentVersion, InstalledReleaseVersion, Channel, _lastCheck, deadline.Token).ConfigureAwait(false);
+            if (epoch != Volatile.Read(ref _channelEpoch)) return;
             _lastCheck = check; lock(_cooldownGate)_rateLimitedUntil = null;
             var release = check.Release;
             Interlocked.Exchange(ref _lastSuccessfulCheckStamp, System.Diagnostics.Stopwatch.GetTimestamp());
             var previous=State;
-            var same = release is not null && previous.Release?.Version == release.Version && previous.Release.Sha256 == release.Sha256
-                && previous.Release.Incremental == release.Incremental;
+            var same = release is not null && previous.Release?.Version == release.Version && previous.Release.Tag == release.Tag && previous.Release.Sha256 == release.Sha256
+                && previous.Release.Size == release.Size && previous.Release.InstallerUrl == release.InstallerUrl
+                && previous.Release.HasInvalidIncrementalAssets == release.HasInvalidIncrementalAssets && previous.Release.Incremental == release.Incremental;
             SetState(new AppUpdateState(release, ReadyInstaller: same ? previous.ReadyInstaller : null)
-                { PreparedPackage=same ? previous.PreparedPackage : null, PreparationProgress=same ? previous.PreparationProgress : null });
+                { PreparedPackage=same ? previous.PreparedPackage : null, PreparationProgress=same ? previous.PreparationProgress : null,
+                    ChannelNotice=ChannelNotice(release), RequiresFullInstaller=same && previous.RequiresFullInstaller }, expectedChannelEpoch: epoch);
             log?.Invoke($"check_ok version={release?.Version.ToString() ?? "current"}");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            SetState(State with { IsChecking = false });
+            SetState(State with { IsChecking = false }, expectedChannelEpoch: epoch);
         }
         catch (Exception ex)
         {
@@ -110,14 +117,18 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
             lock(_cooldownGate)_rateLimitedUntil = limited is null ? null : (timeProvider ?? TimeProvider.System).GetUtcNow() + wait;
             log?.Invoke($"check_failed kind={ex.GetType().Name} status={(ex as HttpRequestException)?.StatusCode}");
             SetState(State with { IsChecking = false, Error = ex is OperationCanceledException
-                ? "The update check timed out. Try again." : "Could not check for updates. " + ex.Message });
+                ? "The update check timed out. Try again." : "Could not check for updates. " + ex.Message }, expectedChannelEpoch: epoch);
         }
         finally { _operation.Release(); }
     }
 
-    private void SetState(AppUpdateState state, bool notify = true)
+    private void SetState(AppUpdateState state, bool notify = true, long? expectedChannelEpoch = null)
     {
-        Volatile.Write(ref _state, state);
+        lock (_channelGate)
+        {
+            if (expectedChannelEpoch is { } epoch && epoch != _channelEpoch) return;
+            Volatile.Write(ref _state, state);
+        }
         if (!notify) return;
         NotifyChanged(state);
     }
