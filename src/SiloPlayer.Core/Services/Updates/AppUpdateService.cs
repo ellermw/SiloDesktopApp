@@ -72,12 +72,9 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
     public async Task CheckAsync(CancellationToken ct = default)
     {
         var epoch = Volatile.Read(ref _channelEpoch);
-        // A post-switch/manual check must not be silently dropped behind other IO.
+        // Allow brief overlaps, but leave the active operation's state untouched if still busy.
         if (!await _operation.WaitAsync(TimeSpan.FromSeconds(12), ct).ConfigureAwait(false))
-        {
-            SetState(State with { Error = "The update check could not start because another update operation is still running. Try again." }, expectedChannelEpoch: epoch);
             return;
-        }
         epoch = Volatile.Read(ref _channelEpoch);
         try
         {
