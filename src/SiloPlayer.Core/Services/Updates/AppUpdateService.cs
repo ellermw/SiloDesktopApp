@@ -120,7 +120,6 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
         }
         catch (Exception ex)
         {
-            Interlocked.Exchange(ref _lastSuccessfulCheckStamp, 0);
             var limited = ex as UpdateCheckRateLimitedException;
             var wait = limited?.RetryAfter ?? RetryInterval;
             wait = wait < RetryInterval ? RetryInterval : wait > MaximumRateLimitWait ? MaximumRateLimitWait : wait;
