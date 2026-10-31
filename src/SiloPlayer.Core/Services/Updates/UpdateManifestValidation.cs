@@ -103,15 +103,26 @@ public static class UpdateManifestValidation
         return Parse(bytes);
     }
 
+    private sealed record ManifestCompatibility(int? Schema, int BootstrapProtocol = 1, bool BackwardCompatibleData = true);
+
     internal static UpdateManifest Parse(byte[] bytes, bool compatibilityProbe = false)
     {
         try
         {
-            var manifest = JsonSerializer.Deserialize<UpdateManifest>(bytes, new JsonSerializerOptions { PropertyNameCaseInsensitive = false, MaxDepth = 16 })
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = false, MaxDepth = 16 };
+            if (compatibilityProbe)
+            {
+                // Probe only the compatibility envelope: future formats need not
+                // deserialize or validate as a v1 inventory. The transport has
+                // already verified the manifest bytes against their size/hash.
+                var compatibility = JsonSerializer.Deserialize<ManifestCompatibility>(bytes, options);
+                if (compatibility?.Schema is null) throw new InvalidDataException("Missing update schema.");
+                if (compatibility.Schema != 1 || compatibility.BootstrapProtocol != 1 || !compatibility.BackwardCompatibleData)
+                    throw new UpdateMigrationRequiredException();
+            }
+            var manifest = JsonSerializer.Deserialize<UpdateManifest>(bytes, options)
                 ?? throw new InvalidDataException("Missing update manifest.");
-            // A compatibility probe still validates every structural/path/hash
-            // bound. Only protocol/data flags may trigger a verified full migration.
-            Validate(compatibilityProbe ? manifest with { Schema = 1, BootstrapProtocol = 1, BackwardCompatibleData = true } : manifest);
+            Validate(manifest);
             return manifest;
         }
         catch (Exception ex) when (ex is JsonException or ArgumentException or NullReferenceException)

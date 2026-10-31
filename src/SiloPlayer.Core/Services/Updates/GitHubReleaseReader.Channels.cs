@@ -109,7 +109,8 @@ internal sealed partial class GitHubReleaseReader
             foreach (var link in links.SelectMany(value => value.Split(',')))
             {
                 if (!link.Contains("rel=\"next\"", StringComparison.Ordinal)) continue;
-                if (!IsNextPageHint(link.Trim(), page + 1)) throw new InvalidDataException("Untrusted release pagination.");
+                // An unfamiliar hint stops discovery, not validation of this page.
+                if (!IsNextPageHint(link.Trim(), page + 1)) { hasNext = false; break; }
                 hasNext = true;
             }
         }

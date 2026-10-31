@@ -77,8 +77,6 @@ internal static class IncrementalUpdateTransport
         if ((semantic?.IsPrerelease == true && manifest.ReleaseVersion is null)
             || (semantic is not null && manifest.ReleaseVersion is not null && manifest.ReleaseVersion != semantic.Text))
             throw new InvalidDataException("Manifest semantic release identity mismatch.");
-        if (manifest.Schema != 1 || manifest.BootstrapProtocol != 1 || !manifest.BackwardCompatibleData)
-            throw new UpdateMigrationRequiredException();
         return bytes;
     }
 }

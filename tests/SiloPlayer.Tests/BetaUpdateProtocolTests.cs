@@ -194,6 +194,45 @@ public sealed class BetaUpdateProtocolTests : IDisposable
     }
 
     [Theory]
+    [InlineData("schema", false)]
+    [InlineData("protocol", false)]
+    [InlineData("data", false)]
+    [InlineData("schema", true)]
+    [InlineData("protocol", true)]
+    [InlineData("data", true)]
+    [InlineData("compatible", false)]
+    [InlineData("missing-schema", false)]
+    public async Task FutureManifestStructureUsesOnlyVerifiedCompatibilityForFullFallback(string kind, bool tamperedHash)
+    {
+        var source = await ArrangeAsync("1.2.518-beta.2", "1.2.518-beta.12");
+        // The future inventory deliberately cannot deserialize as a v1 manifest.
+        var json = new JsonObject { ["Schema"] = kind == "schema" ? 2 : 1,
+            ["BootstrapProtocol"] = kind == "protocol" ? 2 : 1,
+            ["BackwardCompatibleData"] = kind != "data",
+            ["Files"] = new JsonObject { ["future-inventory"] = true } };
+        if (kind == "missing-schema") json.Remove("Schema");
+        await File.WriteAllTextAsync(Path.Combine(source.Assets, UpdateManifestValidation.ManifestName), json.ToJsonString());
+        using var wire = new Assets("1.2.518-beta.12", source.Assets) { BadManifestHash = tamperedHash };
+        using var http = new HttpClient(wire);
+        var service = await CreateAsync(http, "1.2.518-beta.2", "1.2.518-beta.12", source.Client);
+        await service.CheckAsync(); await service.DownloadAsync();
+        Assert.Null(service.State.PreparedPackage); Assert.Empty(wire.Ranges);
+        Assert.False(service.ShouldInstallOnExit);
+        if (tamperedHash || kind is "compatible" or "missing-schema")
+        {
+            Assert.NotNull(service.State.Error); Assert.Null(service.State.ReadyInstaller);
+            Assert.Equal(0, wire.FullInstallerRequests);
+        }
+        else
+        {
+            Assert.Null(service.State.Error); Assert.True(service.State.RequiresFullInstaller);
+            var installer = Assert.IsType<string>(service.State.ReadyInstaller);
+            Assert.Equal(Assets.FullPackage, await File.ReadAllBytesAsync(installer));
+            Assert.True(await service.ReverifyReadyAsync()); Assert.Equal(1, wire.FullInstallerRequests);
+        }
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task AutomaticMigrationDefersFullInstallerUntilExplicitManualDownload(bool unsupportedProtocol)

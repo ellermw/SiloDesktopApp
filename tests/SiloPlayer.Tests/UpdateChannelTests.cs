@@ -308,10 +308,26 @@ public sealed class UpdateChannelTests : IDisposable
         using var wire = new Wire { BadLink = true, Catalog = [Release("1.2.518-beta.12")] };
         using var http = new HttpClient(wire); var service = Create(http);
         await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
-        // Reject the untrusted hint without turning optional discovery into a hard error.
-        Assert.Null(service.State.Error); Assert.Null(service.State.Release);
+        // Ignore the untrusted hint, retaining validated candidates on this page.
+        Assert.Null(service.State.Error); Assert.Null(service.State.ChannelNotice);
+        Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
         Assert.Equal(2, wire.Requests.Count);
         Assert.All(wire.Requests, r => Assert.StartsWith("https://api.github.com/repos/ellermw/SiloDesktopApp/releases", r.Url));
+    }
+
+    [Theory]
+    [InlineData("<https://api.github.com/repos/ellermw/SiloDesktopApp/releases?per_page=100&page=2&extra=1>; rel=\"next\"")]
+    [InlineData("<https://api.github.com/repos/ellermw/SiloDesktopApp/releases?per_page=50&page=2>; rel=\"next\"")]
+    [InlineData("<https://api.github.com/unknown/releases?per_page=100&page=2>; rel=\"next\"")]
+    public async Task UnrecognizedPaginationRetainsCurrentPageAndStopsDiscovery(string hint)
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.2")], SecondPage = [Release("1.2.518-beta.12")], NextLink = hint };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Null(service.State.ChannelNotice);
+        Assert.Equal("1.2.518-beta.2", service.State.Release?.DisplayVersion);
+        Assert.Equal(2, wire.Requests.Count);
+        Assert.DoesNotContain(wire.Requests, r => r.Url.EndsWith("page=2"));
     }
 
     [Fact]
