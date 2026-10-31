@@ -45,6 +45,8 @@ public sealed partial class SettingsPage
             : state.Release is null ? state.ChannelNotice ?? "No newer release is currently available."
             : state.RequiresFullInstaller ? "A full installer is required. View update details to review and confirm closing Silo."
             : $"{(state.ReadyInstaller is not null || state.PreparedPackage is not null ? "Update ready" : "Update available")}: {state.Release.DisplayVersion} · {(state.Release.IsBeta ? "Beta" : "Stable")}");
+        if (state.Error is null && !state.IsChecking && !state.IsDownloading && state.Release is not null && state.ChannelNotice is { } notice)
+            AppUpdateSettingsStatus.Text += "\n" + notice;
         AppUpdateSettingsStatus.Foreground = state.Release is not null ? Helpers.AppUpdateAppearance.Green()
             : (Brush)Application.Current.Resources["SecondaryTextBrush"];
     }

@@ -101,8 +101,12 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
                 && previous.Release.HasInvalidIncrementalAssets == release.HasInvalidIncrementalAssets && previous.Release.Incremental == release.Incremental;
             SetState(new AppUpdateState(release, ReadyInstaller: same ? previous.ReadyInstaller : null)
                 { PreparedPackage=same ? previous.PreparedPackage : null, PreparationProgress=same ? previous.PreparationProgress : null,
-                    ChannelNotice=ChannelNotice(release), RequiresFullInstaller=same && previous.RequiresFullInstaller }, expectedChannelEpoch: epoch);
-            log?.Invoke($"check_ok version={release?.Version.ToString() ?? "current"}");
+                    ChannelNotice=check.CatalogError is not null
+                        ? "Beta discovery was incomplete; showing validated releases only. Try checking again later."
+                        : ChannelNotice(release), RequiresFullInstaller=same && previous.RequiresFullInstaller }, expectedChannelEpoch: epoch);
+            if (check.CatalogError is { } catalogError)
+                log?.Invoke($"check_catalog_failed kind={catalogError.GetType().Name} status={(catalogError as HttpRequestException)?.StatusCode}");
+            else log?.Invoke($"check_ok version={release?.Version.ToString() ?? "current"}");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

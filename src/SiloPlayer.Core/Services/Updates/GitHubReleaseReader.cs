@@ -11,6 +11,7 @@ internal sealed record ReleaseCheck(AppRelease? Release, string? ETag)
 {
     internal AppUpdateChannel Channel { get; init; }
     internal ReleaseCheck? Stable { get; init; }
+    internal Exception? CatalogError { get; init; }
     internal IReadOnlyList<ReleaseCatalogPage> Pages { get; init; } = [];
 }
 internal sealed record ReleaseCatalogPage(byte[] Metadata, string? ETag, bool HasNext);

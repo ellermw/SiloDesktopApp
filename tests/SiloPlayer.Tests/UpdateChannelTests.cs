@@ -97,6 +97,56 @@ public sealed class UpdateChannelTests : IDisposable
         await service.CheckAsync();
         Assert.Null(service.State.Error); Assert.Null(service.State.Release);
         Assert.Equal(2, wire.Requests.Count);
+        Assert.Contains("incomplete", service.State.ChannelNotice!);
+    }
+
+    [Fact]
+    public async Task LaterCatalogFailureKeepsValidatedBetaAndReadyInstaller()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")], SecondPage = [Release("1.2.518-beta.2")] };
+        using var http = new HttpClient(wire);
+        var messages = new List<string>();
+        var service = new AppUpdateService(http, root, new Version(1, 2, 517, 0), messages.Add)
+            { Channel = AppUpdateChannel.Beta, InstalledReleaseVersion = ReleaseVersion.Parse("1.2.517") };
+        await service.CheckAsync(); await service.DownloadAsync();
+        var ready = Assert.IsType<string>(service.State.ReadyInstaller);
+        var catalogCalls = 0;
+        wire.BeforeCatalog = _ => ++catalogCalls == 2
+            ? throw new HttpRequestException("Synthetic page 2 failure") : Task.CompletedTask;
+        messages.Clear();
+        await service.CheckAsync();
+        Assert.Null(service.State.Error);
+        Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+        Assert.Equal(ready, service.State.ReadyInstaller);
+        Assert.True(await service.ReverifyReadyAsync());
+        Assert.Contains("incomplete", service.State.ChannelNotice!);
+        Assert.Contains(messages, message => message.StartsWith("check_catalog_failed kind="));
+        Assert.DoesNotContain(messages, message => message.StartsWith("check_ok"));
+        wire.BeforeCatalog = null;
+        await service.CheckAsync();
+        Assert.Null(service.State.ChannelNotice);
+    }
+
+    [Theory]
+    [InlineData("v1.2.517.9")]
+    [InlineData("v1.2.517.65534")]
+    public async Task LegacyStableCannotUseReservedBetaRevisions(string tag)
+    {
+        Assert.False(GitHubReleaseReader.TryReleaseIdentity(tag, false, out _, out _));
+        var stable = Release("1.2.517.9"); stable["tag_name"] = tag;
+        using var wire = new Wire { Stable = stable };
+        using var http = new HttpClient(wire); var service = Create(http, "1.2.518-beta.4");
+        await service.CheckAsync();
+        Assert.Null(service.State.Release);
+        Assert.NotNull(service.State.Error);
+        Assert.False(service.ShouldInstallOnExit);
+    }
+
+    [Fact]
+    public void LegacyStableWithZeroRevisionRemainsSupported()
+    {
+        Assert.True(GitHubReleaseReader.TryReleaseIdentity("v1.2.518.0", false, out var numeric, out _));
+        Assert.Equal(new Version(1, 2, 518, 0), numeric);
     }
 
     [Fact]

@@ -24,11 +24,11 @@ internal sealed partial class GitHubReleaseReader
             try { numeric = parsed.GetWindowsVersion(); semantic = parsed; return true; }
             catch (InvalidDataException) { return false; }
         }
-        // Retain previously supported four-part stable identities. New releases
-        // use the canonical semantic contract; a four-part tag cannot claim Beta.
+        // Retain four-part stable identities only with revision zero: nonzero
+        // revisions are reserved for beta mappings and would alias their identity.
         return !prerelease && Regex.IsMatch(text, @"\A\d+\.\d+\.\d+\.\d+\z", RegexOptions.CultureInvariant)
             && Version.TryParse(text, out numeric!) && numeric.Major <= 65534 && numeric.Minor <= 65534
-            && numeric.Build <= 65534 && numeric.Revision <= 65534;
+            && numeric.Build <= 65534 && numeric.Revision == 0;
     }
 
     internal async Task<ReleaseCheck> ReadForChannelAsync(Version installed, ReleaseVersion? semanticInstalled,
@@ -80,10 +80,9 @@ internal sealed partial class GitHubReleaseReader
         catch (Exception ex) when (ex is not UpdateCheckRateLimitedException && !ct.IsCancellationRequested
             && (ex is HttpRequestException or InvalidDataException or JsonException or OperationCanceledException))
         {
-            // Keep the independently validated Latest result, including no offer,
-            // if optional Beta discovery is unavailable. Rate-limit exceptions
-            // still propagate so the service preserves the shared GitHub cooldown.
-            return new(stable.Release, null) { Channel = AppUpdateChannel.Beta, Stable = stable };
+            // A later page failure must not discard an already validated candidate.
+            // Rate limits still propagate to preserve the shared GitHub cooldown.
+            return new(best, null) { Channel = AppUpdateChannel.Beta, Stable = stable, Pages = pages, CatalogError = ex };
         }
     }
 

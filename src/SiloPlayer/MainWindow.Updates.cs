@@ -226,6 +226,8 @@ public sealed partial class MainWindow
             ? state.PreparationProgress is { } prep ? $"{prep.Stage} · {prep.CompletedFiles}/{prep.TotalFiles} files · {prep.CompletedBytes/1048576.0:0.0} MB downloaded" : $"Downloading {state.DownloadedBytes / 1048576.0:0.0} / {state.Release!.Size / 1048576.0:0.0} MB…"
             : state.Release is null ? state.ChannelNotice ?? "You're up to date." : state.ReadyInstaller is not null || state.PreparedPackage is not null ? "Ready to update to " + state.Release.DisplayVersion + (state.Release.IsBeta ? " · Beta" : " · Stable")
             : "Update available: " + state.Release.DisplayVersion + (state.Release.IsBeta ? " · Beta" : " · Stable"));
+        if (state.Error is null && !state.IsChecking && !state.IsDownloading && state.Release is not null && state.ChannelNotice is { } notice)
+            _updateStatusText.Text += "\n" + notice;
         _updateStatusText.Foreground = state.Error is null ? UpdateGreen : (Brush)Application.Current.Resources["SecondaryTextBrush"];
         _updateProgress!.Visibility = state.IsDownloading ? Visibility.Visible : Visibility.Collapsed;
         _updateProgress.Value = state.PreparationProgress is {TotalFiles:>0} prepared ? 100d*prepared.CompletedFiles/prepared.TotalFiles : state.Release is { Size: > 0 } release ? 100d * state.DownloadedBytes / release.Size : 0;

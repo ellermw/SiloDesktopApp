@@ -232,6 +232,20 @@ public partial class App : Application
         }
     }
 
+    private static bool PreferIncrementalUpdates()
+    {
+        try
+        {
+            return UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!) is { } root
+                && SideBySideInstallation.ReadState(root) is not null;
+        }
+        catch (Exception ex)
+        {
+            LocalLog.AppendLine("updates.txt", "installation_state_invalid kind=" + ex.GetType().Name);
+            return false;
+        }
+    }
+
     private static IServiceProvider ConfigureServices()
     {
         var services = new ServiceCollection();
@@ -252,7 +266,7 @@ public partial class App : Application
             message => LocalLog.AppendLine("updates.txt", message))
             {Channel=provider.GetRequiredService<SettingsService>().Load().UpdateChannel,
                 InstalledReleaseVersion=ReadInstalledReleaseVersion(),
-                PreferIncrementalUpdates=UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!) is { } updateRoot && SideBySideInstallation.ReadState(updateRoot) is not null,
+                PreferIncrementalUpdates=PreferIncrementalUpdates(),
                 InstalledPayloadDirectory=AppContext.BaseDirectory,InstallationRoot=UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!)});
         services.AddSingleton<IAppUpdateInstaller>(new WindowsAppUpdateInstaller(Path.Combine(appDataDir, "updates")));
         services.AddSingleton<CredentialStore>();
