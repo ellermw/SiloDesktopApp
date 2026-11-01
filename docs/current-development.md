@@ -1,4 +1,6 @@
-# Current development — 1.2.517
+# Current development
+
+The baseline for the November 1 server-alignment candidates is source 1.2.519 (Beta `a15621a0`, tree matching main `a26ff559`). Published Stable is `v1.2.519`; candidate changes and local evidence are recorded below. The following PR62 section preserves its original 1.2.517 context, rather than describing the current source stamps.
 
 ## Opt-in Beta update channel (PR #62)
 
@@ -17,7 +19,7 @@ The update dialog retains its bounded scrolling body and fixed actions. Channel 
 ## Historical release documentation
 
 The [1.2.516 release ledger](releases/1.2.516.md), [1.2.515 handoff](archive/2026-10-29-release-1.2.515-handoff.md), [1.2.514 handoff](archive/2026-10-29-release-1.2.514-handoff.md) and [earlier handoffs](archive/2026-10-29-development-handoffs.md) describe historical releases, not this PR's source identity or verification status.
-# November 1 — marker source/confidence Beta PR candidate
+## November 1 — marker source/confidence Beta PR candidate
 
 Independent candidate on `codex/server-marker-details`, based on Beta `a15621a0` and official server/WebUI `63ef34b236b88dc77acca1a9a3ed90235377691f`. Source stamps remain 1.2.519; the Beta pipeline owns release stamping. This is not a published release.
 
@@ -26,4 +28,3 @@ Current watch `start_seconds/end_seconds` now deserialize alongside legacy range
 Verification under `D:/SiloPlayer/.codex-tmp/server-align-nov01/markers`: actual wire red/green; Lua3 missing-handler/raw-markup red then escaped rendering/clear-state green; focused18 passed; full-main-final **2817 passed, zero failed/skipped**. Release app publish `corrected-native-app` passed, DLL SHA256 `E2429EC86563B580B441E9FAA29B65AA06C48FABA239930AFC1382BE5D888BF6`. Actual synthetic native controls in `native-corrected` pass setting persistence, queued same/different-key failure rollback, repeated/manual/absent marker data, profile retirement and label rendering. The native screenshot was visually inspected: the details line fits above Skip Intro. The initial native fixture's authoritative-position setup was corrected; its original/final hashes and the reproduced rapid-toggle defect are retained in the task report. No product input changed after the corrected Release build; only fixture checks and documentation followed.
 
 All .NET commands held SiloOct18Build and used fresh isolated outputs after pinned native dependency verification. Known existing warnings remain. Independent Standards/Spec review and Beta submission are next. No installer, installed app, real account/media or production endpoint was used; this does not certify complete visual parity or physical-device behavior.
-
