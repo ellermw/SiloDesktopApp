@@ -74,7 +74,9 @@ internal static class MatchSplitScopeNativeFixture
             }
             await MatchChoicesAsync(owner, wire);
             await MatchInventoryAsync(owner, wire);
+            await MatchPreflightFailuresAsync(owner, wire);
             await MatchTimeoutsAsync(owner, wire);
+            await SplitTimeoutsAsync(owner, wire);
             await UnreadableInventoryAsync(owner, wire);
             await MatchBlockedScopesAsync(owner, wire);
             await CuratorAsync(owner, wire, auth);
@@ -387,6 +389,50 @@ internal static class MatchSplitScopeNativeFixture
         }
         finally { wire.InventoryJson = null; }
     }
+    private static async Task MatchPreflightFailuresAsync(FrameworkElement owner, Wire wire)
+    {
+        foreach (var apply in new[] { false, true }) foreach (var timeout in new[] { false, true })
+        {
+            wire.Files = [("1", 2), ("2", 2)]; var dialog = Match(owner); var showing = dialog.ShowAsync();
+            try
+            {
+                await Until(() => Search(dialog).IsEnabled);
+                await (Task)typeof(MatchItemDialog).GetMethod("DoSearchAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!;
+                if (apply) { Invoke(Candidate(dialog)); await Until(() => dialog.SelectedCandidate != null); }
+                var writes = wire.Count("apply"); wire.DenyInventory = !timeout; wire.TimeoutInventory = timeout;
+                Invoke(apply ? All<Button>(dialog).Single(button => button.Name == "ApplyMatchButton") : Candidate(dialog));
+                var message = "Match could not be applied: " + (timeout ? "Synthetic inventory timeout" : "HTTP 403");
+                await Until(() => All<TextBlock>(dialog).Any(text => text.Name == "ApplyStatusText" && text.Visibility == Visibility.Visible && text.Text == message));
+                Check(wire.Count("apply") == writes && dialog.SelectedCandidate == null && !dialog.HasAppliedMatch, "Failed Match preflight dispatches a write or retains a candidate");
+                Check(!Search(dialog).IsEnabled && Refresh(dialog).IsEnabled, "Failed Match inventory leaves unsafe actions enabled or disables retry");
+                wire.DenyInventory = wire.TimeoutInventory = false; Invoke(Refresh(dialog)); await Until(() => Search(dialog).IsEnabled);
+                await SearchAndChooseAsync(dialog);
+                Check(All<Button>(dialog).Single(button => button.Name == "ApplyMatchButton").IsEnabled, "A pre-dispatch failure permanently disarms Match after recovery");
+            }
+            finally { wire.DenyInventory = wire.TimeoutInventory = false; dialog.Hide(); await showing; }
+        }
+    }
+    private static async Task SplitTimeoutsAsync(FrameworkElement owner, Wire wire)
+    {
+        wire.Files = [("1", 2), ("2", 2)]; var dialog = Split(owner); var showing = dialog.ShowAsync();
+        try
+        {
+            await Until(() => Search(dialog).IsEnabled); wire.TimeoutSearch = true;
+            await (Task)typeof(SplitVersionsDialog).GetMethod("SearchAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!;
+            Check(ActionStatus(dialog).Visibility == Visibility.Visible && ActionStatus(dialog).Text.Contains("Synthetic search timeout"), "Split hides a non-lifetime search timeout");
+            Check(Search(dialog).IsEnabled && !dialog.IsPrimaryButtonEnabled, "Split search timeout does not restore safe commands");
+            wire.TimeoutSearch = false; wire.TimeoutPreview = true;
+            await Until(() => All<CheckBox>(dialog).Any(check => AutomationProperties.GetName(check) == "Select /fixture/1.mkv"));
+            File(dialog, "1").IsChecked = true; await SearchAndChooseAsync(dialog);
+            await Until(() => ActionStatus(dialog).Text.Contains("Synthetic preview timeout"));
+            Check(ActionStatus(dialog).Visibility == Visibility.Visible && All<TextBlock>(dialog).Any(text => text.Text.Contains("Preview could not be loaded.")), "Split preview timeout leaves permanent Previewing text instead of retry guidance");
+            Check(!dialog.IsPrimaryButtonEnabled && !dialog.HasSaved, "Split accepts a timed-out preview");
+            wire.TimeoutPreview = false;
+            All<ComboBox>(dialog).Single(box => AutomationProperties.GetName(box) == "Watch history handling").SelectedIndex = 1;
+            await Until(() => dialog.IsPrimaryButtonEnabled);
+        }
+        finally { wire.TimeoutSearch = wire.TimeoutPreview = false; dialog.Hide(); await showing; }
+    }
     private static async Task MatchTimeoutsAsync(FrameworkElement owner, Wire wire)
     {
         wire.Files = [("1", 2), ("2", 2)]; var dialog = Match(owner); var showing = dialog.ShowAsync();
@@ -399,6 +445,15 @@ internal static class MatchSplitScopeNativeFixture
             Invoke(All<Button>(dialog).Single(button => button.Name == "ApplyMatchButton"));
             await Until(() => All<TextBlock>(dialog).Any(text => text.Visibility == Visibility.Visible && text.Text.Contains("Reload the item")));
             Check(!dialog.HasAppliedMatch, "Timed-out Match reports success");
+            var apply = All<Button>(dialog).Single(button => button.Name == "ApplyMatchButton");
+            Check(!apply.IsEnabled && !Search(dialog).IsEnabled && !Refresh(dialog).IsEnabled, "Unconfirmed Match leaves identity actions armed");
+            var writes = wire.Count("apply"); wire.TimeoutApply = false;
+            // Exercise the handler too: disabling the native button alone must not
+            // permit a queued/programmatic second non-idempotent write.
+            typeof(MatchItemDialog).GetMethod("ApplyMatch_Click", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, [apply, new RoutedEventArgs()]);
+            await (Task)typeof(MatchItemDialog).GetMethod("DoSearchAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!;
+            await Task.Delay(80);
+            Check(wire.Count("apply") == writes && !dialog.HasAppliedMatch && !apply.IsEnabled, "Unconfirmed Match dispatches a second Apply without reopening");
         }
         finally { wire.TimeoutSearch = wire.TimeoutApply = false; dialog.Hide(); await showing; }
     }
@@ -616,7 +671,7 @@ internal static class MatchSplitScopeNativeFixture
     private sealed record Call(string Path, JsonElement Body);
     private sealed class Wire : HttpMessageHandler
     {
-        public (string Id, int Library)[] Files = []; public List<Call> Calls = []; public string Root = "/fixture"; public int FileReads, DetailReads; public string? InventoryJson; public bool DenyInventory, PaginatedInventory, TimeoutSearch, TimeoutApply, TimeoutCommit, ApplyWasCanceled, SplitWasCanceled; public TaskCompletionSource? SearchGate, PreviewGate, ApplyGate, CommitGate, DetailGate, FileGate;
+        public (string Id, int Library)[] Files = []; public List<Call> Calls = []; public string Root = "/fixture"; public int FileReads, DetailReads; public string? InventoryJson; public bool DenyInventory, PaginatedInventory, TimeoutInventory, TimeoutSearch, TimeoutPreview, TimeoutApply, TimeoutCommit, ApplyWasCanceled, SplitWasCanceled; public TaskCompletionSource? SearchGate, PreviewGate, ApplyGate, CommitGate, DetailGate, FileGate;
         public int Count(string suffix) => Calls.Count(call => call.Path.EndsWith("/" + suffix));
         public Call Last(string suffix) => Calls.Last(call => call.Path.EndsWith("/" + suffix));
         public int Commits => Calls.Count(call => call.Path.EndsWith("/split") && !call.Body.GetProperty("dry_run").GetBoolean());
@@ -628,6 +683,7 @@ internal static class MatchSplitScopeNativeFixture
             if (path.EndsWith("/files"))
             {
                 FileReads++;
+                if (TimeoutInventory) throw new TaskCanceledException("Synthetic inventory timeout");
                 if (InventoryJson != null) return new(HttpStatusCode.OK) { Content = new StringContent(InventoryJson) };
                 var laterPage = request.RequestUri.Query.Contains("cursor="); if (FileGate != null) await FileGate.Task;
                 var files = PaginatedInventory ? laterPage ? Files.Skip(200) : Files.Take(200) : Files;
@@ -638,7 +694,7 @@ internal static class MatchSplitScopeNativeFixture
                 var body = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync(ct)); Calls.Add(new(path, body));
                 if (path.EndsWith("/search")) { if (TimeoutSearch) throw new TaskCanceledException("Synthetic search timeout"); if (SearchGate != null) await SearchGate.Task; json = "{\"candidates\":[{\"title\":\"Scoped candidate\",\"year\":2026,\"provider_ids\":{\"tmdb\":\"42\"}}]}"; }
                 else if (path.EndsWith("/apply")) { if (TimeoutApply) throw new TaskCanceledException("Synthetic apply timeout"); if (ApplyGate != null) await ApplyGate.Task; ApplyWasCanceled = ct.IsCancellationRequested; json = "{\"content_id\":\"fixture-target\",\"updated\":true}"; }
-                else { if (body.GetProperty("dry_run").GetBoolean() && PreviewGate != null) await PreviewGate.Task; if (!body.GetProperty("dry_run").GetBoolean()) { SplitWasCanceled = false; if (CommitGate != null) await CommitGate.Task; SplitWasCanceled = ct.IsCancellationRequested; if (TimeoutCommit) throw new TaskCanceledException("Synthetic split response timeout"); } json = JsonSerializer.Serialize(new { dry_run = body.GetProperty("dry_run").GetBoolean(), files_moved = body.GetProperty("file_ids").GetArrayLength(), target_content_id = "fixture-target", target_created = true, reattribution = new { progress_moved = 1, history_moved = 1, history_ambiguous = 0, downloads = 0 } }); }
+                else { if (body.GetProperty("dry_run").GetBoolean() && TimeoutPreview) throw new TaskCanceledException("Synthetic preview timeout"); if (body.GetProperty("dry_run").GetBoolean() && PreviewGate != null) await PreviewGate.Task; if (!body.GetProperty("dry_run").GetBoolean()) { SplitWasCanceled = false; if (CommitGate != null) await CommitGate.Task; SplitWasCanceled = ct.IsCancellationRequested; if (TimeoutCommit) throw new TaskCanceledException("Synthetic split response timeout"); } json = JsonSerializer.Serialize(new { dry_run = body.GetProperty("dry_run").GetBoolean(), files_moved = body.GetProperty("file_ids").GetArrayLength(), target_content_id = "fixture-target", target_created = true, reattribution = new { progress_moved = 1, history_moved = 1, history_ambiguous = 0, downloads = 0 } }); }
             }
             return new(HttpStatusCode.OK) { Content = new StringContent(json) };
         }

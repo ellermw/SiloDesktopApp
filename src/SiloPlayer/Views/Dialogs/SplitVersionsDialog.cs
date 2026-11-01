@@ -178,7 +178,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
                 }; _candidates.Children.Add(choice);
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (Lifetime.IsCancellationRequested) { }
         catch (Exception error) { if (ScopeOwner && revision == _searchRevision) Status.Text = error.Message; }
         finally { _searching = false; UpdateCommands(); }
     }
@@ -216,7 +216,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
             if (Count("root_overrides") + Count("file_overrides") > 0) _previewText.Text += $"\n• {Count("root_overrides")} folder / {Count("file_overrides")} file identity override(s) pinned for future scans";
             _acceptedRevision = revision; _acceptedScope = scope;
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (Exception error) { if (revision == _planRevision && ScopeOwner && PlanScopeCurrent(scope)) { Status.Text = error.Message; _previewText.Text = "Preview could not be loaded. Change the selection or target to try again."; } }
         finally { if (revision == _planRevision) { _previewing = false; UpdateCommands(); } }
     }

@@ -38,6 +38,7 @@ public sealed partial class MatchItemDialog : ContentDialog
     private MatchCandidate? _selectedCandidate;
     private bool _searching;
     private bool _applying;
+    private bool _applyUnconfirmed;
 
     public MatchCandidate? SelectedCandidate => _selectedCandidate;
     public bool HasAppliedMatch { get; private set; }
@@ -137,14 +138,14 @@ public sealed partial class MatchItemDialog : ContentDialog
     }
     private void UpdateCommands()
     {
-        SearchButton.IsEnabled = CanAct && _scope.CanSearch && !_searching && !_applying;
-        ApplyMatchButton.IsEnabled = CanAct && _selectedCandidate != null && _scope.IsCurrent(_candidateScope) && !_applying && !_searching;
-        _scope.SetEditing(CanAct && !_applying);
+        SearchButton.IsEnabled = CanAct && _scope.CanSearch && !_searching && !_applying && !_applyUnconfirmed;
+        ApplyMatchButton.IsEnabled = CanAct && _selectedCandidate != null && _scope.IsCurrent(_candidateScope) && !_applying && !_searching && !_applyUnconfirmed;
+        _scope.SetEditing(CanAct && !_applying && !_applyUnconfirmed);
     }
 
     private async void ApplyMatch_Click(object sender, RoutedEventArgs args)
     {
-        if (_selectedCandidate == null || _applying || _searching || !CanAct || !_scope.IsCurrent(_candidateScope))
+        if (_selectedCandidate == null || _applying || _searching || _applyUnconfirmed || !CanAct || !_scope.IsCurrent(_candidateScope))
             return;
         var selected = _selectedCandidate; var scope = _candidateScope;
         var dispatched = false;
@@ -179,17 +180,24 @@ public sealed partial class MatchItemDialog : ContentDialog
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested && !dispatched) { }
         catch (Exception ex)
         {
-            if (!CanAct || !_scope.IsCurrent(scope)) return;
+            // A failed inventory read makes the picker unavailable and retires
+            // candidates, but only a changed inventory snapshot is scope drift.
+            if (!CanAct || !_scope.State.IsCurrent(scope)) return;
             ApplyStatusText.Text = dispatched
                 ? $"Match could not be applied or confirmed: {ex.Message} Reload the item before trying again."
                 : $"Match could not be applied: {ex.Message}";
             ApplyStatusText.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
-            ApplyMatchButton.Content = "Apply Match";
-            ApplyMatchButton.IsEnabled = _selectedCandidate != null;
+            ApplyStatusText.Visibility = Visibility.Visible;
         }
         finally
         {
-            if (dispatched && applied == null) InvalidateAppliedMatch(null);
+            if (dispatched && applied == null)
+            {
+                // A lost response may conceal a committed non-idempotent write.
+                // Do not arm another attempt in this dialog.
+                _applyUnconfirmed = true;
+                InvalidateAppliedMatch(null);
+            }
             _applying = false;
             ApplyMatchButton.Content = "Apply Match"; UpdateCommands();
             if (_lifetime.IsCancellationRequested) Hide();
@@ -644,7 +652,7 @@ public sealed partial class MatchItemDialog : ContentDialog
     private async Task DoSearchAsync()
     {
         if (_searching || _applying || !CanAct) return;
-        if (!_scope.CanSearch) return;
+        if (_applyUnconfirmed || !_scope.CanSearch) return;
         var scope = _scope.State.Capture(); var revision = ++_searchRevision;
         var isVideo = IsVideoMatchType(_itemType);
         var title = (isVideo ? TitleBox.Text : GenericTitleBox.Text).Trim();
@@ -875,9 +883,20 @@ public sealed partial class MatchItemDialog : ContentDialog
         var capturedCandidate = candidate;
         rowBtn.Click += async (_, _) =>
         {
-            if (_applying || _searching || !CanAct || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
-            try { await _scope.RefreshAsync(); } catch (OperationCanceledException) { return; } catch (Exception) { return; }
-            if (_applying || _searching || !CanAct || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
+            if (_applying || _searching || _applyUnconfirmed || !CanAct || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
+            try { await _scope.RefreshAsync(); }
+            catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { return; }
+            catch (Exception ex)
+            {
+                if (CanAct && _scope.State.IsCurrent(scope))
+                {
+                    ApplyStatusText.Text = $"Match could not be applied: {ex.Message}";
+                    ApplyStatusText.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
+                    ApplyStatusText.Visibility = Visibility.Visible;
+                }
+                return;
+            }
+            if (_applying || _searching || _applyUnconfirmed || !CanAct || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
             // Deselect all, select this one
             foreach (var child in ResultsPanel.Children)
             {
