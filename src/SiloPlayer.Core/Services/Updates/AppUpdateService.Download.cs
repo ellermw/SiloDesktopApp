@@ -67,13 +67,34 @@ public sealed partial class AppUpdateService
             if (IsChangingChannel) return Task.CompletedTask;
             if (!_transfer.IsCompleted)
             {
-                if (!automatic) _automaticTransfer = false;
+                if (!automatic)
+                {
+                    _automaticTransfer = false;
+                    return CompleteManualDownloadAsync(_transfer, Volatile.Read(ref _channelEpoch), ct);
+                }
                 return _transfer;
             }
             if (automatic && (Mode != AppUpdateMode.Automatic || _playbackActive || State.RequiresFullInstaller)) return Task.CompletedTask;
             _automaticTransfer = automatic;
             return _transfer = DownloadCoreAsync(ct);
         }
+    }
+
+    private async Task CompleteManualDownloadAsync(Task transfer, long epoch, CancellationToken ct)
+    {
+        await transfer.WaitAsync(ct).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
+        lock (_transferGate)
+        {
+            // The automatic transfer may already have decided to defer its full
+            // fallback before the manual request promoted it. Finish that request,
+            // but never carry consent across a channel change or retry a failure.
+            var state = State;
+            if (epoch != Volatile.Read(ref _channelEpoch) || IsChangingChannel || !state.RequiresFullInstaller
+                || state.ReadyInstaller is not null || state.PreparedPackage is not null || state.Error is not null) return;
+            transfer = DownloadAsync(ct: ct);
+        }
+        await transfer.ConfigureAwait(false);
     }
 
     private async Task DownloadCoreAsync(CancellationToken ct)
@@ -186,7 +207,12 @@ public sealed partial class AppUpdateService
         var epoch = Volatile.Read(ref _channelEpoch);
         if (IsChangingChannel) return false;
         var state = State;
-        if (state.Release is null || (state.ReadyInstaller is null && state.PreparedPackage is null)) return false;
+        if (state.Release is null) return false;
+        if (state.ReadyInstaller is null && state.PreparedPackage is null)
+        {
+            SetState(state with { Error = state.Error ?? "The update is not ready. Download it again to continue." }, expectedChannelEpoch: epoch);
+            return false;
+        }
         try
         {
             if(state.PreparedPackage is { } prepared)

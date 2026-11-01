@@ -288,6 +288,32 @@ public sealed class UpdateChannelTests : IDisposable
     }
 
     [Fact]
+    public async Task ChannelSwitchesRetainOnlyTheSharedLatestValidator()
+    {
+        using var wire = new Wire { Stable = Release("1.2.518"), Catalog = [Release("1.2.519-beta.12")], Conditional = true };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.CheckAsync();
+        for (var i = 0; i < 2; i++)
+        {
+            await service.SetChannelAsync(AppUpdateChannel.Beta);
+            Assert.Null(service.State.Release);
+            var before = wire.Requests.Count;
+            await service.CheckAsync();
+            Assert.Null(service.State.Error);
+            Assert.Equal("1.2.519-beta.12", service.State.Release?.DisplayVersion);
+            Assert.Equal("\"stable\"", wire.Requests[before].ETag);
+            Assert.Null(wire.Requests[before + 1].ETag);
+            await service.SetChannelAsync(AppUpdateChannel.Stable);
+            Assert.Null(service.State.Release);
+            before = wire.Requests.Count;
+            await service.CheckAsync();
+            Assert.Null(service.State.Error);
+            Assert.Equal("1.2.518", service.State.Release?.DisplayVersion);
+            Assert.Equal("\"stable\"", wire.Requests[before].ETag);
+        }
+    }
+
+    [Fact]
     public async Task ConditionalAuthorityIsScopedToEndpointAndChannelAndKeepsExactPreparedDownload()
     {
         using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")], Conditional = true };
@@ -488,7 +514,7 @@ public sealed class UpdateChannelTests : IDisposable
     }
 
     [Fact]
-    public async Task CancelledSelectionCannotReuseBetaCacheAsStableAuthorityOnAnUnexpected304()
+    public async Task CancelledSelectionCanReuseOnlyLatestStableAuthorityOn304()
     {
         using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")] };
         using var http = new HttpClient(wire); var service = Create(http);
@@ -498,11 +524,24 @@ public sealed class UpdateChannelTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.SetChannelAsync(AppUpdateChannel.Stable, stop.Token));
         wire.ForceStableNotModified = true; await service.CheckAsync();
         Assert.Equal(AppUpdateChannel.Stable, service.Channel);
-        Assert.Null(service.State.Release); Assert.NotNull(service.State.Error);
+        Assert.Null(service.State.Release); Assert.Null(service.State.Error);
+        Assert.Equal("\"stable\"", wire.Requests.Last().ETag);
+        Assert.False(service.ShouldInstallOnExit);
     }
 
     [Fact]
-    public async Task CancelingAChannelSwitchWhileItsOperationGateIsHeldRetiresValidatorsAndSuccessStamp()
+    public async Task UnexpectedLatest304WithoutAValidatorStillFailsClosed()
+    {
+        using var wire = new Wire { ForceStableNotModified = true };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.CheckAsync();
+        Assert.Null(service.State.Release); Assert.NotNull(service.State.Error);
+        Assert.Null(Assert.Single(wire.Requests).ETag);
+        Assert.False(service.ShouldInstallOnExit);
+    }
+
+    [Fact]
+    public async Task CancelingAChannelSwitchWhileItsOperationGateIsHeldRetiresCatalogAndSuccessStamp()
     {
         using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")], Conditional = true };
         using var http = new HttpClient(wire); var service = Create(http);
@@ -521,7 +560,11 @@ public sealed class UpdateChannelTests : IDisposable
             stop.Cancel();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => changing);
             Assert.False(service.IsChangingChannel); Assert.Equal(AppUpdateChannel.Stable, service.Channel);
-            Assert.Null(cache.GetValue(service)); Assert.Equal(0L, (long)stamp.GetValue(service)!);
+            var retained = Assert.IsType<ReleaseCheck>(cache.GetValue(service));
+            Assert.Equal(AppUpdateChannel.Stable, retained.Channel);
+            Assert.Equal("\"stable\"", retained.ETag); Assert.Empty(retained.Pages); Assert.Null(retained.Stable);
+            Assert.Null(retained.Release);
+            Assert.Equal(0L, (long)stamp.GetValue(service)!);
             Assert.Null(service.State.Release); Assert.False(service.ShouldInstallOnExit);
         }
         finally { operation.Release(); }
@@ -529,7 +572,8 @@ public sealed class UpdateChannelTests : IDisposable
         await service.CheckAsync();
         Assert.Null(service.State.Error);
         Assert.Single(wire.Requests.Skip(before));
-        Assert.Null(wire.Requests[before].ETag);
+        Assert.Equal("\"stable\"", wire.Requests[before].ETag);
+        Assert.Null(service.State.Release);
     }
 
     [Fact]

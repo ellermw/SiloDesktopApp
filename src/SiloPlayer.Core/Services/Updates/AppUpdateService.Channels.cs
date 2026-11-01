@@ -29,7 +29,8 @@ public sealed partial class AppUpdateService
             Volatile.Write(ref _channel, (int)channel);
             Volatile.Write(ref _changingChannel, 1);
             // Withdraw consent/authority immediately, before waiting out old IO.
-            _lastCheck = null; // A validator belongs only to its old endpoint/representation.
+            // Latest is shared by both channels; only catalog authority is channel-specific.
+            _lastCheck = _lastCheck?.Channel == AppUpdateChannel.Beta ? _lastCheck.Stable : _lastCheck;
             Interlocked.Exchange(ref _lastSuccessfulCheckStamp, 0);
             Volatile.Write(ref _state, UncheckedChannelState());
         }

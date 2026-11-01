@@ -150,6 +150,27 @@ public sealed class AppUpdateDownloadTests : IDisposable
         await service.DownloadAsync(); Assert.Equal(1, wire.Downloads); Assert.NotNull(service.State.ReadyInstaller);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MissingReadyPackageShowsAnActionableStatusWithoutHidingADownloadFailure(bool failedDownload)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var service = Create(http); await service.CheckAsync();
+        if (failedDownload)
+        {
+            wire.AdvertisedDigest = AppUpdateTests.Digest;
+            await service.CheckAsync(); await service.DownloadAsync();
+            Assert.NotNull(service.State.Error);
+        }
+        var error = service.State.Error;
+        Assert.False(await service.ReverifyReadyAsync());
+        Assert.NotNull(service.State.Error);
+        if (failedDownload) Assert.Equal(error, service.State.Error);
+        else Assert.Contains("not ready", service.State.Error!);
+        Assert.Null(service.State.ReadyInstaller); Assert.Null(service.State.PreparedPackage);
+    }
+
     [Fact]
     public async Task TamperedReadyPackageIsDisarmedBeforeExit()
     {

@@ -19,6 +19,8 @@ public sealed class ReleaseVersionTests
 
     [Theory]
     [InlineData("1.2.518", "1.2.518.0")]
+    [InlineData("1.2.517-beta.12", "1.2.516.12")]
+    [InlineData("1.2.518-beta.3", "1.2.517.3")]
     [InlineData("1.2.518-beta.1", "1.2.517.1")]
     [InlineData("1.2.518-beta.2", "1.2.517.2")]
     [InlineData("1.2.518-beta.12", "1.2.517.12")]
@@ -60,6 +62,26 @@ public sealed class ReleaseVersionTests
         Assert.Equal("1.2.516", ReleaseVersion.FromBuild("1.2.516+sourcehash", new Version(1, 2, 516, 0)).Text);
         Assert.Throws<InvalidDataException>(() => ReleaseVersion.FromBuild("1.2.518-beta.12", new Version(1, 2, 518, 0)));
     }
+
+    [Theory]
+    [InlineData("1.2.518.0")]
+    [InlineData("1.2.518.0+sourcehash")]
+    public void LegacyFourPartInstalledStableIdentityIsNormalizedAndStillChecked(string informational)
+    {
+        var version = ReleaseVersion.FromBuild(informational, new Version(1, 2, 518, 0));
+        Assert.Equal("1.2.518", version.Text);
+        Assert.False(version.IsPrerelease);
+        Assert.Equal(new Version(1, 2, 518, 0), version.GetWindowsVersion());
+        Assert.Throws<InvalidDataException>(() => ReleaseVersion.FromBuild(informational, new Version(1, 2, 517, 0)));
+    }
+
+    [Theory]
+    [InlineData("1.2.517.12", "1.2.517.12")]
+    [InlineData("1.2.518.0-beta.12", "1.2.517.12")]
+    [InlineData("1.2.518.0+", "1.2.518.0")]
+    [InlineData("01.2.518.0", "1.2.518.0")]
+    public void LegacyInstalledIdentityDoesNotGuessABetaOrAcceptInvalidStamps(string informational, string numeric)
+        => Assert.Throws<InvalidDataException>(() => ReleaseVersion.FromBuild(informational, Version.Parse(numeric)));
 
     [Theory]
     [InlineData("1.2.517.12", true)]

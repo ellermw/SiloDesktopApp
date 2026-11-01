@@ -34,11 +34,12 @@ internal sealed partial class GitHubReleaseReader
     internal async Task<ReleaseCheck> ReadForChannelAsync(Version installed, ReleaseVersion? semanticInstalled,
         AppUpdateChannel channel, ReleaseCheck? previous, CancellationToken ct)
     {
+        var previousStable = previous?.Channel == AppUpdateChannel.Beta ? previous.Stable : previous;
         if (previous is not null && previous.Channel != channel) previous = null;
-        if (channel != AppUpdateChannel.Beta) return await ReadAsync(installed, previous, ct).ConfigureAwait(false);
+        if (channel != AppUpdateChannel.Beta) return await ReadAsync(installed, previousStable, ct).ConfigureAwait(false);
         // Only GitHub Latest is approved stable authority. A non-Latest stable
         // catalog entry cannot bypass the separate orchestrator's promotion gate.
-        var stable = await ReadAsync(installed, previous?.Stable, ct).ConfigureAwait(false);
+        var stable = await ReadAsync(installed, previousStable, ct).ConfigureAwait(false);
         var current = semanticInstalled ?? ReleaseVersion.Parse($"{installed.Major}.{installed.Minor}.{Math.Max(0, installed.Build)}");
         var pages = new List<ReleaseCatalogPage>();
         AppRelease? best = stable.Release;

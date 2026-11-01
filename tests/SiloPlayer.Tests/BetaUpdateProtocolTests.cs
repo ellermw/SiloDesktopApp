@@ -57,6 +57,7 @@ public sealed class BetaUpdateProtocolTests : IDisposable
 
     [Theory]
     [InlineData("1.2.518-beta.2", "1.2.518-beta.12", "1.2.517.12")]
+    [InlineData("1.2.517-beta.12", "1.2.518-beta.3", "1.2.517.3")]
     [InlineData("1.2.517", "1.2.518-beta.12", "1.2.517.12")]
     [InlineData("1.2.518-beta.12", "1.2.518", "1.2.518.0")]
     public async Task DirectSkippedBetaAndStableTransitionsReuseVerifiedFilesAndRetainRecovery(string installed, string target, string expectedNumeric)
@@ -277,6 +278,46 @@ public sealed class BetaUpdateProtocolTests : IDisposable
         Assert.Equal(1, wire.FullInstallerRequests); Assert.False(service.ShouldInstallOnExit);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ManualRequestDuringAutomaticMigrationCompletesEvenAfterTheFallbackWasDeferred(bool afterDeferralDecision)
+    {
+        var source = await ArrangeAsync("1.2.518-beta.2", "1.2.518-beta.12");
+        var path = Path.Combine(source.Assets, UpdateManifestValidation.ManifestName);
+        var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!; json["BootstrapProtocol"] = 2;
+        await File.WriteAllTextAsync(path, json.ToJsonString());
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var wire = new Assets("1.2.518-beta.12", source.Assets)
+        { BeforeManifest = async ct => { entered.TrySetResult(); await finish.Task.WaitAsync(ct); } };
+        using var http = new HttpClient(wire);
+        var service = await CreateAsync(http, "1.2.518-beta.2", "1.2.518-beta.12", source.Client);
+        service.SetMode(AppUpdateMode.Automatic); await service.CheckAsync();
+        Task? manual = null;
+        service.Changed += state =>
+        {
+            // This callback runs after the automatic branch captured its defer
+            // decision but before the original transfer has completed.
+            if (afterDeferralDecision && state.RequiresFullInstaller && !state.IsDownloading && manual is null)
+                manual = service.DownloadAsync();
+        };
+        var automatic = service.DownloadAsync(automatic: true);
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            if (!afterDeferralDecision) manual = service.DownloadAsync();
+        }
+        finally { finish.TrySetResult(); }
+        await automatic.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.NotNull(manual);
+        await manual!.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Null(service.State.Error); Assert.True(service.State.RequiresFullInstaller);
+        Assert.NotNull(service.State.ReadyInstaller); Assert.True(await service.ReverifyReadyAsync());
+        Assert.Equal(1, wire.ManifestRequests); Assert.Equal(1, wire.FullInstallerRequests);
+        Assert.False(service.ShouldInstallOnExit);
+    }
+
     [Fact]
     public async Task InterruptedSkippedBetaPreparationCanRetryWithoutIntermediateVersionsOrLostPreferences()
     {
@@ -326,6 +367,7 @@ public sealed class BetaUpdateProtocolTests : IDisposable
         public bool BadManifestHash, IncompletePair, TruncateNextRange;
         public int FullInstallerRequests, ManifestRequests;
         public bool FailManifestRequests;
+        public Func<CancellationToken, Task>? BeforeManifest;
         public List<(long From, long To)> Ranges = [];
         public List<string> Metadata = [];
         public IncrementalReleaseAssets Incremental(string version)
@@ -351,7 +393,7 @@ public sealed class BetaUpdateProtocolTests : IDisposable
                 }
             return release;
         }
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Assert.Null(request.Headers.Authorization); var uri = request.RequestUri!;
             if (uri.Host == "api.github.com")
@@ -359,15 +401,16 @@ public sealed class BetaUpdateProtocolTests : IDisposable
                 Metadata.Add(uri.AbsoluteUri);
                 var json = uri.AbsolutePath.EndsWith("/latest") ? Release(target.Contains('-') ? "1.2.517" : target).ToJsonString()
                     : uri.AbsolutePath.Contains("/tags/") ? Release(target).ToJsonString() : JsonSerializer.Serialize(new[] { Release(target) });
-                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") });
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
             }
             var name = Path.GetFileName(uri.AbsolutePath);
             if (name == UpdateManifestValidation.ManifestName)
             {
                 ManifestRequests++;
+                if (BeforeManifest is not null) await BeforeManifest(ct);
                 if (FailManifestRequests) throw new HttpRequestException("Synthetic manifest outage.");
             }
-            if (name == "SiloInstaller-Windows-x64.exe") { FullInstallerRequests++; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(FullPackage) }); }
+            if (name == "SiloInstaller-Windows-x64.exe") { FullInstallerRequests++; return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(FullPackage) }; }
             var bytes = File.ReadAllBytes(Path.Combine(directory!, name));
             if (request.Headers.Range is { } range)
             {
@@ -375,9 +418,9 @@ public sealed class BetaUpdateProtocolTests : IDisposable
                 var content = bytes[(int)from..((int)to + 1)];
                 if (TruncateNextRange) { TruncateNextRange = false; content = content[..(content.Length / 2)]; }
                 var response = new HttpResponseMessage(HttpStatusCode.PartialContent) { Content = new ByteArrayContent(content) };
-                response.Content.Headers.ContentRange = new ContentRangeHeaderValue(from, to, bytes.Length); return Task.FromResult(response);
+                response.Content.Headers.ContentRange = new ContentRangeHeaderValue(from, to, bytes.Length); return response;
             }
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) });
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
         }
     }
     public void Dispose() { if (Directory.Exists(sandbox)) Directory.Delete(sandbox, true); }

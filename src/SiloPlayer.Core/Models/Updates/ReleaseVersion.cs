@@ -48,6 +48,11 @@ public sealed class ReleaseVersion : IComparable<ReleaseVersion>
 
     public static ReleaseVersion FromBuild(string informational, Version numeric)
     {
+        // Legacy stable builds may report M.m.P.0 rather than SemVer M.m.P.
+        // Normalize only revision zero; nonzero revisions need an explicit beta identity.
+        var parts = informational.Split('+', 2);
+        if (Regex.IsMatch(parts[0], @"\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.0\z", RegexOptions.CultureInvariant))
+            informational = parts[0][..^2] + (parts.Length == 2 ? "+" + parts[1] : "");
         _ = Parse(informational);
         var version = Parse(informational.Split('+')[0]);
         if (version.GetWindowsVersion() != numeric) throw new InvalidDataException("Semantic and numeric installed versions disagree.");
