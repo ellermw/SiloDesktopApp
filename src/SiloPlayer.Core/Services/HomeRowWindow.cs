@@ -44,7 +44,7 @@ public static class HomeRowWindow
         var limit = whole.ItemLimit > 0 ? Math.Max(prefix.Count, whole.ItemLimit) : int.MaxValue;
         result.Items = new(prefix.Concat(rest).Take(limit));
         result.HasMore = whole.HasMore;
-        result.HasReadWhole = true;
+        result.HasReadWhole = !whole.HasMore;
         result.ShownCount = Math.Min(initialCount, result.Items.Count);
         result.CompletedOrder = current.CompletedOrder > 0 ? current.CompletedOrder : completedOrder;
         result.LoadCompleted = true;

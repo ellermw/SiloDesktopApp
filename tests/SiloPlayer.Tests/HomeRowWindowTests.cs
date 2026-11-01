@@ -103,14 +103,16 @@ public class HomeRowWindowTests
         var partial = Row("one", "two", "three"); partial.HasMore = true;
         var first = HomeRowWindow.Complete(shown, partial, shown, 7);
         Assert.True(first.HasMore);
-        Assert.True(first.HasReadWhole);
-        Assert.False(first.CanComplete);
+        Assert.False(first.HasReadWhole);
+        Assert.True(first.CanComplete);
         Assert.True(HomeRowWindow.IsExpanded(first));
         Assert.Equal(2, first.ShownCount);
         var unchanged = HomeRowWindow.Complete(first, partial, first, 8);
         Assert.Equal(HomeSectionChange.None, HomeSectionReconciler.Apply(first, unchanged));
         var completed = HomeRowWindow.Complete(first, Row("one", "two", "three", "four"), first, 9);
         Assert.False(completed.HasMore);
+        Assert.True(completed.HasReadWhole);
+        Assert.False(completed.CanComplete);
         Assert.Equal(["one", "two", "three", "four"], completed.Items.Select(i => i.ContentId));
         Assert.Equal(2, completed.ShownCount);
         Assert.Equal(7, completed.CompletedOrder);
@@ -137,13 +139,13 @@ public class HomeRowWindowTests
         Assert.Same(whole.Items[0], completed.Items[2]);
         Assert.Equal(2, completed.ShownCount); Assert.Equal(7, completed.CompletedOrder);
         Assert.Equal(whole.ReadLanguageGeneration, completed.ReadLanguageGeneration);
-        Assert.True(completed.HasMore); Assert.False(completed.CanComplete);
+        Assert.True(completed.HasMore); Assert.True(completed.CanComplete);
     }
 
     [Fact]
-    public void WholeReadStateSurvivesSnapshotProjectionAndReconciliationEvenWhenAllCardsAreHidden()
+    public void TruncatedReadStaysRetrievableThroughProjectionEvenWhenAllCardsAreHidden()
     {
-        var row = Row("shared"); row.HasMore = true; row.HasReadWhole = true;
+        var row = Row("shared"); row.HasMore = true;
         row.ShownCount = 1; row.CompletedOrder = 7;
         Assert.True(HomeRowWindow.IsExpanded(row));
         var anchor = Row("shared"); anchor.Id = "anchor";
@@ -154,7 +156,7 @@ public class HomeRowWindowTests
         var change = HomeSectionReconciler.Apply(mounted, projected["row"]);
         Assert.True(change.HasFlag(HomeSectionChange.Metadata));
         Assert.Empty(mounted.Items);
-        Assert.True(mounted.HasMore); Assert.True(mounted.HasReadWhole); Assert.False(mounted.CanComplete);
+        Assert.True(mounted.HasMore); Assert.False(mounted.HasReadWhole); Assert.True(mounted.CanComplete);
         Assert.True(HomeRowWindow.IsExpanded(mounted));
         Assert.Equal(0, mounted.ShownCount); Assert.Equal(7, mounted.CompletedOrder);
         var json = JsonSerializer.SerializeToElement(mounted, Wire);

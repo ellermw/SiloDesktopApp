@@ -210,11 +210,30 @@ internal static class HomeRowWindowNativeFixture
             scroll.ChangeView(scroll.ScrollableWidth, null, null, true);
             await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(4));
             wire.Release.TrySetResult();
-            await Until(() => vm.Sections[0].HasReadWhole); await Task.Delay(100);
-            Require(vm.Sections[0].HasMore && vm.Sections[0].Items.Count == 25 && vm.Sections[0].ShownCount == 20,
-                "A truncated whole response must retain has_more and the initial-card boundary.");
+            await Until(() => vm.Sections[0].Items.Count == 25); await Task.Delay(100);
+            Require(vm.Sections[0].HasMore && !vm.Sections[0].HasReadWhole && vm.Sections[0].CanComplete
+                && vm.Sections[0].ShownCount == 20 && wire.LastWholeQuery == "?item_limit=50",
+                "A truncated whole response must remain retrievable, using the layout's budget rather than the initial20.");
             var order = vm.Sections[0].CompletedOrder;
             var initialDemands = demands;
+            for (var repeat = 0; repeat < 3; repeat++)
+            {
+                row.Section = HomeSectionDedupe.Snapshot(vm.Sections[0]);
+                row.UpdateLayout(); await Task.Delay(40);
+            }
+            Require(wire.Whole == 1 && demands == initialDemands,
+                "Presentation changes alone must not loop over a truncated response.");
+            var next = (Button)row.FindName("ScrollRightBtn");
+            Require(next.IsEnabled && ((Microsoft.UI.Xaml.UIElement)row.FindName("RightFadeGradient")).Opacity == 1,
+                "A truncated row must retain forward navigation and its fade.");
+            wire.PartialWhole = false;
+            ((IInvokeProvider)new ButtonAutomationPeer(next).GetPattern(PatternInterface.Invoke)).Invoke();
+            await Until(() => vm.Sections[0].Items.Count == 35);
+            Require(!vm.Sections[0].HasMore && vm.Sections[0].HasReadWhole && !vm.Sections[0].CanComplete
+                && vm.Sections[0].ShownCount == 20 && vm.Sections[0].CompletedOrder == order
+                && wire.Whole == 2 && wire.LastWholeQuery == "?item_limit=50",
+                "Fresh forward navigation must retrieve the remaining cards without losing initial priority.");
+            initialDemands = demands;
             for (var repeat = 0; repeat < 3; repeat++)
             {
                 row.Section = HomeSectionDedupe.Snapshot(vm.Sections[0]);
@@ -223,24 +242,25 @@ internal static class HomeRowWindowNativeFixture
                 scroll.ChangeView(scroll.ScrollableWidth, null, null, true); await Task.Delay(40);
                 await vm.CompleteSectionAsync("row");
             }
-            Require(vm.Sections[0].HasReadWhole && !vm.Sections[0].CanComplete && wire.Whole == 1 && demands == initialDemands,
-                "Repeated near-end events and presentation updates must not request the same truncated whole row again.");
+            Require(vm.Sections[0].HasReadWhole && !vm.Sections[0].CanComplete && wire.Whole == 2 && demands == initialDemands,
+                "Repeated near-end events and presentation updates must not request a fully recovered row again.");
             Require(!((Button)row.FindName("ScrollRightBtn")).IsEnabled
                 && ((Microsoft.UI.Xaml.UIElement)row.FindName("RightFadeGradient")).Opacity == 0,
-                "A whole-read row must disable its forward arrow and fade at the end, despite server has_more.");
+                "A fully recovered row must disable its forward arrow and fade at the end.");
 
-            wire.Title = "Still truncated"; vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
+            wire.PartialWhole = true; wire.Title = "Still truncated"; vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
             await Until(() => vm.Sections[0].Title == "Still truncated"); await Task.Delay(150);
-            await vm.CompleteSectionAsync("row");
-            Require(vm.Sections[0].HasMore && vm.Sections[0].HasReadWhole && !vm.Sections[0].CanComplete
-                && vm.Sections[0].Items.Count == 25 && wire.Whole == 2 && wire.Capped == 1,
-                "An expanded truncated refresh must make one uncapped request, not rearm completion.");
+            Require(vm.Sections[0].HasMore && !vm.Sections[0].HasReadWhole && vm.Sections[0].CanComplete
+                && vm.Sections[0].Items.Count == 25 && vm.Sections[0].ShownCount == 20
+                && vm.Sections[0].CompletedOrder == order && wire.Whole == 3 && wire.Capped == 1
+                && wire.LastWholeQuery == "?item_limit=50",
+                "An expanded truncated refresh must retain the whole-row budget, priority and retrievable state without looping.");
 
             wire.PartialWhole = false; wire.ReverseWhole = true; wire.Title = "Full";
             vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
             await Until(() => vm.Sections[0].Title == "Full");
             Require(!vm.Sections[0].HasMore && vm.Sections[0].Items.Count == 35 && vm.Sections[0].ShownCount == 20
-                && vm.Sections[0].CompletedOrder == order && wire.Whole == 3,
+                && vm.Sections[0].CompletedOrder == order && wire.Whole == 4,
                 "A later whole refresh must recover new cards while preserving the initial-card budget and completion order.");
             Require(vm.Sections[0].Items.Select(item => item.ContentId).SequenceEqual(
                 Enumerable.Range(1, 35).Reverse().Select(i => $"alpha-{i}")),
@@ -362,6 +382,7 @@ internal static class HomeRowWindowNativeFixture
         public int Capped, Whole; public bool HoldWhole, FailWhole, HoldRefresh, DuplicateFirst;
         public bool HoldFirstWhole, FailFirstWhole, NullFirstWhole, NullWhole, PartialWhole, ReverseWhole, UnsupportedCapabilities;
         public int CardCount = 35, RowItemLimit = 50;
+        public string? LastWholeQuery;
         public int[]? CardsOverride;
         public string Title = "Progress";
         public TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -390,6 +411,7 @@ internal static class HomeRowWindowNativeFixture
             }
             else
             {
+                LastWholeQuery = request.RequestUri.Query;
                 var attempt = Interlocked.Increment(ref Whole);
                 if (FailWhole || (FailFirstWhole && attempt == 1)) return new(HttpStatusCode.BadRequest) { Content = new StringContent("""{"status":400,"detail":"fixture failure"}""") };
                 if (NullWhole || (NullFirstWhole && attempt == 1)) return Json("null");

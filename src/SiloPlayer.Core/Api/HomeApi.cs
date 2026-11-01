@@ -4,6 +4,7 @@ namespace SiloPlayer.Core.Api;
 
 public class HomeApi(SiloApiClient client)
 {
+    private static readonly TimeSpan CapabilityProbeTimeout = TimeSpan.FromSeconds(2);
     private readonly SemaphoreSlim _capabilityGate = new(1);
     private ApiRequestContext? _capabilityContext;
     private HomeCapabilities? _capabilities;
@@ -47,16 +48,39 @@ public class HomeApi(SiloApiClient client)
     public Task<HomeSectionItemsResponse> GetSectionItemsAsync(string sectionId, CancellationToken ct = default)
         => GetSectionItemsAsync(client.CaptureContext(), LanguageGeneration, sectionId, ct);
 
-    public async Task<HomeSectionItemsResponse> GetSectionItemsAsync(ApiRequestContext owner, long language, string sectionId, CancellationToken ct = default)
+    public Task<HomeSectionItemsResponse> GetSectionItemsAsync(ApiRequestContext owner, long language, string sectionId, CancellationToken ct = default)
+        => ReadSectionItemsAsync(owner, language, sectionId, null, ct);
+
+    /// <summary>Home's featured, expanded and completion reads request the advertised whole-row budget.</summary>
+    public async Task<HomeSectionItemsResponse> GetWholeSectionItemsAsync(ApiRequestContext owner, long language,
+        string sectionId, int itemLimit, CancellationToken ct = default)
+    {
+        var capabilities = await GetCapabilitiesAsync(owner, language, ct).ConfigureAwait(false);
+        int? limit = null;
+        if (capabilities.RowItemLimitMax is > 0 && capabilities.SectionItemLimitMax is > 0)
+        {
+            limit = capabilities.SectionItemLimitMax.Value;
+            if (itemLimit > 0) limit = Math.Min(limit.Value, itemLimit);
+            // A first-window ceiling smaller than the recipe is not a whole
+            // read budget. Preserve the uncapped path rather than shrink it.
+            if (limit.Value > capabilities.RowItemLimitMax.Value) limit = null;
+        }
+        return await ReadSectionItemsAsync(owner, language, sectionId, limit, ct).ConfigureAwait(false);
+    }
+
+    private async Task<HomeSectionItemsResponse> ReadSectionItemsAsync(ApiRequestContext owner, long language,
+        string sectionId, int? itemLimit, CancellationToken ct)
     {
         RequireCurrentRead(owner, language, ct);
+        var path = $"/api/v2/home/sections/{Uri.EscapeDataString(sectionId)}/items";
+        if (itemLimit is > 0) path += $"?item_limit={itemLimit.Value}";
         var section = await client.SendRequestAsync<HomeSectionWithItems>(owner, HttpMethod.Get,
-            $"/api/v2/home/sections/{Uri.EscapeDataString(sectionId)}/items", null, ct).ConfigureAwait(false);
+            path, null, ct).ConfigureAwait(false);
         RequireCurrentRead(owner, language, ct);
         if (section != null)
         {
             section.ReadLanguageGeneration = language;
-            section.HasReadWhole = true;
+            section.HasReadWhole = !section.HasMore;
         }
         return new() { Section = section };
     }
@@ -69,19 +93,9 @@ public class HomeApi(SiloApiClient client)
     {
         RequireCurrentRead(context, language, ct);
         var capabilities = await GetCapabilitiesAsync(context, language, ct).ConfigureAwait(false);
-        RequireCurrentRead(context, language, ct);
-        var path = $"/api/v2/home/sections/{Uri.EscapeDataString(sectionId)}/items";
         var bounded = capabilities.RowItemLimitMax >= Services.HomeRowWindow.InitialItemLimit;
-        if (bounded) path += $"?item_limit={Services.HomeRowWindow.InitialItemLimit}";
-        var section = await client.SendRequestAsync<HomeSectionWithItems>(context, HttpMethod.Get, path, null, ct).ConfigureAwait(false);
-        RequireCurrentRead(context, language, ct);
-        if (section != null)
-        {
-            section.ReadLanguageGeneration = language;
-            section.HasReadWhole = !bounded;
-            if (!bounded) section.HasMore = false;
-        }
-        return new() { Section = section };
+        return await ReadSectionItemsAsync(context, language, sectionId,
+            bounded ? Services.HomeRowWindow.InitialItemLimit : null, ct).ConfigureAwait(false);
     }
 
     public Task<HomeCapabilities> GetCapabilitiesAsync(CancellationToken ct = default)
@@ -99,15 +113,18 @@ public class HomeApi(SiloApiClient client)
                 && (!_capabilitiesTransient || _capabilityLayoutGeneration == layoutGeneration)) return _capabilities;
             HomeCapabilities? capabilities;
             var transient = false;
+            using var probeCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            probeCancellation.CancelAfter(CapabilityProbeTimeout);
             try
             {
-                capabilities = await client.SendRequestAsync<HomeCapabilities>(context, HttpMethod.Get, "/api/v2/home/capabilities", null, ct).ConfigureAwait(false);
+                capabilities = await client.SendRequestAsync<HomeCapabilities>(context, HttpMethod.Get, "/api/v2/home/capabilities", null, probeCancellation.Token).ConfigureAwait(false);
                 transient = capabilities == null;
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested && IsCurrentReadContext(context, language))
             {
-                // HttpClient timeout cancels its own request token, not the row
-                // consumer. A healthy items endpoint remains usable uncapped.
+                // The dedicated probe deadline (or a shorter HttpClient timeout)
+                // must not cancel the row consumer. Caller/owner/language
+                // cancellation still propagates instead of becoming fallback.
                 capabilities = new();
                 transient = true;
             }

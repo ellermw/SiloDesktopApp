@@ -15,8 +15,8 @@ public class HomeSectionWithItems
     public int ItemLimit { get; set; }
     public int TotalCount { get; set; }
     public bool HasMore { get; set; }
-    // An uncapped response can still advertise server-side truncation, but
-    // repeating the same request cannot page beyond it.
+    // A whole-row request is only complete when the server reports no more
+    // cards; server truncation must leave forward completion available.
     [JsonIgnore] public bool HasReadWhole { get; set; }
     [JsonIgnore] public bool CanComplete => HasMore && !HasReadWhole;
     [JsonIgnore] public int? ShownCount { get; set; }

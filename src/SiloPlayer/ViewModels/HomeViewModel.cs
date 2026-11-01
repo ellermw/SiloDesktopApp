@@ -526,6 +526,7 @@ public partial class HomeViewModel : ObservableObject,
         // resume on worker threads. The cache itself belongs to this thread.
         var reads = targets.ToDictionary(section => section.Id, section => (
             Whole: ShouldReadWhole(section),
+            ItemLimit: WholeItemLimit(section.Id),
             Shown: _rawSections.TryGetValue(section.Id, out var cached) ? HomeSectionDedupe.Snapshot(cached) : null));
 
         using var gate = new SemaphoreSlim(MaxConcurrentSectionRequests);
@@ -540,7 +541,7 @@ public partial class HomeViewModel : ObservableObject,
                     && _homeApi.IsCurrentReadContext(owner, language)).ConfigureAwait(false);
                 if (!isCurrent) return;
                 var read = reads[sectionId];
-                var resp = await (read.Whole ? _homeApi.GetSectionItemsAsync(owner, language, sectionId, ct)
+                var resp = await (read.Whole ? _homeApi.GetWholeSectionItemsAsync(owner, language, sectionId, read.ItemLimit, ct)
                     : _homeApi.GetInitialSectionItemsAsync(owner, language, sectionId, ct)).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
                 await RunOnUiThreadAsync(() =>
@@ -602,11 +603,12 @@ public partial class HomeViewModel : ObservableObject,
         var language = _homeApi.LanguageGeneration;
         var removalRevision = _progressRemovalRevision;
         var whole = ShouldReadWhole(current);
+        var itemLimit = WholeItemLimit(sectionId);
         var shown = _rawSections.TryGetValue(sectionId, out var retryRaw) ? HomeSectionDedupe.Snapshot(retryRaw) : null;
         ReplaceInBoundCollection(CloneSection(current, loadFailed: false, loadCompleted: false));
         try
         {
-            var response = await (whole ? _homeApi.GetSectionItemsAsync(owner, language, sectionId, retryToken)
+            var response = await (whole ? _homeApi.GetWholeSectionItemsAsync(owner, language, sectionId, itemLimit, retryToken)
                 : _homeApi.GetInitialSectionItemsAsync(owner, language, sectionId, retryToken));
             if (!IsCurrentSectionRetry(retryGeneration, retryToken, retryProfileId, sectionId))
                 return;
@@ -627,6 +629,11 @@ public partial class HomeViewModel : ObservableObject,
     private bool ShouldReadWhole(HomeSectionWithItems section)
         => _layoutOrder.FirstOrDefault(entry => entry.Id == section.Id)?.Featured == true
             || (_rawSections.TryGetValue(section.Id, out var cached) && HomeRowWindow.IsExpanded(cached));
+
+    // Bounded responses may echo item_limit=20. The layout retains the row's
+    // configured budget, which is authoritative for whole reads.
+    private int WholeItemLimit(string sectionId)
+        => _layoutOrder.FirstOrDefault(entry => entry.Id == sectionId)?.ItemLimit ?? 0;
 
     private void ApplySectionReadResult(HomeSectionWithItems completed, HomeSectionWithItems? shown, bool whole, long removalRevision)
     {
@@ -704,6 +711,7 @@ public partial class HomeViewModel : ObservableObject,
         var language = _homeApi.LanguageGeneration;
         var removalRevision = _progressRemovalRevision;
         var shown = HomeSectionDedupe.Snapshot(raw);
+        var itemLimit = WholeItemLimit(sectionId);
         var exhausted = false;
         try
         {
@@ -715,7 +723,7 @@ public partial class HomeViewModel : ObservableObject,
                 var applied = false;
                 try
                 {
-                    var response = await _homeApi.GetSectionItemsAsync(owner, language, sectionId, ct).ConfigureAwait(false);
+                    var response = await _homeApi.GetWholeSectionItemsAsync(owner, language, sectionId, itemLimit, ct).ConfigureAwait(false);
                     await RunOnUiThreadAsync(() =>
                     {
                         if (!IsCurrentSectionLoad(generation, ct, sectionId)
