@@ -15,6 +15,7 @@ public sealed class AccountPasswordViewModel(AccountPasswordApi api) : Observabl
     private string _currentPassword = "", _newPassword = "", _confirmPassword = "";
     private string? _errorMessage, _successMessage;
     private bool _isLoading, _isSubmitting;
+    private bool _signOutOtherSessions;
 
     public string CurrentPassword { get => _currentPassword; set => SetProperty(ref _currentPassword, value); }
     public string NewPassword { get => _newPassword; set => SetProperty(ref _newPassword, value); }
@@ -25,6 +26,16 @@ public sealed class AccountPasswordViewModel(AccountPasswordApi api) : Observabl
     public bool IsSubmitting { get => _isSubmitting; private set => SetProperty(ref _isSubmitting, value); }
     public bool CanChangePassword => _context is { } context && api.IsCurrentContext(context)
         && _capability is { State: "available", Allowed: true, MinimumPasswordLength: > 0, MaximumPasswordBytes: > 0 };
+    public bool CanSignOutOtherSessions => CanChangePassword && _capability?.SignOutOtherSessions == true;
+    public bool SignOutOtherSessions
+    {
+        get => _signOutOtherSessions;
+        set
+        {
+            if (!IsSubmitting)
+                SetProperty(ref _signOutOtherSessions, value && CanSignOutOtherSessions);
+        }
+    }
     public string Requirements => _capability is { } limits
         ? $"At least {limits.MinimumPasswordLength} characters and no more than {limits.MaximumPasswordBytes} bytes."
         : "";
@@ -44,6 +55,7 @@ public sealed class AccountPasswordViewModel(AccountPasswordApi api) : Observabl
             if (!IsCurrent(generation, context)) return;
             _capability = capability;
             OnPropertyChanged(nameof(CanChangePassword));
+            OnPropertyChanged(nameof(CanSignOutOtherSessions));
             OnPropertyChanged(nameof(Requirements));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested || !api.IsCurrentContext(context)) { }
@@ -86,13 +98,15 @@ public sealed class AccountPasswordViewModel(AccountPasswordApi api) : Observabl
 
         var generation = _generation;
         var ct = _lifetime!.Token;
+        var signOutOthers = CanSignOutOtherSessions && SignOutOtherSessions;
         IsSubmitting = true;
         try
         {
-            await api.ChangePasswordAsync(context, CurrentPassword, NewPassword, ct);
+            await api.ChangePasswordAsync(context, CurrentPassword, NewPassword, signOutOthers, ct);
             if (!IsCurrent(generation, context)) return;
             ClearPasswords();
-            SuccessMessage = "Password changed";
+            SetProperty(ref _signOutOtherSessions, false, nameof(SignOutOtherSessions));
+            SuccessMessage = signOutOthers ? "Password changed. Other devices are signed out." : "Password changed";
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested || !api.IsCurrentContext(context)) { }
         catch (Exception ex)
@@ -118,10 +132,12 @@ public sealed class AccountPasswordViewModel(AccountPasswordApi api) : Observabl
         _lifetime = null;
         _context = null;
         _capability = null;
+        SetProperty(ref _signOutOtherSessions, false, nameof(SignOutOtherSessions));
         ClearPasswords();
         ErrorMessage = SuccessMessage = null;
         IsLoading = IsSubmitting = false;
         OnPropertyChanged(nameof(CanChangePassword));
+        OnPropertyChanged(nameof(CanSignOutOtherSessions));
         OnPropertyChanged(nameof(Requirements));
     }
 
