@@ -1857,6 +1857,7 @@ public partial class PlayerService : IDisposable
         ApiRequestContext? expectedContext = null,
         ApiIdentityContext? expectedIdentityContext = null)
     {
+        var closeGeneration = Volatile.Read(ref _closeGeneration);
         var nextAuthority = authority ?? _localAuthority;
         // Cards carry their original identity, not an access revision. Preserve
         // the strict entry check for callers supplying only a legacy read owner.
@@ -1904,7 +1905,11 @@ public partial class PlayerService : IDisposable
             await _authoritySwitchGate.WaitAsync(cancellationToken);
             try
             {
-                if (expectedIdentity.HasValue && !IsCurrentOwner()) return;
+                // Close retires queued still actions even after _closing resets.
+                // Check before canceling playback or preparing the replacement;
+                // an intentional authority-switch close below is not a queued wait.
+                if (expectedIdentity.HasValue &&
+                    (closeGeneration != Volatile.Read(ref _closeGeneration) || !IsCurrentOwner())) return;
                 if (expectedIdentity.HasValue)
                 {
                     _ = FlushSubtitleOffsetAsync();
@@ -1913,7 +1918,8 @@ public partial class PlayerService : IDisposable
                 if (_closing)
                     await CloseAsync();
                 cancellationToken.ThrowIfCancellationRequested();
-                if (expectedIdentity.HasValue && !IsCurrentOwner()) return;
+                if (expectedIdentity.HasValue &&
+                    (closeGeneration != Volatile.Read(ref _closeGeneration) || !IsCurrentOwner())) return;
                 if (!ReferenceEquals(_activeAuthority, nextAuthority))
                 {
                     await CloseAsync();
@@ -6285,6 +6291,7 @@ public partial class PlayerService : IDisposable
     // ── Close / Dispose ──────────────────────────────────────────────────
 
     private bool _closing;
+    private long _closeGeneration;
     private readonly object _closeTaskGate = new();
     private TaskCompletionSource? _closeCompletion;
 
@@ -6308,6 +6315,7 @@ public partial class PlayerService : IDisposable
 
     private async Task CloseCoreAsync()
     {
+        Interlocked.Increment(ref _closeGeneration);
         EndBufferingQuality();
         var closingAuthority = _activeAuthority;
         await Task.WhenAny(FlushSubtitleOffsetAsync(), Task.Delay(2000));

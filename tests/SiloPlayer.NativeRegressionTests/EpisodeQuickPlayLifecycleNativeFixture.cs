@@ -37,6 +37,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
             ("still click supersedes ordinary start", () => VerifyScopedSupersedesUnscopedAsync(scope)),
             ("ordinary start preserves accepted still click", () => VerifyUnscopedQueuesBehindScopedAsync(scope)),
             ("canceled queued successor", () => VerifyCanceledSuccessorAsync(scope)),
+            ("close retires queued still action", () => VerifyCloseQueuedIntentAsync(scope)),
             ("loading overlay ownership", () => VerifyLoadingOverlayOwnershipAsync(scope)),
             ("attached room authority", () => VerifyRoomIntentAsync(scope)),
             ("rewatch accessible label", () => VerifyRewatchLabelAsync(parent)),
@@ -565,6 +566,36 @@ internal static partial class EpisodeQuickPlayNativeFixture
                 await Task.WhenAll(first, second);
             }
         }
+    }
+
+    private static async Task VerifyCloseQueuedIntentAsync(LifecycleScope scope)
+    {
+        var page = scope.MountSeries("queued-before-close"); await Task.Delay(60); page.UpdateLayout();
+        var play = ResumeButton((Panel)page.FindName("EpisodesPanel"));
+        var gate = (SemaphoreSlim)GetField(scope.Player, "_authoritySwitchGate")!;
+        await gate.WaitAsync();
+        try
+        {
+            Invoke(play);
+            await Until(() => !play.IsEnabled && GetField(scope.Player, "_scopedViewerPlayCts") != null);
+            await scope.Player.CloseAsync().WaitAsync(TimeSpan.FromSeconds(3));
+        }
+        finally { gate.Release(); }
+
+        var generationAfterClose = (long)GetField(scope.Player, "_playRequestGeneration")!;
+        await Until(() => play.IsEnabled);
+        Check(scope.Wire.Watches.Count == 0 && scope.Wire.Starts.Count == 0 &&
+            (long)GetField(scope.Player, "_playRequestGeneration")! == generationAfterClose &&
+            scope.Player.State == PlayerState.Idle && scope.Player.ContentId == null &&
+            !scope.Player.IsLoading && GetField(scope.Player, "_scopedViewerPlayCts") == null,
+            "A queued still action survived CloseAsync and prepared or restarted playback.");
+
+        // Closing must retire the old intent, not disable future card actions.
+        scope.Wire.AcceptStart = true;
+        Invoke(play);
+        await Until(() => play.IsEnabled && scope.Wire.Starts.Count == 1);
+        Check(scope.Player.ContentId == "queued-before-close" && scope.Player.Manager?.CurrentSession != null,
+            "CloseAsync prevented a newly accepted still action from starting playback.");
     }
 
     private static async Task VerifyLoadingOverlayOwnershipAsync(LifecycleScope scope)

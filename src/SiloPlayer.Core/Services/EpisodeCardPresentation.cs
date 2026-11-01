@@ -27,7 +27,7 @@ public static class EpisodeCardPresentation
             string.IsNullOrEmpty(title) ? spoken : $"{spoken}, {title}",
             string.Join("\u00a0\u00a0·\u00a0\u00a0", new[] { formattedAirDate ?? "", runtime }.Where(value => value.Length > 0)),
             overview, overview.Length > 0 && MachineTranslationPresentation.HasField(episode.MachineTranslatedFields),
-            episode.Files.Count > 0 && episode.Files.All(file => file.Unreadable == true));
+            episode.Files is { Count: > 0 } && episode.Files.All(file => file.Unreadable == true));
     }
 
     public static EpisodeCardPresentationState Create(
