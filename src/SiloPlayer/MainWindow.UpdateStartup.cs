@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Core.Services.Updates;
+using SiloPlayer.Core.Models.Updates;
 using SiloPlayer.Services;
 
 namespace SiloPlayer;
@@ -18,6 +19,10 @@ public sealed partial class MainWindow
             if(root is null || SideBySideInstallation.ReadState(root) is not {TransactionId:{ } transaction,PendingVersion:{ } version})return;
             // Local UI readiness only. Server/network state is intentionally not part of startup success.
             SideBySideInstallation.RecordReady(root);
+            // Keep the local observation even on failure, but never confirm a
+            // target whose stamped identity disagrees with the activated version.
+            var installed = ReleaseVersion.FromAssembly(typeof(App).Assembly);
+            if (installed.GetWindowsVersion().ToString(4) != version) throw new InvalidDataException("Installed update identity does not match the activated version.");
             var args=Environment.GetCommandLineArgs();
             var index=Array.IndexOf(args,"--silo-update-ready");
             if(index>=0 && index+1<args.Length && Regex.IsMatch(args[index+1],@"^SiloUpdate-[a-f0-9]{32}$"))
@@ -44,7 +49,7 @@ public sealed partial class MainWindow
             UpdateManifestValidation.EnsureOrdinaryPath(shown);
             try {using var once=new FileStream(shown,FileMode.CreateNew,FileAccess.Write,FileShare.None);once.Flush(true);}
             catch(IOException)when(File.Exists(shown)){return;}
-            App.Services.GetRequiredService<ToastService>().Success("Silo was updated successfully to "+Version.Parse(version).ToString(3)+".");
+            App.Services.GetRequiredService<ToastService>().Success("Silo was updated successfully to "+installed.Text+(installed.IsPrerelease ? " (Beta)" : "")+".");
         }
         catch(Exception ex){LocalLog.AppendLine("updates.txt","startup_confirmation_deferred kind="+ex.GetType().Name);}
     }

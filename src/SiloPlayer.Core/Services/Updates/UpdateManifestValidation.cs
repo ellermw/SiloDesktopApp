@@ -18,8 +18,12 @@ public static class UpdateManifestValidation
         if (manifest.Schema != 1 || manifest.BootstrapProtocol != 1 || !manifest.BackwardCompatibleData)
             throw new InvalidDataException("Unsupported update schema, bootstrap protocol or data migration.");
         if (!Version.TryParse(manifest.Version, out var version) || version.Build < 0 || version.Revision < 0 || version.ToString(4) != manifest.Version ||
+            version.Major > 65534 || version.Minor > 65534 || version.Build > 65534 || version.Revision > 65534 ||
             manifest.Version.Length > 64 || !Regex.IsMatch(manifest.Version, @"^\d+\.\d+\.\d+\.\d+$", RegexOptions.CultureInvariant))
             throw new InvalidDataException("The manifest version must have four normalized components.");
+        if (manifest.ReleaseVersion is { } text &&
+            (!ReleaseVersion.TryParse(text, out var semantic) || semantic.GetWindowsVersion() != version))
+            throw new InvalidDataException("Manifest semantic and numeric versions disagree.");
         if (manifest.PackSize is <= 0 or > MaximumPackBytes || !IsHash(manifest.PackSha256) ||
             manifest.Files is null || manifest.Files.Count is < 2 or > 4096)
             throw new InvalidDataException("Invalid update manifest bounds.");
@@ -99,13 +103,27 @@ public static class UpdateManifestValidation
         return Parse(bytes);
     }
 
-    internal static UpdateManifest Parse(byte[] bytes)
+    private sealed record ManifestCompatibility(int? Schema, int BootstrapProtocol = 1, bool BackwardCompatibleData = true);
+
+    internal static UpdateManifest Parse(byte[] bytes, bool compatibilityProbe = false)
     {
         try
         {
-            var manifest = JsonSerializer.Deserialize<UpdateManifest>(bytes, new JsonSerializerOptions { PropertyNameCaseInsensitive = false, MaxDepth = 16 })
+            var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = false, MaxDepth = 16 };
+            if (compatibilityProbe)
+            {
+                // Probe only the compatibility envelope: future formats need not
+                // deserialize or validate as a v1 inventory. The transport has
+                // already verified the manifest bytes against their size/hash.
+                var compatibility = JsonSerializer.Deserialize<ManifestCompatibility>(bytes, options);
+                if (compatibility?.Schema is null) throw new InvalidDataException("Missing update schema.");
+                if (compatibility.Schema != 1 || compatibility.BootstrapProtocol != 1 || !compatibility.BackwardCompatibleData)
+                    throw new UpdateMigrationRequiredException();
+            }
+            var manifest = JsonSerializer.Deserialize<UpdateManifest>(bytes, options)
                 ?? throw new InvalidDataException("Missing update manifest.");
-            Validate(manifest); return manifest;
+            Validate(manifest);
+            return manifest;
         }
         catch (Exception ex) when (ex is JsonException or ArgumentException or NullReferenceException)
         { throw new InvalidDataException("Invalid update manifest.", ex); }

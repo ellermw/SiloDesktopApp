@@ -164,4 +164,23 @@ public static partial class SideBySideInstallation
             ?? throw new InvalidDataException("The helper is absent from the installed inventory.");
         return RelativeFile(VersionPath(root, version), entry.Path);
     }
+
+    /// <summary>Read stamps as data, never load client code in the privileged updater.</summary>
+    public static ReleaseVersion VerifyInstalledClientIdentity(string root, string version)
+    {
+        root = CanonicalRoot(root);
+        var inventory = VerifyOwnedVersion(root, version);
+        var entry = inventory.Manifest.Files.SingleOrDefault(f => f.Area == "client" && f.Path.Equals("SiloPlayer.dll", StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidDataException("The client assembly is absent from the installed inventory.");
+        var assembly = RelativeFile(VersionPath(root, version), entry.Path);
+        var info = FileVersionInfo.GetVersionInfo(assembly);
+        var numeric = System.Reflection.AssemblyName.GetAssemblyName(assembly).Version
+            ?? throw new InvalidDataException("The installed assembly version is missing.");
+        var release = ReleaseVersion.FromBuild(info.ProductVersion ?? "", numeric);
+        if (numeric.ToString(4) != version
+            || new Version(info.FileMajorPart, info.FileMinorPart, info.FileBuildPart, info.FilePrivatePart) != numeric
+            || (inventory.Manifest.ReleaseVersion is { } semantic && release.Text != semantic))
+            throw new InvalidDataException("The installed client stamps disagree with the verified manifest.");
+        return release;
+    }
 }

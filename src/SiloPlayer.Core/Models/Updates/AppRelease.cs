@@ -1,11 +1,16 @@
 namespace SiloPlayer.Core.Models.Updates;
 
 public enum AppUpdateMode { NotifyOnly, Automatic }
+public enum AppUpdateChannel { Stable, Beta }
 
 public sealed record AppRelease(Version Version, string Tag, string Notes, DateTimeOffset PublishedAt,
     Uri InstallerUrl, string Sha256, long Size)
 {
     public IncrementalReleaseAssets? Incremental { get; init; }
+    public bool HasInvalidIncrementalAssets { get; init; }
+    public ReleaseVersion? SemanticVersion { get; init; }
+    public string DisplayVersion => SemanticVersion?.Text ?? Version.ToString(Version.Revision > 0 ? 4 : 3);
+    public bool IsBeta => SemanticVersion?.IsPrerelease == true;
 }
 
 public sealed record AppUpdateState(AppRelease? Release = null, bool IsChecking = false,
@@ -13,4 +18,6 @@ public sealed record AppUpdateState(AppRelease? Release = null, bool IsChecking 
 {
     public PreparedUpdatePackage? PreparedPackage { get; init; }
     public IncrementalUpdateProgress? PreparationProgress { get; init; }
+    public string? ChannelNotice { get; init; }
+    public bool RequiresFullInstaller { get; init; }
 }

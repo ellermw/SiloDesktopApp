@@ -14,6 +14,14 @@ public sealed class SideBySideInstallationTests : IDisposable
     public SideBySideInstallationTests() => Directory.CreateDirectory(Root);
 
     [Fact]
+    public void BuiltRootApphostCarriesTheFullUpdateGateCapabilityResource()
+    {
+        var (launcher, _) = CreateLauncherFixture();
+        Assert.Equal("Silo Desktop Player launcher; FullUpdateGate=1", FileVersionInfo.GetVersionInfo(launcher).FileDescription);
+        Assert.True(UpdateInstallation.SupportsVersionedFullInstaller(Root));
+    }
+
+    [Fact]
     public void MutexIdentityMatchesLegacyCanonicalRoot()
     {
         var hash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(Root).ToUpperInvariant())))[..16];
@@ -185,15 +193,22 @@ public sealed class SideBySideInstallationTests : IDisposable
         finally { held.ReleaseMutex(); }
     }
 
-    [Fact]
-    public void OrdinaryLaunchCannotDispatchClientWhileRootGateIsHeld()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void OrdinaryLaunchCannotDispatchClientWhileRootGateIsHeld(bool fullInstaller)
     {
         var (launcher, _) = CreateLauncherFixture();
         var output = Path.Combine(sandbox, "should-not-launch.json");
-        using var held = new Mutex(false, SideBySideInstallation.GetMutexName(Root)); Assert.True(held.WaitOne(0));
+        var gateName = fullInstaller ? @"Global\SiloDesktopFullUpdate-" + SideBySideInstallation.RootHash(Root)[..16]
+            : SideBySideInstallation.GetMutexName(Root);
+        using var held = new Mutex(false, gateName); Assert.True(held.WaitOne(0));
         Process? process = null;
         try
         {
+            // Full setup must still be able to run its post-copy verifier while
+            // the helper excludes ordinary launches with the distinct gate.
+            if (fullInstaller) RunLauncher(launcher, ["--silo-initialize"]);
             var start = new ProcessStartInfo(launcher) { UseShellExecute = false, ArgumentList = { "silo://synthetic-gate-check" } };
             start.Environment["SILO_LAUNCHER_FIXTURE_OUTPUT"] = output;
             process = Process.Start(start)!;

@@ -50,6 +50,35 @@ public sealed class AppUpdateDownloadTests : IDisposable
     }
 
     [Fact]
+    public async Task CheckDuringDownloadReturnsImmediatelyWithoutDisturbingTheTransfer()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var wire = new Wire { Response = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = new StreamContent(new Waiting(Package, entered, release)) }) };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.CheckAsync();
+        var download = service.DownloadAsync();
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            var downloading = service.State;
+            var check = service.CheckAsync();
+            Assert.True(check.IsCompletedSuccessfully);
+            await check;
+            Assert.Same(downloading, service.State);
+            Assert.True(service.State.IsDownloading);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await download.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+        Assert.Null(service.State.Error);
+        Assert.NotNull(service.State.ReadyInstaller);
+    }
+
+    [Fact]
     public async Task PlaybackStillDefersAnAutomaticTransferQueuedBehindACheck()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire);
@@ -121,6 +150,27 @@ public sealed class AppUpdateDownloadTests : IDisposable
         await service.DownloadAsync(); Assert.Equal(1, wire.Downloads); Assert.NotNull(service.State.ReadyInstaller);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MissingReadyPackageShowsAnActionableStatusWithoutHidingADownloadFailure(bool failedDownload)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var service = Create(http); await service.CheckAsync();
+        if (failedDownload)
+        {
+            wire.AdvertisedDigest = AppUpdateTests.Digest;
+            await service.CheckAsync(); await service.DownloadAsync();
+            Assert.NotNull(service.State.Error);
+        }
+        var error = service.State.Error;
+        Assert.False(await service.ReverifyReadyAsync());
+        Assert.NotNull(service.State.Error);
+        if (failedDownload) Assert.Equal(error, service.State.Error);
+        else Assert.Contains("not ready", service.State.Error!);
+        Assert.Null(service.State.ReadyInstaller); Assert.Null(service.State.PreparedPackage);
+    }
+
     [Fact]
     public async Task TamperedReadyPackageIsDisarmedBeforeExit()
     {
@@ -142,15 +192,30 @@ public sealed class AppUpdateDownloadTests : IDisposable
         await service.CheckAsync(); Assert.False(service.ShouldInstallOnExit); Assert.Null(service.State.Release);
     }
 
-    [Fact]
-    public async Task FailedMetadataRevalidationDisarmsExitButKeepsManualUpdateAccess()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedMetadataRevalidationDisarmsExitButKeepsManualUpdateAccess(bool timeout)
     {
         using var wire = new Wire(); using var http = new HttpClient(wire);
         var service = Create(http); service.SetMode(AppUpdateMode.Automatic);
         await service.CheckAsync(); await service.DownloadAsync(); Assert.True(service.ShouldInstallOnExit);
-        wire.Metadata = AppUpdateTests.Release(digest: "invalid");
+        var readyInstaller = Assert.IsType<string>(service.State.ReadyInstaller);
+        if (timeout) wire.BeforeMetadata = _ => throw new TaskCanceledException("Synthetic authority timeout.");
+        else wire.Metadata = AppUpdateTests.Release(digest: "invalid");
         await service.CheckAsync();
+        Assert.NotNull(service.State.Error);
         Assert.False(service.ShouldInstallOnExit); Assert.NotNull(service.State.Release);
+        Assert.Equal(readyInstaller, service.State.ReadyInstaller);
+        Assert.True(await service.ReverifyReadyAsync());
+        Assert.False(service.ShouldInstallOnExit);
+
+        wire.BeforeMetadata = null;
+        wire.Metadata = null;
+        await service.CheckAsync();
+        Assert.Null(service.State.Error);
+        Assert.Equal(readyInstaller, service.State.ReadyInstaller);
+        Assert.True(service.ShouldInstallOnExit);
     }
 
     [Theory]

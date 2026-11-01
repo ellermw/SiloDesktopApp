@@ -1,0 +1,701 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using SiloPlayer.Core.Models.Updates;
+using SiloPlayer.Core.Services.Updates;
+
+namespace SiloPlayer.Tests;
+
+public sealed class UpdateChannelTests : IDisposable
+{
+    private readonly string root = Path.Combine(Path.GetTempPath(), "silo-channel-" + Guid.NewGuid().ToString("N"));
+    private static readonly byte[] Package = Encoding.UTF8.GetBytes("synthetic verified installer");
+    private AppUpdateService Create(HttpClient http, string installed = "1.2.517") => new(http, root,
+        ReleaseVersion.Parse(installed).GetWindowsVersion()) { InstalledReleaseVersion = ReleaseVersion.Parse(installed) };
+
+    [Fact]
+    public async Task SwitchingBeforeDispatchSpendsNoRequestsAndKeepsTheNewChannelsConditionalCache()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")], Conditional = true };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.CheckAsync();
+        Task? changing = null;
+        void SelectBeta(AppUpdateState state)
+        {
+            if (state.IsChecking) changing = service.SetChannelAsync(AppUpdateChannel.Beta);
+        }
+        service.Changed += SelectBeta;
+        try { await service.CheckAsync(); }
+        finally { service.Changed -= SelectBeta; }
+        Assert.NotNull(changing);
+        await changing!.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Single(wire.Requests); // The superseded Stable check dispatched nothing.
+        await service.CheckAsync();
+        Assert.Equal(3, wire.Requests.Count);
+        Assert.Equal("\"stable\"", wire.Requests[1].ETag);
+        Assert.Null(wire.Requests[2].ETag);
+        await service.CheckAsync();
+        Assert.Equal(5, wire.Requests.Count);
+        Assert.Equal("\"catalog1\"", wire.Requests[4].ETag);
+        Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+    }
+
+    [Fact]
+    public async Task SupersededRateLimitFailureCannotChangeTheNewEpochsCooldown()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var service = Create(http);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.BeforeCatalog = async _ =>
+        {
+            entered.TrySetResult(); await finish.Task;
+            throw new UpdateCheckRateLimitedException(HttpStatusCode.TooManyRequests, TimeSpan.FromHours(4));
+        };
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        var check = service.CheckAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var changing = service.SetChannelAsync(AppUpdateChannel.Stable);
+        var until = DateTimeOffset.UtcNow.AddHours(1);
+        service.ApplyAuthorityCooldown(until);
+        finish.TrySetResult();
+        await Task.WhenAll(check, changing).WaitAsync(TimeSpan.FromSeconds(10));
+        var cooldown = typeof(AppUpdateService).GetField("_rateLimitedUntil", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        Assert.Equal(until, Assert.IsType<DateTimeOffset>(cooldown.GetValue(service)));
+        await service.CheckAsync();
+        Assert.Equal(2, wire.Requests.Count);
+    }
+
+    [Fact]
+    public async Task ExistingClientsDefaultToStableLatestOnly()
+    {
+        using var wire = new Wire { Stable = Release("1.2.518"), Catalog = [Release("1.2.519-beta.1")] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.CheckAsync();
+        Assert.Equal(AppUpdateChannel.Stable, service.Channel);
+        Assert.Equal("1.2.518", service.State.Release?.DisplayVersion);
+        Assert.All(wire.Requests, r => Assert.EndsWith("/releases/latest", r.Url));
+    }
+
+    [Theory]
+    [InlineData("1.2.517", "1.2.517", "1.2.518-beta.12")]
+    [InlineData("1.2.518-beta.2", "1.2.517", "1.2.518-beta.12")]
+    [InlineData("1.2.518-beta.2", "1.2.518", "1.2.518")]
+    [InlineData("1.2.518-beta.12", "1.2.518", "1.2.518")]
+    [InlineData("1.2.518", "1.2.518", null)]
+    public async Task BetaOffersNewestApplicableSemanticReleaseWithoutIntermediateInstalls(string installed, string stable, string? expected)
+    {
+        using var wire = new Wire { Stable = Release(stable), Catalog = [Release("1.2.518-beta.2"), Release("1.2.518-beta.12"), Release("1.2.518-beta.1")] };
+        using var http = new HttpClient(wire); var service = Create(http, installed);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal(expected, service.State.Release?.DisplayVersion);
+        if (expected?.Contains("beta") == true) Assert.Equal(new Version(1, 2, 517, 12), service.State.Release!.Version);
+    }
+
+    [Fact]
+    public async Task ANewChannelIsNotReportedAsCurrentBeforeItsFirstCheckCompletes()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        Assert.Null(service.State.Release);
+        Assert.Contains("has not been checked", service.State.Error!);
+        await service.CheckAsync();
+        Assert.Null(service.State.Error);
+        Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+    }
+
+    [Fact]
+    public async Task APostSwitchCheckWaitsForAnOverlappingOperationInsteadOfBeingDropped()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.BeforeCatalog = async ct => { entered.TrySetResult(); await finish.Task.WaitAsync(ct); };
+        var automatic = service.CheckAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var postSwitch = service.CheckAsync();
+        try { Assert.False(postSwitch.IsCompleted); }
+        finally { finish.TrySetResult(); }
+        await Task.WhenAll(automatic, postSwitch).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Null(service.State.Error);
+        Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+        Assert.Equal(4, wire.Requests.Count);
+    }
+
+    [Fact]
+    public async Task CancelingAQueuedCheckDoesNotDisturbTheActiveCheckOrReleaseItsGate()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.BeforeCatalog = async ct => { entered.TrySetResult(); await finish.Task.WaitAsync(ct); };
+        var active = service.CheckAsync();
+        Task? next = null;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var checking = service.State;
+            using var stop = new CancellationTokenSource();
+            var canceled = service.CheckAsync(stop.Token);
+            Assert.False(canceled.IsCompleted);
+            stop.Cancel();
+            await canceled.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.True(canceled.IsCompletedSuccessfully);
+            Assert.Same(checking, service.State);
+            Assert.Equal(2, wire.Requests.Count);
+            next = service.CheckAsync();
+            Assert.False(next.IsCompleted);
+        }
+        finally
+        {
+            finish.TrySetResult();
+            await active.WaitAsync(TimeSpan.FromSeconds(10));
+            if (next is not null) await next.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        Assert.Null(service.State.Error);
+        Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+        Assert.Equal(4, wire.Requests.Count);
+    }
+
+    [Fact]
+    public async Task CatalogPaginationAndPrecedenceDoNotDependOnPublicationOrder()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.2")], SecondPage = [Release("1.2.518-beta.12")] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+        Assert.Contains(wire.Requests, r => r.Url.EndsWith("page=2"));
+    }
+
+    [Fact]
+    public async Task BetaChecksUseAtMostThreeRequestsEvenWhenTheCatalogHasMorePages()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.2")], SecondPage = [Release("1.2.518-beta.12")], MorePages = true };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        for (var i = 0; i < 2; i++)
+        {
+            var before = wire.Requests.Count;
+            await service.CheckAsync();
+            Assert.Null(service.State.Error); Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+            Assert.Equal(3, wire.Requests.Count - before);
+        }
+    }
+
+    [Fact]
+    public async Task UnavailableBetaCatalogKeepsIndependentlyValidatedStableOffer()
+    {
+        using var wire = new Wire { Stable = Release("1.2.518") };
+        wire.BeforeCatalog = _ => throw new HttpRequestException("Synthetic catalog failure");
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal("1.2.518", service.State.Release?.DisplayVersion);
+    }
+
+    [Theory]
+    [InlineData("http")]
+    [InlineData("invalid-data")]
+    [InlineData("json")]
+    [InlineData("deadline")]
+    public async Task UnavailableBetaCatalogWithoutANewerStableIsNotAHardCheckError(string failure)
+    {
+        using var wire = new Wire();
+        wire.BeforeCatalog = _ => throw (failure switch
+        {
+            "http" => new HttpRequestException("Synthetic catalog failure"),
+            "invalid-data" => new InvalidDataException("Synthetic oversized catalog"),
+            "json" => new JsonException("Synthetic malformed catalog"),
+            _ => (Exception)new OperationCanceledException("Synthetic catalog deadline")
+        });
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Null(service.State.Release);
+        Assert.Equal(2, wire.Requests.Count);
+        Assert.Contains("incomplete", service.State.ChannelNotice!);
+    }
+
+    [Fact]
+    public async Task LaterCatalogFailureKeepsValidatedBetaAndReadyInstaller()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")], SecondPage = [Release("1.2.518-beta.2")] };
+        using var http = new HttpClient(wire);
+        var messages = new List<string>();
+        var service = new AppUpdateService(http, root, new Version(1, 2, 517, 0), messages.Add)
+            { Channel = AppUpdateChannel.Beta, InstalledReleaseVersion = ReleaseVersion.Parse("1.2.517") };
+        await service.CheckAsync(); await service.DownloadAsync();
+        var ready = Assert.IsType<string>(service.State.ReadyInstaller);
+        var catalogCalls = 0;
+        wire.BeforeCatalog = _ => ++catalogCalls == 2
+            ? throw new HttpRequestException("Synthetic page 2 failure") : Task.CompletedTask;
+        messages.Clear();
+        await service.CheckAsync();
+        Assert.Null(service.State.Error);
+        Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+        Assert.Equal(ready, service.State.ReadyInstaller);
+        Assert.True(await service.ReverifyReadyAsync());
+        Assert.Contains("incomplete", service.State.ChannelNotice!);
+        Assert.Contains(messages, message => message.StartsWith("check_catalog_failed kind="));
+        Assert.DoesNotContain(messages, message => message.StartsWith("check_ok"));
+        wire.BeforeCatalog = null;
+        await service.CheckAsync();
+        Assert.Null(service.State.ChannelNotice);
+    }
+
+    [Theory]
+    [InlineData("v1.2.517.9")]
+    [InlineData("v1.2.517.65534")]
+    public async Task LegacyStableCannotUseReservedBetaRevisions(string tag)
+    {
+        Assert.False(GitHubReleaseReader.TryReleaseIdentity(tag, false, out _, out _));
+        var stable = Release("1.2.517.9"); stable["tag_name"] = tag;
+        using var wire = new Wire { Stable = stable };
+        using var http = new HttpClient(wire); var service = Create(http, "1.2.518-beta.4");
+        await service.CheckAsync();
+        Assert.Null(service.State.Release);
+        Assert.Null(service.State.Error); // An unsupported identity is ineligible, not a failed check.
+        Assert.False(service.ShouldInstallOnExit);
+    }
+
+    [Theory]
+    [InlineData("1.2.518")]
+    [InlineData("v1.2.517.9")]
+    [InlineData("v1.2.518-rc.1")]
+    public async Task UnsupportedLatestIdentityDoesNotAbortBetaDiscoveryOrItsConditionalCache(string tag)
+    {
+        var stable = Release("1.2.518"); stable["tag_name"] = tag;
+        using var wire = new Wire { Stable = stable, Catalog = [Release("1.2.519-beta.12")], Conditional = true };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        for (var i = 0; i < 2; i++)
+        {
+            await service.CheckAsync();
+            Assert.Null(service.State.Error);
+            Assert.Equal("1.2.519-beta.12", service.State.Release?.DisplayVersion);
+        }
+        Assert.Contains(wire.Requests, r => r.Url.EndsWith("/latest") && r.ETag == "\"stable\"");
+    }
+
+    [Fact]
+    public void LegacyStableWithZeroRevisionRemainsSupported()
+    {
+        Assert.True(GitHubReleaseReader.TryReleaseIdentity("v1.2.518.0", false, out var numeric, out _));
+        Assert.Equal(new Version(1, 2, 518, 0), numeric);
+    }
+
+    [Theory]
+    [InlineData("1.2.518")]
+    [InlineData("1.2.518-beta.12")]
+    [InlineData("1.2.518.0")]
+    public async Task BareTagsAreRejectedByDiscoveryAndIndependentTagAuthority(string tag)
+    {
+        var beta = tag.Contains('-');
+        Assert.False(GitHubReleaseReader.TryReleaseIdentity(tag, beta, out _, out _));
+        var item = Release(tag); item["tag_name"] = tag;
+        // Match even the asset URLs to the bare tag: rejection must be about identity.
+        item["assets"]![0]!["browser_download_url"] = $"https://github.com/ellermw/SiloDesktopApp/releases/download/{tag}/SiloInstaller-Windows-x64.exe";
+        using var wire = new Wire { Stable = beta ? Release("1.2.517") : item, Catalog = beta ? [item] : [] };
+        using var http = new HttpClient(wire);
+        await Assert.ThrowsAsync<InvalidDataException>(() => new GitHubReleaseReader(http).ReadTagAsync(tag, default));
+        var authorityDirectory = Path.Combine(root, "authority");
+        await Assert.ThrowsAsync<InvalidDataException>(() => new IncrementalReleaseAuthority(http).FetchAsync(tag, authorityDirectory, default));
+        Assert.Empty(wire.Requests); Assert.False(Directory.Exists(authorityDirectory));
+        var service = Create(http);
+        if (beta) await service.SetChannelAsync(AppUpdateChannel.Beta);
+        await service.CheckAsync(); await service.DownloadAsync();
+        Assert.Null(service.State.Release); Assert.Null(service.State.ReadyInstaller); Assert.Null(service.State.PreparedPackage);
+        Assert.False(await service.ReverifyReadyAsync()); Assert.False(service.ShouldInstallOnExit);
+        Assert.All(wire.Requests, request => Assert.StartsWith("https://api.github.com/", request.Url));
+    }
+
+    [Fact]
+    public async Task CatalogRateLimitWithoutANewerStableStillAppliesSharedCooldown()
+    {
+        using var wire = new Wire();
+        wire.BeforeCatalog = _ => throw new UpdateCheckRateLimitedException(HttpStatusCode.TooManyRequests, TimeSpan.FromHours(1));
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        await service.CheckAsync();
+        Assert.NotNull(service.State.Error); Assert.Null(service.State.Release);
+        await service.CheckAsync();
+        Assert.Equal(2, wire.Requests.Count);
+    }
+
+    [Fact]
+    public async Task StableSwitchWaitsWithoutDowngradeAndLaterPromotesTheSameBetaCore()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var service = Create(http, "1.2.518-beta.12");
+        await service.CheckAsync(); Assert.Null(service.State.Release);
+        Assert.Contains("stable", service.State.ChannelNotice!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("downgrade", service.State.ChannelNotice!, StringComparison.OrdinalIgnoreCase);
+        wire.Stable = Release("1.2.518"); await service.CheckAsync();
+        Assert.Equal("1.2.518", service.State.Release?.DisplayVersion); Assert.Null(service.State.ChannelNotice);
+    }
+
+    [Fact]
+    public async Task ChannelSwitchesRetainOnlyTheSharedLatestValidator()
+    {
+        using var wire = new Wire { Stable = Release("1.2.518"), Catalog = [Release("1.2.519-beta.12")], Conditional = true };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.CheckAsync();
+        for (var i = 0; i < 2; i++)
+        {
+            await service.SetChannelAsync(AppUpdateChannel.Beta);
+            Assert.Null(service.State.Release);
+            var before = wire.Requests.Count;
+            await service.CheckAsync();
+            Assert.Null(service.State.Error);
+            Assert.Equal("1.2.519-beta.12", service.State.Release?.DisplayVersion);
+            Assert.Equal("\"stable\"", wire.Requests[before].ETag);
+            Assert.Null(wire.Requests[before + 1].ETag);
+            await service.SetChannelAsync(AppUpdateChannel.Stable);
+            Assert.Null(service.State.Release);
+            before = wire.Requests.Count;
+            await service.CheckAsync();
+            Assert.Null(service.State.Error);
+            Assert.Equal("1.2.518", service.State.Release?.DisplayVersion);
+            Assert.Equal("\"stable\"", wire.Requests[before].ETag);
+        }
+    }
+
+    [Fact]
+    public async Task ConditionalAuthorityIsScopedToEndpointAndChannelAndKeepsExactPreparedDownload()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")], Conditional = true };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.CheckAsync(); await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync(); await service.DownloadAsync();
+        var prepared = Assert.IsType<string>(service.State.ReadyInstaller);
+        await service.CheckAsync(); Assert.Equal(prepared, service.State.ReadyInstaller); Assert.True(await service.ReverifyReadyAsync());
+        Assert.Contains(wire.Requests, r => r.Url.Contains("?per_page=") && r.ETag == "\"catalog1\"");
+        Assert.DoesNotContain(wire.Requests, r => r.Url.EndsWith("/latest") && r.ETag == "\"catalog1\"");
+        await service.SetChannelAsync(AppUpdateChannel.Stable);
+        Assert.Null(service.State.Release); Assert.Null(service.State.ReadyInstaller); Assert.False(await service.ReverifyReadyAsync());
+        Assert.False(service.ShouldInstallOnExit);
+        await service.CheckAsync(); Assert.Null(service.State.Release);
+    }
+
+    [Theory]
+    [InlineData("draft")]
+    [InlineData("wrong-flag")]
+    [InlineData("major")]
+    [InlineData("leading-zero")]
+    public async Task IneligibleCatalogEntriesNeverBecomeAnInstallableOffer(string kind)
+    {
+        var item = Release("1.2.518-beta.12");
+        if (kind == "draft") item["draft"] = true;
+        if (kind == "wrong-flag") item["prerelease"] = false;
+        if (kind == "major") item = Release("2.0.1-beta.1");
+        if (kind == "leading-zero") item["tag_name"] = "v1.2.518-beta.012";
+        using var wire = new Wire { Catalog = [item] }; using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync(); Assert.Null(service.State.Release);
+    }
+
+    [Theory]
+    [InlineData("url")]
+    [InlineData("digest")]
+    [InlineData("duplicate")]
+    [InlineData("pending")]
+    [InlineData("missing")]
+    public async Task ManipulatedChosenBetaAssetsFailAuthorityValidation(string kind)
+    {
+        var item = ManipulatedBeta("1.2.518-beta.12", kind);
+        using var wire = new Wire { Catalog = [item] }; using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        // The invalid release is ineligible; it is never offered and cannot deny the channel.
+        Assert.Null(service.State.Release); Assert.Null(service.State.Error);
+    }
+
+    [Theory]
+    [InlineData("url")]
+    [InlineData("digest")]
+    [InlineData("duplicate")]
+    [InlineData("pending")]
+    [InlineData("missing")]
+    public async Task AnInvalidNewerBetaDoesNotHideTheValidatedStableOrALowerValidBeta(string kind)
+    {
+        using var wire = new Wire { Stable = Release("1.2.518"), Catalog = [ManipulatedBeta("1.2.519-beta.2", kind), Release("1.2.519-beta.1")] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal("1.2.519-beta.1", service.State.Release?.DisplayVersion);
+        wire.Catalog = [ManipulatedBeta("1.2.519-beta.2", kind)]; await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal("1.2.518", service.State.Release?.DisplayVersion);
+    }
+
+    [Theory]
+    [InlineData("url")]
+    [InlineData("digest")]
+    [InlineData("duplicate")]
+    [InlineData("pending")]
+    [InlineData("missing-pack")]
+    public async Task InvalidOptionalIncrementalMetadataCannotHideAValidLowerBetaOrStable(string kind)
+    {
+        var invalid = ReleaseWithIncrementalAssets("1.2.519-beta.2");
+        var assets = invalid["assets"]!.AsArray(); var manifest = assets[1]!;
+        if (kind == "url") manifest["browser_download_url"] = "https://evil.invalid/manifest.json";
+        if (kind == "digest") manifest["digest"] = "sha256:invalid";
+        if (kind == "duplicate") assets.Add(manifest.DeepClone());
+        if (kind == "pending") manifest["state"] = "starter";
+        if (kind == "missing-pack") assets.RemoveAt(2);
+        var lower = ReleaseWithIncrementalAssets("1.2.519-beta.1");
+        using var wire = new Wire { Stable = Release("1.2.518"), Catalog = [invalid, lower] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal("1.2.519-beta.1", service.State.Release?.DisplayVersion);
+        Assert.NotNull(service.State.Release!.Incremental); Assert.False(service.State.Release.HasInvalidIncrementalAssets);
+        wire.Catalog = [lower, invalid]; await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal("1.2.519-beta.1", service.State.Release?.DisplayVersion);
+        wire.Catalog = [invalid]; await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal("1.2.518", service.State.Release?.DisplayVersion);
+    }
+
+    private static JsonObject ReleaseWithIncrementalAssets(string version)
+    {
+        var release = Release(version);
+        foreach (var name in new[] { UpdateManifestValidation.ManifestName, UpdateManifestValidation.PackName })
+            release["assets"]!.AsArray().Add(new JsonObject { ["name"] = name, ["state"] = "uploaded", ["size"] = 1,
+                ["digest"] = "sha256:" + new string('a', 64),
+                ["browser_download_url"] = $"https://github.com/ellermw/SiloDesktopApp/releases/download/v{version}/{name}" });
+        return release;
+    }
+
+    [Fact]
+    public async Task CatalogEntriesMissingFlagsOrTagAreSkipped()
+    {
+        var noDraft = Release("1.2.519-beta.1"); noDraft.Remove("draft");
+        var noTag = Release("1.2.519-beta.2"); noTag.Remove("tag_name");
+        using var wire = new Wire { Stable = Release("1.2.518"), Catalog = [noDraft, noTag] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal("1.2.518", service.State.Release?.DisplayVersion);
+    }
+
+    private static JsonObject ManipulatedBeta(string version, string kind)
+    {
+        var item = Release(version); var asset = item["assets"]![0]!;
+        if (kind == "url") asset["browser_download_url"] = "https://evil.invalid/setup.exe";
+        if (kind == "digest") asset["digest"] = "sha256:invalid";
+        if (kind == "duplicate") item["assets"]!.AsArray().Add(asset.DeepClone());
+        if (kind == "pending") asset["state"] = "starter";
+        if (kind == "missing") item["assets"] = new JsonArray();
+        return item;
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NeitherChannelAutomaticallyOffersANewMajor(bool beta)
+    {
+        using var wire = new Wire { Stable = Release("2.0.0"), Catalog = [Release("2.0.1-beta.1")] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        if (beta) await service.SetChannelAsync(AppUpdateChannel.Beta);
+        await service.CheckAsync(); Assert.Null(service.State.Release); Assert.False(service.ShouldInstallOnExit);
+    }
+
+    [Fact]
+    public async Task CatalogCannotRedirectPaginationOutsideThePinnedEndpoint()
+    {
+        using var wire = new Wire { BadLink = true, Catalog = [Release("1.2.518-beta.12")] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        // Ignore the untrusted hint, retaining validated candidates on this page.
+        Assert.Null(service.State.Error); Assert.Null(service.State.ChannelNotice);
+        Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+        Assert.Equal(2, wire.Requests.Count);
+        Assert.All(wire.Requests, r => Assert.StartsWith("https://api.github.com/repos/ellermw/SiloDesktopApp/releases", r.Url));
+    }
+
+    [Theory]
+    [InlineData("<https://api.github.com/repos/ellermw/SiloDesktopApp/releases?per_page=100&page=2&extra=1>; rel=\"next\"")]
+    [InlineData("<https://api.github.com/repos/ellermw/SiloDesktopApp/releases?per_page=50&page=2>; rel=\"next\"")]
+    [InlineData("<https://api.github.com/unknown/releases?per_page=100&page=2>; rel=\"next\"")]
+    public async Task UnrecognizedPaginationRetainsCurrentPageAndStopsDiscovery(string hint)
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.2")], SecondPage = [Release("1.2.518-beta.12")], NextLink = hint };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Null(service.State.ChannelNotice);
+        Assert.Equal("1.2.518-beta.2", service.State.Release?.DisplayVersion);
+        Assert.Equal(2, wire.Requests.Count);
+        Assert.DoesNotContain(wire.Requests, r => r.Url.EndsWith("page=2"));
+    }
+
+    [Fact]
+    public async Task ADelayedBetaCheckCannotRepublishAnOfferAfterStableWasSelected()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")] };
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.BeforeCatalog = async _ => { entered.TrySetResult(); await finish.Task; };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); var check = service.CheckAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var changing = service.SetChannelAsync(AppUpdateChannel.Stable);
+        Assert.True(service.IsChangingChannel); Assert.Null(service.State.Release);
+        finish.TrySetResult(); await Task.WhenAll(check, changing).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(AppUpdateChannel.Stable, service.Channel); Assert.Null(service.State.Release);
+        await service.CheckAsync(); Assert.Null(service.State.Release); Assert.Null(service.State.Error);
+    }
+
+    [Fact]
+    public async Task SwitchingDuringDownloadCancelsAndDisarmsTheOldChannelPackage()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")] };
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.BeforeAsset = async ct => { entered.TrySetResult(); await Task.Delay(Timeout.Infinite, ct); };
+        using var http = new HttpClient(wire); var service = Create(http); service.SetMode(AppUpdateMode.Automatic);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync(); var download = service.DownloadAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10)); await service.SetChannelAsync(AppUpdateChannel.Stable).WaitAsync(TimeSpan.FromSeconds(10)); await download;
+        Assert.Null(service.State.Release); Assert.Null(service.State.ReadyInstaller); Assert.Null(service.State.PreparedPackage);
+        Assert.False(service.ShouldInstallOnExit); Assert.False(await service.ReverifyReadyAsync());
+    }
+
+    [Fact]
+    public async Task SwitchingChannelsDoesNotClearTheSharedGitHubCooldown()
+    {
+        using var wire = new Wire { Limited = true }; using var http = new HttpClient(wire); var service = Create(http);
+        await service.CheckAsync(); await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        await service.SetChannelAsync(AppUpdateChannel.Stable); await service.CheckAsync();
+        Assert.Single(wire.Requests); Assert.NotNull(service.State.Error);
+    }
+
+    [Fact]
+    public async Task CancelledSelectionCanReuseOnlyLatestStableAuthorityOn304()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        Assert.True(service.State.Release!.IsBeta);
+        using var stop = new CancellationTokenSource(); stop.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.SetChannelAsync(AppUpdateChannel.Stable, stop.Token));
+        wire.ForceStableNotModified = true; await service.CheckAsync();
+        Assert.Equal(AppUpdateChannel.Stable, service.Channel);
+        Assert.Null(service.State.Release); Assert.Null(service.State.Error);
+        Assert.Equal("\"stable\"", wire.Requests.Last().ETag);
+        Assert.False(service.ShouldInstallOnExit);
+    }
+
+    [Fact]
+    public async Task UnexpectedLatest304WithoutAValidatorStillFailsClosed()
+    {
+        using var wire = new Wire { ForceStableNotModified = true };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.CheckAsync();
+        Assert.Null(service.State.Release); Assert.NotNull(service.State.Error);
+        Assert.Null(Assert.Single(wire.Requests).ETag);
+        Assert.False(service.ShouldInstallOnExit);
+    }
+
+    [Fact]
+    public async Task CancelingAChannelSwitchWhileItsOperationGateIsHeldRetiresCatalogAndSuccessStamp()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")], Conditional = true };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var cache = typeof(AppUpdateService).GetField("_lastCheck", flags)!;
+        var stamp = typeof(AppUpdateService).GetField("_lastSuccessfulCheckStamp", flags)!;
+        var operation = (SemaphoreSlim)typeof(AppUpdateService).GetField("_operation", flags)!.GetValue(service)!;
+        Assert.NotNull(cache.GetValue(service)); Assert.True((long)stamp.GetValue(service)! > 0);
+        await operation.WaitAsync();
+        try
+        {
+            using var stop = new CancellationTokenSource();
+            var changing = service.SetChannelAsync(AppUpdateChannel.Stable, stop.Token);
+            Assert.False(changing.IsCompleted);
+            stop.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => changing);
+            Assert.False(service.IsChangingChannel); Assert.Equal(AppUpdateChannel.Stable, service.Channel);
+            var retained = Assert.IsType<ReleaseCheck>(cache.GetValue(service));
+            Assert.Equal(AppUpdateChannel.Stable, retained.Channel);
+            Assert.Equal("\"stable\"", retained.ETag); Assert.Empty(retained.Pages); Assert.Null(retained.Stable);
+            Assert.Null(retained.Release);
+            Assert.Equal(0L, (long)stamp.GetValue(service)!);
+            Assert.Null(service.State.Release); Assert.False(service.ShouldInstallOnExit);
+        }
+        finally { operation.Release(); }
+        var before = wire.Requests.Count;
+        await service.CheckAsync();
+        Assert.Null(service.State.Error);
+        Assert.Single(wire.Requests.Skip(before));
+        Assert.Equal("\"stable\"", wire.Requests[before].ETag);
+        Assert.Null(service.State.Release);
+    }
+
+    [Fact]
+    public async Task LatestSelectionWinsWhenTwoChannelChangesWaitBehindAnOldCheck()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")] };
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.BeforeCatalog = async _ => { entered.TrySetResult(); await finish.Task; };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); var check = service.CheckAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var first = service.SetChannelAsync(AppUpdateChannel.Stable);
+        var second = service.SetChannelAsync(AppUpdateChannel.Beta);
+        finish.TrySetResult(); await Task.WhenAll(check, first, second).WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(AppUpdateChannel.Beta, service.Channel); Assert.False(service.IsChangingChannel); Assert.Null(service.State.Release);
+        Assert.Contains("has not been checked", service.State.Error!);
+        wire.BeforeCatalog = null; await service.CheckAsync();
+        Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+    }
+
+    [Fact]
+    public async Task NumericRepositoryPaginationHintStillDispatchesOnlyThePinnedOwnerEndpoint()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.2")], SecondPage = [Release("1.2.518-beta.12")],
+            NextLink = "<https://api.github.com/repositories/123456/releases?page=2&per_page=100>; rel=\"next\"" };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+        Assert.Contains(wire.Requests, r => r.Url == "https://api.github.com/repos/ellermw/SiloDesktopApp/releases?per_page=100&page=2");
+        Assert.DoesNotContain(wire.Requests, r => r.Url.Contains("/repositories/"));
+    }
+
+    internal static JsonObject Release(string version)
+    {
+        var tag = "v" + version;
+        return new JsonObject { ["tag_name"] = tag, ["draft"] = false, ["prerelease"] = version.Contains('-'), ["body"] = "Short synthetic release notes.",
+            ["published_at"] = "2026-10-29T10:00:00Z", ["assets"] = new JsonArray(new JsonObject { ["name"] = "SiloInstaller-Windows-x64.exe", ["state"] = "uploaded",
+                ["size"] = Package.Length, ["digest"] = "sha256:" + Convert.ToHexString(SHA256.HashData(Package)).ToLowerInvariant(),
+                ["browser_download_url"] = $"https://github.com/ellermw/SiloDesktopApp/releases/download/{tag}/SiloInstaller-Windows-x64.exe" }) };
+    }
+
+    private sealed class Wire : HttpMessageHandler
+    {
+        public JsonObject Stable = Release("1.2.517");
+        public JsonObject[] Catalog = [], SecondPage = [];
+        public bool Conditional, BadLink, Limited, ForceStableNotModified, MorePages;
+        public string? NextLink;
+        public Func<CancellationToken, Task>? BeforeCatalog, BeforeAsset;
+        public List<(string Url, string? ETag)> Requests = [];
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Assert.Null(request.Headers.Authorization);
+            var url = request.RequestUri!.AbsoluteUri; var etag = request.Headers.IfNoneMatch.FirstOrDefault()?.ToString(); Requests.Add((url, etag));
+            if (Limited) return new(HttpStatusCode.TooManyRequests) { Headers = { RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromHours(1)) } };
+            if (request.RequestUri.Host == "github.com")
+            { if (BeforeAsset is not null) await BeforeAsset(ct); return new(HttpStatusCode.OK) { Content = new ByteArrayContent(Package) }; }
+            var latest = url.EndsWith("/latest"); var second = url.EndsWith("page=2"); var validator = latest ? "\"stable\"" : second ? "\"catalog2\"" : "\"catalog1\"";
+            if (latest && ForceStableNotModified) return new(HttpStatusCode.NotModified);
+            if (Conditional && etag == validator) return new(HttpStatusCode.NotModified);
+            if (!latest && BeforeCatalog is not null) await BeforeCatalog(ct);
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(latest ? Stable.ToJsonString() : JsonSerializer.Serialize(second ? SecondPage : Catalog), Encoding.UTF8, "application/json") };
+            response.Headers.ETag = new EntityTagHeaderValue(validator);
+            if (!latest && !second && (SecondPage.Length != 0 || BadLink)) response.Headers.TryAddWithoutValidation("Link", BadLink
+                ? "<https://evil.invalid/releases?page=2>; rel=\"next\""
+                : NextLink ?? "<https://api.github.com/repos/ellermw/SiloDesktopApp/releases?per_page=100&page=2>; rel=\"next\"");
+            if (second && MorePages) response.Headers.TryAddWithoutValidation("Link",
+                "<https://api.github.com/repos/ellermw/SiloDesktopApp/releases?per_page=100&page=3>; rel=\"next\"");
+            return response;
+        }
+    }
+    public void Dispose() { if (Directory.Exists(root)) Directory.Delete(root, true); }
+}

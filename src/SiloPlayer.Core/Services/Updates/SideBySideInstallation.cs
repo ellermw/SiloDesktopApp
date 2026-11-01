@@ -119,6 +119,8 @@ public static partial class SideBySideInstallation
         var manifest = ReadPreparedManifest(package);
         ValidateManifest(manifest);
         VerifyBootstrapCompatible(root, manifest);
+        if (Version.Parse(manifest.Version).Major != Version.Parse(state.ActiveVersion).Major)
+            throw new InvalidOperationException("A major-version migration requires separate owner approval and a full installer.");
         if (Version.Parse(manifest.Version) <= Version.Parse(state.ActiveVersion))
             throw new InvalidOperationException("Update version must be newer than the active version.");
         var versionDirectory = VersionPath(root, manifest.Version);

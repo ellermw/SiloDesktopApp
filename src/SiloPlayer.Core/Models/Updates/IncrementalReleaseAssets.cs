@@ -7,7 +7,10 @@ public sealed record UpdateFileEntry(string Path, long Size, string Sha256, long
     string PackedSha256, string Area = "client");
 
 public sealed record UpdateManifest(int Schema, string Version, long PackSize, string PackSha256,
-    IReadOnlyList<UpdateFileEntry> Files, int BootstrapProtocol = 1, bool BackwardCompatibleData = true);
+    IReadOnlyList<UpdateFileEntry> Files, int BootstrapProtocol = 1, bool BackwardCompatibleData = true)
+{
+    public string? ReleaseVersion { get; init; }
+}
 
 public sealed record PreparedUpdatePackage(string Directory, string ManifestPath, string ManifestSha256, UpdateManifest Manifest);
 

@@ -21,6 +21,12 @@ public sealed class InstallerBuildPublishDirectoryTests
             . ([scriptblock]::Create($function.Extent.Text))
             $root={{Quote(root)}}
             $cases=@(
+                @{version='1.2.518-beta.12';file='1.2.517.12';assembly='1.2.517.12';inno='1.2.518-beta.12';numeric='1.2.517.12';allowed=$true},
+                @{version='1.2.518-beta.12';file='1.2.518.12';assembly='1.2.518.12';inno='1.2.518-beta.12';numeric='1.2.518.12';allowed=$false},
+                @{version='1.2.518-beta.12';file='1.2.517.12';assembly='1.2.517.12';inno='1.2.518-beta.12';numeric='1.2.518.0';allowed=$false},
+                @{version='1.2.518-beta.12';file='1.2.517.12';assembly='1.2.517.12';inno='1.2.518-beta.12';allowed=$false},
+                @{version='2.0.1';file='2.0.1.0';assembly='2.0.1.0';inno='2.0.1';allowed=$false},
+                @{version='1.2.518-beta.02';file='1.2.517.2';assembly='1.2.517.2';inno='1.2.518-beta.02';numeric='1.2.517.2';allowed=$false},
                 @{version='1.2.999';file='1.2.999.0';assembly='1.2.999.0';inno='1.2.999';duplicate=$false;allowed=$true},
                 @{version='1.2.999';file='1.2.998.0';assembly='1.2.999.0';inno='1.2.999';duplicate=$false;allowed=$false},
                 @{version='1.2.999';file='1.2.999.0';assembly='1.2.998.0';inno='1.2.999';duplicate=$false;allowed=$false},
@@ -36,7 +42,8 @@ public sealed class InstallerBuildPublishDirectoryTests
                 if($case.duplicate){$xml+='<PropertyGroup><Version>1.2.999</Version></PropertyGroup>'}
                 [IO.File]::WriteAllText("$root\project.csproj",$xml+'</Project>')
                 [IO.File]::WriteAllText("$root\installer.iss",'#define MyAppVersion "'+$case.inno+'"')
-                try {$version=Get-StampedAppVersion -Project "$root\project.csproj" -InstallerSource "$root\installer.iss";$allowed=$version -eq '1.2.999'} catch {$allowed=$false}
+                if($case.numeric){[IO.File]::AppendAllText("$root\installer.iss",[Environment]::NewLine+'#define MyAppFourPartVersion "'+$case.numeric+'"')}
+                try {$version=Get-StampedAppVersion -Project "$root\project.csproj" -InstallerSource "$root\installer.iss";$allowed=$version -eq $case.version} catch {$allowed=$false}
                 $results+=($allowed -eq $case.allowed)
             }
             ConvertTo-Json -Compress -InputObject $results
@@ -51,7 +58,7 @@ public sealed class InstallerBuildPublishDirectoryTests
             await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
             Assert.True(process.ExitCode == 0, await output + await error);
             var results = JsonSerializer.Deserialize<bool[]>(await output)!;
-            Assert.Equal(8, results.Length);
+            Assert.Equal(14, results.Length);
             Assert.All(results, Assert.True);
         }
         finally { Directory.Delete(root, true); }

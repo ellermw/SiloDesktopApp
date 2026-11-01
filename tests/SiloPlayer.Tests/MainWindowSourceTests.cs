@@ -3,6 +3,42 @@ namespace SiloPlayer.Tests;
 public sealed class MainWindowSourceTests
 {
     [Fact]
+    public void UpdateStartupRecordsReadinessButRefusesMismatchedIdentityBeforeConfirmation()
+    {
+        var startup = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "MainWindow.UpdateStartup.cs"));
+        var ready = startup.IndexOf("SideBySideInstallation.RecordReady(root);", StringComparison.Ordinal);
+        var pipeReady = startup.IndexOf("await UpdateHostProtocol.WriteAsync(pipe,new(\"ready\",transaction)", StringComparison.Ordinal);
+        var confirmed = startup.IndexOf("if(confirmed.Kind!=\"confirmed\" || confirmed.TransactionId!=transaction)return;", StringComparison.Ordinal);
+        var identity = startup.IndexOf("ReleaseVersion.FromAssembly(typeof(App).Assembly)", StringComparison.Ordinal);
+        var comparison = startup.IndexOf("installed.GetWindowsVersion().ToString(4) != version", StringComparison.Ordinal);
+        var receipt = startup.IndexOf("SideBySideInstallation.GetBootReceiptDirectory(root)", StringComparison.Ordinal);
+        Assert.True(ready >= 0 && identity > ready && comparison > identity);
+        Assert.True(pipeReady > comparison && confirmed > pipeReady && receipt > confirmed,
+            "Invalid stamped identity must retain the local readiness observation but prevent broker confirmation and success feedback.");
+        Assert.Contains("throw new InvalidDataException", startup[comparison..pipeReady]);
+    }
+
+    [Fact]
+    public void PrivilegedWorkerChecksStampsBeforeActivationAndEveryConfirmationRoute()
+    {
+        var root = FindRepositoryRoot();
+        var worker = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.UpdateHost", "UpdateWorker.cs"));
+        foreach (var method in new[] { "public void ValidateCallerAndParent()", "public void AuthorizeNewClient(string executable)", "public bool MatchesReadyProcess(UpdateHostMessage message,string executable)" })
+        {
+            var body = worker[worker.IndexOf(method, StringComparison.Ordinal)..];
+            body = body[..body.IndexOf("\n        }", StringComparison.Ordinal)];
+            Assert.Contains("SideBySideInstallation.VerifyInstalledClientIdentity", body);
+        }
+        var runner = File.ReadAllText(Path.Combine(root, "src", "SiloPlayer.Core", "Services", "Updates", "UpdateTransactionRunner.cs"));
+        Assert.True(runner.IndexOf("environment.ValidateCallerAndParent();", StringComparison.Ordinal)
+            < runner.IndexOf("SideBySideInstallation.Confirm(request.InstallationRoot, pending);", StringComparison.Ordinal));
+        Assert.True(runner.IndexOf("environment.AuthorizeNewClient(", StringComparison.Ordinal)
+            < runner.IndexOf("SideBySideInstallation.Activate(staged);", StringComparison.Ordinal));
+        Assert.True(runner.IndexOf("environment.MatchesReadyProcess(ready, image)", StringComparison.Ordinal)
+            < runner.IndexOf("SideBySideInstallation.Confirm(request.InstallationRoot, staged.TransactionId);", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void SharedNavigationSuppressesStockSlidesAndWholePageOpacityFlashes()
     {
         var root = FindRepositoryRoot();

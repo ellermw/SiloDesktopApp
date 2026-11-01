@@ -36,8 +36,8 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
             while (!ct.IsCancellationRequested)
             {
                 await CheckAsync(ct).ConfigureAwait(false);
-                // A skipped check can overlap a manual request or download.
-                // Wait for its result before choosing the next interval.
+                // Serialize interval selection with subsequent operations, including
+                // a transfer that caused this check to be skipped.
                 await _operation.WaitAsync(ct).ConfigureAwait(false);
                 TimeSpan delay;
                 try { delay = NextCheckDelay(); }
@@ -71,53 +71,108 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
 
     public async Task CheckAsync(CancellationToken ct = default)
     {
-        if (!await _operation.WaitAsync(0, ct).ConfigureAwait(false)) return;
+        var epoch = Volatile.Read(ref _channelEpoch);
+        var entered = false;
         try
         {
+            Task wait;
+            lock (_transferGate)
+            {
+                // Do not queue behind an active or pending long-running transfer.
+                // Otherwise serialize checks with checks, channel changes and cleanup.
+                if (_transferCancellation is not null || !_transfer.IsCompleted) return;
+                wait = _operation.WaitAsync(ct);
+            }
+            await wait.ConfigureAwait(false);
+            entered = true;
+            AppUpdateChannel channel;
+            ReleaseCheck? previousCheck;
+            lock (_channelGate)
+            {
+                epoch = _channelEpoch;
+                if (IsChangingChannel) return;
+                channel = Channel;
+                previousCheck = _lastCheck;
+            }
+            if (InstalledReleaseVersion is { } identity && identity.GetWindowsVersion() != GitHubReleaseReader.Normalize(currentVersion))
+                throw new InvalidDataException("The installed semantic and Windows versions disagree.");
             // Enforce the deadline at dispatch as well as in the timer: a
             // manual check can learn a limit after that timer was scheduled.
             // Download progress/errors are separate from this network limit.
             if (RemainingRateLimitDelay() is not null)
             {
-                SetState(State with { IsChecking = false, Error = "Could not check for updates. " + UpdateCheckRateLimitedException.UserMessage });
+                SetState(State with { IsChecking = false, Error = "Could not check for updates. " + UpdateCheckRateLimitedException.UserMessage }, expectedChannelEpoch: epoch);
                 log?.Invoke("check_deferred_rate_limit");
                 return;
             }
-            SetState(State with { IsChecking = true, Error = null });
+            SetState(State with { IsChecking = true, Error = null }, expectedChannelEpoch: epoch);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
             deadline.CancelAfter(TimeSpan.FromSeconds(12));
-            var check = await new GitHubReleaseReader(http, timeProvider).ReadAsync(currentVersion, _lastCheck, deadline.Token).ConfigureAwait(false);
-            _lastCheck = check; lock(_cooldownGate)_rateLimitedUntil = null;
+            Task<ReleaseCheck> pendingCheck;
+            lock (_channelGate)
+            {
+                // Presentation callbacks can select another channel before dispatch.
+                // Bind authority/cache to the captured epoch and dispatch atomically
+                // with respect to a switch, without holding this lock across IO.
+                if (epoch != _channelEpoch || IsChangingChannel) return;
+                pendingCheck = new GitHubReleaseReader(http, timeProvider).ReadForChannelAsync(currentVersion, InstalledReleaseVersion, channel, previousCheck, deadline.Token);
+            }
+            var check = await pendingCheck.ConfigureAwait(false);
+            lock (_channelGate)
+            {
+                if (epoch != _channelEpoch) return;
+                _lastCheck = check;
+                Interlocked.Exchange(ref _lastSuccessfulCheckStamp, System.Diagnostics.Stopwatch.GetTimestamp());
+            }
             var release = check.Release;
-            Interlocked.Exchange(ref _lastSuccessfulCheckStamp, System.Diagnostics.Stopwatch.GetTimestamp());
             var previous=State;
-            var same = release is not null && previous.Release?.Version == release.Version && previous.Release.Sha256 == release.Sha256
-                && previous.Release.Incremental == release.Incremental;
+            var same = release is not null && previous.Release?.Version == release.Version && previous.Release.Tag == release.Tag && previous.Release.Sha256 == release.Sha256
+                && previous.Release.Size == release.Size && previous.Release.InstallerUrl == release.InstallerUrl
+                && previous.Release.HasInvalidIncrementalAssets == release.HasInvalidIncrementalAssets && previous.Release.Incremental == release.Incremental;
             SetState(new AppUpdateState(release, ReadyInstaller: same ? previous.ReadyInstaller : null)
-                { PreparedPackage=same ? previous.PreparedPackage : null, PreparationProgress=same ? previous.PreparationProgress : null });
-            log?.Invoke($"check_ok version={release?.Version.ToString() ?? "current"}");
+                { PreparedPackage=same ? previous.PreparedPackage : null, PreparationProgress=same ? previous.PreparationProgress : null,
+                    ChannelNotice=check.CatalogError is not null
+                        ? "Beta discovery was incomplete; showing validated releases only. Try checking again later."
+                        : ChannelNotice(release), RequiresFullInstaller=same && previous.RequiresFullInstaller }, expectedChannelEpoch: epoch);
+            if (check.CatalogError is { } catalogError)
+                log?.Invoke($"check_catalog_failed kind={catalogError.GetType().Name} status={(catalogError as HttpRequestException)?.StatusCode}");
+            else log?.Invoke($"check_ok version={release?.Version.ToString() ?? "current"}");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            SetState(State with { IsChecking = false });
+            // A canceled waiter never owned the state of the active operation.
+            if (entered)
+                SetState(State with { IsChecking = false, Error = "The update check was canceled. Try again." }, expectedChannelEpoch: epoch);
         }
         catch (Exception ex)
         {
-            Interlocked.Exchange(ref _lastSuccessfulCheckStamp, 0);
-            var limited = ex as UpdateCheckRateLimitedException;
-            var wait = limited?.RetryAfter ?? RetryInterval;
-            wait = wait < RetryInterval ? RetryInterval : wait > MaximumRateLimitWait ? MaximumRateLimitWait : wait;
-            lock(_cooldownGate)_rateLimitedUntil = limited is null ? null : (timeProvider ?? TimeProvider.System).GetUtcNow() + wait;
+            lock (_channelGate)
+            {
+                if (epoch != _channelEpoch) return;
+                Interlocked.Exchange(ref _lastSuccessfulCheckStamp, 0);
+                if (ex is UpdateCheckRateLimitedException limited)
+                {
+                    var wait = limited.RetryAfter ?? RetryInterval;
+                    wait = wait < RetryInterval ? RetryInterval : wait > MaximumRateLimitWait ? MaximumRateLimitWait : wait;
+                    var until = (timeProvider ?? TimeProvider.System).GetUtcNow() + wait;
+                    lock (_cooldownGate)
+                        if (_rateLimitedUntil is null || _rateLimitedUntil < until) _rateLimitedUntil = until;
+                }
+            }
             log?.Invoke($"check_failed kind={ex.GetType().Name} status={(ex as HttpRequestException)?.StatusCode}");
             SetState(State with { IsChecking = false, Error = ex is OperationCanceledException
-                ? "The update check timed out. Try again." : "Could not check for updates. " + ex.Message });
+                ? "The update check timed out. Try again." : "Could not check for updates. " + ex.Message }, expectedChannelEpoch: epoch);
         }
-        finally { _operation.Release(); }
+        finally { if (entered) _operation.Release(); }
     }
 
-    private void SetState(AppUpdateState state, bool notify = true)
+    private void SetState(AppUpdateState state, bool notify = true, long? expectedChannelEpoch = null)
     {
-        Volatile.Write(ref _state, state);
+        lock (_channelGate)
+        {
+            if (expectedChannelEpoch is { } epoch && epoch != _channelEpoch) return;
+            Volatile.Write(ref _state, state);
+        }
         if (!notify) return;
         NotifyChanged(state);
     }

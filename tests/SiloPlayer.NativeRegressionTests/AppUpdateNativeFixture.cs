@@ -1,4 +1,5 @@
 using System.Net;
+using System.IO.Pipes;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -27,7 +28,14 @@ internal static class AppUpdateNativeFixture
     {
         services.AddSingleton<UpdateWire>();
         services.AddSingleton(provider => new AppUpdateService(new HttpClient(provider.GetRequiredService<UpdateWire>()),
-            Path.Combine(Program.ResultDirectory, "updates"), typeof(App).Assembly.GetName().Version!));
+            Path.Combine(Program.ResultDirectory, "updates"), typeof(App).Assembly.GetName().Version!)
+            { InstalledReleaseVersion = ReleaseVersion.FromAssembly(typeof(App).Assembly),
+                PersistChannel = channel =>
+                {
+                    var preferences = provider.GetRequiredService<SettingsService>(); var settings = preferences.Load();
+                    settings.UpdateChannel = channel; preferences.Save(settings);
+                },
+                PreferIncrementalUpdates = (Environment.GetEnvironmentVariable("SILO_NATIVE_UPDATE_EXIT") ?? "").StartsWith("full-fallback", StringComparison.Ordinal) });
         services.AddSingleton<SafeInstaller>();
         services.AddSingleton<SafeStagedInstaller>();
         services.AddSingleton<IAppUpdateInstaller>(provider => (Environment.GetEnvironmentVariable("SILO_NATIVE_UPDATE_EXIT") ?? "").StartsWith("staged-drain-", StringComparison.Ordinal)
@@ -44,6 +52,48 @@ internal static class AppUpdateNativeFixture
         window.Closed += (_, _) => closed.TrySetResult();
         var nav = (NavigationView)root.FindName("NavView"); nav.IsPaneVisible = true; nav.IsPaneOpen = true;
         var updates = services.GetRequiredService<AppUpdateService>();
+        if (scenario == "full-success")
+        {
+            Directory.CreateDirectory(updates.CacheDirectory);
+            var result = Path.Combine(updates.CacheDirectory, "last-result.json");
+            await File.WriteAllTextAsync(result, JsonSerializer.Serialize(new { state = "installed", message = "Update installed successfully.", version = typeof(App).Assembly.GetName().Version!.ToString(4) }));
+            var read = typeof(MainWindow).GetMethod("ReadUpdateResult", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            read.Invoke(window, null);
+            var installed = ReleaseVersion.FromAssembly(typeof(App).Assembly);
+            var text = "Silo was updated successfully to " + installed.Text + (installed.IsPrerelease ? " (Beta)" : "") + ".";
+            await Until(() => Descendants<TextBlock>(root).Any(x => x.Text == text));
+            if (File.Exists(result)) throw new InvalidOperationException("Full-update success feedback was not consumed.");
+            read.Invoke(window, null);
+            if (Descendants<TextBlock>(root).Count(x => x.Text == text) != 1) throw new InvalidOperationException("Success feedback repeated.");
+            await Task.Delay(400); // Capture after the existing260ms toast entry animation.
+            DependencyObject successToast = Descendants<TextBlock>(root).Single(x => x.Text == text);
+            while (successToast is not Border) successToast = VisualTreeHelper.GetParent(successToast)
+                ?? throw new InvalidOperationException("Success feedback is detached.");
+            if (((Border)successToast).Opacity < .9) throw new InvalidOperationException("Success feedback remains transparent.");
+            await CaptureAsync(root, "full-update-success.png");
+            foreach (var recorded in new object?[] { null, "not-a-version", "0.0.0.0", 42 })
+            {
+                var message = "Synthetic unverified update result: " + (recorded?.ToString() ?? "missing version");
+                var feedback = new Dictionary<string, object?> { ["state"] = "installed", ["message"] = message };
+                if (recorded is not null) feedback["version"] = recorded;
+                await File.WriteAllTextAsync(result, JsonSerializer.Serialize(feedback));
+                read.Invoke(window, null);
+                var warning = "Previous update: " + message;
+                await Until(() => Descendants<TextBlock>(root).Any(x => x.Text == warning));
+                if (File.Exists(result)) throw new InvalidOperationException("Unverified full-update result was not consumed.");
+                read.Invoke(window, null);
+                if (Descendants<TextBlock>(root).Count(x => x.Text == warning) != 1)
+                    throw new InvalidOperationException("Unverified update feedback repeated.");
+            }
+            Program.Log("PASS: full-update success uses the verified installed semantic identity/designation; missing, malformed and mismatched result versions warn and are consumed once without setup.");
+            return;
+        }
+        if (scenario == "channels")
+        {
+            services.GetRequiredService<UpdateWire>().ChannelCatalog = true;
+            await CheckChannelsAsync(window, root, services, updates, navigation);
+            return;
+        }
         if (scenario == "content-fit")
             services.GetRequiredService<UpdateWire>().Notes = "## Synthetic changelog\n" + string.Join("\n\n", Enumerable.Repeat(
                 "Long release notes describe the update in readable text. Preferences and update controls must remain reachable when this content exceeds the available window height.", 30));
@@ -90,6 +140,11 @@ internal static class AppUpdateNativeFixture
         var notes = Descendants<TextBlock>((DependencyObject)dialog.Content).Single(x => x.Name == "AppUpdateReleaseNotes");
         if (!notes.Text.Contains("Synthetic changelog", StringComparison.Ordinal)) throw new InvalidOperationException("In-app changelog is missing.");
         await CaptureAsync((FrameworkElement)dialog.Content, "update-dialog.png");
+        if (scenario.StartsWith("full-fallback", StringComparison.Ordinal))
+        {
+            await CheckFullFallbackAsync(window, services, updates, dialog, field, closed.Task, scenario);
+            return;
+        }
         if (scenario == "content-fit")
         {
             await CheckDialogContentFitAsync(window, root, dialog, updates, services.GetRequiredService<UpdateWire>());
@@ -468,8 +523,12 @@ internal static class AppUpdateNativeFixture
         Program.Log("PASS: enlarged body text and live metadata recheck preserve complete Check/Update/Later controls and refresh the release notes without closing the dialog.");
 
         Windows.Foundation.Rect Box(FrameworkElement item) => item.TransformToVisual(null).TransformBounds(new(0, 0, item.ActualWidth, item.ActualHeight));
-        void AssertVisible(FrameworkElement item)
-        {
+        void AssertVisible(FrameworkElement item) => AssertWithinViewport(item, surface);
+    }
+
+    private static void AssertWithinViewport(FrameworkElement item, FrameworkElement surface)
+    {
+            static Windows.Foundation.Rect Box(FrameworkElement value) => value.TransformToVisual(null).TransformBounds(new(0, 0, value.ActualWidth, value.ActualHeight));
             var bounds = Box(item); var outer = Box(surface);
             if (bounds.Width <= 0 || bounds.Height <= 0 || bounds.X < outer.X - 1 || bounds.Y < outer.Y - 1 || bounds.Right > outer.Right + 1 || bounds.Bottom > outer.Bottom + 1)
                 throw new InvalidOperationException($"Update control {item.Name}/{(item as Button)?.Content} exceeds the dialog: {bounds}; surface={outer}.");
@@ -480,7 +539,6 @@ internal static class AppUpdateNativeFixture
                     if (bounds.Y < viewport.Y - 1 || bounds.Bottom > viewport.Bottom + 1)
                         throw new InvalidOperationException($"Update control {item.Name}/{(item as Button)?.Content} is clipped by {clip.Name}/{parent.GetType().Name}: {bounds}; viewport={viewport}.");
                 }
-        }
     }
 
     private static void Click(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
@@ -513,9 +571,15 @@ internal static class AppUpdateNativeFixture
     private sealed class SafeInstaller : IAppUpdateInstaller
     {
         public bool IsSupported => true;
+        public string? LauncherRoot;
+        public bool CanScheduleFullInstaller => LauncherRoot is null || UpdateInstallation.SupportsVersionedFullInstaller(LauncherRoot);
         public int Calls; public bool Restart; public int ConfirmedCloses;
         public Task<bool> ScheduleAsync(AppRelease release, string path, bool restart, CancellationToken ct)
-        { if (!File.Exists(path)) throw new InvalidOperationException("Missing synthetic staged package."); Calls++; Restart = restart; return Task.FromResult(true); }
+        {
+            if (!CanScheduleFullInstaller) return Task.FromResult(false);
+            if (!File.Exists(path)) throw new InvalidOperationException("Missing synthetic staged package.");
+            Calls++; Restart = restart; return Task.FromResult(true);
+        }
         public void ConfirmNormalClose() { if (Calls != 0) ConfirmedCloses++; }
     }
     private sealed class SafeStagedInstaller : IAppUpdateInstaller, IStagedAppUpdateInstaller
@@ -533,6 +597,166 @@ internal static class AppUpdateNativeFixture
             => throw new InvalidOperationException("A prepared transaction must not schedule a legacy installer.");
         public void ConfirmNormalClose() { if (HasPreparedHandoff) PreparedCloses++; }
     }
+    private static async Task CheckChannelsAsync(MainWindow window, FrameworkElement root, IServiceProvider services,
+        AppUpdateService updates, NavigationService navigation)
+    {
+        await CheckStagedCloseConfirmationAsync();
+        navigation.Navigate<SettingsPage>();
+        await Until(() => navigation.Frame?.Content is SettingsPage { IsLoaded: true });
+        var settings = (SettingsPage)navigation.Frame!.Content; settings.SelectSettingsSection("Playback");
+        var combo = settings.FindName("AppUpdateSettingsChannelCombo") as ComboBox
+            ?? throw new InvalidOperationException("Settings is missing the Stable/Beta channel selection.");
+        if (combo.SelectedIndex != 0 || updates.Channel != AppUpdateChannel.Stable) throw new InvalidOperationException("Stable is not the native default.");
+        var warning = (TextBlock)settings.FindName("AppUpdateSettingsBetaWarning");
+        var operation = (SemaphoreSlim)typeof(AppUpdateService).GetField("_operation", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(updates)!;
+        await operation.WaitAsync();
+        try
+        {
+            combo.SelectedIndex = 1;
+            if (!updates.IsChangingChannel || services.GetRequiredService<SettingsService>().Load().UpdateChannel != updates.Channel)
+                throw new InvalidOperationException("Settings did not persist the channel before draining old work.");
+            navigation.Navigate<HomePage>();
+            await Until(() => navigation.Frame?.Content is HomePage { IsLoaded: true });
+            if (!updates.IsChangingChannel) throw new InvalidOperationException("Leaving Settings canceled the app-owned transition.");
+        }
+        finally { operation.Release(); }
+        await Until(() => updates.Channel == AppUpdateChannel.Beta && !updates.IsChangingChannel && updates.State.Release?.IsBeta == true);
+        navigation.Navigate<SettingsPage>(); await Until(() => navigation.Frame?.Content is SettingsPage { IsLoaded: true });
+        settings = (SettingsPage)navigation.Frame!.Content; settings.SelectSettingsSection("Playback");
+        combo = (ComboBox)settings.FindName("AppUpdateSettingsChannelCombo");
+        warning = (TextBlock)settings.FindName("AppUpdateSettingsBetaWarning");
+        await Until(() => updates.Channel == AppUpdateChannel.Beta && updates.State.Release?.IsBeta == true && warning.Visibility == Visibility.Visible);
+        if (services.GetRequiredService<SettingsService>().Load().UpdateChannel != AppUpdateChannel.Beta)
+            throw new InvalidOperationException("Native channel selection did not persist.");
+        if (warning.Visibility != Visibility.Visible || !warning.Text.Contains("bugs", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Beta selection has no visible warning.");
+        var installed = (TextBlock)settings.FindName("AppUpdateInstalledVersionText");
+        var identity = ReleaseVersion.FromAssembly(typeof(App).Assembly);
+        if (!installed.Text.Contains(identity.Text, StringComparison.Ordinal) || !installed.Text.Contains(identity.Designation, StringComparison.Ordinal))
+            throw new InvalidOperationException("Installed semantic version/designation is missing.");
+        var settingsScroll = Descendants<ScrollViewer>(settings).First();
+        await Until(() => settingsScroll.ScrollableHeight > 0);
+        settingsScroll.ChangeView(null, settingsScroll.ScrollableHeight, null, true);
+        await Until(() => Math.Abs(settingsScroll.VerticalOffset - settingsScroll.ScrollableHeight) < 2);
+        root.UpdateLayout(); AssertWithinViewport(combo, root); AssertWithinViewport(warning, root);
+        await CaptureAsync(root, "channels-settings-beta.png");
+        navigation.Navigate<HomePage>(); await Until(() => navigation.Frame?.Content is HomePage { IsLoaded: true });
+        var showing = window.ShowAppUpdateDialogAsync();
+        var field = typeof(MainWindow).GetField("_appUpdateDialog", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        await Until(() => field.GetValue(window) is ContentDialog { IsLoaded: true });
+        var dialog = (ContentDialog)field.GetValue(window)!;
+        var selection = Descendants<ComboBox>(dialog).Single(c => c.Name == "AppUpdateChannelCombo");
+        if (selection.SelectedIndex != 1 || !Descendants<TextBlock>(dialog).Any(t => t.Text.Contains("1.2.999-beta.12", StringComparison.Ordinal)))
+            throw new InvalidOperationException("Dialog did not show the eligible semantic beta.");
+        await CaptureAsync((FrameworkElement)dialog.Content, "channels-dialog-beta.png");
+        selection.SelectedIndex = 0;
+        await Until(() => updates.Channel == AppUpdateChannel.Stable && !updates.IsChangingChannel && !updates.State.IsChecking
+            && updates.State.Release is null && !dialog.IsPrimaryButtonEnabled && selection.IsEnabled);
+        if (identity.IsPrerelease && !Descendants<TextBlock>(dialog).Any(t => t.Text.Contains("downgrade", StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidOperationException("Ahead-of-stable beta does not explain waiting without downgrade.");
+        selection.SelectedIndex = 1; await Until(() => updates.State.Release?.IsBeta == true && dialog.IsPrimaryButtonEnabled);
+        dialog.Hide(); await showing;
+        navigation.Navigate<SettingsPage>(); await Until(() => navigation.Frame?.Content is SettingsPage { IsLoaded: true });
+        if (((ComboBox)((SettingsPage)navigation.Frame!.Content).FindName("AppUpdateSettingsChannelCombo")).SelectedIndex != 1)
+            throw new InvalidOperationException("Reopened Settings lost the selected channel.");
+        if (services.GetRequiredService<UpdateWire>().Downloads != 0 || services.GetRequiredService<SafeInstaller>().Calls != 0)
+            throw new InvalidOperationException("Channel presentation started a package or setup.");
+        Program.Log("PASS: native settings/dialog persist Stable/Beta, show semantic installed/available identities and beta warning, retire old offers, wait for Stable without downgrade and preserve reopen state without setup.");
+    }
+
+    private static async Task CheckStagedCloseConfirmationAsync()
+    {
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var pipeField = typeof(WindowsAppUpdateInstaller).GetField("stagedPipe", flags)!;
+        var transactionField = typeof(WindowsAppUpdateInstaller).GetField("stagedTransaction", flags)!;
+        var armedField = typeof(WindowsAppUpdateInstaller).GetField("stagedCloseArmed", flags)!;
+        foreach (var scenario in new[] { "connected", "peer-exited", "disposed", "unarmed" })
+        {
+            var installer = new WindowsAppUpdateInstaller(Path.Combine(Program.ResultDirectory, "synthetic-close-cache"));
+            var name = "SiloUpdate-" + Guid.NewGuid().ToString("N");
+            using var pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+            using var client = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var connection = pipe.WaitForConnectionAsync(deadline.Token);
+            await client.ConnectAsync(deadline.Token); await connection;
+            var transaction = Guid.NewGuid().ToString("N");
+            pipeField.SetValue(installer, pipe); transactionField.SetValue(installer, transaction);
+            if (!installer.HasPreparedHandoff) throw new InvalidOperationException("Synthetic handoff did not connect.");
+            if (scenario != "unarmed") installer.ArmNormalClose();
+            if (scenario == "peer-exited") client.Dispose();
+            if (scenario == "disposed") pipe.Dispose();
+            installer.ConfirmNormalClose(); // Must not throw even if the earlier IsConnected observation is stale.
+            if (installer.HasPreparedHandoff || pipeField.GetValue(installer) is not null
+                || transactionField.GetValue(installer) is not null || (bool)armedField.GetValue(installer)!)
+                throw new InvalidOperationException("Close confirmation retained a dead or already-consumed handoff.");
+            installer.ConfirmNormalClose(); // Once-only/no-send path.
+            if (scenario == "connected")
+            {
+                var message = await UpdateHostProtocol.ReadAsync(client, deadline.Token);
+                if (message.Kind != "close" || message.TransactionId != transaction)
+                    throw new InvalidOperationException("Armed normal close lost its transaction confirmation.");
+            }
+            if (scenario == "unarmed" && await client.ReadAsync(new byte[1], deadline.Token) != 0)
+                throw new InvalidOperationException("Unarmed handoff sent a close confirmation.");
+        }
+        Program.Log("PASS: staged close confirms only armed handoffs and tolerates exited/disposed pipes without aborting normal close; synthetic pipes only, no updater/setup.");
+    }
+
+    private static async Task CheckFullFallbackAsync(MainWindow window, IServiceProvider services, AppUpdateService updates,
+        ContentDialog dialog, FieldInfo field, Task closed, string scenario)
+    {
+        var installer = services.GetRequiredService<SafeInstaller>();
+        var primary = Descendants<Button>(dialog).Single(b => b.Name == "PrimaryButton");
+        Click(primary); await Until(() => updates.State.ReadyInstaller is not null && (closed.IsCompleted || dialog.PrimaryButtonText == "Install full update"));
+        if (closed.IsCompleted || installer.Calls != 0 || field.GetValue(window) != dialog || dialog.PrimaryButtonText != "Install full update")
+            throw new InvalidOperationException("First click closed/scheduled Silo before explicit full-migration confirmation.");
+        if (!Descendants<TextBlock>(dialog).Any(t => t.Visibility == Visibility.Visible && t.Text.Contains("full installer", StringComparison.OrdinalIgnoreCase)
+            && t.Text.Contains("close", StringComparison.OrdinalIgnoreCase))) throw new InvalidOperationException("Full migration close/save explanation is missing.");
+        await CaptureAsync((FrameworkElement)dialog.Content, "full-fallback-confirmation.png");
+
+        // This fixture assembly has the default 1.0.0.0 FileVersion. Read it as
+        // an old root launcher; never execute it or change a registered install.
+        var oldRoot = Path.Combine(Program.ResultDirectory, "old-launcher-installation");
+        Directory.CreateDirectory(oldRoot);
+        File.Copy(typeof(AppUpdateNativeFixture).Assembly.Location, Path.Combine(oldRoot, "SiloPlayer.exe"), overwrite: true);
+        installer.LauncherRoot = oldRoot;
+        if (installer.CanScheduleFullInstaller) throw new InvalidOperationException("Old-launcher fixture unexpectedly supports full migration.");
+        var refresh = typeof(MainWindow).GetMethod("RefreshUpdateDialog", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        refresh.Invoke(window, null);
+        if (dialog.IsPrimaryButtonEnabled || dialog.PrimaryButtonText != "Manual installer required"
+            || !Descendants<TextBlock>(dialog).Any(t => t.Visibility == Visibility.Visible && t.Text == UpdateInstallation.ManualFullInstallerMessage))
+            throw new InvalidOperationException("Old launcher still offers in-app installation instead of manual guidance.");
+        var link = Descendants<HyperlinkButton>(dialog).Single(b => b.Name == "AppUpdateFullRelease");
+        if (link.Visibility != Visibility.Visible || link.NavigateUri?.AbsoluteUri != "https://github.com/ellermw/SiloDesktopApp/releases/tag/" + updates.State.Release!.Tag)
+            throw new InvalidOperationException("Manual migration has no release-page link.");
+        if (await installer.ScheduleAsync(updates.State.Release!, updates.State.ReadyInstaller!, true, default))
+            throw new InvalidOperationException("Old-launcher schedule was accepted.");
+        typeof(MainWindow).GetField("_manualUpdateRequested", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, true);
+        var allowClose = await (Task<bool>)typeof(MainWindow).GetMethod("PrepareAppUpdateExitAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null)!;
+        if (allowClose || closed.IsCompleted || installer.Calls != 0 || installer.ConfirmedCloses != 0
+            || ((CancellationTokenSource)typeof(MainWindow).GetField("_appUpdateLifetime", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!).IsCancellationRequested)
+            throw new InvalidOperationException("Rejected old-launcher migration did not leave Silo open and running.");
+        installer.LauncherRoot = null;
+        refresh.Invoke(window, null);
+        if (!dialog.IsPrimaryButtonEnabled || dialog.PrimaryButtonText != "Install full update")
+            throw new InvalidOperationException("Compatible full-migration action did not recover.");
+        Program.Log("PASS: old root launcher rejects full scheduling, shows manual guidance with a release link and vetoes manual-update close without stopping Silo.");
+
+        if (scenario == "full-fallback-manual") Click(primary);
+        else
+        {
+            Click(Descendants<Button>(dialog).Single(b => b.Name == "CloseButton")); await Until(() => field.GetValue(window) is null);
+            updates.SetMode(AppUpdateMode.Automatic);
+            if (updates.ShouldInstallOnExit) throw new InvalidOperationException("Full migration armed automatic exit setup.");
+            SendMessage(WinRT.Interop.WindowNative.GetWindowHandle(window), 0x10, IntPtr.Zero, IntPtr.Zero);
+        }
+        await closed.WaitAsync(TimeSpan.FromSeconds(10));
+        var expected = scenario == "full-fallback-manual" ? 1 : 0;
+        if (installer.Calls != expected || installer.ConfirmedCloses != expected || (expected != 0 && !installer.Restart))
+            throw new InvalidOperationException("Explicit full fallback consent/restart policy was not preserved.");
+        Program.Log("PASS: native full fallback downloads/verifies first, keeps Silo open for explicit second-click consent, preserves Later/automatic no-migration policy and normal-close restart intent; only synthetic SafeInstaller executed.");
+    }
+
     private sealed class UpdateWire : HttpMessageHandler
     {
         private readonly byte[] _package = "Synthetic update, never executable"u8.ToArray();
@@ -540,6 +764,7 @@ internal static class AppUpdateNativeFixture
         public bool HoldDownload;
         public bool HoldMetadata;
         public bool LimitMetadata;
+        public bool ChannelCatalog;
         public int MetadataRequests;
         public string Notes = "## Synthetic changelog\nFixed playback.\n- UI updates";
         public TaskCompletionSource MetadataEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -558,8 +783,10 @@ internal static class AppUpdateNativeFixture
                     return limited;
                 }
                 if (HoldMetadata) { MetadataEntered.TrySetResult(); await ReleaseMetadata.Task.WaitAsync(ct); }
-                var json = JsonSerializer.Serialize(new { tag_name = "v1.2.999", draft = false, prerelease = false, body = Notes, published_at = "2026-10-28T12:00:00Z",
-                    assets = new[] { new { name = "SiloInstaller-Windows-x64.exe", state = "uploaded", size = _package.Length, digest = "sha256:" + Convert.ToHexString(SHA256.HashData(_package)), browser_download_url = "https://github.com/ellermw/SiloDesktopApp/releases/download/v1.2.999/SiloInstaller-Windows-x64.exe" } } });
+                var version = ChannelCatalog ? request.RequestUri.AbsolutePath.EndsWith("/latest") ? "1.2.516" : "1.2.999-beta.12" : "1.2.999";
+                var release = new { tag_name = "v" + version, draft = false, prerelease = version.Contains('-'), body = Notes, published_at = "2026-10-28T12:00:00Z",
+                    assets = new[] { new { name = "SiloInstaller-Windows-x64.exe", state = "uploaded", size = _package.Length, digest = "sha256:" + Convert.ToHexString(SHA256.HashData(_package)), browser_download_url = "https://github.com/ellermw/SiloDesktopApp/releases/download/v"+version+"/SiloInstaller-Windows-x64.exe" } } };
+                var json = ChannelCatalog && request.RequestUri.AbsolutePath.EndsWith("/releases") ? JsonSerializer.Serialize(new[] { release }) : JsonSerializer.Serialize(release);
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") };
             }
             if (request.RequestUri.Host != "github.com") throw new InvalidOperationException("Native update fixture attempted remote networking.");

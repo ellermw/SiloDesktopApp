@@ -220,6 +220,32 @@ public partial class App : Application
         _uiLagTimer.Start();
     }
 
+    // A stamp mismatch disables semantic channel identity; it must not fail
+    // service resolution (and with it MainWindow construction) at startup.
+    private static SiloPlayer.Core.Models.Updates.ReleaseVersion? ReadInstalledReleaseVersion()
+    {
+        try { return SiloPlayer.Core.Models.Updates.ReleaseVersion.FromAssembly(typeof(App).Assembly); }
+        catch (InvalidDataException ex)
+        {
+            LocalLog.AppendLine("updates.txt", "installed_identity_invalid " + ex.Message);
+            return null;
+        }
+    }
+
+    private static bool PreferIncrementalUpdates()
+    {
+        try
+        {
+            return UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!) is { } root
+                && SideBySideInstallation.ReadState(root) is not null;
+        }
+        catch (Exception ex)
+        {
+            LocalLog.AppendLine("updates.txt", "installation_state_invalid kind=" + ex.GetType().Name);
+            return false;
+        }
+    }
+
     private static IServiceProvider ConfigureServices()
     {
         var services = new ServiceCollection();
@@ -233,12 +259,22 @@ public partial class App : Application
 
         // Core services
         services.AddSingleton(new SettingsService(appDataDir));
-        services.AddSingleton(_ => new SiloPlayer.Core.Services.Updates.AppUpdateService(
+        services.AddSingleton(provider => new SiloPlayer.Core.Services.Updates.AppUpdateService(
             new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, AutomaticDecompression = System.Net.DecompressionMethods.None })
                 { Timeout = Timeout.InfiniteTimeSpan },
             Path.Combine(appDataDir, "updates"), typeof(App).Assembly.GetName().Version!,
             message => LocalLog.AppendLine("updates.txt", message))
-            {PreferIncrementalUpdates=UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!) is { } updateRoot && SideBySideInstallation.ReadState(updateRoot) is not null,
+            {Channel=provider.GetRequiredService<SettingsService>().Load().UpdateChannel,
+                PersistChannel=channel =>
+                {
+                    var preferences=provider.GetRequiredService<SettingsService>(); var settings=preferences.Load();
+                    var previous=settings.UpdateChannel;
+                    settings.UpdateChannel=channel;
+                    try { preferences.Save(settings); }
+                    catch { settings.UpdateChannel=previous; throw; }
+                },
+                InstalledReleaseVersion=ReadInstalledReleaseVersion(),
+                PreferIncrementalUpdates=PreferIncrementalUpdates(),
                 InstalledPayloadDirectory=AppContext.BaseDirectory,InstallationRoot=UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!)});
         services.AddSingleton<IAppUpdateInstaller>(new WindowsAppUpdateInstaller(Path.Combine(appDataDir, "updates")));
         services.AddSingleton<CredentialStore>();

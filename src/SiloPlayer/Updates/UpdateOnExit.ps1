@@ -1,5 +1,6 @@
 param([int]$ParentPid, [long]$ParentStartTicks, [string]$Version, [string]$Sha256,
-    [long]$ExpectedSize, [string]$AppPath, [switch]$Restart, [switch]$VerifyOnly, [string]$ValidationRoot, [string]$HandoffToken, [switch]$ValidateExitGate)
+    [long]$ExpectedSize, [string]$AppPath, [switch]$Restart, [switch]$VerifyOnly, [string]$ValidationRoot, [string]$HandoffToken, [switch]$ValidateExitGate,
+    [string]$InstallRoot, [string]$ReleaseTag, [string]$InstallerUrl)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2
 $root=$null; $gate=$null; $gateOwned=$false; $packageStream=$null; $failureState='failed'
@@ -14,6 +15,93 @@ function Assert-OrdinaryPath([string]$Path) {
         } catch [IO.FileNotFoundException] { } catch [IO.DirectoryNotFoundException] { }
         $current=[IO.Path]::GetDirectoryName($current)
     }
+}
+function Get-UpdateInstallationPaths([string]$SourceApp,[string]$RegisteredRoot,[string]$TargetVersion) {
+    foreach($value in @($SourceApp,$RegisteredRoot)){
+        if($value -and ($value.Replace('/','\').Split('\') | Where-Object {$_ -eq '.' -or $_ -eq '..'})){throw 'Update paths cannot contain relative segments.'}
+    }
+    $source=[IO.Path]::GetFullPath($SourceApp)
+    if([IO.Path]::GetFileName($source) -ine 'SiloPlayer.exe'){throw 'Unexpected application executable.'}
+    $directory=[IO.Path]::GetDirectoryName($source).TrimEnd([char[]]'\/')
+    $install=if($RegisteredRoot){[IO.Path]::GetFullPath($RegisteredRoot).TrimEnd([char[]]'\/')}else{$directory}
+    Assert-OrdinaryPath $source; Assert-OrdinaryPath $install
+    $numeric=$null
+    if(![version]::TryParse($TargetVersion,[ref]$numeric) -or $numeric.Revision -lt 0 -or $numeric.ToString(4) -cne $TargetVersion -or
+        $numeric.Major -gt 65534 -or $numeric.Minor -gt 65534 -or $numeric.Build -gt 65534 -or $numeric.Revision -gt 65534){throw 'Invalid numeric target version.'}
+    $versioned=$false;$sourceVersion=$null;$target=$source
+    if($directory -ine $install){
+        $prefix=$install+[IO.Path]::DirectorySeparatorChar
+        if(!$source.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'The source is outside the registered installation.'}
+        $relative=$source.Substring($prefix.Length).Replace('/','\').Split('\')
+        $previous=$null
+        if($relative.Length -ne 3 -or $relative[0] -ine 'versions' -or ![version]::TryParse($relative[1],[ref]$previous) -or
+            $previous.Revision -lt 0 -or $previous.ToString(4) -cne $relative[1]){throw 'Invalid versioned installation source.'}
+        if($numeric.Major -ne $previous.Major -or $numeric -le $previous){throw 'Automatic major changes and downgrades are not supported.'}
+        $versioned=$true;$sourceVersion=$relative[1]
+        $target=Join-Path (Join-Path (Join-Path $install 'versions') $TargetVersion) 'SiloPlayer.exe'
+    }
+    return @{Root=$install;Source=$source;Target=$target;Restart=(Join-Path $install 'SiloPlayer.exe');Versioned=$versioned;SourceVersion=$sourceVersion}
+}
+function Get-UpdateRegisteredRoot {
+    # HKCU and handoff arguments are not installation authority.
+    $base=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine,[Microsoft.Win32.RegistryView]::Registry64)
+    try {
+        $key=$base.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{B8E2F4A1-3C5D-4E6F-9A1B-2D3E4F5A6B7C}_is1')
+        if($key){try{return [string]$key.GetValue('InstallLocation','')}finally{$key.Dispose()}}
+    } finally {$base.Dispose()}
+}
+function Test-UpdatePrivilegedAcl([Security.AccessControl.FileSystemSecurity]$Acl,[bool]$Ancestor=$false) {
+    $owners=@('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    if($Acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $owners){return $false}
+    $dangerous=[Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+        [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
+    if(!$Ancestor){$dangerous=$dangerous -bor [Security.AccessControl.FileSystemRights]::Write}
+    $rules=$Acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])
+    if($rules.Count -eq 0){return $false}
+    foreach($rule in $rules){
+        if($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+            ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and
+            $rule.IdentityReference.Value -notin $owners -and ($rule.FileSystemRights -band $dangerous) -ne 0){return $false}
+    }
+    return $true
+}
+function Assert-UpdateProtectedInstallation([string]$Installation) {
+    # Match the installed updater's protected-machine ACL policy, including
+    # ancestors that could otherwise permit replacing the installation root.
+    $directory=[IO.DirectoryInfo]::new($Installation)
+    while($directory){
+        Assert-OrdinaryPath $directory.FullName
+        if(!(Test-UpdatePrivilegedAcl ($directory.GetAccessControl()) ($directory.FullName -ine $Installation))){throw 'A protected machine installation is required. Run the full installer manually to repair permissions.'}
+        $directory=$directory.Parent
+    }
+    $stack=[Collections.Generic.Stack[IO.FileSystemInfo]]::new();$stack.Push([IO.DirectoryInfo]::new($Installation));$count=0
+    while($stack.Count -gt 0){
+        $entry=$stack.Pop()
+        if(++$count -gt 16384){throw 'Installation inventory exceeds the supported bounds.'}
+        Assert-OrdinaryPath $entry.FullName
+        if(!(Test-UpdatePrivilegedAcl ($entry.GetAccessControl()))){throw 'An installed path permits unprivileged changes. Run the full installer manually to repair permissions.'}
+        if($entry -is [IO.DirectoryInfo]){foreach($child in $entry.EnumerateFileSystemInfos()){$stack.Push($child)}}
+    }
+}
+function Resolve-UpdateMachineInstallation([string]$SourceApp,[string]$RequestedRoot,[string]$TargetVersion) {
+    $registered=Get-UpdateRegisteredRoot
+    if(!$registered -or ![IO.Path]::IsPathRooted($registered)){throw 'Updates require the registered machine installation.'}
+    $registered=[IO.Path]::GetFullPath($registered).TrimEnd([char[]]'\/')
+    if($RequestedRoot -and [IO.Path]::GetFullPath($RequestedRoot).TrimEnd([char[]]'\/') -ine $registered){throw 'The requested root is not the registered machine installation.'}
+    Assert-UpdateProtectedInstallation $registered
+    $paths=Get-UpdateInstallationPaths $SourceApp $registered $TargetVersion
+    if(![IO.File]::Exists($paths.Source) -or ![IO.File]::Exists($paths.Restart)){throw 'The installed application is missing.'}
+    $statePath=Join-Path $registered '.silo-update\state.json'
+    # Installation-owned layout/state selects the mode, never -InstallRoot or
+    # a caller pointing AppPath at the root launcher. Incomplete layouts fail closed.
+    $versioned=[IO.Directory]::Exists((Join-Path $registered 'versions')) -or [IO.Directory]::Exists((Join-Path $registered '.silo-update'))
+    if($versioned){
+        if(!$paths.Versioned -or ![IO.File]::Exists($statePath)){throw 'A versioned installation requires its active version-local client.'}
+        if(([IO.FileInfo]::new($statePath)).Length -gt 65536){throw 'Invalid installation state.'}
+        $state=[IO.File]::ReadAllText($statePath)|ConvertFrom-Json
+        if([string]$state.ActiveVersion -cne $paths.SourceVersion){throw 'The source is not the active installed client.'}
+    } elseif($paths.Versioned){throw 'The versioned installation state is missing.'}
+    return $paths
 }
 function Write-Result([string]$State,[string]$Message,[string]$GateName='') {
     $result=@{state=$State;message=$Message;version=$Version;utc=[DateTime]::UtcNow.ToString('o');gate=$GateName}
@@ -46,6 +134,80 @@ function New-UpdateSetupStartInfo([string]$Package,[string]$AppDirectory,[string
     $start.Arguments='/SILENT /SUPPRESSMSGBOXES /SP- /NORESTART /NOCLOSEAPPLICATIONS /NOFORCECLOSEAPPLICATIONS /NORESTARTAPPLICATIONS /DIR="'+$AppDirectory+'" /LOG="'+$InstallerLog+'"'
     return $start
 }
+function Get-UpdateReleaseMetadata([string]$Tag) {
+    # The tag is validated by Confirm-UpdateReleaseAuthority before constructing
+    # this pinned, unauthenticated endpoint. Never follow a redirect or a caller URL.
+    $uri=[uri]('https://api.github.com/repos/ellermw/SiloDesktopApp/releases/tags/'+$Tag)
+    # Windows PowerShell 5.1 may otherwise use only legacy TLS defaults.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    $request=[Net.WebRequest]::CreateHttp($uri)
+    $request.AllowAutoRedirect=$false;$request.UseDefaultCredentials=$false;$request.Credentials=$null
+    $request.UserAgent='SiloDesktopApp-Updater';$request.Accept='application/vnd.github+json'
+    $request.Headers.Add('X-GitHub-Api-Version','2026-03-10')
+    $request.Timeout=12000;$request.ReadWriteTimeout=12000
+    $response=$null;$body=$null;$bytes=New-Object IO.MemoryStream
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    try {
+        $response=$request.GetResponse()
+        if($response.StatusCode -ne [Net.HttpStatusCode]::OK -or $response.ResponseUri -ne $uri -or
+            $response.ContentLength -gt 524288 -or ($response.ContentEncoding -and $response.ContentEncoding -ine 'identity')){
+            throw 'Could not establish full installer release authority.'
+        }
+        $body=$response.GetResponseStream();$buffer=New-Object byte[] 8192
+        while($true){
+            $remaining=12000-$clock.ElapsedMilliseconds
+            if($remaining -le 0){throw 'Full installer release authority timed out.'}
+            $body.ReadTimeout=[int]$remaining
+            $count=$body.Read($buffer,0,$buffer.Length)
+            if($count -eq 0){break}
+            if($bytes.Length+$count -gt 524288){throw 'Full installer release metadata is too large.'}
+            $bytes.Write($buffer,0,$count)
+        }
+        return ([Text.Encoding]::UTF8.GetString($bytes.ToArray()) | ConvertFrom-Json)
+    } finally {
+        if($body){$body.Dispose()};if($response){$response.Dispose()};$bytes.Dispose()
+    }
+}
+function Confirm-UpdateReleaseAuthority([string]$Tag,[string]$TargetVersion,[string]$Digest,[long]$Size,[string]$Url) {
+    $identity=[regex]::Match($Tag,'\Av(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-beta\.([1-9][0-9]*)|\.0)?\z')
+    if($Tag.Length -gt 64 -or !$identity.Success){throw 'Invalid full installer release tag.'}
+    $major=[int]$identity.Groups[1].Value;$minor=[int]$identity.Groups[2].Value;$patch=[int]$identity.Groups[3].Value
+    $beta=if($identity.Groups[4].Success){[int]$identity.Groups[4].Value}else{0}
+    if($major -gt 65534 -or $minor -gt 65534 -or $patch -gt 65534 -or $beta -gt 65534 -or ($beta -gt 0 -and $patch -lt 1)){
+        throw 'Unsupported full installer release identity.'
+    }
+    $numeric=if($beta -gt 0){[version]::new($major,$minor,($patch-1),$beta)}else{[version]::new($major,$minor,$patch,0)}
+    if($numeric.ToString(4) -cne $TargetVersion){throw 'Full installer tag and numeric version disagree.'}
+    $expectedUrl='https://github.com/ellermw/SiloDesktopApp/releases/download/'+$Tag+'/SiloInstaller-Windows-x64.exe'
+    if($Url -cne $expectedUrl){throw 'Full installer URL is outside the expected release.'}
+    $metadata=Get-UpdateReleaseMetadata $Tag
+    $published=[DateTimeOffset]::MinValue
+    if($metadata.tag_name -cne $Tag -or $metadata.draft -isnot [bool] -or $metadata.draft -or
+        $metadata.prerelease -isnot [bool] -or $metadata.prerelease -ne ($beta -gt 0) -or
+        ![DateTimeOffset]::TryParse($metadata.published_at,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal,[ref]$published)){
+        throw 'The independently fetched release identity is invalid.'
+    }
+    $assets=@($metadata.assets | Where-Object {$_.name -ceq 'SiloInstaller-Windows-x64.exe'})
+    if($assets.Count -ne 1){throw 'The release has no unique Windows x64 installer.'}
+    $asset=$assets[0]
+    if($asset.state -cne 'uploaded' -or ($asset.size -isnot [int] -and $asset.size -isnot [long]) -or
+        $asset.size -le 0 -or $asset.size -gt 536870912 -or $asset.size -ne $Size -or
+        $asset.browser_download_url -cne $expectedUrl -or $asset.digest -cnotmatch '\Asha256:[a-fA-F0-9]{64}\z' -or
+        $asset.digest.Substring(7) -ine $Digest){
+        throw 'The installer disagrees with independent release authority.'
+    }
+}
+function Confirm-UpdateInstallerIdentity([string]$Tag,[string]$TargetVersion,$Info) {
+    # Called only after tag authority establishes the semantic/numeric mapping.
+    $semantic=$Tag.Substring(1)
+    if($semantic -cmatch '\A[0-9]+\.[0-9]+\.[0-9]+\.0\z'){$semantic=$semantic.Substring(0,$semantic.Length-2)}
+    $file='{0}.{1}.{2}.{3}' -f $Info.FileMajorPart,$Info.FileMinorPart,$Info.FileBuildPart,$Info.FilePrivatePart
+    $product='{0}.{1}.{2}.{3}' -f $Info.ProductMajorPart,$Info.ProductMinorPart,$Info.ProductBuildPart,$Info.ProductPrivatePart
+    if($file -cne $TargetVersion -or $product -cne $TargetVersion -or
+        ($Info.ProductVersion -cne $semantic -and !($semantic -cnotmatch '-' -and $Info.ProductVersion -ceq ($semantic+'.0')))){
+        throw 'The installer PE identity disagrees with the verified release.'
+    }
+}
 try {
     $parsed=$null
     if (-not [version]::TryParse($Version,[ref]$parsed) -or $parsed.Build -lt 0 -or $parsed.Revision -lt 0 -or
@@ -57,11 +219,13 @@ try {
     $root=if($VerifyOnly -and $ValidationRoot){[IO.Path]::GetFullPath($ValidationRoot)}else{
         Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'SiloPlayer\updates'
     }
-    $app=[IO.Path]::GetFullPath($AppPath)
-    if ([IO.Path]::GetFileName($app) -ine 'SiloPlayer.exe') {throw 'Unexpected application executable.'}
-    $appDirectory=[IO.Path]::GetDirectoryName($app).TrimEnd([char[]]'\/')
+    $paths=if($VerifyOnly){Get-UpdateInstallationPaths $AppPath $InstallRoot $Version}else{Resolve-UpdateMachineInstallation $AppPath $InstallRoot $Version}
+    $app=$paths.Source;$appDirectory=$paths.Root
     $hash=[Security.Cryptography.SHA256]::Create()
-    try {$gateName='Global\SiloDesktopUpdate-'+([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($appDirectory.ToUpperInvariant()))).Replace('-','').Substring(0,16))}finally{$hash.Dispose()}
+    # The versioned full installer must acquire the ordinary mutation lock to
+    # initialize its final layout. Keep a distinct client-start gate across setup.
+    $gatePrefix=if($paths.Versioned){'Global\SiloDesktopFullUpdate-'}else{'Global\SiloDesktopUpdate-'}
+    try {$gateName=$gatePrefix+([BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($appDirectory.ToUpperInvariant()))).Replace('-','').Substring(0,16))}finally{$hash.Dispose()}
     $package=Join-Path (Join-Path $root $Version) 'SiloInstaller-Windows-x64.exe'
     Assert-OrdinaryPath $package
     $packageStream=[IO.File]::Open($package,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
@@ -70,18 +234,24 @@ try {
     try {$actual=[BitConverter]::ToString($hash.ComputeHash($packageStream)).Replace('-','')}finally{$hash.Dispose()}
     if ($actual -ine $Sha256) {throw 'Installer checksum verification failed.'}
     if ($VerifyOnly -and -not $ValidateExitGate) {Write-Result 'verified' 'Package verified; no installation was launched.' $gateName;exit 0}
-    if (-not $VerifyOnly) {
-    if ($HandoffToken -notmatch '^[a-f0-9]{32}$') {throw 'Missing normal-close confirmation identity.'}
-
-    $registered=$false
-    foreach($hive in @([Microsoft.Win32.RegistryHive]::LocalMachine,[Microsoft.Win32.RegistryHive]::CurrentUser)) {
-        $base=[Microsoft.Win32.RegistryKey]::OpenBaseKey($hive,[Microsoft.Win32.RegistryView]::Registry64)
-        try {
-            $key=$base.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{B8E2F4A1-3C5D-4E6F-9A1B-2D3E4F5A6B7C}_is1')
-            if($key){try{$location=$key.GetValue('InstallLocation','');if($location -and [IO.Path]::GetFullPath($location).TrimEnd([char[]]'\/') -ieq $appDirectory){$registered=$true}}finally{$key.Dispose()}}
-        } finally {$base.Dispose()}
+    if ($paths.Versioned) {
+        # Incremental updates leave the root launcher immutable. FileVersion alone
+        # is ambiguous: gate-less builds also used 1.2.517.0. Require the explicit
+        # AssemblyTitle/FileDescription capability resource on the root apphost.
+        # Never run setup with that launch-exclusion gap; require manual migration.
+        $failureState='deferred'
+        Assert-OrdinaryPath $paths.Restart
+        if ([Diagnostics.FileVersionInfo]::GetVersionInfo($paths.Restart).FileDescription -cne 'Silo Desktop Player launcher; FullUpdateGate=1') {
+            throw 'The installed launcher does not support safe in-app full updates. Close Silo and run the full installer manually.'
+        }
+        $failureState='failed'
     }
-    if(-not $registered){throw 'Updates can only be installed into the registered Silo installation.'}
+    if (-not $VerifyOnly) {
+    # Every elevation, including legacy migration, needs independent authority
+    # and PE identity. A caller-supplied digest alone can never authorize setup.
+    Confirm-UpdateReleaseAuthority $ReleaseTag $Version $Sha256 $ExpectedSize $InstallerUrl
+    Confirm-UpdateInstallerIdentity $ReleaseTag $Version ([Diagnostics.FileVersionInfo]::GetVersionInfo($package))
+    if ($HandoffToken -notmatch '^[a-f0-9]{32}$') {throw 'Missing normal-close confirmation identity.'}
     Write-Result 'waiting' 'Waiting for Silo to finish closing.' $gateName
     if($ParentPid -le 0 -or $ParentStartTicks -le 0){throw 'Missing parent process identity.'}
     $parent=$null
@@ -109,7 +279,7 @@ try {
         try {
             try {$runningPath=$running.MainModule.FileName}
             catch {if($running.HasExited){continue};$failureState='deferred';throw 'Another Silo process cannot be checked. Update postponed.'}
-            if($runningPath -ieq $app){$failureState='deferred';throw 'Another Silo instance is open. Update postponed.'}
+            if($runningPath -ieq $app -or ($paths.Versioned -and $runningPath.StartsWith($appDirectory+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase))){$failureState='deferred';throw 'Another Silo instance is open. Update postponed.'}
         }finally{$running.Dispose()}
     }
     if ($VerifyOnly) {Write-Result 'verified-gate' 'Package and exit gate verified; no installation was launched.' $gateName;exit 0}
@@ -125,10 +295,16 @@ try {
         if($setup.ExitCode -ne 0){throw ('The installer exited with code '+$setup.ExitCode+'. Retry the staged installer.')}
     }finally{$setup.Dispose()}
     $installed=$null
-    if(-not [version]::TryParse([Diagnostics.FileVersionInfo]::GetVersionInfo($app).FileVersion,[ref]$installed) -or $installed -ne $parsed){throw 'The installed version could not be verified. Retry the staged installer.'}
+    Assert-OrdinaryPath $paths.Target
+    if(-not [version]::TryParse([Diagnostics.FileVersionInfo]::GetVersionInfo($paths.Target).FileVersion,[ref]$installed) -or $installed -ne $parsed){throw 'The installed version could not be verified. Retry the staged installer.'}
+    if($paths.Versioned){
+        $statePath=Join-Path $appDirectory '.silo-update\state.json';Assert-OrdinaryPath $statePath
+        $state=[IO.File]::ReadAllText($statePath)|ConvertFrom-Json
+        if([string]$state.ActiveVersion -cne $Version){throw 'The new installation was not activated. Retry the staged installer.'}
+    }
     Write-Result 'installed' 'Update installed successfully.' $gateName
     $gate.ReleaseMutex();$gateOwned=$false
-    if($Restart){$null=[Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo -Property @{FileName=$app;UseShellExecute=$true}))}
+    if($Restart){Assert-OrdinaryPath $paths.Restart;$null=[Diagnostics.Process]::Start((New-Object Diagnostics.ProcessStartInfo -Property @{FileName=$paths.Restart;UseShellExecute=$true}))}
     exit 0
 } catch {
     $errorObject=$_.Exception

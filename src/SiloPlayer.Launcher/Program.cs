@@ -13,49 +13,7 @@ internal static class Program
         {
             var root = SideBySideInstallation.CanonicalRoot(AppContext.BaseDirectory);
             if (args.Length == 1 && args[0] == "--silo-initialize") return InitializeInstalledLayout(root);
-            using var mutex = new Mutex(false, SideBySideInstallation.GetMutexName(root));
-            var owns = false;
-            string executable;
-            try
-            {
-                try { owns = mutex.WaitOne(0); } catch (AbandonedMutexException) { owns = true; }
-                if (!owns) throw new InvalidOperationException("Silo is applying an update. Please try again shortly.");
-                if (args.Length == 1 && args[0] == "--silo-uninstall-owned")
-                {
-                    SideBySideInstallation.RemoveOwnedVersionsForUninstall(root, IsVersionInUse);
-                    return 0;
-                }
-                // Internal installer verbs are never forwarded to the client as an activation.
-                var readinessHandshake = args.Length == 2 && args[0] == "--silo-update-ready" &&
-                    System.Text.RegularExpressions.Regex.IsMatch(args[1], "^SiloUpdate-[a-f0-9]{32}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
-                if (!readinessHandshake && args.Any(a => a.StartsWith("--silo-", StringComparison.Ordinal)))
-                    throw new InvalidOperationException("Invalid Silo launcher operation.");
-                executable = SideBySideInstallation.ResolveLaunchExecutable(root);
-            }
-            finally { if (owns) mutex.ReleaseMutex(); }
-
-            // Release before starting the client: its startup gate checks the same mutex.
-            // Version directories are immutable, so an active-pointer switch cannot change
-            // the selected executable or any of the resources it will load.
-            var start = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(executable)! };
-            foreach (var argument in args) start.ArgumentList.Add(argument);
-            try
-            {
-                SideBySideInstallation.BeginLaunch(root, executable);
-                using var process = Process.Start(start) ?? throw new InvalidOperationException("Silo could not be started.");
-                var state = SideBySideInstallation.ReadState(root);
-                if (state?.PendingVersion is not null &&
-                    Path.GetDirectoryName(executable)!.Equals(Path.Combine(root, "versions", state.PendingVersion), StringComparison.OrdinalIgnoreCase))
-                {
-                    try { SideBySideInstallation.RecordBoot(root, process); }
-                    catch (InvalidOperationException)
-                    {
-                        if (process.HasExited) SideBySideInstallation.RecordFailedLaunch(root, executable);
-                    }
-                }
-            }
-            catch { SideBySideInstallation.RecordFailedLaunch(root, executable); throw; }
-            return 0;
+            return Launch(root, args);
         }
         catch (Exception ex)
         {
@@ -64,6 +22,63 @@ internal static class Program
             MessageBox(IntPtr.Zero, message, "Silo Desktop Player", 0x10);
             return 1;
         }
+    }
+
+    private static int Launch(string root, string[] args)
+    {
+        // Full setup needs the ordinary mutation lock for --silo-initialize.
+        // Exclude launch resolution with its separate gate while setup copies files.
+        using var fullUpdate = new Mutex(false, @"Global\SiloDesktopFullUpdate-" + SideBySideInstallation.RootHash(root)[..16]);
+        var fullUpdateOwned = false;
+        using var mutex = new Mutex(false, SideBySideInstallation.GetMutexName(root));
+        var owns = false;
+        string executable;
+        try
+        {
+            try { fullUpdateOwned = fullUpdate.WaitOne(0); } catch (AbandonedMutexException) { fullUpdateOwned = true; }
+            if (!fullUpdateOwned) throw new InvalidOperationException("Silo is applying an update. Please try again shortly.");
+            try { owns = mutex.WaitOne(0); } catch (AbandonedMutexException) { owns = true; }
+            if (!owns) throw new InvalidOperationException("Silo is applying an update. Please try again shortly.");
+            if (args.Length == 1 && args[0] == "--silo-uninstall-owned")
+            {
+                SideBySideInstallation.RemoveOwnedVersionsForUninstall(root, IsVersionInUse);
+                return 0;
+            }
+            // Internal installer verbs are never forwarded to the client as an activation.
+            var readinessHandshake = args.Length == 2 && args[0] == "--silo-update-ready" &&
+                System.Text.RegularExpressions.Regex.IsMatch(args[1], "^SiloUpdate-[a-f0-9]{32}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+            if (!readinessHandshake && args.Any(a => a.StartsWith("--silo-", StringComparison.Ordinal)))
+                throw new InvalidOperationException("Invalid Silo launcher operation.");
+            executable = SideBySideInstallation.ResolveLaunchExecutable(root);
+        }
+        finally
+        {
+            if (owns) mutex.ReleaseMutex();
+            if (fullUpdateOwned) fullUpdate.ReleaseMutex();
+        }
+
+        // Release both gates before starting the client: startup checks them too.
+        // Version directories are immutable, so an active-pointer switch cannot change
+        // the selected executable or any of the resources it will load.
+        var start = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(executable)! };
+        foreach (var argument in args) start.ArgumentList.Add(argument);
+        try
+        {
+            SideBySideInstallation.BeginLaunch(root, executable);
+            using var process = Process.Start(start) ?? throw new InvalidOperationException("Silo could not be started.");
+            var state = SideBySideInstallation.ReadState(root);
+            if (state?.PendingVersion is not null &&
+                Path.GetDirectoryName(executable)!.Equals(Path.Combine(root, "versions", state.PendingVersion), StringComparison.OrdinalIgnoreCase))
+            {
+                try { SideBySideInstallation.RecordBoot(root, process); }
+                catch (InvalidOperationException)
+                {
+                    if (process.HasExited) SideBySideInstallation.RecordFailedLaunch(root, executable);
+                }
+            }
+        }
+        catch { SideBySideInstallation.RecordFailedLaunch(root, executable); throw; }
+        return 0;
     }
 
     private static int InitializeInstalledLayout(string root)

@@ -15,6 +15,13 @@ public class AudiobookRatePreference
 public class AppSettings
 {
     public Updates.AppUpdateMode UpdateMode { get; set; } = Updates.AppUpdateMode.NotifyOnly;
+    private Updates.AppUpdateChannel _updateChannel;
+    [System.Text.Json.Serialization.JsonConverter(typeof(Updates.AppUpdateChannelJsonConverter))]
+    public Updates.AppUpdateChannel UpdateChannel
+    {
+        get => _updateChannel;
+        set => _updateChannel = Enum.IsDefined(value) ? value : Updates.AppUpdateChannel.Stable;
+    }
     public List<ServerEntry> Servers { get; set; } = [];
     public string? DeviceId { get; set; }
     public string? LastProfileId { get; set; }

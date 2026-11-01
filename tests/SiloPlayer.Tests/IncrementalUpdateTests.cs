@@ -106,6 +106,78 @@ public sealed class IncrementalUpdateTests
         Assert.False(await client.VerifyPreparedAsync(result, default));
     }
 
+    [Fact]
+    public async Task PreparationEvictsOldManifestsButRetainsTheCurrentCacheAndOneRecentCache()
+    {
+        using var fixture = new Fixture(); using var http = new HttpClient(fixture);
+        var cache = fixture.Tree.Path("cache");
+        var current = Path.Combine(cache, "incremental-" + fixture.Release.Incremental!.ManifestSha256.ToLowerInvariant());
+        var old = Path.Combine(cache, "incremental-" + new string('b', 64));
+        var recent = Path.Combine(cache, "incremental-" + new string('c', 64));
+        var unrelated = Path.Combine(cache, "incremental-not-a-manifest");
+        foreach (var folder in new[] { current, old, recent, unrelated })
+        {
+            Directory.CreateDirectory(Path.Combine(folder, "prepared", "client"));
+            File.WriteAllText(Path.Combine(folder, "prepared", "client", "payload.bin"), "cached payload");
+        }
+        Directory.SetLastWriteTimeUtc(current, DateTime.UtcNow.AddDays(-3));
+        Directory.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddDays(-2));
+        Directory.SetLastWriteTimeUtc(recent, DateTime.UtcNow.AddDays(-1));
+        var client = new IncrementalUpdateClient(http, cache, fixture.Tree.Path("absent"));
+        var prepared = await client.PrepareAsync(fixture.Release, _ => { }, default);
+        Assert.False(Directory.Exists(old)); Assert.True(Directory.Exists(recent));
+        Assert.True(Directory.Exists(unrelated)); Assert.True(Directory.Exists(current));
+        Assert.True(await client.VerifyPreparedAsync(prepared, default));
+        fixture.Ranges.Clear();
+        await client.PrepareAsync(fixture.Release, _ => { }, default);
+        Assert.Empty(fixture.Ranges);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UpdateNowReclickReverifiesPreparedPayloadWithoutRepeatingPreparation(bool tamper)
+    {
+        using var fixture = new Fixture(); using var http = new HttpClient(fixture);
+        var service = new AppUpdateService(http, fixture.Tree.Path("cache"), new Version(1, 2, 464))
+        { PreferIncrementalUpdates = true, InstalledPayloadDirectory = fixture.Tree.Path("absent") };
+        await service.CheckAsync();
+        await service.DownloadAsync();
+        Assert.Null(service.State.Error);
+        var prepared = Assert.IsType<PreparedUpdatePackage>(service.State.PreparedPackage);
+        var manifestRequests = fixture.ManifestRequests;
+        Assert.Equal(1, manifestRequests);
+        fixture.Ranges.Clear();
+        if (tamper) File.WriteAllBytes(Path.Combine(prepared.Directory, "client", "SiloPlayer.exe"), [0, 0, 0, 0]);
+
+        await service.DownloadAsync();
+
+        Assert.Null(service.State.Error);
+        Assert.False(service.State.IsDownloading);
+        Assert.NotNull(service.State.PreparedPackage);
+        Assert.Equal(manifestRequests + (tamper ? 1 : 0), fixture.ManifestRequests);
+        Assert.Empty(fixture.Ranges);
+        if (!tamper) Assert.Same(prepared, service.State.PreparedPackage);
+        Assert.True(await service.ReverifyReadyAsync());
+    }
+
+    [Fact]
+    public void StartupCleanupKeepsOnlyTheTwoMostRecentIncrementalCaches()
+    {
+        using var tree = new Tree(); using var http = new HttpClient();
+        var cache = tree.Path("cache");
+        var folders = Enumerable.Range(0, 4).Select(i => Path.Combine(cache, "incremental-" + i.ToString("x64"))).ToArray();
+        for (var i = 0; i < folders.Length; i++)
+        {
+            Directory.CreateDirectory(Path.Combine(folders[i], "objects"));
+            File.WriteAllText(Path.Combine(folders[i], "objects", "cached.object"), "cached bytes");
+            Directory.SetLastWriteTimeUtc(folders[i], DateTime.UtcNow.AddDays(i - 4));
+        }
+        new AppUpdateService(http, cache, new Version(1, 2, 465, 0)).CleanupInstalledPackages();
+        Assert.False(Directory.Exists(folders[0])); Assert.False(Directory.Exists(folders[1]));
+        Assert.True(Directory.Exists(folders[2])); Assert.True(Directory.Exists(folders[3]));
+    }
+
     [Theory]
     [InlineData("wrong-range")]
     [InlineData("wrong-total")]
@@ -255,6 +327,7 @@ public sealed class IncrementalUpdateTests
         internal int FullRequests;
         internal long FullBytes;
         internal int AuthorityRequests;
+        internal int ManifestRequests;
         private readonly string? fault;
         private readonly byte[] manifestBytes;
         internal Fixture(string? fault = null)
@@ -307,7 +380,10 @@ public sealed class IncrementalUpdateTests
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(metadata) });
             }
             if (request.RequestUri!.AbsolutePath.EndsWith(UpdateManifestValidation.ManifestName))
+            {
+                ManifestRequests++;
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(manifestBytes) });
+            }
             var range = request.Headers.Range?.Ranges.SingleOrDefault();
             var response = new HttpResponseMessage(range is null || fault == "no-range" ? HttpStatusCode.OK : HttpStatusCode.PartialContent);
             if (range is null) { FullRequests++; FullBytes += Pack.Length; }
