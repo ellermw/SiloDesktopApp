@@ -79,6 +79,7 @@ internal static class MatchSplitScopeNativeFixture
             await MatchTimeoutsAsync(owner, wire);
             await MatchApplyErrorsAsync(owner, wire);
             await SplitTimeoutsAsync(owner, wire);
+            await SplitPreviewInventoryFailuresAsync(owner, wire);
             await SplitCommitErrorsAsync(owner, wire);
             await UnreadableInventoryAsync(owner, wire);
             await MatchBlockedScopesAsync(owner, wire);
@@ -478,6 +479,14 @@ internal static class MatchSplitScopeNativeFixture
                     wire.CommitStatusCode = null; Invoke(All<Button>(dialog).Single(button => button.Name == "PrimaryButton")); await Until(() => dialog.HasSaved);
                     Check(wire.Commits == commits + 2, "Rejected Split cannot retry its accepted plan");
                 }
+                else
+                {
+                    CheckSplitDisarmed(dialog);
+                    wire.CommitStatusCode = null;
+                    await AttemptRetiredSplitAsync(dialog);
+                    Check(wire.Commits == commits + 1 && !dialog.HasSaved, "Unconfirmed Split retries after a server error");
+                    CheckSplitDisarmed(dialog);
+                }
             }
             finally { wire.CommitStatusCode = null; dialog.Hide(); await showing; }
         }
@@ -502,6 +511,64 @@ internal static class MatchSplitScopeNativeFixture
             await Until(() => dialog.IsPrimaryButtonEnabled);
         }
         finally { wire.TimeoutSearch = wire.TimeoutPreview = false; dialog.Hide(); await showing; }
+    }
+    private static async Task SplitPreviewInventoryFailuresAsync(FrameworkElement owner, Wire wire)
+    {
+        foreach (var unmatched in new[] { false, true })
+        foreach (var afterPreview in new[] { false, true })
+        foreach (var timeout in new[] { false, true })
+        {
+            wire.Files = unmatched ? [("1", 2), ("2", 7), ("3", 2)] : [("1", 2), ("2", 2), ("3", 2)];
+            var dialog = Split(owner); var showing = dialog.ShowAsync();
+            try
+            {
+                await Until(() => All<CheckBox>(dialog).Any(check => AutomationProperties.GetName(check) == "Select /fixture/1.mkv" && check.IsEnabled));
+                File(dialog, "1").IsChecked = true;
+                if (unmatched)
+                {
+                    File(dialog, "2").IsChecked = true;
+                    All<CheckBox>(dialog).Single(box => box.Content as string == "Detach as unmatched (identify later)").IsChecked = true;
+                }
+                else await SearchAndChooseAsync(dialog);
+                await Until(() => dialog.IsPrimaryButtonEnabled);
+                var commits = wire.Commits; var previews = wire.Count("split");
+                if (afterPreview) wire.PreviewGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                else { wire.DenyInventory = !timeout; wire.TimeoutInventory = timeout; }
+                All<ComboBox>(dialog).Single(box => AutomationProperties.GetName(box) == "Watch history handling").SelectedIndex = 1;
+                if (afterPreview)
+                {
+                    await Until(() => wire.Count("split") > previews);
+                    wire.DenyInventory = !timeout; wire.TimeoutInventory = timeout;
+                    wire.PreviewGate!.SetResult(); wire.PreviewGate = null;
+                }
+                var message = timeout ? "Synthetic inventory timeout" : "HTTP 403";
+                await Until(() => ActionStatus(dialog).Text == message);
+                Check(ActionStatus(dialog).Visibility == Visibility.Visible
+                    && All<TextBlock>(dialog).Any(text => text.Text == "Preview could not be loaded. Refresh item libraries to try again."), "Split hides its preview inventory failure");
+                Check(!All<TextBlock>(dialog).Any(text => text.Text == "Previewing…"), "Failed Split inventory leaves a permanent preview spinner label");
+                Check(!dialog.IsPrimaryButtonEnabled && !dialog.HasSaved && wire.Commits == commits && Refresh(dialog).IsEnabled, "Failed preview inventory accepts a plan or blocks recovery");
+                Check(wire.Count("split") == previews + (afterPreview ? 1 : 0), "Failed preview preflight dispatched a dry run");
+                wire.DenyInventory = wire.TimeoutInventory = false; Invoke(Refresh(dialog));
+                await Until(() => File(dialog, "1").IsEnabled);
+                if (!unmatched) await SearchAndChooseAsync(dialog);
+                await Until(() => dialog.IsPrimaryButtonEnabled);
+            }
+            finally { wire.DenyInventory = wire.TimeoutInventory = false; wire.PreviewGate?.TrySetResult(); wire.PreviewGate = null; dialog.Hide(); await showing; }
+        }
+    }
+    private static void CheckSplitDisarmed(SplitVersionsDialog dialog)
+    {
+        Check(!dialog.IsPrimaryButtonEnabled && !Search(dialog).IsEnabled && !Refresh(dialog).IsEnabled, "Unconfirmed Split leaves identity actions armed");
+        Check(All<CheckBox>(dialog).All(box => !box.IsEnabled)
+            && All<TextBox>(dialog).All(box => !box.IsEnabled)
+            && All<ComboBox>(dialog).All(box => !box.IsEnabled)
+            && !Candidate(dialog).IsEnabled, "Unconfirmed Split leaves file/target edits armed");
+    }
+    private static async Task AttemptRetiredSplitAsync(SplitVersionsDialog dialog)
+    {
+        // Exercise the handlers too, rather than relying only on disabled controls.
+        await (Task)typeof(SplitVersionsDialog).GetMethod("SubmitAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!;
+        await (Task)typeof(SplitVersionsDialog).GetMethod("SearchAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!;
     }
     private static async Task MatchTimeoutsAsync(FrameworkElement owner, Wire wire)
     {
@@ -584,6 +651,11 @@ internal static class MatchSplitScopeNativeFixture
             Check(!dialog.HasSaved && ActionStatus(dialog).Text.Contains("Split could not be confirmed"), "Lost Split response silently reports completion or an owner change");
             for (var i = 0; i < ids.Length; i++) Check(!ReferenceEquals(cached[i], await cache.GetAsync(ids[i], default)), "Unconfirmed Split leaves shared detail cached");
             Check(notice.Context == context, "Unconfirmed Split does not publish an owner-tagged refresh");
+            CheckSplitDisarmed(dialog);
+            var commits = wire.Commits; var searches = wire.Count("search"); wire.TimeoutCommit = false;
+            await AttemptRetiredSplitAsync(dialog);
+            Check(wire.Commits == commits && wire.Count("search") == searches && !dialog.HasSaved, "Unconfirmed Split dispatches another operation without reopening");
+            CheckSplitDisarmed(dialog);
         }
         finally { wire.TimeoutCommit = false; WeakReferenceMessenger.Default.UnregisterAll(notice); dialog.Hide(); await showing; }
     }

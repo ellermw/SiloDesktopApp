@@ -40,7 +40,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
     private readonly HashSet<string> _selected = [];
     private List<JsonElement> _allFiles = [];
     private MatchCandidate? _candidate;
-    private bool _changing, _searching, _previewing, _refreshPreviewAfterAction;
+    private bool _changing, _searching, _previewing, _refreshPreviewAfterAction, _applyUnconfirmed;
     private int _planRevision, _searchRevision;
     private int _acceptedRevision = -1;
     private CancellationTokenSource? _previewLifetime;
@@ -85,7 +85,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
     { var input = new TextBox { PlaceholderText = placeholder, FontSize = 14, Height = 36, MinHeight = 0, MinWidth = 0, Padding = new Thickness(12, 6, 12, 6) }; AutomationProperties.SetName(input, name); return input; }
     private static string Value(JsonElement value, string key) => value.TryGetProperty(key, out var property) ? property.ToString() : "";
     private bool ScopeOwner => !_authorityRetired && CanAct && Auth.SessionGeneration == _session && Auth.CurrentUser?.Id == _userId;
-    private bool PlanValid => ScopeOwner && _scope.InventoryAvailable && _selected.Count > 0 && _selected.Count < _allFiles.Count && (_unmatched.IsChecked == true || _candidate != null && _scope.IsCurrent(_candidateScope));
+    private bool PlanValid => !_applyUnconfirmed && ScopeOwner && _scope.InventoryAvailable && _selected.Count > 0 && _selected.Count < _allFiles.Count && (_unmatched.IsChecked == true || _candidate != null && _scope.IsCurrent(_candidateScope));
     private bool PlanScopeCurrent(ItemLibraryScope.Scope scope) => _unmatched.IsChecked == true ? _scope.IsInventoryCurrent(scope) : _scope.IsCurrent(scope);
     protected override async Task LoadAsync()
     {
@@ -110,7 +110,13 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
             RebuildFiles();
         }
         SetEditing(Ready && !Busy);
-        if (!_changing) PlanChanged();
+        if (!_changing && _scope.InventoryAvailable) PlanChanged();
+        else if (!_scope.InventoryAvailable)
+        {
+            // A failed read disarms the plan, but is not inventory/target drift.
+            // Keep its revision so the owning preview can report the read error.
+            _acceptedRevision = -1; UpdateCommands();
+        }
     }
     private void RebuildFiles()
     {
@@ -135,7 +141,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         if (isGroup) _groups.Add((check, row.GroupIds!)); else _checks.Add(row.Id, check);
         void Changed(object sender, RoutedEventArgs args)
         {
-            if (_changing || !Ready || Busy || !ScopeOwner) return;
+            if (_changing || _applyUnconfirmed || !Ready || Busy || !ScopeOwner) return;
             var select = check.IsChecked == true; _changing = true;
             foreach (var id in row.GroupIds ?? [row.Id])
             {
@@ -149,7 +155,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
     }
     private async Task SearchAsync()
     {
-        if (_searching || Busy || !Ready || !ScopeOwner) return;
+        if (_applyUnconfirmed || _searching || Busy || !Ready || !ScopeOwner) return;
         if (!_scope.CanSearch) return;
         _searching = true; UpdateCommands();
         var revision = ++_searchRevision; var scope = _scope.State.Capture();
@@ -170,9 +176,9 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
                 var choice = new Button { Content = row, HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(8), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), BorderBrush = Brush("BorderBrush") }; AutomationProperties.SetName(choice, candidate.Title);
                 choice.Click += async (_, _) =>
                 {
-                    if (Busy || _searching || !ScopeOwner || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
+                    if (_applyUnconfirmed || Busy || _searching || !ScopeOwner || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
                     try { await _scope.RefreshAsync(); } catch (OperationCanceledException) { return; } catch (Exception) { return; }
-                    if (Busy || _searching || !ScopeOwner || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
+                    if (_applyUnconfirmed || Busy || _searching || !ScopeOwner || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
                     _candidate = candidate; _candidateScope = scope; _changing = true; _unmatched.IsChecked = false; _changing = false;
                     foreach (var option in _candidates.Children.OfType<Button>()) option.BorderBrush = Brush(option == choice ? "AccentBrush" : "BorderBrush"); PlanChanged();
                 }; _candidates.Children.Add(choice);
@@ -189,14 +195,15 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
     };
     private void PlanChanged()
     {
-        if (_changing) return;
+        if (_changing || _applyUnconfirmed) return;
         _changing = true; _scope.SelectFiles(_selected); _changing = false;
         var revision = ++_planRevision; _acceptedRevision = -1; _previewing = false; _previewLifetime?.Cancel(); _previewLifetime?.Dispose(); _previewLifetime = null;
         _changing = true; foreach (var group in _groups) group.Root.IsChecked = group.Ids.All(_selected.Contains); _changing = false;
         _warning.Text = _selected.Count > 0 && _selected.Count == _allFiles.Count ? "All files are selected — that is a re-match, not a split. Use “Match Item” instead, or deselect the files that are correct." : "";
-        _previewBox.Visibility = PlanValid ? Visibility.Visible : Visibility.Collapsed; _previewText.Text = "Previewing…"; Status.Text = ""; UpdateCommands();
+        _previewBox.Visibility = PlanValid ? Visibility.Visible : Visibility.Collapsed; _previewText.Text = ""; Status.Text = ""; UpdateCommands();
         if (Busy) { _refreshPreviewAfterAction = true; return; }
         if (!PlanValid || !Ready || !CanAct) return;
+        _previewText.Text = "Previewing…";
         var lifetime = _previewLifetime = CancellationTokenSource.CreateLinkedTokenSource(Lifetime.Token); var request = BuildRequest(true); _ = PreviewAsync(revision, _scope.State.Capture(), request, lifetime.Token);
     }
     private async Task PreviewAsync(int revision, ItemLibraryScope.Scope scope, object request, CancellationToken ct)
@@ -217,13 +224,33 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
             _acceptedRevision = revision; _acceptedScope = scope;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-        catch (Exception error) { if (revision == _planRevision && ScopeOwner && PlanScopeCurrent(scope)) { Status.Text = error.Message; _previewText.Text = "Preview could not be loaded. Change the selection or target to try again."; } }
-        finally { if (revision == _planRevision) { _previewing = false; UpdateCommands(); } }
+        catch (Exception error)
+        {
+            if (revision == _planRevision && ScopeOwner && _scope.State.IsInventoryCurrent(scope))
+            {
+                Status.Text = error.Message;
+                _previewBox.Visibility = Visibility.Visible;
+                _previewText.Text = _scope.InventoryAvailable
+                    ? "Preview could not be loaded. Change the selection or target to try again."
+                    : "Preview could not be loaded. Refresh item libraries to try again.";
+            }
+        }
+        finally
+        {
+            if (revision == _planRevision)
+            {
+                _previewing = false;
+                if (_acceptedRevision != revision && _previewText.Text == "Previewing…")
+                { _previewText.Text = ""; _previewBox.Visibility = Visibility.Collapsed; }
+                UpdateCommands();
+            }
+        }
     }
-    protected override void UpdateCommands() { base.UpdateCommands(); IsPrimaryButtonEnabled &= PlanValid && _acceptedRevision == _planRevision && PlanScopeCurrent(_acceptedScope) && !_previewing && !_searching; _search.IsEnabled = Ready && ScopeOwner && _scope.CanSearch && !Busy && !_searching; }
+    protected override void UpdateCommands() { base.UpdateCommands(); IsPrimaryButtonEnabled &= PlanValid && _acceptedRevision == _planRevision && PlanScopeCurrent(_acceptedScope) && !_previewing && !_searching; _search.IsEnabled = !_applyUnconfirmed && Ready && ScopeOwner && _scope.CanSearch && !Busy && !_searching; }
     protected override void SetEditing(bool enabled)
     {
-        _editing = enabled; _scope?.SetEditing(enabled, canRefresh: !Busy && ScopeOwner);
+        enabled &= !_applyUnconfirmed;
+        _editing = enabled; _scope?.SetEditing(enabled, canRefresh: !_applyUnconfirmed && !Busy && ScopeOwner);
         foreach (var control in new Control[] { _title, _year, _tmdb, _imdb, _tvdb, _unmatched, _history }) control.IsEnabled = enabled;
         foreach (var check in _checks.Values) check.IsEnabled = enabled;
         foreach (var group in _groups) group.Root.IsEnabled = enabled;
@@ -235,7 +262,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
             _refreshPreviewAfterAction = false;
             // A failed read also retires the plan, but is not evidence of drift.
             // Preserve RunActionAsync's error and leave the inventory retry available.
-            if (!ScopeOwner || !_scope.InventoryAvailable) return;
+            if (_applyUnconfirmed || !ScopeOwner || !_scope.InventoryAvailable) return;
             PlanChanged();
             Status.Text = PlanValid ? "Item files changed. Review the updated preview before splitting."
                 : "Item files changed. Search again and review a new preview before splitting.";
@@ -280,7 +307,13 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
                 cache?.Invalidate(ItemId);
                 cache?.Invalidate(_seriesId);
             }
-            else InvalidateAppliedSplit(targetId);
+            else
+            {
+                // A lost response may conceal a committed non-idempotent write.
+                // Only reopening/reloading the item can arm a new attempt.
+                if (targetId == null) _applyUnconfirmed = true;
+                InvalidateAppliedSplit(targetId);
+            }
         }
     }
     private void InvalidateAppliedSplit(string? targetId)
