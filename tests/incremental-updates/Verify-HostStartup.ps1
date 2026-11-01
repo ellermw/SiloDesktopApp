@@ -21,7 +21,7 @@ $process=[Diagnostics.Process]::Start($start);$errorTask=$process.StandardError.
 try {
     $end=[DateTime]::UtcNow.AddSeconds(10)
     while(!$process.HasExited -and [DateTime]::UtcNow -lt $end){Start-Sleep -Milliseconds 100;$process.Refresh();if($process.MainWindowHandle -ne 0){break}}
-    if($process.HasExited -or $process.MainWindowHandle -eq 0 -or $process.MainWindowTitle -ne 'Updating Silo'){throw 'The updater Application did not construct its own window.'}
+    if($process.HasExited -or $process.MainWindowHandle -eq 0 -or $process.MainWindowTitle -ne 'Updating Silo Desktop Player'){throw 'The updater Application did not construct its own window with the Silo Desktop Player title.'}
     Start-Sleep -Milliseconds 500;$process.Refresh();if($process.HasExited){throw 'Updater startup crashed after window creation.'}
     $receipt=[ordered]@{image=$image;sha256=(Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash;version=[Diagnostics.FileVersionInfo]::GetVersionInfo($image).FileVersion;
         ownWindowCreated=$true;unregisteredRoot=$true;noElevationOrNetwork=$true;pid=$process.Id;utc=[DateTimeOffset]::UtcNow}
