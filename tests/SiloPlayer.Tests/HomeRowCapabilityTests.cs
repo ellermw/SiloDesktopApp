@@ -30,6 +30,30 @@ public class HomeRowCapabilityTests
         Assert.Equal(expectedQuery.Length > 0, response.Section.CanComplete);
     }
 
+    [Theory]
+    [InlineData(10, 100, "", 10)]
+    [InlineData(20, 100, "", 20)]
+    [InlineData(10, 5, "", 10)]
+    [InlineData(21, 100, "?item_limit=20", 20)]
+    [InlineData(50, 10, "?item_limit=10", 10)]
+    public async Task InitialReadRespectsTheConfiguredRecipeBudget(int configuredLimit, int sectionMax, string query, int count)
+    {
+        using var wire = new Wire { CardCount = 35, ConfiguredItemLimit = configuredLimit,
+            Capabilities = JsonSerializer.Serialize(new { row_item_limit_max = 100, section_item_limit_max = sectionMax }) };
+        using var http = new HttpClient(wire);
+        var api = new HomeApi(Client(http));
+        var row = (await api.GetInitialSectionItemsAsync("row", configuredLimit)).Section!;
+        Assert.Equal(query, Assert.Single(wire.Rows).Query);
+        Assert.Equal(count, row.Items.Count);
+        Assert.Equal(query.Length == 0, row.HasReadWhole);
+        Assert.Null(row.ShownCount);
+        // The server may report more catalog matches than the recipe budget.
+        // This must not inflate the first window or start automatic recovery.
+        Assert.True(row.HasMore);
+        Assert.True(row.CanComplete);
+        Assert.Equal(query.Length == 0 ? 0 : 1, wire.CapabilityReads);
+    }
+
     [Fact]
     public async Task CapabilityHttpTimeoutFallsBackToHealthyUncappedRow()
     {
@@ -116,7 +140,7 @@ public class HomeRowCapabilityTests
         var response = await new HomeApi(Client(http)).GetSectionItemsAsync("row");
         Assert.Equal(0, wire.CapabilityReads); Assert.Equal("", Assert.Single(wire.Rows).Query);
         Assert.True(response.Section!.HasMore);
-        Assert.True(response.Section.HasReadWhole); Assert.False(response.Section.CanComplete);
+        Assert.True(response.Section.HasReadWhole); Assert.True(response.Section.CanComplete);
     }
 
     [Theory]
@@ -147,7 +171,7 @@ public class HomeRowCapabilityTests
     }
 
     [Fact]
-    public async Task TruncatedHomeWholeResponseStopsDemandAndLaterReadRetainsInitialPriority()
+    public async Task TruncatedHomeWholeResponseAllowsFreshDemandAndLaterReadRetainsInitialPriority()
     {
         static string Section(int count, int limit, bool hasMore) => JsonSerializer.Serialize(new
         {
@@ -160,12 +184,12 @@ public class HomeRowCapabilityTests
         wire.Section = Section(25, 50, true);
         var partial = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 50)).Section!;
         Assert.True(partial.HasReadWhole);
-        Assert.False(partial.CanComplete);
+        Assert.True(partial.CanComplete);
         var expanded = HomeRowWindow.Complete(initial, partial, initial, 1);
         Assert.Equal(25, expanded.Items.Count);
-        Assert.False(expanded.CanComplete);
+        Assert.True(expanded.CanComplete);
 
-        // Only a later refresh should retry the uncapped resource.
+        // A fresh demand can retry the uncapped resource without a refresh.
         wire.Section = Section(35, 50, false);
         var whole = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 50)).Section!;
         var completed = HomeRowWindow.Complete(expanded, whole, expanded, 2);
@@ -193,11 +217,11 @@ public class HomeRowCapabilityTests
         var expanded = HomeRowWindow.Complete(initial, whole, initial, 1);
         Assert.Equal(new[] { "?item_limit=20", "" }, wire.Rows.Select(row => row.Query));
         Assert.Equal(Enumerable.Range(1, 35).Select(i => $"card{i}"), expanded.Items.Select(item => item.ContentId));
-        Assert.False(expanded.CanComplete);
+        Assert.True(expanded.CanComplete);
         var repeated = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 20)).Section!;
         var completed = HomeRowWindow.Complete(expanded, repeated, expanded, 2);
         Assert.Equal(expanded.Items.Select(item => item.ContentId), completed.Items.Select(item => item.ContentId));
-        Assert.True(completed.HasMore); Assert.True(completed.HasReadWhole); Assert.False(completed.CanComplete);
+        Assert.True(completed.HasMore); Assert.True(completed.HasReadWhole); Assert.True(completed.CanComplete);
         Assert.Equal(20, completed.ShownCount); Assert.Equal(1, completed.CompletedOrder);
     }
 
@@ -226,7 +250,7 @@ public class HomeRowCapabilityTests
     [InlineData("timeout")]
     [InlineData("null")]
     [InlineData("malformed")]
-    public async Task UnadvertisedInitialReadPreservesTruncationWithoutOfferingAnIdenticalRead(string failure)
+    public async Task UnadvertisedInitialReadPreservesTruncationAndAllowsFreshDemand(string failure)
     {
         using var wire = new Wire { Unsupported = failure == "unsupported", TimeoutCapabilities = failure == "timeout",
             Capabilities = failure == "malformed" ? "{" : "null", Section = """{"id":"row","has_more":true,"items":[]}""" };
@@ -235,7 +259,7 @@ public class HomeRowCapabilityTests
         Assert.Equal("", Assert.Single(wire.Rows).Query);
         Assert.True(response.Section!.HasMore);
         Assert.True(response.Section.HasReadWhole);
-        Assert.False(response.Section.CanComplete);
+        Assert.True(response.Section.CanComplete);
     }
 
     [Fact]
@@ -272,7 +296,7 @@ public class HomeRowCapabilityTests
     {
         public string Capabilities = "{\"row_item_limit_max\":100,\"section_item_limit_max\":100}";
         public string? Section;
-        public int? CardCount;
+        public int? CardCount, ConfiguredItemLimit;
         public bool Unsupported, Hold, TimeoutCapabilities; public int CapabilityReads; public List<Uri> Rows = [];
         public TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -289,7 +313,7 @@ public class HomeRowCapabilityTests
             if (CardCount is { } count)
             {
                 var limit = request.RequestUri.Query.StartsWith("?item_limit=", StringComparison.Ordinal)
-                    ? int.Parse(request.RequestUri.Query["?item_limit=".Length..]) : count;
+                    ? int.Parse(request.RequestUri.Query["?item_limit=".Length..]) : ConfiguredItemLimit ?? count;
                 return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new {
                     id = "row", item_limit = limit, has_more = count > limit,
                     items = Enumerable.Range(1, Math.Min(count, limit)).Select(i => new { content_id = $"card{i}" }) })) };

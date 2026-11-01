@@ -76,8 +76,8 @@ public class HomeApi(SiloApiClient client)
         if (section != null)
         {
             section.ReadLanguageGeneration = language;
-            // There is no continuation on this resource. Once an uncapped read
-            // succeeds, only refresh can retry it, even if has_more stays true.
+            // Record that this read already attempted the uncapped resource so
+            // automatic recovery will not loop. has_more still allows fresh demand.
             section.HasReadWhole = itemLimit == null || !section.HasMore;
         }
         return new() { Section = section };
@@ -85,15 +85,29 @@ public class HomeApi(SiloApiClient client)
 
     /// <summary>Read the first two screens only when this server advertises the row contract.</summary>
     public Task<HomeSectionItemsResponse> GetInitialSectionItemsAsync(string sectionId, CancellationToken ct = default)
-        => GetInitialSectionItemsAsync(client.CaptureContext(), LanguageGeneration, sectionId, ct);
+        => GetInitialSectionItemsAsync(sectionId, 0, ct);
 
-    public async Task<HomeSectionItemsResponse> GetInitialSectionItemsAsync(ApiRequestContext context, long language, string sectionId, CancellationToken ct = default)
+    public Task<HomeSectionItemsResponse> GetInitialSectionItemsAsync(string sectionId, int configuredItemLimit, CancellationToken ct = default)
+        => GetInitialSectionItemsAsync(client.CaptureContext(), LanguageGeneration, sectionId, configuredItemLimit, ct);
+
+    public Task<HomeSectionItemsResponse> GetInitialSectionItemsAsync(ApiRequestContext context, long language, string sectionId, CancellationToken ct = default)
+        => GetInitialSectionItemsAsync(context, language, sectionId, 0, ct);
+
+    public async Task<HomeSectionItemsResponse> GetInitialSectionItemsAsync(ApiRequestContext context, long language,
+        string sectionId, int configuredItemLimit, CancellationToken ct = default)
     {
         RequireCurrentRead(context, language, ct);
+        // A query limit overrides the recipe budget on some servers. Small
+        // recipes already fit in the initial window; read them unchanged.
+        if (configuredItemLimit is > 0 and <= Services.HomeRowWindow.InitialItemLimit)
+            return await ReadSectionItemsAsync(context, language, sectionId, null, ct).ConfigureAwait(false);
         var capabilities = await GetCapabilitiesAsync(context, language, ct).ConfigureAwait(false);
         var bounded = capabilities.RowItemLimitMax >= Services.HomeRowWindow.InitialItemLimit;
+        var desired = configuredItemLimit > 0
+            ? Math.Min(configuredItemLimit, Services.HomeRowWindow.InitialItemLimit)
+            : Services.HomeRowWindow.InitialItemLimit;
         return await ReadSectionItemsAsync(context, language, sectionId,
-            bounded ? BoundedItemLimit(capabilities, Services.HomeRowWindow.InitialItemLimit) : null, ct).ConfigureAwait(false);
+            bounded ? BoundedItemLimit(capabilities, desired) : null, ct).ConfigureAwait(false);
     }
 
     public Task<HomeCapabilities> GetCapabilitiesAsync(CancellationToken ct = default)

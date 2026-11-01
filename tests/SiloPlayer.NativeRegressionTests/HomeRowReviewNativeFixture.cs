@@ -34,6 +34,8 @@ internal static class HomeRowReviewNativeFixture
         await Case("queued-row-ui-collection-ownership", QueuedUiOwnershipAsync);
         await Case("promoted-hero-whole", PromotedHeroAsync);
         await Case("featured-configured-budget-with-capabilities", FeaturedReadsKeepConfiguredBudgetAsync);
+        await Case("non-featured-configured-ten", () => NonFeaturedReadsKeepConfiguredBudgetAsync(10));
+        await Case("non-featured-configured-twenty", () => NonFeaturedReadsKeepConfiguredBudgetAsync(20));
         await Case("expanded-refresh-with-capabilities", () => ExpandedRefreshWithCapabilitiesAsync(50));
         await Case("expanded-refresh-below-card-count", () => ExpandedRefreshWithCapabilitiesAsync(20));
         await Case("secondary-featured-completion-after-refresh", SecondaryFeaturedCompletionAfterRefreshAsync);
@@ -159,6 +161,30 @@ internal static class HomeRowReviewNativeFixture
         Require(wire.Requests.Count == 6, "Each featured section must be read once per initial, retry and refresh cycle.");
     }
 
+    private static async Task NonFeaturedReadsKeepConfiguredBudgetAsync(int configuredLimit)
+    {
+        using var session = new Session(new Wire { ConfiguredItemLimit = configuredLimit,
+            Capabilities = "{\"row_item_limit_max\":100,\"section_item_limit_max\":100}" });
+        var vm = session.Vm; var wire = session.Wire;
+        void CheckRow()
+        {
+            var row = vm.Sections.Single();
+            Require(!row.Featured && row.ItemLimit == configuredLimit && row.Items.Count == configuredLimit,
+                "A small non-featured recipe must not inflate to twenty cards or shrink on refresh.");
+            Require(row.HasReadWhole && row.ShownCount == null && row.CompletedOrder == 0,
+                "A recipe that fits the initial window must be read whole without automatic expansion.");
+            Require(wire.Requests.All(read => read.Query == ""), "Small recipe reads must preserve the configured server budget.");
+        }
+        await vm.LoadCommand.ExecuteAsync(null);
+        await Until(() => vm.Sections.FirstOrDefault()?.LoadCompleted == true);
+        CheckRow();
+        await vm.RetrySectionAsync("row"); CheckRow();
+        wire.Title = "Small recipe refresh"; vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
+        await Until(() => vm.Sections.FirstOrDefault()?.Title == wire.Title);
+        CheckRow();
+        Require(wire.Requests.Count == 3, "Initial, retry and refresh must each issue only one read.");
+    }
+
     private static async Task ExpandedRefreshWithCapabilitiesAsync(int configuredLimit)
     {
         using var session = new Session(new Wire { ConfiguredItemLimit = configuredLimit,
@@ -168,8 +194,8 @@ internal static class HomeRowReviewNativeFixture
         await vm.CompleteSectionAsync("row");
         var order = vm.Sections[0].CompletedOrder;
         var expectedCount = Math.Min(35, configuredLimit);
-        Require(vm.Sections[0].Items.Count == expectedCount && order > 0 && !vm.Sections[0].CanComplete,
-            "Explicit uncapped completion must recover the configured row and exhaust further demand.");
+        Require(vm.Sections[0].Items.Count == expectedCount && order > 0 && vm.Sections[0].CanComplete == (expectedCount < 35),
+            "Explicit uncapped completion must recover the configured row and retain demand if the server reports more.");
         wire.Title = "Expanded refresh"; vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
         await Until(() => vm.Sections.FirstOrDefault()?.Title == wire.Title);
         Require(vm.Sections[0].Items.Count == expectedCount && vm.Sections[0].Items.Last().ContentId == $"movie{expectedCount}",
@@ -178,7 +204,7 @@ internal static class HomeRowReviewNativeFixture
         Require(vm.Sections[0].Items.Count == expectedCount && vm.Sections[0].ItemLimit == configuredLimit
             && vm.Sections[0].ShownCount == 20 && vm.Sections[0].CompletedOrder == order,
             "Expanded refresh and retry must keep configured membership and initial/tail priority.");
-        Require(wire.Requests.Select(read => read.Query).SequenceEqual(new[] { "?item_limit=20", "", "", "" }),
+        Require(wire.Requests.Select(read => read.Query).SequenceEqual(new[] { configuredLimit <= 20 ? "" : "?item_limit=20", "", "", "" }),
             "Expanded refresh and retry must reuse explicit completion's uncapped read.");
     }
 
@@ -189,13 +215,13 @@ internal static class HomeRowReviewNativeFixture
         var vm = session.Vm; var wire = session.Wire;
         await vm.LoadCommand.ExecuteAsync(null);
         await Until(() => vm.FeaturedSections.Concat(vm.Sections).Count(row => row.LoadCompleted) == 2);
-        Require(!vm.Sections.Single().CanComplete && vm.Sections[0].HasMore && vm.Sections[0].HasReadWhole,
-            "An already uncapped secondary featured row must not offer an identical completion query.");
+        Require(vm.Sections.Single().CanComplete && vm.Sections[0].HasMore && vm.Sections[0].HasReadWhole,
+            "An uncapped secondary featured row must retain fresh demand when the server reports more.");
         var reads = wire.Requests.Count;
         await vm.CompleteSectionAsync("row2");
         var order = vm.Sections[0].CompletedOrder;
-        Require(vm.Sections[0].Items.Count == 20 && order == 0 && wire.Requests.Count == reads,
-            "Featured tail demand must not repeat an already uncapped read.");
+        Require(vm.Sections[0].Items.Count == 20 && order > 0 && wire.Requests.Count == reads + 1,
+            "Fresh featured tail demand must issue one read even after a truncated uncapped response.");
         wire.ConfiguredItemLimit = 35;
         wire.Title = "Featured partial refresh"; vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
         await Until(() => vm.FeaturedSections.Concat(vm.Sections).All(row => row.Title == wire.Title));
@@ -206,11 +232,11 @@ internal static class HomeRowReviewNativeFixture
             "Expanded secondary featured retry must retain every recovered card without another completion gesture.");
         await vm.CompleteSectionAsync("row2");
         Require(vm.Sections[0].Items.Count == 35 && vm.Sections[0].Items.Last().ContentId == "movie35"
-            && vm.Sections[0].ShownCount == null && vm.Sections[0].CompletedOrder == order,
+            && vm.Sections[0].ShownCount == 20 && vm.Sections[0].CompletedOrder == order,
             "All35 cards must remain available after a secondary featured refresh and retry.");
         Require(wire.Requests.Where(read => read.Id == "row2").Select(read => read.Query)
-            .SequenceEqual(new[] { "", "", "" }),
-            "Only refresh and retry may reissue the uncapped featured resource.");
+            .SequenceEqual(new[] { "", "", "", "" }),
+            "Initial, explicit demand, refresh and retry must each issue one uncapped featured read.");
         Require(vm.FeaturedSections.Single().Items.Count == 35, "The hero refresh must also adopt the new configured budget.");
     }
 
@@ -254,8 +280,8 @@ internal static class HomeRowReviewNativeFixture
         await vm.LoadCommand.ExecuteAsync(null); await Until(() => vm.Sections.FirstOrDefault()?.Items.Count == 20);
         await vm.CompleteSectionAsync("row");
         var order = vm.Sections[0].CompletedOrder;
-        Require(vm.Sections[0].Items.Count == 20 && order > 0 && !vm.Sections[0].CanComplete,
-            "Fixture must exhaust an unchanged uncapped completion at its configured20-card budget.");
+        Require(vm.Sections[0].Items.Count == 20 && order > 0 && vm.Sections[0].CanComplete,
+            "A truncated uncapped completion must retain fresh demand at its configured20-card budget.");
 
         wire.Hero = true; wire.Title = "Expanded hero refresh";
         vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
@@ -263,11 +289,11 @@ internal static class HomeRowReviewNativeFixture
         await vm.RetrySectionAsync("row");
         var hero = vm.FeaturedSections.Single();
         Require(hero.Featured && hero.Items.Count == 20 && hero.Items.Last().ContentId == "movie20"
-            && hero.ItemLimit >= hero.Items.Count && hero.ShownCount == 20 && hero.CompletedOrder == order && !hero.CanComplete,
-            "Promotion and retry must preserve the configured row and exhausted demand state.");
+            && hero.ItemLimit >= hero.Items.Count && hero.ShownCount == 20 && hero.CompletedOrder == order && hero.CanComplete,
+            "Promotion and retry must preserve the configured row and fresh demand state.");
         Require(wire.Requests.Select(read => read.Query).SequenceEqual(
-            new[] { "?item_limit=20", "", "", "" }),
-            "Cached expansion must keep reads uncapped independently of featured placement.");
+            new[] { "", "", "", "" }),
+            "Small recipes and cached expansion must keep reads uncapped independently of featured placement.");
     }
 
     private static async Task LibraryRowWithoutCompletionConsumerAsync(StackPanel parent)

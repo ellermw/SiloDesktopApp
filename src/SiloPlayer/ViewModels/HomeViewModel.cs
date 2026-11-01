@@ -526,6 +526,7 @@ public partial class HomeViewModel : ObservableObject,
         // resume on worker threads. The cache itself belongs to this thread.
         var reads = targets.ToDictionary(section => section.Id, section => (
             Whole: ShouldReadWhole(section),
+            ConfiguredLimit: WholeItemLimit(section.Id),
             ExpandedLimit: ExpandedItemLimit(section.Id),
             Shown: _rawSections.TryGetValue(section.Id, out var cached) ? HomeSectionDedupe.Snapshot(cached) : null));
 
@@ -546,7 +547,7 @@ public partial class HomeViewModel : ObservableObject,
                 var resp = await (read.ExpandedLimit is { } limit
                     ? _homeApi.GetWholeSectionItemsAsync(owner, language, sectionId, limit, ct)
                     : read.Whole ? _homeApi.GetSectionItemsAsync(owner, language, sectionId, ct)
-                    : _homeApi.GetInitialSectionItemsAsync(owner, language, sectionId, ct)).ConfigureAwait(false);
+                    : _homeApi.GetInitialSectionItemsAsync(owner, language, sectionId, read.ConfiguredLimit, ct)).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
                 await RunOnUiThreadAsync(() =>
                 {
@@ -607,6 +608,7 @@ public partial class HomeViewModel : ObservableObject,
         var language = _homeApi.LanguageGeneration;
         var removalRevision = _progressRemovalRevision;
         var whole = ShouldReadWhole(current);
+        var configuredLimit = WholeItemLimit(sectionId);
         var expandedLimit = ExpandedItemLimit(sectionId);
         var shown = _rawSections.TryGetValue(sectionId, out var retryRaw) ? HomeSectionDedupe.Snapshot(retryRaw) : null;
         ReplaceInBoundCollection(CloneSection(current, loadFailed: false, loadCompleted: false));
@@ -615,7 +617,7 @@ public partial class HomeViewModel : ObservableObject,
             var response = await (expandedLimit is { } limit
                 ? _homeApi.GetWholeSectionItemsAsync(owner, language, sectionId, limit, retryToken)
                 : whole ? _homeApi.GetSectionItemsAsync(owner, language, sectionId, retryToken)
-                : _homeApi.GetInitialSectionItemsAsync(owner, language, sectionId, retryToken));
+                : _homeApi.GetInitialSectionItemsAsync(owner, language, sectionId, configuredLimit, retryToken));
             if (!IsCurrentSectionRetry(retryGeneration, retryToken, retryProfileId, sectionId))
                 return;
 
@@ -658,7 +660,7 @@ public partial class HomeViewModel : ObservableObject,
         ApplyRefreshedSection(completed, whole);
         // Demand survives a bounded read overtaking completion, but a whole
         // refresh already serviced it; do not chain an identical whole read.
-        if (whole || !completed.CanComplete)
+        if (whole || completed.HasReadWhole || !completed.CanComplete)
         {
             _completionWantedSections.Remove(completed.Id);
             _completionRetryAfter.Remove(completed.Id);
@@ -710,6 +712,9 @@ public partial class HomeViewModel : ObservableObject,
         var key = (generation, sectionId);
         if (!IsCurrentSectionLoad(generation, ct, sectionId)
             || !_rawSections.TryGetValue(sectionId, out var raw) || !raw.CanComplete) return;
+        // A successful uncapped read consumes automatic demand, not the
+        // server's has_more flag. Only a new user gesture may repeat it.
+        if (!userDemand && raw.HasReadWhole) return;
         // Only fresh user navigation can bypass a failed cycle's cooldown.
         // In particular, hidden-row projection must not rearm it on every refresh.
         if (!userDemand && _completionRetryAfter.TryGetValue(sectionId, out var retryAfter)
@@ -744,7 +749,7 @@ public partial class HomeViewModel : ObservableObject,
                         FilterProgressRemovals(response.Section, removalRevision);
                         var completed = HomeRowWindow.Complete(shown, response.Section, current, ++_rowCompletionOrder);
                         ApplyRefreshedSection(completed, whole: true);
-                        if (!completed.CanComplete || !userDemand) _completionWantedSections.Remove(sectionId);
+                        _completionWantedSections.Remove(sectionId);
                         applied = true;
                     }).ConfigureAwait(false);
                 }
@@ -971,11 +976,11 @@ public partial class HomeViewModel : ObservableObject,
         }
         // A duplicate-filtered or dismissed partial row has no carousel left
         // to report near-end demand. Recover it once, before expansion. Even a
-        // successful whole read may remain hidden and truncated; an identical
-        // request cannot page further and must not rearm other hidden rows.
+        // successful whole read may remain hidden and truncated; do not
+        // automatically repeat it when projecting other rows.
         foreach (var section in FeaturedSections.Concat(Sections).Where(section => section.CanComplete && section.Items.Count == 0
             && section.Id != wholeReadSectionId
-            && _rawSections.TryGetValue(section.Id, out var raw) && !HomeRowWindow.IsExpanded(raw)).ToList())
+            && _rawSections.TryGetValue(section.Id, out var raw) && !raw.HasReadWhole && !HomeRowWindow.IsExpanded(raw)).ToList())
             _ = CompleteSectionAsync(section.Id, userDemand: false);
     }
 

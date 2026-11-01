@@ -45,9 +45,8 @@ public static class HomeRowWindow
         // must not discard unseen cards, including when we retain old cards.
         result.Items = new(prefix.Concat(rest));
         result.HasMore = whole.HasMore;
-        // Completion has attempted the uncapped resource, which has no cursor.
-        // Preserve has_more, but do not offer identical tail reads this cycle.
-        // A later refresh can recover changed server data.
+        // Stop automatic identical reads, but preserve fresh user demand when
+        // the server still reports more cards.
         result.HasReadWhole = true;
         result.ShownCount = Math.Min(initialCount, result.Items.Count);
         result.CompletedOrder = current.CompletedOrder > 0 ? current.CompletedOrder : completedOrder;

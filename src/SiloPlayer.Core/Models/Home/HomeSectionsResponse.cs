@@ -15,10 +15,10 @@ public class HomeSectionWithItems
     public int ItemLimit { get; set; }
     public int TotalCount { get; set; }
     public bool HasMore { get; set; }
-    // A successful uncapped read exhausts completion for this refresh cycle,
-    // even when the server reports truncation without a continuation.
+    // Suppress automatic identical reads after an uncapped attempt, without
+    // treating the attempt as proof that the server has no more cards.
     [JsonIgnore] public bool HasReadWhole { get; set; }
-    [JsonIgnore] public bool CanComplete => HasMore && !HasReadWhole;
+    [JsonIgnore] public bool CanComplete => HasMore;
     [JsonIgnore] public int? ShownCount { get; set; }
     [JsonIgnore] public long CompletedOrder { get; set; }
     [JsonIgnore] public long? ReadLanguageGeneration { get; set; }
