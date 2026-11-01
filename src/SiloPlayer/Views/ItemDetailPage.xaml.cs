@@ -846,6 +846,7 @@ public sealed partial class ItemDetailPage : Page
             {
                 if (!Current()) return;
                 ApplyEpisodeSpoilers();
+                ApplySeasonAction();
                 if (args.PropertyName == nameof(ViewModel.Item))
                 {
                     ApplyAuthoritativeSeriesAction();
@@ -1172,13 +1173,7 @@ public sealed partial class ItemDetailPage : Page
                 // current WebUI targets its first episode and labels the action
                 // "Play First Episode". Never request /watch/{season-id}.
                 BuildEpisodeRows();
-                var firstEpisode = ViewModel.Episodes.FirstOrDefault();
-                _playableContentId = ViewModel.Item.HasAuthoritativePlayTarget
-                    ? ViewModel.Item.PlayContentId : firstEpisode?.ContentId;
-                PlayButtonText.Text = "Play First Episode";
-                SplitPlayButton.Visibility = string.IsNullOrWhiteSpace(_playableContentId)
-                    ? Visibility.Collapsed
-                    : Visibility.Visible;
+                ApplySeasonAction();
                 VersionDropdownButton.Visibility = Visibility.Collapsed;
                 VersionSeparator.Visibility = Visibility.Collapsed;
                 AudioTracksButton.Visibility = Visibility.Collapsed;
@@ -4794,6 +4789,17 @@ public sealed partial class ItemDetailPage : Page
         {
             ShowNoPlayableEpisodeToast(ViewModel.Item.Type);
         }
+    }
+
+    private void ApplySeasonAction()
+    {
+        if (ViewModel.Item is not { Type: "season" } item) return;
+        _playableContentId = item.HasAuthoritativePlayTarget ? item.PlayContentId : ViewModel.Episodes.FirstOrDefault()?.ContentId;
+        var playable = !string.IsNullOrWhiteSpace(_playableContentId);
+        PlayButtonText.Text = "Play First Episode";
+        SplitPlayButton.Visibility = playable ? Visibility.Visible : Visibility.Collapsed;
+        PrimaryPlayButton.IsEnabled = playable;
+        SplitPlayButton.Opacity = playable ? 1 : .5;
     }
 
     private bool ApplyAuthoritativeSeriesAction()

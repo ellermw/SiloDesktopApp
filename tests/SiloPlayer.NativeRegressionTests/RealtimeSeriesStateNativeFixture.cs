@@ -21,7 +21,8 @@ internal static class RealtimeSeriesStateNativeFixture
     {
         var slot = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var original = (IServiceProvider)slot.GetValue(null)!;
-        using var http = new HttpClient(new Wire());
+        var wire = new Wire();
+        using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://realtime-native.invalid"); client.SetProfile("fixture-profile");
         using var auth = new AuthService(client, new AuthApi(client));
         var catalog = new CatalogApi(client);
@@ -30,11 +31,12 @@ internal static class RealtimeSeriesStateNativeFixture
         {
             foreach (var type in new[] { "series", "season" })
             {
+                wire.Count = 2; wire.Target = "new-target";
                 var page = new ItemDetailPage { Width = 900, Height = 720 };
                 var vm = page.ViewModel;
                 using var navigation = new CancellationTokenSource();
                 vm.Item = new() { ContentId = type, Type = type, SeriesId = type == "season" ? "series" : null,
-                    Title = "Realtime fixture", EpisodeCount = 4, PlayContentId = "old-target", UserData = new() { UnplayedCount = 4 }, UserState = new() };
+                    Title = "Realtime fixture", EpisodeCount = 4, PlayContentId = type == "season" ? null : "old-target", UserData = new() { UnplayedCount = 4 }, UserState = new() };
                 vm.IsSeries = type == "series"; vm.SelectedSeasonNumber = 1;
                 vm.Seasons.Add(new() { ContentId = "season", SeasonNumber = 1, Title = "Season 1", EpisodeCount = 4, UserData = new() { UnplayedCount = 4 } });
                 vm.Episodes.Add(new() { ContentId = "sibling", Title = "Untouched sibling", SeasonNumber = 1, EpisodeNumber = 1,
@@ -56,6 +58,9 @@ internal static class RealtimeSeriesStateNativeFixture
                         ((UIElement)page.FindName("SeasonsLoadingSkeleton")).Visibility = Visibility.Collapsed;
                     }
                     Call(page, "BuildSeasonCards"); Call(page, "BuildEpisodeRows"); Call(page, "UpdateWatchedButton");
+                    // Initial navigation hides a season action when the server
+                    // explicitly supplies null, even with loaded episode rows.
+                    if (type == "season") ((UIElement)page.FindName("SplitPlayButton")).Visibility = Visibility.Collapsed;
                     var mounted = vm.Item;
                     using var data = JsonDocument.Parse("""
                         {"profile_id":"fixture-profile","content_id":"never-loaded","series_id":"series","change":"watched","played":true}
@@ -73,6 +78,23 @@ internal static class RealtimeSeriesStateNativeFixture
                         "Actual native season card did not repaint authoritative watched count.");
                     if (type == "series") Check(vm.Item.PlayContentId == "new-target" && ((TextBlock)page.FindName("PlayButtonText")).Text == "Resume",
                         "Actual native Resume action did not refresh its authoritative target/label.");
+                    if (type == "season")
+                    {
+                        var action = (UIElement)page.FindName("SplitPlayButton");
+                        Check(action.Visibility == Visibility.Visible && vm.Item.PlayContentId == "new-target",
+                            "A refreshed playable season target leaves its actual native Play action hidden.");
+                        wire.Target = null; wire.Count = 3;
+                        refresh.ReceiveRealtime("user_state", "user_state.changed", data.RootElement);
+                        await UntilAsync(() => vm.Item.UserData?.WatchedCount == 3);
+                        await Task.Delay(100);
+                        Check(action.Visibility == Visibility.Collapsed && vm.Item.PlayContentId == null,
+                            "An explicit null season target leaves an unusable native Play action visible.");
+                        wire.Target = "new-target"; wire.Count = 4;
+                        refresh.ReceiveRealtime("user_state", "user_state.changed", data.RootElement);
+                        await UntilAsync(() => vm.Item.UserData?.WatchedCount == 4);
+                        await Task.Delay(100);
+                        Check(action.Visibility == Visibility.Visible, "A season Play action cannot recover after its target returns.");
+                    }
                     await MediaParityNativeFixture.CaptureAsync(page, "realtime-state-" + type + ".png");
                     Program.Log($"PASS: captured unknown-episode event refreshes mounted native {type} aggregate/season counts and leaves sibling state/badge untouched.");
                 }
@@ -100,6 +122,8 @@ internal static class RealtimeSeriesStateNativeFixture
 
     private sealed class Wire : HttpMessageHandler
     {
+        internal int Count = 2;
+        internal string? Target = "new-target";
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host != "realtime-native.invalid" || request.Method != HttpMethod.Get)
@@ -107,8 +131,8 @@ internal static class RealtimeSeriesStateNativeFixture
             var path = request.RequestUri.AbsolutePath;
             object body = path.StartsWith("/api/v2/catalog/items/") ?
                 new { content_id = path.EndsWith("/season") ? "season" : "series", type = path.EndsWith("/season") ? "season" : "series",
-                    play_content_id = "new-target", play_season_number = 1,
-                    user_data = new { watched_count = 2, unplayed_count = 2, in_progress_count = 1, played = false }, user_state = new { } } :
+                    play_content_id = Target, play_season_number = 1,
+                    user_data = new { watched_count = Count, unplayed_count = 2, in_progress_count = 1, played = false }, user_state = new { } } :
                 path.EndsWith("/seasons") ? new { items = new[] { new { content_id = "season", season_number = 1, episode_count = 4,
                     user_data = new { watched_count = 2, unplayed_count = 2, in_progress_count = 1, played = false } } } } :
                 path.Contains("progress/capabilities") ? new { clear_resume_position = false } : new { items = Array.Empty<object>() };

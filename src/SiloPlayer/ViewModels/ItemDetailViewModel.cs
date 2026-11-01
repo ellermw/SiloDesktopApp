@@ -26,7 +26,11 @@ public partial class ItemDetailViewModel : ObservableObject,
     private bool _stateRefreshActive = true;
     private Task? _remoteStateRefresh;
     private MediaStateInvalidated? _pendingRemoteState;
-    private long _remoteStateGeneration;
+    private MediaStateInvalidated? _activeRemoteState;
+    private MediaStateInvalidated? _initialRemoteState;
+    private long _initialStateRevision;
+    private long _localStateGeneration;
+    private Task _pendingLocalProgressSave = Task.CompletedTask;
     private CancellationTokenSource? _remoteStateReadCts;
     private ApiRequestContext? _remoteStateReadContext;
     public long WatchedStateRevision => Volatile.Read(ref _watchedStateGeneration);
@@ -134,22 +138,34 @@ public partial class ItemDetailViewModel : ObservableObject,
     /// <summary>Refresh retained state without replacing the detail or changing playback/room intent.</summary>
     public Task RefreshMediaStateAsync(MediaStateInvalidated message)
     {
-        if (!_stateRefreshActive || !_catalogApi.IsCurrentContext(message.Context)
-            || Item is not { } item || !IsRelatedState(message, item)) return Task.CompletedTask;
+        if (!_stateRefreshActive || !_catalogApi.IsCurrentContext(message.Context)) return Task.CompletedTask;
+        if (Item is not { } item)
+        {
+            if (_loadCts is { IsCancellationRequested: false })
+            {
+                _initialRemoteState = MergeState(_initialRemoteState, message);
+                ++_initialStateRevision;
+            }
+            return Task.CompletedTask;
+        }
+        if (!IsRelatedState(message, item)) return Task.CompletedTask;
         if (_remoteStateReadContext is { } reading && reading != message.Context) _remoteStateReadCts?.Cancel();
         if (!message.RefreshDetails) return Task.CompletedTask;
-        // Raw progress ticks invalidate cached reads globally, but cannot
-        // starve a retained surface's bounded authoritative snapshot. Only
-        // another coalesced sweep supersedes that snapshot; owner/navigation
-        // and local mutation revisions still retire it immediately.
-        Interlocked.Increment(ref _remoteStateGeneration);
-        if (_pendingRemoteState is { } pending && pending.Context == message.Context)
-            message = message with { ContentIds = pending.ContentIds.Concat(message.ContentIds).ToHashSet(StringComparer.Ordinal),
-                SeriesIds = pending.SeriesIds.Concat(message.SeriesIds).ToHashSet(StringComparer.Ordinal), CatchUp = pending.CatchUp || message.CatchUp };
-        _pendingRemoteState = message;
+        // A still-owned snapshot finishes even when another sweep is due.
+        // Retain its scope in the trailing work until all of its reads settle.
+        _pendingRemoteState = MergeState(_pendingRemoteState, MergeState(_activeRemoteState, message));
         if (_remoteStateRefresh is not { IsCompleted: false }) _remoteStateRefresh = RefreshRemoteStateLoopAsync();
         return _remoteStateRefresh;
     }
+
+    private static MediaStateInvalidated MergeState(MediaStateInvalidated? earlier, MediaStateInvalidated later) =>
+        earlier == null || earlier.Context != later.Context ? later : later with
+        {
+            ContentIds = earlier.ContentIds.Concat(later.ContentIds).ToHashSet(StringComparer.Ordinal),
+            SeriesIds = earlier.SeriesIds.Concat(later.SeriesIds).ToHashSet(StringComparer.Ordinal),
+            CatchUp = earlier.CatchUp || later.CatchUp,
+            RefreshDetails = earlier.RefreshDetails || later.RefreshDetails
+        };
 
     private async Task RefreshRemoteStateLoopAsync()
     {
@@ -158,16 +174,16 @@ public partial class ItemDetailViewModel : ObservableObject,
         while (_pendingRemoteState is { } message)
         {
             _pendingRemoteState = null;
+            _activeRemoteState = message;
             var item = Item;
             var libraryId = LibraryId;
             var selectedSeason = SelectedSeasonNumber;
-            var revision = WatchedStateRevision;
-            var remoteRevision = Volatile.Read(ref _remoteStateGeneration);
+            var revision = Volatile.Read(ref _localStateGeneration);
             using var readOwner = new CancellationTokenSource();
             var ct = readOwner.Token;
             bool Current() => _stateRefreshActive && ReferenceEquals(Item, item) && LibraryId == libraryId
-                && !ct.IsCancellationRequested && revision == WatchedStateRevision
-                && remoteRevision == Volatile.Read(ref _remoteStateGeneration) && _catalogApi.IsCurrentContext(message.Context);
+                && !ct.IsCancellationRequested && revision == Volatile.Read(ref _localStateGeneration)
+                && _catalogApi.IsCurrentContext(message.Context);
             if (item == null || !Current() || !IsRelatedState(message, item)) continue;
             _remoteStateReadCts = readOwner;
             _remoteStateReadContext = message.Context;
@@ -177,14 +193,15 @@ public partial class ItemDetailViewModel : ObservableObject,
                 // feedback or rollback authority of an in-flight local mark.
                 if (ToggleWatchedCommand is { IsRunning: true, ExecutionTask: { } mutation })
                     await mutation.WaitAsync(ct);
+                await _pendingLocalProgressSave.WaitAsync(ct);
                 if (!_stateRefreshActive || ct.IsCancellationRequested || !ReferenceEquals(Item, item)
                     || LibraryId != libraryId || !_catalogApi.IsCurrentContext(message.Context)) continue;
-                // Initial list reads retry for this bounded sweep, not every
-                // raw tick; capture revisions after the local mark settles.
-                revision = Interlocked.Increment(ref _watchedStateGeneration);
-                remoteRevision = Volatile.Read(ref _remoteStateGeneration);
+                revision = Volatile.Read(ref _localStateGeneration);
                 _detailPrefetchCache.Invalidate(item.ContentId);
-                var refreshed = await ReadDetailAsync(item.ContentId, ct);
+                // Mounted reads own their transport and snapshot. Raw ticks
+                // still clear speculative cache entries, without retrying or
+                // discarding this request each time another device advances.
+                var refreshed = await _catalogApi.GetItemDetailAsync(item.ContentId, libraryId, ct);
                 if (!Current()) continue;
                 var seasons = item.Type == "series" && Seasons.Count > 0
                     ? await _catalogApi.GetSeasonsAsync(item.ContentId, libraryId, ct) : null;
@@ -227,6 +244,7 @@ public partial class ItemDetailViewModel : ObservableObject,
                     _remoteStateReadCts = null;
                     _remoteStateReadContext = null;
                 }
+                if (ReferenceEquals(_activeRemoteState, message)) _activeRemoteState = null;
             }
         }
     }
@@ -251,6 +269,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         }
 
         Interlocked.Increment(ref _watchedStateGeneration);
+        Interlocked.Increment(ref _localStateGeneration);
         _detailPrefetchCache.Invalidate(item.ContentId);
         if (!string.IsNullOrEmpty(item.SeriesId)) _detailPrefetchCache.Invalidate(item.SeriesId);
         var watchedDelta = 0;
@@ -325,6 +344,13 @@ public partial class ItemDetailViewModel : ObservableObject,
     public void Receive(PlaybackProgressUpdated message)
     {
         _detailPrefetchCache.Invalidate(message.ContentId);
+        if (Item?.ContentId == message.ContentId || Episodes.Any(e => e.ContentId == message.ContentId))
+        {
+            Interlocked.Increment(ref _watchedStateGeneration);
+            Interlocked.Increment(ref _localStateGeneration);
+            _pendingLocalProgressSave = Task.WhenAll(_pendingLocalProgressSave, message.Persisted);
+            if (_activeRemoteState is { } active) _pendingRemoteState = MergeState(_pendingRemoteState, active);
+        }
         var episodeSpoilersChanged = false;
         foreach (var episode in Episodes.Where(episode => episode.ContentId == message.ContentId))
         {
@@ -457,8 +483,12 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         _stateRefreshActive = false;
         _pendingRemoteState = null;
+        _activeRemoteState = null;
+        _initialRemoteState = null;
+        _pendingLocalProgressSave = Task.CompletedTask;
         _remoteStateReadCts?.Cancel();
         Interlocked.Increment(ref _watchedStateGeneration);
+        Interlocked.Increment(ref _localStateGeneration);
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = null;
@@ -472,6 +502,8 @@ public partial class ItemDetailViewModel : ObservableObject,
         var loadCts = new CancellationTokenSource();
         _loadCts = loadCts;
         var ct = loadCts.Token;
+        var loadContext = _catalogApi.CaptureContext();
+        var initialRevision = _initialStateRevision;
 
         IsLoading = true;
         ErrorMessage = null;
@@ -495,9 +527,21 @@ public partial class ItemDetailViewModel : ObservableObject,
 
         try
         {
-            var item = await ReadDetailAsync(contentId, ct);
+            MediaItemDetail item;
+            try { item = await ReadDetailAsync(contentId, ct); }
+            catch (UserStateChangedException) when (!ct.IsCancellationRequested)
+            {
+                item = await _catalogApi.GetItemDetailAsync(contentId, LibraryId, ct);
+            }
             ct.ThrowIfCancellationRequested();
-            if (!ReferenceEquals(_loadCts, loadCts)) return;
+            if (!ReferenceEquals(_loadCts, loadCts) || !_catalogApi.IsCurrentContext(loadContext)) return;
+            if (initialRevision != _initialStateRevision && _initialRemoteState is { } invalidation && IsRelatedState(invalidation, item))
+            {
+                initialRevision = _initialStateRevision;
+                item = await _catalogApi.GetItemDetailAsync(contentId, LibraryId, ct);
+                ct.ThrowIfCancellationRequested();
+                if (!ReferenceEquals(_loadCts, loadCts) || !_catalogApi.IsCurrentContext(loadContext)) return;
+            }
             Item = item;
 
             // Server commit 4172a16 inlines favorite/watchlist/rating on the item
@@ -523,6 +567,10 @@ public partial class ItemDetailViewModel : ObservableObject,
             OnPropertyChanged(nameof(RuntimeDisplay));
             OnPropertyChanged(nameof(GenresDisplay));
             OnPropertyChanged(nameof(RatingDisplay));
+            var trailing = _initialRemoteState;
+            _initialRemoteState = null;
+            if (initialRevision != _initialStateRevision && trailing != null)
+                await RefreshMediaStateAsync(trailing with { RefreshDetails = true });
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -638,6 +686,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         // a MediaSurfaceChanged message on success so HomeViewModel's Continue
         // Watching row and HistoryViewModel refresh without a page reload.
         bool wasWatched = IsWatched;
+        Interlocked.Increment(ref _localStateGeneration);
         IsWatched = !wasWatched;
         var generation = Volatile.Read(ref _watchedStateGeneration);
         bool Current() => ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context)

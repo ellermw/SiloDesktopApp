@@ -43,3 +43,18 @@ Final concrete feedback regression: a pending local watched write lost its accep
 Final suite result: 2,830 passed, one unchanged update-cleanup setup failure at UpdateTransactionLifecycleTests.cs:215 (inventory unknown); source/update code untouched. Parent requested one isolated method rerun, no unrelated update fixes, and authorized commit with exact disclosure rather than another full run. Parent owns final publish/native and independent review.
 
 Isolated rerun passed all four update-cleanup variants. Parent final Release publish succeeded with unchanged product inputs and app SHA256 1E4BF6311780D62BEC54A160A5ECF8D5459054A78E0D33889C6515FDDB0996F0. Parent runs final native routes and independent reviews; no native success is claimed before their receipts exist.
+
+## Independent review correction pass (2431f182 baseline)
+
+Standards four findings and Spec six findings overlap in six grounded behaviors. Preserve all earlier evidence, including parent correction bc6e4660 and published candidate 66CF8CA5…, as historical candidates.
+
+- [x] Reproduce sustained raw plus coalesced traffic using actual HTTP snapshots, production cache/revision registrations and mounted VM recipients; both default and library-scoped reads fail before correction.
+- [x] Reproduce active episode/catch-up scope loss, initial scoped null-Item invalidation loss, local final-progress overwrite and sibling /watch retry exhaustion against actual API clients.
+- [x] Make mounted reads owned catalog requests; preserve unioned active/trailing scope; hold initial invalidations through a bounded read; give local progress its own revision/save barrier; distinguish aggregate series scope from changed playback-leaf scope.
+- [x] Reproduce real native season target null→playable failure using the preserved 66CF candidate, then recompute season action on mounted item/episode changes and test both target transitions.
+- [x] Migrate earlier cache-delegate detail fixtures to delayed HTTP responses so they exercise the owned-read boundary. Keep global speculative cache invalidation enabled.
+- [x] Run full unit, fresh Release publish, updated native realtime route and existing local-watched route; record exact receipts and commit the focused correction.
+
+Evidence so far: review-red-owned 7 expected behavioral failures; review-green-owned 7 passed; review-red-season-native actual hidden Play failure; review-focused-migration exposed 15 old cache-only fixture failures; after HTTP fixture migration, review-green-focused passed 122. Full and fresh Release receipts follow. No further generic review loop is requested by the parent.
+
+Final correction evidence: review-full-unit 2,839/2,839 passed (zero failures/skips); review-release-app succeeded, DLL637F11276FDA9055728ED073B76BB9CD317EAA44B210C268F8B73F6A9202DA88. review-green-season-native and review-native-watched both pass this same output. The updated native fixture checks explicit season target null→playable→null→playable and existing sibling isolation. review-final-source-binding.json hashes 1,006 tracked product inputs, all unchanged since publish began; final commit is bound after commit. No push, install or installed app control.

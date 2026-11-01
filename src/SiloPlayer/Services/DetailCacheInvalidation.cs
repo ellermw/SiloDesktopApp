@@ -38,7 +38,7 @@ public static class DetailCacheInvalidation
         messenger ??= WeakReferenceMessenger.Default;
         var revision = new UserStateRevision();
         messenger.Register<UserStateRevision, MediaStateInvalidated>(revision,
-            static (owner, message) => owner.Advance(message.CatchUp ? [] : message.ContentIds.Concat(message.SeriesIds).Cast<string?>().ToArray()));
+            static (owner, message) => owner.Advance(message.CatchUp ? [] : WatchScope(message.ContentIds, message.SeriesIds)));
         messenger.Register<UserStateRevision, MediaSurfaceChanged>(revision,
             static (owner, message) => owner.Advance(ScopeOf(message)));
         messenger.Register<UserStateRevision, PlaybackProgressUpdated>(revision,
@@ -51,7 +51,17 @@ public static class DetailCacheInvalidation
     private static string?[] ScopeOf(MediaSurfaceChanged message)
         => message.ContentId.StartsWith("series:", StringComparison.Ordinal) && string.IsNullOrEmpty(message.SeriesId)
             ? []
-            : [message.ContentId, message.SeriesId];
+            : WatchScope([message.ContentId], string.IsNullOrEmpty(message.SeriesId) ? [] : [message.SeriesId]);
+
+    // A named series relates aggregate detail state, not every episode's
+    // playback position. Only an actual series/season container mutation
+    // invalidates its descendant /watch snapshots. Season IDs use series:.
+    private static string?[] WatchScope(IEnumerable<string> contentIds, IEnumerable<string> seriesIds)
+    {
+        var items = contentIds.ToArray();
+        return (items.Any(id => id.StartsWith("series:", StringComparison.Ordinal))
+            ? items.Concat(seriesIds) : items).Cast<string?>().ToArray();
+    }
 
     // A player-close message arrives before its final write finishes. Clear
     // now, and again once the server has the position, so a read started in

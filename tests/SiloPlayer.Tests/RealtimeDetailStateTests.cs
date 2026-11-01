@@ -77,14 +77,14 @@ public sealed class RealtimeDetailStateTests
     }
 
     [Fact]
-    public async Task NavigationCancelsTheRetiredReadConsumerWithoutWaitingForItsSharedPrefetch()
+    public async Task NavigationCancelsTheRetiredOwnedReadWithoutWaitingForTheBackend()
     {
         using var scope = new Scope("series") { BlockedRead = new(TaskCreationOptions.RunContinuationsAsynchronously) };
         var operation = scope.Vm.RefreshMediaStateAsync(scope.Message());
         await scope.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
         scope.Vm.CancelPendingLoads();
         await Task.WhenAny(operation, Task.Delay(300));
-        Assert.True(operation.IsCompleted, "Retired detail still waits for the shared prefetch transport.");
+        Assert.True(operation.IsCompleted, "Retired detail still waits for the backend response.");
         Assert.False(scope.BlockedRead.Task.IsCompleted);
     }
 
@@ -206,6 +206,9 @@ public sealed class RealtimeDetailStateTests
     private sealed class Scope : HttpMessageHandler
     {
         private readonly HttpClient _http;
+        private readonly AuthService _auth;
+        private readonly ItemDetailPrefetchCache _cache;
+        private readonly string _type;
         internal SiloApiClient Client { get; }
         internal ItemDetailViewModel Vm { get; }
         internal int DetailReads;
@@ -227,29 +230,45 @@ public sealed class RealtimeDetailStateTests
         {
             _http = new HttpClient(this, false);
             Client = new SiloApiClient(_http); Client.SetBaseUrl("https://realtime-detail.invalid"); Client.SetProfile("profile");
-            Vm = new ItemDetailViewModel(new CatalogApi(Client), new ItemDetailPrefetchCache((id, _) =>
-            {
-                DetailReads++;
-                ReadStarted.TrySetResult();
-                if (OverrideDetail is { } read) return read();
-                return DetailReads == 1 && BlockedRead != null ? BlockedRead.Task : Task.FromResult(FreshDetail(id, type));
-            }));
+            _type = type;
+            _auth = new(Client, new AuthApi(Client));
+            var catalog = new CatalogApi(Client);
+            _cache = new(catalog, _auth);
+            DetailCacheInvalidation.Attach(_cache);
+            Vm = new ItemDetailViewModel(catalog, _cache);
             Vm.Item = new() { ContentId = type == "series" ? "series" : "season", SeriesId = type == "season" ? "series" : null,
                 Type = type, EpisodeCount = 4, UserData = new() { UnplayedCount = 4 } };
             Vm.Seasons.Add(new() { ContentId = "season", SeasonNumber = 1, EpisodeCount = 4, UserData = new() { UnplayedCount = 4 } });
             Vm.Episodes.Add(new() { ContentId = "sibling", SeasonNumber = 1, UserData = new() { PositionSeconds = 31 } });
         }
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.RequestUri!.AbsolutePath.StartsWith("/api/v2/catalog/items/"))
+            {
+                DetailReads++;
+                ReadStarted.TrySetResult();
+                var detail = OverrideDetail is { } read ? await read().WaitAsync(cancellationToken)
+                    : DetailReads == 1 && BlockedRead != null ? await BlockedRead.Task.WaitAsync(cancellationToken)
+                    : FreshDetail(request.RequestUri.AbsolutePath.Split('/').Last(), _type);
+                var body = new Dictionary<string, object?>
+                {
+                    ["content_id"] = detail.ContentId, ["type"] = detail.Type,
+                    ["user_data"] = new { watched_count = detail.UserData?.WatchedCount, unplayed_count = detail.UserData?.UnplayedCount,
+                        in_progress_count = detail.UserData?.InProgressCount, played = detail.UserData?.Played }
+                };
+                if (detail.HasAuthoritativePlayTarget) { body["play_content_id"] = detail.PlayContentId; body["play_season_number"] = detail.PlaySeasonNumber; }
+                return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
+            }
             Assert.EndsWith("/series/series/seasons", request.RequestUri!.AbsolutePath);
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""
                 {"items":[{"content_id":"season","season_number":1,"episode_count":4,"user_data":{"watched_count":2,"unplayed_count":2,"in_progress_count":1}}]}
-                """, Encoding.UTF8, "application/json") });
+                """, Encoding.UTF8, "application/json") };
         }
         protected override void Dispose(bool disposing)
         {
             WeakReferenceMessenger.Default.UnregisterAll(Vm);
-            if (disposing) _http.Dispose();
+            WeakReferenceMessenger.Default.UnregisterAll(_cache);
+            if (disposing) { _auth.Dispose(); _http.Dispose(); }
             base.Dispose(disposing);
         }
     }
