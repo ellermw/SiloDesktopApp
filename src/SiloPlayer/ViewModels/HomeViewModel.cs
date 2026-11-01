@@ -70,9 +70,12 @@ public partial class HomeViewModel : ObservableObject,
         _ = RunOnUiThreadAsync(() =>
         {
             if (!_homeApi.IsCurrentContext(message.Context) || _loadedProfileId != message.Context.ProfileId) return;
-            // Retire reads begun before this mutation. Fresh REST state remains
-            // authoritative, including catch-up after another client's missed event.
+            // Retire reads begun before this mutation, but leave a live token
+            // for near-end demand delivered before the debounced refresh.
+            // Fresh REST state remains authoritative for missed events too.
             _sectionLoadCts?.Cancel();
+            _sectionLoadCts?.Dispose();
+            _sectionLoadCts = new CancellationTokenSource();
             ++_sectionLoadGeneration;
             if (message.Marked.HasValue && NotInterestedPolicy.Apply(FeaturedSections.Concat(Sections).Concat(_rawSections.Values), message.ItemId, message.Marked.Value))
                 BumpRenderRevision();
@@ -1047,6 +1050,8 @@ public partial class HomeViewModel : ObservableObject,
     {
         _localizedReloadPending |= _loadInProgress;
         _sectionLoadCts?.Cancel();
+        _sectionLoadCts?.Dispose();
+        _sectionLoadCts = new CancellationTokenSource();
         ++_sectionLoadGeneration;
         QueueRealtimeRefresh("metadata_language");
     }

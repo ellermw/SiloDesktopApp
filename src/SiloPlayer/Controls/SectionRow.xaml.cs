@@ -45,7 +45,6 @@ public sealed partial class SectionRow : UserControl
     private bool _dragCompletionDemandStarted;
     private System.Collections.ObjectModel.ObservableCollection<MediaItem>? _observedItems;
     private string? _lastRenderedSectionId;
-    private string? _lastRenderedTemplateKey;
     private long _activationGeneration;
     private const double DragThreshold = 7;
 
@@ -240,8 +239,7 @@ public sealed partial class SectionRow : UserControl
             : allCoverMedia ? "ContinuePosterCardTemplate"
             : useLandscape ? "LandscapeCardTemplate"
             : "PosterCardTemplate";
-        var templateChanged = !string.Equals(_lastRenderedTemplateKey, templateKey, StringComparison.Ordinal);
-        if (!isSameSection || templateChanged)
+        if (!isSameSection)
         {
             _completionDemandArmed = false;
             _lastHorizontalOffset = CardsScrollViewer.HorizontalOffset;
@@ -250,7 +248,6 @@ public sealed partial class SectionRow : UserControl
         if (!ReferenceEquals(CardsRepeater.ItemTemplate, template)) CardsRepeater.ItemTemplate = template;
         if (!ReferenceEquals(CardsRepeater.ItemsSource, section.Items)) CardsRepeater.ItemsSource = section.Items;
         _lastRenderedSectionId = section.Id;
-        _lastRenderedTemplateKey = templateKey;
 
         // F6: show a skeleton row while items are still loading (empty list
         // during F12 per-section fetch). Replaced by the real cards as soon
@@ -288,12 +285,11 @@ public sealed partial class SectionRow : UserControl
             CardsScrollViewer.Visibility = Visibility.Collapsed;
         }
 
-        // The current WebUI keeps carousel state mounted while section items
-        // update. Preserve horizontal position for the same section/template
-        // so background refreshes, progress updates, and item dismissals don't
-        // snap the user back to the first card. New sections or card-shape
-        // changes still reset to the beginning.
-        RestoreScrollPositionAfterRebind(isSameSection && !templateChanged, previousOffset);
+        // Keep the mounted position and demand latch for the same section,
+        // even when completion changes its card shape. The deferred restore
+        // clamps against the rebound extent and re-evaluates near-end demand
+        // without treating the restored offset as forward navigation.
+        RestoreScrollPositionAfterRebind(isSameSection, previousOffset);
         UpdateScrollBounds();
     }
 

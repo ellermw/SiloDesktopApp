@@ -15,6 +15,9 @@ internal static class HomeRowWindowNativeFixture
     internal static async Task RunAsync(StackPanel parent)
     {
         await ScrollAndRefreshAsync(parent);
+        await CompletionTemplateChangeAsync(parent);
+        await DemandAfterInvalidationAsync(parent, localized: false);
+        await DemandAfterInvalidationAsync(parent, localized: true);
         await AuthoritativeRefreshAsync(legacy: true, count: 3);
         await AuthoritativeRefreshAsync(legacy: true, count: 35);
         await AuthoritativeRefreshAsync(legacy: false, count: 35);
@@ -77,6 +80,79 @@ internal static class HomeRowWindowNativeFixture
             Program.Log("PASS: actual SectionRow ViewChanged recovered cards21-35 once; expanded refresh retained first card.");
         }
         finally { if (row != null) parent.Children.Remove(row); Retire(vm); }
+    }
+
+    private static async Task CompletionTemplateChangeAsync(StackPanel parent)
+    {
+        using var wire = new Wire { HoldWhole = true, MixedTail = true }; using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://home-window.invalid");
+        using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("alpha");
+        var vm = new HomeViewModel(new HomeApi(client), auth);
+        SectionRow? row = null;
+        try
+        {
+            await vm.LoadCommand.ExecuteAsync(null);
+            await Until(() => vm.Sections.FirstOrDefault()?.Items.Count == 20);
+            var mounted = vm.Sections[0];
+            var demands = 0;
+            row = new SectionRow { Width = 900, Section = mounted,
+                OnNearEnd = section => { demands++; _ = vm.CompleteSectionAsync(section.Id); } };
+            parent.Children.Add(row); await Task.Delay(120); row.UpdateLayout();
+            var scroll = (ScrollViewer)row.FindName("CardsScrollViewer");
+            var repeater = (ItemsRepeater)row.FindName("CardsRepeater");
+            Require(ReferenceEquals(repeater.ItemTemplate, row.Resources["ContinuePosterCardTemplate"]),
+                "The bounded all-cover prefix must start with poster cards.");
+            scroll.ChangeView(scroll.ScrollableWidth, null, null, true);
+            await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(4)); await Task.Delay(80);
+            var offset = scroll.HorizontalOffset;
+            Require(offset > 0 && demands == 1, "Near-end scrolling must deliver one completion demand.");
+            wire.Release.TrySetResult();
+            await Until(() => mounted.Items.Count == 35
+                && ReferenceEquals(repeater.ItemTemplate, row.Resources["LandscapeCardTemplate"]));
+            row.UpdateLayout(); await Task.Delay(150);
+            Require(ReferenceEquals(mounted, vm.Sections[0]) && ReferenceEquals(row.Section, mounted)
+                && Math.Abs(scroll.HorizontalOffset - Math.Min(offset, scroll.ScrollableWidth)) < 2,
+                "Completion's poster-to-landscape rebind must preserve the mounted, clamped scroll offset.");
+            var armed = (bool)typeof(SectionRow).GetField("_completionDemandArmed", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(row)!;
+            Require(!armed && demands == 1 && wire.Whole == 1,
+                "Restoring the new template must not re-arm the consumed navigation gesture.");
+        }
+        finally { wire.Release.TrySetResult(); if (row != null) parent.Children.Remove(row); Retire(vm); }
+    }
+
+    private static async Task DemandAfterInvalidationAsync(StackPanel parent, bool localized)
+    {
+        using var wire = new Wire { HoldWhole = true }; using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://home-window.invalid");
+        using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("alpha");
+        var vm = new HomeViewModel(new HomeApi(client), auth);
+        SectionRow? row = null;
+        try
+        {
+            await vm.LoadCommand.ExecuteAsync(null);
+            await Until(() => vm.Sections.FirstOrDefault()?.Items.Count == 20);
+            row = new SectionRow { Width = 900, Section = vm.Sections[0],
+                OnNearEnd = section => _ = vm.CompleteSectionAsync(section.Id) };
+            parent.Children.Add(row); await Task.Delay(120); row.UpdateLayout();
+            // Keep realtime refresh inactive to isolate demand delivered between
+            // invalidation and the next refresh, without a debounce timing race.
+            if (localized)
+            {
+                client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
+                vm.InvalidateLocalizedReads();
+            }
+            else vm.Receive(new NotInterestedChange(client.CaptureContext(), "alpha-1", true));
+            var scroll = (ScrollViewer)row.FindName("CardsScrollViewer");
+            scroll.ChangeView(scroll.ScrollableWidth, null, null, true);
+            await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(4));
+            Require(wire.Capped == 1 && wire.Whole == 1,
+                "A delivered demand must start a whole read before any replacement batch runs.");
+            wire.Release.TrySetResult();
+            await Until(() => vm.Sections[0].Items.Count == 35);
+            Require(!vm.Sections[0].CanComplete && wire.Whole == 1,
+                "Invalidation must not consume near-end demand without recovering the tail.");
+        }
+        finally { wire.Release.TrySetResult(); if (row != null) parent.Children.Remove(row); Retire(vm); }
     }
 
     private static async Task AuthoritativeRefreshAsync(bool legacy, int count)
@@ -585,7 +661,7 @@ internal static class HomeRowWindowNativeFixture
 
     private sealed class Wire : HttpMessageHandler
     {
-        public int Capped, Whole; public bool HoldWhole, FailWhole, HoldRefresh, DuplicateFirst;
+        public int Capped, Whole; public bool HoldWhole, FailWhole, HoldRefresh, DuplicateFirst, MixedTail;
         public bool HoldFirstWhole, FailFirstWhole, NullFirstWhole, NullWhole, PartialWhole, ReverseWhole, UnsupportedCapabilities;
         public int CardCount = 35, RowItemLimit = 50, HiddenRows = 1, PartialWholeCount = 25;
         public string Capabilities = """{"row_item_limit_max":100,"section_item_limit_max":100}""";
@@ -634,7 +710,7 @@ internal static class HomeRowWindowNativeFixture
             if (!capped && ReverseWhole) cards = cards.Reverse();
             return Json(JsonSerializer.Serialize(new { id = path.Split('/')[5], title = Title, section_type = DuplicateFirst ? "hidden_gems" : "continue_watching", item_limit = capped ? queryLimit : RowItemLimit,
                 total_count = CardCount, has_more = capped || PartialWhole, items = cards.Select(i => new { content_id = $"{profile}-{i}",
-                    title = CardsOverride != null && i == 1 ? "Updated card1" : $"Card{i}", type = "movie",
+                    title = CardsOverride != null && i == 1 ? "Updated card1" : $"Card{i}", type = MixedTail && i > 20 ? "episode" : "movie",
                     position_seconds = CardsOverride != null && i == 1 ? 123 : 0,
                     progress_updated_at = CardsOverride != null && i == 1 ? "2026-11-01T15:50:00Z" : null,
                     user_state = new { is_favorite = CardsOverride != null && i == 1 } }) }));
