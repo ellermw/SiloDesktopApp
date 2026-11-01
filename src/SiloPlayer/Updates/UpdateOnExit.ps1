@@ -42,6 +42,67 @@ function Get-UpdateInstallationPaths([string]$SourceApp,[string]$RegisteredRoot,
     }
     return @{Root=$install;Source=$source;Target=$target;Restart=(Join-Path $install 'SiloPlayer.exe');Versioned=$versioned;SourceVersion=$sourceVersion}
 }
+function Get-UpdateRegisteredRoot {
+    # HKCU and handoff arguments are not installation authority.
+    $base=[Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine,[Microsoft.Win32.RegistryView]::Registry64)
+    try {
+        $key=$base.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{B8E2F4A1-3C5D-4E6F-9A1B-2D3E4F5A6B7C}_is1')
+        if($key){try{return [string]$key.GetValue('InstallLocation','')}finally{$key.Dispose()}}
+    } finally {$base.Dispose()}
+}
+function Test-UpdatePrivilegedAcl([Security.AccessControl.FileSystemSecurity]$Acl,[bool]$Ancestor=$false) {
+    $owners=@('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    if($Acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $owners){return $false}
+    $dangerous=[Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+        [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
+    if(!$Ancestor){$dangerous=$dangerous -bor [Security.AccessControl.FileSystemRights]::Write}
+    $rules=$Acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])
+    if($rules.Count -eq 0){return $false}
+    foreach($rule in $rules){
+        if($rule.AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+            ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and
+            $rule.IdentityReference.Value -notin $owners -and ($rule.FileSystemRights -band $dangerous) -ne 0){return $false}
+    }
+    return $true
+}
+function Assert-UpdateProtectedInstallation([string]$Installation) {
+    # Match the installed updater's protected-machine ACL policy, including
+    # ancestors that could otherwise permit replacing the installation root.
+    $directory=[IO.DirectoryInfo]::new($Installation)
+    while($directory){
+        Assert-OrdinaryPath $directory.FullName
+        if(!(Test-UpdatePrivilegedAcl ($directory.GetAccessControl()) ($directory.FullName -ine $Installation))){throw 'A protected machine installation is required. Run the full installer manually to repair permissions.'}
+        $directory=$directory.Parent
+    }
+    $stack=[Collections.Generic.Stack[IO.FileSystemInfo]]::new();$stack.Push([IO.DirectoryInfo]::new($Installation));$count=0
+    while($stack.Count -gt 0){
+        $entry=$stack.Pop()
+        if(++$count -gt 16384){throw 'Installation inventory exceeds the supported bounds.'}
+        Assert-OrdinaryPath $entry.FullName
+        if(!(Test-UpdatePrivilegedAcl ($entry.GetAccessControl()))){throw 'An installed path permits unprivileged changes. Run the full installer manually to repair permissions.'}
+        if($entry -is [IO.DirectoryInfo]){foreach($child in $entry.EnumerateFileSystemInfos()){$stack.Push($child)}}
+    }
+}
+function Resolve-UpdateMachineInstallation([string]$SourceApp,[string]$RequestedRoot,[string]$TargetVersion) {
+    $registered=Get-UpdateRegisteredRoot
+    if(!$registered -or ![IO.Path]::IsPathRooted($registered)){throw 'Updates require the registered machine installation.'}
+    $registered=[IO.Path]::GetFullPath($registered).TrimEnd([char[]]'\/')
+    if($RequestedRoot -and [IO.Path]::GetFullPath($RequestedRoot).TrimEnd([char[]]'\/') -ine $registered){throw 'The requested root is not the registered machine installation.'}
+    Assert-UpdateProtectedInstallation $registered
+    $paths=Get-UpdateInstallationPaths $SourceApp $registered $TargetVersion
+    if(![IO.File]::Exists($paths.Source) -or ![IO.File]::Exists($paths.Restart)){throw 'The installed application is missing.'}
+    $statePath=Join-Path $registered '.silo-update\state.json'
+    # Installation-owned layout/state selects the mode, never -InstallRoot or
+    # a caller pointing AppPath at the root launcher. Incomplete layouts fail closed.
+    $versioned=[IO.Directory]::Exists((Join-Path $registered 'versions')) -or [IO.Directory]::Exists((Join-Path $registered '.silo-update'))
+    if($versioned){
+        if(!$paths.Versioned -or ![IO.File]::Exists($statePath)){throw 'A versioned installation requires its active version-local client.'}
+        if(([IO.FileInfo]::new($statePath)).Length -gt 65536){throw 'Invalid installation state.'}
+        $state=[IO.File]::ReadAllText($statePath)|ConvertFrom-Json
+        if([string]$state.ActiveVersion -cne $paths.SourceVersion){throw 'The source is not the active installed client.'}
+    } elseif($paths.Versioned){throw 'The versioned installation state is missing.'}
+    return $paths
+}
 function Write-Result([string]$State,[string]$Message,[string]$GateName='') {
     $result=@{state=$State;message=$Message;version=$Version;utc=[DateTime]::UtcNow.ToString('o');gate=$GateName}
     $json=$result|ConvertTo-Json -Compress
@@ -136,6 +197,17 @@ function Confirm-UpdateReleaseAuthority([string]$Tag,[string]$TargetVersion,[str
         throw 'The installer disagrees with independent release authority.'
     }
 }
+function Confirm-UpdateInstallerIdentity([string]$Tag,[string]$TargetVersion,$Info) {
+    # Called only after tag authority establishes the semantic/numeric mapping.
+    $semantic=$Tag.Substring(1)
+    if($semantic -cmatch '\A[0-9]+\.[0-9]+\.[0-9]+\.0\z'){$semantic=$semantic.Substring(0,$semantic.Length-2)}
+    $file='{0}.{1}.{2}.{3}' -f $Info.FileMajorPart,$Info.FileMinorPart,$Info.FileBuildPart,$Info.FilePrivatePart
+    $product='{0}.{1}.{2}.{3}' -f $Info.ProductMajorPart,$Info.ProductMinorPart,$Info.ProductBuildPart,$Info.ProductPrivatePart
+    if($file -cne $TargetVersion -or $product -cne $TargetVersion -or
+        ($Info.ProductVersion -cne $semantic -and !($semantic -cnotmatch '-' -and $Info.ProductVersion -ceq ($semantic+'.0')))){
+        throw 'The installer PE identity disagrees with the verified release.'
+    }
+}
 try {
     $parsed=$null
     if (-not [version]::TryParse($Version,[ref]$parsed) -or $parsed.Build -lt 0 -or $parsed.Revision -lt 0 -or
@@ -147,7 +219,7 @@ try {
     $root=if($VerifyOnly -and $ValidationRoot){[IO.Path]::GetFullPath($ValidationRoot)}else{
         Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'SiloPlayer\updates'
     }
-    $paths=Get-UpdateInstallationPaths $AppPath $InstallRoot $Version
+    $paths=if($VerifyOnly){Get-UpdateInstallationPaths $AppPath $InstallRoot $Version}else{Resolve-UpdateMachineInstallation $AppPath $InstallRoot $Version}
     $app=$paths.Source;$appDirectory=$paths.Root
     $hash=[Security.Cryptography.SHA256]::Create()
     # The versioned full installer must acquire the ordinary mutation lock to
@@ -173,22 +245,13 @@ try {
             throw 'The installed launcher does not support safe in-app full updates. Close Silo and run the full installer manually.'
         }
         $failureState='failed'
-        # VerifyOnly cannot launch setup. Real versioned handoffs must obtain
-        # fresh tag authority even when the caller supplied a matching local hash.
-        if(-not $VerifyOnly){Confirm-UpdateReleaseAuthority $ReleaseTag $Version $Sha256 $ExpectedSize $InstallerUrl}
     }
     if (-not $VerifyOnly) {
+    # Every elevation, including legacy migration, needs independent authority
+    # and PE identity. A caller-supplied digest alone can never authorize setup.
+    Confirm-UpdateReleaseAuthority $ReleaseTag $Version $Sha256 $ExpectedSize $InstallerUrl
+    Confirm-UpdateInstallerIdentity $ReleaseTag $Version ([Diagnostics.FileVersionInfo]::GetVersionInfo($package))
     if ($HandoffToken -notmatch '^[a-f0-9]{32}$') {throw 'Missing normal-close confirmation identity.'}
-
-    $registered=$false
-    foreach($hive in @([Microsoft.Win32.RegistryHive]::LocalMachine,[Microsoft.Win32.RegistryHive]::CurrentUser)) {
-        $base=[Microsoft.Win32.RegistryKey]::OpenBaseKey($hive,[Microsoft.Win32.RegistryView]::Registry64)
-        try {
-            $key=$base.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{B8E2F4A1-3C5D-4E6F-9A1B-2D3E4F5A6B7C}_is1')
-            if($key){try{$location=$key.GetValue('InstallLocation','');if($location -and [IO.Path]::GetFullPath($location).TrimEnd([char[]]'\/') -ieq $appDirectory){$registered=$true}}finally{$key.Dispose()}}
-        } finally {$base.Dispose()}
-    }
-    if(-not $registered){throw 'Updates can only be installed into the registered Silo installation.'}
     Write-Result 'waiting' 'Waiting for Silo to finish closing.' $gateName
     if($ParentPid -le 0 -or $ParentStartTicks -le 0){throw 'Missing parent process identity.'}
     $parent=$null

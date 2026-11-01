@@ -98,12 +98,16 @@ public sealed class FullInstallerAuthorityTests
     }
 
     [Fact]
-    public void RealVersionedHandoffsRequirePinnedBoundedAuthorityBeforeSetupCanStart()
+    public void AllRealHandoffsRequirePinnedBoundedAuthorityAndPeIdentityBeforeSetupCanStart()
     {
         var helper = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Updates", "UpdateOnExit.ps1"));
-        var validation = helper.IndexOf("if(-not $VerifyOnly){Confirm-UpdateReleaseAuthority $ReleaseTag $Version $Sha256 $ExpectedSize $InstallerUrl}", StringComparison.Ordinal);
+        var validation = helper.IndexOf("    Confirm-UpdateReleaseAuthority $ReleaseTag $Version $Sha256 $ExpectedSize $InstallerUrl", StringComparison.Ordinal);
         Assert.True(validation > helper.IndexOf("if ($paths.Versioned)", StringComparison.Ordinal));
-        Assert.True(validation < helper.IndexOf("$setup=[Diagnostics.Process]::Start($start)", StringComparison.Ordinal));
+        var identity = helper.IndexOf("    Confirm-UpdateInstallerIdentity $ReleaseTag $Version ([Diagnostics.FileVersionInfo]::GetVersionInfo($package))", StringComparison.Ordinal);
+        Assert.True(identity > validation);
+        Assert.True(identity < helper.IndexOf("$setup=[Diagnostics.Process]::Start($start)", StringComparison.Ordinal));
+        Assert.Contains("$paths=if($VerifyOnly){Get-UpdateInstallationPaths $AppPath $InstallRoot $Version}else{Resolve-UpdateMachineInstallation $AppPath $InstallRoot $Version}", helper);
+        Assert.DoesNotContain("RegistryHive]::CurrentUser", helper);
         Assert.Contains("https://api.github.com/repos/ellermw/SiloDesktopApp/releases/tags/", helper);
         var tls = helper.IndexOf("[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12", StringComparison.Ordinal);
         Assert.True(tls > helper.IndexOf("function Get-UpdateReleaseMetadata", StringComparison.Ordinal));

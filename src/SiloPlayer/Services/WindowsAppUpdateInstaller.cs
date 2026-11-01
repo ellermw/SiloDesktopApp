@@ -92,11 +92,10 @@ public sealed partial class WindowsAppUpdateInstaller(string cacheDirectory) : I
                 "-ParentPid", current.Id.ToString(CultureInfo.InvariantCulture), "-ParentStartTicks", current.StartTime.ToUniversalTime().Ticks.ToString(CultureInfo.InvariantCulture),
                 "-Version", release.Version.ToString(), "-Sha256", release.Sha256, "-ExpectedSize", release.Size.ToString(CultureInfo.InvariantCulture), "-AppPath", Environment.ProcessPath!, "-HandoffToken", handoffToken })
                 start.ArgumentList.Add(arg);
-            if (versioned)
-            {
-                foreach (var arg in new[] { "-InstallRoot", installationRoot, "-ReleaseTag", release.Tag, "-InstallerUrl", release.InstallerUrl.AbsoluteUri })
-                    start.ArgumentList.Add(arg);
-            }
+            // Legacy migration needs the same independent release authority as
+            // a versioned full fallback. The helper resolves the machine root itself.
+            foreach (var arg in new[] { "-InstallRoot", installationRoot, "-ReleaseTag", release.Tag, "-InstallerUrl", release.InstallerUrl.AbsoluteUri })
+                start.ArgumentList.Add(arg);
             if (restart) start.ArgumentList.Add("-Restart");
             ct.ThrowIfCancellationRequested();
             await WriteResultAsync(root, "scheduled", "The update will install after Silo closes.", release.Version.ToString(), ct);
