@@ -135,6 +135,30 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             _window.AppWindow.Show(false);
             await Task.Delay(150); // Allow the hidden native tree to acquire its XamlRoot.
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "match-split-online")
+            {
+                await MatchSplitScopeNativeFixture.RunAsync(parent, onlineOnly: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "match-split-spec")
+            {
+                await MatchSplitScopeNativeFixture.RunAsync(parent, specOnly: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "match-split-review")
+            {
+                await MatchSplitScopeNativeFixture.RunAsync(parent, reviewOnly: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "match-split-scope")
+            {
+                await MatchSplitScopeNativeFixture.RunAsync(parent);
+                await MatchSplitScopeNativeFixture.RunAsync(parent, reviewOnly: true);
+                await MatchSplitScopeNativeFixture.RunAsync(parent, specOnly: true);
+                await MatchSplitScopeNativeFixture.RunAsync(parent, onlineOnly: true);
+                await MediaToolsDialogsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "password-sessions")
             {
                 await PasswordSessionsNativeFixture.RunAsync(parent);
