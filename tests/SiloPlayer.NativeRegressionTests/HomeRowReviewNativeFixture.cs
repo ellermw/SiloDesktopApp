@@ -33,6 +33,7 @@ internal static class HomeRowReviewNativeFixture
         await Case("null-whole-mounted-hero", () => NullRowAsync(parent, true));
         await Case("queued-row-ui-collection-ownership", QueuedUiOwnershipAsync);
         await Case("promoted-hero-whole", PromotedHeroAsync);
+        await Case("expanded-hero-round-trip", ExpandedHeroRoundTripAsync);
         await Case("translated-prefix-and-tail", LanguageAsync);
         await Case("real-menu-undo-vs-refresh", () => MenuAsync(parent, true));
         await Case("real-menu-series-tail-removal", () => MenuAsync(parent, false));
@@ -127,6 +128,38 @@ internal static class HomeRowReviewNativeFixture
         Require(wire.Requests.Last().Query == "", "Promoted hero must issue an uncapped read.");
     }
 
+    private static async Task ExpandedHeroRoundTripAsync()
+    {
+        using var session = new Session(new Wire()); var vm = session.Vm; var wire = session.Wire;
+        await vm.LoadCommand.ExecuteAsync(null); await Until(() => vm.Sections.FirstOrDefault()?.Items.Count == 20);
+        await vm.CompleteSectionAsync("row");
+        var order = vm.Sections[0].CompletedOrder;
+        Require(vm.Sections[0].ShownCount == 20 && order > 0, "Fixture must start with a completed bounded row.");
+
+        wire.Hero = true; wire.Title = "Featured refresh";
+        vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
+        await Until(() => vm.FeaturedSections.FirstOrDefault()?.Title == wire.Title);
+        var featured = vm.FeaturedSections.Single();
+        Require(featured.Items.Count == 35 && featured.ShownCount == 20 && featured.CompletedOrder == order,
+            "Promotion must preserve the expanded row's initial/tail boundary and completion order.");
+        var later = new HomeSectionWithItems { Id = "later", SectionType = "continue_watching",
+            Items = new() { new() { ContentId = "episode21" } } };
+        var projected = HomeSectionDedupe.Project([new() { Id = "row", Featured = true }, new() { Id = "later" }],
+            new Dictionary<string, HomeSectionWithItems> { ["row"] = featured, ["later"] = later },
+            new HashSet<string> { "continue_watching" });
+        Require(projected["later"].Items.Count == 1 && projected["row"].Items.All(item => item.ContentId != "episode21"),
+            "A featured expansion tail must still yield to a later row's initial cards.");
+
+        wire.Hero = false; wire.Title = "Demoted refresh";
+        vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
+        await Until(() => vm.Sections.FirstOrDefault()?.Title == wire.Title);
+        var row = vm.Sections.Single();
+        Require(vm.FeaturedSections.Count == 0 && row.Items.Count == 35 && row.ShownCount == 20 && row.CompletedOrder == order,
+            "Demotion must keep the previously expanded row whole and retain its priority boundary.");
+        Require(wire.Requests.Count == 4 && wire.Requests.Skip(1).All(read => read.Query == ""),
+            "Completion, promotion and demotion must each use one uncapped read.");
+    }
+
     private static async Task LanguageAsync()
     {
         using var session = new Session(new Wire { HoldRefresh = true }); var vm = session.Vm; var wire = session.Wire;
@@ -216,7 +249,7 @@ internal static class HomeRowReviewNativeFixture
     private sealed record Read(string Id, string Host, string Profile, string Query, string Account);
     private sealed class Wire : HttpMessageHandler
     {
-        public bool Batch, Hero, HoldRefresh, HoldWhole, Dismissed, NullItems; public string Language = "EN"; public int UndoCalls;
+        public bool Batch, Hero, HoldRefresh, HoldWhole, Dismissed, NullItems; public string Language = "EN", Title = "Progress"; public int UndoCalls;
         public ConcurrentQueue<Read> Requests = new(); public ConcurrentQueue<string> MutationProfiles = new();
         public TaskCompletionSource FirstFive = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseFirst = new(TaskCreationOptions.RunContinuationsAsynchronously),
             RefreshStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseRefresh = new(TaskCreationOptions.RunContinuationsAsynchronously),
@@ -244,7 +277,7 @@ internal static class HomeRowReviewNativeFixture
             if (capped && Interlocked.Increment(ref _capped) > 1 && HoldRefresh) { RefreshStarted.TrySetResult(); await ReleaseRefresh.Task; }
             if (!capped && HoldWhole) { WholeStarted.TrySetResult(); await ReleaseWhole.Task; }
             if (NullItems) return Json("null");
-            return Json(JsonSerializer.Serialize(new { id, title = "Progress", section_type = "continue_watching", featured = hero, item_limit = capped ? 20 : 50,
+            return Json(JsonSerializer.Serialize(new { id, title = Title, section_type = "continue_watching", featured = hero, item_limit = capped ? 20 : 50,
                 total_count = 35, has_more = capped, items = Enumerable.Range(1, capped ? 20 : 35).Where(i => !dismissed || i is not (1 or 21)).Select(i => new {
                     content_id = i is 1 or 21 ? $"episode{i}" : $"movie{i}", series_id = i is 1 or 21 ? "show" : null, type = i is 1 or 21 ? "episode" : "movie",
                     title = language == "FR" ? $"FR Carte{i}" : $"EN Card{i}", overview = language == "FR" ? $"FR Résumé{i}" : $"EN Overview{i}",

@@ -18,12 +18,13 @@ internal static class HomeRowWindowNativeFixture
         await AuthoritativeRefreshAsync(legacy: true, count: 35);
         await AuthoritativeRefreshAsync(legacy: false, count: 35);
         await WideInitialLayoutAsync(parent);
-        foreach (var interruption in new[] { "refresh", "error", "null", "persistent-error" })
+        foreach (var interruption in new[] { "refresh", "error", "null", "persistent-error", "persistent-null" })
             await DemandRecoveryAsync(parent, interruption);
         await TruncatedCompletionAsync(parent);
         await RetryAndRemovalAsync();
         await ConcurrentRefreshAsync();
         await HiddenPartialAsync();
+        await HiddenPartialAsync(failCompletion: true);
         await RetiredOwnerAsync();
         Program.Log("PASS: bounded Home actual carousel, single completion, refresh, retry, removal and retired owner.");
     }
@@ -142,7 +143,7 @@ internal static class HomeRowWindowNativeFixture
     private static async Task DemandRecoveryAsync(StackPanel parent, string interruption)
     {
         using var wire = new Wire { HoldFirstWhole = interruption == "refresh", FailFirstWhole = interruption == "error",
-            NullFirstWhole = interruption == "null", FailWhole = interruption == "persistent-error" };
+            NullFirstWhole = interruption == "null", FailWhole = interruption == "persistent-error", NullWhole = interruption == "persistent-null" };
         using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://home-window.invalid");
         using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("alpha");
@@ -162,12 +163,23 @@ internal static class HomeRowWindowNativeFixture
                 vm.QueueRealtimeRefresh("playback_progress", client.CaptureContext());
                 await Until(() => wire.Capped == 2);
             }
-            else if (interruption == "persistent-error")
+            else if (interruption is "persistent-error" or "persistent-null")
             {
                 await Until(() => wire.Whole == 2); await Task.Delay(150);
                 Require(vm.Sections[0].HasMore && vm.Sections[0].Items.Count == 20 && wire.Whole == 2,
                     "Persistent errors must retain the partial row and bound automatic retries.");
-                wire.FailWhole = false;
+                for (var repeat = 0; repeat < 3; repeat++)
+                {
+                    var capped = wire.Capped;
+                    vm.QueueRealtimeRefresh("playback_progress", client.CaptureContext());
+                    await Until(() => wire.Capped == capped + 1); await Task.Delay(150);
+                    row.Section = HomeSectionDedupe.Snapshot(vm.Sections[0]);
+                    row.Width = 940 + repeat * 40;
+                    row.UpdateLayout(); await Task.Delay(100);
+                    Require(wire.Whole == 2,
+                        "Refreshes and near-end size/presentation events must not restart an exhausted completion cycle.");
+                }
+                wire.FailWhole = false; wire.NullWhole = false;
                 var next = (Button)row.FindName("ScrollRightBtn");
                 Require(next.IsEnabled, "Forward navigation must remain available at a partial row's maximum offset.");
                 ((IInvokeProvider)new ButtonAutomationPeer(next).GetPattern(PatternInterface.Invoke)).Invoke();
@@ -306,17 +318,32 @@ internal static class HomeRowWindowNativeFixture
         finally { wire.Release.TrySetResult(); wire.RefreshRelease.TrySetResult(); Retire(vm); }
     }
 
-    private static async Task HiddenPartialAsync()
+    private static async Task HiddenPartialAsync(bool failCompletion = false)
     {
-        using var wire = new Wire { DuplicateFirst = true }; using var http = new HttpClient(wire);
+        using var wire = new Wire { DuplicateFirst = true, FailWhole = failCompletion }; using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://home-window.invalid");
         using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("alpha");
         var vm = new HomeViewModel(new HomeApi(client), auth, new SettingsApi(client));
         try
         {
             await vm.LoadCommand.ExecuteAsync(null);
+            if (failCompletion)
+            {
+                await Until(() => wire.Whole == 2); await Task.Delay(150);
+                Require(vm.Sections.Count == 2 && vm.Sections[1].Items.Count == 0,
+                    "Failed hidden-row recovery must keep the duplicate-filtered row hidden.");
+                for (var repeat = 0; repeat < 3; repeat++)
+                {
+                    var capped = wire.Capped;
+                    vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
+                    await Until(() => wire.Capped == capped + 1); await Task.Delay(150);
+                    Require(wire.Whole == 2, "Hidden-row projection must back off after its retry budget is exhausted.");
+                }
+                wire.FailWhole = false;
+                await vm.CompleteSectionAsync("row");
+            }
             await Until(() => vm.Sections.Count == 2 && vm.Sections[1].Items.Count == 15);
-            Require(wire.Whole == 1 && vm.Sections[1].Items.First().ContentId == "alpha-21" && !vm.Sections[1].HasMore,
+            Require(wire.Whole == (failCompletion ? 3 : 1) && vm.Sections[1].Items.First().ContentId == "alpha-21" && !vm.Sections[1].HasMore,
                 "A fully duplicate-filtered partial row must recover its hidden remaining cards without a carousel.");
         }
         finally { Retire(vm); }
@@ -333,7 +360,7 @@ internal static class HomeRowWindowNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         public int Capped, Whole; public bool HoldWhole, FailWhole, HoldRefresh, DuplicateFirst;
-        public bool HoldFirstWhole, FailFirstWhole, NullFirstWhole, PartialWhole, ReverseWhole, UnsupportedCapabilities;
+        public bool HoldFirstWhole, FailFirstWhole, NullFirstWhole, NullWhole, PartialWhole, ReverseWhole, UnsupportedCapabilities;
         public int CardCount = 35, RowItemLimit = 50;
         public int[]? CardsOverride;
         public string Title = "Progress";
@@ -365,7 +392,7 @@ internal static class HomeRowWindowNativeFixture
             {
                 var attempt = Interlocked.Increment(ref Whole);
                 if (FailWhole || (FailFirstWhole && attempt == 1)) return new(HttpStatusCode.BadRequest) { Content = new StringContent("""{"status":400,"detail":"fixture failure"}""") };
-                if (NullFirstWhole && attempt == 1) return Json("null");
+                if (NullWhole || (NullFirstWhole && attempt == 1)) return Json("null");
                 if (HoldFirstWhole && attempt == 1) { Started.TrySetResult(); await Release.Task.WaitAsync(ct); }
                 else if (HoldWhole) { Started.TrySetResult(); await Release.Task; }
             }

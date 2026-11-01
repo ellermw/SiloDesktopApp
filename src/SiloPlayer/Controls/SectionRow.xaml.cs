@@ -32,6 +32,7 @@ public sealed partial class SectionRow : UserControl
     private bool _canScrollPrev;
     private bool _canScrollNext;
     private bool _completionDemandArmed;
+    private double _lastHorizontalOffset;
     private bool _isPinned;
     private int? _libraryId;
     private bool _useTitleViewLink;
@@ -228,7 +229,11 @@ public sealed partial class SectionRow : UserControl
             : useLandscape ? "LandscapeCardTemplate"
             : "PosterCardTemplate";
         var templateChanged = !string.Equals(_lastRenderedTemplateKey, templateKey, StringComparison.Ordinal);
-        if (!isSameSection || templateChanged) _completionDemandArmed = false;
+        if (!isSameSection || templateChanged)
+        {
+            _completionDemandArmed = false;
+            _lastHorizontalOffset = CardsScrollViewer.HorizontalOffset;
+        }
         var template = (DataTemplate)this.Resources[templateKey];
         if (!ReferenceEquals(CardsRepeater.ItemTemplate, template)) CardsRepeater.ItemTemplate = template;
         if (!ReferenceEquals(CardsRepeater.ItemsSource, section.Items)) CardsRepeater.ItemsSource = section.Items;
@@ -298,6 +303,8 @@ public sealed partial class SectionRow : UserControl
         {
             if (!IsLoaded || activation != _activationGeneration || !ReferenceEquals(section, Section)) return;
             var clamped = Math.Clamp(targetOffset, 0, CardsScrollViewer.ScrollableWidth);
+            // Restoring the mounted position is not new forward navigation.
+            _lastHorizontalOffset = clamped;
             CardsScrollViewer.ChangeView(clamped, null, null, disableAnimation: true);
             UpdateScrollBounds();
         });
@@ -347,7 +354,9 @@ public sealed partial class SectionRow : UserControl
     {
         // Initial layout can already be within one viewport of the tail on
         // wide displays. Wait for forward movement or explicit navigation.
-        if (CardsScrollViewer.HorizontalOffset > 1) _completionDemandArmed = true;
+        var offset = CardsScrollViewer.HorizontalOffset;
+        if (offset > _lastHorizontalOffset + 1) _completionDemandArmed = true;
+        _lastHorizontalOffset = offset;
         UpdateScrollBounds();
     }
 
@@ -481,7 +490,12 @@ public sealed partial class SectionRow : UserControl
         RightFadeGradient.Opacity = _canScrollNext ? 1.0 : 0.0;
         if (IsLoaded && _completionDemandArmed && Section is { CanComplete: true, LoadCompleted: true } section && viewport > 0 && extent > 0
             && extent - viewport - offset <= viewport)
+        {
+            // Consume this gesture. Size/presentation changes at the same offset
+            // are not fresh demand after a completion cycle has failed.
+            _completionDemandArmed = false;
             OnNearEnd?.Invoke(section);
+        }
     }
 
     // ─── Hover-reveal ───────────────────────────────────────────────────

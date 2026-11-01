@@ -24,6 +24,7 @@ public partial class HomeViewModel : ObservableObject,
     private readonly Dictionary<string, HomeSectionWithItems> _rawSections = new(StringComparer.Ordinal);
     private readonly HashSet<(int Generation, string SectionId)> _completingSections = [];
     private readonly HashSet<string> _completionWantedSections = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> _completionRetryAfter = new(StringComparer.Ordinal);
     private long _rowCompletionOrder;
     private long _progressRemovalRevision;
     private readonly Dictionary<string, (long Revision, string? SeriesId)> _progressRemovals = new(StringComparer.Ordinal);
@@ -218,6 +219,7 @@ public partial class HomeViewModel : ObservableObject,
     private bool _isActive;
     private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan RealtimeRefreshDebounce = TimeSpan.FromMilliseconds(350);
+    private static readonly TimeSpan CompletionRetryCooldown = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan CatalogBurstRefreshCooldown = TimeSpan.FromSeconds(30);
     private readonly HomeRealtimeRefreshGate _realtimeRefreshGate = new(
         RealtimeRefreshDebounce,
@@ -387,6 +389,7 @@ public partial class HomeViewModel : ObservableObject,
             Sections.Clear();
             _rawSections.Clear();
             _completionWantedSections.Clear();
+            _completionRetryAfter.Clear();
             _progressRemovals.Clear();
             _layoutOrder = [];
             _avoidDuplicateTypes.Clear();
@@ -425,6 +428,8 @@ public partial class HomeViewModel : ObservableObject,
             foreach (var staleId in _rawSections.Keys.Where(id => !activeIds.Contains(id)).ToList())
                 _rawSections.Remove(staleId);
             _completionWantedSections.RemoveWhere(id => !activeIds.Contains(id));
+            foreach (var staleId in _completionRetryAfter.Keys.Where(id => !activeIds.Contains(id)).ToList())
+                _completionRetryAfter.Remove(staleId);
 
             var previous = FeaturedSections
                 .Concat(Sections)
@@ -636,8 +641,12 @@ public partial class HomeViewModel : ObservableObject,
         ApplyRefreshedSection(completed);
         // Demand survives a same-owner generation change, even when the new
         // bounded read reconciles to exactly the same mounted cards.
-        if (!completed.CanComplete) _completionWantedSections.Remove(completed.Id);
-        else if (_completionWantedSections.Contains(completed.Id)) _ = CompleteSectionAsync(completed.Id);
+        if (!completed.CanComplete)
+        {
+            _completionWantedSections.Remove(completed.Id);
+            _completionRetryAfter.Remove(completed.Id);
+        }
+        else if (_completionWantedSections.Contains(completed.Id)) _ = CompleteSectionAsync(completed.Id, userDemand: false);
     }
 
     private void FilterProgressRemovals(HomeSectionWithItems incoming, long readRevision)
@@ -664,30 +673,38 @@ public partial class HomeViewModel : ObservableObject,
 
     private void PreserveExpandedState(HomeSectionWithItems incoming)
     {
-        if (incoming.Featured) return;
         _rawSections.TryGetValue(incoming.Id, out var cached);
         if (cached?.ShownCount is { } shown)
         {
-            // Retain the priority budget and completion order, not stale cards.
+            // Retain the priority budget and completion order, not stale cards,
+            // even while the layout promotes this expanded row to featured.
             incoming.ShownCount = Math.Min(shown, incoming.Items.Count);
             incoming.CompletedOrder = cached.CompletedOrder;
         }
     }
 
     /// <summary>Recover the rest of a partial row without shifting cards already shown.</summary>
-    public async Task CompleteSectionAsync(string sectionId)
+    public Task CompleteSectionAsync(string sectionId) => CompleteSectionAsync(sectionId, userDemand: true);
+
+    private async Task CompleteSectionAsync(string sectionId, bool userDemand)
     {
         var generation = _sectionLoadGeneration;
         var ct = _sectionLoadCts?.Token ?? CancellationToken.None;
         var key = (generation, sectionId);
         if (!IsCurrentSectionLoad(generation, ct, sectionId)
             || !_rawSections.TryGetValue(sectionId, out var raw) || !raw.CanComplete) return;
+        // Only fresh user navigation can bypass a failed cycle's cooldown.
+        // In particular, hidden-row projection must not rearm it on every refresh.
+        if (!userDemand && _completionRetryAfter.TryGetValue(sectionId, out var retryAfter)
+            && DateTimeOffset.UtcNow < retryAfter) return;
+        _completionRetryAfter.Remove(sectionId);
         _completionWantedSections.Add(sectionId);
         if (!_completingSections.Add(key)) return;
         var owner = _loadedContext!.Value;
         var language = _homeApi.LanguageGeneration;
         var removalRevision = _progressRemovalRevision;
         var shown = HomeSectionDedupe.Snapshot(raw);
+        var exhausted = false;
         try
         {
             // Retry one transient failure/null response without requiring a
@@ -716,7 +733,12 @@ public partial class HomeViewModel : ObservableObject,
                 catch (OperationCanceledException) when (ct.IsCancellationRequested || !_homeApi.IsCurrentReadContext(owner, language)) { throw; }
                 catch (Exception ex) { LogSectionFetchFailure(sectionId, ex); }
 
-                if (applied || attempt == 1) return;
+                if (applied) return;
+                if (attempt == 1)
+                {
+                    exhausted = true;
+                    return;
+                }
                 await Task.Delay(RealtimeRefreshDebounce, ct).ConfigureAwait(false);
                 var stillWanted = false;
                 await RunOnUiThreadAsync(() => stillWanted = IsCurrentSectionLoad(generation, ct, sectionId)
@@ -732,7 +754,16 @@ public partial class HomeViewModel : ObservableObject,
         }
         finally
         {
-            await RunOnUiThreadAsync(() => _completingSections.Remove(key)).ConfigureAwait(false);
+            await RunOnUiThreadAsync(() =>
+            {
+                if (exhausted && IsCurrentSectionLoad(generation, ct, sectionId)
+                    && _homeApi.IsCurrentReadContext(owner, language))
+                {
+                    _completionWantedSections.Remove(sectionId);
+                    _completionRetryAfter[sectionId] = DateTimeOffset.UtcNow + CompletionRetryCooldown;
+                }
+                _completingSections.Remove(key);
+            }).ConfigureAwait(false);
         }
     }
 
@@ -923,7 +954,7 @@ public partial class HomeViewModel : ObservableObject,
         // A duplicate-filtered or dismissed partial row has no carousel left
         // to report near-end demand, so recover its remaining cards now.
         foreach (var section in FeaturedSections.Concat(Sections).Where(section => section.CanComplete && section.Items.Count == 0).ToList())
-            _ = CompleteSectionAsync(section.Id);
+            _ = CompleteSectionAsync(section.Id, userDemand: false);
     }
 
     private async Task LoadRecipeTypesAsync(int generation, CancellationToken ct)
