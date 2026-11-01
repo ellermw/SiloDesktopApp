@@ -20,6 +20,8 @@ public class HomeRowCapabilityTests
         Assert.Equal(expectedQuery, Assert.Single(wire.Rows).Query);
         Assert.Contains("row%2Fone", wire.Rows[0].AbsoluteUri);
         Assert.Equal(expectedQuery.Length > 0, response.Section!.HasMore);
+        Assert.Equal(expectedQuery.Length == 0, response.Section.HasReadWhole);
+        Assert.Equal(expectedQuery.Length > 0, response.Section.CanComplete);
     }
 
     [Fact]
@@ -83,8 +85,10 @@ public class HomeRowCapabilityTests
     public async Task WholeReadBypassesCapAndCapabilityDiscoveryForHeroAndCompletion()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire);
-        await new HomeApi(Client(http)).GetSectionItemsAsync("row");
+        var response = await new HomeApi(Client(http)).GetSectionItemsAsync("row");
         Assert.Equal(0, wire.CapabilityReads); Assert.Equal("", Assert.Single(wire.Rows).Query);
+        Assert.True(response.Section!.HasMore);
+        Assert.True(response.Section.HasReadWhole); Assert.False(response.Section.CanComplete);
     }
 
     [Fact]

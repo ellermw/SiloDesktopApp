@@ -469,7 +469,7 @@ public sealed partial class SectionRow : UserControl
         // Keep forward navigation available at the current tail for partial
         // rows, including when all initially served cards fit on screen.
         _canScrollNext = (offset < extent - viewport - 1 && extent > viewport + 1)
-            || Section is { HasMore: true, LoadCompleted: true };
+            || Section is { CanComplete: true, LoadCompleted: true };
 
         ScrollLeftBtn.IsEnabled = _canScrollPrev;
         ScrollRightBtn.IsEnabled = _canScrollNext;
@@ -479,7 +479,7 @@ public sealed partial class SectionRow : UserControl
         // only when there's more content in that direction.
         LeftFadeGradient.Opacity = _canScrollPrev ? 1.0 : 0.0;
         RightFadeGradient.Opacity = _canScrollNext ? 1.0 : 0.0;
-        if (IsLoaded && _completionDemandArmed && Section is { HasMore: true, LoadCompleted: true } section && viewport > 0 && extent > 0
+        if (IsLoaded && _completionDemandArmed && Section is { CanComplete: true, LoadCompleted: true } section && viewport > 0 && extent > 0
             && extent - viewport - offset <= viewport)
             OnNearEnd?.Invoke(section);
     }

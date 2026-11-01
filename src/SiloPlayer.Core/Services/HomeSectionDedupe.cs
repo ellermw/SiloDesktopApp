@@ -63,6 +63,7 @@ public static class HomeSectionDedupe
         IsCustom = source.IsCustom, Customized = source.Customized,
         LoadFailed = source.LoadFailed, LoadCompleted = source.LoadCompleted,
         HasMore = source.HasMore, ShownCount = source.ShownCount, CompletedOrder = source.CompletedOrder,
+        HasReadWhole = source.HasReadWhole,
         ReadLanguageGeneration = source.ReadLanguageGeneration,
         Items = new(source.Items),
     };

@@ -634,7 +634,7 @@ public partial class HomeViewModel : ObservableObject,
         ApplyRefreshedSection(completed);
         // Demand survives a same-owner generation change, even when the new
         // bounded read reconciles to exactly the same mounted cards.
-        if (!completed.HasMore) _completionWantedSections.Remove(completed.Id);
+        if (!completed.CanComplete) _completionWantedSections.Remove(completed.Id);
         else if (_completionWantedSections.Contains(completed.Id)) _ = CompleteSectionAsync(completed.Id);
     }
 
@@ -678,7 +678,7 @@ public partial class HomeViewModel : ObservableObject,
         var ct = _sectionLoadCts?.Token ?? CancellationToken.None;
         var key = (generation, sectionId);
         if (!IsCurrentSectionLoad(generation, ct, sectionId)
-            || !_rawSections.TryGetValue(sectionId, out var raw) || !raw.HasMore) return;
+            || !_rawSections.TryGetValue(sectionId, out var raw) || !raw.CanComplete) return;
         _completionWantedSections.Add(sectionId);
         if (!_completingSections.Add(key)) return;
         var owner = _loadedContext!.Value;
@@ -700,13 +700,13 @@ public partial class HomeViewModel : ObservableObject,
                     {
                         if (!IsCurrentSectionLoad(generation, ct, sectionId)
                             || !_homeApi.IsCurrentReadContext(owner, language)
-                            || !_rawSections.TryGetValue(sectionId, out var current) || !current.HasMore
+                            || !_rawSections.TryGetValue(sectionId, out var current) || !current.CanComplete
                             || response.Section == null) return;
                         response.Section.Items ??= new ObservableCollection<MediaItem>();
                         FilterProgressRemovals(response.Section, removalRevision);
                         var completed = HomeRowWindow.Complete(shown, response.Section, current, ++_rowCompletionOrder);
                         ApplyRefreshedSection(completed);
-                        if (!completed.HasMore) _completionWantedSections.Remove(sectionId);
+                        if (!completed.CanComplete) _completionWantedSections.Remove(sectionId);
                         applied = true;
                     }).ConfigureAwait(false);
                 }
@@ -749,6 +749,7 @@ public partial class HomeViewModel : ObservableObject,
         LoadFailed = loadFailed,
         LoadCompleted = loadCompleted ?? source.LoadCompleted,
         HasMore = source.HasMore,
+        HasReadWhole = source.HasReadWhole,
         ShownCount = source.ShownCount,
         CompletedOrder = source.CompletedOrder,
         ReadLanguageGeneration = source.ReadLanguageGeneration,
@@ -772,6 +773,7 @@ public partial class HomeViewModel : ObservableObject,
         LoadFailed = false,
         LoadCompleted = cached?.LoadCompleted == true && cached.LoadFailed == false,
         HasMore = cached?.HasMore ?? false,
+        HasReadWhole = cached?.HasReadWhole ?? false,
         ShownCount = cached?.ShownCount,
         CompletedOrder = cached?.CompletedOrder ?? 0,
         ReadLanguageGeneration = cached?.ReadLanguageGeneration,
@@ -917,7 +919,7 @@ public partial class HomeViewModel : ObservableObject,
         }
         // A duplicate-filtered or dismissed partial row has no carousel left
         // to report near-end demand, so recover its remaining cards now.
-        foreach (var section in FeaturedSections.Concat(Sections).Where(section => section.HasMore && section.Items.Count == 0).ToList())
+        foreach (var section in FeaturedSections.Concat(Sections).Where(section => section.CanComplete && section.Items.Count == 0).ToList())
             _ = CompleteSectionAsync(section.Id);
     }
 

@@ -85,6 +85,8 @@ public class HomeRowWindowTests
         var partial = Row("one", "two", "three"); partial.HasMore = true;
         var first = HomeRowWindow.Complete(shown, partial, shown, 7);
         Assert.True(first.HasMore);
+        Assert.True(first.HasReadWhole);
+        Assert.False(first.CanComplete);
         Assert.True(HomeRowWindow.IsExpanded(first));
         Assert.Equal(2, first.ShownCount);
         var unchanged = HomeRowWindow.Complete(first, partial, first, 8);
@@ -94,6 +96,50 @@ public class HomeRowWindowTests
         Assert.Equal(["one", "two", "three", "four"], completed.Items.Select(i => i.ContentId));
         Assert.Equal(2, completed.ShownCount);
         Assert.Equal(7, completed.CompletedOrder);
+    }
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(50)]
+    public void LanguageChangeReplacesAvailableTranslationsWithoutDroppingShownCards(int limit)
+    {
+        var current = Row("one", "omitted", "tail");
+        current.ReadLanguageGeneration = 1; current.ShownCount = 2; current.CompletedOrder = 7;
+        var whole = Row("tail", "one", "new");
+        whole.ReadLanguageGeneration = 2; whole.HasMore = true; whole.ItemLimit = limit;
+        whole.Items[0].Title = "Translated tail"; whole.Items[1].Title = "Translated one";
+
+        var completed = HomeRowWindow.Complete(HomeSectionDedupe.Snapshot(current), whole, current, 8);
+
+        Assert.Equal(limit == 2 ? new[] { "one", "omitted", "tail" } : new[] { "one", "omitted", "tail", "new" },
+            completed.Items.Select(item => item.ContentId));
+        Assert.True(completed.Items.Count >= current.Items.Count);
+        Assert.Same(whole.Items[1], completed.Items[0]);
+        Assert.Same(current.Items[1], completed.Items[1]);
+        Assert.Same(whole.Items[0], completed.Items[2]);
+        Assert.Equal(2, completed.ShownCount); Assert.Equal(7, completed.CompletedOrder);
+        Assert.Equal(whole.ReadLanguageGeneration, completed.ReadLanguageGeneration);
+        Assert.True(completed.HasMore); Assert.False(completed.CanComplete);
+    }
+
+    [Fact]
+    public void WholeReadStateSurvivesSnapshotProjectionAndReconciliationEvenWhenAllCardsAreHidden()
+    {
+        var row = Row("shared"); row.HasMore = true; row.HasReadWhole = true;
+        Assert.True(HomeRowWindow.IsExpanded(row));
+        var anchor = Row("shared"); anchor.Id = "anchor";
+        var projected = HomeSectionDedupe.Project([new() { Id = "anchor" }, new() { Id = "row" }],
+            new Dictionary<string, HomeSectionWithItems> { ["anchor"] = anchor, ["row"] = HomeSectionDedupe.Snapshot(row) },
+            new HashSet<string> { "recipe" });
+        var mounted = Row("shared"); mounted.HasMore = true;
+        var change = HomeSectionReconciler.Apply(mounted, projected["row"]);
+        Assert.True(change.HasFlag(HomeSectionChange.Metadata));
+        Assert.Empty(mounted.Items);
+        Assert.True(mounted.HasMore); Assert.True(mounted.HasReadWhole); Assert.False(mounted.CanComplete);
+        var json = JsonSerializer.SerializeToElement(mounted, Wire);
+        Assert.True(json.GetProperty("has_more").GetBoolean());
+        Assert.False(json.TryGetProperty("has_read_whole", out _));
+        Assert.False(json.TryGetProperty("can_complete", out _));
     }
 
     [Fact]

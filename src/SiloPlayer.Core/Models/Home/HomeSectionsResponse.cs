@@ -15,6 +15,10 @@ public class HomeSectionWithItems
     public int ItemLimit { get; set; }
     public int TotalCount { get; set; }
     public bool HasMore { get; set; }
+    // An uncapped response can still advertise server-side truncation, but
+    // repeating the same request cannot page beyond it.
+    [JsonIgnore] public bool HasReadWhole { get; set; }
+    [JsonIgnore] public bool CanComplete => HasMore && !HasReadWhole;
     [JsonIgnore] public int? ShownCount { get; set; }
     [JsonIgnore] public long CompletedOrder { get; set; }
     [JsonIgnore] public long? ReadLanguageGeneration { get; set; }

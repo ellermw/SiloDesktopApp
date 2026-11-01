@@ -75,6 +75,7 @@ public static class HomeSectionReconciler
             || current.Customized != incoming.Customized
             || current.LoadFailed != incoming.LoadFailed
             || current.HasMore != incoming.HasMore
+            || current.HasReadWhole != incoming.HasReadWhole
             || current.ShownCount != incoming.ShownCount
             || current.CompletedOrder != incoming.CompletedOrder
             || current.ReadLanguageGeneration != incoming.ReadLanguageGeneration
@@ -91,6 +92,7 @@ public static class HomeSectionReconciler
         current.LoadFailed = incoming.LoadFailed;
         current.LoadCompleted = incoming.LoadCompleted;
         current.HasMore = incoming.HasMore;
+        current.HasReadWhole = incoming.HasReadWhole;
         current.ShownCount = incoming.ShownCount;
         current.CompletedOrder = incoming.CompletedOrder;
         current.ReadLanguageGeneration = incoming.ReadLanguageGeneration;

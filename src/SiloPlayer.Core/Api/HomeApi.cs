@@ -53,7 +53,11 @@ public class HomeApi(SiloApiClient client)
         var section = await client.SendRequestAsync<HomeSectionWithItems>(owner, HttpMethod.Get,
             $"/api/v2/home/sections/{Uri.EscapeDataString(sectionId)}/items", null, ct).ConfigureAwait(false);
         RequireCurrentRead(owner, language, ct);
-        if (section != null) section.ReadLanguageGeneration = language;
+        if (section != null)
+        {
+            section.ReadLanguageGeneration = language;
+            section.HasReadWhole = true;
+        }
         return new() { Section = section };
     }
 
@@ -74,6 +78,7 @@ public class HomeApi(SiloApiClient client)
         if (section != null)
         {
             section.ReadLanguageGeneration = language;
+            section.HasReadWhole = !bounded;
             if (!bounded) section.HasMore = false;
         }
         return new() { Section = section };
