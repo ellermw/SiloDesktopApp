@@ -219,6 +219,31 @@ public sealed class UpdateChannelTests : IDisposable
         Assert.Equal(new Version(1, 2, 518, 0), numeric);
     }
 
+    [Theory]
+    [InlineData("1.2.518")]
+    [InlineData("1.2.518-beta.12")]
+    [InlineData("1.2.518.0")]
+    public async Task BareTagsAreRejectedByDiscoveryAndIndependentTagAuthority(string tag)
+    {
+        var beta = tag.Contains('-');
+        Assert.False(GitHubReleaseReader.TryReleaseIdentity(tag, beta, out _, out _));
+        var item = Release(tag); item["tag_name"] = tag;
+        // Match even the asset URLs to the bare tag: rejection must be about identity.
+        item["assets"]![0]!["browser_download_url"] = $"https://github.com/ellermw/SiloDesktopApp/releases/download/{tag}/SiloInstaller-Windows-x64.exe";
+        using var wire = new Wire { Stable = beta ? Release("1.2.517") : item, Catalog = beta ? [item] : [] };
+        using var http = new HttpClient(wire);
+        await Assert.ThrowsAsync<InvalidDataException>(() => new GitHubReleaseReader(http).ReadTagAsync(tag, default));
+        var authorityDirectory = Path.Combine(root, "authority");
+        await Assert.ThrowsAsync<InvalidDataException>(() => new IncrementalReleaseAuthority(http).FetchAsync(tag, authorityDirectory, default));
+        Assert.Empty(wire.Requests); Assert.False(Directory.Exists(authorityDirectory));
+        var service = Create(http);
+        if (beta) await service.SetChannelAsync(AppUpdateChannel.Beta);
+        await service.CheckAsync(); await service.DownloadAsync();
+        Assert.Null(service.State.Release); Assert.Null(service.State.ReadyInstaller); Assert.Null(service.State.PreparedPackage);
+        Assert.False(await service.ReverifyReadyAsync()); Assert.False(service.ShouldInstallOnExit);
+        Assert.All(wire.Requests, request => Assert.StartsWith("https://api.github.com/", request.Url));
+    }
+
     [Fact]
     public async Task CatalogRateLimitWithoutANewerStableStillAppliesSharedCooldown()
     {
@@ -304,6 +329,43 @@ public sealed class UpdateChannelTests : IDisposable
         Assert.Null(service.State.Error); Assert.Equal("1.2.519-beta.1", service.State.Release?.DisplayVersion);
         wire.Catalog = [ManipulatedBeta("1.2.519-beta.2", kind)]; await service.CheckAsync();
         Assert.Null(service.State.Error); Assert.Equal("1.2.518", service.State.Release?.DisplayVersion);
+    }
+
+    [Theory]
+    [InlineData("url")]
+    [InlineData("digest")]
+    [InlineData("duplicate")]
+    [InlineData("pending")]
+    [InlineData("missing-pack")]
+    public async Task InvalidOptionalIncrementalMetadataCannotHideAValidLowerBetaOrStable(string kind)
+    {
+        var invalid = ReleaseWithIncrementalAssets("1.2.519-beta.2");
+        var assets = invalid["assets"]!.AsArray(); var manifest = assets[1]!;
+        if (kind == "url") manifest["browser_download_url"] = "https://evil.invalid/manifest.json";
+        if (kind == "digest") manifest["digest"] = "sha256:invalid";
+        if (kind == "duplicate") assets.Add(manifest.DeepClone());
+        if (kind == "pending") manifest["state"] = "starter";
+        if (kind == "missing-pack") assets.RemoveAt(2);
+        var lower = ReleaseWithIncrementalAssets("1.2.519-beta.1");
+        using var wire = new Wire { Stable = Release("1.2.518"), Catalog = [invalid, lower] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal("1.2.519-beta.1", service.State.Release?.DisplayVersion);
+        Assert.NotNull(service.State.Release!.Incremental); Assert.False(service.State.Release.HasInvalidIncrementalAssets);
+        wire.Catalog = [lower, invalid]; await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal("1.2.519-beta.1", service.State.Release?.DisplayVersion);
+        wire.Catalog = [invalid]; await service.CheckAsync();
+        Assert.Null(service.State.Error); Assert.Equal("1.2.518", service.State.Release?.DisplayVersion);
+    }
+
+    private static JsonObject ReleaseWithIncrementalAssets(string version)
+    {
+        var release = Release(version);
+        foreach (var name in new[] { UpdateManifestValidation.ManifestName, UpdateManifestValidation.PackName })
+            release["assets"]!.AsArray().Add(new JsonObject { ["name"] = name, ["state"] = "uploaded", ["size"] = 1,
+                ["digest"] = "sha256:" + new string('a', 64),
+                ["browser_download_url"] = $"https://github.com/ellermw/SiloDesktopApp/releases/download/v{version}/{name}" });
+        return release;
     }
 
     [Fact]

@@ -16,8 +16,8 @@ internal sealed partial class GitHubReleaseReader
     internal static bool TryReleaseIdentity(string tag, bool prerelease, out Version numeric, out ReleaseVersion? semantic)
     {
         numeric = new(0, 0, 0, 0); semantic = null;
-        if (tag.Length is 0 or > 64) return false;
-        var text = tag.StartsWith('v') ? tag[1..] : tag;
+        if (tag.Length is < 2 or > 64 || !tag.StartsWith('v')) return false;
+        var text = tag[1..];
         if (ReleaseVersion.TryParse(text, out var parsed))
         {
             if (parsed.IsPrerelease != prerelease) return false;
@@ -68,7 +68,11 @@ internal sealed partial class GitHubReleaseReader
                 // installer and all authority bounds. Invalid new assets fail closed
                 // for that release only: it is ineligible, and the already-validated
                 // Stable or a lower valid Beta remains the offer.
-                try { best = Parse(Encoding.UTF8.GetBytes(entry.GetRawText()), installed, allowPrerelease: true) ?? best; }
+                try
+                {
+                    var candidate = Parse(Encoding.UTF8.GetBytes(entry.GetRawText()), installed, allowPrerelease: true);
+                    if (candidate is { HasInvalidIncrementalAssets: false }) best = candidate;
+                }
                 catch (Exception ex) when (ex is InvalidDataException or KeyNotFoundException or InvalidOperationException or FormatException) { }
             }
             if (!catalog.HasNext) return new(best, null) { Channel = AppUpdateChannel.Beta, Stable = stable, Pages = pages };

@@ -99,6 +99,19 @@ try {
     try {$actual=[BitConverter]::ToString($hash.ComputeHash($packageStream)).Replace('-','')}finally{$hash.Dispose()}
     if ($actual -ine $Sha256) {throw 'Installer checksum verification failed.'}
     if ($VerifyOnly -and -not $ValidateExitGate) {Write-Result 'verified' 'Package verified; no installation was launched.' $gateName;exit 0}
+    if ($paths.Versioned) {
+        # Incremental updates leave the root launcher immutable. Launchers before
+        # 1.2.517.0 do not check the distinct full-update gate held across setup.
+        # Never run setup with that launch-exclusion gap; require manual migration.
+        $failureState='deferred'
+        Assert-OrdinaryPath $paths.Restart
+        $launcherVersion=$null
+        if (-not [version]::TryParse([Diagnostics.FileVersionInfo]::GetVersionInfo($paths.Restart).FileVersion,[ref]$launcherVersion) -or
+            $launcherVersion -lt [version]'1.2.517.0') {
+            throw 'The installed launcher does not support safe in-app full updates. Close Silo and run the full installer manually.'
+        }
+        $failureState='failed'
+    }
     if (-not $VerifyOnly) {
     if ($HandoffToken -notmatch '^[a-f0-9]{32}$') {throw 'Missing normal-close confirmation identity.'}
 

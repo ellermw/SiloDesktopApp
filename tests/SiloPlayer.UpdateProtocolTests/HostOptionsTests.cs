@@ -34,6 +34,17 @@ public sealed class HostOptionsTests
         => Assert.Throws<InvalidDataException>(() => HostOptions.Parse(Arguments(tag)));
 
     [Theory]
+    [InlineData("1.2.518")]
+    [InlineData("1.2.518.0")]
+    [InlineData("1.2.518-beta.12")]
+    public void Bare_tags_are_rejected_before_broker_or_worker_startup(string tag)
+    {
+        Assert.Throws<InvalidDataException>(() => HostOptions.Parse(Arguments(tag)));
+        var worker = Arguments(tag); worker[1] = "yes";
+        Assert.Throws<InvalidDataException>(() => HostOptions.Parse(worker));
+    }
+
+    [Theory]
     [InlineData("v1.2.518-beta.0")]
     [InlineData("v1.2.518-beta.01")]
     [InlineData("v1.2.518-beta.65535")]

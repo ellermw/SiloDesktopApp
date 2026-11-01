@@ -16,9 +16,10 @@ internal sealed record HostOptions(bool Worker,string AppPipe,string WorkerPipe,
         foreach(var key in values.Keys)if(key is not ("--worker" or "--app-pipe" or "--worker-pipe" or "--parent" or "--parent-start" or "--package" or "--tag" or "--restart" or "--owner" or "--broker" or "--broker-start"))throw new InvalidDataException();
         foreach(var pipe in new[]{Get("--app-pipe"),Get("--worker-pipe")})if(!Regex.IsMatch(pipe,@"^SiloUpdate-[a-f0-9]{32}$"))throw new InvalidDataException();
         var tag=Get("--tag");
-        if(!Regex.IsMatch(tag,@"\Av?\d+\.\d+\.\d+(?:\.0)?\z"))
+        if(tag.Length is < 2 or > 64 || !tag.StartsWith('v'))throw new InvalidDataException();
+        if(!Regex.IsMatch(tag,@"\Av\d+\.\d+\.\d+(?:\.0)?\z"))
         {
-            if(!ReleaseVersion.TryParse(tag.StartsWith('v') ? tag[1..] : tag,out var release) || !release.IsPrerelease)
+            if(!ReleaseVersion.TryParse(tag[1..],out var release) || !release.IsPrerelease)
                 throw new InvalidDataException();
             _=release.GetWindowsVersion(); // Enforce canonical beta sequencing and Windows bounds.
         }

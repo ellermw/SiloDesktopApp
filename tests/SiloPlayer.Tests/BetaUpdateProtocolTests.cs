@@ -158,15 +158,21 @@ public sealed class BetaUpdateProtocolTests : IDisposable
     [InlineData("incomplete-pair")]
     public async Task ManipulatedIncrementalAuthorityNeverSilentlyBecomesFullInstallerSuccess(string bad)
     {
-        var source = await ArrangeAsync("1.2.518-beta.2", "1.2.518-beta.12");
+        // Malformed optional metadata is ineligible in the Beta catalog. Use the
+        // independently selected Latest stable to retain the download hard-failure
+        // coverage for an incomplete pair; manifest corruption still exercises Beta.
+        var target = bad == "incomplete-pair" ? "1.2.518" : "1.2.518-beta.12";
+        var source = await ArrangeAsync("1.2.518-beta.2", target);
         var path = Path.Combine(source.Assets, UpdateManifestValidation.ManifestName);
         var json = JsonNode.Parse(await File.ReadAllTextAsync(path))!;
         if (bad == "missing-identity") json.AsObject().Remove("ReleaseVersion");
         if (bad == "wrong-identity") json["ReleaseVersion"] = "1.2.518-beta.2";
         await File.WriteAllTextAsync(path, json.ToJsonString());
-        using var wire = new Assets("1.2.518-beta.12", source.Assets) { BadManifestHash = bad == "tampered-hash", IncompletePair = bad == "incomplete-pair" };
-        using var http = new HttpClient(wire); var service = await CreateAsync(http, "1.2.518-beta.2", "1.2.518-beta.12", source.Client);
-        await service.CheckAsync(); await service.DownloadAsync();
+        using var wire = new Assets(target, source.Assets) { BadManifestHash = bad == "tampered-hash", IncompletePair = bad == "incomplete-pair" };
+        using var http = new HttpClient(wire); var service = await CreateAsync(http, "1.2.518-beta.2", target, source.Client);
+        await service.CheckAsync();
+        Assert.Equal("v" + target, service.State.Release?.Tag);
+        await service.DownloadAsync();
         Assert.NotNull(service.State.Error); Assert.Null(service.State.PreparedPackage); Assert.Null(service.State.ReadyInstaller);
         Assert.Equal(0, wire.FullInstallerRequests); Assert.False(service.ShouldInstallOnExit);
     }
