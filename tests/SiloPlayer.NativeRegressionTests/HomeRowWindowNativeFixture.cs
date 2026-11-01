@@ -30,6 +30,7 @@ internal static class HomeRowWindowNativeFixture
         await ConcurrentRefreshAsync();
         await HiddenPartialAsync();
         await HiddenPartialAsync(failCompletion: true);
+        await HiddenNoProgressPairAsync();
         await RetiredOwnerAsync();
         Program.Log("PASS: bounded Home actual carousel, single completion, refresh, retry, removal and retired owner.");
     }
@@ -488,6 +489,39 @@ internal static class HomeRowWindowNativeFixture
         finally { Retire(vm); }
     }
 
+    private static async Task HiddenNoProgressPairAsync()
+    {
+        using var wire = new Wire { DuplicateFirst = true, HiddenRows = 2, PartialWhole = true, PartialWholeCount = 20 };
+        using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://home-window.invalid");
+        using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("alpha");
+        var vm = new HomeViewModel(new HomeApi(client), auth, new SettingsApi(client));
+        try
+        {
+            await vm.LoadCommand.ExecuteAsync(null);
+            await Until(() => vm.Sections.Count == 3 && vm.Sections.Skip(1).All(row => row.ShownCount.HasValue));
+            await Task.Delay(200);
+            Require(wire.Whole == 2 && vm.Sections.Skip(1).All(row => row.Items.Count == 0 && row.CanComplete),
+                "Two still-hidden truncated completions must each be attempted once, not ping-pong through projection.");
+            var wanted = (HashSet<string>)typeof(HomeViewModel).GetField("_completionWantedSections", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(vm)!;
+            Require(wanted.Count == 0, "Successful no-progress automatic reads must retire their automatic demand.");
+            typeof(HomeViewModel).GetMethod("ApplySectionProjection", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, [null]);
+            await Task.Delay(100);
+            Require(wire.Whole == 2, "An unrelated projection must not repeat a hidden row's identical whole read.");
+
+            wire.Title = "Hidden whole refresh";
+            vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
+            await Until(() => vm.Sections.Skip(1).All(row => row.Title == wire.Title));
+            await Task.Delay(200);
+            Require(wire.Whole == 4 && wanted.Count == 0,
+                "A new layout generation must refresh each expanded row once without restarting automatic recovery.");
+            await vm.CompleteSectionAsync("row"); await Task.Delay(100);
+            Require(wire.Whole == 5 && vm.Sections[1].CanComplete,
+                "A fresh explicit demand must still be able to retry a hidden truncated row once.");
+        }
+        finally { Retire(vm); }
+    }
+
     private static void Retire(HomeViewModel vm) { vm.SetActive(false); CommunityToolkit.Mvvm.Messaging.WeakReferenceMessenger.Default.UnregisterAll(vm); }
     private static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
     private static async Task Until(Func<bool> condition)
@@ -500,7 +534,7 @@ internal static class HomeRowWindowNativeFixture
     {
         public int Capped, Whole; public bool HoldWhole, FailWhole, HoldRefresh, DuplicateFirst;
         public bool HoldFirstWhole, FailFirstWhole, NullFirstWhole, NullWhole, PartialWhole, ReverseWhole, UnsupportedCapabilities;
-        public int CardCount = 35, RowItemLimit = 50;
+        public int CardCount = 35, RowItemLimit = 50, HiddenRows = 1, PartialWholeCount = 25;
         public string? LastWholeQuery;
         public int[]? CardsOverride;
         public string Title = "Progress";
@@ -516,7 +550,8 @@ internal static class HomeRowWindowNativeFixture
                 ? new(HttpStatusCode.NotFound) { Content = new StringContent("{}") }
                 : Json("""{"row_item_limit_max":100,"section_item_limit_max":100}""");
             if (path.EndsWith("/layout")) return Json(DuplicateFirst
-                ? """{"sections":[{"id":"anchor","title":"First","section_type":"plain","item_limit":20},{"id":"row","title":"More","section_type":"hidden_gems","item_limit":50}]}"""
+                ? JsonSerializer.Serialize(new { sections = new[] { new { id = "anchor", title = "First", section_type = "plain", item_limit = 20 } }
+                    .Concat(Enumerable.Range(1, HiddenRows).Select(i => new { id = i == 1 ? "row" : $"row{i}", title = "More", section_type = "hidden_gems", item_limit = 50 })) })
                 : """{"sections":[{"id":"row","title":"Progress","section_type":"continue_watching","item_limit":50}]}""");
             if (path.EndsWith("/recipes")) return Json("""{"categories":[{"category":"one","recipes":[{"type":"hidden_gems","avoid_duplicates":true}]}]}""");
             var profile = request.Headers.TryGetValues("X-Profile-ID", out var ids) ? ids.Single() : "alpha";
@@ -532,14 +567,17 @@ internal static class HomeRowWindowNativeFixture
             {
                 LastWholeQuery = request.RequestUri.Query;
                 var attempt = Interlocked.Increment(ref Whole);
+                // Keep both hidden rows asynchronous so their successful
+                // no-progress responses can expose cross-row retry loops.
+                if (HiddenRows > 1) await Task.Delay(10, ct);
                 if (FailWhole || (FailFirstWhole && attempt == 1)) return new(HttpStatusCode.BadRequest) { Content = new StringContent("""{"status":400,"detail":"fixture failure"}""") };
                 if (NullWhole || (NullFirstWhole && attempt == 1)) return Json("null");
                 if (HoldFirstWhole && attempt == 1) { Started.TrySetResult(); await Release.Task.WaitAsync(ct); }
                 else if (HoldWhole) { Started.TrySetResult(); await Release.Task; }
             }
-            IEnumerable<int> cards = CardsOverride ?? Enumerable.Range(1, capped ? Math.Min(20, CardCount) : PartialWhole ? 25 : CardCount);
+            IEnumerable<int> cards = CardsOverride ?? Enumerable.Range(1, capped ? Math.Min(20, CardCount) : PartialWhole ? PartialWholeCount : CardCount);
             if (!capped && ReverseWhole) cards = cards.Reverse();
-            return Json(JsonSerializer.Serialize(new { id = "row", title = Title, section_type = DuplicateFirst ? "hidden_gems" : "continue_watching", item_limit = capped ? 20 : RowItemLimit,
+            return Json(JsonSerializer.Serialize(new { id = path.Split('/')[5], title = Title, section_type = DuplicateFirst ? "hidden_gems" : "continue_watching", item_limit = capped ? 20 : RowItemLimit,
                 total_count = CardCount, has_more = capped || PartialWhole, items = cards.Select(i => new { content_id = $"{profile}-{i}",
                     title = CardsOverride != null && i == 1 ? "Updated card1" : $"Card{i}", type = "movie",
                     position_seconds = CardsOverride != null && i == 1 ? 123 : 0,

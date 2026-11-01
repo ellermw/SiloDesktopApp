@@ -38,6 +38,8 @@ internal static class HomeRowReviewNativeFixture
         await Case("expanded-refresh-below-card-count", () => ExpandedRefreshWithCapabilitiesAsync(20));
         await Case("secondary-featured-completion-after-refresh", SecondaryFeaturedCompletionAfterRefreshAsync);
         await Case("expanded-hero-round-trip", ExpandedHeroRoundTripAsync);
+        await Case("expanded-hero-below-card-count", ExpandedHeroBelowCardCountAsync);
+        await Case("library-row-without-completion-consumer", () => LibraryRowWithoutCompletionConsumerAsync(parent));
         await Case("translated-prefix-and-tail", LanguageAsync);
         await Case("real-menu-undo-vs-refresh", () => MenuAsync(parent, true));
         await Case("real-menu-series-tail-removal", () => MenuAsync(parent, false));
@@ -191,17 +193,18 @@ internal static class HomeRowReviewNativeFixture
         Require(vm.Sections[0].Items.Count == 35 && order > 0, "Featured row completion must recover all35 cards.");
         wire.Title = "Featured partial refresh"; vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
         await Until(() => vm.FeaturedSections.Concat(vm.Sections).All(row => row.Title == wire.Title));
-        Require(vm.Sections[0].Items.Count == 20 && vm.Sections[0].CanComplete && !vm.Sections[0].HasReadWhole,
-            "An uncapped featured refresh may restore the display budget, but must not declare its tail exhausted.");
+        Require(vm.Sections[0].Items.Count == 35 && !vm.Sections[0].CanComplete && vm.Sections[0].HasReadWhole,
+            "An expanded secondary featured refresh must retain all35 cards rather than restore the display budget.");
         await vm.RetrySectionAsync("row2");
-        Require(vm.Sections[0].CanComplete, "Featured retry must retain an explicit completion path.");
+        Require(vm.Sections[0].Items.Count == 35 && !vm.Sections[0].CanComplete && vm.Sections[0].HasReadWhole,
+            "Expanded secondary featured retry must retain every recovered card without another completion gesture.");
         await vm.CompleteSectionAsync("row2");
         Require(vm.Sections[0].Items.Count == 35 && vm.Sections[0].Items.Last().ContentId == "movie35"
             && vm.Sections[0].ShownCount == 20 && vm.Sections[0].CompletedOrder == order,
-            "All35 cards must remain recoverable after a secondary featured refresh and retry.");
+            "All35 cards must remain available after a secondary featured refresh and retry.");
         Require(wire.Requests.Where(read => read.Id == "row2").Select(read => read.Query)
-            .SequenceEqual(new[] { "", "?item_limit=100", "", "", "?item_limit=100" }),
-            "Featured refresh and retry must stay uncapped; explicit completion uses the negotiated budget.");
+            .SequenceEqual(new[] { "", "?item_limit=100", "?item_limit=100", "?item_limit=100" }),
+            "Expanded featured refresh and retry must reuse completion's negotiated budget.");
         Require(vm.FeaturedSections.Single().Items.Count == 20, "Completing a secondary row must not inflate the hero budget.");
     }
 
@@ -235,6 +238,59 @@ internal static class HomeRowReviewNativeFixture
             "Demotion must keep the previously expanded row whole and retain its priority boundary.");
         Require(wire.Requests.Count == 4 && wire.Requests.Skip(1).All(read => read.Query == ""),
             "Completion, promotion and demotion must each use one uncapped read.");
+    }
+
+    private static async Task ExpandedHeroBelowCardCountAsync()
+    {
+        using var session = new Session(new Wire { ConfiguredItemLimit = 20,
+            Capabilities = "{\"row_item_limit_max\":100,\"section_item_limit_max\":100}" });
+        var vm = session.Vm; var wire = session.Wire;
+        await vm.LoadCommand.ExecuteAsync(null); await Until(() => vm.Sections.FirstOrDefault()?.Items.Count == 20);
+        await vm.CompleteSectionAsync("row");
+        var order = vm.Sections[0].CompletedOrder;
+        Require(vm.Sections[0].Items.Count == 35 && order > 0, "Fixture must start with an expanded35-card row.");
+
+        wire.Hero = true; wire.Title = "Expanded hero refresh";
+        vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
+        await Until(() => vm.FeaturedSections.FirstOrDefault()?.Title == wire.Title);
+        await vm.RetrySectionAsync("row");
+        var hero = vm.FeaturedSections.Single();
+        Require(hero.Featured && hero.Items.Count == 35 && hero.Items.Last().ContentId == "movie35"
+            && hero.ItemLimit >= hero.Items.Count && hero.ShownCount == 20 && hero.CompletedOrder == order && !hero.CanComplete,
+            "Promotion and retry must keep the expanded tail renderable even with a configured20-card hero budget.");
+        Require(wire.Requests.Select(read => read.Query).SequenceEqual(
+            new[] { "?item_limit=20", "?item_limit=100", "?item_limit=100", "?item_limit=100" }),
+            "Cached expansion must own the read budget independently of featured placement.");
+    }
+
+    private static async Task LibraryRowWithoutCompletionConsumerAsync(StackPanel parent)
+    {
+        using var session = new Session(new Wire());
+        var page = new LibraryPage();
+        var section = new HomeSectionWithItems { Id = "recommended", Title = "Recommended", SectionType = "recommended",
+            LoadCompleted = true, HasMore = true, Items = new(Enumerable.Range(1, 20).Select(i => new MediaItem {
+                ContentId = $"library-{i}", Title = $"Card{i}", Type = "movie" })) };
+        var row = (SectionRow)typeof(LibraryPage).GetMethod("CreateLibrarySectionRow", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(page, [section, 11])!;
+        row.Width = 900;
+        parent.Children.Add(row);
+        try
+        {
+            await Task.Delay(120); row.UpdateLayout();
+            var scroll = (ScrollViewer)row.FindName("CardsScrollViewer");
+            var next = (Button)row.FindName("ScrollRightBtn");
+            Require(row.OnNearEnd == null && scroll.ScrollableWidth > 0 && next.IsEnabled,
+                "Library caller must retain ordinary navigation through its loaded cards without a completion consumer.");
+            var reads = session.Wire.Requests.Count;
+            scroll.ChangeView(scroll.ScrollableWidth, null, null, true); await Task.Delay(100);
+            Require(!next.IsEnabled && ((UIElement)row.FindName("RightFadeGradient")).Opacity == 0,
+                "Library's truncated shared model must not advertise forward completion at the loaded tail.");
+            typeof(SectionRow).GetMethod("ScrollByPage", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(row, [1]);
+            await Task.Delay(100);
+            Require(session.Wire.Requests.Count == reads && section.Items.Count == 20,
+                "Forward demand without a Library completion consumer must not start a Home tail request.");
+        }
+        finally { parent.Children.Remove(row); }
     }
 
     private static async Task LanguageAsync()
@@ -313,6 +369,7 @@ internal static class HomeRowReviewNativeFixture
             _field.SetValue(null, new Services(_previous, new Dictionary<Type, object> {
                 [typeof(SiloApiClient)] = Client, [typeof(HomeApi)] = home, [typeof(HomeViewModel)] = Vm,
                 [typeof(AuthService)] = Auth, [typeof(CatalogApi)] = new CatalogApi(Client), [typeof(ToastService)] = Toast,
+                [typeof(LibraryViewModel)] = new LibraryViewModel(new CatalogApi(Client)),
                 [typeof(EventChannelClient)] = _events }));
         }
         public void Dispose()

@@ -100,7 +100,18 @@ public sealed partial class SectionRow : UserControl
     }
 
     public Action<HomeSectionWithItems>? OnRetry { get; set; }
-    public Action<HomeSectionWithItems>? OnNearEnd { get; set; }
+    private Action<HomeSectionWithItems>? _onNearEnd;
+    public Action<HomeSectionWithItems>? OnNearEnd
+    {
+        get => _onNearEnd;
+        set
+        {
+            if (_onNearEnd == value) return;
+            _onNearEnd = value;
+            _completionDemandArmed = false;
+            UpdateScrollBounds();
+        }
+    }
 
     public SectionRow()
     {
@@ -489,10 +500,10 @@ public sealed partial class SectionRow : UserControl
         double offset = CardsScrollViewer.HorizontalOffset;
 
         _canScrollPrev = offset > 1;
-        // Keep forward navigation available at the current tail for partial
-        // rows, including when all initially served cards fit on screen.
+        // Only callers with a completion consumer can navigate beyond the
+        // loaded tail. Library rows share the model but have no such consumer.
         _canScrollNext = (offset < extent - viewport - 1 && extent > viewport + 1)
-            || Section is { CanComplete: true, LoadCompleted: true };
+            || (OnNearEnd != null && Section is { CanComplete: true, LoadCompleted: true });
 
         ScrollLeftBtn.IsEnabled = _canScrollPrev;
         ScrollRightBtn.IsEnabled = _canScrollNext;
@@ -502,13 +513,14 @@ public sealed partial class SectionRow : UserControl
         // only when there's more content in that direction.
         LeftFadeGradient.Opacity = _canScrollPrev ? 1.0 : 0.0;
         RightFadeGradient.Opacity = _canScrollNext ? 1.0 : 0.0;
-        if (IsLoaded && _completionDemandArmed && Section is { CanComplete: true, LoadCompleted: true } section && viewport > 0 && extent > 0
+        if (IsLoaded && _completionDemandArmed && OnNearEnd is { } onNearEnd
+            && Section is { CanComplete: true, LoadCompleted: true } section && viewport > 0 && extent > 0
             && extent - viewport - offset <= viewport)
         {
             // Consume this gesture. Size/presentation changes at the same offset
             // are not fresh demand after a completion cycle has failed.
             _completionDemandArmed = false;
-            OnNearEnd?.Invoke(section);
+            onNearEnd(section);
         }
     }
 

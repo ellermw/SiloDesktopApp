@@ -259,7 +259,11 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("QueueRealtimeRefreshAsync(reason, delay, cts, context)", viewModel);
         Assert.Contains("if (context.HasValue && (!_homeApi.IsCurrentContext(context.Value) || _loadedContext != context)) return", viewModel);
         Assert.Contains("await FetchSectionItemsInBatchesAsync(generation, _sectionLoadCts.Token)", viewModel);
-        Assert.Contains("ApplyRefreshedSection(completed)", viewModel);
+        // Batch refresh and retry share the read-result helper, which must
+        // preserve whole-read projection ownership for expanded rows.
+        Assert.Contains("ApplySectionReadResult(completed, read.Shown, read.Whole, removalRevision)", viewModel);
+        Assert.Contains("ApplySectionReadResult(completed, shown, whole, removalRevision)", viewModel);
+        Assert.Contains("ApplyRefreshedSection(completed, whole)", viewModel);
         Assert.Contains("QueueRealtimeRefresh(message.Completed ? \"playback_completed\" : \"playback_progress\")", viewModel);
     }
 
