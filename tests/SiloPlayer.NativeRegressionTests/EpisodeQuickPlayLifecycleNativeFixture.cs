@@ -135,6 +135,86 @@ internal static partial class EpisodeQuickPlayNativeFixture
                 "An access-only refresh at Expanded silently abandoned the accepted scoped session.");
         }
         finally { scope.Player.StateChanged -= OnStateChanged; }
+
+        await scope.ResetAsync();
+        scope.Wire.AcceptStart = true;
+        page = scope.MountSeries("refresh-at-queued-gate"); await Task.Delay(60); page.UpdateLayout();
+        play = ResumeButton((Panel)page.FindName("EpisodesPanel"));
+        var gate = (SemaphoreSlim)GetField(scope.Player, "_authoritySwitchGate")!;
+        await gate.WaitAsync();
+        try
+        {
+            Invoke(play);
+            await Until(() => !play.IsEnabled);
+            scope.Client.InvalidateAccessContext();
+        }
+        finally { gate.Release(); }
+        await Until(() => play.IsEnabled);
+        Check(scope.Wire.Starts.Count == 1 && scope.Player.State == PlayerState.Expanded && scope.Player.ErrorMessage == null,
+            "An access refresh at the queued authority gate dropped accepted playback intent.");
+
+        foreach (var boundary in new[] { "watch", "capability", "settings" })
+        {
+            foreach (var outgoing in new[] { false, true })
+            {
+                await scope.ResetAsync();
+                scope.Wire.AcceptStart = true;
+                if (outgoing)
+                {
+                    var manager = new PlaybackManager(scope.Playback, scope.Catalog, scope.Auth, scope.Client);
+                    manager.UseWatchDetail(new() { ContentId = "outgoing", Type = "episode", Versions = [new() { FileId = 42, Duration = 1200 }] });
+                    await manager.StartSessionAsync(42, 91);
+                    SetField(scope.Player, "_playbackManager", manager);
+                    typeof(PlayerService).GetProperty("ContentId")!.SetValue(scope.Player, "outgoing");
+                    typeof(PlayerService).GetMethod("SetState", Private)!.Invoke(scope.Player, [PlayerState.Minimized]);
+                    scope.Wire.Starts.Clear();
+                }
+                if (boundary == "watch") scope.Wire.HoldWatch = "refresh-during-preparation";
+                else if (boundary == "capability") scope.Wire.HoldCapability = true;
+                else scope.Wire.HoldSettings = true;
+                page = scope.MountSeries("refresh-during-preparation"); await Task.Delay(60); page.UpdateLayout();
+                play = ResumeButton((Panel)page.FindName("EpisodesPanel"));
+                Invoke(play);
+                try
+                {
+                    await (boundary == "watch" ? scope.Wire.WatchStarted.Task : scope.Wire.BoundaryStarted.Task).WaitAsync(TimeSpan.FromSeconds(3));
+                    scope.Client.InvalidateAccessContext();
+                }
+                finally { scope.Wire.ReleaseWatch.TrySetResult(); scope.Wire.ReleaseBoundary.TrySetResult(); }
+                await Until(() => play.IsEnabled);
+                Check(scope.Wire.Starts.Count == 1 && scope.Player.State == PlayerState.Expanded &&
+                    scope.Player.ErrorMessage == null && scope.Player.Manager?.CurrentSession != null &&
+                    GetField(scope.Player, "_activeTransportPlan") != null,
+                    $"An access-only refresh during {boundary} failed accepted playback (outgoing={outgoing}).");
+                Check(scope.Wire.Watches.Count == (boundary == "watch" ? 2 : 1),
+                    $"The retired {boundary} preparation did not retry its read with a fresh context.");
+                Check(scope.Wire.Stops == (outgoing ? 1 : 0), "Access refresh stopped more than the outgoing session.");
+            }
+        }
+
+        // Repeated refreshes must stop retrying with a useful message rather
+        // than exposing internal context/owner exception strings.
+        await scope.ResetAsync();
+        scope.Wire.HoldWatch = "repeated-access-refresh";
+        page = scope.MountSeries(scope.Wire.HoldWatch); await Task.Delay(60); page.UpdateLayout();
+        play = ResumeButton((Panel)page.FindName("EpisodesPanel"));
+        Invoke(play);
+        try
+        {
+            await scope.Wire.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var releaseFirst = scope.Wire.ReleaseWatch;
+            scope.Wire.WatchStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            scope.Wire.ReleaseWatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            scope.Client.InvalidateAccessContext();
+            releaseFirst.TrySetResult();
+            await scope.Wire.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            scope.Client.InvalidateAccessContext();
+        }
+        finally { scope.Wire.ReleaseWatch.TrySetResult(); }
+        await Until(() => play.IsEnabled);
+        Check(scope.Wire.Watches.Count == 2 && scope.Wire.Starts.Count == 0 && !scope.Player.IsLoading &&
+            scope.Player.ErrorMessage == "Your access changed while preparing playback. Please try again.",
+            "Repeated access refreshes leaked internal owner errors or retried without a bound.");
     }
 
     private static async Task VerifySupersededStateAsync(LifecycleScope scope)
@@ -153,9 +233,24 @@ internal static partial class EpisodeQuickPlayNativeFixture
             scope.Wire.HoldWatch = "successor-b";
             scope.Wire.WatchStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
             scope.Wire.ReleaseWatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            // Reserve the authority gate ahead of B, so A can finish cleanup
+            // while B is accepted but cannot yet re-arm the EOF guard in core.
+            var authorityGate = (SemaphoreSlim)GetField(scope.Player, "_authoritySwitchGate")!;
+            var handoff = authorityGate.WaitAsync();
             var second = scope.Player.PlayAsync("successor-b", expectedContext: scoped ? scope.Client.CaptureContext() : null);
+            var handoffReleased = false;
             try
             {
+                await handoff.WaitAsync(TimeSpan.FromSeconds(3));
+                await first;
+                Check((bool)GetField(scope.Player, "_switchingContent")!,
+                    "Superseded cleanup cleared the outgoing EOF guard before its successor entered core.");
+                typeof(PlayerService).GetMethod("HandleMpvEndSignal", Private)!.Invoke(scope.Player, ["end-file"]);
+                await Task.Delay(40);
+                Check(!states.Contains(PlayerState.Idle) && scope.Player.State == PlayerState.Minimized,
+                    "An outgoing EOF closed playback between superseded cleanup and successor core.");
+                authorityGate.Release();
+                handoffReleased = true;
                 await scope.Wire.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
                 await first;
                 Check(!states.Contains(PlayerState.Idle) && scope.Player.State == PlayerState.Minimized && scope.Player.ContentId == "successor-b",
@@ -163,6 +258,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
             }
             finally
             {
+                if (!handoffReleased) _ = handoff.ContinueWith(_ => authorityGate.Release(), TaskScheduler.Default);
                 releaseFirst.TrySetResult(); scope.Wire.ReleaseWatch.TrySetResult();
                 await Task.WhenAll(first, second);
                 scope.Player.StateChanged -= OnStateChanged;
@@ -236,11 +332,12 @@ internal static partial class EpisodeQuickPlayNativeFixture
 
     private static async Task VerifyPreparationOwnerAsync(LifecycleScope scope)
     {
-        foreach (var boundary in new[] { "watch", "capability", "start" })
+        foreach (var boundary in new[] { "watch", "capability", "settings", "start" })
         {
             await scope.ResetAsync();
             if (boundary == "watch") scope.Wire.HoldWatch = "pending-owner";
             else if (boundary == "capability") scope.Wire.HoldCapability = true;
+            else if (boundary == "settings") scope.Wire.HoldSettings = true;
             else { scope.Wire.HoldStart = true; scope.Wire.AcceptStart = true; }
             var page = scope.MountSeries("pending-owner"); await Task.Delay(60); page.UpdateLayout();
             var play = ResumeButton((Panel)page.FindName("EpisodesPanel")); Invoke(play);
@@ -459,7 +556,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
             Frame.Navigate(typeof(Page)); Services.GetRequiredService<WatchTogetherCoordinator>().ClearActiveRoom();
             Services.GetRequiredService<NavigationService>().Frame = Frame;
             await Player.CloseAsync();
-            Wire.HoldWatch = null; Wire.HoldCapability = Wire.HoldStart = Wire.HoldStage = Wire.AcceptStart = false;
+            Wire.HoldWatch = null; Wire.HoldCapability = Wire.HoldSettings = Wire.HoldStart = Wire.HoldStage = Wire.AcceptStart = false;
             Wire.ResumePosition = 91;
             Wire.WatchStarted = new(TaskCreationOptions.RunContinuationsAsynchronously); Wire.ReleaseWatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Wire.BoundaryStarted = new(TaskCreationOptions.RunContinuationsAsynchronously); Wire.ReleaseBoundary = new(TaskCreationOptions.RunContinuationsAsynchronously);

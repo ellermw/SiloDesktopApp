@@ -275,7 +275,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
         internal string? HoldWatch;
         internal TaskCompletionSource WatchStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ReleaseWatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal bool HoldCapability, HoldStart, HoldStage;
+        internal bool HoldCapability, HoldSettings, HoldStart, HoldStage;
         internal TaskCompletionSource BoundaryStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ReleaseBoundary = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal List<(string Path, string? Profile)> Requests = [];
@@ -289,7 +289,12 @@ internal static partial class EpisodeQuickPlayNativeFixture
             lock (Requests) Requests.Add((path, request.Headers.TryGetValues("X-Profile-Id", out var profiles) ? profiles.Single() : null));
             if (path == "/still") return new(HttpStatusCode.OK) { Content = new ByteArrayContent(File.ReadAllBytes(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "audiobook-cover.png"))) };
             if (path == "/api/v2/settings/contract/capabilities") return Json("""{"api_version":1,"manifest_revision":17,"supports_batched_effective":true}""");
-            if (path == "/api/v2/settings/values/effective") return Json("""{"items":[{"key":"catalog.hide_unwatched_episode_images","value":true},{"key":"catalog.hide_unwatched_episode_overviews","value":true}]}""");
+            if (path == "/api/v2/settings/values/effective")
+            {
+                if (HoldSettings && request.RequestUri.Query.Contains("playback.preferred_quality", StringComparison.Ordinal))
+                { BoundaryStarted.TrySetResult(); await ReleaseBoundary.Task.WaitAsync(ct); }
+                return Json("""{"items":[{"key":"catalog.hide_unwatched_episode_images","value":true},{"key":"catalog.hide_unwatched_episode_overviews","value":true}]}""");
+            }
             if (path.StartsWith("/api/v2/watch/"))
             {
                 Watches.Add(request.RequestUri);

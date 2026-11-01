@@ -8101,8 +8101,8 @@ public sealed partial class ItemDetailPage : Page
             if (!quickPlayButton.IsEnabled || !IsCurrentCardOwner() || !episode.Files.Any(file => file.Unreadable != true)) return;
             quickPlayButton.IsEnabled = false;
             // A rendered card may outlive an access revision, but not its
-            // account/profile. Capture the read context per accepted action.
-            var owner = api.CaptureContext();
+            // account/profile. Preparation captures fresh read contexts under
+            // this original identity, including while the start is queued.
             // Cosmetic grid rebuilds retire the old button, not an accepted
             // start. Only navigation or a real page owner change cancels it.
             using var acceptedLifetime = CancellationTokenSource.CreateLinkedTokenSource(navigationToken);
@@ -8144,7 +8144,7 @@ public sealed partial class ItemDetailPage : Page
                     return;
                 }
                 await player.PlayAsync(
-                    contentId, libraryId: libraryId, cancellationToken: acceptedToken, expectedContext: owner);
+                    contentId, libraryId: libraryId, cancellationToken: acceptedToken, expectedIdentityContext: identity);
             }
             catch (OperationCanceledException) when (!IsCurrentOwner()) { }
             catch (Exception ex)
