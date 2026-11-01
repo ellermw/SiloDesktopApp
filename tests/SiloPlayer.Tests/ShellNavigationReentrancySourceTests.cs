@@ -26,16 +26,19 @@ public sealed class ShellNavigationReentrancySourceTests
     {
         var source = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs").ReplaceLineEndings("\n");
         var catchUp = MethodBody(source, "private void OnReadCatchUpRequested(");
-        var detailStart = catchUp.IndexOf("if (ContentFrame.Content is ItemDetailPage)", StringComparison.Ordinal);
+        var detailStart = catchUp.IndexOf("if (ContentFrame.Content is ItemDetailPage detail)", StringComparison.Ordinal);
         Assert.True(detailStart >= 0);
-        var detailBranch = MethodBody(catchUp[detailStart..], "if (ContentFrame.Content is ItemDetailPage)");
+        var detailBranch = MethodBody(catchUp[detailStart..], "if (ContentFrame.Content is ItemDetailPage detail)");
         Assert.Contains("_pendingDetailCatchUp = true;", detailBranch);
+        Assert.Contains("_pendingDetailCatchUpRequiresRemount |= !detail.CanPreserveOnReconnect;", detailBranch);
         Assert.Contains("ApplyPendingAccessRefresh();", detailBranch);
 
         var apply = MethodBody(source, "private void ApplyPendingAccessRefresh(");
         Assert.Contains("!_pendingAccessRefresh && !_pendingDetailCatchUp", apply);
         Assert.Contains("PlayerState.Expanded or PlayerState.Fullscreen", apply);
         Assert.Contains("var preserveDetail = !_pendingAccessRefresh", apply);
+        Assert.Contains("!_pendingDetailCatchUpRequiresRemount", apply);
+        Assert.Contains("_pendingDetailCatchUpRequiresRemount = false;", apply);
         Assert.Contains("detail.CanPreserveOnReconnect", apply);
         var page = ReadRepoFile("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
         var healthStart = page.IndexOf("public bool CanPreserveOnReconnect =>", StringComparison.Ordinal);
@@ -45,6 +48,10 @@ public sealed class ShellNavigationReentrancySourceTests
         Assert.Contains("ViewModel.Item.Type is \"series\" or \"season\"", health);
         Assert.Contains("!ViewModel.SimilarLoadFailed", health);
         Assert.Contains("ViewModel.FailureKind == DetailFailureKind.None", health);
+        Assert.Contains("!ViewModel.IsLoading", health);
+        Assert.Contains("!ViewModel.IsSeasonsLoading", health);
+        Assert.Contains("!ViewModel.IsEpisodesLoading", health);
+        Assert.Contains("_seasonEpisodesLoads == 0", health);
         Assert.Contains("!ViewModel.SeasonsLoadFailed", health);
         Assert.Contains("!ViewModel.EpisodesLoadFailed", health);
         Assert.Contains("EpisodesLoadError.Visibility != Visibility.Visible", health);

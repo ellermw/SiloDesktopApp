@@ -93,6 +93,53 @@ public sealed class RealtimeReadOwnershipTests
         Assert.Equal(900, f.Vm.Episodes[0].UserData!.PositionSeconds);
     }
 
+    [Theory]
+    [InlineData("series", true)]
+    [InlineData("series", false)]
+    [InlineData("season", true)]
+    [InlineData("season", false)]
+    public async Task FinalSaveOutsideTheLoadedSeasonRetiresTheOldAggregateAndHoldsItsRetry(string type, bool namedSeries)
+    {
+        using var f = new Fixture(); f.Seed();
+        if (type == "season")
+        {
+            f.Vm.Item!.Type = "season";
+            f.Vm.Item.ContentId = "series:review-S02";
+            f.Vm.Item.SeriesId = Series;
+        }
+        f.Vm.Item!.PlayContentId = namedSeries ? EpisodeA : EpisodeB;
+        f.Wire.Count = 1; f.Wire.HoldDetails = true;
+        var operation = f.Vm.RefreshMediaStateAsync(f.Change());
+        var oldDetail = await f.Wire.NextAsync();
+        var save = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var revision = f.Vm.WatchedStateRevision;
+        f.Messenger.Send(new PlaybackProgressUpdated(EpisodeB, 900, 1000, false)
+            { SeriesId = namedSeries ? Series : null, Persisted = save.Task });
+        Assert.True(f.Vm.WatchedStateRevision > revision);
+        Assert.Equal(31, Assert.Single(f.Vm.Episodes).UserData!.PositionSeconds);
+        var retryWaiting = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Wire.BeforeDetailResponse = () =>
+        {
+            Assert.True(save.Task.IsCompleted, "The retry read began before the cross-season final save settled.");
+            retryWaiting.SetResult();
+        };
+        f.Wire.HoldDetails = false;
+        oldDetail.Release();
+
+        // Let the retired read settle; the owned sweep must stay open at the save barrier.
+        await oldDetail.Settled.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(operation.IsCompleted);
+        Assert.Equal(0, f.Vm.Item.UserData!.WatchedCount);
+        f.Wire.Count = 2;
+        save.SetResult();
+        await operation.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.True(retryWaiting.Task.IsCompleted);
+        Assert.Equal(2, f.Wire.DetailReads);
+        Assert.Equal(2, f.Vm.Item.UserData.WatchedCount);
+        Assert.Equal(31, f.Vm.Episodes[0].UserData!.PositionSeconds);
+    }
+
     [Fact]
     public async Task FailedFinalSaveThenSuccessfulSaveCannotPoisonLaterRemoteRefreshOrRestoreAnOldSnapshot()
     {
@@ -199,6 +246,7 @@ public sealed class RealtimeReadOwnershipTests
         internal string? Target = EpisodeA;
         internal bool HoldDetails, HoldEpisodes;
         internal Action? BeforeWatchResponse;
+        internal Action? BeforeDetailResponse;
         internal readonly List<Uri> CatalogUris = [];
         private readonly Channel<Read> _held = Channel.CreateUnbounded<Read>();
         private readonly List<Read> _all = [];
@@ -229,6 +277,7 @@ public sealed class RealtimeReadOwnershipTests
                 {
                     Assert.StartsWith("/api/v2/catalog/items/", path);
                     DetailReads++; hold = HoldDetails;
+                    BeforeDetailResponse?.Invoke();
                     body = new { content_id = Series, type = "series", episode_count = 8, play_content_id = Target,
                         user_state = new { }, user_data = new { watched_count = Count, played = false } };
                 }
@@ -237,7 +286,8 @@ public sealed class RealtimeReadOwnershipTests
             if (hold)
             {
                 var read = new Read(); lock (_all) _all.Add(read); _held.Writer.TryWrite(read);
-                await read.Pending.WaitAsync(ct);
+                try { await read.Pending.WaitAsync(ct); }
+                finally { read.MarkSettled(); }
             }
             return new(HttpStatusCode.OK) { Content = new StringContent(snapshot, Encoding.UTF8, "application/json") };
         }
@@ -246,8 +296,11 @@ public sealed class RealtimeReadOwnershipTests
     private sealed class Read
     {
         private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _settled = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal Task Pending => _ready.Task;
+        internal Task Settled => _settled.Task;
         internal void Release() => _ready.TrySetResult();
+        internal void MarkSettled() => _settled.TrySetResult();
     }
 
     private sealed class Clock : TimeProvider

@@ -30,6 +30,8 @@ public sealed partial class ItemDetailPage : Page
     public bool CanPreserveOnReconnect => ViewModel.Item != null
         && (ViewModel.Item.Type is "series" or "season")
         && ViewModel.FailureKind == DetailFailureKind.None
+        && !ViewModel.IsLoading && !ViewModel.IsSeasonsLoading && !ViewModel.IsEpisodesLoading
+        && _seasonEpisodesLoads == 0
         && !ViewModel.SeasonsLoadFailed && !ViewModel.EpisodesLoadFailed && !ViewModel.SimilarLoadFailed
         && EpisodesLoadError.Visibility != Visibility.Visible
         && SeasonEpisodesFatalError.Visibility != Visibility.Visible;
@@ -963,6 +965,7 @@ public sealed partial class ItemDetailPage : Page
     private bool _subscribedToStateChanged;
     private double _seasonCardWidth;
     private string _seasonEpisodesErrorMessage = "Season not found";
+    private int _seasonEpisodesLoads;
 
     private bool IsCurrentDetail(string contentId) =>
         _navigationCts is { IsCancellationRequested: false }
@@ -6782,6 +6785,7 @@ public sealed partial class ItemDetailPage : Page
         int seasonNumber,
         CancellationToken ct = default)
     {
+        ++_seasonEpisodesLoads;
         try
         {
             var catalogApi = App.Services.GetRequiredService<SiloPlayer.Core.Api.CatalogApi>();
@@ -6818,6 +6822,7 @@ public sealed partial class ItemDetailPage : Page
             System.Diagnostics.Debug.WriteLine($"Season episodes load failed for {seasonContentId}: {ex}");
             return false;
         }
+        finally { --_seasonEpisodesLoads; }
     }
 
     private void ShowSeasonEpisodesFatalError(MediaItemDetail season)

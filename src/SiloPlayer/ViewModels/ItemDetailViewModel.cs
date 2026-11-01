@@ -271,8 +271,11 @@ public partial class ItemDetailViewModel : ObservableObject,
                         IsFavorite = item.UserState.IsFavorite;
                         InWatchlist = item.UserState.InWatchlist;
                     }
-                    item.UserRating = refreshed.UserRating;
-                    UserRating = item.UserRating;
+                    if (refreshed.HasAuthoritativeUserRating)
+                    {
+                        item.UserRating = refreshed.UserRating;
+                        UserRating = item.UserRating;
+                    }
                 }
                 // The authoritative detail is useful even if a companion read
                 // fails. Commit and notify before starting those independent reads.
@@ -378,8 +381,12 @@ public partial class ItemDetailViewModel : ObservableObject,
             return;
         }
 
-        Interlocked.Increment(ref _watchedStateGeneration);
-        Interlocked.Increment(ref _localStateGeneration);
+        lock (_remoteStateGate)
+        {
+            Interlocked.Increment(ref _watchedStateGeneration);
+            Interlocked.Increment(ref _localStateGeneration);
+            if (_activeRemoteState is { } active) _pendingRemoteState = MergeState(_pendingRemoteState, active);
+        }
         _detailPrefetchCache.Invalidate(item.ContentId);
         if (!string.IsNullOrEmpty(item.SeriesId)) _detailPrefetchCache.Invalidate(item.SeriesId);
         var watchedDelta = 0;
@@ -454,13 +461,17 @@ public partial class ItemDetailViewModel : ObservableObject,
     public void Receive(PlaybackProgressUpdated message)
     {
         _detailPrefetchCache.Invalidate(message.ContentId);
-        if (Item?.ContentId == message.ContentId || Episodes.Any(e => e.ContentId == message.ContentId))
+        if (Item is { } item && (item.ContentId == message.ContentId
+            || item.PlayContentId == message.ContentId
+            || ((item.Type is "series" or "season") && !string.IsNullOrEmpty(message.SeriesId)
+                && (item.ContentId == message.SeriesId || item.SeriesId == message.SeriesId))
+            || Episodes.Any(e => e.ContentId == message.ContentId)))
         {
-            Interlocked.Increment(ref _watchedStateGeneration);
-            Interlocked.Increment(ref _localStateGeneration);
             var settled = ProgressSaveSettledAsync(message.Persisted);
             lock (_remoteStateGate)
             {
+                Interlocked.Increment(ref _watchedStateGeneration);
+                Interlocked.Increment(ref _localStateGeneration);
                 _pendingLocalProgressSave = _pendingLocalProgressSave.IsCompleted
                     ? settled : Task.WhenAll(_pendingLocalProgressSave, settled);
                 if (_activeRemoteState is { } active) _pendingRemoteState = MergeState(_pendingRemoteState, active);

@@ -104,8 +104,16 @@ public class MediaItemDetail
     [JsonPropertyName("user_state")]
     public MediaItemUserState? UserState { get; set; }
 
+    private int? _userRating;
     [JsonPropertyName("user_rating")]
-    public int? UserRating { get; set; }
+    public int? UserRating
+    {
+        get => _userRating;
+        set { _userRating = value; HasAuthoritativeUserRating = true; }
+    }
+    // An omitted legacy field is not an authoritative rating removal.
+    [JsonIgnore]
+    public bool HasAuthoritativeUserRating { get; private set; }
 }
 
 public sealed class MangaDetailExtension

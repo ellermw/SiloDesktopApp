@@ -1433,6 +1433,7 @@ public sealed partial class MainWindow : Window
     private bool _navInitialized;
     private bool _pendingAccessRefresh;
     private bool _pendingDetailCatchUp;
+    private bool _pendingDetailCatchUpRequiresRemount;
     private string? _hydratedShellKey;
     private bool _playerPrewarmed;
 
@@ -1469,9 +1470,12 @@ public sealed partial class MainWindow : Window
             App.Services.GetRequiredService<ItemDetailPrefetchCache>().Clear();
             // Keep healthy details mounted, but do not drop shell hydration
             // (including when foreground playback defers it).
-            if (ContentFrame.Content is ItemDetailPage)
+            if (ContentFrame.Content is ItemDetailPage detail)
             {
                 _pendingDetailCatchUp = true;
+                // Remember the decision while playback defers shell hydration:
+                // a pre-reconnect companion response may finish in the meantime.
+                _pendingDetailCatchUpRequiresRemount |= !detail.CanPreserveOnReconnect;
                 ApplyPendingAccessRefresh();
                 return;
             }
@@ -1504,10 +1508,12 @@ public sealed partial class MainWindow : Window
             _playerService.State is PlayerState.Expanded or PlayerState.Fullscreen) return;
         // Access changes still remount the route. Reconnect alone preserves a
         // healthy detail; a failed initial load needs the normal navigation retry.
-        var preserveDetail = !_pendingAccessRefresh && ContentFrame.Content is ItemDetailPage detail
+        var preserveDetail = !_pendingAccessRefresh && !_pendingDetailCatchUpRequiresRemount
+            && ContentFrame.Content is ItemDetailPage detail
             && detail.CanPreserveOnReconnect;
         _pendingAccessRefresh = false;
         _pendingDetailCatchUp = false;
+        _pendingDetailCatchUpRequiresRemount = false;
         if (!preserveDetail) ShowMainNavigation();
         CancelShellHydration();
         _shellHydrationCts = new CancellationTokenSource();
@@ -2396,6 +2402,7 @@ public sealed partial class MainWindow : Window
         _hydratedShellKey = null;
         _pendingDetailCatchUp = false;
         CancelShellHydration();
+        _pendingDetailCatchUpRequiresRemount = false;
         ReleaseNotificationSubscription();
         _brandingLoadGate.Cancel();
     }

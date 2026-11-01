@@ -98,6 +98,32 @@ internal static class RealtimeSeriesStateNativeFixture
                     }
                     await MediaParityNativeFixture.CaptureAsync(page, "realtime-state-" + type + ".png");
                     Check(page.CanPreserveOnReconnect, "A healthy mounted detail should survive reconnect.");
+                    vm.Seasons.Clear(); vm.Episodes.Clear();
+                    wire.HeldCompanion = type == "series" ? "seasons" : "episodes";
+                    wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    wire.ReleaseCompanion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var initialCompanion = type == "series"
+                        ? vm.LoadSeasonsCommand.ExecuteAsync(null)
+                        : (Task)typeof(ItemDetailPage).GetMethod("LoadSeasonEpisodesAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                            .Invoke(page, ["season", 1, navigation.Token])!;
+                    try
+                    {
+                        await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                        Check(!page.CanPreserveOnReconnect, "A held initial companion must remount on reconnect, even with empty rows.");
+                        await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(),
+                            new HashSet<string>(), CatchUp: true));
+                        Check(!page.CanPreserveOnReconnect, "Detail catch-up alone cannot make a pre-reconnect companion safe to preserve.");
+                    }
+                    finally
+                    {
+                        wire.HeldCompanion = null;
+                        wire.ReleaseCompanion.TrySetResult();
+                        await initialCompanion.WaitAsync(TimeSpan.FromSeconds(5));
+                    }
+                    Check(page.CanPreserveOnReconnect, "Settled successful companions should allow preservation again.");
+                    vm.IsEpisodesLoading = true;
+                    Check(!page.CanPreserveOnReconnect, "A pending selected-season query must remount on reconnect.");
+                    vm.IsEpisodesLoading = false;
                     vm.SeasonsLoadFailed = true;
                     Check(!page.CanPreserveOnReconnect, "A failed seasons query must remount on reconnect.");
                     vm.SeasonsLoadFailed = false;
@@ -169,6 +195,9 @@ internal static class RealtimeSeriesStateNativeFixture
         internal int Count = 2;
         internal string? Target = "new-target";
         internal bool FailEpisodes;
+        internal string? HeldCompanion;
+        internal TaskCompletionSource? CompanionStarted;
+        internal TaskCompletionSource? ReleaseCompanion;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host != "realtime-native.invalid" || request.Method != HttpMethod.Get)
@@ -184,7 +213,19 @@ internal static class RealtimeSeriesStateNativeFixture
                 path.EndsWith("/seasons") ? new { items = new[] { new { content_id = "season", season_number = 1, episode_count = 4,
                     user_data = new { watched_count = 2, unplayed_count = 2, in_progress_count = 1, played = false } } } } :
                 path.Contains("progress/capabilities") ? new { clear_resume_position = false } : new { items = Array.Empty<object>() };
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") });
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
+            if (HeldCompanion is { } companion && path.EndsWith("/" + companion) && ReleaseCompanion is { } release)
+            {
+                CompanionStarted?.TrySetResult();
+                return ReleaseAsync(response, release.Task, ct);
+            }
+            return Task.FromResult(response);
+        }
+
+        private static async Task<HttpResponseMessage> ReleaseAsync(HttpResponseMessage response, Task release, CancellationToken ct)
+        {
+            try { await release.WaitAsync(ct); return response; }
+            catch { response.Dispose(); throw; }
         }
     }
 }

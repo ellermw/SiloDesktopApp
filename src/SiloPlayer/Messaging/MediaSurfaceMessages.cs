@@ -90,6 +90,8 @@ public sealed class MediaSurfaceChanged
 public sealed class PlaybackProgressUpdated
 {
     public string ContentId { get; }
+    /// <summary>The episode's series, even when its season is not loaded by a mounted detail.</summary>
+    public string? SeriesId { get; init; }
     public double PositionSeconds { get; }
     public double DurationSeconds { get; }
     public bool Completed { get; }

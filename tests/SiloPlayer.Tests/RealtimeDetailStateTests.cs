@@ -68,12 +68,38 @@ public sealed class RealtimeDetailStateTests
         using var scope = new Scope("series") { BlockedRead = new(TaskCreationOptions.RunContinuationsAsynchronously) };
         var operation = scope.Vm.RefreshMediaStateAsync(scope.Message());
         await scope.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var retiredSnapshot = scope.FreshDetail("series", "series");
         if (departure == "profile") scope.Client.SetProfile("replacement");
         else if (departure == "navigation") scope.Vm.CancelPendingLoads();
-        else scope.Vm.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "series"));
-        scope.BlockedRead.SetResult(scope.FreshDetail("series", "series"));
+        else
+        {
+            scope.ContainerPlayed = true; // The accepted local mutation is now on the server.
+            scope.Vm.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "series"));
+        }
+        scope.BlockedRead.SetResult(retiredSnapshot);
         await operation;
         Assert.Equal(departure == "local-watched" ? 4 : 0, scope.Vm.Item!.UserData!.WatchedCount);
+        Assert.Equal(departure == "local-watched" ? 2 : 1, scope.DetailReads);
+    }
+
+    [Fact]
+    public async Task LocalEpisodeMarkRetriesAnActiveSweepAndIncludesTheRemoteEpisode()
+    {
+        using var scope = new Scope("series") { BlockedRead = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        var operation = scope.Vm.RefreshMediaStateAsync(scope.Message());
+        await scope.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        scope.Vm.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "sibling", "series"));
+        Assert.Equal(1, scope.Vm.Item!.UserData!.WatchedCount);
+        var oldSnapshot = scope.FreshDetail("series", "series");
+        oldSnapshot.UserData!.WatchedCount = 0;
+        scope.BlockedRead.SetResult(oldSnapshot);
+        await operation.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, scope.DetailReads);
+        Assert.Equal(2, scope.Vm.Item.UserData.WatchedCount);
+        Assert.Equal(2, scope.Vm.Seasons[0].UserData!.WatchedCount);
+        Assert.True(scope.Vm.Episodes[0].UserData!.Played);
     }
 
     [Fact]
@@ -191,11 +217,15 @@ public sealed class RealtimeDetailStateTests
         var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         scope.Vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(scope.Vm.Item) && scope.Vm.Item!.UserData!.WatchedCount == 2) changed.TrySetResult();
+            // Item is deliberately notified before the independent season read.
+            // Wait for both surfaces, not a fixed delay or the earlier notification.
+            if (e.PropertyName is nameof(scope.Vm.Item) or nameof(scope.Vm.Seasons)
+                && scope.Vm.Item!.UserData!.WatchedCount == 2
+                && (type != "series" || scope.Vm.Seasons[0].UserData!.WatchedCount == 2)) changed.TrySetResult();
         };
         scope.Vm.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.PlaybackProgress, "never-loaded", "series",
             context: scope.Client.CaptureContext()));
-        await Task.WhenAny(changed.Task, Task.Delay(500));
+        await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(2, scope.Vm.Item!.UserData!.WatchedCount);
         Assert.False(scope.Vm.Episodes[0].UserData!.Played);
         Assert.Equal(31, scope.Vm.Episodes[0].UserData!.PositionSeconds);
@@ -224,10 +254,12 @@ public sealed class RealtimeDetailStateTests
         Assert.Equal(1, scope.EpisodeReads);
     }
 
-    [Fact]
-    public async Task ReconnectRefreshesRetainedViewerStateRatingAndSimilarItems()
+    [Theory]
+    [InlineData(null)]
+    [InlineData(3)]
+    public async Task ReconnectRefreshesRetainedViewerStateRatingAndSimilarItems(int? rating)
     {
-        using var scope = new Scope("series");
+        using var scope = new Scope("series") { FreshRating = rating };
         var item = scope.Vm.Item!;
         scope.Vm.UserRating = 5;
         await scope.Vm.LoadSimilarCommand.ExecuteAsync(null);
@@ -241,8 +273,31 @@ public sealed class RealtimeDetailStateTests
         Assert.True(scope.Vm.IsFavorite);
         Assert.True(scope.Vm.InWatchlist);
         Assert.True(item.UserState!.NotInterested);
-        Assert.Null(scope.Vm.UserRating);
+        Assert.Equal(rating, scope.Vm.UserRating);
+        Assert.Equal(rating, item.UserRating);
         Assert.Empty(scope.Vm.SimilarItems);
+    }
+
+    [Theory]
+    [InlineData("series", null)]
+    [InlineData("season", null)]
+    [InlineData("series", 5)]
+    [InlineData("season", 5)]
+    public async Task ReconnectWithoutAnInlinedRatingPreservesTheMountedRating(string type, int? itemRating)
+    {
+        using var scope = new Scope(type);
+        var item = scope.Vm.Item!;
+        item.UserRating = itemRating;
+        scope.Vm.UserRating = 5; // May have been loaded from the legacy rating endpoint.
+        scope.OverrideResponse = request => request.RequestUri!.AbsolutePath == "/api/v2/catalog/items/" + item.ContentId
+            ? new(HttpStatusCode.OK) { Content = new StringContent("{\"content_id\":\"" + item.ContentId + "\",\"user_state\":{}}",
+                Encoding.UTF8, "application/json") } : null;
+
+        await scope.Vm.RefreshMediaStateAsync(scope.Message() with { CatchUp = true });
+
+        Assert.Same(item, scope.Vm.Item);
+        Assert.Equal(itemRating, item.UserRating);
+        Assert.Equal(5, scope.Vm.UserRating);
     }
 
     [Fact]
@@ -434,6 +489,7 @@ public sealed class RealtimeDetailStateTests
         internal int EpisodeReads;
         internal bool? ContainerPlayed;
         internal MediaItemUserState? FreshViewerState;
+        internal int? FreshRating;
         internal bool HideSimilar;
         internal Func<Task<MediaItemDetail>>? OverrideDetail;
         internal Func<HttpRequestMessage, HttpResponseMessage?>? OverrideResponse;
@@ -445,7 +501,7 @@ public sealed class RealtimeDetailStateTests
             new(Client.CaptureContext(), new HashSet<string>([id]), new HashSet<string>([series]));
         internal MediaItemDetail FreshDetail(string id, string type)
         {
-            var detail = new MediaItemDetail { ContentId = id, Type = type, UserState = FreshViewerState,
+            var detail = new MediaItemDetail { ContentId = id, Type = type, UserState = FreshViewerState, UserRating = FreshRating,
                 UserData = new() { Played = ContainerPlayed ?? false,
                     WatchedCount = ContainerPlayed.HasValue ? (ContainerPlayed.Value ? 4 : 0) : 2,
                     UnplayedCount = ContainerPlayed.HasValue ? (ContainerPlayed.Value ? 0 : 4) : 2, InProgressCount = 1 } };
