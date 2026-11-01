@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Runtime.Loader;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
@@ -33,6 +34,12 @@ internal static class Program
             var path = Path.Combine(AppDirectory, name.Name + ".dll");
             return File.Exists(path) ? context.LoadFromAssemblyPath(path) : null;
         };
+        // SiloPlayer.dll is copied beside this host, but its native engine stays
+        // in the published app directory. Managed resolution does not cover P/Invoke.
+        AssemblyLoadContext.Default.ResolvingUnmanagedDll += (assembly, name) =>
+            assembly == typeof(SiloPlayer.Player.MpvInterop).Assembly && name == "libmpv-2.dll"
+                ? NativeLibrary.Load(Path.Combine(AppDirectory, name))
+                : IntPtr.Zero;
         AppDomain.CurrentDomain.UnhandledException += (_, e) => Log(e.ExceptionObject.ToString()!);
         try
         {
