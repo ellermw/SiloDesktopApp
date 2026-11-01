@@ -24,18 +24,6 @@ public sealed class CodeRabbitFollowUpRegressionTests
     }
 
     [Fact]
-    public void LetterJumpPreservesWhetherTheRetainedCatalogTotalIsExact()
-    {
-        var source = ExtractMethod(
-            ReadRepoFile("src", "SiloPlayer", "ViewModels", "LibraryViewModel.cs"),
-            "private async Task JumpToLetterAsync");
-
-        Assert.Contains("var knownTotalIsExact = _hasExactTotal;", source, StringComparison.Ordinal);
-        Assert.Contains("_hasExactTotal = knownTotalIsExact;", source, StringComparison.Ordinal);
-        Assert.DoesNotContain("_hasExactTotal = true;", source, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void UserChangedDoesNotReconnectAnAlreadyRunningEventChannelAfterTokenRefresh()
     {
         var source = ExtractMethod(

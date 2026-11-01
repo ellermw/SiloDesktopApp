@@ -23,7 +23,7 @@ public sealed class UpdateProgressWindow : Window
     private readonly DispatcherTimer ownerTracking=new(){Interval=TimeSpan.FromMilliseconds(250)};
     public UpdateProgressWindow(bool restart,long owner)
     {
-        Title="Updating Silo";
+        Title="Updating Silo Desktop Player";
         try
         {
             // The client owns Assets; this assembly lives in its Updater subfolder.
@@ -34,7 +34,7 @@ public sealed class UpdateProgressWindow : Window
         catch(Exception ex) { Console.Error.WriteLine($"Updater window icon unavailable: {ex.GetType().Name}"); }
         var panel=new StackPanel{Spacing=18,Padding=new Thickness(28),RequestedTheme=ElementTheme.Dark,
             Background=new SolidColorBrush(ColorHelper.FromArgb(255,24,27,32))};
-        panel.Children.Add(new TextBlock{Text="Updating Silo",FontSize=24,FontWeight=Microsoft.UI.Text.FontWeights.SemiBold,Foreground=new SolidColorBrush(Colors.White)});
+        panel.Children.Add(new TextBlock{Text=Title,FontSize=24,FontWeight=Microsoft.UI.Text.FontWeights.SemiBold,Foreground=new SolidColorBrush(Colors.White)});
         Status=new TextBlock{Text="Preparing your update…",FontSize=14,TextWrapping=TextWrapping.Wrap,Foreground=new SolidColorBrush(Colors.White)};panel.Children.Add(Status);
         Progress=new ProgressBar{Minimum=0,Maximum=100,IsIndeterminate=true,Foreground=new SolidColorBrush(ColorHelper.FromArgb(255,74,222,128))};panel.Children.Add(Progress);
         explanation=new TextBlock{Text=restart ? "Silo stays open while the new version is installed. It will restart when everything is ready." : "Silo stays open until installation finishes, then closes. It won't reopen automatically.",

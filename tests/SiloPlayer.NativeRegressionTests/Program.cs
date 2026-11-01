@@ -152,6 +152,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await MediaToolsDialogsNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "password-sessions")
+            {
+                await PasswordSessionsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "history-import-auth")
             {
                 await HistoryImportAuthNativeFixture.RunAsync();
@@ -422,6 +427,12 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "upstream-shell")
             {
                 await UpstreamShellNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "library-letters")
+            {
+                await LibraryLettersNativeFixture.RunAsync(parent, _window);
                 Program.Log("PASS: native regression run completed.");
                 return;
             }
