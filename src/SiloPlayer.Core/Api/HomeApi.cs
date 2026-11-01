@@ -7,6 +7,9 @@ public class HomeApi(SiloApiClient client)
     private readonly SemaphoreSlim _capabilityGate = new(1);
     private ApiRequestContext? _capabilityContext;
     private HomeCapabilities? _capabilities;
+    private bool _capabilitiesTransient;
+    private long _layoutGeneration;
+    private long _capabilityLayoutGeneration;
 
     public ApiRequestContext CaptureContext() => client.CaptureContext();
     public ApiIdentityContext CaptureIdentityContext() => client.CaptureIdentityContext();
@@ -23,7 +26,12 @@ public class HomeApi(SiloApiClient client)
         client.LocalizedReads.ThrowIfChanged(language);
     }
     public Task<HomeLayoutResponse> GetLayoutAsync(CancellationToken ct = default)
-        => client.GetAsync<HomeLayoutResponse>("/api/v2/home/layout", ct);
+    {
+        // Share optional discovery failures across this layout's initial and
+        // queued rows. A later layout refresh can discover recovered support.
+        Interlocked.Increment(ref _layoutGeneration);
+        return client.GetAsync<HomeLayoutResponse>("/api/v2/home/layout", ct);
+    }
 
     public Task<HomeSectionsResponse> GetSectionsAsync(CancellationToken ct = default)
         => client.GetAsync<HomeSectionsResponse>("/api/v2/home/sections", ct);
@@ -45,7 +53,7 @@ public class HomeApi(SiloApiClient client)
         var section = await client.SendRequestAsync<HomeSectionWithItems>(owner, HttpMethod.Get,
             $"/api/v2/home/sections/{Uri.EscapeDataString(sectionId)}/items", null, ct).ConfigureAwait(false);
         RequireCurrentRead(owner, language, ct);
-        section.ReadLanguageGeneration = language;
+        if (section != null) section.ReadLanguageGeneration = language;
         return new() { Section = section };
     }
 
@@ -63,8 +71,11 @@ public class HomeApi(SiloApiClient client)
         if (bounded) path += $"?item_limit={Services.HomeRowWindow.InitialItemLimit}";
         var section = await client.SendRequestAsync<HomeSectionWithItems>(context, HttpMethod.Get, path, null, ct).ConfigureAwait(false);
         RequireCurrentRead(context, language, ct);
-        section.ReadLanguageGeneration = language;
-        if (!bounded) section.HasMore = false;
+        if (section != null)
+        {
+            section.ReadLanguageGeneration = language;
+            if (!bounded) section.HasMore = false;
+        }
         return new() { Section = section };
     }
 
@@ -78,33 +89,40 @@ public class HomeApi(SiloApiClient client)
         try
         {
             RequireCurrentRead(context, language, ct);
-            if (_capabilityContext == context && _capabilities != null) return _capabilities;
-            HomeCapabilities capabilities;
+            var layoutGeneration = Volatile.Read(ref _layoutGeneration);
+            if (_capabilityContext == context && _capabilities != null
+                && (!_capabilitiesTransient || _capabilityLayoutGeneration == layoutGeneration)) return _capabilities;
+            HomeCapabilities? capabilities;
+            var transient = false;
             try
             {
                 capabilities = await client.SendRequestAsync<HomeCapabilities>(context, HttpMethod.Get, "/api/v2/home/capabilities", null, ct).ConfigureAwait(false);
+                transient = capabilities == null;
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested && IsCurrentReadContext(context, language))
             {
                 // HttpClient timeout cancels its own request token, not the row
                 // consumer. A healthy items endpoint remains usable uncapped.
-                return new();
+                capabilities = new();
+                transient = true;
             }
             catch (OperationCanceledException) { throw; }
             catch (ApiException ex) when (IsCurrentReadContext(context, language) && ex.StatusCode is 404 or 405 or 501)
             {
-                _capabilityContext = context;
-                return _capabilities = new();
+                capabilities = new();
             }
             catch (Exception) when (IsCurrentReadContext(context, language))
             {
                 // The optimization is optional. Older/unavailable capability endpoints
                 // must never cause an unadvertised item_limit to be sent.
-                return new();
+                capabilities = new();
+                transient = true;
             }
             RequireCurrentRead(context, language, ct);
             _capabilityContext = context;
-            return _capabilities = capabilities;
+            _capabilitiesTransient = transient;
+            _capabilityLayoutGeneration = layoutGeneration;
+            return _capabilities = capabilities ?? new();
         }
         finally { _capabilityGate.Release(); }
     }

@@ -7,6 +7,7 @@ public class HomeRowCapabilityTests
 {
     [Theory]
     [InlineData("{}", "")]
+    [InlineData("null", "")]
     [InlineData("{\"section_item_limit_max\":100}", "")]
     [InlineData("{\"row_item_limit_max\":19}", "")]
     [InlineData("{\"row_item_limit_max\":20}", "?item_limit=20")]
@@ -27,6 +28,38 @@ public class HomeRowCapabilityTests
         using var wire = new Wire { TimeoutCapabilities = true }; using var http = new HttpClient(wire) { Timeout = TimeSpan.FromMilliseconds(100) };
         var response = await new HomeApi(Client(http)).GetInitialSectionItemsAsync("row");
         Assert.Equal("", Assert.Single(wire.Rows).Query); Assert.False(response.Section!.HasMore);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NullSectionKeepsTheNullableWrapperForMountedRowFallback(bool initial)
+    {
+        using var wire = new Wire { Section = "null" }; using var http = new HttpClient(wire);
+        var api = new HomeApi(Client(http));
+        var result = initial ? await api.GetInitialSectionItemsAsync("row") : await api.GetSectionItemsAsync("row");
+        Assert.NotNull(result); Assert.Null(result.Section);
+    }
+
+    [Theory]
+    [InlineData("timeout")]
+    [InlineData("malformed")]
+    [InlineData("null")]
+    public async Task OptionalFailureIsSharedAcrossRowsAndRetriedOnLaterLayout(string failure)
+    {
+        using var wire = new Wire { TimeoutCapabilities = failure == "timeout", Capabilities = failure == "malformed" ? "{" : "null" };
+        using var http = new HttpClient(wire) { Timeout = TimeSpan.FromMilliseconds(100) };
+        var api = new HomeApi(Client(http));
+        await api.GetLayoutAsync();
+        await Task.WhenAll(Enumerable.Range(1, 8).Select(i => api.GetInitialSectionItemsAsync("row" + i)));
+        // Include rows queued behind Home's five-request cap, after discovery finished.
+        await api.GetInitialSectionItemsAsync("queued-row");
+        Assert.Equal(1, wire.CapabilityReads);
+        Assert.Equal(9, wire.Rows.Count); Assert.All(wire.Rows, row => Assert.Equal("", row.Query));
+        wire.TimeoutCapabilities = false; wire.Capabilities = "{\"row_item_limit_max\":100}";
+        await api.GetLayoutAsync();
+        await api.GetInitialSectionItemsAsync("refreshed");
+        Assert.Equal(2, wire.CapabilityReads); Assert.Equal("?item_limit=20", wire.Rows.Last().Query);
     }
 
     [Fact]
@@ -87,18 +120,21 @@ public class HomeRowCapabilityTests
     private sealed class Wire : HttpMessageHandler
     {
         public string Capabilities = "{\"row_item_limit_max\":100,\"section_item_limit_max\":100}";
+        public string Section = """{"id":"row","has_more":true,"items":[]}""";
         public bool Unsupported, Hold, TimeoutCapabilities; public int CapabilityReads; public List<Uri> Rows = [];
         public TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
+            if (request.RequestUri!.AbsolutePath.EndsWith("/layout"))
+                return new(HttpStatusCode.OK) { Content = new StringContent("""{"sections":[]}""") };
             if (request.RequestUri!.AbsolutePath.EndsWith("/capabilities"))
             {
                 CapabilityReads++; Started.TrySetResult(); if (Hold) await Release.Task;
                 if (TimeoutCapabilities) await Task.Delay(Timeout.InfiniteTimeSpan, ct);
                 return new(Unsupported ? HttpStatusCode.NotFound : HttpStatusCode.OK) { Content = new StringContent(Unsupported ? "{}" : Capabilities) };
             }
-            Rows.Add(request.RequestUri);
-            return new(HttpStatusCode.OK) { Content = new StringContent("""{"id":"row","has_more":true,"items":[]}""") };
+            lock (Rows) Rows.Add(request.RequestUri);
+            return new(HttpStatusCode.OK) { Content = new StringContent(Section) };
         }
     }
 }

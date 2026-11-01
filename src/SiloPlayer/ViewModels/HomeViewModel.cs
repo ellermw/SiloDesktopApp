@@ -527,7 +527,10 @@ public partial class HomeViewModel : ObservableObject,
             try
             {
                 var sectionId = section.Id;
-                if (!IsCurrentSectionLoad(generation, ct, sectionId) || !_homeApi.IsCurrentReadContext(owner, language)) return;
+                var isCurrent = false;
+                await RunOnUiThreadAsync(() => isCurrent = IsCurrentSectionLoad(generation, ct, sectionId)
+                    && _homeApi.IsCurrentReadContext(owner, language)).ConfigureAwait(false);
+                if (!isCurrent) return;
                 var read = reads[sectionId];
                 var resp = await (read.Whole ? _homeApi.GetSectionItemsAsync(owner, language, sectionId, ct)
                     : _homeApi.GetInitialSectionItemsAsync(owner, language, sectionId, ct)).ConfigureAwait(false);

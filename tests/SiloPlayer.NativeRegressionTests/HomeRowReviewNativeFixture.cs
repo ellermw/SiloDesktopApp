@@ -9,6 +9,7 @@ using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
@@ -28,11 +29,66 @@ internal static class HomeRowReviewNativeFixture
         await Case("queued-server-headers", () => QueuedOwnerAsync("server"));
         await Case("queued-account-headers", () => QueuedOwnerAsync("account"));
         await Case("queued-token-refresh-same-owner", () => QueuedOwnerAsync("token-refresh"));
+        await Case("null-initial-mounted-row", () => NullRowAsync(parent, false));
+        await Case("null-whole-mounted-hero", () => NullRowAsync(parent, true));
+        await Case("queued-row-ui-collection-ownership", QueuedUiOwnershipAsync);
         await Case("promoted-hero-whole", PromotedHeroAsync);
         await Case("translated-prefix-and-tail", LanguageAsync);
         await Case("real-menu-undo-vs-refresh", () => MenuAsync(parent, true));
         await Case("real-menu-series-tail-removal", () => MenuAsync(parent, false));
         if (failures.Count > 0) throw new InvalidOperationException(string.Join("\n", failures));
+    }
+
+    private static async Task NullRowAsync(StackPanel parent, bool hero)
+    {
+        using var session = new Session(new Wire { NullItems = true, Hero = hero });
+        var page = new HomePage { Width = 900, Height = 700 }; parent.Children.Add(page);
+        try
+        {
+            await Until(() => session.Vm.FeaturedSections.Concat(session.Vm.Sections).FirstOrDefault()?.LoadCompleted == true);
+            var row = session.Vm.FeaturedSections.Concat(session.Vm.Sections).Single();
+            Require(!row.LoadFailed && row.Id == "row" && row.Title == "Progress", "Null item JSON must preserve the successful mounted layout slot.");
+        }
+        finally { parent.Children.Remove(page); }
+    }
+
+    private static async Task QueuedUiOwnershipAsync()
+    {
+        using var session = new Session(new Wire { Batch = true });
+        await session.Vm.LoadCommand.ExecuteAsync(null); await session.Wire.FirstFive.Task.WaitAsync(TimeSpan.FromSeconds(4));
+        // Guard the real collections' backing stores, without replacing the VM or
+        // its validity predicate. This deterministically detects off-dispatcher
+        // enumeration at the real queued continuation rather than relying on a race.
+        var guards = new[] { session.Vm.FeaturedSections, session.Vm.Sections }.Select(collection =>
+        {
+            var field = typeof(System.Collections.ObjectModel.Collection<HomeSectionWithItems>)
+                .GetFields(BindingFlags.NonPublic | BindingFlags.Instance).Single(f => f.FieldType == typeof(IList<HomeSectionWithItems>));
+            var guard = new UiOwnedList((IList<HomeSectionWithItems>)field.GetValue(collection)!, Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread());
+            field.SetValue(collection, guard); return guard;
+        }).ToArray();
+        await Task.Run(() => session.Wire.ReleaseFirst.TrySetResult());
+        await Until(() => session.Vm.Sections.All(row => row.LoadCompleted));
+        Require(guards.Sum(g => g.WorkerReads) == 0, "Queued validity check enumerated UI-owned collections from a worker.");
+        Require(session.Vm.Sections.Single(row => row.Id == "row6").Items.Count == 20, "Healthy queued row must complete.");
+    }
+
+    private sealed class UiOwnedList(IList<HomeSectionWithItems> inner, Microsoft.UI.Dispatching.DispatcherQueue dispatcher) : IList<HomeSectionWithItems>
+    {
+        public int WorkerReads;
+        public IEnumerator<HomeSectionWithItems> GetEnumerator()
+        {
+            if (!dispatcher.HasThreadAccess) { Interlocked.Increment(ref WorkerReads); throw new InvalidOperationException("UI collection enumerated from a worker."); }
+            return inner.GetEnumerator();
+        }
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+        public HomeSectionWithItems this[int index] { get => inner[index]; set => inner[index] = value; }
+        public int Count => inner.Count; public bool IsReadOnly => inner.IsReadOnly;
+        public void Add(HomeSectionWithItems item) => inner.Add(item);
+        public void Clear() => inner.Clear(); public bool Contains(HomeSectionWithItems item) => inner.Contains(item);
+        public void CopyTo(HomeSectionWithItems[] array, int index) => inner.CopyTo(array, index);
+        public int IndexOf(HomeSectionWithItems item) => inner.IndexOf(item);
+        public void Insert(int index, HomeSectionWithItems item) => inner.Insert(index, item);
+        public bool Remove(HomeSectionWithItems item) => inner.Remove(item); public void RemoveAt(int index) => inner.RemoveAt(index);
     }
 
     private static async Task QueuedOwnerAsync(string change)
@@ -160,7 +216,7 @@ internal static class HomeRowReviewNativeFixture
     private sealed record Read(string Id, string Host, string Profile, string Query, string Account);
     private sealed class Wire : HttpMessageHandler
     {
-        public bool Batch, Hero, HoldRefresh, HoldWhole, Dismissed; public string Language = "EN"; public int UndoCalls;
+        public bool Batch, Hero, HoldRefresh, HoldWhole, Dismissed, NullItems; public string Language = "EN"; public int UndoCalls;
         public ConcurrentQueue<Read> Requests = new(); public ConcurrentQueue<string> MutationProfiles = new();
         public TaskCompletionSource FirstFive = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseFirst = new(TaskCreationOptions.RunContinuationsAsynchronously),
             RefreshStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseRefresh = new(TaskCreationOptions.RunContinuationsAsynchronously),
@@ -187,6 +243,7 @@ internal static class HomeRowReviewNativeFixture
             if (Batch && id != "row6") { if (Requests.Count == 5) FirstFive.TrySetResult(); await ReleaseFirst.Task; }
             if (capped && Interlocked.Increment(ref _capped) > 1 && HoldRefresh) { RefreshStarted.TrySetResult(); await ReleaseRefresh.Task; }
             if (!capped && HoldWhole) { WholeStarted.TrySetResult(); await ReleaseWhole.Task; }
+            if (NullItems) return Json("null");
             return Json(JsonSerializer.Serialize(new { id, title = "Progress", section_type = "continue_watching", featured = hero, item_limit = capped ? 20 : 50,
                 total_count = 35, has_more = capped, items = Enumerable.Range(1, capped ? 20 : 35).Where(i => !dismissed || i is not (1 or 21)).Select(i => new {
                     content_id = i is 1 or 21 ? $"episode{i}" : $"movie{i}", series_id = i is 1 or 21 ? "show" : null, type = i is 1 or 21 ? "episode" : "movie",
