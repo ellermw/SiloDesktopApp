@@ -280,6 +280,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
         internal List<Uri> Watches { get; } = [];
         internal List<JsonElement> Starts { get; } = [];
         internal double ResumePosition = 91;
+        internal int WatchFailuresRemaining;
         internal string? HoldWatch;
         internal TaskCompletionSource WatchStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource ReleaseWatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -307,6 +308,11 @@ internal static partial class EpisodeQuickPlayNativeFixture
             {
                 Watches.Add(request.RequestUri);
                 if (path.EndsWith("/" + HoldWatch)) { WatchStarted.TrySetResult(); await ReleaseWatch.Task.WaitAsync(ct); }
+                if (WatchFailuresRemaining > 0)
+                {
+                    --WatchFailuresRemaining;
+                    return new(HttpStatusCode.BadRequest) { Content = new StringContent("{\"error\":\"session-retiring\"}", Encoding.UTF8, "application/json") };
+                }
                 return Json("""{"content_id":"CONTENT","type":"episode","title":"Fixture episode","versions":[{"file_id":42,"duration":1200,"resolution":"1080p","container":"mkv","codec_video":"h264","codec_audio":"aac"}],"user_data":{"position_seconds":POSITION,"duration_seconds":1200,"is_in_progress":true}}""".Replace("CONTENT", path.Split('/')[^1]).Replace("POSITION", ResumePosition.ToString(System.Globalization.CultureInfo.InvariantCulture)));
             }
             if (path.EndsWith("/start"))

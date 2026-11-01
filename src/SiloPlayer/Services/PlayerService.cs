@@ -312,7 +312,8 @@ public partial class PlayerService : IDisposable
     public void PrefetchWatchDetail(string? contentId, int? libraryId = null, int? fileId = null)
         => PrefetchWatchDetailCore(contentId, _localAuthority, libraryId, fileId);
 
-    private void PrefetchWatchDetailCore(string? contentId, PlaybackAuthorityScope authority, int? libraryId = null, int? fileId = null)
+    private void PrefetchWatchDetailCore(string? contentId, PlaybackAuthorityScope authority, int? libraryId = null, int? fileId = null,
+        ApiRequestContext? expectedContext = null)
     {
         if (string.IsNullOrWhiteSpace(contentId) || _closing)
             return;
@@ -325,7 +326,7 @@ public partial class PlayerService : IDisposable
         var task = _watchDetailPrefetches.GetOrAdd(
             cacheKey,
             WatchPrefetchAuthorityKey(authority, profileId),
-            () => FetchWatchDetailAfterFinalSaveAsync(authority, contentId, libraryId, fileId, CancellationToken.None),
+            () => FetchWatchDetailAfterFinalSaveAsync(authority, contentId, libraryId, fileId, CancellationToken.None, expectedContext),
             DateTimeOffset.UtcNow,
             out var added);
         if (added)
@@ -358,9 +359,7 @@ public partial class PlayerService : IDisposable
         PlaybackAuthorityScope? authority = null,
         ApiRequestContext? expectedContext = null)
         => _watchDetailFreshness.GetCurrentAsync(
-            token => expectedContext.HasValue
-                ? FetchWatchDetailAfterFinalSaveAsync(authority ?? _activeAuthority, contentId, libraryId, fileId, token, expectedContext)
-                : GetOrFetchWatchDetailOnceAsync(contentId, consumePrefetch, token, libraryId, fileId, authority),
+            token => GetOrFetchWatchDetailOnceAsync(contentId, consumePrefetch, token, libraryId, fileId, authority, expectedContext),
             _ => _watchDetailPrefetches.Invalidate(WatchPreparationKey(contentId, libraryId, fileId)),
             ct);
 
@@ -370,16 +369,19 @@ public partial class PlayerService : IDisposable
         CancellationToken ct,
         int? libraryId = null,
         int? fileId = null,
-        PlaybackAuthorityScope? authority = null)
+        PlaybackAuthorityScope? authority = null,
+        ApiRequestContext? expectedContext = null)
     {
         authority ??= _activeAuthority;
         ArgumentException.ThrowIfNullOrWhiteSpace(contentId);
-        var context = authority.ApiClient.CaptureContext();
+        var context = expectedContext ?? authority.ApiClient.CaptureContext();
+        EnsurePreparationAuthority();
 
         // Starting through the cache also coalesces callers that arrive before
         // a hover prefetch has fired (for example, Item Detail and Play racing
-        // immediately after navigation).
-        PrefetchWatchDetailCore(contentId, authority, libraryId, fileId);
+        // immediately after navigation). Scoped starts retain their captured
+        // read owner through both the shared request and the transient retry.
+        PrefetchWatchDetailCore(contentId, authority, libraryId, fileId, expectedContext);
         var prefetched = await TryGetPrefetchedWatchDetailAsync(contentId, consumePrefetch, ct, authority, libraryId, fileId)
             .ConfigureAwait(false);
         EnsurePreparationAuthority();
@@ -388,7 +390,7 @@ public partial class PlayerService : IDisposable
 
         try
         {
-            var detail = await FetchWatchDetailAfterFinalSaveAsync(authority, contentId, libraryId, fileId, ct).ConfigureAwait(false);
+            var detail = await FetchWatchDetailAfterFinalSaveAsync(authority, contentId, libraryId, fileId, ct, expectedContext).ConfigureAwait(false);
             EnsurePreparationAuthority();
             return detail;
         }
@@ -399,7 +401,7 @@ public partial class PlayerService : IDisposable
             // imposing this delay on successful requests.
             await Task.Delay(300, ct).ConfigureAwait(false);
             EnsurePreparationAuthority();
-            var detail = await FetchWatchDetailAfterFinalSaveAsync(authority, contentId, libraryId, fileId, ct).ConfigureAwait(false);
+            var detail = await FetchWatchDetailAfterFinalSaveAsync(authority, contentId, libraryId, fileId, ct, expectedContext).ConfigureAwait(false);
             EnsurePreparationAuthority();
             return detail;
         }
@@ -1884,6 +1886,13 @@ public partial class PlayerService : IDisposable
             if (!expectedIdentity.HasValue)
             {
                 _ = FlushSubtitleOffsetAsync();
+                CancelPendingPlayRequest();
+            }
+            else if (IsCurrentOwner() && Volatile.Read(ref _playRequestCts) != null)
+            {
+                // A still click supersedes ordinary as well as scoped pending
+                // starts before waiting for their authority gate. With no
+                // preparation pending, leave established playback untouched.
                 CancelPendingPlayRequest();
             }
             await _authoritySwitchGate.WaitAsync(cancellationToken);

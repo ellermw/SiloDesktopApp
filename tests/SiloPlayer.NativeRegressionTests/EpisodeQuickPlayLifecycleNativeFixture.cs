@@ -27,11 +27,13 @@ internal static partial class EpisodeQuickPlayNativeFixture
         {
             ("transport owner", () => VerifyTransportOwnerAsync(scope)),
             ("scoped watch freshness", () => VerifyScopedWatchFreshnessAsync(scope)),
+            ("scoped watch retry and prefetch", () => VerifyScopedWatchPreparationAsync(scope)),
             ("access refresh ownership", () => VerifyAccessRefreshAsync(scope)),
             ("superseded starts retain player state", () => VerifySupersededStateAsync(scope)),
             ("watch cancellation and resize/navigation", () => VerifyCancellationAsync(scope)),
             ("profile ownership across preparation awaits", () => VerifyPreparationOwnerAsync(scope)),
             ("newer viewer click", () => VerifyNewerIntentAsync(scope)),
+            ("still click supersedes ordinary start", () => VerifyScopedSupersedesUnscopedAsync(scope)),
             ("canceled queued successor", () => VerifyCanceledSuccessorAsync(scope)),
             ("loading overlay ownership", () => VerifyLoadingOverlayOwnershipAsync(scope)),
             ("attached room authority", () => VerifyRoomIntentAsync(scope)),
@@ -104,6 +106,49 @@ internal static partial class EpisodeQuickPlayNativeFixture
         await pending;
         Check(scope.Wire.Watches.Count == 2 && scope.Wire.Starts.Count == 1,
             "Scoped /watch consumed a response invalidated by a racing progress/watched mutation.");
+    }
+
+    private static async Task VerifyScopedWatchPreparationAsync(LifecycleScope scope)
+    {
+        // Exercise both a failed initial prefetch and the delayed fallback
+        // retry while retiring an actual outgoing playback session.
+        foreach (var failures in new[] { 1, 2 })
+        {
+            await scope.ResetAsync();
+            scope.Wire.AcceptStart = true;
+            var manager = new PlaybackManager(scope.Playback, scope.Catalog, scope.Auth, scope.Client);
+            manager.UseWatchDetail(new() { ContentId = "outgoing", Type = "episode", Versions = [new() { FileId = 42, Duration = 1200 }] });
+            await manager.StartSessionAsync(42, 91);
+            SetField(scope.Player, "_playbackManager", manager);
+            typeof(PlayerService).GetProperty("ContentId")!.SetValue(scope.Player, "outgoing");
+            typeof(PlayerService).GetMethod("SetState", Private)!.Invoke(scope.Player, [PlayerState.Minimized]);
+            scope.Wire.Starts.Clear();
+            scope.Wire.WatchFailuresRemaining = failures;
+            var page = scope.MountSeries("retry-episode"); await Task.Delay(60); page.UpdateLayout();
+            var play = ResumeButton((Panel)page.FindName("EpisodesPanel")); Invoke(play);
+            await Until(() => play.IsEnabled && scope.Wire.Starts.Count == 1);
+            Check(scope.Wire.Watches.Count == failures + 1 && scope.Wire.Stops == 1 &&
+                scope.Player.ContentId == "retry-episode" && scope.Player.State == PlayerState.Expanded &&
+                scope.Player.Manager?.CurrentSession != null && scope.Player.ErrorMessage == null,
+                "A transient scoped /watch 400 after retiring playback did not recover through normal watch preparation.");
+        }
+
+        await scope.ResetAsync();
+        scope.Wire.HoldWatch = "prefetched-episode";
+        var prefetchedPage = scope.MountSeries(scope.Wire.HoldWatch); await Task.Delay(60); prefetchedPage.UpdateLayout();
+        scope.Player.PrefetchWatchDetail(scope.Wire.HoldWatch, libraryId: 73);
+        await scope.Wire.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var prefetchedPlay = ResumeButton((Panel)prefetchedPage.FindName("EpisodesPanel")); Invoke(prefetchedPlay);
+        try
+        {
+            await Until(() => scope.Player.IsLoading);
+            Check(scope.Wire.Watches.Count == 1, "Scoped playback duplicated the in-flight hover/detail /watch read.");
+        }
+        finally { scope.Wire.ReleaseWatch.TrySetResult(); }
+        await Until(() => prefetchedPlay.IsEnabled && scope.Wire.Starts.Count == 1);
+        Check(scope.Wire.Watches.Count == 1 && scope.Wire.Watches[0].Query == "?library_id=73" &&
+            scope.Wire.Starts[0].GetProperty("start_position").GetDouble() == 91,
+            "Scoped playback did not consume its matching library-scoped prefetch and normal resume position.");
     }
 
     private static async Task VerifyAccessRefreshAsync(LifecycleScope scope)
@@ -329,6 +374,38 @@ internal static partial class EpisodeQuickPlayNativeFixture
         await Task.Delay(40);
         Check(newerEntered && successorLoading && scope.Overlay.Visibility == Visibility.Visible && scope.Wire.Starts.Count == 1 && scope.Player.ContentId == "new-b",
             "The newer card click waited for stale playback startup or older cleanup hid its loading/error surface.");
+    }
+
+    private static async Task VerifyScopedSupersedesUnscopedAsync(LifecycleScope scope)
+    {
+        var page = scope.MountSeries("new-scoped-episode"); await Task.Delay(60); page.UpdateLayout();
+        var play = ResumeButton((Panel)page.FindName("EpisodesPanel"));
+        scope.Wire.HoldWatch = "slow-unscoped";
+        var first = scope.Player.PlayAsync(scope.Wire.HoldWatch);
+        await scope.Wire.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var releaseOld = scope.Wire.ReleaseWatch;
+        scope.Wire.HoldWatch = "new-scoped-episode";
+        scope.Wire.WatchStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        scope.Wire.ReleaseWatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        Invoke(play);
+        try
+        {
+            // The successor must reach its own read while the ordinary start's
+            // read is still held, and the ordinary request must never /start.
+            await scope.Wire.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await first.WaitAsync(TimeSpan.FromSeconds(3));
+            Check(scope.Wire.Starts.Count == 0 && scope.Player.ContentId == "new-scoped-episode" && scope.Player.IsLoading,
+                "A still click failed to preempt the ordinary preparation before session/native startup.");
+        }
+        finally
+        {
+            releaseOld.TrySetResult(); scope.Wire.ReleaseWatch.TrySetResult();
+            await first;
+            await Until(() => play.IsEnabled);
+        }
+        Check(scope.Wire.Starts.Count == 1 && scope.Player.ContentId == "new-scoped-episode" &&
+            scope.Wire.Watches.Count == 2 && scope.Wire.Watches[1].Query == "?library_id=73",
+            "The superseded ordinary request reached /start or replaced the newer scoped episode.");
     }
 
     private static async Task VerifyPreparationOwnerAsync(LifecycleScope scope)
@@ -712,7 +789,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
             Services.GetRequiredService<NavigationService>().Frame = Frame;
             await Player.CloseAsync();
             Wire.HoldWatch = null; Wire.HoldCapability = Wire.HoldSettings = Wire.HoldStart = Wire.HoldStage = Wire.AcceptStart = false;
-            Wire.ResumePosition = 91;
+            Wire.ResumePosition = 91; Wire.WatchFailuresRemaining = 0;
             Wire.WatchStarted = new(TaskCreationOptions.RunContinuationsAsynchronously); Wire.ReleaseWatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Wire.BoundaryStarted = new(TaskCreationOptions.RunContinuationsAsynchronously); Wire.ReleaseBoundary = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Wire.Watches.Clear(); Wire.Starts.Clear(); Wire.Stages.Clear(); Wire.Requests.Clear(); Wire.Stops = Wire.Suggestions = 0;
