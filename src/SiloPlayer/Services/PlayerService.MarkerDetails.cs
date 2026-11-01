@@ -52,10 +52,10 @@ public partial class PlayerService
             fileGeneration == Volatile.Read(ref _fileLoadGeneration) &&
             playback == Volatile.Read(ref _playRequestGeneration) && ReferenceEquals(authority, _activeAuthority) &&
             authority.ApiClient.IsCurrentContext(context);
-        var preferences = new MarkerDetailsPreferences();
+        MarkerDetailsPreferences preferences;
         try { preferences = await authority.SettingsApi.GetMarkerDetailsPreferencesAsync(context, ct).ConfigureAwait(false); }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
-        catch { } // Older/unreachable settings keep these optional details off.
+        catch (OperationCanceledException) { return; }
+        catch { return; } // A failed optional read must not replace accepted preferences.
         lock (_markerDetailsGate)
         {
             if (ct.IsCancellationRequested || !Current()) return;
@@ -87,6 +87,21 @@ public partial class PlayerService
 
     private FileVersion? CurrentMarkerVersion => MarkerVersions().FirstOrDefault(version =>
         version.FileId == (_playbackManager?.CurrentSession?.MediaFileId ?? 0));
+
+    // Playback retains the legacy top-level timing fallback. Provenance below
+    // is deliberately stricter so another file's details never label that range.
+    private TimeRange? MarkerTimingFor(string kind)
+    {
+        var version = CurrentMarkerVersion;
+        return kind switch
+        {
+            "intro" => version?.Intro ?? WatchDetail?.Intro,
+            "recap" => version?.Recap ?? WatchDetail?.Recap,
+            "credits" => version?.Credits ?? WatchDetail?.Credits,
+            "preview" => version?.Preview ?? WatchDetail?.Preview,
+            _ => null,
+        };
+    }
 
     private TimeRange? MarkerProvenanceFor(string kind)
     {

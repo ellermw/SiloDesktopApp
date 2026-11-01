@@ -70,6 +70,44 @@ public sealed class MarkerProvenanceTests
         Assert.Equal("92% · TheIntroDB", MarkerProvenance.Label(version.Intro, true, true));
     }
 
+    [Fact]
+    public void MixedTimingSnapshotPreservesDetailsPerKind()
+    {
+        TimeRange Marker(double start, double end) => new() { Start = start, End = end,
+            Source = "plugin", Provider = "introdb", Confidence = .92, Algorithm = "v4" };
+        var version = new FileVersion { Intro = Marker(5, 30), Credits = Marker(90, 100),
+            Recap = Marker(1, 4), Preview = Marker(70, 75) };
+        var intro = version.Intro; var recap = version.Recap; var preview = version.Preview;
+        using var message = JsonDocument.Parse("""{"intro":{"start":5,"end":30},"credits":{"start":85,"end":100},"recap":{"start":1,"end":4},"preview":{"start":70,"end":75},"marker_segments":[{"kind":"credits","start_seconds":85,"end_seconds":100}]}""");
+        PlaybackMarkerUpdate.Apply(version, message.RootElement);
+        Assert.Same(intro, version.Intro); Assert.Same(recap, version.Recap); Assert.Same(preview, version.Preview);
+        Assert.Equal(85, version.Credits!.Start);
+        Assert.Single(version.MarkerSegments!);
+        foreach (var range in new[] { version.Intro, version.Credits, version.Recap, version.Preview })
+        {
+            Assert.Equal("92% · TheIntroDB", MarkerProvenance.Label(range, true, true));
+            Assert.Equal("v4", range!.Algorithm);
+        }
+    }
+
+    [Theory]
+    [InlineData("start", "end")]
+    [InlineData("start_seconds", "end_seconds")]
+    public void TimingChangeWithoutDetailsRetainsAcceptedProvenance(string start, string end)
+    {
+        var version = new FileVersion { Intro = new() { Start = 5, End = 30,
+            Source = "plugin", Provider = "introdb", Confidence = .92, Algorithm = "v4" } };
+        using var message = JsonDocument.Parse($$$"""{"intro":{"{{{start}}}":5,"{{{end}}}":40}}""");
+        PlaybackMarkerUpdate.Apply(version, message.RootElement);
+        Assert.Equal(40, version.Intro!.End);
+        Assert.Equal("92% · TheIntroDB", MarkerProvenance.Label(version.Intro, true, true));
+        Assert.Equal("v4", version.Intro.Algorithm);
+        using var cleared = JsonDocument.Parse("""{"intro":{"start":5,"end":40,"source":null,"provider":null,"confidence":null,"algorithm":null}}""");
+        PlaybackMarkerUpdate.Apply(version, cleared.RootElement);
+        Assert.Null(MarkerProvenance.Label(version.Intro, true, true));
+        Assert.Null(version.Intro!.Algorithm);
+    }
+
     [Theory]
     [InlineData(23, true, false)]
     [InlineData(24, false, false)]

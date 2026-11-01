@@ -5461,10 +5461,17 @@ local function observe_properties()
                 or state.marker_file_id ~= tonumber(data.file_id)
                 or state.marker_load_generation ~= tonumber(data.load_generation)
             local changed = content_changed or state.marker_file_id ~= tonumber(data.file_id)
+            -- check_skip_markers projects the singular state ranges onto the
+            -- active segment. Compare payloads, not that mutable projection.
+            local previous_ranges, incoming_ranges = state.marker_payload_ranges or {}, {}
             for _, kind in ipairs({"intro", "recap", "credits", "preview"}) do
-                if (state[kind .. "_start"] or 0) ~= (tonumber(data[kind .. "_start"]) or 0)
-                    or (state[kind .. "_end"] or 0) ~= (tonumber(data[kind .. "_end"]) or 0) then changed = true end
+                for _, edge in ipairs({"_start", "_end"}) do
+                    local key = kind .. edge
+                    incoming_ranges[key] = tonumber(data[key]) or 0
+                    if (previous_ranges[key] or 0) ~= incoming_ranges[key] then changed = true end
+                end
             end
+            state.marker_payload_ranges = incoming_ranges
             local before, after = state.marker_segments or {}, type(data.marker_segments) == "table" and data.marker_segments or {}
             if #before ~= #after then changed = true end
             for index, segment in ipairs(after) do

@@ -1274,7 +1274,7 @@ public partial class PlayerService : IDisposable
     public TimeRange? ActiveRecap => ActiveMarker("recap");
     public TimeRange? ActivePreview => ActiveMarker("preview");
     private TimeRange? ActiveMarker(string kind) => CurrentMarkerVersion?.MarkerSegments is { } segments
-        ? PlaybackMarkerRanges.Active(segments, kind, Position, MarkerProvenanceFor(kind)) : MarkerProvenanceFor(kind);
+        ? PlaybackMarkerRanges.Active(segments, kind, Position, MarkerProvenanceFor(kind)) : MarkerTimingFor(kind);
 
     // ── Events ───────────────────────────────────────────────────────────
 
@@ -5312,14 +5312,14 @@ public partial class PlayerService : IDisposable
             load_generation = Volatile.Read(ref _fileLoadGeneration),
             reset_auto_skip = _autoSkipMarkerIdentity.ShouldResetFor(ContentId),
             marker_segments = CurrentMarkerVersion?.MarkerSegments,
-            intro_start = MarkerProvenanceFor("intro")?.Start ?? 0,
-            intro_end = MarkerProvenanceFor("intro")?.End ?? 0,
-            recap_start = MarkerProvenanceFor("recap")?.Start ?? 0,
-            recap_end = MarkerProvenanceFor("recap")?.End ?? 0,
-            credits_start = MarkerProvenanceFor("credits")?.Start ?? 0,
-            credits_end = MarkerProvenanceFor("credits")?.End ?? 0,
-            preview_start = MarkerProvenanceFor("preview")?.Start ?? 0,
-            preview_end = MarkerProvenanceFor("preview")?.End ?? 0
+            intro_start = MarkerTimingFor("intro")?.Start ?? 0,
+            intro_end = MarkerTimingFor("intro")?.End ?? 0,
+            recap_start = MarkerTimingFor("recap")?.Start ?? 0,
+            recap_end = MarkerTimingFor("recap")?.End ?? 0,
+            credits_start = MarkerTimingFor("credits")?.Start ?? 0,
+            credits_end = MarkerTimingFor("credits")?.End ?? 0,
+            preview_start = MarkerTimingFor("preview")?.Start ?? 0,
+            preview_end = MarkerTimingFor("preview")?.End ?? 0
         };
 
         var json = System.Text.Json.JsonSerializer.Serialize(markers);

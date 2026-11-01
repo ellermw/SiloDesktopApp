@@ -10,6 +10,7 @@ using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Player;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 using SiloPlayer.Views;
@@ -64,9 +65,27 @@ internal static class MarkerDetailsNativeFixture
             Set(player, "_playbackManager", manager); typeof(PlayerService).GetProperty("Versions")!.SetValue(player, detail.Versions);
             await player.RefreshMarkerDetailsPreferencesAsync();
             Expect(player.GetMarkerDetailsLabel("intro") == "80% · TheIntroDB", "Nested-only multipart labels use the selected file");
+            wire.FailMarkerReads = true;
+            await player.RefreshMarkerDetailsPreferencesAsync();
+            Expect(player.MarkerDetails.ShowConfidence && player.MarkerDetails.ShowSource &&
+                player.GetMarkerDetailsLabel("intro") == "80% · TheIntroDB", "A failed optional read retains accepted preferences and labels");
+            wire.FailMarkerReads = false; wire.Confidence = wire.Source = false;
+            await player.RefreshMarkerDetailsPreferencesAsync();
+            Expect(!player.MarkerDetails.ShowConfidence && !player.MarkerDetails.ShowSource &&
+                player.GetMarkerDetailsLabel("intro") is null, "A successful disabled preference read still clears details");
+            wire.Confidence = wire.Source = true;
+            await player.RefreshMarkerDetailsPreferencesAsync();
+            using (var payload = JsonDocument.Parse("""{"file_id":8,"intro":{"start":15,"end":40},"credits":{"start":90,"end":100}}"""))
+                Call(player, "ApplyRealtimeMarkersUpdated", payload.RootElement);
+            Expect(player.GetMarkerDetailsLabel("intro") == "80% · TheIntroDB", "A mixed timing-only live update retains unchanged intro details");
+            using (var payload = JsonDocument.Parse("""{"file_id":8,"intro":{"start_seconds":15,"end_seconds":45}}"""))
+                Call(player, "ApplyRealtimeMarkersUpdated", payload.RootElement);
+            Expect(player.ActiveIntro?.End == 45 && player.GetMarkerDetailsLabel("intro") == "80% · TheIntroDB",
+                "A timing-only live edit retains accepted intro provenance");
             using (var payload = JsonDocument.Parse("""{"file_id":8,"intro":{"start":15,"end":40,"source":"manual"}}"""))
                 Call(player, "ApplyRealtimeMarkersUpdated", payload.RootElement);
             Expect(player.GetMarkerDetailsLabel("intro") == "Edited", "Nested-only multipart file receives its live marker update");
+            await VerifyTimingFallbackAsync(player, manager, detail);
             Set(player, "_playbackManager", null);
 
             parent.Children.Add(frame);
@@ -117,6 +136,50 @@ internal static class MarkerDetailsNativeFixture
         }
         if (failures.Count > 0) throw new InvalidOperationException(string.Join("; ", failures));
     }
+
+    private static async Task VerifyTimingFallbackAsync(PlayerService player, PlaybackManager manager, WatchDetailResponse detail)
+    {
+        detail.Versions[0].Intro = null;
+        detail.Intro = new() { Start = 5, End = 30, Source = "scanner" };
+        detail.Recap = new() { Start = 1, End = 4 };
+        detail.Credits = new() { Start = 90, End = 100 };
+        detail.Preview = new() { Start = 70, End = 75 };
+        using var mpv = new MpvPlayer(); mpv.Initialize(16, 16);
+        var script = Path.Combine(Program.ResultDirectory, "marker-timing-fallback.lua");
+        await File.WriteAllTextAsync(script, """
+            local mp = require('mp')
+            local utils = require('mp.utils')
+            mp.register_script_message('osc-set-markers', function(json)
+                mp.set_property_native('user-data/marker-fallback', utils.parse_json(json))
+            end)
+            mp.set_property_bool('user-data/marker-fallback-ready', true)
+            """);
+        typeof(MpvPlayer).GetMethod("Command", Fields)!.Invoke(mpv, [new[] { "load-script", script }]);
+        await Until(() => mpv.GetPropertyFlag("user-data/marker-fallback-ready"));
+        Set(player, "_mpv", mpv);
+        try
+        {
+            // Both a range-less selected version and an absent inventory entry
+            // must retain legacy watch timing, without inheriting its labels.
+            foreach (var fileId in new[] { 7, 999 })
+            {
+                typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, new PlaybackStartResponse { MediaFileId = fileId });
+                Call(player, "SendMarkersToOsc");
+                await Until(() => mpv.GetPropertyDouble("user-data/marker-fallback/file_id") == fileId);
+                foreach (var (kind, start, end) in new[] { ("intro", 5, 30), ("recap", 1, 4), ("credits", 90, 100), ("preview", 70, 75) })
+                {
+                    Check(mpv.GetPropertyDouble($"user-data/marker-fallback/{kind}_start") == start &&
+                        mpv.GetPropertyDouble($"user-data/marker-fallback/{kind}_end") == end,
+                        $"OSC lost top-level {kind} timing for file {fileId}");
+                    Check(player.GetMarkerDetailsLabel(kind) is null, "Fallback timing must not inherit primary-file provenance");
+                }
+                Check(player.ActiveIntro?.Start == 5 && player.ActiveIntro?.End == 30 && player.ActiveCredits?.Start == 90,
+                    "Native skip timing must retain the same top-level fallback");
+            }
+        }
+        finally { Set(player, "_mpv", null); }
+    }
+
     internal static async Task RunAsync(StackPanel parent)
     {
         var slot = typeof(SiloPlayer.App).GetField("_services", BindingFlags.Static | BindingFlags.NonPublic)!;
@@ -215,7 +278,7 @@ internal static class MarkerDetailsNativeFixture
     {
         internal readonly List<(string Key, bool Value)> Writes = [];
         internal int Deletes, FailedWrites;
-        internal bool Confidence, Source, FailWrites, HeldRequested, HeldWriteRequested, LibraryReadHeld;
+        internal bool Confidence, Source, FailWrites, FailMarkerReads, HeldRequested, HeldWriteRequested, LibraryReadHeld;
         internal string? LastMarkerProfile;
         internal TaskCompletionSource? HeldEffective, HeldWrite, HeldLibraries;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -229,6 +292,7 @@ internal static class MarkerDetailsNativeFixture
             {
                 if (request.RequestUri.Query.Contains(MarkerDetailsPreferences.ConfidenceKey))
                 {
+                    if (FailMarkerReads) return new(HttpStatusCode.InternalServerError) { Content = new StringContent("fixture read failed") };
                     LastMarkerProfile = request.Headers.TryGetValues("X-Profile-Id", out var ids) ? ids.Single() : null;
                     if (HeldEffective is { } held) { HeldRequested = true; await held.Task; }
                 }

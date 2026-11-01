@@ -49,6 +49,43 @@ public sealed class MpvOscRuntimeTests
     }
 
     [Theory]
+    [InlineData(35)]
+    [InlineData(45)]
+    public void SegmentProjectionDoesNotChangeRepublishedTimingIdentity(int position)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local state = osc_test_state
+            local payload = {content_id='episode', intro_start=5, intro_end=30,
+                marker_segments={ {kind='intro', start_seconds=5, end_seconds=30},
+                    {kind='intro', start_seconds=40, end_seconds=50} } }
+            local utils = require('mp.utils')
+            handlers['osc-set-markers'](utils.format_json(payload))
+            state.duration, state.time_pos = 100, {{position}}
+            osc_test_check()
+            assert(state.intro_start ~= 5, 'Active segment must differ from the singular payload')
+            local pending = {target=50}
+            state.intro_pending, state.intro_undo_origin = pending, 7
+            state.intro_prompt_remaining, state.intro_prompt_key = 3.25, 'owner-key'
+            handlers['osc-set-markers'](utils.format_json(payload))
+            local kept = state.intro_pending == pending and state.intro_undo_origin == 7
+                and state.intro_prompt_remaining == 3.25 and state.intro_prompt_key == 'owner-key'
+            payload.intro_end = 31
+            handlers['osc-set-markers'](utils.format_json(payload))
+            local range_reset = state.intro_pending == nil and state.intro_undo_origin == nil and state.intro_prompt_key == nil
+            state.intro_pending, state.intro_undo_origin, state.intro_prompt_key = pending, 7, 'owner-key'
+            payload.marker_segments[2].end_seconds = 51
+            handlers['osc-set-markers'](utils.format_json(payload))
+            local segment_reset = state.intro_pending == nil and state.intro_undo_origin == nil and state.intro_prompt_key == nil
+            mp.set_property('user-data/timing-identity', tostring(kept)..':'..tostring(range_reset)..':'..tostring(segment_reset))
+            """, rawAss: true, resultProperty: "user-data/timing-identity", beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """);
+        Assert.Equal("true:true:true", output);
+    }
+
+    [Theory]
     [InlineData("intro")]
     [InlineData("recap")]
     [InlineData("credits")]
