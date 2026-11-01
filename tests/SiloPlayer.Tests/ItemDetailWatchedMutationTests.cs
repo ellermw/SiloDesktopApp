@@ -126,6 +126,21 @@ public sealed class ItemDetailWatchedMutationTests
     }
 
     [Fact]
+    public async Task RemoteRefreshCannotRetireTheAcceptedFeedbackOfAPendingLocalWatchedWrite()
+    {
+        using var scope = new Scope("series", false) { Delayed = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        var localWrite = scope.Vm.ToggleWatchedCommand.ExecuteAsync(null);
+        var remoteRefresh = scope.Vm.RefreshMediaStateAsync(new(scope.Client.CaptureContext(),
+            new HashSet<string>(["unknown-episode"]), new HashSet<string>(["current"])));
+        scope.Delayed.SetResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+        await Task.WhenAll(localWrite, remoteRefresh);
+        Assert.True(scope.Vm.IsWatched);
+        Assert.True(scope.Vm.Item!.UserData!.Played);
+        Assert.True(scope.Vm.Seasons[0].UserData!.Played);
+        Assert.True(scope.Vm.Episodes[0].UserData!.Played);
+    }
+
+    [Fact]
     public async Task PreMutationEpisodeReadIsRetriedBeforeItCanOverwriteAcceptedCascade()
     {
         using var scope = new Scope("series", false);

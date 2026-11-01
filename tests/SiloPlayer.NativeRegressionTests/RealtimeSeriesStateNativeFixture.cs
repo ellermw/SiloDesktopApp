@@ -1,0 +1,118 @@
+using System.ComponentModel;
+using System.Net;
+using System.Reflection;
+using System.Text;
+using System.Text.Json;
+using CommunityToolkit.Mvvm.Messaging;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Services;
+using SiloPlayer.Services;
+using SiloPlayer.ViewModels;
+using SiloPlayer.Views;
+
+internal static class RealtimeSeriesStateNativeFixture
+{
+    internal static async Task RunAsync(StackPanel parent)
+    {
+        var slot = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var original = (IServiceProvider)slot.GetValue(null)!;
+        using var http = new HttpClient(new Wire());
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://realtime-native.invalid"); client.SetProfile("fixture-profile");
+        using var auth = new AuthService(client, new AuthApi(client));
+        var catalog = new CatalogApi(client);
+        slot.SetValue(null, new Services(original, client, auth, catalog));
+        try
+        {
+            foreach (var type in new[] { "series", "season" })
+            {
+                var page = new ItemDetailPage { Width = 900, Height = 720 };
+                var vm = page.ViewModel;
+                using var navigation = new CancellationTokenSource();
+                vm.Item = new() { ContentId = type, Type = type, SeriesId = type == "season" ? "series" : null,
+                    Title = "Realtime fixture", EpisodeCount = 4, PlayContentId = "old-target", UserData = new() { UnplayedCount = 4 }, UserState = new() };
+                vm.IsSeries = type == "series"; vm.SelectedSeasonNumber = 1;
+                vm.Seasons.Add(new() { ContentId = "season", SeasonNumber = 1, Title = "Season 1", EpisodeCount = 4, UserData = new() { UnplayedCount = 4 } });
+                vm.Episodes.Add(new() { ContentId = "sibling", Title = "Untouched sibling", SeasonNumber = 1, EpisodeNumber = 1,
+                    Runtime = 20, UserData = new() { PositionSeconds = 31 } });
+                Set(page, "_currentContentId", vm.Item.ContentId); Set(page, "_navigationCts", navigation);
+                var handler = (PropertyChangedEventHandler)typeof(ItemDetailPage).GetMethod("OnViewModelPropertyChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .CreateDelegate(typeof(PropertyChangedEventHandler), page);
+                vm.PropertyChanged += handler;
+                parent.Children.Add(page);
+                using var refresh = new RealtimeMediaStateRefresh(client, action => page.DispatcherQueue.TryEnqueue(() => action()));
+                try
+                {
+                    await Task.Delay(60);
+                    ((UIElement)page.FindName("ContentScroll")).Visibility = Visibility.Visible;
+                    if (type == "series")
+                    {
+                        ((UIElement)page.FindName("SeasonsSection")).Visibility = Visibility.Visible;
+                        ((UIElement)page.FindName("SeasonsScrollViewer")).Visibility = Visibility.Visible;
+                        ((UIElement)page.FindName("SeasonsLoadingSkeleton")).Visibility = Visibility.Collapsed;
+                    }
+                    Call(page, "BuildSeasonCards"); Call(page, "BuildEpisodeRows"); Call(page, "UpdateWatchedButton");
+                    var mounted = vm.Item;
+                    using var data = JsonDocument.Parse("""
+                        {"profile_id":"fixture-profile","content_id":"never-loaded","series_id":"series","change":"watched","played":true}
+                        """);
+                    refresh.ReceiveRealtime("user_state", "user_state.changed", data.RootElement);
+                    await UntilAsync(() => vm.Item.UserData?.WatchedCount == 2);
+                    await Task.Delay(100); page.UpdateLayout();
+                    Check(ReferenceEquals(mounted, vm.Item), "Realtime refresh replaced the mounted detail.");
+                    Check(vm.Item.UserData?.InProgressCount == 1 && !vm.IsWatched, "Authoritative aggregate state was not retained.");
+                    Check(vm.Episodes[0].UserData?.Played == false && vm.Episodes[0].UserData?.PositionSeconds == 31,
+                        "Unknown episode's scalar reached a sibling.");
+                    Check(!Descendants<Grid>((Panel)page.FindName("EpisodesPanel")).Any(grid => AutomationProperties.GetName(grid) == "Watched" && grid.Visibility == Visibility.Visible),
+                        "Unknown episode's scalar painted a sibling watched badge.");
+                    if (type == "series") Check(Descendants<TextBlock>((Panel)page.FindName("SeasonsPanel")).Any(text => text.Text == "2 of 4 episodes"),
+                        "Actual native season card did not repaint authoritative watched count.");
+                    if (type == "series") Check(vm.Item.PlayContentId == "new-target" && ((TextBlock)page.FindName("PlayButtonText")).Text == "Resume",
+                        "Actual native Resume action did not refresh its authoritative target/label.");
+                    await MediaParityNativeFixture.CaptureAsync(page, "realtime-state-" + type + ".png");
+                    Program.Log($"PASS: captured unknown-episode event refreshes mounted native {type} aggregate/season counts and leaves sibling state/badge untouched.");
+                }
+                finally { vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page); }
+            }
+        }
+        finally { slot.SetValue(null, original); }
+    }
+
+    private static async Task UntilAsync(Func<bool> condition)
+    { for (var i = 0; i < 250; i++) { if (condition()) return; await Task.Delay(20); } throw new TimeoutException("Native realtime state did not refresh."); }
+    private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
+    private static void Set(object target, string field, object value) => target.GetType().GetField(field, BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(target, value);
+    private static void Call(object target, string method) => target.GetType().GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(target, null);
+    private static IEnumerable<T> Descendants<T>(DependencyObject node) where T : DependencyObject
+    { if (node is T own) yield return own; for (var i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) foreach (var child in Descendants<T>(VisualTreeHelper.GetChild(node, i))) yield return child; }
+
+    private sealed class Services(IServiceProvider original, SiloApiClient client, AuthService auth, CatalogApi catalog) : IServiceProvider
+    {
+        public object? GetService(Type type) => type == typeof(SiloApiClient) ? client : type == typeof(AuthService) ? auth : type == typeof(CatalogApi) ? catalog :
+            type == typeof(SettingsApi) ? new SettingsApi(client) : type == typeof(PlaybackApi) ? new PlaybackApi(client) :
+            type == typeof(ItemDetailViewModel) ? new ItemDetailViewModel(catalog, new ItemDetailPrefetchCache(catalog, auth)) :
+            type == typeof(UICustomizationService) ? new UICustomizationService(new SettingsApi(client)) : original.GetService(type);
+    }
+
+    private sealed class Wire : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (request.RequestUri!.Host != "realtime-native.invalid" || request.Method != HttpMethod.Get)
+                throw new InvalidOperationException("Only synthetic local read fixtures are authorized.");
+            var path = request.RequestUri.AbsolutePath;
+            object body = path.StartsWith("/api/v2/catalog/items/") ?
+                new { content_id = path.EndsWith("/season") ? "season" : "series", type = path.EndsWith("/season") ? "season" : "series",
+                    play_content_id = "new-target", play_season_number = 1,
+                    user_data = new { watched_count = 2, unplayed_count = 2, in_progress_count = 1, played = false }, user_state = new { } } :
+                path.EndsWith("/seasons") ? new { items = new[] { new { content_id = "season", season_number = 1, episode_count = 4,
+                    user_data = new { watched_count = 2, unplayed_count = 2, in_progress_count = 1, played = false } } } } :
+                path.Contains("progress/capabilities") ? new { clear_resume_position = false } : new { items = Array.Empty<object>() };
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") });
+        }
+    }
+}

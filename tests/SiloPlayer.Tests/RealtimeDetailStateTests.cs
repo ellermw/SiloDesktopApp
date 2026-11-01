@@ -1,0 +1,256 @@
+using System.Net;
+using System.Text;
+using System.Text.Json;
+using CommunityToolkit.Mvvm.Messaging;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Services;
+using SiloPlayer.Messaging;
+using SiloPlayer.Services;
+using SiloPlayer.ViewModels;
+
+namespace SiloPlayer.Tests;
+
+public sealed class RealtimeDetailStateTests
+{
+    [Theory]
+    [InlineData("series", "watched")]
+    [InlineData("season", "watched")]
+    [InlineData("series", "progress")]
+    [InlineData("season", "progress")]
+    public async Task CapturedServerEnvelopeRefreshesOnlyTheNamedAggregate(string type, string change)
+    {
+        using var scope = new Scope(type);
+        var messenger = new WeakReferenceMessenger();
+        messenger.Register<ItemDetailViewModel, MediaStateInvalidated>(scope.Vm, static (vm, message) => vm.Receive(message));
+        using var refresh = new RealtimeMediaStateRefresh(scope.Client, callback => callback(), messenger);
+        var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        scope.Vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(scope.Vm.Item)) applied.TrySetResult(); };
+        using (var data = JsonDocument.Parse(JsonSerializer.Serialize(new { profile_id = "profile", content_id = "unloaded", series_id = "series", change, played = true, position_seconds = 900 })))
+            refresh.ReceiveRealtime("user_state", "user_state.changed", data.RootElement);
+        await applied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, scope.Vm.Item!.UserData!.WatchedCount);
+        Assert.False(scope.Vm.Item.UserData.Played);
+        Assert.False(scope.Vm.Episodes[0].UserData!.Played);
+        Assert.Equal(31, scope.Vm.Episodes[0].UserData!.PositionSeconds);
+        Assert.Equal(1, scope.DetailReads);
+    }
+
+    [Fact]
+    public async Task UnrelatedSeriesDoesNotReloadTheOpenDetail()
+    {
+        using var scope = new Scope("series");
+        await scope.Vm.RefreshMediaStateAsync(scope.Message("other-episode", "other-series"));
+        Assert.Equal(0, scope.DetailReads);
+        Assert.Equal(0, scope.Vm.Item!.UserData!.WatchedCount);
+    }
+
+    [Theory]
+    [InlineData(true, "new-resume-target", "new-resume-target")]
+    [InlineData(true, null, null)]
+    [InlineData(false, null, "old-target")]
+    public async Task RemoteProgressRefreshesTheAuthoritativeTargetAndPreservesAnOmittedLegacyTarget(bool supplied, string? target, string? expected)
+    {
+        using var scope = new Scope("series") { IncludeTarget = supplied, FreshTarget = target };
+        scope.Vm.Item!.PlayContentId = "old-target";
+        await scope.Vm.RefreshMediaStateAsync(scope.Message());
+        Assert.Equal(expected, scope.Vm.Item.PlayContentId);
+        Assert.Equal(31, scope.Vm.Episodes[0].UserData!.PositionSeconds);
+        Assert.False(scope.Vm.Episodes[0].UserData!.Played);
+    }
+
+    [Theory]
+    [InlineData("profile")]
+    [InlineData("navigation")]
+    [InlineData("local-watched")]
+    public async Task RetiredReadCannotOverwriteCurrentState(string departure)
+    {
+        using var scope = new Scope("series") { BlockedRead = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        var operation = scope.Vm.RefreshMediaStateAsync(scope.Message());
+        await scope.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (departure == "profile") scope.Client.SetProfile("replacement");
+        else if (departure == "navigation") scope.Vm.CancelPendingLoads();
+        else scope.Vm.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "series"));
+        scope.BlockedRead.SetResult(scope.FreshDetail("series", "series"));
+        await operation;
+        Assert.Equal(departure == "local-watched" ? 4 : 0, scope.Vm.Item!.UserData!.WatchedCount);
+    }
+
+    [Fact]
+    public async Task NavigationCancelsTheRetiredReadConsumerWithoutWaitingForItsSharedPrefetch()
+    {
+        using var scope = new Scope("series") { BlockedRead = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        var operation = scope.Vm.RefreshMediaStateAsync(scope.Message());
+        await scope.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        scope.Vm.CancelPendingLoads();
+        await Task.WhenAny(operation, Task.Delay(300));
+        Assert.True(operation.IsCompleted, "Retired detail still waits for the shared prefetch transport.");
+        Assert.False(scope.BlockedRead.Task.IsCompleted);
+    }
+
+    [Fact]
+    public async Task ImmediateInvalidationsDoNotRestartInitialEpisodeReadsBeforeTheCoalescedRefresh()
+    {
+        using var wire = new InitialEpisodeWire();
+        using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://initial-realtime.invalid"); client.SetProfile("profile");
+        var vm = new ItemDetailViewModel(new CatalogApi(client), new ItemDetailPrefetchCache((_, _) =>
+            throw new InvalidOperationException("Immediate invalidation must not fetch detail.")));
+        vm.Item = new() { ContentId = "series", Type = "series", UserData = new() };
+        try
+        {
+            var initialRead = vm.SelectSeasonCommand.ExecuteAsync(1);
+            await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            for (var n = 0; n < 10; n++) vm.Receive(new MediaStateInvalidated(client.CaptureContext(),
+                new HashSet<string>(["sibling"]), new HashSet<string>(["series"]), RefreshDetails: false));
+            wire.Release.TrySetResult();
+            await initialRead;
+            Assert.Equal(1, wire.Reads);
+            Assert.Equal("sibling", Assert.Single(vm.Episodes).ContentId);
+        }
+        finally { vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); }
+    }
+
+    [Fact]
+    public async Task EventsDuringAReadAreSerializedIntoOneTrailingAuthoritativeRead()
+    {
+        using var scope = new Scope("series") { BlockedRead = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        var operation = scope.Vm.RefreshMediaStateAsync(scope.Message());
+        await scope.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = scope.Vm.RefreshMediaStateAsync(scope.Message("another"));
+        var third = scope.Vm.RefreshMediaStateAsync(scope.Message("last"));
+        Assert.Equal(1, scope.DetailReads);
+        scope.BlockedRead.SetResult(scope.FreshDetail("series", "series"));
+        await Task.WhenAll(operation, second, third);
+        Assert.Equal(2, scope.DetailReads);
+        Assert.Equal(2, scope.Vm.Item!.UserData!.WatchedCount);
+    }
+
+    [Fact]
+    public async Task ReconnectCatchUpRefreshesTheOpenDetailWithoutReplacingIt()
+    {
+        using var scope = new Scope("series");
+        var item = scope.Vm.Item;
+        await scope.Vm.RefreshMediaStateAsync(scope.Message() with { ContentIds = new HashSet<string>(), SeriesIds = new HashSet<string>(), CatchUp = true });
+        Assert.Same(item, scope.Vm.Item);
+        Assert.Equal(2, item!.UserData!.WatchedCount);
+        Assert.Equal(2, scope.Vm.Seasons[0].UserData!.WatchedCount);
+    }
+
+    [Fact]
+    public async Task RefreshPreservesTheLibraryScopeForBothDetailAndSeasonReads()
+    {
+        using var wire = new ScopedWire();
+        using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://scoped-realtime.invalid"); client.SetProfile("profile");
+        var vm = new ItemDetailViewModel(new CatalogApi(client), new ItemDetailPrefetchCache((_, _) =>
+            throw new InvalidOperationException("A library-scoped detail must not use default-scope prefetch.")));
+        try
+        {
+            await vm.LoadInLibraryAsync("scoped-series", 9);
+            vm.Seasons.Add(new() { ContentId = "season", SeasonNumber = 1, EpisodeCount = 4, UserData = new() });
+            await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(["unknown"]), new HashSet<string>(["scoped-series"])));
+            Assert.Equal(2, vm.Item!.UserData!.WatchedCount);
+            Assert.Equal(2, vm.Seasons[0].UserData!.WatchedCount);
+            Assert.Equal(3, wire.Requests.Count);
+            Assert.All(wire.Requests, uri => Assert.Equal("?library_id=9", uri.Query));
+        }
+        finally { vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); }
+    }
+
+    [Theory]
+    [InlineData("series")]
+    [InlineData("season")]
+    public async Task UnknownEpisodeProgressRefreshesNamedAggregateWithoutApplyingASiblingScalar(string type)
+    {
+        using var scope = new Scope(type);
+        var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        scope.Vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(scope.Vm.Item) && scope.Vm.Item!.UserData!.WatchedCount == 2) changed.TrySetResult();
+        };
+        scope.Vm.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.PlaybackProgress, "never-loaded", "series",
+            context: scope.Client.CaptureContext()));
+        await Task.WhenAny(changed.Task, Task.Delay(500));
+        Assert.Equal(2, scope.Vm.Item!.UserData!.WatchedCount);
+        Assert.False(scope.Vm.Episodes[0].UserData!.Played);
+        Assert.Equal(31, scope.Vm.Episodes[0].UserData!.PositionSeconds);
+        Assert.Equal(1, scope.DetailReads);
+        if (type == "series") Assert.Equal(2, scope.Vm.Seasons[0].UserData!.WatchedCount);
+    }
+
+    private sealed class Scope : HttpMessageHandler
+    {
+        private readonly HttpClient _http;
+        internal SiloApiClient Client { get; }
+        internal ItemDetailViewModel Vm { get; }
+        internal int DetailReads;
+        internal TaskCompletionSource<MediaItemDetail>? BlockedRead;
+        internal readonly TaskCompletionSource ReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal bool IncludeTarget;
+        internal string? FreshTarget;
+        internal MediaStateInvalidated Message(string id = "unknown", string series = "series") =>
+            new(Client.CaptureContext(), new HashSet<string>([id]), new HashSet<string>([series]));
+        internal MediaItemDetail FreshDetail(string id, string type)
+        {
+            var detail = new MediaItemDetail { ContentId = id, Type = type,
+                UserData = new() { WatchedCount = 2, UnplayedCount = 2, InProgressCount = 1 } };
+            if (IncludeTarget) { detail.PlayContentId = FreshTarget; detail.PlaySeasonNumber = 2; }
+            return detail;
+        }
+        internal Scope(string type)
+        {
+            _http = new HttpClient(this, false);
+            Client = new SiloApiClient(_http); Client.SetBaseUrl("https://realtime-detail.invalid"); Client.SetProfile("profile");
+            Vm = new ItemDetailViewModel(new CatalogApi(Client), new ItemDetailPrefetchCache((id, _) =>
+            {
+                DetailReads++;
+                ReadStarted.TrySetResult();
+                return DetailReads == 1 && BlockedRead != null ? BlockedRead.Task : Task.FromResult(FreshDetail(id, type));
+            }));
+            Vm.Item = new() { ContentId = type == "series" ? "series" : "season", SeriesId = type == "season" ? "series" : null,
+                Type = type, EpisodeCount = 4, UserData = new() { UnplayedCount = 4 } };
+            Vm.Seasons.Add(new() { ContentId = "season", SeasonNumber = 1, EpisodeCount = 4, UserData = new() { UnplayedCount = 4 } });
+            Vm.Episodes.Add(new() { ContentId = "sibling", SeasonNumber = 1, UserData = new() { PositionSeconds = 31 } });
+        }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Assert.EndsWith("/series/series/seasons", request.RequestUri!.AbsolutePath);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""
+                {"items":[{"content_id":"season","season_number":1,"episode_count":4,"user_data":{"watched_count":2,"unplayed_count":2,"in_progress_count":1}}]}
+                """, Encoding.UTF8, "application/json") });
+        }
+        protected override void Dispose(bool disposing)
+        {
+            WeakReferenceMessenger.Default.UnregisterAll(Vm);
+            if (disposing) _http.Dispose();
+            base.Dispose(disposing);
+        }
+    }
+
+    private sealed class ScopedWire : HttpMessageHandler
+    {
+        internal readonly List<Uri> Requests = [];
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Requests.Add(request.RequestUri!);
+            var body = request.RequestUri!.AbsolutePath.EndsWith("/seasons")
+                ? """{"items":[{"content_id":"season","season_number":1,"episode_count":4,"user_data":{"watched_count":2}}]}"""
+                : """{"content_id":"scoped-series","type":"series","episode_count":4,"user_state":{},"user_data":{"watched_count":2}}""";
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") });
+        }
+    }
+
+    private sealed class InitialEpisodeWire : HttpMessageHandler
+    {
+        internal int Reads;
+        internal readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Assert.EndsWith("/seasons/1/episodes", request.RequestUri!.AbsolutePath);
+            Reads++; Started.TrySetResult(); await Release.Task.WaitAsync(ct);
+            return new(HttpStatusCode.OK) { Content = new StringContent("""{"items":[{"content_id":"sibling","season_number":1,"user_data":{"played":false}}]}""", Encoding.UTF8, "application/json") };
+        }
+    }
+}

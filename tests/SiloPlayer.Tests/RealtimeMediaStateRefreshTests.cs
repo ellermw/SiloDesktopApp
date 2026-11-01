@@ -1,0 +1,171 @@
+using System.Text.Json;
+using CommunityToolkit.Mvvm.Messaging;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Services;
+using SiloPlayer.Messaging;
+using SiloPlayer.Services;
+
+namespace SiloPlayer.Tests;
+
+public sealed class RealtimeMediaStateRefreshTests
+{
+    [Fact]
+    public void BurstRetainsEveryNamedSeriesIncludingEarlierNamesOmittedByLaterEvents()
+    {
+        using var fixture = new Fixture();
+        fixture.Send("episode-a", "series-a", "watched"); fixture.Drain();
+        fixture.Clock.Advance(100);
+        fixture.Send("episode-a", null); fixture.Send("episode-a", "series-b"); fixture.Send("episode-b", "series-c"); fixture.Drain();
+        fixture.Clock.Advance(199); fixture.Drain();
+        Assert.Empty(fixture.Messages.Where(m => m.RefreshDetails));
+        fixture.Clock.Advance(1); fixture.Drain();
+        var batch = Assert.Single(fixture.Messages.Where(m => m.RefreshDetails));
+        Assert.Equal(["episode-a", "episode-b"], batch.ContentIds.Order().ToArray());
+        Assert.Equal(["series-a", "series-b", "series-c"], batch.SeriesIds.Order().ToArray());
+    }
+
+    [Fact]
+    public void ContinuousProgressCannotPostponeTheRefreshPastOneSecond()
+    {
+        using var fixture = new Fixture();
+        for (var n = 0; n < 10; n++)
+        {
+            fixture.Send("episode", "series"); fixture.Drain();
+            fixture.Clock.Advance(100); fixture.Drain();
+        }
+        Assert.Single(fixture.Messages.Where(m => m.RefreshDetails));
+    }
+
+    [Fact]
+    public void InputQueuedAheadOfTheDueTimerCannotRetireTheDeadlineFlush()
+    {
+        using var fixture = new Fixture();
+        fixture.Send("first", "series"); fixture.Drain();
+        fixture.Clock.Advance(100);
+        fixture.Send("input-ahead-of-timer", "other-series");
+        fixture.Clock.Advance(900); // dispatcher was busy; receipt precedes the due timer callback
+        fixture.Drain();
+        var batch = Assert.Single(fixture.Messages.Where(m => m.RefreshDetails));
+        Assert.Equal(["first", "input-ahead-of-timer"], batch.ContentIds.Order().ToArray());
+    }
+
+    [Theory]
+    [InlineData("profile")]
+    [InlineData("subscription")]
+    [InlineData("window")]
+    public void RetiredOwnershipCannotPublishAlreadyQueuedEventsOrTimers(string departure)
+    {
+        using var fixture = new Fixture();
+        fixture.Send("first", "series"); fixture.Drain();
+        fixture.Clock.Advance(200); // timer callback is now queued
+        fixture.Send("queued", "series"); // receipt callback is also queued
+        if (departure == "profile") fixture.Client.SetProfile("replacement");
+        else if (departure == "subscription") fixture.Refresh.Reset();
+        else fixture.Refresh.Dispose();
+        fixture.Drain();
+        Assert.Single(fixture.Messages); // only the original immediate invalidation
+        Assert.False(fixture.Messages[0].RefreshDetails);
+    }
+
+    [Fact]
+    public async Task AcceptedEventImmediatelyRetiresPrefetchedDetailsAndWatchRevisions()
+    {
+        using var fixture = new Fixture();
+        var reads = 0;
+        var cache = new ItemDetailPrefetchCache((id, _) => { reads++; return Task.FromResult(new MediaItemDetail { ContentId = id }); });
+        DetailCacheInvalidation.Attach(cache, fixture.Messenger);
+        var revision = DetailCacheInvalidation.AttachUserStateRevision(fixture.Messenger);
+        await cache.GetAsync("series", CancellationToken.None);
+        var stamp = revision.Current;
+        fixture.Send("never-cached", "series"); fixture.Drain();
+        await cache.GetAsync("series", CancellationToken.None);
+        Assert.Equal(2, reads);
+        Assert.False(revision.IsCurrent(stamp, "never-cached", "series"));
+        Assert.True(revision.IsCurrent(stamp, "unrelated", "other-series"));
+    }
+
+    [Fact]
+    public void CatchUpCoalescesWithEventsAndPreservesCapturedOwnership()
+    {
+        using var fixture = new Fixture();
+        var context = fixture.Client.CaptureContext();
+        fixture.Refresh.CatchUp(context); fixture.Send("episode", "series"); fixture.Drain();
+        fixture.Clock.Advance(200); fixture.Drain();
+        var batch = Assert.Single(fixture.Messages.Where(m => m.RefreshDetails));
+        Assert.True(batch.CatchUp); Assert.Equal(context, batch.Context);
+        Assert.Contains("series", batch.SeriesIds);
+        fixture.Client.SetProfile("replacement");
+        fixture.Refresh.CatchUp(context); fixture.Drain(); fixture.Clock.Advance(200); fixture.Drain();
+        Assert.Single(fixture.Messages.Where(m => m.RefreshDetails));
+    }
+
+    [Theory]
+    [InlineData("other", "progress", "episode", "user_state", "user_state.changed")]
+    [InlineData("profile", "favorite", "episode", "user_state", "user_state.changed")]
+    [InlineData("profile", "watched", " ", "user_state", "user_state.changed")]
+    [InlineData("profile", "progress", "episode", "notifications", "user_state.changed")]
+    [InlineData("profile", "progress", "episode", "user_state", "wrong")]
+    public void UnrelatedOrInvalidEventsHaveNoSideEffects(string profile, string kind, string id, string channel, string name)
+    {
+        using var fixture = new Fixture();
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(new { profile_id = profile, change = kind, content_id = id }));
+        fixture.Refresh.ReceiveRealtime(channel, name, json.RootElement);
+        fixture.Drain(); fixture.Clock.Advance(200); fixture.Drain();
+        Assert.Empty(fixture.Messages);
+    }
+
+    private sealed class Fixture : IDisposable
+    {
+        private readonly HttpClient _http = new(new RejectHttp());
+        private readonly Queue<Action> _queue = new();
+        internal readonly WeakReferenceMessenger Messenger = new();
+        internal readonly List<MediaStateInvalidated> Messages = [];
+        internal readonly ManualClock Clock = new();
+        internal readonly SiloApiClient Client;
+        internal readonly RealtimeMediaStateRefresh Refresh;
+        internal Fixture()
+        {
+            Client = new SiloApiClient(_http); Client.SetBaseUrl("https://realtime.invalid"); Client.SetProfile("profile");
+            Messenger.Register<List<MediaStateInvalidated>, MediaStateInvalidated>(Messages, static (owner, message) => owner.Add(message));
+            Refresh = new(Client, _queue.Enqueue, Messenger, Clock);
+        }
+        internal void Send(string id, string? series, string kind = "progress")
+        {
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(new { profile_id = "profile", content_id = id, series_id = series, change = kind, played = true, position_seconds = 900 }));
+            Refresh.ReceiveRealtime("user_state", "user_state.changed", json.RootElement);
+        }
+        internal void Drain() { while (_queue.TryDequeue(out var action)) action(); }
+        public void Dispose() { Refresh.Dispose(); _http.Dispose(); }
+    }
+
+    private sealed class RejectHttp : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            throw new InvalidOperationException("Realtime batching must not make HTTP requests.");
+    }
+
+    private sealed class ManualClock : TimeProvider
+    {
+        private DateTimeOffset _now = DateTimeOffset.UnixEpoch;
+        private readonly List<Timer> _timers = [];
+        public override DateTimeOffset GetUtcNow() => _now;
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = new Timer(this, callback, state); timer.Change(dueTime, period); _timers.Add(timer); return timer;
+        }
+        internal void Advance(int milliseconds)
+        {
+            _now += TimeSpan.FromMilliseconds(milliseconds);
+            foreach (var timer in _timers.Where(t => t.Due <= _now).ToArray()) timer.Fire();
+        }
+        private sealed class Timer(ManualClock clock, TimerCallback callback, object? state) : ITimer
+        {
+            internal DateTimeOffset Due = DateTimeOffset.MaxValue;
+            public bool Change(TimeSpan dueTime, TimeSpan period) { Due = clock._now + dueTime; return true; }
+            internal void Fire() { Due = DateTimeOffset.MaxValue; callback(state); }
+            public void Dispose() => Due = DateTimeOffset.MaxValue;
+            public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+        }
+    }
+}

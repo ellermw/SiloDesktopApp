@@ -21,6 +21,7 @@ public static class DetailCacheInvalidation
         // A watched or progress change on an episode also changes its season
         // and series next-up state, so drop every entry; the cache is small.
         messenger.Register<ItemDetailPrefetchCache, MediaSurfaceChanged>(cache, static (owner, _) => owner.Clear());
+        messenger.Register<ItemDetailPrefetchCache, MediaStateInvalidated>(cache, static (owner, _) => owner.Clear());
         messenger.Register<ItemDetailPrefetchCache, PlaybackProgressUpdated>(cache,
             static (owner, message) => ClearNowAndAfter(message.Persisted, owner.Clear));
     }
@@ -36,6 +37,8 @@ public static class DetailCacheInvalidation
     {
         messenger ??= WeakReferenceMessenger.Default;
         var revision = new UserStateRevision();
+        messenger.Register<UserStateRevision, MediaStateInvalidated>(revision,
+            static (owner, message) => owner.Advance(message.CatchUp ? [] : message.ContentIds.Concat(message.SeriesIds).Cast<string?>().ToArray()));
         messenger.Register<UserStateRevision, MediaSurfaceChanged>(revision,
             static (owner, message) => owner.Advance(ScopeOf(message)));
         messenger.Register<UserStateRevision, PlaybackProgressUpdated>(revision,

@@ -12,6 +12,7 @@ namespace SiloPlayer.ViewModels;
 
 public partial class ItemDetailViewModel : ObservableObject,
     IRecipient<MediaSurfaceChanged>,
+    IRecipient<MediaStateInvalidated>,
     IRecipient<NotInterestedChange>,
     IRecipient<PlaybackProgressUpdated>
 {
@@ -22,6 +23,12 @@ public partial class ItemDetailViewModel : ObservableObject,
     private long _seasonsLoadGeneration;
     private long _episodesLoadGeneration;
     private long _watchedStateGeneration;
+    private bool _stateRefreshActive = true;
+    private Task? _remoteStateRefresh;
+    private MediaStateInvalidated? _pendingRemoteState;
+    private long _remoteStateGeneration;
+    private CancellationTokenSource? _remoteStateReadCts;
+    private ApiRequestContext? _remoteStateReadContext;
     public long WatchedStateRevision => Volatile.Read(ref _watchedStateGeneration);
     public int? LibraryId { get; private set; }
     public Task LoadInLibraryAsync(string contentId, int? libraryId)
@@ -42,6 +49,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         // favorited / watchlisted / watched from another surface (context
         // menu on a poster card, etc.), this VM reflects it immediately.
         WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this);
+        WeakReferenceMessenger.Default.Register<MediaStateInvalidated>(this);
         WeakReferenceMessenger.Default.Register<NotInterestedChange>(this);
         WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this);
     }
@@ -75,6 +83,11 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         if (message.Context is { } context && !_catalogApi.IsCurrentContext(context)) return;
         _detailPrefetchCache.Invalidate(message.ContentId);
+        if (message.Kind == MediaSurfaceChangeKind.PlaybackProgress)
+        {
+            Receive(StateInvalidation(message));
+            return;
+        }
         if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared)
         {
             ApplyWatchedChange(message);
@@ -104,6 +117,116 @@ public partial class ItemDetailViewModel : ObservableObject,
         }
     }
 
+    public void Receive(MediaStateInvalidated message) => _ = RefreshMediaStateAsync(message);
+
+    private MediaStateInvalidated StateInvalidation(MediaSurfaceChanged message) =>
+        new(message.Context ?? _catalogApi.CaptureContext(), new HashSet<string>([message.ContentId], StringComparer.Ordinal),
+            string.IsNullOrEmpty(message.SeriesId) ? new HashSet<string>() : new HashSet<string>([message.SeriesId], StringComparer.Ordinal));
+
+    private bool IsRelatedState(MediaStateInvalidated message, MediaItemDetail item) =>
+        message.CatchUp || message.ContentIds.Contains(item.ContentId)
+        || (!string.IsNullOrEmpty(item.SeriesId) && message.ContentIds.Contains(item.SeriesId))
+        || ((item.Type is "series" or "season") && (message.SeriesIds.Contains(item.ContentId)
+            || (!string.IsNullOrEmpty(item.SeriesId) && message.SeriesIds.Contains(item.SeriesId))))
+        || Seasons.Any(s => message.ContentIds.Contains(s.ContentId))
+        || Episodes.Any(e => message.ContentIds.Contains(e.ContentId));
+
+    /// <summary>Refresh retained state without replacing the detail or changing playback/room intent.</summary>
+    public Task RefreshMediaStateAsync(MediaStateInvalidated message)
+    {
+        if (!_stateRefreshActive || !_catalogApi.IsCurrentContext(message.Context)
+            || Item is not { } item || !IsRelatedState(message, item)) return Task.CompletedTask;
+        Interlocked.Increment(ref _remoteStateGeneration);
+        if (_remoteStateReadContext is { } reading && reading != message.Context) _remoteStateReadCts?.Cancel();
+        if (!message.RefreshDetails) return Task.CompletedTask;
+        if (_pendingRemoteState is { } pending && pending.Context == message.Context)
+            message = message with { ContentIds = pending.ContentIds.Concat(message.ContentIds).ToHashSet(StringComparer.Ordinal),
+                SeriesIds = pending.SeriesIds.Concat(message.SeriesIds).ToHashSet(StringComparer.Ordinal), CatchUp = pending.CatchUp || message.CatchUp };
+        _pendingRemoteState = message;
+        if (_remoteStateRefresh is not { IsCompleted: false }) _remoteStateRefresh = RefreshRemoteStateLoopAsync();
+        return _remoteStateRefresh;
+    }
+
+    private async Task RefreshRemoteStateLoopAsync()
+    {
+        // Yield so the owning task is assigned before a synchronous fixture/cache response completes.
+        await Task.Yield();
+        while (_pendingRemoteState is { } message)
+        {
+            _pendingRemoteState = null;
+            var item = Item;
+            var libraryId = LibraryId;
+            var selectedSeason = SelectedSeasonNumber;
+            var revision = WatchedStateRevision;
+            var remoteRevision = Volatile.Read(ref _remoteStateGeneration);
+            using var readOwner = new CancellationTokenSource();
+            var ct = readOwner.Token;
+            bool Current() => _stateRefreshActive && ReferenceEquals(Item, item) && LibraryId == libraryId
+                && !ct.IsCancellationRequested && revision == WatchedStateRevision
+                && remoteRevision == Volatile.Read(ref _remoteStateGeneration) && _catalogApi.IsCurrentContext(message.Context);
+            if (item == null || !Current() || !IsRelatedState(message, item)) continue;
+            _remoteStateReadCts = readOwner;
+            _remoteStateReadContext = message.Context;
+            try
+            {
+                // An echoed/other-device event must not retire the accepted
+                // feedback or rollback authority of an in-flight local mark.
+                if (ToggleWatchedCommand is { IsRunning: true, ExecutionTask: { } mutation })
+                    await mutation.WaitAsync(ct);
+                if (!_stateRefreshActive || ct.IsCancellationRequested || !ReferenceEquals(Item, item)
+                    || LibraryId != libraryId || !_catalogApi.IsCurrentContext(message.Context)) continue;
+                // Initial list reads retry for this bounded sweep, not every
+                // raw tick; capture revisions after the local mark settles.
+                revision = Interlocked.Increment(ref _watchedStateGeneration);
+                remoteRevision = Volatile.Read(ref _remoteStateGeneration);
+                _detailPrefetchCache.Invalidate(item.ContentId);
+                var refreshed = await ReadDetailAsync(item.ContentId, ct);
+                if (!Current()) continue;
+                var seasons = item.Type == "series" && Seasons.Count > 0
+                    ? await _catalogApi.GetSeasonsAsync(item.ContentId, libraryId, ct) : null;
+                if (!Current()) continue;
+                // A named series relates its aggregate seasons, not its other episode leaves.
+                var refreshEpisodes = Episodes.Count > 0 && (message.CatchUp || message.ContentIds.Contains(item.ContentId)
+                    || Seasons.Any(s => message.ContentIds.Contains(s.ContentId))
+                    || Episodes.Any(e => message.ContentIds.Contains(e.ContentId)));
+                EpisodesResponse? episodes = null;
+                if (refreshEpisodes && item.Type == "season")
+                    episodes = await _catalogApi.GetItemEpisodesAsync(item.ContentId, libraryId, ct);
+                else if (refreshEpisodes && item.Type == "series" && selectedSeason >= 0)
+                    episodes = await _catalogApi.GetEpisodesAsync(item.ContentId, selectedSeason, libraryId, ct);
+                if (!Current()) continue;
+                item.UserData = refreshed.UserData;
+                if (refreshed.HasAuthoritativePlayTarget)
+                {
+                    item.PlayContentId = refreshed.PlayContentId;
+                    item.PlaySeasonNumber = refreshed.PlaySeasonNumber;
+                }
+                IsWatched = item.UserData?.Played ?? false;
+                if (seasons != null)
+                    foreach (var loaded in Seasons)
+                        if (seasons.Seasons.FirstOrDefault(s => s.ContentId == loaded.ContentId) is { } fresh)
+                            loaded.UserData = fresh.UserData;
+                if (episodes != null && SelectedSeasonNumber == selectedSeason)
+                    foreach (var loaded in Episodes)
+                        if (episodes.Episodes.FirstOrDefault(e => e.ContentId == loaded.ContentId) is { } fresh)
+                            loaded.UserData = fresh.UserData;
+                OnPropertyChanged(nameof(Item));
+                if (seasons != null) OnPropertyChanged(nameof(Seasons));
+                if (episodes != null) OnPropertyChanged(nameof(Episodes));
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Realtime detail-state refresh failed: {ex.Message}"); }
+            finally
+            {
+                if (ReferenceEquals(_remoteStateReadCts, readOwner))
+                {
+                    _remoteStateReadCts = null;
+                    _remoteStateReadContext = null;
+                }
+            }
+        }
+    }
+
     private void ApplyWatchedChange(MediaSurfaceChanged message)
     {
         var item = Item;
@@ -119,7 +242,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         {
             if ((item.Type is "series" or "season")
                 && (item.ContentId == message.SeriesId || (item.SeriesId == message.SeriesId && message.SeriesId != null)))
-                _ = RefreshRelatedWatchedStateAsync(item);
+                _ = RefreshMediaStateAsync(StateInvalidation(message));
             return;
         }
 
@@ -193,32 +316,6 @@ public partial class ItemDetailViewModel : ObservableObject,
         OnPropertyChanged(nameof(Item));
         if (changedEpisodes.Length > 0) OnPropertyChanged(nameof(Episodes));
         if (Seasons.Count > 0) OnPropertyChanged(nameof(Seasons));
-    }
-
-    private async Task RefreshRelatedWatchedStateAsync(MediaItemDetail item)
-    {
-        var generation = Interlocked.Increment(ref _watchedStateGeneration);
-        var context = _catalogApi.CaptureContext();
-        var libraryId = LibraryId;
-        bool Current() => ReferenceEquals(Item, item) && LibraryId == libraryId
-            && generation == Volatile.Read(ref _watchedStateGeneration) && _catalogApi.IsCurrentContext(context);
-        try
-        {
-            _detailPrefetchCache.Invalidate(item.ContentId);
-            var refreshed = await ReadDetailAsync(item.ContentId, CancellationToken.None);
-            if (!Current()) return;
-            var seasons = item.Type == "series" ? await _catalogApi.GetSeasonsAsync(item.ContentId, libraryId) : null;
-            if (!Current()) return;
-            item.UserData = refreshed.UserData;
-            IsWatched = item.UserData?.Played ?? false;
-            if (seasons != null)
-                foreach (var loaded in Seasons)
-                    if (seasons.Seasons.FirstOrDefault(s => s.ContentId == loaded.ContentId) is { } fresh)
-                        loaded.UserData = fresh.UserData;
-            OnPropertyChanged(nameof(Item));
-            OnPropertyChanged(nameof(Seasons));
-        }
-        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Related watched-state refresh failed: {ex.Message}"); }
     }
 
     public void Receive(PlaybackProgressUpdated message)
@@ -354,6 +451,10 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     public void CancelPendingLoads()
     {
+        _stateRefreshActive = false;
+        _pendingRemoteState = null;
+        _remoteStateReadCts?.Cancel();
+        Interlocked.Increment(ref _watchedStateGeneration);
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = null;
@@ -363,6 +464,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     private async Task LoadAsync(string contentId)
     {
         CancelPendingLoads();
+        _stateRefreshActive = true;
         var loadCts = new CancellationTokenSource();
         _loadCts = loadCts;
         var ct = loadCts.Token;

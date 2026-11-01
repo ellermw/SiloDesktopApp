@@ -1,5 +1,17 @@
 namespace SiloPlayer.Messaging;
 
+/// <summary>
+/// Captured server state invalidation. The first delivery retires stale reads;
+/// the bounded, coalesced delivery also refreshes mounted detail surfaces.
+/// These IDs describe refresh scope, never watched/progress scalar values.
+/// </summary>
+public sealed record MediaStateInvalidated(
+    SiloPlayer.Core.Api.ApiRequestContext Context,
+    IReadOnlySet<string> ContentIds,
+    IReadOnlySet<string> SeriesIds,
+    bool CatchUp = false,
+    bool RefreshDetails = true);
+
 /// <summary>A captured profile's server-ordered Home preference was accepted.</summary>
 public sealed record HomePreferenceChanged(SiloPlayer.Core.Api.ApiRequestContext Context, bool ReloadLayout = false);
 

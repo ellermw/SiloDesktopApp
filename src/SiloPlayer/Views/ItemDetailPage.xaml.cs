@@ -829,18 +829,26 @@ public sealed partial class ItemDetailPage : Page
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
     {
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        var context = client.CaptureContext();
+        var item = ViewModel.Item;
+        var navigation = _navigationCts;
+        bool Current() => client.IsCurrentContext(context) && ReferenceEquals(ViewModel.Item, item)
+            && ReferenceEquals(_navigationCts, navigation) && navigation?.IsCancellationRequested != true;
         if (args.PropertyName == nameof(ViewModel.UserRating))
-            DispatcherQueue.TryEnqueue(UpdateStarRating);
+            DispatcherQueue.TryEnqueue(() => { if (Current()) UpdateStarRating(); });
         else if (args.PropertyName == nameof(ViewModel.IsWatched))
-            DispatcherQueue.TryEnqueue(UpdateWatchedButton);
+            DispatcherQueue.TryEnqueue(() => { if (Current()) UpdateWatchedButton(); });
         else if (args.PropertyName == nameof(ViewModel.Seasons))
-            DispatcherQueue.TryEnqueue(BuildSeasonCards);
+            DispatcherQueue.TryEnqueue(() => { if (Current()) BuildSeasonCards(); });
         else if (args.PropertyName is nameof(ViewModel.Item) or nameof(ViewModel.Episodes))
             DispatcherQueue.TryEnqueue(() =>
             {
+                if (!Current()) return;
                 ApplyEpisodeSpoilers();
                 if (args.PropertyName == nameof(ViewModel.Item))
                 {
+                    ApplyAuthoritativeSeriesAction();
                     BuildMoreFlyout();
                     if (ViewModel.Item is { Type: "episode" })
                         BuildSiblingEpisodeCards();

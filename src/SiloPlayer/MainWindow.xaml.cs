@@ -40,6 +40,8 @@ public sealed partial class MainWindow : Window
     private readonly RequestsApi _requestsApi;
     private readonly NotificationsApi _notificationsApi;
     private readonly EventChannelClient _eventChannel;
+    private readonly RealtimeMediaStateRefresh _realtimeMediaStateRefresh;
+    private bool _windowClosed;
     private readonly PlayerService _playerService;
     private readonly ThemeService _themeService;
     private readonly UICustomizationService _uiCustomizationService;
@@ -117,6 +119,8 @@ public sealed partial class MainWindow : Window
         _requestsApi = App.Services.GetRequiredService<RequestsApi>();
         _notificationsApi = App.Services.GetRequiredService<NotificationsApi>();
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
+        _realtimeMediaStateRefresh = new RealtimeMediaStateRefresh(_apiClient,
+            callback => DispatcherQueue.TryEnqueue(() => callback()));
         _themeService = App.Services.GetRequiredService<ThemeService>();
         _uiCustomizationService = App.Services.GetRequiredService<UICustomizationService>();
         _uiCustomizationService.Changed += OnUICustomizationChanged;
@@ -444,6 +448,9 @@ public sealed partial class MainWindow : Window
 
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
+        _realtimeMediaStateRefresh.Dispose();
+        _windowClosed = true;
+        if (ContentFrame.Content is ItemDetailPage detail) detail.ViewModel.CancelPendingLoads();
         if (!_updateSessionEnding)
             try { App.Services.GetService<IAppUpdateInstaller>()?.ConfirmNormalClose(); }
             catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "confirm_update_close"); }
@@ -1451,13 +1458,17 @@ public sealed partial class MainWindow : Window
 
     private void OnReadCatchUpRequested(ApiRequestContext context)
     {
+        _realtimeMediaStateRefresh.CatchUp(context);
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (!_apiClient.IsCurrentContext(context) || !CanExposeAuthenticatedNavigation) return;
+            if (_windowClosed || !_apiClient.IsCurrentContext(context) || !CanExposeAuthenticatedNavigation) return;
             _catalogApi.InvalidateLibraryCache();
             _catalogApi.InvalidateFilterCache();
             _catalogApi.InvalidateRatingCapability();
             App.Services.GetRequiredService<ItemDetailPrefetchCache>().Clear();
+            // Keep the mounted detail and playback/room intents. Its retained
+            // state is refreshed by the captured, coalesced catch-up above.
+            if (ContentFrame.Content is ItemDetailPage) return;
             if (ContentFrame.Content is HomePage home && NavView.IsPaneVisible &&
                 _playerService.State is not (PlayerState.Expanded or PlayerState.Fullscreen))
             {
@@ -1637,6 +1648,7 @@ public sealed partial class MainWindow : Window
 
     private void ReleaseNotificationSubscription()
     {
+        _realtimeMediaStateRefresh.Reset();
         _notificationSubscription?.Dispose();
         _notificationSubscription = null;
         _notificationSubscriptionShellKey = null;
@@ -1687,6 +1699,7 @@ public sealed partial class MainWindow : Window
     {
         if (_notificationSubscription != null && CanExposeAuthenticatedNavigation)
         {
+            _realtimeMediaStateRefresh.ReceiveRealtime(channel, eventName, data);
             _apiClient.LocalizedReads.NotifyRealtime(channel, eventName, data, _authService.SelectedProfileId);
             App.Services.GetService<NotInterestedService>()?.ReceiveRealtime(channel, eventName, data);
             NotifyEpisodeSpoilerSettingFromRealtime(channel, eventName, data);
