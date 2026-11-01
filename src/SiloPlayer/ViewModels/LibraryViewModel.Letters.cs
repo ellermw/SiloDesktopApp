@@ -9,8 +9,11 @@ public partial class LibraryViewModel
 {
     [ObservableProperty]
     private CatalogLettersResponse? _letterIndex;
+    [ObservableProperty]
+    private bool _isLetterIndexLoading;
     private string? _letterIndexKey;
     private Task? _letterIndexTask;
+    private long _letterIndexLoadVersion;
     private long _letterJumpVersion;
     private long _activeLetterJumpVersion;
     public bool IsLetterJumpInProgress => _activeLetterJumpVersion != 0;
@@ -36,10 +39,11 @@ public partial class LibraryViewModel
         if (_letterIndexKey == key) return _letterIndexTask ?? Task.CompletedTask;
         LetterIndex = null;
         _letterIndexKey = key;
-        return _letterIndexTask = LoadLetterIndexAsync(key, _catalogQueryCts.Token);
+        IsLetterIndexLoading = true;
+        return _letterIndexTask = LoadLetterIndexAsync(key, ++_letterIndexLoadVersion, _catalogQueryCts.Token);
     }
 
-    private async Task LoadLetterIndexAsync(string key, CancellationToken ct)
+    private async Task LoadLetterIndexAsync(string key, long loadVersion, CancellationToken ct)
     {
         var libraryId = Library!.Id;
         var order = SelectedOrder;
@@ -86,6 +90,10 @@ public partial class LibraryViewModel
                 _letterIndexTask = null;
                 LetterIndex = null;
             }
+        }
+        finally
+        {
+            if (loadVersion == _letterIndexLoadVersion) IsLetterIndexLoading = false;
         }
     }
 
@@ -137,6 +145,8 @@ public partial class LibraryViewModel
         _activeLetterJumpVersion = 0;
         _letterIndexKey = null;
         _letterIndexTask = null;
+        _letterIndexLoadVersion++;
+        IsLetterIndexLoading = false;
         LetterIndex = null;
     }
 

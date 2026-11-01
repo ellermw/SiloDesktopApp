@@ -354,6 +354,7 @@ public partial class LibraryViewModel : ObservableObject
 
     public MediaItem? GetWindowItem(int absoluteIndex)
     {
+        if (_hasExactTotal && absoluteIndex >= TotalCount) return null;
         var relativeIndex = absoluteIndex - WindowStartIndex;
         if (WindowStartIndex >= 0 && relativeIndex >= 0 && relativeIndex < _windowItems.Count)
             return _windowItems[relativeIndex];
@@ -1048,6 +1049,7 @@ public partial class LibraryViewModel : ObservableObject
     }
 
     private bool HasTrustworthyExactTotal(CatalogResponse response, bool includeTotal) => response.TotalExact &&
+        (includeTotal || !_hasExactTotal || response.Total <= TotalCount) &&
         (includeTotal || response.Total > 0 || (!_hasExactTotal && response.Items.Count == 0 && !response.HasMore));
 
     private void ApplyWindowResponse(int startIndex, CatalogResponse response, bool includeTotal, bool preserveAdjacent = false)
@@ -1059,14 +1061,19 @@ public partial class LibraryViewModel : ObservableObject
         if (!string.IsNullOrWhiteSpace(response.Snapshot))
             _snapshot = response.Snapshot;
 
-        if (preserveAdjacent && response.Items.Count > 0 && WindowStartIndex >= 0 &&
-            startIndex <= WindowEndIndex + 1 && startIndex + response.Items.Count >= WindowStartIndex)
+        // Do not mutate the response: FetchWindowAsync may still be appending
+        // pages to it. Publish only the part inside the authoritative extent.
+        var items = _hasExactTotal
+            ? response.Items.Take(TotalCount - startIndex).ToList() : response.Items;
+        if (preserveAdjacent && items.Count > 0 && WindowStartIndex >= 0 &&
+            startIndex <= WindowEndIndex + 1 && startIndex + items.Count >= WindowStartIndex)
         {
             // Small edge fetches must not fragment the active viewport across
             // more cache entries than the eviction limit. Keep a bounded,
             // contiguous active window and retain the existing item objects.
             var first = Math.Min(WindowStartIndex, startIndex);
-            var last = Math.Max(WindowEndIndex, startIndex + response.Items.Count - 1);
+            var last = Math.Max(WindowEndIndex, startIndex + items.Count - 1);
+            if (_hasExactTotal) last = Math.Min(last, TotalCount - 1);
             if (last - first + 1 > 1200)
             {
                 if (startIndex < WindowStartIndex) last = first + 1199;
@@ -1074,18 +1081,18 @@ public partial class LibraryViewModel : ObservableObject
             }
             var merged = new MediaItem[last - first + 1];
             for (var i = first; i <= last; i++)
-                merged[i - first] = i >= startIndex && i < startIndex + response.Items.Count
-                    ? response.Items[i - startIndex]
+                merged[i - first] = i >= startIndex && i < startIndex + items.Count
+                    ? items[i - startIndex]
                     : _windowItems[i - WindowStartIndex];
             _windowItems = merged;
             WindowStartIndex = first;
         }
         else
         {
-            _windowItems = response.Items;
-            WindowStartIndex = response.Items.Count == 0 ? -1 : startIndex;
+            _windowItems = items;
+            WindowStartIndex = items.Count == 0 ? -1 : startIndex;
         }
-        HasMore = response.HasMore;
+        HasMore = response.HasMore && (!_hasExactTotal || startIndex + items.Count < TotalCount);
 
         if (HasTrustworthyExactTotal(response, includeTotal))
         {

@@ -49,6 +49,59 @@ public sealed class LibraryLetterNavigationTests
         Assert.Equal(0, wire.IndexRequests); Assert.Equal(0, wire.ProbeRequests);
         Assert.Equal(count, wire.Seeks.Count);
         Assert.Null(model.ErrorMessage);
+        Assert.False(model.IsLetterIndexLoading);
+    }
+
+    [Theory]
+    [InlineData("loaded")]
+    [InlineData("failed")]
+    [InlineData("empty")]
+    public async Task LetterIndexLoadingEndsWhenOptionalIndexSettles(string outcome)
+    {
+        using var wire = new Wire { HoldIndex = true, FailIndex = outcome == "failed",
+            IndexTotal = outcome == "empty" ? 0 : 1000 };
+        var model = wire.Create();
+        var load = model.LoadCommand.ExecuteAsync(null);
+        try
+        {
+            await wire.IndexStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await load;
+            Assert.True(model.IsLetterIndexLoading);
+            Assert.Null(model.LetterIndex);
+            Assert.NotNull(model.GetWindowItem(0));
+        }
+        finally { wire.ReleaseIndex.TrySetResult(); await model.EnsureLetterIndexAsync(); }
+        Assert.False(model.IsLetterIndexLoading);
+        if (outcome == "failed") Assert.Null(model.LetterIndex);
+        else Assert.Equal(outcome == "empty" ? 0 : 1000, model.LetterIndex!.Total);
+    }
+
+    [Fact]
+    public async Task RetiredIndexCompletionCannotReleaseANewerLoadingReservation()
+    {
+        using var wire = new Wire { HoldIndex = true };
+        var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        await wire.IndexStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var retired = model.EnsureLetterIndexAsync();
+        var retiredRelease = wire.ReleaseIndex;
+        model.SuspendCatalogLoads();
+        Assert.False(model.IsLetterIndexLoading);
+        wire.ReleaseIndex = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.Client.SetProfile("new-synthetic-profile");
+        await model.LoadCommand.ExecuteAsync(null);
+        var current = model.EnsureLetterIndexAsync();
+        try
+        {
+            Assert.True(model.IsLetterIndexLoading);
+            retiredRelease.TrySetResult();
+            await retired;
+            Assert.True(model.IsLetterIndexLoading);
+            Assert.Null(model.LetterIndex);
+        }
+        finally { wire.ReleaseIndex.TrySetResult(); await current; }
+        Assert.False(model.IsLetterIndexLoading);
+        Assert.NotNull(model.LetterIndex);
     }
 
     [Theory]
@@ -315,6 +368,7 @@ public sealed class LibraryLetterNavigationTests
     [InlineData(900, 800, false)] // Empty page beyond the newly counted end.
     [InlineData(900, 1000, false)] // Older non-empty page beyond that end.
     [InlineData(720, 1000, false)] // Older page overlapping the newly counted end.
+    [InlineData(720, 1000, true)] // Its exact total must not enlarge the newer count either.
     [InlineData(900, 800, true)] // An exact-total empty page is still an older window.
     [InlineData(900, 1000, true)] // An older exact total cannot restore phantom slots.
     [InlineData(800, 1000, true)] // The first index beyond the exact extent is also retired.
@@ -351,7 +405,14 @@ public sealed class LibraryLetterNavigationTests
             Assert.Equal(0, model.WindowStartIndex);
             Assert.Null(model.GetWindowItem(start));
         }
-        else Assert.NotNull(model.GetWindowItem(799));
+        else
+        {
+            Assert.NotNull(model.GetWindowItem(799));
+            Assert.Equal(799, model.WindowEndIndex);
+            Assert.Null(model.GetWindowItem(800));
+            Assert.Null(model.GetWindowItem(819));
+            Assert.False(model.HasMore);
+        }
         Assert.False(model.IsLoading);
         Assert.Null(model.ErrorMessage);
         var tail = Assert.Single(model.LetterIndex!.Letters, entry => entry.Letter == "N");
@@ -486,6 +547,7 @@ public sealed class LibraryLetterNavigationTests
         Assert.True(publications >= 8);
         Assert.Equal(1, wire.CapabilityRequests);
         Assert.Equal(failCapabilities ? 0 : 1, wire.IndexRequests);
+        Assert.False(model.IsLetterIndexLoading);
         Assert.Null(model.ErrorMessage);
         Assert.NotNull(model.GetWindowItem(840));
         // Returning to the page is an explicit, bounded retry trigger.
@@ -660,7 +722,7 @@ public sealed class LibraryLetterNavigationTests
         internal bool HoldCatalog;
         internal readonly TaskCompletionSource ReleaseCatalog = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource IndexStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        internal readonly TaskCompletionSource ReleaseIndex = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReleaseIndex = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly List<int> Seeks = [];
         internal Wire() { http = new(this, disposeHandler: false); Client = new(http); Client.SetBaseUrl("https://letter-fixture.invalid"); }
         internal LibraryViewModel Create() => new(new CatalogApi(Client)) { Library = new Library { Id = 7, Type = "movie" } };

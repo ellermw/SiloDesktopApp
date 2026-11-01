@@ -55,7 +55,7 @@ public sealed partial class LibraryPage
 
     private void LibraryLetters_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(ViewModel.LetterIndex) or nameof(ViewModel.SelectedSort) or
+        if (e.PropertyName is nameof(ViewModel.LetterIndex) or nameof(ViewModel.IsLetterIndexLoading) or nameof(ViewModel.SelectedSort) or
             nameof(ViewModel.SelectedOrder) or nameof(ViewModel.Library) or nameof(ViewModel.TotalCount))
             DispatcherQueue.TryEnqueue(UpdateLibraryLetters);
     }
@@ -86,12 +86,13 @@ public sealed partial class LibraryPage
 
     private void UpdateLibraryLetterLayout()
     {
-        // Reserve space based only on grid mode and viewport height, not on
-        // index availability. Resetting or receiving an index must not resize
-        // the posters or change the item at the saved pixel scroll offset.
+        // Keep the same width from pending to loaded, but release the gutter
+        // for unsupported, failed or empty indexes so ordinary browsing uses
+        // the full viewport.
         var available = Math.Max(14, LibraryContentArea.ActualHeight - 88);
         var columns = available < 540 ? 2 : 1;
-        LibraryLetterColumn.Width = new GridLength(IsLibraryLetterGrid ? columns * 24 + 18 : 0);
+        var reserveRail = IsLibraryLetterGrid && (ViewModel.IsLetterIndexLoading || CanShowLibraryLetters);
+        LibraryLetterColumn.Width = new GridLength(reserveRail ? columns * 24 + 18 : 0);
         if (LibraryLetterRail.Visibility != Visibility.Visible) return;
         // Keep all 27 targets inside the space below the toolbar, including on
         // short windows. Fill down each column, matching the WebUI's order.

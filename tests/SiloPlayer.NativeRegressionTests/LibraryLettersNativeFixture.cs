@@ -56,8 +56,10 @@ internal static class LibraryLettersNativeFixture
                 await Until(() => scroll.ViewportWidth > 0);
                 await Task.Delay(150);
                 var pendingIndexWidth = scroll.ViewportWidth;
-                if (page.ViewModel.LetterIndex is not null || letters.Children.Cast<Button>().Any(button => button.IsEnabled))
-                    throw new InvalidOperationException("The pending index must not enable guessed letters.");
+                var railColumn = (ColumnDefinition)page.FindName("LibraryLetterColumn");
+                if (!page.ViewModel.IsLetterIndexLoading || railColumn.Width.Value <= 0 ||
+                    page.ViewModel.LetterIndex is not null || letters.Children.Cast<Button>().Any(button => button.IsEnabled))
+                    throw new InvalidOperationException("The pending index must reserve space without enabling guessed letters.");
                 wire.LetterIndexGate.TrySetResult();
                 await page.ViewModel.EnsureLetterIndexAsync();
                 await Until(() => rail.Visibility == Visibility.Visible && letters.Children.Count == 27);
@@ -124,9 +126,25 @@ internal static class LibraryLettersNativeFixture
                     ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName("AudiobookBooksButton")).GetPattern(PatternInterface.Invoke)).Invoke();
                     await Until(() => rail.Visibility == Visibility.Visible);
                 }
+                page.UpdateLayout(); await Task.Delay(100);
+                var beforeFailureWidth = scroll.ViewportWidth;
+                var reservedWidth = railColumn.Width.Value;
+                wire.FailIndex = true;
+                wire.LetterIndexGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                page.ViewModel.SuspendCatalogLoads();
+                var failedIndex = page.ViewModel.EnsureLetterIndexAsync();
+                await Until(() => page.ViewModel.IsLetterIndexLoading && railColumn.Width.Value > 0);
+                wire.LetterIndexGate.TrySetResult();
+                await failedIndex;
+                await Until(() => !page.ViewModel.IsLetterIndexLoading && railColumn.Width.Value == 0 &&
+                    rail.Visibility == Visibility.Collapsed);
+                page.UpdateLayout(); await Task.Delay(100);
+                if (Math.Abs(scroll.ViewportWidth - beforeFailureWidth - reservedWidth) > .1)
+                    throw new InvalidOperationException("A failed index left an empty gutter instead of restoring the full viewport.");
+                wire.FailIndex = false;
                 ((IInvokeProvider)new ButtonAutomationPeer((Button)page.FindName("RecommendedTab")).GetPattern(PatternInterface.Invoke)).Invoke();
                 await Until(() => rail.Visibility == Visibility.Collapsed);
-                Program.Log($"PASS: actual {type} Library alphabet rail, exact distant jump, bottom selection, availability, accessible counts, visibility and bounds at {width}x{height}.");
+                Program.Log($"PASS: actual {type} Library alphabet rail, exact distant jump, bottom selection, availability, accessible counts, visibility, failed-index gutter recovery and bounds at {width}x{height}.");
                 frame.Navigate(typeof(Page)); parent.Children.Remove(frame); await Task.Delay(100); frame = null;
             }
         }
@@ -144,6 +162,7 @@ internal static class LibraryLettersNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         internal int InvalidCursors, LibraryId = 11;
+        internal bool FailIndex;
         internal TaskCompletionSource? LetterIndexGate;
         internal List<int> Seeks { get; } = [];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -184,6 +203,7 @@ internal static class LibraryLettersNativeFixture
         private async Task<HttpResponseMessage> CompleteLetterIndexAsync(Task<HttpResponseMessage> reply, CancellationToken ct)
         {
             if (LetterIndexGate is { } gate) await gate.Task.WaitAsync(ct);
+            if (FailIndex) return await Reply(new { detail = "Synthetic unavailable index" }, HttpStatusCode.ServiceUnavailable);
             return await reply;
         }
         private static Task<HttpResponseMessage> Reply(object body, HttpStatusCode status = HttpStatusCode.OK)
