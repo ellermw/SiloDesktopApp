@@ -386,6 +386,16 @@
                                            Foreground="{StaticResource SecondaryTextBrush}" />
                             </StackPanel>
                             <PasswordBox x:Name="AccountConfirmPassword" Header="Confirm new password" PasswordChanged="AccountPassword_Changed" />
+                            <StackPanel x:Name="AccountSignOutOtherSessionsGroup" Spacing="4" Visibility="Collapsed">
+                                <CheckBox x:Name="AccountSignOutOtherSessions" IsChecked="False"
+                                          Checked="AccountSignOutOtherSessions_Changed" Unchecked="AccountSignOutOtherSessions_Changed"
+                                          AutomationProperties.HelpText="Other browsers and apps must sign in again with the new password. This app stays signed in, and API keys keep working.">
+                                    <TextBlock Text="Sign out of other devices" TextWrapping="Wrap" />
+                                </CheckBox>
+                                <TextBlock x:Name="AccountSignOutOtherSessionsDescription" FontSize="12" TextWrapping="Wrap"
+                                           Margin="32,0,0,0" Foreground="{StaticResource SecondaryTextBrush}"
+                                           Text="Other browsers and apps must sign in again with the new password. This app stays signed in, and API keys keep working." />
+                            </StackPanel>
                             <Button x:Name="AccountPasswordSubmit" Content="Change password" Style="{StaticResource AccentButtonStyle}"
                                     Click="AccountPasswordSubmit_Click" />
                         </StackPanel>

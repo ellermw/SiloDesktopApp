@@ -8,6 +8,141 @@ namespace SiloPlayer.Tests;
 public sealed class AccountPasswordTests
 {
     private const string Allowed = """{"state":"available","allowed":true,"requires_current_password":true,"minimum_password_length":8,"maximum_password_bytes":72}""";
+    private const string SupportsSessions = """{"state":"available","allowed":true,"sign_out_other_sessions":true,"requires_current_password":true,"minimum_password_length":8,"maximum_password_bytes":72}""";
+
+    [Fact]
+    public async Task AdvertisedSessionOptionIsAvailableToThePasswordForm()
+    {
+        var (vm, _, handler) = Create();
+        handler.Capability = SupportsSessions;
+        await vm.LoadAsync();
+        Assert.True(vm.CanSignOutOtherSessions);
+        Assert.False(vm.SignOutOtherSessions);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(null, true)]
+    [InlineData(false, true)]
+    public async Task SessionMemberIsSentOnlyWhenAdvertisedAndSelected(bool? support, bool selected)
+    {
+        var (vm, client, handler) = Create();
+        client.SetAccessToken("synthetic-current-session");
+        handler.Capability = support is null ? Allowed : Allowed[..^1] +
+            $",\"sign_out_other_sessions\":{support.Value.ToString().ToLowerInvariant()}}}";
+        await vm.LoadAsync();
+        Fill(vm);
+        vm.SignOutOtherSessions = selected;
+        await vm.SubmitAsync();
+        using var body = JsonDocument.Parse(handler.Body!);
+        var sent = body.RootElement.TryGetProperty("sign_out_other_sessions", out var member);
+        Assert.Equal(support == true && selected, sent);
+        if (sent) Assert.True(member.GetBoolean());
+        Assert.Equal(sent ? "Password changed. Other devices are signed out." : "Password changed", vm.SuccessMessage);
+        Assert.False(vm.SignOutOtherSessions);
+        Assert.Equal("synthetic-current-session", client.AccessToken);
+        Assert.Equal(2, handler.Requests.Count); // No local revocation/sign-out calls.
+    }
+
+    [Theory]
+    [InlineData("available", false)]
+    [InlineData("not_configured", true)]
+    public async Task AdvertisedOptionCannotAuthorizeUnavailableOrReadOnlyForm(string state, bool allowed)
+    {
+        var (vm, _, handler) = Create();
+        handler.Capability = $$"""{"state":"{{state}}","allowed":{{allowed.ToString().ToLowerInvariant()}},"sign_out_other_sessions":true,"minimum_password_length":8,"maximum_password_bytes":72}""";
+        await vm.LoadAsync();
+        vm.SignOutOtherSessions = true;
+        Fill(vm);
+        await vm.SubmitAsync();
+        Assert.False(vm.CanSignOutOtherSessions);
+        Assert.False(vm.SignOutOtherSessions);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task ChoiceResetsOnReloadDepartureAndAccountChange()
+    {
+        var (vm, client, handler) = Create();
+        handler.Capability = SupportsSessions;
+        await vm.LoadAsync();
+        vm.SignOutOtherSessions = true;
+        await vm.LoadAsync();
+        Assert.False(vm.SignOutOtherSessions);
+        vm.SignOutOtherSessions = true;
+        vm.Deactivate();
+        Assert.False(vm.SignOutOtherSessions);
+        Assert.False(vm.CanSignOutOtherSessions);
+        await vm.LoadAsync();
+        vm.SignOutOtherSessions = true;
+        client.BeginAuthenticationSession("replacement-synthetic-session");
+        await vm.SubmitAsync();
+        Assert.False(vm.SignOutOtherSessions);
+        Assert.False(vm.CanSignOutOtherSessions);
+        Assert.All(handler.Requests, request => Assert.StartsWith("GET", request));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PendingSubmitFreezesChoiceAndSuccessFeedback(bool selected)
+    {
+        var (vm, _, handler) = Create();
+        handler.Capability = SupportsSessions;
+        await vm.LoadAsync();
+        Fill(vm);
+        vm.SignOutOtherSessions = selected;
+        handler.Pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var submission = vm.SubmitAsync();
+        Assert.True(vm.IsSubmitting);
+        vm.SignOutOtherSessions = !selected;
+        Assert.Equal(selected, vm.SignOutOtherSessions);
+        handler.Pending.SetResult(new(HttpStatusCode.NoContent));
+        await submission;
+        using var body = JsonDocument.Parse(handler.Body!);
+        Assert.Equal(selected, body.RootElement.TryGetProperty("sign_out_other_sessions", out _));
+        Assert.Equal(selected ? "Password changed. Other devices are signed out." : "Password changed", vm.SuccessMessage);
+    }
+
+    [Fact]
+    public async Task LateSupportedCapabilityCannotRestoreChoiceAfterReload()
+    {
+        var (vm, _, handler) = Create();
+        handler.Pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = handler.Pending;
+        var oldLoad = vm.LoadAsync();
+        handler.Pending = null;
+        await vm.LoadAsync(); // Older server on the next visit.
+        pending.SetResult(new(HttpStatusCode.OK) { Content = new StringContent(SupportsSessions) });
+        await oldLoad;
+        Assert.True(vm.CanChangePassword);
+        Assert.False(vm.CanSignOutOtherSessions);
+        Assert.False(vm.SignOutOtherSessions);
+    }
+
+    [Fact]
+    public async Task LateOptedInSubmitCannotOverwriteAnotherVisit()
+    {
+        var (vm, _, handler) = Create();
+        handler.Capability = SupportsSessions;
+        await vm.LoadAsync();
+        Fill(vm);
+        vm.SignOutOtherSessions = true;
+        handler.Pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = handler.Pending;
+        var submission = vm.SubmitAsync();
+        handler.Pending = null;
+        await vm.LoadAsync();
+        Fill(vm);
+        pending.SetResult(new(HttpStatusCode.NoContent));
+        await submission;
+        Assert.Null(vm.SuccessMessage);
+        Assert.False(vm.SignOutOtherSessions);
+        Assert.Equal("new password", vm.NewPassword);
+    }
 
     [Fact]
     public async Task SuccessfulChangeUsesV2AndOriginatingProfileAndClearsSecrets()

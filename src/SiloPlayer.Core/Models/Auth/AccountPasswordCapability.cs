@@ -7,4 +7,5 @@ public sealed class AccountPasswordCapability
     public bool RequiresCurrentPassword { get; set; } = true;
     public int MinimumPasswordLength { get; set; }
     public int MaximumPasswordBytes { get; set; }
+    public bool SignOutOtherSessions { get; set; }
 }

@@ -25,6 +25,7 @@ public sealed partial class SettingsPage
         _syncingAccountPasswords = true;
         try
         {
+            AccountSignOutOtherSessions.IsChecked = _accountPassword.SignOutOtherSessions;
             // PasswordChanged is dispatched asynchronously by WinUI. Updating
             // one field must not erase another field's input before its event.
             if ((changedProperty is null or nameof(AccountPasswordViewModel.CurrentPassword)) &&
@@ -47,6 +48,9 @@ public sealed partial class SettingsPage
         AccountCurrentPassword.IsEnabled = !_accountPassword.IsSubmitting;
         AccountNewPassword.IsEnabled = !_accountPassword.IsSubmitting;
         AccountConfirmPassword.IsEnabled = !_accountPassword.IsSubmitting;
+        AccountSignOutOtherSessionsGroup.Visibility = _accountPassword.CanSignOutOtherSessions
+            ? Visibility.Visible : Visibility.Collapsed;
+        AccountSignOutOtherSessions.IsEnabled = _accountPassword.CanSignOutOtherSessions && !_accountPassword.IsSubmitting;
         AccountPasswordUnavailable.Visibility = !loading && !allowed && _accountPassword.ErrorMessage is null
             ? Visibility.Visible : Visibility.Collapsed;
         AccountPasswordRequirements.Text = _accountPassword.Requirements;
@@ -78,6 +82,13 @@ public sealed partial class SettingsPage
 
     private async void AccountPasswordSubmit_Click(object sender, RoutedEventArgs e)
         => await _accountPassword.SubmitAsync();
+
+    private void AccountSignOutOtherSessions_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_syncingAccountPasswords) return;
+        _accountPassword.SignOutOtherSessions = AccountSignOutOtherSessions.IsChecked == true;
+        UpdateAccountPasswordPanel(nameof(AccountPasswordViewModel.SignOutOtherSessions));
+    }
 
     private async void AccountPasswordRetry_Click(object sender, RoutedEventArgs e)
         => await _accountPassword.LoadAsync();
