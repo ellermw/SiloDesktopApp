@@ -98,7 +98,7 @@ public class HomeRowWindowTests
     }
 
     [Fact]
-    public void TruncatedCompletionStopsWhenUnchangedAndLaterWholeDataRetainsInitialPriority()
+    public void TruncatedCompletionStaysRetrievableWhenUnchangedAndLaterWholeDataRetainsInitialPriority()
     {
         var shown = Row("one", "two"); shown.HasMore = true;
         var partial = Row("one", "two", "three"); partial.HasMore = true;
@@ -109,8 +109,8 @@ public class HomeRowWindowTests
         Assert.True(HomeRowWindow.IsExpanded(first));
         Assert.Equal(2, first.ShownCount);
         var unchanged = HomeRowWindow.Complete(first, partial, first, 8);
-        Assert.True(unchanged.HasReadWhole); Assert.False(unchanged.CanComplete);
-        Assert.Equal(HomeSectionChange.Metadata, HomeSectionReconciler.Apply(first, unchanged));
+        Assert.True(unchanged.HasMore); Assert.False(unchanged.HasReadWhole); Assert.True(unchanged.CanComplete);
+        Assert.Equal(HomeSectionChange.None, HomeSectionReconciler.Apply(first, unchanged));
         var completed = HomeRowWindow.Complete(first, Row("one", "two", "three", "four"), first, 9);
         Assert.False(completed.HasMore);
         Assert.True(completed.HasReadWhole);
@@ -124,20 +124,32 @@ public class HomeRowWindowTests
     [InlineData(0)]
     [InlineData(20)]
     [InlineData(50)]
-    public void RepeatedTruncatedCompletionStopsWithoutRestoringConcurrentRemovals(int limit)
+    public void RepeatedTruncatedCompletionRemainsRetryableWithoutRestoringConcurrentRemovals(int limit)
     {
         var shown = Row("one", "removed", "two"); shown.HasMore = true;
         var current = Row("one", "two"); current.HasMore = true;
         var whole = Row("two", "removed", "one", "one"); whole.HasMore = true; whole.ItemLimit = limit;
         var completed = HomeRowWindow.Complete(shown, whole, current, 7);
         Assert.Equal(["one", "two"], completed.Items.Select(item => item.ContentId));
-        Assert.True(completed.HasMore); Assert.True(completed.HasReadWhole); Assert.False(completed.CanComplete);
+        Assert.True(completed.HasMore); Assert.False(completed.HasReadWhole); Assert.True(completed.CanComplete);
         Assert.Equal(2, completed.ShownCount); Assert.Equal(7, completed.CompletedOrder);
         var mounted = new HomeSectionWithItems();
         HomeSectionReconciler.Apply(mounted, HomeSectionDedupe.Snapshot(completed));
-        Assert.False(mounted.CanComplete);
+        Assert.True(mounted.CanComplete);
         Assert.Equal(HomeSectionChange.None, HomeSectionReconciler.Apply(mounted,
             HomeRowWindow.Complete(shown, whole, mounted, 8)));
+    }
+
+    [Fact]
+    public void SmallerTruncatedCompletionKeepsExistingTailAndRetryPath()
+    {
+        var current = Row("one", "two", "tail"); current.HasMore = true;
+        current.ShownCount = 2; current.CompletedOrder = 7;
+        var whole = Row("one", "two"); whole.HasMore = true;
+        var completed = HomeRowWindow.Complete(HomeSectionDedupe.Snapshot(current), whole, current, 8);
+        Assert.Equal(["one", "two", "tail"], completed.Items.Select(item => item.ContentId));
+        Assert.True(completed.HasMore); Assert.False(completed.HasReadWhole); Assert.True(completed.CanComplete);
+        Assert.Equal(2, completed.ShownCount); Assert.Equal(7, completed.CompletedOrder);
     }
 
     [Theory]

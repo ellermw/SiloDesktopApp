@@ -14,9 +14,13 @@ public class HomeRowCapabilityTests
     [InlineData("{\"row_item_limit_max\":19}", "")]
     [InlineData("{\"row_item_limit_max\":20}", "?item_limit=20")]
     [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", "?item_limit=20")]
+    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":15}", "?item_limit=15")]
+    [InlineData("{\"row_item_limit_max\":20,\"section_item_limit_max\":10}", "?item_limit=10")]
     public async Task FirstReadNegotiatesTheExactRowCapability(string capabilities, string expectedQuery)
     {
-        using var wire = new Wire { Capabilities = capabilities }; using var http = new HttpClient(wire);
+        using var wire = new Wire { Capabilities = capabilities,
+            Section = JsonSerializer.Serialize(new { id = "row", has_more = expectedQuery.Length > 0, items = Array.Empty<object>() }) };
+        using var http = new HttpClient(wire);
         var client = Client(http); var api = new HomeApi(client);
         var response = await api.GetInitialSectionItemsAsync("row/one");
         Assert.Equal(expectedQuery, Assert.Single(wire.Rows).Query);
@@ -120,8 +124,9 @@ public class HomeRowCapabilityTests
     [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 50, "?item_limit=100")]
     [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":30}", 50, "?item_limit=30")]
     [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 150, "?item_limit=100")]
-    [InlineData("{\"row_item_limit_max\":40,\"section_item_limit_max\":100}", 50, "")]
-    [InlineData("{\"row_item_limit_max\":40,\"section_item_limit_max\":100}", 30, "")]
+    [InlineData("{\"row_item_limit_max\":40,\"section_item_limit_max\":100}", 50, "?item_limit=40")]
+    [InlineData("{\"row_item_limit_max\":40,\"section_item_limit_max\":100}", 30, "?item_limit=40")]
+    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":15}", 20, "?item_limit=15")]
     [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":60}", 80, "?item_limit=60")]
     [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 0, "?item_limit=100")]
     [InlineData("{\"row_item_limit_max\":100}", 50, "")]
@@ -191,7 +196,30 @@ public class HomeRowCapabilityTests
         var repeated = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 20)).Section!;
         var completed = HomeRowWindow.Complete(expanded, repeated, expanded, 2);
         Assert.Equal(expanded.Items.Select(item => item.ContentId), completed.Items.Select(item => item.ContentId));
-        Assert.True(completed.HasMore); Assert.True(completed.HasReadWhole); Assert.False(completed.CanComplete);
+        Assert.True(completed.HasMore); Assert.False(completed.HasReadWhole); Assert.True(completed.CanComplete);
+        Assert.Equal(20, completed.ShownCount); Assert.Equal(1, completed.CompletedOrder);
+    }
+
+    [Fact]
+    public async Task RowCeilingIsExplicitAndRepeatedTruncationKeepsCompletionAvailable()
+    {
+        static string Section(int count) => JsonSerializer.Serialize(new
+        {
+            id = "row", has_more = true,
+            items = Enumerable.Range(1, count).Select(i => new { content_id = $"card{i}" })
+        });
+        using var wire = new Wire { Capabilities = "{\"row_item_limit_max\":40,\"section_item_limit_max\":100}", Section = Section(20) };
+        using var http = new HttpClient(wire);
+        var api = new HomeApi(Client(http));
+        var initial = (await api.GetInitialSectionItemsAsync("row")).Section!;
+        wire.Section = Section(40);
+        var whole = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 20)).Section!;
+        var expanded = HomeRowWindow.Complete(initial, whole, initial, 1);
+        var repeated = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 20)).Section!;
+        var completed = HomeRowWindow.Complete(expanded, repeated, expanded, 2);
+        Assert.Equal(new[] { "?item_limit=20", "?item_limit=40", "?item_limit=40" }, wire.Rows.Select(row => row.Query));
+        Assert.Equal(Enumerable.Range(1, 40).Select(i => $"card{i}"), completed.Items.Select(item => item.ContentId));
+        Assert.True(completed.HasMore); Assert.False(completed.HasReadWhole); Assert.True(completed.CanComplete);
         Assert.Equal(20, completed.ShownCount); Assert.Equal(1, completed.CompletedOrder);
     }
 

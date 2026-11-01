@@ -45,9 +45,9 @@ public static class HomeRowWindow
         // must not discard unseen cards, including when we retain old cards.
         result.Items = new(prefix.Concat(rest));
         result.HasMore = whole.HasMore;
-        // There is no paging cursor: repeating a whole read that adds nothing
-        // cannot move forward. A later refresh can discover changed cards.
-        result.HasReadWhole = !whole.HasMore || result.Items.Count == prefix.Count;
+        // A repeated/truncated response is not evidence of exhaustion. Keep
+        // explicit forward demand available until the server reports no tail.
+        result.HasReadWhole = !whole.HasMore;
         result.ShownCount = Math.Min(initialCount, result.Items.Count);
         result.CompletedOrder = current.CompletedOrder > 0 ? current.CompletedOrder : completedOrder;
         result.LoadCompleted = true;

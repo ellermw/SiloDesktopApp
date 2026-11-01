@@ -51,22 +51,23 @@ public class HomeApi(SiloApiClient client)
     public Task<HomeSectionItemsResponse> GetSectionItemsAsync(ApiRequestContext owner, long language, string sectionId, CancellationToken ct = default)
         => ReadSectionItemsAsync(owner, language, sectionId, null, ct);
 
-    /// <summary>Explicit partial-row completion requests the advertised whole-row budget; featured and expanded refreshes use GetSectionItemsAsync.</summary>
+    /// <summary>Completion and expanded non-featured refreshes request the negotiated whole-row budget; featured reads stay uncapped.</summary>
     public async Task<HomeSectionItemsResponse> GetWholeSectionItemsAsync(ApiRequestContext owner, long language,
         string sectionId, int itemLimit, CancellationToken ct = default)
     {
         var capabilities = await GetCapabilitiesAsync(owner, language, ct).ConfigureAwait(false);
-        int? limit = null;
-        if (capabilities.RowItemLimitMax is > 0 && capabilities.SectionItemLimitMax is > 0)
-        {
-            limit = capabilities.SectionItemLimitMax.Value;
-            // The recipe's display itemLimit must not cap completion at the
-            // initial window. Ask for the section maximum, or fall back to an
-            // uncapped read if that exceeds the advertised query ceiling.
-            if (limit.Value > capabilities.RowItemLimitMax.Value) limit = null;
-        }
+        // The recipe's display itemLimit must not cap completion at the
+        // initial window. Stay within both advertised query ceilings.
+        var limit = capabilities.SectionItemLimitMax is > 0
+            ? BoundedItemLimit(capabilities, capabilities.SectionItemLimitMax.Value) : null;
         return await ReadSectionItemsAsync(owner, language, sectionId, limit, ct).ConfigureAwait(false);
     }
+
+    private static int? BoundedItemLimit(HomeCapabilities capabilities, int desired)
+        => capabilities.RowItemLimitMax is > 0
+            ? Math.Min(desired, Math.Min(capabilities.RowItemLimitMax.Value,
+                capabilities.SectionItemLimitMax is > 0 ? capabilities.SectionItemLimitMax.Value : int.MaxValue))
+            : null;
 
     private async Task<HomeSectionItemsResponse> ReadSectionItemsAsync(ApiRequestContext owner, long language,
         string sectionId, int? itemLimit, CancellationToken ct)
@@ -95,7 +96,7 @@ public class HomeApi(SiloApiClient client)
         var capabilities = await GetCapabilitiesAsync(context, language, ct).ConfigureAwait(false);
         var bounded = capabilities.RowItemLimitMax >= Services.HomeRowWindow.InitialItemLimit;
         return await ReadSectionItemsAsync(context, language, sectionId,
-            bounded ? Services.HomeRowWindow.InitialItemLimit : null, ct).ConfigureAwait(false);
+            bounded ? BoundedItemLimit(capabilities, Services.HomeRowWindow.InitialItemLimit) : null, ct).ConfigureAwait(false);
     }
 
     public Task<HomeCapabilities> GetCapabilitiesAsync(CancellationToken ct = default)

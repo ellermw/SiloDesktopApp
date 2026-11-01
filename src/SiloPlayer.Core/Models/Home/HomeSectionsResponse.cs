@@ -15,8 +15,8 @@ public class HomeSectionWithItems
     public int ItemLimit { get; set; }
     public int TotalCount { get; set; }
     public bool HasMore { get; set; }
-    // A whole-row read may stop completion despite HasMore when it adds no
-    // unseen cards. Preserve the wire flag without offering an endless retry.
+    // Only a response reporting no more cards establishes exhaustion;
+    // repeated truncated reads must retain an explicit completion path.
     [JsonIgnore] public bool HasReadWhole { get; set; }
     [JsonIgnore] public bool CanComplete => HasMore && !HasReadWhole;
     [JsonIgnore] public int? ShownCount { get; set; }
