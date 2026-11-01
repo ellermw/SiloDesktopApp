@@ -1,4 +1,3 @@
-using SiloPlayer.Core.Models.MediaMaintenance;
 using System.Text.Json;
 
 namespace SiloPlayer.Core.Api;
@@ -18,11 +17,6 @@ public sealed class MediaSplitApi(SiloApiClient client)
             cursor = pagination.TryGetProperty("next_cursor", out var next) && next.ValueKind == JsonValueKind.String ? next.GetString() : null;
             if (string.IsNullOrEmpty(cursor) || !seen.Add(cursor)) throw new InvalidOperationException("Incomplete item file list. Reload to try again.");
         }
-    }
-    public async Task<ItemMatchSearchResponse> SearchAsync(ApiRequestContext context, string id, ItemMatchSearchRequest request, CancellationToken ct = default)
-    {
-        Current(context, ct); var result = await client.SendRequestAsync<ItemMatchSearchResponse>(context, HttpMethod.Post,
-            $"/api/v2/admin/items/{Uri.EscapeDataString(id)}/match/search", V2Json.Body(request), ct); Current(context, ct); return result;
     }
     public async Task<JsonElement> SplitAsync(ApiRequestContext context, string id, object request, CancellationToken ct = default)
     {

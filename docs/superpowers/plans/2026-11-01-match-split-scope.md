@@ -5,3 +5,5 @@
 3. Integrate selected-file scope and stale candidate/preview/commit guards into Split; align its authorization with the server.
 4. Add an actual-control synthetic fixture covering scoped bodies, multi-library choices, membership changes, delayed replies and owner/permission departure. Publish Release under a fresh worktree output and provide runner route to parent.
 5. Run full unit suite, diff check and self review, commit assigned branch, record exact commands/results/limits in report and append current-development handoff.
+
+Review corrections: reproduce each reported behavior on the first final publish (review-red, review-red-02), apply focused fixes, then run core/API tests and a fresh app publish. The full match-split-scope route now includes the review regressions and existing media-tools fixtures. Finish with a final full unit run, source review, new receipts, report responses to each finding, and parent re-review; no remote actions.

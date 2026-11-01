@@ -18,16 +18,16 @@ public sealed class ItemLibraryScope(int? pageLibraryId, bool split, bool hasInv
         {
             if (!hasInventory) return pageLibraryId;
             var libraries = LibraryIds;
-            if (split && _selected.Count > 0 && _selected.All(id => _files.TryGetValue(id, out var library) && library.HasValue))
-            {
-                var selectedLibraries = _selected.Select(id => _files[id]).Distinct().ToArray();
-                if (selectedLibraries.Length == 1) return selectedLibraries[0];
-            }
+            if (SelectedLibraryId.HasValue) return SelectedLibraryId;
             if (pageLibraryId.HasValue && libraries.Contains(pageLibraryId.Value)) return pageLibraryId;
             if (pageLibraryId.HasValue && !split) return null;
             return libraries.Count == 1 ? libraries[0] : _picked;
         }
     }
+    private int? SelectedLibraryId => split && _selected.Count > 0 && _selected.All(id => _files.TryGetValue(id, out var library) && library.HasValue)
+        && _selected.Select(id => _files[id]).Distinct().ToArray() is { Length: 1 } libraries ? libraries[0] : null;
+    public bool AllowsChoice => hasInventory && Loaded && LibraryIds.Count > 1 && !SelectedLibraryId.HasValue
+        && (!pageLibraryId.HasValue || split && !LibraryIds.Contains(pageLibraryId.Value));
     public bool NeedsChoice => hasInventory && Loaded && LibraryIds.Count > 1 && !LibraryId.HasValue && (!pageLibraryId.HasValue || split);
     public bool CanSearch => Loaded && (!hasInventory || LibraryId.HasValue || !pageLibraryId.HasValue && LibraryIds.Count == 0);
     public bool ReplaceFiles(IEnumerable<JsonElement> files)
@@ -56,6 +56,7 @@ public sealed class ItemLibraryScope(int? pageLibraryId, bool split, bool hasInv
         _picked = next; _revision++; return true;
     }
     public Scope Capture() => new(_revision, LibraryId);
-    public bool IsCurrent(Scope scope) => CanSearch && scope == Capture();
+    public bool IsCurrent(Scope scope) => CanSearch && IsInventoryCurrent(scope);
+    public bool IsInventoryCurrent(Scope scope) => Loaded && scope == Capture();
     public readonly record struct Scope(long Revision, int? LibraryId);
 }

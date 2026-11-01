@@ -147,7 +147,7 @@ public sealed partial class ItemDetailPage
         if (!Current()) return;
         dialog.BindNavigation(token); dialog.XamlRoot = XamlRoot; await dialog.ShowAsync();
         if (!dialog.HasSaved || !Current()) return;
-        await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
+        await ViewModel.ReloadAsync(item.ContentId);
         if (Current()) UpdateUI();
     }
 }

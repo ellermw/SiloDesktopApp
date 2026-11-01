@@ -78,4 +78,21 @@ public sealed class ItemLibraryScopeTests
         scope.SelectFiles(["a", "b"]); Assert.True(scope.NeedsChoice);
         scope.Pick(9); Assert.Equal(9, scope.LibraryId); Assert.True(scope.CanSearch);
     }
+    [Fact]
+    public void AmbiguousUnmatchedPlansCanValidateInventoryWithoutASearchLibrary()
+    {
+        var scope = new ItemLibraryScope(null, true, true); scope.ReplaceFiles(Files(("a", 2), ("b", 7), ("c", 2)));
+        scope.SelectFiles(["a", "b"]); var plan = scope.Capture();
+        Assert.False(scope.IsCurrent(plan)); Assert.True(scope.IsInventoryCurrent(plan));
+        scope.ReplaceFiles(Files(("a", 7), ("b", 7), ("c", 2))); Assert.False(scope.IsInventoryCurrent(plan));
+    }
+    [Fact]
+    public void ChoicesRemainAvailableAfterAPickButNeverOverrideAnImposedLibrary()
+    {
+        var scope = new ItemLibraryScope(null, true, true); scope.ReplaceFiles(Files(("a", 2), ("b", 7), ("c", 2)));
+        scope.SelectFiles(["a", "b"]); Assert.True(scope.AllowsChoice); scope.Pick(7); Assert.True(scope.AllowsChoice);
+        scope.SelectFiles(["a"]); Assert.False(scope.AllowsChoice); Assert.Equal(2, scope.LibraryId);
+        var match = new ItemLibraryScope(2, false, true); match.ReplaceFiles(Files(("a", 2), ("b", 7))); Assert.False(match.AllowsChoice);
+        var scopedSplit = new ItemLibraryScope(2, true, true); scopedSplit.ReplaceFiles(Files(("a", 2), ("b", 7))); scopedSplit.SelectFiles(["a", "b"]); Assert.False(scopedSplit.AllowsChoice);
+    }
 }
