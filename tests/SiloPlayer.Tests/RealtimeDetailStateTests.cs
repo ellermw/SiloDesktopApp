@@ -127,6 +127,30 @@ public sealed class RealtimeDetailStateTests
     }
 
     [Fact]
+    public async Task ContinuousRawTicksCannotStarveTheBoundedMountedRefresh()
+    {
+        using var scope = new Scope("series");
+        // Each bounded sweep is slow enough for a later raw progress tick to
+        // arrive. The view still needs an authoritative snapshot before the
+        // next sweep, even when progress never goes quiet.
+        for (var sweep = 0; sweep < 3; sweep++)
+        {
+            var read = new TaskCompletionSource<MediaItemDetail>(TaskCreationOptions.RunContinuationsAsynchronously);
+            scope.OverrideDetail = () => read.Task;
+            var count = scope.DetailReads;
+            var operation = scope.Vm.RefreshMediaStateAsync(scope.Message());
+            for (var i = 0; i < 100 && scope.DetailReads == count; i++) await Task.Delay(10);
+            Assert.Equal(count + 1, scope.DetailReads);
+            scope.Vm.Receive(scope.Message("later-progress") with { RefreshDetails = false });
+            var snapshot = scope.FreshDetail("series", "series");
+            snapshot.UserData!.WatchedCount = sweep + 1;
+            read.SetResult(snapshot);
+            await operation.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Equal(sweep + 1, scope.Vm.Item!.UserData!.WatchedCount);
+        }
+    }
+
+    [Fact]
     public async Task ReconnectCatchUpRefreshesTheOpenDetailWithoutReplacingIt()
     {
         using var scope = new Scope("series");
@@ -185,6 +209,7 @@ public sealed class RealtimeDetailStateTests
         internal SiloApiClient Client { get; }
         internal ItemDetailViewModel Vm { get; }
         internal int DetailReads;
+        internal Func<Task<MediaItemDetail>>? OverrideDetail;
         internal TaskCompletionSource<MediaItemDetail>? BlockedRead;
         internal readonly TaskCompletionSource ReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool IncludeTarget;
@@ -206,6 +231,7 @@ public sealed class RealtimeDetailStateTests
             {
                 DetailReads++;
                 ReadStarted.TrySetResult();
+                if (OverrideDetail is { } read) return read();
                 return DetailReads == 1 && BlockedRead != null ? BlockedRead.Task : Task.FromResult(FreshDetail(id, type));
             }));
             Vm.Item = new() { ContentId = type == "series" ? "series" : "season", SeriesId = type == "season" ? "series" : null,

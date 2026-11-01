@@ -136,9 +136,13 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         if (!_stateRefreshActive || !_catalogApi.IsCurrentContext(message.Context)
             || Item is not { } item || !IsRelatedState(message, item)) return Task.CompletedTask;
-        Interlocked.Increment(ref _remoteStateGeneration);
         if (_remoteStateReadContext is { } reading && reading != message.Context) _remoteStateReadCts?.Cancel();
         if (!message.RefreshDetails) return Task.CompletedTask;
+        // Raw progress ticks invalidate cached reads globally, but cannot
+        // starve a retained surface's bounded authoritative snapshot. Only
+        // another coalesced sweep supersedes that snapshot; owner/navigation
+        // and local mutation revisions still retire it immediately.
+        Interlocked.Increment(ref _remoteStateGeneration);
         if (_pendingRemoteState is { } pending && pending.Context == message.Context)
             message = message with { ContentIds = pending.ContentIds.Concat(message.ContentIds).ToHashSet(StringComparer.Ordinal),
                 SeriesIds = pending.SeriesIds.Concat(message.SeriesIds).ToHashSet(StringComparer.Ordinal), CatchUp = pending.CatchUp || message.CatchUp };
