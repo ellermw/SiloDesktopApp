@@ -22,6 +22,26 @@ public class LiveMarkerUpdateTests
         Assert.Equal(10, version.Intro!.End); Assert.Equal(9, version.Recap!.End);
     }
     [Theory]
+    [InlineData("null")]
+    [InlineData("{}")]
+    [InlineData("false")]
+    [InlineData("0")]
+    [InlineData("\"invalid\"")]
+    public void Non_array_segments_leave_accepted_occurrences_unchanged(string segments)
+    {
+        var version = new FileVersion { MarkerSegments = [new() { Kind = "intro", StartSeconds = 0, EndSeconds = 30 }] };
+        var original = version.MarkerSegments;
+        using var payload = JsonDocument.Parse($$$"""{"marker_segments":{{{segments}}},"credits":{"start":90,"end":100}}""");
+        PlaybackMarkerUpdate.Apply(version, payload.RootElement);
+        Assert.Same(original, version.MarkerSegments);
+        Assert.Equal(30, PlaybackMarkerRanges.Active(version.MarkerSegments!, "intro", 10)?.End);
+        Assert.Equal(100, version.Credits!.End);
+
+        var withoutSegments = new FileVersion();
+        PlaybackMarkerUpdate.Apply(withoutSegments, payload.RootElement);
+        Assert.Null(withoutSegments.MarkerSegments);
+    }
+    [Theory]
     [InlineData(1)] [InlineData(50)] [InlineData(100)]
     public void Subtitle_text_opacity_survives_clone_and_wire_round_trip(int opacity)
     {

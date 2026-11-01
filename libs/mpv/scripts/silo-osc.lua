@@ -3945,19 +3945,25 @@ check_skip_markers = function()
         state.auto_skipped_segments = state.auto_skipped_segments or {}
         for _, kind in ipairs({"intro", "recap", "credits", "preview"}) do
             local first, last = 0, 0
+            local has_segments = false
             for _, segment in ipairs(state.marker_segments) do
                 local a, b = tonumber(segment.start_seconds), tonumber(segment.end_seconds)
+                if segment.kind == kind then has_segments = true end
                 if segment.kind == kind and a and b and b > a and pos >= a and pos < b then
                     first, last = a, b
                     break
                 end
             end
-            local key = kind .. ":" .. tostring(first) .. ":" .. tostring(last)
-            if state[kind .. "_segment_key"] ~= key then
-                state[kind .. "_segment_key"] = key
-                state[kind .. "_auto_skipped"] = state.auto_skipped_segments[key] == true
+            -- Only kinds represented in the segment list are authoritative.
+            -- Other kinds retain the host's singular watch-range fallback.
+            if has_segments then
+                local key = kind .. ":" .. tostring(first) .. ":" .. tostring(last)
+                if state[kind .. "_segment_key"] ~= key then
+                    state[kind .. "_segment_key"] = key
+                    state[kind .. "_auto_skipped"] = state.auto_skipped_segments[key] == true
+                end
+                state[kind .. "_start"], state[kind .. "_end"] = first, last
             end
-            state[kind .. "_start"], state[kind .. "_end"] = first, last
         end
     end
 

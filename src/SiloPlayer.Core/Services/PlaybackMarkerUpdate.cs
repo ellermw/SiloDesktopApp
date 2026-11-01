@@ -7,9 +7,8 @@ public static class PlaybackMarkerUpdate
 {
     public static void Apply(FileVersion version, JsonElement payload)
     {
-        if (payload.TryGetProperty("marker_segments", out var segments))
-            version.MarkerSegments = segments.ValueKind == JsonValueKind.Array
-                ? JsonSerializer.Deserialize<List<PlaybackMarkerSegment>>(segments.GetRawText()) ?? [] : [];
+        if (payload.TryGetProperty("marker_segments", out var segments) && segments.ValueKind == JsonValueKind.Array)
+            version.MarkerSegments = JsonSerializer.Deserialize<List<PlaybackMarkerSegment>>(segments.GetRawText()) ?? [];
         if (payload.TryGetProperty("intro", out var intro)) version.Intro = Range(intro, version.Intro);
         if (payload.TryGetProperty("credits", out var credits)) version.Credits = Range(credits, version.Credits);
         if (payload.TryGetProperty("recap", out var recap)) version.Recap = Range(recap, version.Recap);

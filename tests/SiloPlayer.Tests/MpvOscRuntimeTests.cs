@@ -86,6 +86,54 @@ public sealed class MpvOscRuntimeTests
     }
 
     [Theory]
+    [InlineData("[]")]
+    [InlineData("[{\"kind\":\"intro\",\"start_seconds\":5,\"end_seconds\":30}]")]
+    public void SegmentProjectionRetainsSingularRangesForUnrepresentedKinds(string segments)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local state = osc_test_state
+            handlers['osc-set-markers']([==[{"content_id":"episode","intro_start":5,"intro_end":30,
+                "recap_start":1,"recap_end":4,"credits_start":90,"credits_end":100,
+                "preview_start":70,"preview_end":75,"marker_segments":{{segments}}}]==])
+            state.duration, state.osc_disabled, state.next_ep_available = 100, false, false
+            state.intro_mode, state.auto_skip_recap, state.auto_skip_credits = 'ask', false, false
+            for _, marker in ipairs({
+                {'intro', 5, 30, 10, 'Skip Intro'},
+                {'recap', 1, 4, 2, 'Skip Recap'}, {'credits', 90, 100, 95, 'Skip Credits'},
+                {'preview', 70, 75, 72}
+            }) do
+                state.time_pos = marker[4]
+                osc_test_check()
+                assert(state[marker[1]..'_start'] == marker[2] and state[marker[1]..'_end'] == marker[3],
+                    marker[1]..' lost its range')
+                if marker[5] then
+                    assert(state.skip_visible and state.skip_label == marker[5] and state.skip_target == marker[3],
+                        marker[1]..' lost its skip pill')
+                end
+            end
+            state.time_pos = 80
+            osc_test_check()
+            assert(not state.skip_visible, 'No pill should appear outside a marker window')
+            state.intro_mode, state.time_pos = 'always', 10
+            osc_test_check()
+            assert(state.intro_pending and state.intro_pending.target == 30, 'Intro auto-skip was lost')
+            state.intro_pending = nil
+            state.auto_skip_recap, state.time_pos = true, 2
+            osc_test_check()
+            assert(state.recap_auto_skipped, 'Recap auto-skip was lost')
+            state.auto_skip_credits, state.time_pos = true, 95
+            osc_test_check()
+            assert(state.credits_auto_skipped, 'Credits auto-skip was lost')
+            mp.set_property('user-data/marker-fallback', 'preserved')
+            """, rawAss: true, resultProperty: "user-data/marker-fallback", beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """);
+        Assert.Equal("preserved", output);
+    }
+
+    [Theory]
     [InlineData("intro")]
     [InlineData("recap")]
     [InlineData("credits")]
