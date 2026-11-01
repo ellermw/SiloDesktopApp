@@ -37,8 +37,13 @@ public static class DetailCacheInvalidation
     {
         messenger ??= WeakReferenceMessenger.Default;
         var revision = new UserStateRevision();
-        messenger.Register<UserStateRevision, MediaStateInvalidated>(revision,
-            static (owner, message) => owner.Advance(message.CatchUp ? [] : WatchScope(message.ContentIds, message.SeriesIds)));
+        messenger.Register<UserStateRevision, MediaStateInvalidated>(revision, static (owner, message) =>
+        {
+            // The coalesced delivery refreshes mounted details; its raw events
+            // already retired /watch reads and must not consume another retry.
+            if (!message.RefreshDetails)
+                owner.Advance(message.CatchUp ? [] : WatchScope(message.ContentIds, message.SeriesIds));
+        });
         messenger.Register<UserStateRevision, MediaSurfaceChanged>(revision,
             static (owner, message) => owner.Advance(ScopeOf(message)));
         messenger.Register<UserStateRevision, PlaybackProgressUpdated>(revision,

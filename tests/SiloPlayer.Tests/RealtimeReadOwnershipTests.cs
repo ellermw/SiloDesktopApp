@@ -78,6 +78,40 @@ public sealed class RealtimeReadOwnershipTests
     }
 
     [Fact]
+    public async Task InitialDetailLoadCompletesWhileItsTrailingRealtimeReadIsStillPending()
+    {
+        using var f = new Fixture();
+        f.Wire.HoldDetails = true;
+        var loading = f.Vm.LoadInLibraryAsync(Series, 9);
+        var initial = await f.Wire.NextAsync();
+        f.Wire.Count = 1;
+        f.Raw(EpisodeB); f.Clock.Advance(200);
+        initial.Release();
+
+        // A second event during the bounded replacement requires a trailing
+        // sweep, but must not keep the already committed page on its skeleton.
+        var replacement = await f.Wire.NextAsync();
+        f.Wire.Count = 2;
+        f.Raw(EpisodeB); f.Clock.Advance(200);
+        replacement.Release();
+        var trailing = await f.Wire.NextAsync();
+        try
+        {
+            await loading.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(f.Vm.IsLoading);
+            Assert.Equal(1, f.Vm.Item!.UserData!.WatchedCount);
+            Assert.False(trailing.Pending.IsCompleted);
+        }
+        finally
+        {
+            f.Wire.HoldDetails = false;
+            trailing.Release();
+        }
+        await f.WaitCountAsync(2);
+        Assert.All(f.Wire.CatalogUris, uri => Assert.Equal("?library_id=9", uri.Query));
+    }
+
+    [Fact]
     public async Task LocalFinalProgressOwnsTheRowOverAnOlderRemoteEpisodeSnapshot()
     {
         using var f = new Fixture(); f.Seed();
@@ -184,6 +218,52 @@ public sealed class RealtimeReadOwnershipTests
         var beforeContainer = await freshness.ReadAsync(EpisodeB, ct => playback.GetWatchDetailAsync(EpisodeB, ct), CancellationToken.None);
         f.Raw("series:review-S01", "watched");
         Assert.False(freshness.IsCurrent(beforeContainer));
+    }
+
+    [Fact]
+    public async Task CoalescedRemoteReplayDoesNotExhaustOwnItemWatchPreparation()
+    {
+        using var f = new Fixture();
+        var playback = new PlaybackApi(f.Client);
+        var freshness = new WatchDetailFreshness<WatchDetailResponse>(f.Revision, TimeSpan.FromSeconds(1), d => d.ContentId, d => d.SeriesId);
+        f.Wire.BeforeWatchResponse = () =>
+        {
+            if (f.Wire.WatchReads <= 2)
+            {
+                f.Wire.Position = f.Wire.WatchReads * 100;
+                f.Raw(EpisodeA);
+            }
+            else f.Clock.Advance(200); // Replay both events during the last retry.
+        };
+
+        var detail = await freshness.GetCurrentAsync(ct => freshness.ReadAsync(EpisodeA,
+            token => playback.GetWatchDetailAsync(EpisodeA, token), ct), _ => { }, CancellationToken.None);
+
+        Assert.Equal(3, f.Wire.WatchReads);
+        Assert.Equal(200, detail.UserData!.PositionSeconds);
+        Assert.True(freshness.IsCurrent(detail));
+        Assert.Equal(2L, f.Revision.Current);
+    }
+
+    [Fact]
+    public async Task NewRemoteProgressDuringEachOfThreeWatchReadsStillRejectsKnownStalePositions()
+    {
+        using var f = new Fixture();
+        var playback = new PlaybackApi(f.Client);
+        var freshness = new WatchDetailFreshness<WatchDetailResponse>(f.Revision, TimeSpan.FromSeconds(1), d => d.ContentId, d => d.SeriesId);
+        f.Wire.BeforeWatchResponse = () =>
+        {
+            f.Raw(EpisodeA);
+            f.Clock.Advance(200);
+        };
+
+        var error = await Assert.ThrowsAsync<UserStateChangedException>(() => freshness.GetCurrentAsync(
+            ct => freshness.ReadAsync(EpisodeA, token => playback.GetWatchDetailAsync(EpisodeA, token), ct),
+            _ => { }, CancellationToken.None));
+
+        Assert.Equal(EpisodeA, error.ContentId);
+        Assert.Equal(3, f.Wire.WatchReads);
+        Assert.Equal(3L, f.Revision.Current); // Each event advances once, not again on flush.
     }
 
     private const string Series = "series:review";

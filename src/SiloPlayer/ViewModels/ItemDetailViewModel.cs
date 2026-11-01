@@ -730,8 +730,10 @@ public partial class ItemDetailViewModel : ObservableObject,
             OnPropertyChanged(nameof(RatingDisplay));
             var trailing = _initialRemoteState;
             _initialRemoteState = null;
+            // Let navigation paint the committed detail without waiting for
+            // the shared, ownership-guarded realtime loop to drain.
             if (initialRevision != _initialStateRevision && trailing != null)
-                await RefreshMediaStateAsync(trailing with { RefreshDetails = true });
+                _ = RefreshMediaStateAsync(trailing with { RefreshDetails = true });
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {

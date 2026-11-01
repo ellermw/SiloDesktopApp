@@ -189,10 +189,21 @@ public sealed class DetailCacheInvalidationTests
         var client = new SiloPlayer.Core.Api.SiloApiClient(http);
         client.SetBaseUrl("https://container-scope.invalid");
         client.SetProfile("profile");
-        messenger.Send(new MediaStateInvalidated(client.CaptureContext(),
-            new HashSet<string>(["series:show-S01"]), new HashSet<string>(), RefreshDetails: coalesced));
-
+        var invalidation = new MediaStateInvalidated(client.CaptureContext(),
+            new HashSet<string>(["series:show-S01"]), new HashSet<string>(), RefreshDetails: false);
+        messenger.Send(invalidation);
         Assert.False(freshness.IsCurrent(held));
+
+        if (coalesced)
+        {
+            var refreshed = await freshness.ReadAsync("episode:show-s01e01",
+                server.Read("episode:show-s01e01", "series:show"), CancellationToken.None);
+            var stamp = revision.Current;
+            messenger.Send(invalidation with { RefreshDetails = true });
+            Assert.Equal(stamp, revision.Current);
+            Assert.True(freshness.IsCurrent(refreshed));
+            Assert.False(freshness.IsCurrent(held));
+        }
         GC.KeepAlive(revision);
     }
 
