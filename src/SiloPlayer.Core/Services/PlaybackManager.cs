@@ -144,10 +144,21 @@ public partial class PlaybackManager : IDisposable
         PlaybackQualityPreferences? preferences = null,
         int? subtitleTrackIndex = null,
         bool preserveTrackIntent = false,
-        ApiRequestContext? expectedContext = null)
+        ApiIdentityContext? expectedIdentityContext = null)
     {
-        preferences ??= await ResolveQualityPreferencesAsync(ct, expectedContext).ConfigureAwait(false);
-        if (!_apiClient.IsCurrentContext(preferences.Context)) throw new OperationCanceledException("Playback quality owner changed.", ct);
+        var owner = expectedIdentityContext ?? _apiClient.CaptureIdentityContext();
+        if (!_apiClient.IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Playback owner changed.", ct);
+        if (preferences == null)
+        {
+            ApiRequestContext? readContext = expectedIdentityContext.HasValue ? _apiClient.CaptureContext() : null;
+            if (!_apiClient.IsCurrentIdentityContext(owner)) throw new OperationCanceledException("Playback owner changed.", ct);
+            preferences = await ResolveQualityPreferencesAsync(ct, readContext).ConfigureAwait(false);
+        }
+        // Completed reads carry an identity-bound capability snapshot. Access
+        // revisions retire reads in flight, not these accepted preferences.
+        if (!_apiClient.IsCurrentIdentityContext(owner) || (preferences.CapabilitySnapshot is { } snapshot
+            ? snapshot.Owner != owner : !_apiClient.IsCurrentContext(preferences.Context)))
+            throw new OperationCanceledException("Playback quality owner changed.", ct);
         if (!preserveTrackIntent) ResetLocalTrackIntent();
         var subtitleRevision = CaptureSubtitleRevision();
         var audioRevision = CaptureAudioRevision();
@@ -179,8 +190,8 @@ public partial class PlaybackManager : IDisposable
 
         LogToStateTrace($"StartSession v3: fileId={fileId}, pos={startPosition}, force={forceStartPosition}, attempt={request.PlaybackAttemptId}, codecs_video=[{string.Join(",", capabilities.CodecsVideo)}], codecs_audio=[{string.Join(",", capabilities.CodecsAudio)}], max_res={capabilities.MaxResolution}, hdr={capabilities.Hdr}");
 
-        await ConfigureConnectionStartAsync(request, preferences, ct, expectedContext).ConfigureAwait(false);
-        var decision = await _playbackApi.StartPlaybackV3Async(request, ct, expectedContext).ConfigureAwait(false);
+        await ConfigureConnectionStartAsync(request, preferences, ct, owner).ConfigureAwait(false);
+        var decision = await _playbackApi.StartPlaybackV3Async(request, ct, owner).ConfigureAwait(false);
         _connectionFeatures = request.ClientFeatures.ToArray();
         var response = AdoptProtocolV3Decision(decision, request.PlaybackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
         _recoveryAttemptHistory.Reset();

@@ -25,12 +25,12 @@ public partial class PlaybackApi
     }
 
     private async Task<PlaybackDecisionResponseV3> StartV2Async(PlaybackStartRequestV3 request, CancellationToken ct,
-        ApiRequestContext? expectedContext)
+        ApiIdentityContext? expectedIdentityContext)
     {
-        var authority = client.CaptureIdentityContext();
-        if (expectedContext is { } expected && !client.IsCurrentContext(expected))
+        var authority = expectedIdentityContext ?? client.CaptureIdentityContext();
+        if (!client.IsCurrentIdentityContext(authority))
             throw new OperationCanceledException("Playback start owner changed.", ct);
-        // Validate a scoped read owner at entry, then bind delivery and retries
+        // Validate the accepted identity at entry, then bind delivery and retries
         // atomically to this identity. An access/cache refresh is not an account
         // or profile departure and must not abandon an accepted start.
         Task<T> SendOwnedAsync<T>(HttpMethod method, string path, object? body, CancellationToken token) =>

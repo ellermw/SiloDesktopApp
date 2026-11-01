@@ -35,6 +35,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
             ("profile ownership across preparation awaits", () => VerifyPreparationOwnerAsync(scope)),
             ("newer viewer click", () => VerifyNewerIntentAsync(scope)),
             ("still click supersedes ordinary start", () => VerifyScopedSupersedesUnscopedAsync(scope)),
+            ("ordinary start preserves accepted still click", () => VerifyUnscopedQueuesBehindScopedAsync(scope)),
             ("canceled queued successor", () => VerifyCanceledSuccessorAsync(scope)),
             ("loading overlay ownership", () => VerifyLoadingOverlayOwnershipAsync(scope)),
             ("attached room authority", () => VerifyRoomIntentAsync(scope)),
@@ -439,6 +440,33 @@ internal static partial class EpisodeQuickPlayNativeFixture
             "The superseded ordinary request reached /start or replaced the newer scoped episode.");
     }
 
+    private static async Task VerifyUnscopedQueuesBehindScopedAsync(LifecycleScope scope)
+    {
+        scope.Wire.AcceptStart = true;
+        scope.Wire.HoldWatch = "accepted-scoped-episode";
+        var page = scope.MountSeries(scope.Wire.HoldWatch); await Task.Delay(60); page.UpdateLayout();
+        var play = ResumeButton((Panel)page.FindName("EpisodesPanel")); Invoke(play);
+        await scope.Wire.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var scopedIntent = (CancellationTokenSource)GetField(scope.Player, "_scopedViewerPlayCts")!;
+        var ordinary = scope.Player.PlayAsync("queued-ordinary");
+        try
+        {
+            await Task.Delay(60);
+            Check(!scopedIntent.IsCancellationRequested && ReferenceEquals(GetField(scope.Player, "_scopedViewerPlayCts"), scopedIntent) &&
+                !play.IsEnabled && !ordinary.IsCompleted && scope.Player.IsLoading &&
+                scope.Player.ContentId == "accepted-scoped-episode" && scope.Wire.Watches.Count == 1 && scope.Wire.Starts.Count == 0,
+                "An ordinary start canceled or cleared the accepted scoped intent instead of queuing behind it.");
+        }
+        finally { scope.Wire.ReleaseWatch.TrySetResult(); }
+        await ordinary.WaitAsync(TimeSpan.FromSeconds(3));
+        await Until(() => play.IsEnabled);
+        Check(scope.Wire.Starts.Count == 2 && scope.Wire.Watches.Count == 2 &&
+            scope.Wire.Watches[0].AbsolutePath.EndsWith("/accepted-scoped-episode") && scope.Wire.Watches[0].Query == "?library_id=73" &&
+            scope.Wire.Watches[1].AbsolutePath.EndsWith("/queued-ordinary") &&
+            scope.Player.ContentId == "queued-ordinary" && scope.Player.Manager?.CurrentSession != null && scope.Player.ErrorMessage == null,
+            "The accepted still action did not start before its queued ordinary successor.");
+    }
+
     private static async Task VerifyPreparationOwnerAsync(LifecycleScope scope)
     {
         foreach (var boundary in new[] { "watch", "capability", "settings", "start" })
@@ -471,11 +499,20 @@ internal static partial class EpisodeQuickPlayNativeFixture
         var play = ResumeButton((Panel)page.FindName("EpisodesPanel")); Invoke(play);
         await scope.Wire.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
         using var departed = new CancellationTokenSource(); departed.Cancel();
-        try { await scope.Player.PlayAsync("canceled-successor", cancellationToken: departed.Token); }
+        var canceledSuccessor = scope.Player.PlayAsync("canceled-successor", cancellationToken: departed.Token);
+        try
+        {
+            await Task.Delay(60);
+            Check(!play.IsEnabled && scope.Player.IsLoading && scope.Wire.Starts.Count == 0 &&
+                GetField(scope.Player, "_scopedViewerPlayCts") is CancellationTokenSource { IsCancellationRequested: false },
+                "An already-canceled ordinary successor canceled the accepted scoped action.");
+        }
+        finally { scope.Frame.Navigate(typeof(Page)); }
+        try { await canceledSuccessor.WaitAsync(TimeSpan.FromSeconds(3)); }
         catch (OperationCanceledException) { }
         await Until(() => play.IsEnabled); await Task.Delay(60);
         Check(!scope.Player.IsLoading && scope.Overlay.Visibility == Visibility.Collapsed && scope.Wire.Starts.Count == 0,
-            "A canceled queued successor prevented the retired request from hiding its own loading surface.");
+            "A canceled queued successor prevented the departed scoped request from hiding its own loading surface.");
         CheckAbandonedHandoff(scope);
 
         foreach (var departure in new[] { "cancellation", "profile" })

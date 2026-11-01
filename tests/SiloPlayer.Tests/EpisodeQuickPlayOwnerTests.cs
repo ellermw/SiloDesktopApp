@@ -1,5 +1,4 @@
 using System.Net;
-using System.Reflection;
 using System.Text;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Playback;
@@ -13,14 +12,10 @@ public sealed class EpisodeQuickPlayOwnerTests
     {
         using var wire = new Wire(); using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://quickplay-owner.invalid"); client.SetProfile("profile-a");
-        var owner = client.CaptureContext(); client.SetProfile("profile-b");
+        var owner = client.CaptureIdentityContext(); client.SetProfile("profile-b");
         var api = new PlaybackApi(client);
-        var method = typeof(PlaybackApi).GetMethod(nameof(PlaybackApi.StartPlaybackV3Async))!;
-        var arguments = method.GetParameters().Select(parameter => parameter.HasDefaultValue ? parameter.DefaultValue : null).ToArray();
-        arguments[0] = new PlaybackStartRequestV3 { FileId = 42, ProfileId = "profile-a" };
-        var ownerIndex = Array.FindIndex(method.GetParameters(), parameter => parameter.Name == "expectedContext");
-        if (ownerIndex >= 0) arguments[ownerIndex] = owner;
-        var pending = (Task)method.Invoke(api, arguments)!;
+        var pending = api.StartPlaybackV3Async(new PlaybackStartRequestV3 { FileId = 42, ProfileId = "profile-a" },
+            expectedIdentityContext: owner);
         var error = await Record.ExceptionAsync(() => pending);
         Assert.Empty(wire.Requests);
         Assert.IsAssignableFrom<OperationCanceledException>(error);

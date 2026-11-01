@@ -1879,14 +1879,20 @@ public partial class PlayerService : IDisposable
         // established playback merely by reserving their place.
         var reservation = new object();
         Interlocked.Exchange(ref _viewerPlayReservation, reservation);
-        var previousIntent = Interlocked.Exchange(ref _scopedViewerPlayCts, scopedIntent);
-        try { previousIntent?.Cancel(); } catch (ObjectDisposedException) { }
+        if (scopedIntent != null)
+        {
+            var previousIntent = Interlocked.Exchange(ref _scopedViewerPlayCts, scopedIntent);
+            try { previousIntent?.Cancel(); } catch (ObjectDisposedException) { }
+        }
         try
         {
             if (!expectedIdentity.HasValue)
             {
                 _ = FlushSubtitleOffsetAsync();
-                CancelPendingPlayRequest();
+                // Ordinary starts queue behind accepted still actions; only a
+                // newer scoped viewer intent may supersede their preparation.
+                if (Volatile.Read(ref _scopedViewerPlayCts) == null)
+                    CancelPendingPlayRequest();
             }
             else if (IsCurrentOwner() && Volatile.Read(ref _playRequestCts) != null)
             {
@@ -2328,9 +2334,8 @@ public partial class PlayerService : IDisposable
             // viewer choice. Omit Auto so the server can honor remembered
             // tracks and refine compatibility on the source it actually plays.
             var selectedAudioTrackIndex = audioTrackIndex;
-            var preparedQuality = await PrepareReadAsync(async context =>
-                (Preferences: await _playbackManager.ResolveQualityPreferencesAsync(requestToken, context), Context: context));
-            var qualityPreferences = preparedQuality.Preferences;
+            var qualityPreferences = await PrepareReadAsync(context =>
+                _playbackManager.ResolveQualityPreferencesAsync(requestToken, context));
             EnsureCurrentOwner();
             var candidateVersion = SelectVersion(watchDetail, fileId, qualityPreferences.Quality)
                 ?? throw new InvalidOperationException("No playable version found.");
@@ -2355,7 +2360,7 @@ public partial class PlayerService : IDisposable
                     disableProgressPersistence: IsAudiobook,
                     ct: requestToken,
                     preferences: qualityPreferences,
-                    expectedContext: preparedQuality.Context);
+                    expectedIdentityContext: expectedIdentity);
             }
             catch (ApiException ex) when (
                 ex.StatusCode == 429 &&
@@ -2374,7 +2379,7 @@ public partial class PlayerService : IDisposable
                     disableProgressPersistence: IsAudiobook,
                     ct: requestToken,
                     preferences: qualityPreferences,
-                    expectedContext: preparedQuality.Context);
+                    expectedIdentityContext: expectedIdentity);
             }
             EnsureCurrentOwner();
             var bestVersion = watchDetail.Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)

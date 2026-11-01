@@ -23,8 +23,8 @@ public partial class PlaybackApi(SiloApiClient client)
     }
 
     public Task<PlaybackDecisionResponseV3> StartPlaybackV3Async(PlaybackStartRequestV3 request, CancellationToken ct = default,
-        ApiRequestContext? expectedContext = null)
-        => StartV2Async(request, ct, expectedContext);
+        ApiIdentityContext? expectedIdentityContext = null)
+        => StartV2Async(request, ct, expectedIdentityContext);
 
     public Task<PlaybackCapabilityV3> GetPlaybackCapabilityAsync(CancellationToken ct = default)
         => client.GetAsync<PlaybackCapabilityV3>("/api/v2/playback/capabilities", ct);
