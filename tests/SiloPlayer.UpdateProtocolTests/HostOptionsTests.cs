@@ -26,6 +26,14 @@ public sealed class HostOptionsTests
     }
 
     [Theory]
+    [InlineData("v1.2.517.1")]
+    [InlineData("v1.2.517.12")]
+    [InlineData("1.2.517.12")]
+    [InlineData("v1.2.517.65534")]
+    public void Stable_tags_cannot_use_revisions_reserved_for_beta(string tag)
+        => Assert.Throws<InvalidDataException>(() => HostOptions.Parse(Arguments(tag)));
+
+    [Theory]
     [InlineData("v1.2.518-beta.0")]
     [InlineData("v1.2.518-beta.01")]
     [InlineData("v1.2.518-beta.65535")]
