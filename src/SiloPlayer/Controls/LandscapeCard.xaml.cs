@@ -9,7 +9,7 @@ using SiloPlayer.Views;
 
 namespace SiloPlayer.Controls;
 
-public sealed partial class LandscapeCard : UserControl
+public sealed partial class LandscapeCard : UserControl, IMediaItemOwner
 {
     private double _cardWidth = 315;
     private EpisodeSpoilerPreferences? _spoilerPreferences;
@@ -33,6 +33,8 @@ public sealed partial class LandscapeCard : UserControl
         get => (MediaItem?)GetValue(MediaItemProperty);
         set => SetValue(MediaItemProperty, value);
     }
+
+    public event Action? MediaItemChanged;
 
     public static readonly DependencyProperty UsePosterAspectProperty =
         DependencyProperty.Register(
@@ -117,6 +119,7 @@ public sealed partial class LandscapeCard : UserControl
     private static void OnMediaItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is not LandscapeCard card) return;
+        if (!ReferenceEquals(e.OldValue, e.NewValue)) card.MediaItemChanged?.Invoke();
         card.ObserveArtwork(card.IsLoaded ? e.NewValue as MediaItem : null);
         if (e.NewValue is MediaItem item) card.UpdateContent(item);
     }

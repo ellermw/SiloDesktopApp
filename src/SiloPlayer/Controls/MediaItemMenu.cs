@@ -342,8 +342,8 @@ public static class MediaItemMenu
             if (node is Frame sourceFrame) { frame = sourceFrame; break; }
         var surface = owner ?? frame?.Content as FrameworkElement ?? root.Content as FrameworkElement;
         if (surface?.IsLoaded != true) return;
-        var itemProperty = surface switch { LandscapeCard => LandscapeCard.MediaItemProperty, PosterCard => PosterCard.MediaItemProperty, _ => null };
-        bool OwnsItem() => itemProperty == null || ReferenceEquals(surface.GetValue(itemProperty), item);
+        var itemOwner = surface as IMediaItemOwner;
+        bool OwnsItem() => itemOwner == null || ReferenceEquals(itemOwner.MediaItem, item);
         var frameContent = frame?.Content;
         bool Authorized() => client.IsCurrentContext(context) && auth.SessionGeneration == session
             && auth.CurrentUser?.Id == userId && AuthorizationPolicy.CanCurateMetadata(auth);
@@ -351,8 +351,8 @@ public static class MediaItemMenu
         void Departed(object sender, RoutedEventArgs args) => lifetime.Cancel();
         void Navigated(object sender, NavigationEventArgs args) => lifetime.Cancel();
         void AuthorityChanged() { if (!Authorized()) lifetime.Cancel(); }
-        var itemChanged = itemProperty == null ? 0 : surface.RegisterPropertyChangedCallback(itemProperty,
-            (_, _) => { if (!OwnsItem()) lifetime.Cancel(); });
+        void ItemChanged() { if (!OwnsItem()) lifetime.Cancel(); }
+        if (itemOwner != null) itemOwner.MediaItemChanged += ItemChanged;
         surface.Unloaded += Departed; if (frame != null) frame.Navigated += Navigated;
         auth.UserChanged += AuthorityChanged; auth.LoggedOut += AuthorityChanged;
         bool Current() => !lifetime.IsCancellationRequested && OwnsItem() && surface.IsLoaded && surface.XamlRoot == root
@@ -391,7 +391,7 @@ public static class MediaItemMenu
         }
         finally
         {
-            if (itemProperty != null) surface.UnregisterPropertyChangedCallback(itemProperty, itemChanged);
+            if (itemOwner != null) itemOwner.MediaItemChanged -= ItemChanged;
             surface.Unloaded -= Departed; if (frame != null) frame.Navigated -= Navigated; auth.UserChanged -= AuthorityChanged; auth.LoggedOut -= AuthorityChanged;
         }
     }

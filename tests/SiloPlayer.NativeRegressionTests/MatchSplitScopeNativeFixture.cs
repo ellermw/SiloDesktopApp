@@ -41,8 +41,8 @@ internal static class MatchSplitScopeNativeFixture
                 var failures = new List<Exception>();
                 async Task Case(string name, Func<Task> run) { try { await run(); Program.Log("PASS online: " + name); } catch (Exception error) { Program.Log("FAIL online: " + name + " — " + error); failures.Add(error); } }
                 await Case("scoped empty and unreadable Match inventory", () => EmptyScopedMatchAsync(owner, wire));
-                foreach (var poster in new[] { false, true }) foreach (var apply in new[] { false, true })
-                    await Case($"{(poster ? "PosterCard" : "LandscapeCard")} rebind during {(apply ? "Apply" : "detail GET")}", () => CardRebindAsync(owner, wire, poster, apply));
+                foreach (var card in new[] { "LandscapeCard", "PosterCard", "LibraryGridCard" }) foreach (var apply in new[] { false, true })
+                    await Case($"{card} rebind during {(apply ? "Apply" : "detail GET")}", () => CardRebindAsync(owner, wire, card, apply));
                 await Case("Split path and root changes retire accepted preview", () => SplitPathChangeAsync(owner, wire));
                 if (failures.Count > 0) throw new AggregateException(failures);
                 return;
@@ -112,13 +112,31 @@ internal static class MatchSplitScopeNativeFixture
             finally { dialog.Hide(); await showing; }
         }
     }
-    private static async Task CardRebindAsync(Grid root, Wire wire, bool poster, bool apply)
+    private static async Task CardRebindAsync(Grid root, Wire wire, string card, bool apply)
     {
         wire.Files = [("1", 2), ("2", 2)];
         var item = new MediaItem { ContentId = "fixture", Type = "movie", Title = "Fixture" };
-        FrameworkElement surface = poster ? new PosterCard { MediaItem = item } : new LandscapeCard { MediaItem = item };
+        FrameworkElement surface = card switch
+        {
+            "PosterCard" => new PosterCard(),
+            "LibraryGridCard" => new LibraryGridCard(),
+            _ => new LandscapeCard(),
+        };
+        Dictionary<int, LibraryGridCard> gridSlots = [];
+        void Bind(MediaItem value, int index)
+        {
+            if (surface is PosterCard p) p.MediaItem = value;
+            else if (surface is LandscapeCard l) l.MediaItem = value;
+            else if (surface is LibraryGridCard grid)
+            {
+                // LibraryPage reuses still-loaded slots for different virtual indices.
+                gridSlots = VirtualGridSlotAllocator.Assign(new[] { grid }, gridSlots, index, index);
+                Check(ReferenceEquals(gridSlots[index], surface), "Virtual grid did not reuse the loaded slot");
+                gridSlots[index].Bind(value, null);
+            }
+        }
+        Bind(item, 0);
         root.Children.Add(surface); await Task.Delay(120); Check(surface.IsLoaded, "Card was not loaded");
-        void Bind(MediaItem value) { if (surface is PosterCard p) p.MediaItem = value; else ((LandscapeCard)surface).MediaItem = value; }
         var client = (SiloApiClient)SiloPlayer.App.Services.GetService(typeof(SiloApiClient))!; var changes = 0; var reads = wire.DetailReads;
         var cache = (ItemDetailPrefetchCache)SiloPlayer.App.Services.GetService(typeof(ItemDetailPrefetchCache))!;
         var cachedSource = await cache.GetAsync("fixture", default); var cachedTarget = await cache.GetAsync("fixture-target", default);
@@ -134,7 +152,7 @@ internal static class MatchSplitScopeNativeFixture
                 await Until(() => PopupMatch(root) != null); active = PopupMatch(root)!; await Until(() => Search(active).IsEnabled); await SearchAndChooseAsync(active);
                 wire.ApplyGate = new(TaskCreationOptions.RunContinuationsAsynchronously); var writes = wire.Count("apply"); Invoke(All<Button>(active).Single(button => button.Name == "ApplyMatchButton")); await Until(() => wire.Count("apply") > writes);
             }
-            Bind(new MediaItem { ContentId = "replacement", Type = "movie", Title = "Replacement" }); Bind(item);
+            Bind(new MediaItem { ContentId = "replacement", Type = "movie", Title = "Replacement" }, 42); Bind(item, 0);
             Check(surface.IsLoaded, "Rebinding unexpectedly unloaded the card");
             wire.DetailGate?.TrySetResult(); wire.ApplyGate?.TrySetResult(); wire.DetailGate = wire.ApplyGate = null; await Task.Delay(180);
             Check(PopupMatch(root) == null && active?.HasAppliedMatch != true && changes == 0, "Loaded card rebind restored old Match authority/callback"); await action;
