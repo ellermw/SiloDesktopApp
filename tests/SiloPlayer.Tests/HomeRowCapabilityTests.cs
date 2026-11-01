@@ -116,29 +116,29 @@ public class HomeRowCapabilityTests
         var response = await new HomeApi(Client(http)).GetSectionItemsAsync("row");
         Assert.Equal(0, wire.CapabilityReads); Assert.Equal("", Assert.Single(wire.Rows).Query);
         Assert.True(response.Section!.HasMore);
-        Assert.False(response.Section.HasReadWhole); Assert.True(response.Section.CanComplete);
+        Assert.True(response.Section.HasReadWhole); Assert.False(response.Section.CanComplete);
     }
 
     [Theory]
-    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 20, "?item_limit=100")]
-    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 50, "?item_limit=100")]
-    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":30}", 50, "?item_limit=30")]
-    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 150, "?item_limit=100")]
-    [InlineData("{\"row_item_limit_max\":40,\"section_item_limit_max\":100}", 50, "?item_limit=40")]
-    [InlineData("{\"row_item_limit_max\":40,\"section_item_limit_max\":100}", 30, "?item_limit=40")]
-    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":15}", 20, "?item_limit=15")]
-    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":60}", 80, "?item_limit=60")]
-    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 0, "?item_limit=100")]
+    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 20, "")]
+    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 50, "")]
+    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":30}", 50, "")]
+    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 150, "")]
+    [InlineData("{\"row_item_limit_max\":40,\"section_item_limit_max\":100}", 50, "")]
+    [InlineData("{\"row_item_limit_max\":40,\"section_item_limit_max\":100}", 30, "")]
+    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":15}", 20, "")]
+    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":60}", 80, "")]
+    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 0, "")]
     [InlineData("{\"row_item_limit_max\":100}", 50, "")]
     [InlineData("{\"section_item_limit_max\":100}", 50, "")]
     [InlineData("{\"row_item_limit_max\":0,\"section_item_limit_max\":100}", 50, "")]
     [InlineData("null", 50, "")]
-    public async Task HomeWholeReadUsesAdvertisedSectionMaximumRegardlessOfDisplayBudget(string capabilities, int itemLimit, string expectedQuery)
+    public async Task HomeWholeReadIsUncappedRegardlessOfAdvertisedCeilingsOrDisplayBudget(string capabilities, int itemLimit, string expectedQuery)
     {
         using var wire = new Wire { Capabilities = capabilities }; using var http = new HttpClient(wire);
         var api = new HomeApi(Client(http));
         var response = await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row/one", itemLimit);
-        Assert.Equal(1, wire.CapabilityReads);
+        Assert.Equal(0, wire.CapabilityReads);
         var request = Assert.Single(wire.Rows);
         Assert.Equal(expectedQuery, request.Query);
         Assert.Contains("row%2Fone", request.AbsoluteUri);
@@ -147,7 +147,7 @@ public class HomeRowCapabilityTests
     }
 
     [Fact]
-    public async Task TruncatedHomeWholeResponseCanBeRetrievedAgainWithoutLosingInitialPriority()
+    public async Task TruncatedHomeWholeResponseStopsDemandAndLaterReadRetainsInitialPriority()
     {
         static string Section(int count, int limit, bool hasMore) => JsonSerializer.Serialize(new
         {
@@ -159,16 +159,17 @@ public class HomeRowCapabilityTests
         var initial = (await api.GetInitialSectionItemsAsync("row")).Section!;
         wire.Section = Section(25, 50, true);
         var partial = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 50)).Section!;
-        Assert.False(partial.HasReadWhole);
-        Assert.True(partial.CanComplete);
+        Assert.True(partial.HasReadWhole);
+        Assert.False(partial.CanComplete);
         var expanded = HomeRowWindow.Complete(initial, partial, initial, 1);
         Assert.Equal(25, expanded.Items.Count);
-        Assert.True(expanded.CanComplete);
+        Assert.False(expanded.CanComplete);
 
+        // Only a later refresh should retry the uncapped resource.
         wire.Section = Section(35, 50, false);
         var whole = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 50)).Section!;
         var completed = HomeRowWindow.Complete(expanded, whole, expanded, 2);
-        Assert.Equal(new[] { "?item_limit=20", "?item_limit=100", "?item_limit=100" }, wire.Rows.Select(row => row.Query));
+        Assert.Equal(new[] { "?item_limit=20", "", "" }, wire.Rows.Select(row => row.Query));
         Assert.Equal(Enumerable.Range(1, 35).Select(i => $"card{i}"), completed.Items.Select(item => item.ContentId));
         Assert.True(completed.HasReadWhole);
         Assert.False(completed.CanComplete);
@@ -190,49 +191,51 @@ public class HomeRowCapabilityTests
         wire.Section = Section(35);
         var whole = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 20)).Section!;
         var expanded = HomeRowWindow.Complete(initial, whole, initial, 1);
-        Assert.Equal(new[] { "?item_limit=20", "?item_limit=100" }, wire.Rows.Select(row => row.Query));
+        Assert.Equal(new[] { "?item_limit=20", "" }, wire.Rows.Select(row => row.Query));
         Assert.Equal(Enumerable.Range(1, 35).Select(i => $"card{i}"), expanded.Items.Select(item => item.ContentId));
-        Assert.True(expanded.CanComplete);
+        Assert.False(expanded.CanComplete);
         var repeated = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 20)).Section!;
         var completed = HomeRowWindow.Complete(expanded, repeated, expanded, 2);
         Assert.Equal(expanded.Items.Select(item => item.ContentId), completed.Items.Select(item => item.ContentId));
-        Assert.True(completed.HasMore); Assert.False(completed.HasReadWhole); Assert.True(completed.CanComplete);
+        Assert.True(completed.HasMore); Assert.True(completed.HasReadWhole); Assert.False(completed.CanComplete);
         Assert.Equal(20, completed.ShownCount); Assert.Equal(1, completed.CompletedOrder);
     }
 
-    [Fact]
-    public async Task RowCeilingIsExplicitAndRepeatedTruncationKeepsCompletionAvailable()
+    [Theory]
+    [InlineData(20, 100, 20)]
+    [InlineData(40, 100, 20)]
+    [InlineData(100, 10, 10)]
+    public async Task CompletionRecoversCardsBeyondAdvertisedQueryCeilings(int rowMax, int sectionMax, int initialCount)
     {
-        static string Section(int count) => JsonSerializer.Serialize(new
-        {
-            id = "row", has_more = true,
-            items = Enumerable.Range(1, count).Select(i => new { content_id = $"card{i}" })
-        });
-        using var wire = new Wire { Capabilities = "{\"row_item_limit_max\":40,\"section_item_limit_max\":100}", Section = Section(20) };
+        using var wire = new Wire { Capabilities = JsonSerializer.Serialize(new { row_item_limit_max = rowMax, section_item_limit_max = sectionMax }), CardCount = 60 };
         using var http = new HttpClient(wire);
         var api = new HomeApi(Client(http));
         var initial = (await api.GetInitialSectionItemsAsync("row")).Section!;
-        wire.Section = Section(40);
-        var whole = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 20)).Section!;
-        var expanded = HomeRowWindow.Complete(initial, whole, initial, 1);
-        var repeated = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 20)).Section!;
-        var completed = HomeRowWindow.Complete(expanded, repeated, expanded, 2);
-        Assert.Equal(new[] { "?item_limit=20", "?item_limit=40", "?item_limit=40" }, wire.Rows.Select(row => row.Query));
-        Assert.Equal(Enumerable.Range(1, 40).Select(i => $"card{i}"), completed.Items.Select(item => item.ContentId));
-        Assert.True(completed.HasMore); Assert.False(completed.HasReadWhole); Assert.True(completed.CanComplete);
-        Assert.Equal(20, completed.ShownCount); Assert.Equal(1, completed.CompletedOrder);
+        Assert.Equal(initialCount, initial.Items.Count);
+        Assert.True(initial.CanComplete);
+        var whole = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 60)).Section!;
+        var completed = HomeRowWindow.Complete(initial, whole, initial, 1);
+        Assert.Equal(new[] { $"?item_limit={initialCount}", "" }, wire.Rows.Select(row => row.Query));
+        Assert.Equal(Enumerable.Range(1, 60).Select(i => $"card{i}"), completed.Items.Select(item => item.ContentId));
+        Assert.False(completed.HasMore); Assert.True(completed.HasReadWhole); Assert.False(completed.CanComplete);
+        Assert.Equal(initialCount, completed.ShownCount); Assert.Equal(1, completed.CompletedOrder);
     }
 
-    [Fact]
-    public async Task UnadvertisedInitialReadDoesNotDiscardServerTruncation()
+    [Theory]
+    [InlineData("unsupported")]
+    [InlineData("timeout")]
+    [InlineData("null")]
+    [InlineData("malformed")]
+    public async Task UnadvertisedInitialReadPreservesTruncationWithoutOfferingAnIdenticalRead(string failure)
     {
-        using var wire = new Wire { Unsupported = true, Section = """{"id":"row","has_more":true,"items":[]}""" };
-        using var http = new HttpClient(wire);
+        using var wire = new Wire { Unsupported = failure == "unsupported", TimeoutCapabilities = failure == "timeout",
+            Capabilities = failure == "malformed" ? "{" : "null", Section = """{"id":"row","has_more":true,"items":[]}""" };
+        using var http = new HttpClient(wire) { Timeout = TimeSpan.FromMilliseconds(100) };
         var response = await new HomeApi(Client(http)).GetInitialSectionItemsAsync("row");
         Assert.Equal("", Assert.Single(wire.Rows).Query);
         Assert.True(response.Section!.HasMore);
-        Assert.False(response.Section.HasReadWhole);
-        Assert.True(response.Section.CanComplete);
+        Assert.True(response.Section.HasReadWhole);
+        Assert.False(response.Section.CanComplete);
     }
 
     [Fact]
@@ -269,6 +272,7 @@ public class HomeRowCapabilityTests
     {
         public string Capabilities = "{\"row_item_limit_max\":100,\"section_item_limit_max\":100}";
         public string? Section;
+        public int? CardCount;
         public bool Unsupported, Hold, TimeoutCapabilities; public int CapabilityReads; public List<Uri> Rows = [];
         public TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -282,6 +286,14 @@ public class HomeRowCapabilityTests
                 return new(Unsupported ? HttpStatusCode.NotFound : HttpStatusCode.OK) { Content = new StringContent(Unsupported ? "{}" : Capabilities) };
             }
             lock (Rows) Rows.Add(request.RequestUri);
+            if (CardCount is { } count)
+            {
+                var limit = request.RequestUri.Query.StartsWith("?item_limit=", StringComparison.Ordinal)
+                    ? int.Parse(request.RequestUri.Query["?item_limit=".Length..]) : count;
+                return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new {
+                    id = "row", item_limit = limit, has_more = count > limit,
+                    items = Enumerable.Range(1, Math.Min(count, limit)).Select(i => new { content_id = $"card{i}" }) })) };
+            }
             return new(HttpStatusCode.OK) { Content = new StringContent(Section ?? (request.RequestUri.Query == "?item_limit=20"
                 ? """{"id":"row","has_more":true,"items":[]}""" : """{"id":"row","has_more":false,"items":[]}""")) };
         }

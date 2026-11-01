@@ -541,7 +541,7 @@ public partial class HomeViewModel : ObservableObject,
                     && _homeApi.IsCurrentReadContext(owner, language)).ConfigureAwait(false);
                 if (!isCurrent) return;
                 var read = reads[sectionId];
-                // Reuse completion's negotiated budget for every expanded row,
+                // Reuse completion's uncapped read for every expanded row,
                 // including rows that have since been promoted to the hero.
                 var resp = await (read.ExpandedLimit is { } limit
                     ? _homeApi.GetWholeSectionItemsAsync(owner, language, sectionId, limit, ct)
@@ -641,7 +641,7 @@ public partial class HomeViewModel : ObservableObject,
             ? WholeItemLimit(sectionId) : null;
 
     // Pass the layout's display budget, never the bounded response's echo.
-    // HomeApi negotiates the whole-read ceiling independently of this value.
+    // HomeApi keeps completion uncapped independently of this value.
     private int WholeItemLimit(string sectionId)
         => _layoutOrder.FirstOrDefault(entry => entry.Id == sectionId)?.ItemLimit ?? 0;
 

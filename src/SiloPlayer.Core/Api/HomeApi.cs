@@ -51,17 +51,12 @@ public class HomeApi(SiloApiClient client)
     public Task<HomeSectionItemsResponse> GetSectionItemsAsync(ApiRequestContext owner, long language, string sectionId, CancellationToken ct = default)
         => ReadSectionItemsAsync(owner, language, sectionId, null, ct);
 
-    /// <summary>Completion and expanded non-featured refreshes request the negotiated whole-row budget; featured reads stay uncapped.</summary>
-    public async Task<HomeSectionItemsResponse> GetWholeSectionItemsAsync(ApiRequestContext owner, long language,
+    /// <summary>Completion and expanded refreshes use the original uncapped section read.</summary>
+    public Task<HomeSectionItemsResponse> GetWholeSectionItemsAsync(ApiRequestContext owner, long language,
         string sectionId, int itemLimit, CancellationToken ct = default)
-    {
-        var capabilities = await GetCapabilitiesAsync(owner, language, ct).ConfigureAwait(false);
-        // The recipe's display itemLimit must not cap completion at the
-        // initial window. Stay within both advertised query ceilings.
-        var limit = capabilities.SectionItemLimitMax is > 0
-            ? BoundedItemLimit(capabilities, capabilities.SectionItemLimitMax.Value) : null;
-        return await ReadSectionItemsAsync(owner, language, sectionId, limit, ct).ConfigureAwait(false);
-    }
+        // Advertised query ceilings only bound the initial optimization. Reusing
+        // one as a whole-row budget makes cards beyond that ceiling unreachable.
+        => ReadSectionItemsAsync(owner, language, sectionId, null, ct);
 
     private static int? BoundedItemLimit(HomeCapabilities capabilities, int desired)
         => capabilities.RowItemLimitMax is > 0
@@ -81,7 +76,9 @@ public class HomeApi(SiloApiClient client)
         if (section != null)
         {
             section.ReadLanguageGeneration = language;
-            section.HasReadWhole = !section.HasMore;
+            // There is no continuation on this resource. Once an uncapped read
+            // succeeds, only refresh can retry it, even if has_more stays true.
+            section.HasReadWhole = itemLimit == null || !section.HasMore;
         }
         return new() { Section = section };
     }

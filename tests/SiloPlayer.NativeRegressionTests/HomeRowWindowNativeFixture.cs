@@ -22,6 +22,9 @@ internal static class HomeRowWindowNativeFixture
         foreach (var interruption in new[] { "refresh", "error", "null", "persistent-error", "persistent-null" })
             await DemandRecoveryAsync(parent, interruption);
         await TruncatedCompletionAsync(parent);
+        await CompletionBeyondCeilingAsync(parent, rowMax: 20, sectionMax: 100, initialCount: 20);
+        await CompletionBeyondCeilingAsync(parent, rowMax: 40, sectionMax: 100, initialCount: 20);
+        await CompletionBeyondCeilingAsync(parent, rowMax: 100, sectionMax: 10, initialCount: 10);
         await NoProgressCompletionAsync(parent, legacy: false, repeatCompletion: false);
         await NoProgressCompletionAsync(parent, legacy: false, repeatCompletion: true);
         await NoProgressCompletionAsync(parent, legacy: true, repeatCompletion: true);
@@ -217,9 +220,9 @@ internal static class HomeRowWindowNativeFixture
             await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(4));
             wire.Release.TrySetResult();
             await Until(() => vm.Sections[0].Items.Count == 25); await Task.Delay(100);
-            Require(vm.Sections[0].HasMore && !vm.Sections[0].HasReadWhole && vm.Sections[0].CanComplete
-                && vm.Sections[0].ShownCount == 20 && wire.LastWholeQuery == "?item_limit=100",
-                "A truncated whole response that adds cards must remain retrievable, using the section maximum rather than the display budget.");
+            Require(vm.Sections[0].HasMore && vm.Sections[0].HasReadWhole && !vm.Sections[0].CanComplete
+                && vm.Sections[0].ShownCount == 20 && wire.LastWholeQuery == "",
+                "An uncapped completion must keep every returned card but exhaust identical tail demand.");
             var order = vm.Sections[0].CompletedOrder;
             var initialDemands = demands;
             for (var repeat = 0; repeat < 3; repeat++)
@@ -230,15 +233,18 @@ internal static class HomeRowWindowNativeFixture
             Require(wire.Whole == 1 && demands == initialDemands,
                 "Presentation changes alone must not loop over a truncated response.");
             var next = (Button)row.FindName("ScrollRightBtn");
-            Require(next.IsEnabled && ((Microsoft.UI.Xaml.UIElement)row.FindName("RightFadeGradient")).Opacity == 1,
-                "A truncated row must retain forward navigation and its fade.");
-            wire.PartialWhole = false;
-            ((IInvokeProvider)new ButtonAutomationPeer(next).GetPattern(PatternInterface.Invoke)).Invoke();
+            scroll.ChangeView(scroll.ScrollableWidth, null, null, true); await Task.Delay(60);
+            Require(!next.IsEnabled && ((Microsoft.UI.Xaml.UIElement)row.FindName("RightFadeGradient")).Opacity == 0,
+                "An uncapped truncated row must disable its forward arrow and fade at the loaded tail.");
+            await vm.CompleteSectionAsync("row");
+            Require(wire.Whole == 1, "Explicit tail demand must not repeat the exhausted uncapped resource.");
+            wire.PartialWhole = false; wire.Title = "Recovered on refresh";
+            vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
             await Until(() => vm.Sections[0].Items.Count == 35);
             Require(!vm.Sections[0].HasMore && vm.Sections[0].HasReadWhole && !vm.Sections[0].CanComplete
                 && vm.Sections[0].ShownCount == 20 && vm.Sections[0].CompletedOrder == order
-                && wire.Whole == 2 && wire.LastWholeQuery == "?item_limit=100",
-                "Fresh forward navigation must retrieve the remaining cards without losing initial priority.");
+                && wire.Whole == 2 && wire.LastWholeQuery == "",
+                "A later refresh must recover changed server data without losing initial priority.");
             initialDemands = demands;
             for (var repeat = 0; repeat < 3; repeat++)
             {
@@ -256,11 +262,11 @@ internal static class HomeRowWindowNativeFixture
 
             wire.PartialWhole = true; wire.Title = "Still truncated"; vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
             await Until(() => vm.Sections[0].Title == "Still truncated"); await Task.Delay(150);
-            Require(vm.Sections[0].HasMore && !vm.Sections[0].HasReadWhole && vm.Sections[0].CanComplete
+            Require(vm.Sections[0].HasMore && vm.Sections[0].HasReadWhole && !vm.Sections[0].CanComplete
                 && vm.Sections[0].Items.Count == 25 && vm.Sections[0].ShownCount == 20
                 && vm.Sections[0].CompletedOrder == order && wire.Whole == 3 && wire.Capped == 1
-                && wire.LastWholeQuery == "?item_limit=100",
-                "An expanded truncated refresh that adds no cards must retain priority and an explicit completion path without auto-chaining reads.");
+                && wire.LastWholeQuery == "",
+                "An expanded truncated refresh must retain priority without rearming an identical completion query.");
 
             wire.PartialWhole = false; wire.ReverseWhole = true; wire.Title = "Full";
             vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
@@ -283,6 +289,41 @@ internal static class HomeRowWindowNativeFixture
         finally { wire.Release.TrySetResult(); if (row != null) parent.Children.Remove(row); Retire(vm); }
     }
 
+    private static async Task CompletionBeyondCeilingAsync(StackPanel parent, int rowMax, int sectionMax, int initialCount)
+    {
+        using var wire = new Wire { CardCount = 60, RowItemLimit = 60,
+            Capabilities = JsonSerializer.Serialize(new { row_item_limit_max = rowMax, section_item_limit_max = sectionMax }) };
+        using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://home-window.invalid");
+        using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("alpha");
+        var vm = new HomeViewModel(new HomeApi(client), auth);
+        SectionRow? row = null;
+        try
+        {
+            await vm.LoadCommand.ExecuteAsync(null);
+            await Until(() => vm.Sections.FirstOrDefault()?.Items.Count == initialCount);
+            Require(vm.Sections[0].CanComplete && wire.Capped == 1 && wire.Whole == 0,
+                "Only the initial read may be constrained by the advertised query ceilings.");
+            row = new SectionRow { Width = 900, Section = vm.Sections[0], OnNearEnd = section => _ = vm.CompleteSectionAsync(section.Id) };
+            parent.Children.Add(row); await Task.Delay(120); row.UpdateLayout();
+            typeof(SectionRow).GetMethod("ScrollByPage", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(row, [1]);
+            var scroll = (ScrollViewer)row.FindName("CardsScrollViewer");
+            scroll.ChangeView(scroll.ScrollableWidth, null, null, true);
+            await Until(() => vm.Sections[0].Items.Count == 60);
+            Require(wire.Whole == 1 && wire.LastWholeQuery == ""
+                && vm.Sections[0].Items.Select(item => item.ContentId).SequenceEqual(Enumerable.Range(1, 60).Select(i => $"alpha-{i}"))
+                && vm.Sections[0].ShownCount == initialCount && !vm.Sections[0].CanComplete,
+                "Uncapped completion must recover all60 cards, including those beyond the advertised query ceiling.");
+            row.Section = HomeSectionDedupe.Snapshot(vm.Sections[0]); row.UpdateLayout();
+            scroll.ChangeView(scroll.ScrollableWidth, null, null, true); await Task.Delay(80);
+            await vm.CompleteSectionAsync("row");
+            Require(wire.Whole == 1 && !((Button)row.FindName("ScrollRightBtn")).IsEnabled
+                && ((Microsoft.UI.Xaml.UIElement)row.FindName("RightFadeGradient")).Opacity == 0,
+                "A completed row must not loop through identical queries or show tail navigation.");
+        }
+        finally { if (row != null) parent.Children.Remove(row); Retire(vm); }
+    }
+
     private static async Task NoProgressCompletionAsync(StackPanel parent, bool legacy, bool repeatCompletion)
     {
         using var wire = new Wire { PartialWhole = true, UnsupportedCapabilities = legacy }; using var http = new HttpClient(wire);
@@ -297,21 +338,21 @@ internal static class HomeRowWindowNativeFixture
             Require(vm.Sections[0].Items.Count == 25, "The first whole read must retain every returned card.");
             if (!legacy && repeatCompletion) await vm.CompleteSectionAsync("row");
             if (legacy || repeatCompletion)
-                Require(vm.Sections[0].HasMore && !vm.Sections[0].HasReadWhole && vm.Sections[0].CanComplete,
-                    "A completion returning the same truncated set must retain an explicit retry path.");
+                Require(vm.Sections[0].HasMore && vm.Sections[0].HasReadWhole && !vm.Sections[0].CanComplete,
+                    "An uncapped initial or completion read must retire identical tail demand.");
             else
             {
                 var reads = wire.Whole;
                 wire.CardsOverride = Enumerable.Range(1, 30).ToArray(); wire.Title = "Progressing whole refresh";
                 vm.QueueRealtimeRefresh("playback_progress", client.CaptureContext());
                 await Until(() => vm.Sections[0].Title == wire.Title); await Task.Delay(150);
-                Require(wire.Whole == reads + 1 && vm.Sections[0].Items.Count == 30 && vm.Sections[0].CanComplete,
-                    "Even a progressing truncated whole refresh must not auto-chain the same request.");
+                Require(wire.Whole == reads + 1 && vm.Sections[0].Items.Count == 30 && !vm.Sections[0].CanComplete,
+                    "Even a progressing truncated whole refresh must exhaust the same uncapped request.");
                 reads = wire.Whole; wire.NullWhole = true;
                 vm.QueueRealtimeRefresh("playback_progress", client.CaptureContext());
                 await Until(() => wire.Whole == reads + 1); await Task.Delay(150);
-                Require(wire.Whole == reads + 1 && vm.Sections[0].Items.Count == 30 && vm.Sections[0].CanComplete,
-                    "A JSON null fallback is not a successful no-progress read and must preserve completion state.");
+                Require(wire.Whole == reads + 1 && vm.Sections[0].Items.Count == 30 && !vm.Sections[0].CanComplete,
+                    "A JSON null fallback must preserve the mounted row's exhausted completion state.");
                 wire.NullWhole = false;
             }
             row = new SectionRow { Width = 900, Section = HomeSectionDedupe.Snapshot(vm.Sections[0]),
@@ -325,33 +366,34 @@ internal static class HomeRowWindowNativeFixture
                 vm.QueueRealtimeRefresh("playback_progress", client.CaptureContext());
                 await Until(() => vm.Sections[0].Title == wire.Title); await Task.Delay(150);
                 Require(wire.Whole == reads + 1, "An expanded realtime refresh must make exactly one whole read, not chain another identical request.");
-                Require(vm.Sections[0].HasMore && !vm.Sections[0].HasReadWhole && vm.Sections[0].CanComplete,
-                    "Repeated truncation without new cards must preserve the server flag and explicit completion path.");
-                // Position at the tail without issuing demand, then exercise the
-                // actual forward button as a fresh, explicit retry gesture.
+                Require(vm.Sections[0].HasMore && vm.Sections[0].HasReadWhole && !vm.Sections[0].CanComplete,
+                    "Repeated truncation must preserve the server flag without offering identical completion reads.");
+                // Position at the tail without issuing demand, then exercise
+                // forward navigation even though its button is now disabled.
                 row.OnNearEnd = null;
                 row.Section = HomeSectionDedupe.Snapshot(vm.Sections[0]); row.UpdateLayout();
                 scroll.ChangeView(scroll.ScrollableWidth, null, null, true); await Task.Delay(60);
                 row.OnNearEnd = section => _ = vm.CompleteSectionAsync(section.Id);
                 var next = (Button)row.FindName("ScrollRightBtn");
-                Require(next.IsEnabled && ((Microsoft.UI.Xaml.UIElement)row.FindName("RightFadeGradient")).Opacity == 1,
-                    "No-progress completion must retain the forward arrow and fade at the tail.");
-                ((IInvokeProvider)new ButtonAutomationPeer(next).GetPattern(PatternInterface.Invoke)).Invoke();
-                await Until(() => wire.Whole == reads + 2); await Task.Delay(150);
-                Require(wire.Whole == reads + 2 && vm.Sections[0].CanComplete,
-                    "Fresh tail demand must perform exactly one retry, without automatically looping.");
+                Require(!next.IsEnabled && ((Microsoft.UI.Xaml.UIElement)row.FindName("RightFadeGradient")).Opacity == 0,
+                    "No-progress completion must disable the forward arrow and fade at the tail.");
+                typeof(SectionRow).GetMethod("ScrollByPage", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(row, [1]);
+                await vm.CompleteSectionAsync("row"); await Task.Delay(150);
+                Require(wire.Whole == reads + 1 && !vm.Sections[0].CanComplete,
+                    "Fresh tail gestures must not repeat an exhausted uncapped query.");
                 row.Section = HomeSectionDedupe.Snapshot(vm.Sections[0]); row.UpdateLayout(); await Task.Delay(60);
-                Require(wire.Whole == reads + 2, "Rebinding an unchanged truncated row must not rearm completion demand.");
+                Require(wire.Whole == reads + 1, "Rebinding an unchanged truncated row must not rearm completion demand.");
             }
             var finalReads = wire.Whole;
             var order = vm.Sections[0].CompletedOrder;
             wire.PartialWhole = false;
             wire.CardsOverride = null;
-            ((IInvokeProvider)new ButtonAutomationPeer((Button)row.FindName("ScrollRightBtn")).GetPattern(PatternInterface.Invoke)).Invoke();
+            wire.Title = "Recovered on later refresh";
+            vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
             await Until(() => vm.Sections[0].Items.Count == 35);
             Require(wire.Whole == finalReads + 1 && vm.Sections[0].HasReadWhole && !vm.Sections[0].CanComplete
                 && vm.Sections[0].CompletedOrder == order && vm.Sections[0].Items.Last().ContentId == "alpha-35",
-                "Fresh forward navigation must recover a later full response after repeated no-progress reads.");
+                "Refresh must recover a later full response after repeated no-progress reads.");
         }
         finally { if (row != null) parent.Children.Remove(row); Retire(vm); }
     }
@@ -501,7 +543,7 @@ internal static class HomeRowWindowNativeFixture
             await vm.LoadCommand.ExecuteAsync(null);
             await Until(() => vm.Sections.Count == 3 && vm.Sections.Skip(1).All(row => row.ShownCount.HasValue));
             await Task.Delay(200);
-            Require(wire.Whole == 2 && vm.Sections.Skip(1).All(row => row.Items.Count == 0 && row.CanComplete),
+            Require(wire.Whole == 2 && vm.Sections.Skip(1).All(row => row.Items.Count == 0 && !row.CanComplete && row.HasReadWhole),
                 "Two still-hidden truncated completions must each be attempted once, not ping-pong through projection.");
             var wanted = (HashSet<string>)typeof(HomeViewModel).GetField("_completionWantedSections", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(vm)!;
             Require(wanted.Count == 0, "Successful no-progress automatic reads must retire their automatic demand.");
@@ -516,8 +558,8 @@ internal static class HomeRowWindowNativeFixture
             Require(wire.Whole == 4 && wanted.Count == 0,
                 "A new layout generation must refresh each expanded row once without restarting automatic recovery.");
             await vm.CompleteSectionAsync("row"); await Task.Delay(100);
-            Require(wire.Whole == 5 && vm.Sections[1].CanComplete,
-                "A fresh explicit demand must still be able to retry a hidden truncated row once.");
+            Require(wire.Whole == 4 && !vm.Sections[1].CanComplete,
+                "Explicit demand must not repeat a hidden row's exhausted uncapped read.");
         }
         finally { Retire(vm); }
     }
@@ -535,6 +577,7 @@ internal static class HomeRowWindowNativeFixture
         public int Capped, Whole; public bool HoldWhole, FailWhole, HoldRefresh, DuplicateFirst;
         public bool HoldFirstWhole, FailFirstWhole, NullFirstWhole, NullWhole, PartialWhole, ReverseWhole, UnsupportedCapabilities;
         public int CardCount = 35, RowItemLimit = 50, HiddenRows = 1, PartialWholeCount = 25;
+        public string Capabilities = """{"row_item_limit_max":100,"section_item_limit_max":100}""";
         public string? LastWholeQuery;
         public int[]? CardsOverride;
         public string Title = "Progress";
@@ -548,14 +591,15 @@ internal static class HomeRowWindowNativeFixture
             if (request.Method != HttpMethod.Get) return new(HttpStatusCode.NoContent);
             if (path.EndsWith("/capabilities")) return UnsupportedCapabilities
                 ? new(HttpStatusCode.NotFound) { Content = new StringContent("{}") }
-                : Json("""{"row_item_limit_max":100,"section_item_limit_max":100}""");
+                : Json(Capabilities);
             if (path.EndsWith("/layout")) return Json(DuplicateFirst
                 ? JsonSerializer.Serialize(new { sections = new[] { new { id = "anchor", title = "First", section_type = "plain", item_limit = 20 } }
                     .Concat(Enumerable.Range(1, HiddenRows).Select(i => new { id = i == 1 ? "row" : $"row{i}", title = "More", section_type = "hidden_gems", item_limit = 50 })) })
-                : """{"sections":[{"id":"row","title":"Progress","section_type":"continue_watching","item_limit":50}]}""");
+                : JsonSerializer.Serialize(new { sections = new[] { new { id = "row", title = "Progress", section_type = "continue_watching", item_limit = RowItemLimit } } }));
             if (path.EndsWith("/recipes")) return Json("""{"categories":[{"category":"one","recipes":[{"type":"hidden_gems","avoid_duplicates":true}]}]}""");
             var profile = request.Headers.TryGetValues("X-Profile-ID", out var ids) ? ids.Single() : "alpha";
-            var capped = request.RequestUri.Query == "?item_limit=20";
+            var capped = request.RequestUri.Query.StartsWith("?item_limit=", StringComparison.Ordinal);
+            var queryLimit = capped ? int.Parse(request.RequestUri.Query["?item_limit=".Length..]) : 0;
             if (path.Contains("/anchor/")) return Json(JsonSerializer.Serialize(new { id = "anchor", section_type = "plain", item_limit = 20,
                 items = Enumerable.Range(1, 20).Select(i => new { content_id = $"{profile}-{i}", title = $"Card{i}", type = "movie" }) }));
             if (capped)
@@ -575,9 +619,9 @@ internal static class HomeRowWindowNativeFixture
                 if (HoldFirstWhole && attempt == 1) { Started.TrySetResult(); await Release.Task.WaitAsync(ct); }
                 else if (HoldWhole) { Started.TrySetResult(); await Release.Task; }
             }
-            IEnumerable<int> cards = CardsOverride ?? Enumerable.Range(1, capped ? Math.Min(20, CardCount) : PartialWhole ? PartialWholeCount : CardCount);
+            IEnumerable<int> cards = CardsOverride ?? Enumerable.Range(1, capped ? Math.Min(queryLimit, CardCount) : PartialWhole ? PartialWholeCount : CardCount);
             if (!capped && ReverseWhole) cards = cards.Reverse();
-            return Json(JsonSerializer.Serialize(new { id = path.Split('/')[5], title = Title, section_type = DuplicateFirst ? "hidden_gems" : "continue_watching", item_limit = capped ? 20 : RowItemLimit,
+            return Json(JsonSerializer.Serialize(new { id = path.Split('/')[5], title = Title, section_type = DuplicateFirst ? "hidden_gems" : "continue_watching", item_limit = capped ? queryLimit : RowItemLimit,
                 total_count = CardCount, has_more = capped || PartialWhole, items = cards.Select(i => new { content_id = $"{profile}-{i}",
                     title = CardsOverride != null && i == 1 ? "Updated card1" : $"Card{i}", type = "movie",
                     position_seconds = CardsOverride != null && i == 1 ? 123 : 0,

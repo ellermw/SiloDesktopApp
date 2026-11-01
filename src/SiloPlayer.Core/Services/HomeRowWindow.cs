@@ -45,9 +45,10 @@ public static class HomeRowWindow
         // must not discard unseen cards, including when we retain old cards.
         result.Items = new(prefix.Concat(rest));
         result.HasMore = whole.HasMore;
-        // A repeated/truncated response is not evidence of exhaustion. Keep
-        // explicit forward demand available until the server reports no tail.
-        result.HasReadWhole = !whole.HasMore;
+        // Completion has attempted the uncapped resource, which has no cursor.
+        // Preserve has_more, but do not offer identical tail reads this cycle.
+        // A later refresh can recover changed server data.
+        result.HasReadWhole = true;
         result.ShownCount = Math.Min(initialCount, result.Items.Count);
         result.CompletedOrder = current.CompletedOrder > 0 ? current.CompletedOrder : completedOrder;
         result.LoadCompleted = true;

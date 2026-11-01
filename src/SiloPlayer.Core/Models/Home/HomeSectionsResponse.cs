@@ -15,8 +15,8 @@ public class HomeSectionWithItems
     public int ItemLimit { get; set; }
     public int TotalCount { get; set; }
     public bool HasMore { get; set; }
-    // Only a response reporting no more cards establishes exhaustion;
-    // repeated truncated reads must retain an explicit completion path.
+    // A successful uncapped read exhausts completion for this refresh cycle,
+    // even when the server reports truncation without a continuation.
     [JsonIgnore] public bool HasReadWhole { get; set; }
     [JsonIgnore] public bool CanComplete => HasMore && !HasReadWhole;
     [JsonIgnore] public int? ShownCount { get; set; }
