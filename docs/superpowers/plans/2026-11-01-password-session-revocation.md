@@ -32,5 +32,5 @@ Absent capability must omit the member even if selection is attempted. Unsupport
 
 - [x] Reproduce delayed credential/network link refresh returning after departure/reentry using actual Connect controls; assert no new capability request, preserved new choice/inputs, pending submit and request-specific success.
 - [x] Replace serial refresh awaits in all three link/unlink completion paths in SettingsPage.SignIn.cs with refresh tasks started together under the existing ownership check.
-- [ ] Run focused account-password tests and full relevant unit suite, commit source, then fresh Release publish and affected native fixture on that exact source.
-- [ ] Record source, red/green runs, frozen prior and final hashes and unchanged limits; parent reruns independent review and owns remote delivery.
+- [x] Run focused account-password tests and full relevant unit suite, commit source, then fresh Release publish and affected native fixture on that exact source.
+- [x] Record source, red/green runs, frozen prior and final hashes and unchanged limits; parent reruns independent review and owns remote delivery.
