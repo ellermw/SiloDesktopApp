@@ -161,41 +161,88 @@ $IsccPaths = @(
 )
 $IsccPath = $null
 foreach ($p in $IsccPaths) {
-    if (Test-Path $p) { $IsccPath = $p; break }
+    if (Test-Path -LiteralPath $p -PathType Leaf) { $IsccPath = $p; break }
 }
 if (-not $IsccPath) {
     Write-Error "Inno Setup not found. Install with: winget install JRSoftware.InnoSetup"
     exit 1
 }
+function ConvertTo-InnoSetupVersion([string]$Text) {
+    if ($Text -match '^\s*(\d+\.\d+(?:\.\d+){0,2})(?=$|[^\d.])') {
+        $parsed = $null
+        if ([version]::TryParse($Matches[1], [ref]$parsed)) {
+            $version = [version]::new($parsed.Major, $parsed.Minor, [Math]::Max(0, $parsed.Build), [Math]::Max(0, $parsed.Revision))
+            if ($version -gt [version]'0.0.0.0') { return $version }
+        }
+    }
+}
+
+function Select-InnoSetupVersion([string[]]$RegistryVersions, [string[]]$UninstallerVersions) {
+    $registry = @($RegistryVersions | ForEach-Object { ConvertTo-InnoSetupVersion $_ } | Sort-Object -Unique)
+    $uninstaller = @($UninstallerVersions | ForEach-Object { ConvertTo-InnoSetupVersion $_ } | Sort-Object -Unique)
+    # Matching registration takes precedence over a possibly stale adjacent uninstaller.
+    $candidates = $registry
+    if (-not $candidates.Count) { $candidates = $uninstaller }
+    if ($candidates.Count -gt 1) {
+        throw "Conflicting Inno Setup versions ($($candidates -join ', ')); the compiler version could not be determined. Reinstall Inno Setup with its standard installer."
+    }
+    if ($candidates.Count) { return $candidates[0] }
+    return [version]'0.0.0.0'
+}
+
 function Get-InnoSetupVersion([string]$CompilerPath) {
-    # Current Inno Setup 6 releases (6.7.x) ship ISCC.exe without numeric version resources (they read 0.0.0.0).
-    # The uninstaller beside it carries the release as ProductVersion, and the installer's uninstall entry records it.
+    # Some releases omit ISCC.exe's numeric version resource. Prefer compiler-owned
+    # metadata (including its help banner) before consulting installation metadata.
     $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($CompilerPath)
     $fromCompiler = [version]::new($info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart, $info.FilePrivatePart)
     if ($fromCompiler -gt [version]'0.0.0.0') { return $fromCompiler }
-    $directory = Split-Path $CompilerPath -Parent
-    $candidates = @()
+    $fromProduct = ConvertTo-InnoSetupVersion $info.ProductVersion
+    if ($fromProduct) { return $fromProduct }
+    try {
+        # A help invocation may exit nonzero; only its version banner matters here.
+        $PSNativeCommandUseErrorActionPreference = $false
+        $helpOutput = & $CompilerPath '/?' 2>&1
+        foreach ($line in $helpOutput) {
+            if ("$line" -match '^\s*(?:Compiler engine version:\s*(?:Inno Setup\s+)?|Inno Setup\s+)(\d+\.\d+(?:\.\d+){0,2})(?=\s|$)') {
+                $fromHelp = ConvertTo-InnoSetupVersion $Matches[1]
+                if ($fromHelp) { return $fromHelp }
+            }
+        }
+    } catch {
+        # An unavailable compiler query must not prevent the metadata fallbacks.
+    }
+    $directory = [IO.Path]::GetFullPath((Split-Path $CompilerPath -Parent)).TrimEnd('\')
+    $uninstallerVersions = @()
     $uninstaller = Join-Path $directory 'unins000.exe'
-    if (Test-Path $uninstaller) { $candidates += [Diagnostics.FileVersionInfo]::GetVersionInfo($uninstaller).ProductVersion }
+    if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
+        try {
+            $uninstallerVersions += [Diagnostics.FileVersionInfo]::GetVersionInfo($uninstaller).ProductVersion
+        } catch {
+            # An unreadable optional uninstaller is not a compiler version.
+        }
+    }
+    $registryVersions = @()
     $uninstallKeys = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1',
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1',
         'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1'
     foreach ($key in $uninstallKeys) {
-        $entry = Get-ItemProperty $key -ErrorAction SilentlyContinue
-        if ($entry -and $entry.InstallLocation -and
-            [IO.Path]::GetFullPath($entry.InstallLocation).TrimEnd('\') -ieq [IO.Path]::GetFullPath($directory).TrimEnd('\')) {
-            $candidates += $entry.DisplayVersion
+        try {
+            $entry = Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue
+            if ($entry -and $entry.InstallLocation -and [IO.Path]::IsPathFullyQualified($entry.InstallLocation) -and
+                [IO.Path]::GetFullPath($entry.InstallLocation).TrimEnd('\') -ieq $directory) {
+                $registryVersions += $entry.DisplayVersion
+            }
+        } catch {
+            # Ignore malformed or inaccessible entries and continue with the other keys.
+            continue
         }
     }
-    foreach ($text in $candidates) {
-        if ("$text" -match '^\s*(\d+)\.(\d+)(?:\.(\d+))?') {
-            $build = if ($Matches[3]) { [int]$Matches[3] } else { 0 }  # no ?? : build.ps1 also runs in Windows PowerShell 5.1
-            return [version]::new([int]$Matches[1], [int]$Matches[2], $build, 0)
-        }
-    }
-    return $fromCompiler
+    return Select-InnoSetupVersion -RegistryVersions $registryVersions -UninstallerVersions $uninstallerVersions
 }
 $IsccVersion = Get-InnoSetupVersion $IsccPath
+if ($IsccVersion -eq [version]'0.0.0.0') {
+    throw "The Inno Setup version could not be determined at '$IsccPath'. Checked ISCC.exe's numeric and ProductVersion resources, its /? banner, adjacent unins000.exe, and matching uninstall registry entries. Reinstall Inno Setup with its standard installer before building."
+}
 if ($IsccVersion -lt [version]'6.3.0.0') {
     throw "Inno Setup 6.3.0 or newer is required for semantic AppVersion and VersionInfoProductTextVersion. Found $IsccVersion at '$IsccPath'. Upgrade Inno Setup before building."
 }
