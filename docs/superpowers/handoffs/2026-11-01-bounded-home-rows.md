@@ -15,7 +15,7 @@ Verification under external `Invoke-Verification.ps1` and `SiloOct18Build`:
 - `final-full-green`: **2,817 passed**, zero failed/skipped.
 - `final-release-publish`: fresh Release passed; app DLL SHA256 `EAD30AC02DAA9FCF86B32D1724E8D5CF95CBDA35A37A300F03F87FB428BF648B`.
 - `native-control`: actual SectionRow scrolling, cards 21–35, duplicate demand, cache refresh, error retry, concurrent removal/refresh, hidden duplicate row recovery and stale profile rejection passed before final Undo correction.
-- `final-native-control`: **pending**, external shell session **73737**. Includes real Dismiss/Undo and the existing `HomeCurrentNativeFixture`; parent monitors and records completion before push. Do not cancel it.
+- `final-native-control`: **passed**, external shell session **73737** completed. Includes real Dismiss/Undo and the existing `HomeCurrentNativeFixture`; final PASS sentinel and receipt exitCode 0 verified against the final Release DLL.
 
 Final product manifest: `D:/SiloPlayer/.codex-tmp/server-align-nov01/task-e/final-product-fingerprints.json`, SHA256 `21F35654DF6327888CA9A8B65169EEE0453A1C0609D002FE42D645B235FA2B3C`. The manifest still matched all product sources after the final unit/publish checks. Receipts are precommit working-tree validation and record the base HEAD; the external task report maps those unchanged bytes to the committed task head.
 

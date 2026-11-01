@@ -12,4 +12,4 @@ Execution: isolated branch codex/server-home-window from a15621a0; pinned libmpv
 
 Ruling: removal and Undo must preserve initial-card priority, including when a row completes after removal. The focused Undo regression reproduced expected 2/actual 1 and drove snapshot/manual restoration and projected-prefix correction.
 
-Implementation complete; final full unit suite 2,817/2,817 and fresh Release publish passed. Earlier actual native row-window fixture passed before the Undo correction. Parent explicitly took over queued final native verification (session 73737) to free the review slot; final readiness/push remains gated on that result. No source version stamp or remote mutation performed.
+Implementation complete; final full unit suite 2,817/2,817, fresh Release publish and final native row-window plus current Home regressions passed. Parent monitored queued final native verification (session 73737), then implementer verified the final PASS sentinel and zero-exit receipt. Independent review and remote mutation remain with the parent. No source version stamp or remote mutation performed.
