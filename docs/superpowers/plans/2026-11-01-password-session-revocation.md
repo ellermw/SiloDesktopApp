@@ -27,3 +27,10 @@ Absent capability must omit the member even if selection is attempted. Unsupport
 - [x] Add dedicated PasswordSessionsNativeFixture and Program route `password-sessions` with synthetic service isolation, actual controls and layout assertions; leave shared run.ps1 untouched.
 - [x] Run focused and full SiloPlayer.Tests, fresh Release publish and native fixture under mutex; inspect diff and record exact evidence/limits in task report and development handoff.
 - [x] Commit assigned branch after successful relevant unit tests; parent performs independent review and remote delivery.
+
+## P2 callback lifetime correction
+
+- [x] Reproduce delayed credential/network link refresh returning after departure/reentry using actual Connect controls; assert no new capability request, preserved new choice/inputs, pending submit and request-specific success.
+- [x] Replace serial refresh awaits in all three link/unlink completion paths in SettingsPage.SignIn.cs with refresh tasks started together under the existing ownership check.
+- [ ] Run focused account-password tests and full relevant unit suite, commit source, then fresh Release publish and affected native fixture on that exact source.
+- [ ] Record source, red/green runs, frozen prior and final hashes and unchanged limits; parent reruns independent review and owns remote delivery.
