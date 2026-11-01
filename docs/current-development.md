@@ -17,3 +17,11 @@ The update dialog retains its bounded scrolling body and fixed actions. Channel 
 ## Historical release documentation
 
 The [1.2.516 release ledger](releases/1.2.516.md), [1.2.515 handoff](archive/2026-10-29-release-1.2.515-handoff.md), [1.2.514 handoff](archive/2026-10-29-release-1.2.514-handoff.md) and [earlier handoffs](archive/2026-10-29-development-handoffs.md) describe historical releases, not this PR's source identity or verification status.
+
+## November 1 episode still quick-play candidate
+
+Independent `codex/server-episode-quickplay` candidate starts from newer Beta `5a6555492801aa0172d2559257ef8711a8e0efe4`, with pipeline-owned source stamp **1.2.519**. Official Silo server/WebUI main was freshly confirmed at `63ef34b236b88dc77acca1a9a3ed90235377691f`. The episode grids and sibling cards gain a separate accessible Play/Resume action based on authorized readable-file fields. It reuses normal scoped playback/resume preparation and rejects departed card/navigation/API owners across queued playback gates.
+
+Synthetic local verification: main suite **2,799/2,799**, Release publish successful, and actual-control native run `quickplay/final-native` passed for series/season/sibling builders, keyboard invocation, separate detail navigation, library/profile/resume requests, omitted zero override, readable/missing files, 128/220/400px non-overlapping action rectangles, spoiler blur/overview, stale queued scopes and existing room transport behavior. Release/native app DLL SHA256 is `6D088A603C6C798EDC2296CBEAEA63E2EC09819DBDB7C188B8AC34709C4C1470`; receipts/logs/screenshots are under `D:/SiloPlayer/.codex-tmp/server-align-nov01/quickplay`. Full task report is `D:/SiloPlayer/.codex-tmp/server-align-nov01/task-f-report.md`.
+
+This is a Beta source candidate awaiting independent review and parent-managed delivery, not a release or installer receipt. No installer was built/executed and the installed player was not controlled. Native requests use synthetic in-memory responses and stop at an intentional server denial before media load; real account/media playback and complete visual parity remain unverified.

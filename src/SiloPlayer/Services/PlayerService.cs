@@ -1841,22 +1841,39 @@ public partial class PlayerService : IDisposable
         string? shuffleId = null,
         PlaybackAuthorityScope? authority = null,
         CancellationToken cancellationToken = default,
-        bool? sourceVersionPinned = null)
+        bool? sourceVersionPinned = null,
+        ApiRequestContext? expectedContext = null)
     {
-        _ = FlushSubtitleOffsetAsync();
-        CancelPendingPlayRequest();
+        var nextAuthority = authority ?? _localAuthority;
+        bool IsCurrentOwner() => !cancellationToken.IsCancellationRequested &&
+            (expectedContext is not { } owner || nextAuthority.ApiClient.IsCurrentContext(owner));
+        // A scoped UI action may wait behind another authority switch. Do not
+        // cancel current playback until that action still owns its request.
+        if (expectedContext.HasValue && !IsCurrentOwner()) return;
+        if (!expectedContext.HasValue)
+        {
+            _ = FlushSubtitleOffsetAsync();
+            CancelPendingPlayRequest();
+        }
         await _authoritySwitchGate.WaitAsync(cancellationToken);
         try
         {
+            if (expectedContext.HasValue && !IsCurrentOwner()) return;
+            if (expectedContext.HasValue)
+            {
+                _ = FlushSubtitleOffsetAsync();
+                CancelPendingPlayRequest();
+            }
             if (_closing)
                 await CloseAsync();
             cancellationToken.ThrowIfCancellationRequested();
-            var nextAuthority = authority ?? _localAuthority;
+            if (expectedContext.HasValue && !IsCurrentOwner()) return;
             if (!ReferenceEquals(_activeAuthority, nextAuthority))
             {
                 await CloseAsync();
                 try { await PendingProgressSave; } catch { /* The outgoing manager reports final-write failures. */ }
                 cancellationToken.ThrowIfCancellationRequested();
+                if (expectedContext.HasValue && !IsCurrentOwner()) return;
                 _activeAuthority = nextAuthority;
                 _shuffleController = null;
                 _watchDetailPrefetches.Clear();
@@ -1872,7 +1889,7 @@ public partial class PlayerService : IDisposable
             }
             await PlayRequestAsync(contentId, fromStart, fileId, audioTrackIndex,
                 subtitleSelection, startPositionOverride, HasRemoteAuthority ? null : prefetchedWatchDetail,
-                subtitleTrackSignature, libraryId, shuffleId, cancellationToken, sourceVersionPinned);
+                subtitleTrackSignature, libraryId, shuffleId, cancellationToken, sourceVersionPinned, expectedContext);
         }
         finally { _authoritySwitchGate.Release(); }
     }
@@ -1880,7 +1897,8 @@ public partial class PlayerService : IDisposable
     private async Task PlayRequestAsync(string contentId, bool fromStart, int? fileId,
         int? audioTrackIndex, int? subtitleSelection, double? startPositionOverride,
         WatchDetailResponse? prefetchedWatchDetail, SubtitleTrackSignature? subtitleTrackSignature,
-        int? libraryId, string? shuffleId, CancellationToken cancellationToken, bool? sourceVersionPinned)
+        int? libraryId, string? shuffleId, CancellationToken cancellationToken, bool? sourceVersionPinned,
+        ApiRequestContext? expectedContext)
     {
         if (_closing)
             return;
@@ -1899,6 +1917,7 @@ public partial class PlayerService : IDisposable
         {
             await _playRequestGate.WaitAsync(ownerCts.Token);
             gateEntered = true;
+            if (expectedContext is { } owner && !_apiClient.IsCurrentContext(owner)) return;
             ResetStartupTelemetry();
             SetConnectionMediaActive(true);
             ownerCts.Token.ThrowIfCancellationRequested();
