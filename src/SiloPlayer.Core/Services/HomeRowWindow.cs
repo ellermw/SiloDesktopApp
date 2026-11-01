@@ -45,8 +45,8 @@ public static class HomeRowWindow
         // must not discard unseen cards, including when we retain old cards.
         result.Items = new(prefix.Concat(rest));
         result.HasMore = whole.HasMore;
-        // Stop automatic identical reads, but preserve fresh user demand when
-        // the server still reports more cards.
+        // The uncapped read completes the carousel. Any remaining catalog
+        // matches belong to Explore all, not another identical tail read.
         result.HasReadWhole = true;
         result.ShownCount = Math.Min(initialCount, result.Items.Count);
         result.CompletedOrder = current.CompletedOrder > 0 ? current.CompletedOrder : completedOrder;

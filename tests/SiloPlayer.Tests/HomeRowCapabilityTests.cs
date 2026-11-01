@@ -48,9 +48,10 @@ public class HomeRowCapabilityTests
         Assert.Equal(query.Length == 0, row.HasReadWhole);
         Assert.Null(row.ShownCount);
         // The server may report more catalog matches than the recipe budget.
-        // This must not inflate the first window or start automatic recovery.
+        // Only a bounded read needs carousel recovery; uncapped recipes leave
+        // the remaining catalog matches to Explore all.
         Assert.True(row.HasMore);
-        Assert.True(row.CanComplete);
+        Assert.Equal(query.Length > 0, row.CanComplete);
         Assert.Equal(query.Length == 0 ? 0 : 1, wire.CapabilityReads);
     }
 
@@ -140,7 +141,7 @@ public class HomeRowCapabilityTests
         var response = await new HomeApi(Client(http)).GetSectionItemsAsync("row");
         Assert.Equal(0, wire.CapabilityReads); Assert.Equal("", Assert.Single(wire.Rows).Query);
         Assert.True(response.Section!.HasMore);
-        Assert.True(response.Section.HasReadWhole); Assert.True(response.Section.CanComplete);
+        Assert.True(response.Section.HasReadWhole); Assert.False(response.Section.CanComplete);
     }
 
     [Theory]
@@ -171,7 +172,7 @@ public class HomeRowCapabilityTests
     }
 
     [Fact]
-    public async Task TruncatedHomeWholeResponseAllowsFreshDemandAndLaterReadRetainsInitialPriority()
+    public async Task TruncatedHomeWholeResponseStopsTailDemandAndLaterReadRetainsInitialPriority()
     {
         static string Section(int count, int limit, bool hasMore) => JsonSerializer.Serialize(new
         {
@@ -184,12 +185,12 @@ public class HomeRowCapabilityTests
         wire.Section = Section(25, 50, true);
         var partial = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 50)).Section!;
         Assert.True(partial.HasReadWhole);
-        Assert.True(partial.CanComplete);
+        Assert.False(partial.CanComplete);
         var expanded = HomeRowWindow.Complete(initial, partial, initial, 1);
         Assert.Equal(25, expanded.Items.Count);
-        Assert.True(expanded.CanComplete);
+        Assert.False(expanded.CanComplete);
 
-        // A fresh demand can retry the uncapped resource without a refresh.
+        // A later whole refresh can still recover updated server data.
         wire.Section = Section(35, 50, false);
         var whole = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 50)).Section!;
         var completed = HomeRowWindow.Complete(expanded, whole, expanded, 2);
@@ -217,11 +218,11 @@ public class HomeRowCapabilityTests
         var expanded = HomeRowWindow.Complete(initial, whole, initial, 1);
         Assert.Equal(new[] { "?item_limit=20", "" }, wire.Rows.Select(row => row.Query));
         Assert.Equal(Enumerable.Range(1, 35).Select(i => $"card{i}"), expanded.Items.Select(item => item.ContentId));
-        Assert.True(expanded.CanComplete);
+        Assert.False(expanded.CanComplete);
         var repeated = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 20)).Section!;
         var completed = HomeRowWindow.Complete(expanded, repeated, expanded, 2);
         Assert.Equal(expanded.Items.Select(item => item.ContentId), completed.Items.Select(item => item.ContentId));
-        Assert.True(completed.HasMore); Assert.True(completed.HasReadWhole); Assert.True(completed.CanComplete);
+        Assert.True(completed.HasMore); Assert.True(completed.HasReadWhole); Assert.False(completed.CanComplete);
         Assert.Equal(20, completed.ShownCount); Assert.Equal(1, completed.CompletedOrder);
     }
 
@@ -250,7 +251,7 @@ public class HomeRowCapabilityTests
     [InlineData("timeout")]
     [InlineData("null")]
     [InlineData("malformed")]
-    public async Task UnadvertisedInitialReadPreservesTruncationAndAllowsFreshDemand(string failure)
+    public async Task UnadvertisedInitialReadPreservesTruncationWithoutTailDemand(string failure)
     {
         using var wire = new Wire { Unsupported = failure == "unsupported", TimeoutCapabilities = failure == "timeout",
             Capabilities = failure == "malformed" ? "{" : "null", Section = """{"id":"row","has_more":true,"items":[]}""" };
@@ -259,7 +260,7 @@ public class HomeRowCapabilityTests
         Assert.Equal("", Assert.Single(wire.Rows).Query);
         Assert.True(response.Section!.HasMore);
         Assert.True(response.Section.HasReadWhole);
-        Assert.True(response.Section.CanComplete);
+        Assert.False(response.Section.CanComplete);
     }
 
     [Fact]

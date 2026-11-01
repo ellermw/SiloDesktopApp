@@ -8,6 +8,17 @@ public class HomeRowWindowTests
 {
     private static readonly JsonSerializerOptions Wire = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
 
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    public void OnlyBoundedRowsWithMoreCardsCanComplete(bool hasMore, bool hasReadWhole, bool canComplete)
+    {
+        var row = new HomeSectionWithItems { HasMore = hasMore, HasReadWhole = hasReadWhole };
+        Assert.Equal(canComplete, row.CanComplete);
+    }
+
     [Fact]
     public void PartialRowSurvivesRawSnapshotAndReconciliation()
     {
@@ -26,6 +37,7 @@ public class HomeRowWindowTests
     {
         var row = Row(Enumerable.Range(1, count).Select(i => $"card{i}").ToArray());
         row.HasReadWhole = true;
+        row.HasMore = true; // Catalog matches can exceed an uncapped recipe's budget.
         var mounted = new HomeSectionWithItems();
         HomeSectionReconciler.Apply(mounted, HomeSectionDedupe.Snapshot(row));
 
@@ -98,18 +110,18 @@ public class HomeRowWindowTests
     }
 
     [Fact]
-    public void TruncatedCompletionAllowsFreshDemandAndLaterWholeDataRetainsInitialPriority()
+    public void TruncatedCompletionStopsTailDemandAndLaterWholeDataRetainsInitialPriority()
     {
         var shown = Row("one", "two"); shown.HasMore = true;
         var partial = Row("one", "two", "three"); partial.HasMore = true;
         var first = HomeRowWindow.Complete(shown, partial, shown, 7);
         Assert.True(first.HasMore);
         Assert.True(first.HasReadWhole);
-        Assert.True(first.CanComplete);
+        Assert.False(first.CanComplete);
         Assert.True(HomeRowWindow.IsExpanded(first));
         Assert.Equal(2, first.ShownCount);
         var unchanged = HomeRowWindow.Complete(first, partial, first, 8);
-        Assert.True(unchanged.HasMore); Assert.True(unchanged.HasReadWhole); Assert.True(unchanged.CanComplete);
+        Assert.True(unchanged.HasMore); Assert.True(unchanged.HasReadWhole); Assert.False(unchanged.CanComplete);
         Assert.Equal(HomeSectionChange.None, HomeSectionReconciler.Apply(first, unchanged));
         var completed = HomeRowWindow.Complete(first, Row("one", "two", "three", "four"), first, 9);
         Assert.False(completed.HasMore);
@@ -124,31 +136,31 @@ public class HomeRowWindowTests
     [InlineData(0)]
     [InlineData(20)]
     [InlineData(50)]
-    public void NoProgressCompletionAllowsFreshDemandWithoutRestoringConcurrentRemovals(int limit)
+    public void NoProgressCompletionStopsTailDemandWithoutRestoringConcurrentRemovals(int limit)
     {
         var shown = Row("one", "removed", "two"); shown.HasMore = true;
         var current = Row("one", "two"); current.HasMore = true;
         var whole = Row("two", "removed", "one", "one"); whole.HasMore = true; whole.ItemLimit = limit;
         var completed = HomeRowWindow.Complete(shown, whole, current, 7);
         Assert.Equal(["one", "two"], completed.Items.Select(item => item.ContentId));
-        Assert.True(completed.HasMore); Assert.True(completed.HasReadWhole); Assert.True(completed.CanComplete);
+        Assert.True(completed.HasMore); Assert.True(completed.HasReadWhole); Assert.False(completed.CanComplete);
         Assert.Equal(2, completed.ShownCount); Assert.Equal(7, completed.CompletedOrder);
         var mounted = new HomeSectionWithItems();
         HomeSectionReconciler.Apply(mounted, HomeSectionDedupe.Snapshot(completed));
-        Assert.True(mounted.CanComplete);
+        Assert.False(mounted.CanComplete);
         Assert.Equal(HomeSectionChange.None, HomeSectionReconciler.Apply(mounted,
             HomeRowWindow.Complete(shown, whole, mounted, 8)));
     }
 
     [Fact]
-    public void SmallerTruncatedCompletionKeepsExistingTailAndAllowsFreshDemand()
+    public void SmallerTruncatedCompletionKeepsExistingTailAndStopsTailDemand()
     {
         var current = Row("one", "two", "tail"); current.HasMore = true;
         current.ShownCount = 2; current.CompletedOrder = 7;
         var whole = Row("one", "two"); whole.HasMore = true;
         var completed = HomeRowWindow.Complete(HomeSectionDedupe.Snapshot(current), whole, current, 8);
         Assert.Equal(["one", "two", "tail"], completed.Items.Select(item => item.ContentId));
-        Assert.True(completed.HasMore); Assert.True(completed.HasReadWhole); Assert.True(completed.CanComplete);
+        Assert.True(completed.HasMore); Assert.True(completed.HasReadWhole); Assert.False(completed.CanComplete);
         Assert.Equal(2, completed.ShownCount); Assert.Equal(7, completed.CompletedOrder);
     }
 
@@ -173,11 +185,11 @@ public class HomeRowWindowTests
         Assert.Same(whole.Items[0], completed.Items[2]);
         Assert.Equal(2, completed.ShownCount); Assert.Equal(7, completed.CompletedOrder);
         Assert.Equal(whole.ReadLanguageGeneration, completed.ReadLanguageGeneration);
-        Assert.True(completed.HasMore); Assert.True(completed.CanComplete);
+        Assert.True(completed.HasMore); Assert.False(completed.CanComplete);
     }
 
     [Fact]
-    public void TruncatedReadPreservesFreshDemandAndAutomaticReadGuardThroughProjection()
+    public void TruncatedReadPreservesCarouselCompletionThroughProjection()
     {
         var row = Row("shared"); row.HasMore = true;
         row.ShownCount = 1; row.CompletedOrder = 7; row.HasReadWhole = true;
@@ -190,7 +202,7 @@ public class HomeRowWindowTests
         var change = HomeSectionReconciler.Apply(mounted, projected["row"]);
         Assert.True(change.HasFlag(HomeSectionChange.Metadata));
         Assert.Empty(mounted.Items);
-        Assert.True(mounted.HasMore); Assert.True(mounted.HasReadWhole); Assert.True(mounted.CanComplete);
+        Assert.True(mounted.HasMore); Assert.True(mounted.HasReadWhole); Assert.False(mounted.CanComplete);
         Assert.True(HomeRowWindow.IsExpanded(mounted));
         Assert.Equal(0, mounted.ShownCount); Assert.Equal(7, mounted.CompletedOrder);
         var json = JsonSerializer.SerializeToElement(mounted, Wire);

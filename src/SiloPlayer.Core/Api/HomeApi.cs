@@ -76,8 +76,8 @@ public class HomeApi(SiloApiClient client)
         if (section != null)
         {
             section.ReadLanguageGeneration = language;
-            // Record that this read already attempted the uncapped resource so
-            // automatic recovery will not loop. has_more still allows fresh demand.
+            // An uncapped resource already applies the recipe budget. Keep
+            // has_more for browse navigation, not identical carousel reads.
             section.HasReadWhole = itemLimit == null || !section.HasMore;
         }
         return new() { Section = section };

@@ -710,11 +710,10 @@ public partial class HomeViewModel : ObservableObject,
         var generation = _sectionLoadGeneration;
         var ct = _sectionLoadCts?.Token ?? CancellationToken.None;
         var key = (generation, sectionId);
+        // CanComplete excludes successful uncapped reads for both automatic
+        // and user demand, including later frames of the same scroll gesture.
         if (!IsCurrentSectionLoad(generation, ct, sectionId)
             || !_rawSections.TryGetValue(sectionId, out var raw) || !raw.CanComplete) return;
-        // A successful uncapped read consumes automatic demand, not the
-        // server's has_more flag. Only a new user gesture may repeat it.
-        if (!userDemand && raw.HasReadWhole) return;
         // Only fresh user navigation can bypass a failed cycle's cooldown.
         // In particular, hidden-row projection must not rearm it on every refresh.
         if (!userDemand && _completionRetryAfter.TryGetValue(sectionId, out var retryAfter)
