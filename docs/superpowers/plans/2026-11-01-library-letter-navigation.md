@@ -26,9 +26,9 @@
 
 ## Tasks
 
-- [ ] Write a behavioral regression against the existing approximate `JumpToLetterCommand`; show it misses the server's exact distant position.
-- [ ] Add catalog letter DTOs/API, sharing the current search capability cache. Validate index positions and preserve request context; request the same structured filters as catalog browsing.
-- [ ] Replace approximate probes with query-owned exact indexes/jumps, cancellation and stale-response guards. Add protocol/scope/filter/order/empty/failure tests; run red/green and the unit suite.
-- [ ] Add a focused native rail partial and XAML host. Consume `LetterIndex`, `EnsureLetterIndexAsync()` and `JumpToLetterCommand`; align scrolling to `CatalogLetter.Position`, reserve rail width, support two-column short layouts and accessible roving keyboard navigation.
-- [ ] Extend the synthetic library fixture to verify actual jump/scroll/highlighting, unavailable letters, sorting and short/tall layout. Build/publish into fresh diagnostic output and run native checks.
-- [ ] Independently review Standards and Spec, correct findings and rerun scoped checks. Refresh/inspect remote heads and PR threads, then push the exact reviewed branch and open a Beta PR.
+- [x] Write a behavioral regression against the existing approximate `JumpToLetterCommand`; show it misses the server's exact distant position.
+- [x] Add catalog letter DTOs/API, sharing the current search capability cache. Validate index positions and preserve request context; request the same structured filters as catalog browsing.
+- [x] Replace approximate probes with query-owned exact indexes/jumps, cancellation and stale-response guards. Add protocol/scope/filter/order/empty/failure tests; run red/green and the unit suite.
+- [x] Add a focused native rail partial and XAML host. Consume `LetterIndex`, `EnsureLetterIndexAsync()` and `JumpToLetterCommand`; align scrolling to `CatalogLetter.Position`, reserve rail width, support two-column short layouts and accessible roving keyboard navigation.
+- [x] Extend the synthetic library fixture to verify actual jump/scroll/highlighting, unavailable letters, sorting and short/tall layout. Build/publish into fresh diagnostic output and run native checks.
+- [x] Independently review Standards and Spec, correct findings and rerun scoped checks. Remote submission follows the final gate; the PR and local delivery receipt record its exact head.
