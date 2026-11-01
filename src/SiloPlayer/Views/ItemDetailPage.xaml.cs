@@ -8072,18 +8072,14 @@ public sealed partial class ItemDetailPage : Page
             stateChanged: RefreshActionState,
             owner: button);
 
-        var actionLayer = new Grid
+        var root = new Grid();
+        var actionLayer = new EpisodeCardActionLayer(root)
         {
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Top,
             Opacity = 0,
             IsHitTestVisible = false,
         };
-        void SetActionLayerVisibility(bool reveal)
-        {
-            actionLayer.Opacity = reveal ? 1 : 0;
-            actionLayer.IsHitTestVisible = reveal;
-        }
         var quickPlayButton = new Button
         {
             Width = 36,
@@ -8105,7 +8101,35 @@ public sealed partial class ItemDetailPage : Page
             quickPlayButton.IsEnabled = false;
             try
             {
-                await App.Services.GetRequiredService<Services.PlayerService>().PlayAsync(
+                var player = App.Services.GetRequiredService<Services.PlayerService>();
+                var coordinator = App.Services.GetRequiredService<WatchTogetherCoordinator>();
+                if (coordinator.ActiveRoom is { } room)
+                {
+                    // Keep viewer intent within the room's existing authority
+                    // path. An unrelated still must not replace its local media.
+                    if (room.Room?.Phase == "playing" && room.Room.SelectedContentId == contentId &&
+                        player.ContentId == contentId && room.AttachedSessionId == player.Manager?.SessionId)
+                    {
+                        coordinator.RequestTransport("play", player.UserSeekPosition, isPaused: false);
+                        return;
+                    }
+                    if (room.RoomId == null || room.RoomToken == null) return;
+                    var playback = App.Services.GetRequiredService<PlaybackApi>();
+                    if (room.IsHost && !room.IsVoteMode && room.Room?.Phase == "lobby")
+                    {
+                        var response = await playback.StageWatchTogetherRoomItemAsync(room.RoomId, contentId, libraryId: libraryId, ct: actionToken);
+                        if (!IsCurrentOwner() || !ReferenceEquals(coordinator.ActiveRoom, room)) return;
+                        room.Room = response.Room;
+                    }
+                    else
+                        await playback.CreateWatchTogetherSuggestionAsync(room.RoomId, room.RoomToken, contentId, "episode", episode.Title,
+                            posterUrl: episode.StillUrl, ct: actionToken);
+                    if (IsCurrentOwner() && ReferenceEquals(coordinator.ActiveRoom, room))
+                        App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs
+                        { RoomId = room.RoomId, RoomAccessToken = room.RoomToken });
+                    return;
+                }
+                await player.PlayAsync(
                     contentId, libraryId: libraryId, cancellationToken: actionToken, expectedContext: owner);
             }
             catch (OperationCanceledException) when (!IsCurrentOwner()) { }
@@ -8164,7 +8188,7 @@ public sealed partial class ItemDetailPage : Page
             var label = current.WatchedActionLabel;
             AutomationProperties.SetName(quickWatchedButton, label);
             ToolTipService.SetToolTip(quickWatchedButton, label);
-            var playLabel = (current.ShowProgress ? "Resume " : "Play ") + caption.Presentation.SpokenTitle;
+            var playLabel = (mediaItem.PositionSeconds > 0 ? "Resume " : "Play ") + caption.Presentation.SpokenTitle;
             AutomationProperties.SetName(quickPlayButton, playLabel);
             ToolTipService.SetToolTip(quickPlayButton, playLabel);
             RefreshActionState();
@@ -8206,7 +8230,6 @@ public sealed partial class ItemDetailPage : Page
         actionLayer.Children.Add(moreButton);
         if (episode.Files.Any(file => file.Unreadable != true)) actionLayer.Children.Add(quickPlayButton);
 
-        var root = new Grid();
         root.Children.Add(button);
         root.Children.Add(actionLayer);
         root.SizeChanged += (_, args) =>
@@ -8215,10 +8238,6 @@ public sealed partial class ItemDetailPage : Page
             quickPlayButton.Width = quickPlayButton.Height = Math.Clamp(args.NewSize.Width - 104, 24, 36);
         };
         root.Unloaded += (_, _) => RetireAction();
-        root.PointerEntered += (_, _) => SetActionLayerVisibility(true);
-        root.PointerExited += (_, _) => SetActionLayerVisibility(false);
-        root.GotFocus += (_, _) => SetActionLayerVisibility(true);
-        root.LostFocus += (_, _) => SetActionLayerVisibility(false);
         UpdateQuickAction();
 
         return root;

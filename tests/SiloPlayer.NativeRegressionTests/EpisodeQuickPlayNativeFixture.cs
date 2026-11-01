@@ -19,7 +19,7 @@ using SiloPlayer.Player;
 using SiloPlayer.Controls;
 using SiloPlayer.Views;
 
-internal static class EpisodeQuickPlayNativeFixture
+internal static partial class EpisodeQuickPlayNativeFixture
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
 
@@ -77,8 +77,7 @@ internal static class EpisodeQuickPlayNativeFixture
                 await MediaParityNativeFixture.CaptureAsync(card, $"episode-quickplay-{width}.png");
             }
             Check(fixture.Wire.Watches.Count == 0, "Focus or layout started playback.");
-            NativeLibrary.SetDllImportResolver(typeof(MpvPlayer).Assembly, (name, _, _) => name == "libmpv-2.dll"
-                ? NativeLibrary.Load(Path.Combine(Program.AppDirectory, name)) : IntPtr.Zero);
+            EnsureNativeResolver();
             using var mpv = new MpvPlayer(); mpv.Initialize(16, 16); mpv.SetProperty("ao", "null");
             typeof(PlayerService).GetField("_mpv", Private)!.SetValue(fixture.Player, mpv);
             Invoke(play!);
@@ -273,27 +272,52 @@ internal static class EpisodeQuickPlayNativeFixture
         internal List<Uri> Watches { get; } = [];
         internal List<JsonElement> Starts { get; } = [];
         internal double ResumePosition = 91;
+        internal string? HoldWatch;
+        internal TaskCompletionSource WatchStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReleaseWatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal bool HoldCapability, HoldStart, HoldStage;
+        internal TaskCompletionSource BoundaryStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource ReleaseBoundary = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal List<(string Path, string? Profile)> Requests = [];
+        internal bool AcceptStart;
+        internal int Stops, Suggestions;
+        internal List<JsonElement> Stages = [];
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Check(request.RequestUri!.Host == "quickplay.fixture.invalid", "External quick-play fixture request refused.");
             var path = request.RequestUri.AbsolutePath;
+            lock (Requests) Requests.Add((path, request.Headers.TryGetValues("X-Profile-Id", out var profiles) ? profiles.Single() : null));
             if (path == "/still") return new(HttpStatusCode.OK) { Content = new ByteArrayContent(File.ReadAllBytes(Path.Combine(Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_READER_FIXTURES")!, "audiobook-cover.png"))) };
             if (path == "/api/v2/settings/contract/capabilities") return Json("""{"api_version":1,"manifest_revision":17,"supports_batched_effective":true}""");
             if (path == "/api/v2/settings/values/effective") return Json("""{"items":[{"key":"catalog.hide_unwatched_episode_images","value":true},{"key":"catalog.hide_unwatched_episode_overviews","value":true}]}""");
             if (path.StartsWith("/api/v2/watch/"))
             {
                 Watches.Add(request.RequestUri);
-                return Json("""{"content_id":"fixture-episode","type":"episode","title":"Fixture episode","versions":[{"file_id":42,"duration":1200,"resolution":"1080p","container":"mkv","codec_video":"h264","codec_audio":"aac"}],"user_data":{"position_seconds":POSITION,"duration_seconds":1200,"is_in_progress":true}}""".Replace("POSITION", ResumePosition.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                if (path.EndsWith("/" + HoldWatch)) { WatchStarted.TrySetResult(); await ReleaseWatch.Task.WaitAsync(ct); }
+                return Json("""{"content_id":"CONTENT","type":"episode","title":"Fixture episode","versions":[{"file_id":42,"duration":1200,"resolution":"1080p","container":"mkv","codec_video":"h264","codec_audio":"aac"}],"user_data":{"position_seconds":POSITION,"duration_seconds":1200,"is_in_progress":true}}""".Replace("CONTENT", path.Split('/')[^1]).Replace("POSITION", ResumePosition.ToString(System.Globalization.CultureInfo.InvariantCulture)));
             }
             if (path.EndsWith("/start"))
             {
                 using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
                 Starts.Add(json.RootElement.Clone());
+                if (HoldStart) { BoundaryStarted.TrySetResult(); await ReleaseBoundary.Task.WaitAsync(ct); }
+                if (AcceptStart) return Json("""{"protocol_version":3,"outcome":"playable","session_id":"fixture-session","playback_plan":{"plan_id":"fixture-plan","plan_attempt_key":"fixture-key","session_id":"fixture-session","effective_media_file_id":42,"delivery":"original_http","active_quality":"original","stream":{"url":"https://quickplay.fixture.invalid/stream/direct/fixture","protocol":"http_progressive"},"timeline":{"can_seek_anywhere":true},"source":{"bitrate_kbps":1536,"duration_seconds":1200},"selected_tracks":{"audio":{"id":"file:42:audio:0","index":0}},"subtitle":{"mode":"off","inventory":[]}}}""");
                 // Record the real authorized request, then end before any media load.
                 return new(HttpStatusCode.Forbidden) { Content = new StringContent("{\"error\":\"fixture-denied\"}", Encoding.UTF8, "application/json") };
             }
+            if (request.Method == HttpMethod.Delete) { ++Stops; return Json("""{"outcome":"stopped"}"""); }
+            if (path.Contains("/suggestions") && request.Method == HttpMethod.Post) { ++Suggestions; return Json("""{"suggestions":[]}"""); }
+            if (path.EndsWith("/staged-selection"))
+            {
+                using var stage = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct)); Stages.Add(stage.RootElement.Clone());
+                if (HoldStage) { BoundaryStarted.TrySetResult(); await ReleaseBoundary.Task.WaitAsync(ct); }
+                return Json("""{"room":{"room_id":"fixture-room","phase":"lobby","selected_content_id":"room-b","selection_mode":"host_pick","selection_revision":4,"self_can_manage_room":true}}""");
+            }
             if (path == "/api/v2/playback/capabilities")
+            {
+                if (HoldCapability) { BoundaryStarted.TrySetResult(); await ReleaseBoundary.Task.WaitAsync(ct); }
                 return Json("""{"allowed":true,"state":"available","installation_id":"fixture-install","protocol_versions":[3],"features":["fixed_media_file_v1"]}""");
+            }
             return Json("""{"items":[],"settings":[],"sections":[],"profiles":[]}""");
         }
         private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };

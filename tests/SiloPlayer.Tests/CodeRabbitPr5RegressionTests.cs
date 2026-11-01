@@ -144,9 +144,10 @@ public sealed class CodeRabbitPr5RegressionTests
         var source = Normalize(Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs"));
         var method = SliceMethod(source, "private FrameworkElement CreateEpisodeCard", "private void AddEpisodeCardOverlays");
 
-        Assert.Contains("void SetActionLayerVisibility(bool reveal)", method);
-        Assert.Contains("actionLayer.Opacity = reveal ? 1 : 0;", method);
-        Assert.Contains("actionLayer.IsHitTestVisible = reveal;", method);
+        var layer = Normalize(Read("src", "SiloPlayer", "Controls", "EpisodeCardActionLayer.cs"));
+        Assert.Contains("new EpisodeCardActionLayer(root)", method);
+        Assert.Contains("Opacity = reveal ? 1 : 0;", layer);
+        Assert.Contains("IsHitTestVisible = reveal;", layer);
         Assert.DoesNotContain("IsHitTestVisible = true", method);
     }
 

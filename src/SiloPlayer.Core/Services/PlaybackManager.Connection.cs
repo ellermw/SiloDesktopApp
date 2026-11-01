@@ -18,6 +18,7 @@ public partial class PlaybackManager
     private async Task ConfigureConnectionStartAsync(PlaybackStartRequestV3 request, PlaybackQualityPreferences preferences, CancellationToken ct)
     {
         var owner = _apiClient.CaptureIdentityContext();
+        if (!_apiClient.IsCurrentContext(preferences.Context)) throw new OperationCanceledException("Playback owner changed.", ct);
         var capability = preferences.CapabilitySnapshot is { } snapshot && snapshot.Owner == owner
             ? snapshot.Capability : await _playbackApi.GetConnectionCapabilityAsync(owner, ct).ConfigureAwait(false);
         request.CapabilitySnapshot = (owner, capability);
