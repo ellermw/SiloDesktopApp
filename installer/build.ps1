@@ -210,7 +210,13 @@ function Get-InnoSetupVersion([string]$CompilerPath) {
     $uninstaller = Join-Path $directory 'unins000.exe'
     if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
         try {
-            $uninstallerVersions += [Diagnostics.FileVersionInfo]::GetVersionInfo($uninstaller).ProductVersion
+            $info = (Get-Item -LiteralPath $uninstaller -ErrorAction Stop).VersionInfo
+            $fromUninstaller = [version]::new($info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart, $info.FilePrivatePart)
+            if ($fromUninstaller -gt [version]'0.0.0.0') {
+                $uninstallerVersions += $fromUninstaller.ToString()
+            } else {
+                $uninstallerVersions += $info.ProductVersion
+            }
         } catch {
             # An unreadable optional uninstaller is not a compiler version.
         }

@@ -137,6 +137,26 @@ try {
     $engineInfo.ProductVersion = ''
     Assert-Version (Get-InnoSetupVersion $compiler) '0.0.0.0' 'unreadable version is not an old version'
 
+    $uninstaller = Join-Path $fixture 'unins000.exe'
+    [IO.File]::WriteAllText($uninstaller, '')
+    $uninstallerInfo = [pscustomobject]@{
+        FileMajorPart = 6; FileMinorPart = 4; FileBuildPart = 2; FilePrivatePart = 0
+        ProductVersion = 'Inno Setup Setup Data (6.4.2)'
+    }
+    $script:fileVersionInfos[$uninstaller] = $uninstallerInfo
+    Assert-Version (Get-InnoSetupVersion $compiler) '6.4.2.0' 'uninstaller numeric resource with descriptive ProductVersion'
+    $uninstallerInfo.ProductVersion = $null
+    Assert-Version (Get-InnoSetupVersion $compiler) '6.4.2.0' 'uninstaller numeric resource without ProductVersion'
+    $script:registryEntries['HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1'] =
+        [pscustomobject]@{ InstallLocation = $fixture; DisplayVersion = '6.2.0' }
+    Assert-Version (Get-InnoSetupVersion $compiler) '6.2.0.0' 'matching registry precedes numeric uninstaller resource'
+    $script:registryEntries.Clear()
+    $uninstallerInfo.FileMajorPart = 0
+    $uninstallerInfo.FileMinorPart = 0
+    $uninstallerInfo.FileBuildPart = 0
+    $uninstallerInfo.ProductVersion = '6.5.3'
+    Assert-Version (Get-InnoSetupVersion $compiler) '6.5.3.0' 'uninstaller ProductVersion fallback'
+
     $script:registryEntries['HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1'] =
         [pscustomobject]@{ InstallLocation = $fixture + [char]0; DisplayVersion = '6.2.0' }
     $script:registryEntries['HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1'] =
