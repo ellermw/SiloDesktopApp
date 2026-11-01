@@ -219,6 +219,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             var item = Item;
             var libraryId = LibraryId;
             var selectedSeason = SelectedSeasonNumber;
+            var episodesSeasonContentId = EpisodesSeasonContentId;
             var revision = Volatile.Read(ref _localStateGeneration);
             using var readOwner = new CancellationTokenSource();
             var ct = readOwner.Token;
@@ -235,9 +236,14 @@ public partial class ItemDetailViewModel : ObservableObject,
             {
                 // An echoed/other-device event must not retire the accepted
                 // feedback or rollback authority of an in-flight local mark.
-                if (ToggleWatchedCommand is { IsRunning: true, ExecutionTask: { } mutation })
-                    await mutation.WaitAsync(ct);
-                await WaitForLocalProgressSettlementAsync(ct);
+                do
+                {
+                    if (ToggleWatchedCommand is { IsRunning: true, ExecutionTask: { } mutation })
+                        await mutation.WaitAsync(ct);
+                    await WaitForLocalProgressSettlementAsync(ct);
+                    // A mark can start while the final progress save is pending.
+                    // Settle it too before accepting a new local-state baseline.
+                } while (ToggleWatchedCommand.IsRunning);
                 if (!_stateRefreshActive || ct.IsCancellationRequested || !ReferenceEquals(Item, item)
                     || LibraryId != libraryId || !_catalogApi.IsCurrentContext(message.Context)) continue;
                 revision = Volatile.Read(ref _localStateGeneration);
@@ -258,16 +264,21 @@ public partial class ItemDetailViewModel : ObservableObject,
                 EpisodesResponse? episodes = null;
                 if (refreshEpisodes && item.Type == "season")
                     episodes = await _catalogApi.GetItemEpisodesAsync(item.ContentId, libraryId, ct);
+                else if (refreshEpisodes && item.Type == "series" && episodesSeasonContentId != null)
+                    episodes = await _catalogApi.GetItemEpisodesAsync(episodesSeasonContentId, libraryId, ct);
                 else if (refreshEpisodes && item.Type == "series" && selectedSeason >= 0)
                     episodes = await _catalogApi.GetEpisodesAsync(item.ContentId, selectedSeason, libraryId, ct);
                 if (!Current()) continue;
-                item.UserData = refreshed.UserData;
+                if (refreshed.UserData is { } userData)
+                {
+                    item.UserData = userData;
+                    IsWatched = userData.Played;
+                }
                 if (refreshed.HasAuthoritativePlayTarget)
                 {
                     item.PlayContentId = refreshed.PlayContentId;
                     item.PlaySeasonNumber = refreshed.PlaySeasonNumber;
                 }
-                IsWatched = item.UserData?.Played ?? false;
                 if (message.CatchUp)
                 {
                     if (refreshed.UserState != null)
@@ -281,12 +292,12 @@ public partial class ItemDetailViewModel : ObservableObject,
                 }
                 if (seasons != null)
                     foreach (var loaded in Seasons)
-                        if (seasons.Seasons.FirstOrDefault(s => s.ContentId == loaded.ContentId) is { } fresh)
-                            loaded.UserData = fresh.UserData;
-                if (episodes != null && SelectedSeasonNumber == selectedSeason)
+                        if (seasons.Seasons.FirstOrDefault(s => s.ContentId == loaded.ContentId) is { UserData: { } fresh })
+                            loaded.UserData = fresh;
+                if (episodes != null && SelectedSeasonNumber == selectedSeason && EpisodesSeasonContentId == episodesSeasonContentId)
                     foreach (var loaded in Episodes)
-                        if (episodes.Episodes.FirstOrDefault(e => e.ContentId == loaded.ContentId) is { } fresh)
-                            loaded.UserData = fresh.UserData;
+                        if (episodes.Episodes.FirstOrDefault(e => e.ContentId == loaded.ContentId) is { UserData: { } fresh })
+                            loaded.UserData = fresh;
                 OnPropertyChanged(nameof(Item));
                 if (seasons != null) OnPropertyChanged(nameof(Seasons));
                 if (episodes != null) OnPropertyChanged(nameof(Episodes));
@@ -546,6 +557,9 @@ public partial class ItemDetailViewModel : ObservableObject,
     [ObservableProperty]
     private int _selectedSeasonNumber = -1;
 
+    // Non-null when the visible rows came from the canonical season item route.
+    public string? EpisodesSeasonContentId { get; set; }
+
     public ObservableCollection<Season> Seasons { get; } = [];
     public ObservableCollection<Episode> Episodes { get; } = [];
     public ObservableCollection<MediaItem> SimilarItems { get; } = [];
@@ -613,6 +627,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         EpisodesLoadFailed = false;
         SimilarLoadFailed = false;
         SelectedSeasonNumber = -1;
+        EpisodesSeasonContentId = null;
         UserRating = null;
 
         try
@@ -886,6 +901,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         var generation = Interlocked.Increment(ref _episodesLoadGeneration);
 
         SelectedSeasonNumber = seasonNumber;
+        EpisodesSeasonContentId = null;
         IsEpisodesLoading = true;
         EpisodesLoadFailed = false;
         Episodes.Clear();

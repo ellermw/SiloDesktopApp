@@ -1505,7 +1505,7 @@ public sealed partial class MainWindow : Window
         // Access changes still remount the route. Reconnect alone preserves a
         // healthy detail; a failed initial load needs the normal navigation retry.
         var preserveDetail = !_pendingAccessRefresh && ContentFrame.Content is ItemDetailPage detail
-            && detail.ViewModel.Item != null && detail.ViewModel.FailureKind == DetailFailureKind.None;
+            && detail.CanPreserveOnReconnect;
         _pendingAccessRefresh = false;
         _pendingDetailCatchUp = false;
         if (!preserveDetail) ShowMainNavigation();

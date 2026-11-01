@@ -289,6 +289,76 @@ public sealed class RealtimeDetailStateTests
         Assert.Equal(0, scope.Vm.Episodes[0].UserData!.PositionSeconds);
     }
 
+    [Theory]
+    [InlineData("series", false)]
+    [InlineData("series", true)]
+    [InlineData("season", false)]
+    [InlineData("season", true)]
+    public async Task MissingRemoteUserDataPreservesMountedDetailAndCompanionState(string type, bool explicitNull)
+    {
+        using var scope = new Scope(type);
+        var item = scope.Vm.Item!;
+        item.UserData!.Played = true;
+        item.UserData.PositionSeconds = 75;
+        scope.Vm.IsWatched = true;
+        scope.Vm.SelectedSeasonNumber = 1;
+        var detailData = item.UserData;
+        var seasonData = scope.Vm.Seasons[0].UserData;
+        var episodeData = scope.Vm.Episodes[0].UserData;
+        var reads = new List<string>();
+        scope.OverrideResponse = request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            reads.Add(path);
+            var data = explicitNull ? ",\"user_data\":null" : "";
+            var body = path.EndsWith("/episodes")
+                ? "{\"items\":[{\"content_id\":\"sibling\"" + data + "}]}"
+                : path.EndsWith("/seasons")
+                    ? "{\"items\":[{\"content_id\":\"season\"" + data + "}]}"
+                    : "{\"content_id\":\"" + item.ContentId + "\"" + data + "}";
+            return new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+        };
+
+        await scope.Vm.RefreshMediaStateAsync(scope.Message() with { CatchUp = true });
+
+        Assert.Equal(type == "series" ? 3 : 2, reads.Count);
+        Assert.True(scope.Vm.IsWatched);
+        Assert.Same(detailData, item.UserData);
+        Assert.Equal(75, item.UserData!.PositionSeconds);
+        Assert.Same(seasonData, scope.Vm.Seasons[0].UserData);
+        Assert.Equal(4, seasonData!.UnplayedCount);
+        Assert.Same(episodeData, scope.Vm.Episodes[0].UserData);
+        Assert.Equal(31, episodeData!.PositionSeconds);
+    }
+
+    [Fact]
+    public async Task SingleSeasonSpecialsRefreshUsesTheCanonicalSourceOfTheVisibleRows()
+    {
+        using var scope = new Scope("series");
+        scope.Vm.SelectedSeasonNumber = 0;
+        scope.Vm.EpisodesSeasonContentId = "special-season";
+        scope.Vm.Seasons[0].ContentId = "special-season";
+        scope.Vm.Seasons[0].SeasonNumber = 0;
+        var episode = scope.Vm.Episodes[0];
+        episode.SeasonNumber = 0;
+        string? episodePath = null;
+        scope.OverrideResponse = request =>
+        {
+            if (!request.RequestUri!.AbsolutePath.EndsWith("/episodes")) return null;
+            episodePath = request.RequestUri.AbsolutePath;
+            return new(HttpStatusCode.OK) { Content = new StringContent("""
+                {"items":[{"content_id":"sibling","season_number":0,"user_data":{"played":true,"position_seconds":90}}]}
+                """, Encoding.UTF8, "application/json") };
+        };
+
+        await scope.Vm.RefreshMediaStateAsync(scope.Message("sibling"));
+
+        Assert.Equal("/api/v2/catalog/items/special-season/episodes", episodePath);
+        Assert.Same(episode, Assert.Single(scope.Vm.Episodes));
+        Assert.True(episode.UserData!.Played);
+        Assert.Equal(90, episode.UserData.PositionSeconds);
+    }
+
     private sealed class Scope : HttpMessageHandler
     {
         private readonly HttpClient _http;
@@ -303,6 +373,7 @@ public sealed class RealtimeDetailStateTests
         internal MediaItemUserState? FreshViewerState;
         internal bool HideSimilar;
         internal Func<Task<MediaItemDetail>>? OverrideDetail;
+        internal Func<HttpRequestMessage, HttpResponseMessage?>? OverrideResponse;
         internal TaskCompletionSource<MediaItemDetail>? BlockedRead;
         internal readonly TaskCompletionSource ReadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool IncludeTarget;
@@ -335,6 +406,7 @@ public sealed class RealtimeDetailStateTests
         }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (OverrideResponse?.Invoke(request) is { } response) return response;
             var path = request.RequestUri!.AbsolutePath;
             if (path.StartsWith("/api/v2/recommendations/similar/"))
                 return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new

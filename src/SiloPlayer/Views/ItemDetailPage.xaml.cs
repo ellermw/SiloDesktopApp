@@ -25,6 +25,11 @@ public sealed partial class ItemDetailPage : Page
     private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
     private readonly UICustomizationService _uiCustomizationService;
     public ItemDetailViewModel ViewModel { get; }
+    public bool CanPreserveOnReconnect => ViewModel.Item != null
+        && ViewModel.FailureKind == DetailFailureKind.None
+        && !ViewModel.SeasonsLoadFailed && !ViewModel.EpisodesLoadFailed
+        && EpisodesLoadError.Visibility != Visibility.Visible
+        && SeasonEpisodesFatalError.Visibility != Visibility.Visible;
     private CancellationTokenSource? _imageCts;
     private CancellationTokenSource? _navigationCts;
     private CancellationTokenSource? _translationCts;
@@ -6793,6 +6798,7 @@ public sealed partial class ItemDetailPage : Page
             if (response?.Episodes != null && response.Episodes.Count > 0)
             {
                 ViewModel.SelectedSeasonNumber = seasonNumber;
+                ViewModel.EpisodesSeasonContentId = seasonContentId;
                 ViewModel.Episodes.Clear();
                 foreach (var ep in response.Episodes)
                     ViewModel.Episodes.Add(ep);

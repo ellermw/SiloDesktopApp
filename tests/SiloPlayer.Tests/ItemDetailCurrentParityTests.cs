@@ -477,6 +477,7 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("singleSeason.ContentId", page);
         Assert.Contains("singleSeason.SeasonNumber", page);
         Assert.Contains("GetItemEpisodesAsync(seasonContentId, libraryId, ct)", page);
+        Assert.Contains("ViewModel.EpisodesSeasonContentId = seasonContentId;", page);
         Assert.Contains("SeasonNumber == 0", page);
         Assert.Contains("EpisodesHeader.Text = ViewModel.SelectedSeasonNumber == 0", page);
         Assert.DoesNotContain("ViewModel.Seasons.Count <= 1", page);

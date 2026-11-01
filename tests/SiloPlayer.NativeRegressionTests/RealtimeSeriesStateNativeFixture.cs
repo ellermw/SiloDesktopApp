@@ -96,6 +96,23 @@ internal static class RealtimeSeriesStateNativeFixture
                         Check(action.Visibility == Visibility.Visible, "A season Play action cannot recover after its target returns.");
                     }
                     await MediaParityNativeFixture.CaptureAsync(page, "realtime-state-" + type + ".png");
+                    Check(page.CanPreserveOnReconnect, "A healthy mounted detail should survive reconnect.");
+                    vm.SeasonsLoadFailed = true;
+                    Check(!page.CanPreserveOnReconnect, "A failed seasons query must remount on reconnect.");
+                    vm.SeasonsLoadFailed = false;
+                    vm.EpisodesLoadFailed = true;
+                    Check(!page.CanPreserveOnReconnect, "A failed episodes query must remount on reconnect.");
+                    vm.EpisodesLoadFailed = false;
+                    wire.FailEpisodes = true;
+                    var loaded = await (Task<bool>)typeof(ItemDetailPage).GetMethod("LoadSeasonEpisodesAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                        .Invoke(page, ["season", 1, navigation.Token])!;
+                    Check(!loaded, "Synthetic companion failure unexpectedly succeeded.");
+                    if (type == "season")
+                        typeof(ItemDetailPage).GetMethod("ShowSeasonEpisodesFatalError", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, [vm.Item]);
+                    else
+                        ((UIElement)page.FindName("EpisodesLoadError")).Visibility = Visibility.Visible;
+                    Check(!page.CanPreserveOnReconnect, "A failed canonical episode row must remount on reconnect, including the season fatal error.");
+                    wire.FailEpisodes = false;
                     Program.Log($"PASS: captured unknown-episode event refreshes mounted native {type} aggregate/season counts and leaves sibling state/badge untouched.");
                 }
                 finally { vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page); }
@@ -124,11 +141,15 @@ internal static class RealtimeSeriesStateNativeFixture
     {
         internal int Count = 2;
         internal string? Target = "new-target";
+        internal bool FailEpisodes;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.Host != "realtime-native.invalid" || request.Method != HttpMethod.Get)
                 throw new InvalidOperationException("Only synthetic local read fixtures are authorized.");
             var path = request.RequestUri.AbsolutePath;
+            if (FailEpisodes && path.EndsWith("/episodes"))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                    { Content = new StringContent("{\"error\":{\"code\":\"service_unavailable\",\"message\":\"Synthetic companion failure\"}}", Encoding.UTF8, "application/json") });
             object body = path.StartsWith("/api/v2/catalog/items/") ?
                 new { content_id = path.EndsWith("/season") ? "season" : "series", type = path.EndsWith("/season") ? "season" : "series",
                     play_content_id = Target, play_season_number = 1,

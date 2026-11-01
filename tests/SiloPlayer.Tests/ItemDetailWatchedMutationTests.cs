@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
+using System.Threading.Channels;
 using CommunityToolkit.Mvvm.Messaging;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
@@ -141,6 +143,55 @@ public sealed class ItemDetailWatchedMutationTests
     }
 
     [Fact]
+    public async Task WatchedWriteStartedDuringTheFinalSaveBarrierSettlesBeforeTheRemoteRead()
+    {
+        var dispatcher = new QueuedContext();
+        Scope scope = null!;
+        dispatcher.Run(() => scope = new Scope("series", false)
+            { Delayed = new(TaskCreationOptions.RunContinuationsAsynchronously) });
+        using (scope)
+        {
+            var reads = 0;
+            scope.Read = request =>
+            {
+                reads++;
+                var played = scope.Vm.Item!.UserData!.Played;
+                object body = request.RequestUri!.AbsolutePath.EndsWith("/seasons")
+                    ? new { items = new[] { new { content_id = "season", user_data = new { played } } } }
+                    : new { content_id = "current", user_data = new { played } };
+                return Task.FromResult(Json(JsonSerializer.Serialize(body)));
+            };
+            var save = new TaskCompletionSource();
+            dispatcher.Run(() => scope.Vm.Receive(new PlaybackProgressUpdated("episode", 90, 100, false) { Persisted = save.Task }));
+            Task remote = Task.CompletedTask;
+            dispatcher.Run(() => remote = scope.Vm.RefreshMediaStateAsync(new(scope.Client.CaptureContext(),
+                new HashSet<string>(["unknown-episode"]), new HashSet<string>(["current"]))));
+            // Run the loop's initial yield all the way to the held save barrier.
+            await dispatcher.RunNextAsync();
+            Assert.Equal(0, reads);
+            Task local = Task.CompletedTask;
+            dispatcher.Run(() => local = scope.Vm.ToggleWatchedCommand.ExecuteAsync(null));
+            save.SetResult();
+            try
+            {
+                await dispatcher.RunNextAsync();
+                Assert.False(remote.IsCompleted);
+                Assert.Equal(0, reads);
+                Assert.True(scope.Vm.IsWatched);
+            }
+            finally
+            {
+                scope.Delayed!.TrySetResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+                await dispatcher.PumpUntilAsync(Task.WhenAll(local, remote));
+            }
+            Assert.True(scope.Vm.IsWatched);
+            Assert.True(scope.Vm.Item!.UserData!.Played);
+            Assert.True(scope.Vm.Seasons[0].UserData!.Played);
+            Assert.True(scope.Vm.Episodes[0].UserData!.Played);
+        }
+    }
+
+    [Fact]
     public async Task PreMutationEpisodeReadIsRetriedBeforeItCanOverwriteAcceptedCascade()
     {
         using var scope = new Scope("series", false);
@@ -162,6 +213,30 @@ public sealed class ItemDetailWatchedMutationTests
 
     private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK)
     { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+
+    private sealed class QueuedContext : SynchronizationContext
+    {
+        private readonly Channel<Action> _work = Channel.CreateUnbounded<Action>();
+        public override void Post(SendOrPostCallback callback, object? state) => _work.Writer.TryWrite(() => callback(state));
+        internal void Run(Action action)
+        {
+            var prior = Current;
+            SetSynchronizationContext(this);
+            try { action(); }
+            finally { SetSynchronizationContext(prior); }
+        }
+        internal async Task RunNextAsync() => Run(await _work.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+        internal async Task PumpUntilAsync(Task completion)
+        {
+            while (!completion.IsCompleted)
+            {
+                var ready = _work.Reader.WaitToReadAsync().AsTask();
+                await Task.WhenAny(completion, ready).WaitAsync(TimeSpan.FromSeconds(5));
+                while (_work.Reader.TryRead(out var action)) Run(action);
+            }
+            await completion;
+        }
+    }
 
     private sealed class Scope : HttpMessageHandler
     {
