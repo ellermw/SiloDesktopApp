@@ -194,9 +194,10 @@ public sealed partial class SettingsPage
                         await SignInApi.LinkAccountIdentityWithCredentialsAsync(context, provider.InstallationId, submittedPassword, username.Text, directoryPassword.Password, ct);
                     if (!Current()) return;
                     _signInMessage = $"Connected {provider.DisplayName}. Sign in with it from now on."; _signInMessageIsError = false;
-                    // Start both refreshes while this visit owns the callback.
-                    // A canceled sign-in refresh must not later reload a newer password form.
-                    await Task.WhenAll(LoadAccountSignInAsync(), _accountPassword.LoadAsync());
+                    // Start refreshes while this visit owns the callback, but
+                    // never reload (and cancel) an in-flight password mutation.
+                    await Task.WhenAll(LoadAccountSignInAsync(),
+                        _accountPassword.IsSubmitting ? Task.CompletedTask : _accountPassword.LoadAsync());
                 }
                 else
                 {
@@ -215,7 +216,8 @@ public sealed partial class SettingsPage
                             await SignInApi.CompleteAccountIdentityLinkAsync(context, callback.Code, attempt.CodeVerifier, ct);
                             if (!Current()) return true;
                             _signInMessage = "Your account is connected to the sign-in provider."; _signInMessageIsError = false;
-                            await Task.WhenAll(LoadAccountSignInAsync(), _accountPassword.LoadAsync());
+                            await Task.WhenAll(LoadAccountSignInAsync(),
+                                _accountPassword.IsSubmitting ? Task.CompletedTask : _accountPassword.LoadAsync());
                         }
                         catch (OperationCanceledException) { }
                         catch (Exception ex)
@@ -293,7 +295,8 @@ public sealed partial class SettingsPage
                 if (!Current()) return;
                 _signInMessage = "Disconnected " + IdentityName(identity); _signInMessageIsError = false;
                 args.Cancel = false;
-                await Task.WhenAll(LoadAccountSignInAsync(), _accountPassword.LoadAsync());
+                await Task.WhenAll(LoadAccountSignInAsync(),
+                    _accountPassword.IsSubmitting ? Task.CompletedTask : _accountPassword.LoadAsync());
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)

@@ -116,7 +116,7 @@ internal static class PasswordSessionsNativeFixture
             handler.Allowed = true;
             await OpenAccount();
             foreach (var mode in new[] { "network", "credentials" })
-                foreach (var scenario in new[] { "choice", "submit", "departure" })
+                foreach (var scenario in new[] { "choice", "submit", "departure", "same-visit-submit" })
                     await DelayedLinkRefresh(mode, scenario);
 
             async Task DelayedLinkRefresh(string mode, string scenario)
@@ -136,9 +136,36 @@ internal static class PasswordSessionsNativeFixture
                 handler.IdentityPending = delayed;
                 var reads = handler.DelayedIdentityReads;
                 var connect = All<Button>(body).Single(button => Equals(button.Content, "Connect"));
+                var readsBeforeConnect = handler.CapabilityReads;
+                if (scenario == "same-visit-submit")
+                {
+                    option.IsChecked = true;
+                    await Fill();
+                    handler.Pending = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    Invoke(page, "AccountPasswordSubmit_Click", submit, new RoutedEventArgs());
+                    Check(vm.IsSubmitting, "Same visit must have a pending opted-in password request");
+                }
                 ((IInvokeProvider)new ButtonAutomationPeer(connect).GetPattern(PatternInterface.Invoke)).Invoke();
                 await Until(() => handler.DelayedIdentityReads == reads + 1);
                 handler.IdentityPending = null;
+                if (scenario == "same-visit-submit")
+                {
+                    delayed.SetResult(new(HttpStatusCode.OK) { Content = new StringContent("""{"items":[],"can_unlink":false}""") });
+                    await Until(() => (bool)typeof(SettingsPage).GetField("_signInLoaded", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!);
+                    Check(handler.CapabilityReads == readsBeforeConnect && vm.IsSubmitting &&
+                        !handler.PasswordCancellation.IsCancellationRequested,
+                        $"Same-visit {mode} link refresh reloaded or canceled the password submission");
+                    Check(option.IsChecked == true && !option.IsEnabled && !submit.IsEnabled &&
+                        current.Password == "fixture old password" && replacement.Password == "fixture new password" &&
+                        confirmation.Password == "fixture new password", "Same-visit link refresh cleared the pending form");
+                    handler.Pending!.SetResult(new(HttpStatusCode.NoContent));
+                    await Until(() => !vm.IsSubmitting);
+                    handler.Pending = null;
+                    Check(message.Message == "Password changed. Other devices are signed out." &&
+                        handler.Body.GetProperty("sign_out_other_sessions").GetBoolean(),
+                        "Same-visit link refresh lost request-specific success feedback");
+                    return;
+                }
                 Invoke(page, "ShowSettingsOverview");
                 if (scenario != "departure")
                 {
@@ -223,6 +250,7 @@ internal static class PasswordSessionsNativeFixture
         internal JsonElement Body;
         internal TaskCompletionSource<HttpResponseMessage>? Pending;
         internal TaskCompletionSource<HttpResponseMessage>? IdentityPending;
+        internal CancellationToken PasswordCancellation;
         internal int CapabilityReads, DelayedIdentityReads;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -239,6 +267,7 @@ internal static class PasswordSessionsNativeFixture
             }
             if (request.Method == HttpMethod.Post && request.RequestUri!.AbsolutePath == "/api/v2/account/password")
             {
+                PasswordCancellation = ct;
                 using var document = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
                 Body = document.RootElement.Clone();
                 return Pending is { } pending ? await pending.Task : new(HttpStatusCode.NoContent);
