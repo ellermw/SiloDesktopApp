@@ -630,13 +630,9 @@ public partial class HomeViewModel : ObservableObject,
         completed.Items ??= new ObservableCollection<MediaItem>();
         if (!PrepareReadResult(completed, shown, whole)) return;
         FilterProgressRemovals(completed, removalRevision);
-        // A new server ranking must not promote retained tail cards into the
-        // initial prefix. Refresh expanded rows through the stable merge too.
-        if (whole && !completed.Featured && _rawSections.TryGetValue(completed.Id, out var current)
-            && HomeRowWindow.IsExpanded(current))
-            completed = HomeRowWindow.Complete(shown ?? current, completed, current, ++_rowCompletionOrder);
-        else
-            PreserveExpandedState(completed);
+        // Refresh membership, order and card data belong to the server. The
+        // stable prefix merge is only for CompleteSectionAsync's first expansion.
+        PreserveExpandedState(completed);
         ApplyRefreshedSection(completed);
         // Demand survives a same-owner generation change, even when the new
         // bounded read reconciles to exactly the same mounted cards.
@@ -670,10 +666,11 @@ public partial class HomeViewModel : ObservableObject,
     {
         if (incoming.Featured) return;
         _rawSections.TryGetValue(incoming.Id, out var cached);
-        if (HomeRowWindow.IsExpanded(cached) || incoming.Items.Count > HomeRowWindow.InitialItemLimit)
+        if (cached?.ShownCount is { } shown)
         {
-            incoming.ShownCount = Math.Min(cached?.ShownCount ?? HomeRowWindow.InitialItemLimit, incoming.Items.Count);
-            incoming.CompletedOrder = cached?.CompletedOrder > 0 ? cached.CompletedOrder : ++_rowCompletionOrder;
+            // Retain the priority budget and completion order, not stale cards.
+            incoming.ShownCount = Math.Min(shown, incoming.Items.Count);
+            incoming.CompletedOrder = cached.CompletedOrder;
         }
     }
 

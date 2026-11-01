@@ -7,8 +7,9 @@ public static class HomeRowWindow
 {
     public const int InitialItemLimit = 20;
 
-    public static bool IsExpanded(HomeSectionWithItems? row) => row != null
-        && (row.HasReadWhole || row.ShownCount.HasValue || (!row.HasMore && row.Items.Count > InitialItemLimit));
+    // Only completion establishes an initial/tail boundary. An uncapped
+    // initial read (including an old-server fallback) is not an expansion.
+    public static bool IsExpanded(HomeSectionWithItems? row) => row?.ShownCount.HasValue == true;
 
     public static void RemoveAt(HomeSectionWithItems row, int index)
     {

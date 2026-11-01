@@ -18,6 +18,24 @@ public class HomeRowWindowTests
         Assert.True(json.TryGetProperty("has_more", out var partial) && partial.GetBoolean());
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(3)]
+    [InlineData(35)]
+    public void UncappedInitialRowsAreNotExpandedRegardlessOfSize(int count)
+    {
+        var row = Row(Enumerable.Range(1, count).Select(i => $"card{i}").ToArray());
+        row.HasReadWhole = true;
+        var mounted = new HomeSectionWithItems();
+        HomeSectionReconciler.Apply(mounted, HomeSectionDedupe.Snapshot(row));
+
+        Assert.True(mounted.HasReadWhole);
+        Assert.False(mounted.CanComplete);
+        Assert.False(HomeRowWindow.IsExpanded(mounted));
+        Assert.Null(mounted.ShownCount);
+        Assert.Equal(0, mounted.CompletedOrder);
+    }
+
     [Fact]
     public void EveryRowsInitialCardsWinBeforeEarlierRowsExpansionCards()
     {
@@ -126,6 +144,7 @@ public class HomeRowWindowTests
     public void WholeReadStateSurvivesSnapshotProjectionAndReconciliationEvenWhenAllCardsAreHidden()
     {
         var row = Row("shared"); row.HasMore = true; row.HasReadWhole = true;
+        row.ShownCount = 1; row.CompletedOrder = 7;
         Assert.True(HomeRowWindow.IsExpanded(row));
         var anchor = Row("shared"); anchor.Id = "anchor";
         var projected = HomeSectionDedupe.Project([new() { Id = "anchor" }, new() { Id = "row" }],
@@ -136,6 +155,8 @@ public class HomeRowWindowTests
         Assert.True(change.HasFlag(HomeSectionChange.Metadata));
         Assert.Empty(mounted.Items);
         Assert.True(mounted.HasMore); Assert.True(mounted.HasReadWhole); Assert.False(mounted.CanComplete);
+        Assert.True(HomeRowWindow.IsExpanded(mounted));
+        Assert.Equal(0, mounted.ShownCount); Assert.Equal(7, mounted.CompletedOrder);
         var json = JsonSerializer.SerializeToElement(mounted, Wire);
         Assert.True(json.GetProperty("has_more").GetBoolean());
         Assert.False(json.TryGetProperty("has_read_whole", out _));

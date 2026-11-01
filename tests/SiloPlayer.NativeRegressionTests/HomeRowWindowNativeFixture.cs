@@ -14,6 +14,9 @@ internal static class HomeRowWindowNativeFixture
     internal static async Task RunAsync(StackPanel parent)
     {
         await ScrollAndRefreshAsync(parent);
+        await AuthoritativeRefreshAsync(legacy: true, count: 3);
+        await AuthoritativeRefreshAsync(legacy: true, count: 35);
+        await AuthoritativeRefreshAsync(legacy: false, count: 35);
         await WideInitialLayoutAsync(parent);
         foreach (var interruption in new[] { "refresh", "error", "null", "persistent-error" })
             await DemandRecoveryAsync(parent, interruption);
@@ -64,6 +67,53 @@ internal static class HomeRowWindowNativeFixture
             Program.Log("PASS: actual SectionRow ViewChanged recovered cards21-35 once; expanded refresh retained first card.");
         }
         finally { if (row != null) parent.Children.Remove(row); Retire(vm); }
+    }
+
+    private static async Task AuthoritativeRefreshAsync(bool legacy, int count)
+    {
+        using var wire = new Wire { UnsupportedCapabilities = legacy, CardCount = count, RowItemLimit = count };
+        using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://home-window.invalid");
+        using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("alpha");
+        var vm = new HomeViewModel(new HomeApi(client), auth);
+        try
+        {
+            await vm.LoadCommand.ExecuteAsync(null);
+            await Until(() => vm.Sections.FirstOrDefault()?.LoadCompleted == true);
+            if (!legacy) await vm.CompleteSectionAsync("row");
+            var row = vm.Sections[0];
+            Require(row.Items.Count == count && row.HasReadWhole && !row.CanComplete, "Fixture must start with a whole row.");
+            Require(HomeRowWindow.IsExpanded(row) == !legacy && row.ShownCount == (legacy ? (int?)null : 20),
+                "Only a bounded-to-whole completion may establish an expansion boundary.");
+            var completionOrder = row.CompletedOrder;
+            var oldFirst = row.Items[0];
+            var unchanged = row.Items[2];
+            // Stay at item_limit: the new head must replace the dropped card,
+            // rather than being appended and discarded by a completion merge.
+            wire.CardsOverride = new[] { count + 1, 1 }.Concat(Enumerable.Range(3, count - 2)).ToArray();
+            wire.Title = "Authoritative refresh";
+            vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
+            await Until(() => vm.Sections[0].Title == wire.Title);
+            row = vm.Sections[0];
+            Require(row.Items.Select(item => item.ContentId).SequenceEqual(wire.CardsOverride.Select(i => $"alpha-{i}")),
+                "Whole refresh must adopt server membership and order, including removal and a new first card.");
+            var updated = row.Items[1];
+            Require(updated.ContentId == oldFirst.ContentId && updated.PositionSeconds == 123 && updated.Title == "Updated card1"
+                && updated.UserState?.IsFavorite == true && updated.ProgressUpdatedAt == "2026-11-01T15:50:00Z"
+                && !ReferenceEquals(updated, oldFirst), "Retained cards must receive fresh server progress and metadata.");
+            Require(ReferenceEquals(unchanged, row.Items[2]), "Unchanged mounted cards should retain their identity.");
+            Require(row.ShownCount == (legacy ? (int?)null : 20) && row.CompletedOrder == completionOrder && wire.Capped == (legacy ? 0 : 1),
+                "Refresh must preserve only the completed row's priority boundary/order, without expanding old-server rows.");
+
+            wire.CardsOverride = new[] { 1 }; wire.Title = "Shrunk refresh";
+            vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
+            await Until(() => vm.Sections[0].Title == wire.Title);
+            row = vm.Sections[0];
+            Require(row.Items.Count == 1 && row.Items[0].ContentId == "alpha-1"
+                && row.ShownCount == (legacy ? (int?)null : 1) && row.CompletedOrder == completionOrder,
+                "A shrinking authoritative refresh must clamp the initial boundary and retain completion order.");
+        }
+        finally { Retire(vm); }
     }
 
     private static async Task WideInitialLayoutAsync(StackPanel parent)
@@ -179,18 +229,18 @@ internal static class HomeRowWindowNativeFixture
             await Until(() => vm.Sections[0].Title == "Full");
             Require(!vm.Sections[0].HasMore && vm.Sections[0].Items.Count == 35 && vm.Sections[0].ShownCount == 20
                 && vm.Sections[0].CompletedOrder == order && wire.Whole == 3,
-                "A later whole refresh must recover new cards without promoting earlier tail cards to initial priority.");
+                "A later whole refresh must recover new cards while preserving the initial-card budget and completion order.");
             Require(vm.Sections[0].Items.Select(item => item.ContentId).SequenceEqual(
-                Enumerable.Range(1, 25).Concat(Enumerable.Range(26, 10).Reverse()).Select(i => $"alpha-{i}")),
-                "A reversed whole refresh must retain the initial IDs and tail order, then append unseen cards.");
+                Enumerable.Range(1, 35).Reverse().Select(i => $"alpha-{i}")),
+                "A whole refresh must adopt the server's new ranking rather than merge cached cards.");
             var later = new HomeSectionWithItems { Id = "later", SectionType = "continue_watching",
                 Items = new() { new() { ContentId = "alpha-1" }, new() { ContentId = "alpha-25" } } };
             var projected = HomeSectionDedupe.Project([new() { Id = "row" }, new() { Id = "later" }],
                 new Dictionary<string, HomeSectionWithItems> { ["row"] = vm.Sections[0], ["later"] = later },
                 new HashSet<string> { "continue_watching" });
-            Require(projected["later"].Items.Select(item => item.ContentId).SequenceEqual(new[] { "alpha-25" })
-                && projected["row"].Items.Take(20).Select(item => item.ContentId).SequenceEqual(Enumerable.Range(1, 20).Select(i => $"alpha-{i}")),
-                "Original initial cards must retain duplicate priority while retained tail cards yield to another row's initial cards.");
+            Require(projected["later"].Items.Select(item => item.ContentId).SequenceEqual(new[] { "alpha-1" })
+                && projected["row"].Items.Take(20).Select(item => item.ContentId).SequenceEqual(Enumerable.Range(16, 20).Reverse().Select(i => $"alpha-{i}")),
+                "The refreshed initial-card budget must retain duplicate priority while the refreshed tail yields to another row's initial cards.");
         }
         finally { wire.Release.TrySetResult(); if (row != null) parent.Children.Remove(row); Retire(vm); }
     }
@@ -283,7 +333,9 @@ internal static class HomeRowWindowNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         public int Capped, Whole; public bool HoldWhole, FailWhole, HoldRefresh, DuplicateFirst;
-        public bool HoldFirstWhole, FailFirstWhole, NullFirstWhole, PartialWhole, ReverseWhole;
+        public bool HoldFirstWhole, FailFirstWhole, NullFirstWhole, PartialWhole, ReverseWhole, UnsupportedCapabilities;
+        public int CardCount = 35, RowItemLimit = 50;
+        public int[]? CardsOverride;
         public string Title = "Progress";
         public TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -293,7 +345,9 @@ internal static class HomeRowWindowNativeFixture
         {
             var path = request.RequestUri!.AbsolutePath;
             if (request.Method != HttpMethod.Get) return new(HttpStatusCode.NoContent);
-            if (path.EndsWith("/capabilities")) return Json("""{"row_item_limit_max":100,"section_item_limit_max":100}""");
+            if (path.EndsWith("/capabilities")) return UnsupportedCapabilities
+                ? new(HttpStatusCode.NotFound) { Content = new StringContent("{}") }
+                : Json("""{"row_item_limit_max":100,"section_item_limit_max":100}""");
             if (path.EndsWith("/layout")) return Json(DuplicateFirst
                 ? """{"sections":[{"id":"anchor","title":"First","section_type":"plain","item_limit":20},{"id":"row","title":"More","section_type":"hidden_gems","item_limit":50}]}"""
                 : """{"sections":[{"id":"row","title":"Progress","section_type":"continue_watching","item_limit":50}]}""");
@@ -315,10 +369,14 @@ internal static class HomeRowWindowNativeFixture
                 if (HoldFirstWhole && attempt == 1) { Started.TrySetResult(); await Release.Task.WaitAsync(ct); }
                 else if (HoldWhole) { Started.TrySetResult(); await Release.Task; }
             }
-            var cards = Enumerable.Range(1, capped ? 20 : PartialWhole ? 25 : 35);
+            IEnumerable<int> cards = CardsOverride ?? Enumerable.Range(1, capped ? Math.Min(20, CardCount) : PartialWhole ? 25 : CardCount);
             if (!capped && ReverseWhole) cards = cards.Reverse();
-            return Json(JsonSerializer.Serialize(new { id = "row", title = Title, section_type = DuplicateFirst ? "hidden_gems" : "continue_watching", item_limit = capped ? 20 : 50,
-                total_count = 35, has_more = capped || PartialWhole, items = cards.Select(i => new { content_id = $"{profile}-{i}", title = $"Card{i}", type = "movie" }) }));
+            return Json(JsonSerializer.Serialize(new { id = "row", title = Title, section_type = DuplicateFirst ? "hidden_gems" : "continue_watching", item_limit = capped ? 20 : RowItemLimit,
+                total_count = CardCount, has_more = capped || PartialWhole, items = cards.Select(i => new { content_id = $"{profile}-{i}",
+                    title = CardsOverride != null && i == 1 ? "Updated card1" : $"Card{i}", type = "movie",
+                    position_seconds = CardsOverride != null && i == 1 ? 123 : 0,
+                    progress_updated_at = CardsOverride != null && i == 1 ? "2026-11-01T15:50:00Z" : null,
+                    user_state = new { is_favorite = CardsOverride != null && i == 1 } }) }));
         }
         private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
     }
