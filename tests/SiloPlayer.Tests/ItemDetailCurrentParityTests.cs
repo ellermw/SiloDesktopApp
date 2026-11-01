@@ -650,6 +650,26 @@ public sealed class ItemDetailCurrentParityTests
     }
 
     [Fact]
+    public void PlaybackSelectionsAreScopedToTheResolvedContentAtThePlayerBoundary()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var start = page.IndexOf("private void NavigateToPlayer(", StringComparison.Ordinal);
+        var end = page.IndexOf("private void SetNextEpisodeHintIfApplicable(", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var playback = page[start..end];
+
+        // E1's loaded /watch must own its file and tracks even after a mounted
+        // series/season resolves E2. Preserve catalog-only selections for leaves.
+        Assert.Contains("var selectionsMatchContent = string.Equals(", playback);
+        Assert.Contains("_watchDetail?.ContentId ?? ViewModel.Item?.ContentId, contentId, StringComparison.Ordinal)", playback);
+        Assert.Contains("fileId: selectionsMatchContent ? fileId : null", playback);
+        Assert.Contains("audioTrackIndex: selectionsMatchContent ? _selectedAudioTrackIndex : null", playback);
+        Assert.Contains("subtitleSelection: selectionsMatchContent ? _selectedSubtitleIndex : null", playback);
+        Assert.Contains("subtitleTrackSignature: selectionsMatchContent ? _selectedSubtitleSignature : null", playback);
+        Assert.Contains("sourceVersionPinned: selectionsMatchContent && IsSelectedVersionPinned", playback);
+    }
+
+    [Fact]
     public void DetailBackButtonFallsBackToHomeLikeCurrentPageBack()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");

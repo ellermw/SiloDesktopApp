@@ -46,6 +46,44 @@ public sealed class RealtimeDetailStateTests
     }
 
     [Theory]
+    [InlineData("movie", "content")]
+    [InlineData("episode", "content")]
+    [InlineData("episode", "series")]
+    [InlineData("episode", "loaded-sibling")]
+    [InlineData("movie", "catch-up")]
+    [InlineData("episode", "catch-up")]
+    public async Task PlayableLeavesDoNotReceivePartialRetainedStateRefreshes(string type, string scope)
+    {
+        using var fixture = new Scope(type) { IncludeTarget = true, FreshTarget = "new-target" };
+        var vm = fixture.Vm;
+        var mounted = vm.Item!;
+        mounted.SeriesId = type == "episode" ? "series" : null;
+        mounted.PlayContentId = mounted.ContentId;
+        var userData = mounted.UserData!;
+        userData.PositionSeconds = 31;
+        var notifications = new List<string?>();
+        vm.PropertyChanged += (_, args) => notifications.Add(args.PropertyName);
+        var message = scope switch
+        {
+            "content" => fixture.Message(mounted.ContentId),
+            "series" => fixture.Message("series"),
+            "loaded-sibling" => fixture.Message("sibling"),
+            _ => fixture.Message() with { CatchUp = true }
+        };
+
+        await vm.RefreshMediaStateAsync(message with { RefreshDetails = false });
+        await vm.RefreshMediaStateAsync(message);
+
+        Assert.Equal(0, fixture.DetailReads);
+        Assert.Equal(0, fixture.EpisodeReads);
+        Assert.Same(mounted, vm.Item);
+        Assert.Same(userData, mounted.UserData);
+        Assert.Equal(31, mounted.UserData!.PositionSeconds);
+        Assert.Equal(mounted.ContentId, mounted.PlayContentId);
+        Assert.Empty(notifications);
+    }
+
+    [Theory]
     [InlineData(true, "new-resume-target", "new-resume-target")]
     [InlineData(true, null, null)]
     [InlineData(false, null, "old-target")]

@@ -132,13 +132,16 @@ public partial class ItemDetailViewModel : ObservableObject,
         new(message.Context ?? _catalogApi.CaptureContext(), new HashSet<string>([message.ContentId], StringComparer.Ordinal),
             string.IsNullOrEmpty(message.SeriesId) ? new HashSet<string>() : new HashSet<string>([message.SeriesId], StringComparer.Ordinal));
 
+    // Only containers have a complete retained-state refresh. Playable leaves
+    // need a remount to refresh /watch and their page-owned resume controls too.
     private bool IsRelatedState(MediaStateInvalidated message, MediaItemDetail item) =>
-        message.CatchUp || message.ContentIds.Contains(item.ContentId)
-        || (!string.IsNullOrEmpty(item.SeriesId) && message.ContentIds.Contains(item.SeriesId))
-        || ((item.Type is "series" or "season") && (message.SeriesIds.Contains(item.ContentId)
-            || (!string.IsNullOrEmpty(item.SeriesId) && message.SeriesIds.Contains(item.SeriesId))))
-        || Seasons.Any(s => message.ContentIds.Contains(s.ContentId))
-        || Episodes.Any(e => message.ContentIds.Contains(e.ContentId));
+        (item.Type is "series" or "season") && (
+            message.CatchUp || message.ContentIds.Contains(item.ContentId)
+            || (!string.IsNullOrEmpty(item.SeriesId) && message.ContentIds.Contains(item.SeriesId))
+            || message.SeriesIds.Contains(item.ContentId)
+            || (!string.IsNullOrEmpty(item.SeriesId) && message.SeriesIds.Contains(item.SeriesId))
+            || Seasons.Any(s => message.ContentIds.Contains(s.ContentId))
+            || Episodes.Any(e => message.ContentIds.Contains(e.ContentId)));
 
     /// <summary>Refresh retained state without replacing the detail or changing playback/room intent.</summary>
     public Task RefreshMediaStateAsync(MediaStateInvalidated message)

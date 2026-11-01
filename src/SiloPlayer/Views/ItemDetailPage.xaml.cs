@@ -4889,18 +4889,22 @@ public sealed partial class ItemDetailPage : Page
         // when this is a series episode with a known successor.
         SetNextEpisodeHintIfApplicable(playerService, contentId);
 
-        // Phase 2a + 2b: pass pre-play audio + subtitle selections through.
+        // A mounted container can advance to another episode while its selectors
+        // still describe the previous /watch response. Catalog-only selectors
+        // belong to the displayed leaf, never to a container's new play target.
+        var selectionsMatchContent = string.Equals(
+            _watchDetail?.ContentId ?? ViewModel.Item?.ContentId, contentId, StringComparison.Ordinal);
         _ = playerService.PlayAsync(
             contentId,
             fromStart: fromStart,
-            fileId: fileId,
-            audioTrackIndex: _selectedAudioTrackIndex,
-            subtitleSelection: _selectedSubtitleIndex,
+            fileId: selectionsMatchContent ? fileId : null,
+            audioTrackIndex: selectionsMatchContent ? _selectedAudioTrackIndex : null,
+            subtitleSelection: selectionsMatchContent ? _selectedSubtitleIndex : null,
             prefetchedWatchDetail: string.Equals(_watchDetail?.ContentId, contentId, StringComparison.Ordinal)
                 ? _watchDetail
                 : null,
-            subtitleTrackSignature: _selectedSubtitleSignature, libraryId: ViewModel.LibraryId,
-            sourceVersionPinned: IsSelectedVersionPinned);
+            subtitleTrackSignature: selectionsMatchContent ? _selectedSubtitleSignature : null, libraryId: ViewModel.LibraryId,
+            sourceVersionPinned: selectionsMatchContent && IsSelectedVersionPinned);
     }
 
     /// <summary>

@@ -159,8 +159,8 @@ internal static class RealtimeSeriesStateNativeFixture
                 {
                     await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(),
                         new HashSet<string>(), CatchUp: true));
-                    Check(vm.Item.UserData?.PositionSeconds == 900 && mountedWatch.UserData.PositionSeconds == 31,
-                        "The catch-up fixture must have a newer catalog position than the mounted /watch snapshot.");
+                    Check(vm.Item.UserData?.PositionSeconds == 31 && mountedWatch.UserData.PositionSeconds == 31,
+                        "A leaf catch-up must not partially update catalog state while its mounted /watch and resume controls remain unchanged.");
                     Check(!page.CanPreserveOnReconnect,
                         "A playable leaf must remount to refresh its stale /watch position and resume controls.");
                     Set(page, "_watchDetail", null!);
