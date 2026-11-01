@@ -39,6 +39,52 @@ public sealed class AppUpdateRateLimitTests
         finally { stop.Cancel(); await loop.WaitAsync(TimeSpan.FromSeconds(5)); }
     }
 
+    [Theory]
+    [InlineData("1.2.518", false)]
+    [InlineData("v1.2.517.9", false)]
+    [InlineData("v1.2.518-rc.1", false)]
+    [InlineData("v1.2.518", true)]
+    public async Task UnsupportedLatestIdentityUsesTheNormalIntervalButInvalidEligibleAssetsStillRetry(string tag, bool invalidDigest)
+    {
+        using var clock = new Clock();
+        var requests = 0;
+        using var http = new HttpClient(new ResponseWire(request =>
+        {
+            requests++;
+            if (requests == 2)
+            {
+                Assert.False(invalidDigest);
+                Assert.Equal("\"ineligible\"", request.Headers.IfNoneMatch.Single().ToString());
+                return new HttpResponseMessage(HttpStatusCode.NotModified);
+            }
+            var response = new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(AppUpdateTests.Release(tag: tag,
+                    digest: invalidDigest ? "sha256:invalid" : "sha256:" + AppUpdateTests.Digest))
+            };
+            response.Headers.ETag = new EntityTagHeaderValue("\"ineligible\"");
+            return response;
+        }));
+        var service = new AppUpdateService(http, Path.GetTempPath(), new Version(1, 2, 517), timeProvider: clock);
+        using var stop = new CancellationTokenSource(); var loop = service.RunAutomaticChecksAsync(stop.Token);
+        try
+        {
+            (await clock.NextAsync()).Fire();
+            var next = await clock.NextAsync();
+            Assert.Equal(TimeSpan.FromMinutes(invalidDigest ? 5 : 15), next.Due);
+            Assert.Null(service.State.Release);
+            Assert.Equal(invalidDigest, service.State.Error is not null);
+            if (!invalidDigest)
+            {
+                next.Fire();
+                Assert.Equal(TimeSpan.FromMinutes(15), (await clock.NextAsync()).Due);
+                Assert.Equal(2, requests);
+                Assert.Null(service.State.Release); Assert.Null(service.State.Error);
+            }
+        }
+        finally { stop.Cancel(); await loop.WaitAsync(TimeSpan.FromSeconds(5)); }
+    }
+
     [Fact]
     public async Task ConditionalCacheKeepsNoUpdateAndRejectsInvalidReplacementValidators()
     {

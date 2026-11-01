@@ -120,6 +120,7 @@ public sealed class FullInstallerFallbackTests
             using var process = Process.Start(start)!; var output = process.StandardOutput.ReadToEndAsync(); var errors = process.StandardError.ReadToEndAsync();
             await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30)); var text = await output;
             Assert.True(process.ExitCode == (supported ? 0 : 1), text + await errors);
+            Assert.Equal(supported, UpdateInstallation.SupportsVersionedFullInstaller(install));
             using var json = JsonDocument.Parse(text); var result = json.RootElement;
             Assert.Equal(supported ? "verified-gate" : "deferred", result.GetProperty("state").GetString());
             if (!supported) Assert.Contains("run the full installer manually", result.GetProperty("message").GetString()!);
@@ -128,6 +129,33 @@ public sealed class FullInstallerFallbackTests
             Assert.False(File.Exists(Path.Combine(cache, "last-result.json")));
         }
         finally { Directory.Delete(sandbox, true); }
+    }
+
+    [Fact]
+    public void MissingOrUnversionedRootLauncherCannotAuthorizeFullMigration()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "silo-full-client-gate-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            Assert.False(UpdateInstallation.SupportsVersionedFullInstaller(root));
+            File.WriteAllText(Path.Combine(root, "SiloPlayer.exe"), "not a versioned PE");
+            Assert.False(UpdateInstallation.SupportsVersionedFullInstaller(root));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void FullScheduleRechecksRootLauncherBeforeAnyHelperHandoff()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "WindowsAppUpdateInstaller.cs"));
+        var schedule = source[source.IndexOf("public async Task<bool> ScheduleAsync", StringComparison.Ordinal)..];
+        var gate = schedule.IndexOf("if (!UpdateInstallation.SupportsVersionedFullInstaller(installationRoot))", StringComparison.Ordinal);
+        Assert.True(gate >= 0);
+        Assert.Contains("throw new InvalidOperationException(UpdateInstallation.ManualFullInstallerMessage);", schedule[gate..]);
+        Assert.True(gate < schedule.IndexOf("File.Copy(helper, script", StringComparison.Ordinal));
+        Assert.True(gate < schedule.IndexOf("Process.Start(start)", StringComparison.Ordinal));
+        Assert.Contains("return false;", schedule);
     }
 
     [Fact]

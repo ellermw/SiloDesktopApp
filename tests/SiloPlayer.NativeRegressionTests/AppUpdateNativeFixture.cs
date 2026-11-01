@@ -565,9 +565,15 @@ internal static class AppUpdateNativeFixture
     private sealed class SafeInstaller : IAppUpdateInstaller
     {
         public bool IsSupported => true;
+        public string? LauncherRoot;
+        public bool CanScheduleFullInstaller => LauncherRoot is null || UpdateInstallation.SupportsVersionedFullInstaller(LauncherRoot);
         public int Calls; public bool Restart; public int ConfirmedCloses;
         public Task<bool> ScheduleAsync(AppRelease release, string path, bool restart, CancellationToken ct)
-        { if (!File.Exists(path)) throw new InvalidOperationException("Missing synthetic staged package."); Calls++; Restart = restart; return Task.FromResult(true); }
+        {
+            if (!CanScheduleFullInstaller) return Task.FromResult(false);
+            if (!File.Exists(path)) throw new InvalidOperationException("Missing synthetic staged package.");
+            Calls++; Restart = restart; return Task.FromResult(true);
+        }
         public void ConfirmNormalClose() { if (Calls != 0) ConfirmedCloses++; }
     }
     private sealed class SafeStagedInstaller : IAppUpdateInstaller, IStagedAppUpdateInstaller
@@ -646,6 +652,35 @@ internal static class AppUpdateNativeFixture
         if (!Descendants<TextBlock>(dialog).Any(t => t.Visibility == Visibility.Visible && t.Text.Contains("full installer", StringComparison.OrdinalIgnoreCase)
             && t.Text.Contains("close", StringComparison.OrdinalIgnoreCase))) throw new InvalidOperationException("Full migration close/save explanation is missing.");
         await CaptureAsync((FrameworkElement)dialog.Content, "full-fallback-confirmation.png");
+
+        // This fixture assembly has the default 1.0.0.0 FileVersion. Read it as
+        // an old root launcher; never execute it or change a registered install.
+        var oldRoot = Path.Combine(Program.ResultDirectory, "old-launcher-installation");
+        Directory.CreateDirectory(oldRoot);
+        File.Copy(typeof(AppUpdateNativeFixture).Assembly.Location, Path.Combine(oldRoot, "SiloPlayer.exe"), overwrite: true);
+        installer.LauncherRoot = oldRoot;
+        if (installer.CanScheduleFullInstaller) throw new InvalidOperationException("Old-launcher fixture unexpectedly supports full migration.");
+        var refresh = typeof(MainWindow).GetMethod("RefreshUpdateDialog", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        refresh.Invoke(window, null);
+        if (dialog.IsPrimaryButtonEnabled || dialog.PrimaryButtonText != "Manual installer required"
+            || !Descendants<TextBlock>(dialog).Any(t => t.Visibility == Visibility.Visible && t.Text == UpdateInstallation.ManualFullInstallerMessage))
+            throw new InvalidOperationException("Old launcher still offers in-app installation instead of manual guidance.");
+        var link = Descendants<HyperlinkButton>(dialog).Single(b => b.Name == "AppUpdateFullRelease");
+        if (link.Visibility != Visibility.Visible || link.NavigateUri?.AbsoluteUri != "https://github.com/ellermw/SiloDesktopApp/releases/tag/" + updates.State.Release!.Tag)
+            throw new InvalidOperationException("Manual migration has no release-page link.");
+        if (await installer.ScheduleAsync(updates.State.Release!, updates.State.ReadyInstaller!, true, default))
+            throw new InvalidOperationException("Old-launcher schedule was accepted.");
+        typeof(MainWindow).GetField("_manualUpdateRequested", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, true);
+        var allowClose = await (Task<bool>)typeof(MainWindow).GetMethod("PrepareAppUpdateExitAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null)!;
+        if (allowClose || closed.IsCompleted || installer.Calls != 0 || installer.ConfirmedCloses != 0
+            || ((CancellationTokenSource)typeof(MainWindow).GetField("_appUpdateLifetime", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!).IsCancellationRequested)
+            throw new InvalidOperationException("Rejected old-launcher migration did not leave Silo open and running.");
+        installer.LauncherRoot = null;
+        refresh.Invoke(window, null);
+        if (!dialog.IsPrimaryButtonEnabled || dialog.PrimaryButtonText != "Install full update")
+            throw new InvalidOperationException("Compatible full-migration action did not recover.");
+        Program.Log("PASS: old root launcher rejects full scheduling, shows manual guidance with a release link and vetoes manual-update close without stopping Silo.");
+
         if (scenario == "full-fallback-manual") Click(primary);
         else
         {

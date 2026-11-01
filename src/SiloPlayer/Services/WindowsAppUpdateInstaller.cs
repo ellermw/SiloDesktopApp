@@ -34,6 +34,16 @@ public sealed partial class WindowsAppUpdateInstaller(string cacheDirectory) : I
         }
     }
 
+    public bool CanScheduleFullInstaller
+    {
+        get
+        {
+            var root = Environment.ProcessPath is { } executable ? UpdateInstallation.FindRegisteredRoot(executable) : null;
+            return root is not null && (SameDirectory(root, AppContext.BaseDirectory)
+                || UpdateInstallation.SupportsVersionedFullInstaller(root));
+        }
+    }
+
     public async Task<bool> ScheduleAsync(AppRelease release, string installerPath, bool restart, CancellationToken ct)
     {
         try
@@ -59,6 +69,10 @@ public sealed partial class WindowsAppUpdateInstaller(string cacheDirectory) : I
             var helper = Path.Combine(AppContext.BaseDirectory, "Updates", "UpdateOnExit.ps1");
             if (versioned)
             {
+                // Incremental updates never replace the root bootstrap. Reject an
+                // old or unrecognized launcher before starting a helper or closing Silo.
+                if (!UpdateInstallation.SupportsVersionedFullInstaller(installationRoot))
+                    throw new InvalidOperationException(UpdateInstallation.ManualFullInstallerMessage);
                 await Task.Run(() => UpdateInstallation.RequireProtectedMachineInstallation(installationRoot, AppContext.BaseDirectory), ct);
                 var sourceVersion = Path.GetFileName(Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory));
                 if (SideBySideInstallation.ReadState(installationRoot)?.ActiveVersion != sourceVersion

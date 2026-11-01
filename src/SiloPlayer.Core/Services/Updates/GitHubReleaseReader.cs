@@ -95,8 +95,9 @@ internal sealed partial class GitHubReleaseReader(HttpClient http, TimeProvider?
         var prerelease = root.GetProperty("prerelease").GetBoolean();
         if (root.GetProperty("draft").GetBoolean() || (prerelease && !allowPrerelease)) return null;
         var tag = root.GetProperty("tag_name").GetString() ?? "";
-        if (!TryReleaseIdentity(tag, prerelease, out var version, out var semantic))
-            throw new InvalidDataException("The release has an unsupported version.");
+        // Unsupported identities are ineligible releases, not failed checks.
+        // Eligible releases still require all asset and metadata validation below.
+        if (!TryReleaseIdentity(tag, prerelease, out var version, out var semantic)) return null;
         version = Normalize(version);
         // A major migration is a separately owner-approved operation, never an update-channel choice.
         if (installed.Major != 0 && version.Major != installed.Major) return null;

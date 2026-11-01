@@ -208,8 +208,27 @@ public sealed class UpdateChannelTests : IDisposable
         using var http = new HttpClient(wire); var service = Create(http, "1.2.518-beta.4");
         await service.CheckAsync();
         Assert.Null(service.State.Release);
-        Assert.NotNull(service.State.Error);
+        Assert.Null(service.State.Error); // An unsupported identity is ineligible, not a failed check.
         Assert.False(service.ShouldInstallOnExit);
+    }
+
+    [Theory]
+    [InlineData("1.2.518")]
+    [InlineData("v1.2.517.9")]
+    [InlineData("v1.2.518-rc.1")]
+    public async Task UnsupportedLatestIdentityDoesNotAbortBetaDiscoveryOrItsConditionalCache(string tag)
+    {
+        var stable = Release("1.2.518"); stable["tag_name"] = tag;
+        using var wire = new Wire { Stable = stable, Catalog = [Release("1.2.519-beta.12")], Conditional = true };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        for (var i = 0; i < 2; i++)
+        {
+            await service.CheckAsync();
+            Assert.Null(service.State.Error);
+            Assert.Equal("1.2.519-beta.12", service.State.Release?.DisplayVersion);
+        }
+        Assert.Contains(wire.Requests, r => r.Url.EndsWith("/latest") && r.ETag == "\"stable\"");
     }
 
     [Fact]

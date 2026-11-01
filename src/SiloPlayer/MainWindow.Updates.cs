@@ -218,6 +218,9 @@ public sealed partial class MainWindow
         }
     }
 
+    private bool RequiresManualFullInstaller(AppUpdateState state) => state.RequiresFullInstaller
+        && App.Services.GetService<IAppUpdateInstaller>()?.CanScheduleFullInstaller != true;
+
     private void RefreshUpdateDialog()
     {
         if (_appUpdateDialog is null || _appUpdates is null || _updateStatusText is null || _updateBodyPanel is null) return;
@@ -231,12 +234,18 @@ public sealed partial class MainWindow
         _updateStatusText.Foreground = state.Error is null ? UpdateGreen : (Brush)Application.Current.Resources["SecondaryTextBrush"];
         _updateProgress!.Visibility = state.IsDownloading ? Visibility.Visible : Visibility.Collapsed;
         _updateProgress.Value = state.PreparationProgress is {TotalFiles:>0} prepared ? 100d*prepared.CompletedFiles/prepared.TotalFiles : state.Release is { Size: > 0 } release ? 100d * state.DownloadedBytes / release.Size : 0;
-        _appUpdateDialog.IsPrimaryButtonEnabled = state.Release is not null && !_updateDialogBusy && !_appUpdates.IsChangingChannel;
-        _appUpdateDialog.PrimaryButtonText = _updateDialogBusy ? "Preparing update…" : state.IsDownloading ? "Update when ready"
+        var manualInstaller = RequiresManualFullInstaller(state);
+        _appUpdateDialog.IsPrimaryButtonEnabled = state.Release is not null && !_updateDialogBusy && !_appUpdates.IsChangingChannel && !manualInstaller;
+        _appUpdateDialog.PrimaryButtonText = manualInstaller ? "Manual installer required" : _updateDialogBusy ? "Preparing update…" : state.IsDownloading ? "Update when ready"
             : state.RequiresFullInstaller ? state.ReadyInstaller is not null ? "Install full update" : "Download full update" : "Update now";
         if (_updateChannelCombo is not null) _updateChannelCombo.IsEnabled = !_updateDialogBusy && !_appUpdates.IsChangingChannel;
         if (_updateBetaWarning is not null) _updateBetaWarning.Visibility = _appUpdates.Channel == AppUpdateChannel.Beta || _appUpdates.InstalledReleaseVersion?.IsPrerelease == true ? Visibility.Visible : Visibility.Collapsed;
-        if (_updateFullInstallerNote is not null) _updateFullInstallerNote.Visibility = state.RequiresFullInstaller ? Visibility.Visible : Visibility.Collapsed;
+        if (_updateFullInstallerNote is not null)
+        {
+            _updateFullInstallerNote.Visibility = state.RequiresFullInstaller ? Visibility.Visible : Visibility.Collapsed;
+            _updateFullInstallerNote.Text = manualInstaller ? UpdateInstallation.ManualFullInstallerMessage
+                : "This update needs the full installer. Silo must close first; playback will be saved. Choose Install full update to continue.";
+        }
         if (_updateKeepOpenNote is not null) _updateKeepOpenNote.Visibility = state.RequiresFullInstaller ? Visibility.Collapsed : Visibility.Visible;
         foreach (var child in _updateBodyPanel.Children)
         {
@@ -244,6 +253,7 @@ public sealed partial class MainWindow
             if (child is TextBlock { Name: "AppUpdatePublishedDate" } date) date.Text = state.Release is null ? "" : "Published " + Helpers.DateTimeDisplay.FormatDate(state.Release.PublishedAt);
             if (child is HyperlinkButton { Name: "AppUpdateFullRelease" } link)
             {
+                link.Content = manualInstaller ? "Download full installer on GitHub" : "Full release notes on GitHub";
                 link.Visibility = state.Release is null ? Visibility.Collapsed : Visibility.Visible;
                 link.NavigateUri = state.Release is null ? null : new Uri("https://github.com/ellermw/SiloDesktopApp/releases/tag/" + Uri.EscapeDataString(state.Release.Tag));
             }
@@ -268,6 +278,11 @@ public sealed partial class MainWindow
         try
         {
             await _appUpdates.DownloadAsync(ct: consent.Token).WaitAsync(consent.Token);
+            if (RequiresManualFullInstaller(_appUpdates.State))
+            {
+                App.Services.GetRequiredService<ToastService>().Error(UpdateInstallation.ManualFullInstallerMessage);
+                return;
+            }
             if (!await _appUpdates.ReverifyReadyAsync(consent.Token)) return;
             consent.Token.ThrowIfCancellationRequested();
             // Discovering a full migration is not consent to close. Show the
@@ -303,6 +318,7 @@ public sealed partial class MainWindow
             if (_updateSessionEnding || (!_manualUpdateRequested && !_appUpdates.ShouldInstallOnExit)) return allowClose;
             var installer = App.Services.GetService<IAppUpdateInstaller>();
             if (installer?.IsSupported != true || !await _appUpdates.ReverifyReadyAsync()) return allowClose;
+            if (_appUpdates.State.RequiresFullInstaller && !installer.CanScheduleFullInstaller) return allowClose;
             if(_appUpdates.State is {PreparedPackage:{ } package,Release:{ } release} && installer is IStagedAppUpdateInstaller staged)
             {
                 if(!staged.HasPreparedHandoff && !await staged.PrepareAsync(release,package,_manualUpdateRequested,_updateHwnd.ToInt64(),CancellationToken.None))
@@ -326,7 +342,9 @@ public sealed partial class MainWindow
             else
             {
                 _manualUpdateRequested=false;
-                App.Services.GetRequiredService<ToastService>().Error("The update was deferred because playback could not be saved or the update could not be verified. Silo is still open; try again when ready.");
+                App.Services.GetRequiredService<ToastService>().Error(RequiresManualFullInstaller(_appUpdates.State)
+                    ? UpdateInstallation.ManualFullInstallerMessage
+                    : "The update was deferred because playback could not be saved or the update could not be verified. Silo is still open; try again when ready.");
             }
         }
     }
