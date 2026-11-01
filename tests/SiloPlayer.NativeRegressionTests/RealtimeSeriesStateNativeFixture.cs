@@ -37,7 +37,7 @@ internal static class RealtimeSeriesStateNativeFixture
                 var vm = page.ViewModel;
                 using var navigation = new CancellationTokenSource();
                 vm.Item = new() { ContentId = type, Type = type, SeriesId = type == "season" ? "series" : null,
-                    Title = "Realtime fixture", EpisodeCount = 4, PlayContentId = type == "season" ? null : "old-target", UserData = new() { UnplayedCount = 4 }, UserState = new() };
+                    Title = "Realtime fixture", EpisodeCount = 4, SeasonCount = 2, PlayContentId = type == "season" ? null : "old-target", UserData = new() { UnplayedCount = 4 }, UserState = new() };
                 vm.IsSeries = type == "series"; vm.SelectedSeasonNumber = 1;
                 vm.Seasons.Add(new() { ContentId = "season", SeasonNumber = 1, Title = "Season 1", EpisodeCount = 4, UserData = new() { UnplayedCount = 4 } });
                 vm.Episodes.Add(new() { ContentId = "sibling", Title = "Untouched sibling", SeasonNumber = 1, EpisodeNumber = 1,
@@ -70,12 +70,22 @@ internal static class RealtimeSeriesStateNativeFixture
                     await UntilAsync(() => vm.Item.UserData?.WatchedCount == 2);
                     await Task.Delay(100); page.UpdateLayout();
                     Check(ReferenceEquals(mounted, vm.Item), "Realtime refresh replaced the mounted detail.");
+                    Check(vm.Item.EpisodeCount == 6, "Realtime refresh discarded the authoritative episode total.");
+                    if (type == "series")
+                    {
+                        Check(vm.Item.SeasonCount == 1 && ((TextBlock)page.FindName("SeasonCountText")).Text == "1 SEASON",
+                            "Mounted series season-count badge did not refresh.");
+                        Check(((TextBlock)page.FindName("EpisodeCountText")).Text == "6 EPISODES",
+                            "Mounted series episode-count badge did not refresh.");
+                    }
+                    else Check(((TextBlock)page.FindName("RuntimeText")).Text == "6 EPISODES",
+                        "Mounted season episode-count badge did not refresh.");
                     Check(vm.Item.UserData?.InProgressCount == 1 && !vm.IsWatched, "Authoritative aggregate state was not retained.");
                     Check(vm.Episodes[0].UserData?.Played == false && vm.Episodes[0].UserData?.PositionSeconds == 31,
                         "Unknown episode's scalar reached a sibling.");
                     Check(!Descendants<Grid>((Panel)page.FindName("EpisodesPanel")).Any(grid => AutomationProperties.GetName(grid) == "Watched" && grid.Visibility == Visibility.Visible),
                         "Unknown episode's scalar painted a sibling watched badge.");
-                    if (type == "series") Check(Descendants<TextBlock>((Panel)page.FindName("SeasonsPanel")).Any(text => text.Text == "2 of 4 episodes"),
+                    if (type == "series") Check(Descendants<TextBlock>((Panel)page.FindName("SeasonsPanel")).Any(text => text.Text == "2 of 6 episodes"),
                         "Actual native season card did not repaint authoritative watched count.");
                     if (type == "series") Check(vm.Item.PlayContentId == "new-target" && ((TextBlock)page.FindName("PlayButtonText")).Text == "Resume",
                         "Actual native Resume action did not refresh its authoritative target/label.");
@@ -208,10 +218,10 @@ internal static class RealtimeSeriesStateNativeFixture
                     { Content = new StringContent("{\"error\":{\"code\":\"service_unavailable\",\"message\":\"Synthetic companion failure\"}}", Encoding.UTF8, "application/json") });
             object body = path.StartsWith("/api/v2/catalog/items/") ?
                 new { content_id = path.Split('/').Last(), type = path.Split('/').Last(),
-                    play_content_id = Target, play_season_number = 1,
-                    user_data = new { watched_count = Count, unplayed_count = 2, in_progress_count = 1, played = false, position_seconds = 900 }, user_state = new { } } :
-                path.EndsWith("/seasons") ? new { items = new[] { new { content_id = "season", season_number = 1, episode_count = 4,
-                    user_data = new { watched_count = 2, unplayed_count = 2, in_progress_count = 1, played = false } } } } :
+                    play_content_id = Target, play_season_number = 1, episode_count = 6, season_count = 1,
+                    user_data = new { watched_count = Count, unplayed_count = 6 - Count, in_progress_count = 1, played = false, position_seconds = 900 }, user_state = new { } } :
+                path.EndsWith("/seasons") ? new { items = new[] { new { content_id = "season", season_number = 1, episode_count = 6,
+                    user_data = new { watched_count = 2, unplayed_count = 4, in_progress_count = 1, played = false } } } } :
                 path.Contains("progress/capabilities") ? new { clear_resume_position = false } : new { items = Array.Empty<object>() };
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
             if (HeldCompanion is { } companion && path.EndsWith("/" + companion) && ReleaseCompanion is { } release)

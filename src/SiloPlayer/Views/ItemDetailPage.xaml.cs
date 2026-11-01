@@ -850,7 +850,7 @@ public sealed partial class ItemDetailPage : Page
         else if (args.PropertyName == nameof(ViewModel.IsWatched))
             DispatcherQueue.TryEnqueue(() => { if (Current()) UpdateWatchedButton(); });
         else if (args.PropertyName == nameof(ViewModel.Seasons))
-            DispatcherQueue.TryEnqueue(() => { if (Current()) BuildSeasonCards(); });
+            DispatcherQueue.TryEnqueue(() => { if (Current()) { BuildSeasonCards(); RefreshContainerCountBadges(); } });
         else if (args.PropertyName is nameof(ViewModel.Item) or nameof(ViewModel.Episodes))
             DispatcherQueue.TryEnqueue(() =>
             {
@@ -859,12 +859,35 @@ public sealed partial class ItemDetailPage : Page
                 ApplySeasonAction();
                 if (args.PropertyName == nameof(ViewModel.Item))
                 {
+                    RefreshContainerCountBadges();
                     ApplyAuthoritativeSeriesAction();
                     BuildMoreFlyout();
                     if (ViewModel.Item is { Type: "episode" })
                         BuildSiblingEpisodeCards();
                 }
             });
+    }
+
+    private void RefreshContainerCountBadges()
+    {
+        if (ViewModel.Item is not { } item) return;
+        if (item.Type == "series")
+        {
+            var seasonCount = item.SeasonCount ?? ViewModel.Seasons.Count;
+            var episodeCount = item.EpisodeCount ?? ViewModel.Seasons.Sum(season => Math.Max(0, season.EpisodeCount));
+            SeasonCountText.Text = $"{seasonCount} {(seasonCount == 1 ? "SEASON" : "SEASONS")}";
+            SeasonCountBadge.Visibility = seasonCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+            EpisodeCountText.Text = $"{episodeCount} {(episodeCount == 1 ? "EPISODE" : "EPISODES")}";
+            EpisodeCountBadge.Visibility = episodeCount > 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        else if (item.Type == "season")
+        {
+            var count = item.EpisodeCount ?? ViewModel.Episodes.Count;
+            RuntimeText.Text = $"{count} {(count == 1 ? "EPISODE" : "EPISODES")}";
+            RuntimeBadge.Visibility = Visibility.Visible;
+        }
+        if (ViewModel.Episodes.Count > 0 && (item.Type == "season" || item.Type == "series" && ViewModel.Seasons.Count == 1))
+            EpisodesTotalText.Text = $"{item.EpisodeCount ?? ViewModel.Episodes.Count} total";
     }
 
     private void OnPageLoaded(object sender, RoutedEventArgs e)

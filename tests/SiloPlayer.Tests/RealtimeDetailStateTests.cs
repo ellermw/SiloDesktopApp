@@ -225,6 +225,90 @@ public sealed class RealtimeDetailStateTests
         Assert.Equal(2, scope.Vm.Seasons[0].UserData!.WatchedCount);
     }
 
+    [Theory]
+    [InlineData("series", false)]
+    [InlineData("series", true)]
+    [InlineData("season", false)]
+    [InlineData("season", true)]
+    public async Task AuthoritativeTotalsStayConsistentWithRemoteCountsAndLaterLocalWatchedFeedback(string type, bool catchUp)
+    {
+        using var scope = new Scope(type);
+        var item = scope.Vm.Item!;
+        var total = type == "series" ? 20 : 12;
+        item.EpisodeCount = total - 2;
+        item.SeasonCount = 2;
+        scope.Vm.Seasons[0].EpisodeCount = 10;
+        var season = scope.Vm.Seasons[0];
+        scope.OverrideResponse = request =>
+        {
+            var body = request.RequestUri!.AbsolutePath.EndsWith("/seasons")
+                ? """{"items":[{"content_id":"season","season_number":1,"episode_count":12,"user_data":{"watched_count":4,"unplayed_count":8}}]}"""
+                : request.RequestUri.AbsolutePath.EndsWith("/episodes")
+                    ? """{"items":[{"content_id":"sibling","season_number":1,"user_data":{"played":false}}]}"""
+                    : JsonSerializer.Serialize(new { content_id = item.ContentId, type, episode_count = total, season_count = 3,
+                        user_data = new { watched_count = 4, unplayed_count = total - 4 } });
+            return new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+        };
+
+        await scope.Vm.RefreshMediaStateAsync(scope.Message() with { CatchUp = catchUp });
+
+        Assert.Same(item, scope.Vm.Item);
+        Assert.Equal(total, item.EpisodeCount);
+        Assert.Equal(3, item.SeasonCount);
+        Assert.Equal(total - 4, item.UserData!.UnplayedCount);
+        if (type == "series")
+        {
+            Assert.Same(season, Assert.Single(scope.Vm.Seasons));
+            Assert.Equal(12, season.EpisodeCount);
+            Assert.Equal(8, season.UserData!.UnplayedCount);
+        }
+        Assert.False(scope.Vm.Episodes[0].UserData!.Played);
+
+        scope.Vm.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, "sibling", "series"));
+
+        Assert.Equal(5, item.UserData.WatchedCount);
+        Assert.Equal(total - 5, item.UserData.UnplayedCount);
+        if (type == "series")
+        {
+            Assert.Equal(5, season.UserData!.WatchedCount);
+            Assert.Equal(7, season.UserData.UnplayedCount);
+        }
+        scope.Vm.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, item.ContentId));
+        Assert.Equal(total, item.UserData.WatchedCount);
+        Assert.Equal(0, item.UserData.UnplayedCount);
+    }
+
+    [Fact]
+    public async Task SeasonsCompanionReconcilesMembershipAndCountsEvenAfterTheLoadedSetBecomesEmpty()
+    {
+        using var scope = new Scope("series");
+        var retained = scope.Vm.Seasons[0];
+        scope.Vm.Seasons.Add(new() { ContentId = "removed", SeasonNumber = 2, EpisodeCount = 8 });
+        var body = """
+            {"items":[{"content_id":"added","season_number":0,"episode_count":2},
+                      {"content_id":"season","season_number":1,"episode_count":12,"user_data":{"watched_count":4,"unplayed_count":8}}]}
+            """;
+        scope.OverrideResponse = request => request.RequestUri!.AbsolutePath.EndsWith("/seasons")
+            ? new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") } : null;
+
+        await scope.Vm.RefreshMediaStateAsync(scope.Message());
+
+        Assert.Equal(new[] { "added", "season" }, scope.Vm.Seasons.Select(s => s.ContentId));
+        Assert.Equal(2, scope.Vm.Seasons[0].EpisodeCount);
+        Assert.Same(retained, scope.Vm.Seasons[1]);
+        Assert.Equal(12, retained.EpisodeCount);
+        Assert.Equal(4, retained.UserData!.WatchedCount);
+
+        body = """{"items":[]}""";
+        await scope.Vm.RefreshMediaStateAsync(scope.Message());
+        Assert.Empty(scope.Vm.Seasons);
+
+        body = """{"items":[{"content_id":"returned","season_number":3,"episode_count":5}]}""";
+        await scope.Vm.RefreshMediaStateAsync(scope.Message());
+        Assert.Equal("returned", Assert.Single(scope.Vm.Seasons).ContentId);
+        Assert.Equal(5, scope.Vm.Seasons[0].EpisodeCount);
+    }
+
     [Fact]
     public async Task RefreshPreservesTheLibraryScopeForBothDetailAndSeasonReads()
     {
@@ -417,6 +501,7 @@ public sealed class RealtimeDetailStateTests
         Assert.Equal(type == "series" ? 3 : 2, reads.Count);
         Assert.True(scope.Vm.IsWatched);
         Assert.Same(detailData, item.UserData);
+        Assert.Equal(4, item.EpisodeCount);
         Assert.Equal(75, item.UserData!.PositionSeconds);
         Assert.Same(seasonData, scope.Vm.Seasons[0].UserData);
         Assert.Equal(4, seasonData!.UnplayedCount);

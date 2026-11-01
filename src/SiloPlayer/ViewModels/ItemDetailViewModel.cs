@@ -256,6 +256,10 @@ public partial class ItemDetailViewModel : ObservableObject,
                 // discarding this request each time another device advances.
                 var refreshed = await _catalogApi.GetItemDetailAsync(item.ContentId, libraryId, ct);
                 if (!Current()) continue;
+                // Keep aggregate feedback and later local watched deltas on the
+                // same server total. Missing legacy counts leave known totals intact.
+                if (refreshed.EpisodeCount.HasValue) item.EpisodeCount = refreshed.EpisodeCount;
+                if (refreshed.SeasonCount.HasValue) item.SeasonCount = refreshed.SeasonCount;
                 if (refreshed.UserData is { } userData)
                 {
                     item.UserData = userData;
@@ -284,15 +288,23 @@ public partial class ItemDetailViewModel : ObservableObject,
                 // fails. Commit and notify before starting those independent reads.
                 OnPropertyChanged(nameof(Item));
                 if (!Current()) continue;
-                if (item.Type == "series" && Seasons.Count > 0)
+                if (item.Type == "series" && !IsSeasonsLoading && (_seasonsLoaded || Seasons.Count > 0))
                 {
                     try
                     {
                         var seasons = await _catalogApi.GetSeasonsAsync(item.ContentId, libraryId, ct);
                         if (!Current()) continue;
-                        foreach (var loaded in Seasons)
-                            if (seasons.Seasons.FirstOrDefault(s => s.ContentId == loaded.ContentId) is { UserData: { } fresh })
-                                loaded.UserData = fresh;
+                        var retained = seasons.Seasons.Select(fresh =>
+                        {
+                            var loaded = Seasons.FirstOrDefault(s => s.ContentId == fresh.ContentId);
+                            if (loaded == null) return fresh;
+                            loaded.EpisodeCount = fresh.EpisodeCount;
+                            if (fresh.UserData != null) loaded.UserData = fresh.UserData;
+                            return loaded;
+                        }).ToArray();
+                        Seasons.Clear();
+                        foreach (var season in retained) Seasons.Add(season);
+                        _seasonsLoaded = true;
                         OnPropertyChanged(nameof(Seasons));
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested)
@@ -300,6 +312,8 @@ public partial class ItemDetailViewModel : ObservableObject,
                 }
                 if (!Current()) continue;
                 // A named series relates its aggregate seasons, not its other episode leaves.
+                // The episode companion refreshes user data on retained rows only;
+                // navigation/season selection still owns episode list membership.
                 var refreshEpisodes = Episodes.Count > 0 && (message.CatchUp || message.ContentIds.Contains(item.ContentId)
                     || (!string.IsNullOrEmpty(item.SeriesId) && message.ContentIds.Contains(item.SeriesId))
                     || Seasons.Any(s => message.ContentIds.Contains(s.ContentId))
@@ -604,6 +618,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     public ObservableCollection<Episode> Episodes { get; } = [];
     public ObservableCollection<MediaItem> SimilarItems { get; } = [];
     private bool _similarLoaded;
+    private bool _seasonsLoaded;
 
     public string RuntimeDisplay => Item?.Runtime > 0
         ? Item.Runtime >= 60
@@ -663,6 +678,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         Episodes.Clear();
         SimilarItems.Clear();
         _similarLoaded = false;
+        _seasonsLoaded = false;
         SeasonsLoadFailed = false;
         EpisodesLoadFailed = false;
         SimilarLoadFailed = false;
@@ -910,6 +926,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             Seasons.Clear();
             foreach (var season in response.Seasons)
                 Seasons.Add(season);
+            _seasonsLoaded = true;
 
             // Auto-select the first season
             if (Seasons.Count > 0)
