@@ -161,7 +161,14 @@ public sealed partial class MatchItemDialog : ContentDialog
         {
             UpdateCommands();
             await _scope.RefreshAsync();
-            if (!CanAct || !_scope.IsCurrent(scope) || _selectedCandidate != selected) return;
+            if (!CanAct) return;
+            if (!_scope.IsCurrent(scope))
+            {
+                ApplyStatusText.Text = "Item files changed. Search again and apply the match.";
+                ApplyStatusText.Visibility = Visibility.Visible;
+                return;
+            }
+            if (_selectedCandidate != selected) return;
             // Once dispatched this non-idempotent write must finish independently
             // of the launching surface; only its UI effects belong to the lifetime.
             dispatched = true;
@@ -680,7 +687,14 @@ public sealed partial class MatchItemDialog : ContentDialog
         try
         {
             await _scope.RefreshAsync();
-            if (!CanAct || !_scope.IsCurrent(scope) || revision != _searchRevision) return;
+            if (!CanAct) return;
+            if (!_scope.IsCurrent(scope))
+            {
+                EmptyText.Text = "Item files changed. Search again and apply the match.";
+                EmptyText.Visibility = Visibility.Visible;
+                return;
+            }
+            if (revision != _searchRevision) return;
             var request = new ItemMatchSearchRequest
             {
                 Title = title.Length > 0 ? title : null,
@@ -694,7 +708,14 @@ public sealed partial class MatchItemDialog : ContentDialog
 
             var response = await _maintenanceApi.SearchMatchesAsync(_context, _itemId, request, _lifetime.Token);
             await _scope.RefreshAsync();
-            if (!CanAct || !_scope.IsCurrent(scope) || revision != _searchRevision) return;
+            if (!CanAct) return;
+            if (!_scope.IsCurrent(scope))
+            {
+                EmptyText.Text = "Item files changed. Search again and apply the match.";
+                EmptyText.Visibility = Visibility.Visible;
+                return;
+            }
+            if (revision != _searchRevision) return;
             TruncatedText.Visibility = response.Truncated ? Visibility.Visible : Visibility.Collapsed;
 
             if (response.Candidates.Count == 0)

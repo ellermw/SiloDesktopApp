@@ -355,7 +355,13 @@ internal static class MatchSplitScopeNativeFixture
             Check(wire.Last("search").Body.GetProperty("library_id").GetString() == "2", "Single-library Match is not inferred");
             wire.Files = [("1", 7), ("2", 7)]; var writes = wire.Count("apply"); Invoke(All<Button>(dialog).Single(button => button.Name == "ApplyMatchButton"));
             await Until(() => dialog.SelectedCandidate == null); Check(wire.Count("apply") == writes, "Changed inventory is applied before scope revalidation");
+            Check(All<TextBlock>(dialog).Any(text => text.Name == "ApplyStatusText" && text.Visibility == Visibility.Visible && text.Text == "Item files changed. Search again and apply the match."), "Match Apply silently retires changed inventory");
             await SearchAndChooseAsync(dialog); Check(wire.Last("search").Body.GetProperty("library_id").GetString() == "7", "New inventory searches old library");
+            wire.Files = [("1", 7), ("2", 7), ("3", 7)]; var searches = wire.Count("search");
+            await (Task)typeof(MatchItemDialog).GetMethod("DoSearchAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!;
+            Check(wire.Count("search") == searches && dialog.SelectedCandidate == null, "Match Search adopts changed inventory during preflight");
+            Check(All<TextBlock>(dialog).Any(text => text.Name == "EmptyText" && text.Visibility == Visibility.Visible && text.Text == "Item files changed. Search again and apply the match."), "Match Search silently retires changed inventory");
+            await SearchAndChooseAsync(dialog); Check(wire.Last("search").Body.GetProperty("library_id").GetString() == "7", "Fresh Match Search cannot recover from same-library inventory drift");
         }
         finally { dialog.Hide(); await showing; }
         wire.Files = []; dialog = Match(owner); showing = dialog.ShowAsync(); await Task.Delay(140);
