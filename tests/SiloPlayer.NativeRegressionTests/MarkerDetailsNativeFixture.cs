@@ -95,6 +95,9 @@ internal static class MarkerDetailsNativeFixture
                 "A timing-only live edit retains accepted intro provenance");
             using (var payload = JsonDocument.Parse("""{"file_id":8,"intro":{"start":15,"end":40,"source":"manual"}}"""))
                 Call(player, "ApplyRealtimeMarkersUpdated", payload.RootElement);
+            Expect(player.GetMarkerDetailsLabel("intro") == "80% · Edited", "A source-only update retains unmentioned confidence");
+            using (var payload = JsonDocument.Parse("""{"file_id":8,"intro":{"start":15,"end":40,"provider":null,"confidence":null,"algorithm":null}}"""))
+                Call(player, "ApplyRealtimeMarkersUpdated", payload.RootElement);
             Expect(player.GetMarkerDetailsLabel("intro") == "Edited", "Nested-only multipart file receives its live marker update");
             await VerifyTimingFallbackAsync(player, manager, detail);
             Set(player, "_playbackManager", null);
@@ -161,7 +164,13 @@ internal static class MarkerDetailsNativeFixture
             local mp = require('mp')
             local utils = require('mp.utils')
             mp.register_script_message('osc-set-markers', function(json)
-                mp.set_property_native('user-data/marker-fallback', utils.parse_json(json))
+                local data = utils.parse_json(json)
+                mp.set_property_native('user-data/marker-fallback', data)
+                local segments = data.marker_segments
+                mp.set_property_bool('user-data/marker-segments-contiguous', type(segments) == 'table'
+                    and #segments == 2 and type(segments[1]) == 'table' and type(segments[2]) == 'table'
+                    and segments[1].start_seconds == 5 and segments[1].end_seconds == 30
+                    and segments[2].start_seconds == 40 and segments[2].end_seconds == 50)
             end)
             mp.set_property_bool('user-data/marker-fallback-ready', true)
             """);
@@ -209,6 +218,13 @@ internal static class MarkerDetailsNativeFixture
                 Call(player, "ApplyRealtimeMarkersUpdated", payload.RootElement);
             await Until(() => mpv.GetPropertyDouble("user-data/marker-fallback/intro_end") == 0);
             Check(detail.Intro is null && player.ActiveIntro is null, "An explicit live withdrawal still clears the fallback intro");
+
+            nested.MarkerSegments = [null!, new() { Kind = "intro", StartSeconds = 5, EndSeconds = 30 },
+                null!, new() { Kind = "intro", StartSeconds = 40, EndSeconds = 50 }, null!];
+            Call(player, "SendMarkersToOsc");
+            await Until(() => mpv.GetPropertyFlag("user-data/marker-segments-contiguous"));
+            typeof(PlayerService).GetProperty("Position")!.SetValue(player, 45d);
+            Check(player.ActiveIntro?.End == 50, "Native marker evaluation must skip null watch segments and reach later occurrences");
         }
         finally { Set(player, "_mpv", null); }
     }

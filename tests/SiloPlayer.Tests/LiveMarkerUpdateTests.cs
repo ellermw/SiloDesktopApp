@@ -41,9 +41,9 @@ public class LiveMarkerUpdateTests
     [InlineData("confidence", "\"invalid\"", null)]
     [InlineData("confidence", "{}", null)]
     [InlineData("confidence", "false", null)]
-    [InlineData("source", "5", null)]
-    [InlineData("provider", "[]", null)]
-    [InlineData("algorithm", "true", null)]
+    [InlineData("source", "5", .8)]
+    [InlineData("provider", "[]", .8)]
+    [InlineData("algorithm", "true", .8)]
     public void Optional_provenance_types_do_not_interrupt_live_timing_updates(string field, string value, double? confidence)
     {
         var version = new FileVersion { Intro = new() { Start = 1, End = 4, Source = "plugin", Provider = "introdb", Confidence = .8, Algorithm = "v4" } };
@@ -52,8 +52,49 @@ public class LiveMarkerUpdateTests
         Assert.Single(version.MarkerSegments!);
         Assert.Equal(5, version.Intro!.Start); Assert.Equal(30, version.Intro.End);
         Assert.Equal(confidence, version.Intro.Confidence);
-        Assert.Null(version.Intro.Source); Assert.Null(version.Intro.Provider); Assert.Null(version.Intro.Algorithm);
+        Assert.Equal(field == "source" ? null : "plugin", version.Intro.Source);
+        Assert.Equal(field == "provider" ? null : "introdb", version.Intro.Provider);
+        Assert.Equal(field == "algorithm" ? null : "v4", version.Intro.Algorithm);
         Assert.Equal(100, version.Credits!.End); Assert.Equal(4, version.Recap!.End); Assert.Equal(75, version.Preview!.End);
+    }
+    [Theory]
+    [InlineData("\"5\"", "\"30\"")]
+    [InlineData("5", "\"30\"")]
+    [InlineData("\"5\"", "30")]
+    public void String_encoded_segment_timing_applies_alongside_singular_ranges(string start, string end)
+    {
+        var version = new FileVersion();
+        using var payload = JsonDocument.Parse($$$"""{"marker_segments":[{"kind":"intro","start_seconds":{{{start}}},"end_seconds":{{{end}}}}],"intro":{"start":5,"end":30},"credits":{"start":90,"end":100}}""");
+        PlaybackMarkerUpdate.Apply(version, payload.RootElement);
+        var segment = Assert.Single(version.MarkerSegments!);
+        Assert.Equal("intro", segment.Kind);
+        Assert.Equal(5, segment.StartSeconds); Assert.Equal(30, segment.EndSeconds);
+        Assert.Equal(30, version.Intro!.End); Assert.Equal(100, version.Credits!.End);
+    }
+    [Theory]
+    [InlineData("null")]
+    [InlineData("false")]
+    [InlineData("5")]
+    [InlineData("\"invalid\"")]
+    [InlineData("[]")]
+    [InlineData("{}")]
+    [InlineData("{\"kind\":false,\"start_seconds\":5,\"end_seconds\":30}")]
+    [InlineData("{\"kind\":\"intro\",\"start_seconds\":null,\"end_seconds\":30}")]
+    [InlineData("{\"kind\":\"intro\",\"start_seconds\":\"invalid\",\"end_seconds\":30}")]
+    [InlineData("{\"kind\":\"intro\",\"start_seconds\":\"NaN\",\"end_seconds\":30}")]
+    [InlineData("{\"kind\":\"intro\",\"start_seconds\":5,\"end_seconds\":\"Infinity\"}")]
+    [InlineData("{\"kind\":\"intro\",\"start_seconds\":-1,\"end_seconds\":30}")]
+    [InlineData("{\"kind\":\"intro\",\"start_seconds\":5,\"end_seconds\":5}")]
+    public void Malformed_segments_do_not_discard_valid_occurrences_or_singular_ranges(string malformed)
+    {
+        var version = new FileVersion();
+        using var payload = JsonDocument.Parse($$$"""{"marker_segments":[{{{malformed}}},{"kind":"intro","start_seconds":5,"end_seconds":30},{{{malformed}}},{"kind":"intro","start_seconds":40,"end_seconds":50},{{{malformed}}}],"intro":{"start":5,"end":30},"credits":{"start":90,"end":100},"recap":{"start":1,"end":4},"preview":{"start":70,"end":75}}""");
+        PlaybackMarkerUpdate.Apply(version, payload.RootElement);
+        Assert.Equal(2, version.MarkerSegments!.Count);
+        Assert.Equal(30, PlaybackMarkerRanges.Active(version.MarkerSegments, "intro", 10)?.End);
+        Assert.Equal(50, PlaybackMarkerRanges.Active(version.MarkerSegments, "intro", 45)?.End);
+        Assert.Equal(30, version.Intro!.End); Assert.Equal(100, version.Credits!.End);
+        Assert.Equal(4, version.Recap!.End); Assert.Equal(75, version.Preview!.End);
     }
     [Theory]
     [InlineData("null")]

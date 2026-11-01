@@ -6,7 +6,7 @@ public static class PlaybackMarkerRanges
 {
     public static TimeRange? Active(IEnumerable<PlaybackMarkerSegment> segments, string kind, double position, TimeRange? provenance = null)
     {
-        var range = segments.FirstOrDefault(segment => segment.Kind == kind &&
+        var range = segments.FirstOrDefault(segment => segment is not null && segment.Kind == kind &&
             double.IsFinite(segment.StartSeconds) && double.IsFinite(segment.EndSeconds) &&
             segment.StartSeconds >= 0 && segment.EndSeconds > segment.StartSeconds &&
             position >= segment.StartSeconds && position < segment.EndSeconds);

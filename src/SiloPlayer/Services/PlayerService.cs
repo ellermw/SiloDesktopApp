@@ -5311,7 +5311,7 @@ public partial class PlayerService : IDisposable
             file_id = _playbackManager.CurrentSession?.MediaFileId ?? 0,
             load_generation = Volatile.Read(ref _fileLoadGeneration),
             reset_auto_skip = _autoSkipMarkerIdentity.ShouldResetFor(ContentId),
-            marker_segments = CurrentMarkerVersion?.MarkerSegments,
+            marker_segments = CurrentMarkerVersion?.MarkerSegments?.Where(segment => segment is not null).ToArray(),
             intro_start = MarkerTimingFor("intro")?.Start ?? 0,
             intro_end = MarkerTimingFor("intro")?.End ?? 0,
             recap_start = MarkerTimingFor("recap")?.Start ?? 0,

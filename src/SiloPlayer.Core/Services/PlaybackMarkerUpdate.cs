@@ -8,12 +8,23 @@ public static class PlaybackMarkerUpdate
 {
     public static void Apply(FileVersion version, JsonElement payload)
     {
-        if (payload.TryGetProperty("marker_segments", out var segments) && segments.ValueKind == JsonValueKind.Array)
-            version.MarkerSegments = JsonSerializer.Deserialize<List<PlaybackMarkerSegment>>(segments.GetRawText()) ?? [];
         if (payload.TryGetProperty("intro", out var intro)) version.Intro = Range(intro, version.Intro);
         if (payload.TryGetProperty("credits", out var credits)) version.Credits = Range(credits, version.Credits);
         if (payload.TryGetProperty("recap", out var recap)) version.Recap = Range(recap, version.Recap);
         if (payload.TryGetProperty("preview", out var preview)) version.Preview = Range(preview, version.Preview);
+        if (payload.TryGetProperty("marker_segments", out var segments) && segments.ValueKind == JsonValueKind.Array)
+        {
+            var accepted = new List<PlaybackMarkerSegment>();
+            foreach (var segment in segments.EnumerateArray())
+            {
+                if (segment.ValueKind != JsonValueKind.Object || String(segment, "kind") is not { Length: > 0 } kind ||
+                    !segment.TryGetProperty("start_seconds", out var a) || !segment.TryGetProperty("end_seconds", out var b) ||
+                    !TryNumber(a, out var start) || !TryNumber(b, out var end) ||
+                    !double.IsFinite(start) || !double.IsFinite(end) || start < 0 || end <= start) continue;
+                accepted.Add(new() { Kind = kind, StartSeconds = start, EndSeconds = end });
+            }
+            version.MarkerSegments = accepted;
+        }
     }
     private static TimeRange? Range(JsonElement value, TimeRange? previous)
     {
@@ -26,22 +37,17 @@ public static class PlaybackMarkerUpdate
         var next = new TimeRange
         {
             Start = start, End = end,
-            Source = String(value, "source"), Provider = String(value, "provider"),
-            Algorithm = String(value, "algorithm"),
-            Confidence = value.TryGetProperty("confidence", out var confidence) && TryNumber(confidence, out var number) ? number : null,
+            Source = value.TryGetProperty("source", out _) ? String(value, "source") : previous?.Source,
+            Provider = value.TryGetProperty("provider", out _) ? String(value, "provider") : previous?.Provider,
+            Algorithm = value.TryGetProperty("algorithm", out _) ? String(value, "algorithm") : previous?.Algorithm,
+            Confidence = value.TryGetProperty("confidence", out var confidence)
+                ? TryNumber(confidence, out var number) ? number : null : previous?.Confidence,
         };
-        // Timing-only snapshots leave this kind's accepted provenance unchanged,
-        // even when its timing or another kind changed. Explicit details (including
-        // nulls) replace provenance, so a manual edit never inherits confidence.
-        if (previous is not null &&
+        // Omitted provenance fields retain their accepted values; explicit nulls
+        // clear only that field. Preserve the instance for timing-only no-ops.
+        if (previous is not null && next.Start == previous.Start && next.End == previous.End &&
             !new[] { "source", "provider", "confidence", "algorithm" }.Any(key => value.TryGetProperty(key, out _)))
-        {
-            if (next.Start == previous.Start && next.End == previous.End) return previous;
-            next.Source = previous.Source;
-            next.Provider = previous.Provider;
-            next.Confidence = previous.Confidence;
-            next.Algorithm = previous.Algorithm;
-        }
+            return previous;
         return next;
     }
 

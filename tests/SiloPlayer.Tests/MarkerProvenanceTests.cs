@@ -43,7 +43,7 @@ public sealed class MarkerProvenanceTests
     }
 
     [Fact]
-    public void RepeatedOccurrenceAndLiveReplacementPreserveMetadataWithoutInventingConfidence()
+    public void RepeatedOccurrenceAndLiveReplacementPreserveMetadataUntilExplicitlyCleared()
     {
         var version = new FileVersion { MarkerSegments = [new() { Kind = "intro", StartSeconds = 30, EndSeconds = 40 }] };
         using var update = JsonDocument.Parse("""{"intro":{"start":0,"end":10,"source":"plugin","provider":"introdb","confidence":0.8,"algorithm":"v4"}}""");
@@ -52,10 +52,37 @@ public sealed class MarkerProvenanceTests
         Assert.Equal(30, repeated.Start); Assert.Equal("80% · TheIntroDB", MarkerProvenance.Label(repeated, true, true));
         using var edited = JsonDocument.Parse("""{"intro":{"start_seconds":0,"end_seconds":10,"source":"manual"}}""");
         PlaybackMarkerUpdate.Apply(version, edited.RootElement);
+        Assert.Equal(.8, version.Intro!.Confidence); Assert.Equal("80% · Edited", MarkerProvenance.Label(version.Intro, true, true));
+        using var cleared = JsonDocument.Parse("""{"intro":{"start_seconds":0,"end_seconds":10,"provider":null,"confidence":null,"algorithm":null}}""");
+        PlaybackMarkerUpdate.Apply(version, cleared.RootElement);
         Assert.Null(version.Intro!.Confidence); Assert.Equal("Edited", MarkerProvenance.Label(version.Intro, true, true));
         using var withdrawn = JsonDocument.Parse("""{"intro":null,"marker_segments":[]}""");
         PlaybackMarkerUpdate.Apply(version, withdrawn.RootElement);
         Assert.Null(version.Intro); Assert.Empty(version.MarkerSegments!);
+    }
+
+    [Theory]
+    [InlineData("source", "\"plugin\"", "plugin", "introdb", .92, "v4")]
+    [InlineData("source", "\"manual\"", "manual", "introdb", .92, "v4")]
+    [InlineData("provider", "\"other\"", "plugin", "other", .92, "v4")]
+    [InlineData("confidence", "\"0.8\"", "plugin", "introdb", .8, "v4")]
+    [InlineData("algorithm", "\"v5\"", "plugin", "introdb", .92, "v5")]
+    [InlineData("source", "null", null, "introdb", .92, "v4")]
+    [InlineData("provider", "null", "plugin", null, .92, "v4")]
+    [InlineData("confidence", "null", "plugin", "introdb", null, "v4")]
+    [InlineData("algorithm", "null", "plugin", "introdb", .92, null)]
+    public void PartialProvenanceUpdatesReplaceOnlyPresentFields(string field, string value,
+        string? source, string? provider, double? confidence, string? algorithm)
+    {
+        var version = new FileVersion { Intro = new() { Start = 5, End = 30,
+            Source = "plugin", Provider = "introdb", Confidence = .92, Algorithm = "v4" } };
+        using var message = JsonDocument.Parse($$$"""{"intro":{"start":5,"end":40,"{{{field}}}":{{{value}}}}}""");
+        PlaybackMarkerUpdate.Apply(version, message.RootElement);
+        Assert.Equal(5, version.Intro!.Start); Assert.Equal(40, version.Intro.End);
+        Assert.Equal(source, version.Intro.Source); Assert.Equal(provider, version.Intro.Provider);
+        Assert.Equal(confidence, version.Intro.Confidence); Assert.Equal(algorithm, version.Intro.Algorithm);
+        Assert.Equal(MarkerProvenance.Label(new() { Source = source, Provider = provider, Confidence = confidence }, true, true),
+            MarkerProvenance.Label(version.Intro, true, true));
     }
 
     [Fact]
