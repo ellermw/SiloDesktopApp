@@ -12,6 +12,16 @@ public class HomeApi(SiloApiClient client)
     public ApiIdentityContext CaptureIdentityContext() => client.CaptureIdentityContext();
     public bool IsCurrentIdentityContext(ApiIdentityContext context) => client.IsCurrentIdentityContext(context);
     public bool IsCurrentContext(ApiRequestContext context) => client.IsCurrentContext(context);
+    public long LanguageGeneration => client.LocalizedReads.Generation;
+    public bool IsCurrentReadContext(ApiRequestContext context, long language)
+        => client.IsCurrentContext(context) && LanguageGeneration == language;
+
+    private void RequireCurrentRead(ApiRequestContext context, long language, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Home owner changed.", ct);
+        client.LocalizedReads.ThrowIfChanged(language);
+    }
     public Task<HomeLayoutResponse> GetLayoutAsync(CancellationToken ct = default)
         => client.GetAsync<HomeLayoutResponse>("/api/v2/home/layout", ct);
 
@@ -26,51 +36,73 @@ public class HomeApi(SiloApiClient client)
     /// loading pipeline to batch-fetch sections with a concurrency cap
     /// after the skeleton has rendered from <see cref="GetLayoutAsync"/>.
     /// </summary>
-    public async Task<HomeSectionItemsResponse> GetSectionItemsAsync(string sectionId, CancellationToken ct = default)
-        => new() { Section = await client.GetAsync<HomeSectionWithItems>($"/api/v2/home/sections/{Uri.EscapeDataString(sectionId)}/items", ct) };
+    public Task<HomeSectionItemsResponse> GetSectionItemsAsync(string sectionId, CancellationToken ct = default)
+        => GetSectionItemsAsync(client.CaptureContext(), LanguageGeneration, sectionId, ct);
+
+    public async Task<HomeSectionItemsResponse> GetSectionItemsAsync(ApiRequestContext owner, long language, string sectionId, CancellationToken ct = default)
+    {
+        RequireCurrentRead(owner, language, ct);
+        var section = await client.SendRequestAsync<HomeSectionWithItems>(owner, HttpMethod.Get,
+            $"/api/v2/home/sections/{Uri.EscapeDataString(sectionId)}/items", null, ct).ConfigureAwait(false);
+        RequireCurrentRead(owner, language, ct);
+        section.ReadLanguageGeneration = language;
+        return new() { Section = section };
+    }
 
     /// <summary>Read the first two screens only when this server advertises the row contract.</summary>
-    public async Task<HomeSectionItemsResponse> GetInitialSectionItemsAsync(string sectionId, CancellationToken ct = default)
+    public Task<HomeSectionItemsResponse> GetInitialSectionItemsAsync(string sectionId, CancellationToken ct = default)
+        => GetInitialSectionItemsAsync(client.CaptureContext(), LanguageGeneration, sectionId, ct);
+
+    public async Task<HomeSectionItemsResponse> GetInitialSectionItemsAsync(ApiRequestContext context, long language, string sectionId, CancellationToken ct = default)
     {
-        var context = client.CaptureContext();
-        var language = client.LocalizedReads.Generation;
-        var capabilities = await GetCapabilitiesAsync(ct).ConfigureAwait(false);
-        client.LocalizedReads.ThrowIfChanged(language);
+        RequireCurrentRead(context, language, ct);
+        var capabilities = await GetCapabilitiesAsync(context, language, ct).ConfigureAwait(false);
+        RequireCurrentRead(context, language, ct);
         var path = $"/api/v2/home/sections/{Uri.EscapeDataString(sectionId)}/items";
         var bounded = capabilities.RowItemLimitMax >= Services.HomeRowWindow.InitialItemLimit;
         if (bounded) path += $"?item_limit={Services.HomeRowWindow.InitialItemLimit}";
         var section = await client.SendRequestAsync<HomeSectionWithItems>(context, HttpMethod.Get, path, null, ct).ConfigureAwait(false);
-        client.LocalizedReads.ThrowIfChanged(language);
+        RequireCurrentRead(context, language, ct);
+        section.ReadLanguageGeneration = language;
         if (!bounded) section.HasMore = false;
         return new() { Section = section };
     }
 
-    public async Task<HomeCapabilities> GetCapabilitiesAsync(CancellationToken ct = default)
+    public Task<HomeCapabilities> GetCapabilitiesAsync(CancellationToken ct = default)
+        => GetCapabilitiesAsync(client.CaptureContext(), LanguageGeneration, ct);
+
+    private async Task<HomeCapabilities> GetCapabilitiesAsync(ApiRequestContext context, long language, CancellationToken ct)
     {
-        var context = client.CaptureContext();
+        RequireCurrentRead(context, language, ct);
         await _capabilityGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Home owner changed.", ct);
+            RequireCurrentRead(context, language, ct);
             if (_capabilityContext == context && _capabilities != null) return _capabilities;
             HomeCapabilities capabilities;
             try
             {
                 capabilities = await client.SendRequestAsync<HomeCapabilities>(context, HttpMethod.Get, "/api/v2/home/capabilities", null, ct).ConfigureAwait(false);
             }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested && IsCurrentReadContext(context, language))
+            {
+                // HttpClient timeout cancels its own request token, not the row
+                // consumer. A healthy items endpoint remains usable uncapped.
+                return new();
+            }
             catch (OperationCanceledException) { throw; }
-            catch (ApiException ex) when (client.IsCurrentContext(context) && ex.StatusCode is 404 or 405 or 501)
+            catch (ApiException ex) when (IsCurrentReadContext(context, language) && ex.StatusCode is 404 or 405 or 501)
             {
                 _capabilityContext = context;
                 return _capabilities = new();
             }
-            catch (Exception) when (client.IsCurrentContext(context))
+            catch (Exception) when (IsCurrentReadContext(context, language))
             {
                 // The optimization is optional. Older/unavailable capability endpoints
                 // must never cause an unadvertised item_limit to be sent.
                 return new();
             }
-            if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Home owner changed.", ct);
+            RequireCurrentRead(context, language, ct);
             _capabilityContext = context;
             return _capabilities = capabilities;
         }

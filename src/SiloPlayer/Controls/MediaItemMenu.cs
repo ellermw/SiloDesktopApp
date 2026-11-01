@@ -283,7 +283,8 @@ public static class MediaItemMenu
                     WeakReferenceMessenger.Default.Send(new HomeDismissalApplied(surfaceKey, item, context));
                     stage = "surface_update";
                     WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
-                        MediaSurfaceChangeKind.HomeDismissed, item.ContentId, item.SeriesId));
+                        MediaSurfaceChangeKind.HomeDismissed, item.ContentId,
+                        item.SeriesId ?? (item.Type == "series" ? item.ContentId : null), context: context));
                     stage = "success_toast";
                     toast.Success(dropsShow ? "Removed from Continue Watching and Next Up" : label);
                     LocalLog.AppendLine("home_actions.txt",

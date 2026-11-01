@@ -17,6 +17,7 @@ public class HomeSectionWithItems
     public bool HasMore { get; set; }
     [JsonIgnore] public int? ShownCount { get; set; }
     [JsonIgnore] public long CompletedOrder { get; set; }
+    [JsonIgnore] public long? ReadLanguageGeneration { get; set; }
     public bool IsCustom { get; set; }
     public bool Customized { get; set; }
     [JsonIgnore]

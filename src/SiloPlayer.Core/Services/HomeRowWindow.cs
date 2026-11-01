@@ -28,11 +28,20 @@ public static class HomeRowWindow
         HomeSectionWithItems current, long completedOrder)
     {
         var result = HomeSectionDedupe.Snapshot(whole);
+        // Retained cards may belong to the previous metadata language. Keep
+        // their order only where the new whole response supplies current text;
+        // never carry an old-language object into the new-language result.
+        var prefix = current.Items.ToList();
+        if (current.ReadLanguageGeneration != whole.ReadLanguageGeneration)
+        {
+            var translated = whole.Items.DistinctBy(item => item.ContentId).ToDictionary(item => item.ContentId, StringComparer.Ordinal);
+            prefix = current.Items.Where(item => translated.ContainsKey(item.ContentId)).Select(item => translated[item.ContentId]).ToList();
+        }
         var seen = shown.Items.Concat(current.Items).Select(item => item.ContentId).ToHashSet(StringComparer.Ordinal);
         var rest = whole.Items.Where(item => seen.Add(item.ContentId));
-        result.Items = new(current.Items.Concat(rest).Take(Math.Max(whole.ItemLimit, whole.Items.Count)));
+        result.Items = new(prefix.Concat(rest).Take(Math.Max(whole.ItemLimit, whole.Items.Count)));
         result.HasMore = false;
-        result.ShownCount = Math.Min(current.Items.Count, result.Items.Count);
+        result.ShownCount = Math.Min(prefix.Count, result.Items.Count);
         result.CompletedOrder = completedOrder;
         result.LoadCompleted = true;
         result.LoadFailed = false;

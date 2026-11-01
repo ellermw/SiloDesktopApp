@@ -22,6 +22,23 @@ public class HomeRowCapabilityTests
     }
 
     [Fact]
+    public async Task CapabilityHttpTimeoutFallsBackToHealthyUncappedRow()
+    {
+        using var wire = new Wire { TimeoutCapabilities = true }; using var http = new HttpClient(wire) { Timeout = TimeSpan.FromMilliseconds(100) };
+        var response = await new HomeApi(Client(http)).GetInitialSectionItemsAsync("row");
+        Assert.Equal("", Assert.Single(wire.Rows).Query); Assert.False(response.Section!.HasMore);
+    }
+
+    [Fact]
+    public async Task CallerCancellationDoesNotBecomeAnUncappedFallback()
+    {
+        using var wire = new Wire { TimeoutCapabilities = true }; using var http = new HttpClient(wire) { Timeout = TimeSpan.FromSeconds(2) };
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new HomeApi(Client(http)).GetInitialSectionItemsAsync("row", cancellation.Token));
+        Assert.Empty(wire.Rows);
+    }
+
+    [Fact]
     public async Task OldServerCapabilityFailureFallsBackToWholeRead()
     {
         using var wire = new Wire { Unsupported = true }; using var http = new HttpClient(wire);
@@ -70,13 +87,14 @@ public class HomeRowCapabilityTests
     private sealed class Wire : HttpMessageHandler
     {
         public string Capabilities = "{\"row_item_limit_max\":100,\"section_item_limit_max\":100}";
-        public bool Unsupported, Hold; public int CapabilityReads; public List<Uri> Rows = [];
+        public bool Unsupported, Hold, TimeoutCapabilities; public int CapabilityReads; public List<Uri> Rows = [];
         public TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.AbsolutePath.EndsWith("/capabilities"))
             {
                 CapabilityReads++; Started.TrySetResult(); if (Hold) await Release.Task;
+                if (TimeoutCapabilities) await Task.Delay(Timeout.InfiniteTimeSpan, ct);
                 return new(Unsupported ? HttpStatusCode.NotFound : HttpStatusCode.OK) { Content = new StringContent(Unsupported ? "{}" : Capabilities) };
             }
             Rows.Add(request.RequestUri);

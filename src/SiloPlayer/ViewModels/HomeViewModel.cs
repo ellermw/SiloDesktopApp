@@ -24,6 +24,8 @@ public partial class HomeViewModel : ObservableObject,
     private readonly Dictionary<string, HomeSectionWithItems> _rawSections = new(StringComparer.Ordinal);
     private readonly HashSet<(int Generation, string SectionId)> _completingSections = [];
     private long _rowCompletionOrder;
+    private long _progressRemovalRevision;
+    private readonly Dictionary<string, (long Revision, string? SeriesId)> _progressRemovals = new(StringComparer.Ordinal);
     private HashSet<string> _avoidDuplicateTypes = new(StringComparer.Ordinal);
 
     public HomeViewModel(HomeApi homeApi, AuthService authService, SettingsApi? settingsApi = null)
@@ -152,6 +154,9 @@ public partial class HomeViewModel : ObservableObject,
 
     private void RemoveFromProgressRows(string contentId, string? seriesId)
     {
+        // Keep the server's whole-show predicate, including members absent
+        // from the first20 cards, for reads already in flight at dismissal.
+        _progressRemovals[contentId] = (++_progressRemovalRevision, seriesId);
         var removedAny = false;
         foreach (var section in FeaturedSections.Concat(Sections).Concat(_rawSections.Values))
         {
@@ -380,6 +385,7 @@ public partial class HomeViewModel : ObservableObject,
             FeaturedSections.Clear();
             Sections.Clear();
             _rawSections.Clear();
+            _progressRemovals.Clear();
             _layoutOrder = [];
             _avoidDuplicateTypes.Clear();
             ClearDismissState();
@@ -505,6 +511,9 @@ public partial class HomeViewModel : ObservableObject,
         // Gather all placeholder sections in display order (featured first).
         var targets = FeaturedSections.Concat(Sections).ToList();
         if (targets.Count == 0) return;
+        if (_loadedContext is not { } owner) return;
+        var language = _homeApi.LanguageGeneration;
+        var removalRevision = _progressRemovalRevision;
         // Capture cache state on the UI thread before semaphore continuations
         // resume on worker threads. The cache itself belongs to this thread.
         var reads = targets.ToDictionary(section => section.Id, section => (
@@ -518,9 +527,10 @@ public partial class HomeViewModel : ObservableObject,
             try
             {
                 var sectionId = section.Id;
+                if (!IsCurrentSectionLoad(generation, ct, sectionId) || !_homeApi.IsCurrentReadContext(owner, language)) return;
                 var read = reads[sectionId];
-                var resp = await (read.Whole ? _homeApi.GetSectionItemsAsync(sectionId, ct)
-                    : _homeApi.GetInitialSectionItemsAsync(sectionId, ct)).ConfigureAwait(false);
+                var resp = await (read.Whole ? _homeApi.GetSectionItemsAsync(owner, language, sectionId, ct)
+                    : _homeApi.GetInitialSectionItemsAsync(owner, language, sectionId, ct)).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
                 await RunOnUiThreadAsync(() =>
                 {
@@ -531,12 +541,7 @@ public partial class HomeViewModel : ObservableObject,
                     // alive instead of turning a malformed/partial response into
                     // a UI-thread NullReferenceException.
                     var completed = resp?.Section ?? CloneSection(section, loadFailed: false);
-                    completed.LoadFailed = false;
-                    completed.LoadCompleted = true;
-                    completed.Items ??= new ObservableCollection<MediaItem>();
-                    if (!PrepareReadResult(completed, read.Shown, read.Whole)) return;
-                    PreserveExpandedState(completed);
-                    ApplyRefreshedSection(completed);
+                    ApplySectionReadResult(completed, read.Shown, read.Whole, removalRevision);
                 }).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -582,23 +587,21 @@ public partial class HomeViewModel : ObservableObject,
         var retryGeneration = _sectionLoadGeneration;
         var retryProfileId = _loadedProfileId;
         var retryToken = _sectionLoadCts?.Token ?? CancellationToken.None;
+        if (_loadedContext is not { } owner) return;
+        var language = _homeApi.LanguageGeneration;
+        var removalRevision = _progressRemovalRevision;
         var whole = ShouldReadWhole(current);
         var shown = _rawSections.TryGetValue(sectionId, out var retryRaw) ? HomeSectionDedupe.Snapshot(retryRaw) : null;
         ReplaceInBoundCollection(CloneSection(current, loadFailed: false, loadCompleted: false));
         try
         {
-            var response = await (whole ? _homeApi.GetSectionItemsAsync(sectionId, retryToken)
-                : _homeApi.GetInitialSectionItemsAsync(sectionId, retryToken));
+            var response = await (whole ? _homeApi.GetSectionItemsAsync(owner, language, sectionId, retryToken)
+                : _homeApi.GetInitialSectionItemsAsync(owner, language, sectionId, retryToken));
             if (!IsCurrentSectionRetry(retryGeneration, retryToken, retryProfileId, sectionId))
                 return;
 
             var completed = response?.Section ?? CloneSection(current, loadFailed: false);
-            completed.LoadFailed = false;
-            completed.LoadCompleted = true;
-            completed.Items ??= new ObservableCollection<MediaItem>();
-            if (!PrepareReadResult(completed, shown, whole)) return;
-            PreserveExpandedState(completed);
-            ApplyRefreshedSection(completed);
+            ApplySectionReadResult(completed, shown, whole, removalRevision);
         }
         catch (Exception ex)
         {
@@ -611,7 +614,31 @@ public partial class HomeViewModel : ObservableObject,
     }
 
     private bool ShouldReadWhole(HomeSectionWithItems section)
-        => section.Featured || (_rawSections.TryGetValue(section.Id, out var cached) && HomeRowWindow.IsExpanded(cached));
+        => _layoutOrder.FirstOrDefault(entry => entry.Id == section.Id)?.Featured == true
+            || (_rawSections.TryGetValue(section.Id, out var cached) && HomeRowWindow.IsExpanded(cached));
+
+    private void ApplySectionReadResult(HomeSectionWithItems completed, HomeSectionWithItems? shown, bool whole, long removalRevision)
+    {
+        completed.LoadFailed = false;
+        completed.LoadCompleted = true;
+        completed.Items ??= new ObservableCollection<MediaItem>();
+        if (!PrepareReadResult(completed, shown, whole)) return;
+        FilterProgressRemovals(completed, removalRevision);
+        PreserveExpandedState(completed);
+        ApplyRefreshedSection(completed);
+    }
+
+    private void FilterProgressRemovals(HomeSectionWithItems incoming, long readRevision)
+    {
+        if (incoming.SectionType is not ("continue_watching" or "next_up")) return;
+        for (var index = incoming.Items.Count - 1; index >= 0; index--)
+        {
+            var item = incoming.Items[index];
+            if (_progressRemovals.Any(removal => removal.Value.Revision > readRevision &&
+                (item.ContentId == removal.Key || (removal.Value.SeriesId is { } series && (item.SeriesId == series || item.ContentId == series)))))
+                HomeRowWindow.RemoveAt(incoming, index);
+        }
+    }
 
     private bool PrepareReadResult(HomeSectionWithItems incoming, HomeSectionWithItems? shown, bool whole)
     {
@@ -643,15 +670,20 @@ public partial class HomeViewModel : ObservableObject,
         if (!IsCurrentSectionLoad(generation, ct, sectionId)
             || !_rawSections.TryGetValue(sectionId, out var raw) || !raw.HasMore
             || !_completingSections.Add(key)) return;
+        var owner = _loadedContext!.Value;
+        var language = _homeApi.LanguageGeneration;
+        var removalRevision = _progressRemovalRevision;
         var shown = HomeSectionDedupe.Snapshot(raw);
         try
         {
-            var response = await _homeApi.GetSectionItemsAsync(sectionId, ct).ConfigureAwait(false);
+            var response = await _homeApi.GetSectionItemsAsync(owner, language, sectionId, ct).ConfigureAwait(false);
             await RunOnUiThreadAsync(() =>
             {
                 if (!IsCurrentSectionLoad(generation, ct, sectionId)
                     || !_rawSections.TryGetValue(sectionId, out var current) || !current.HasMore
                     || response.Section == null) return;
+                response.Section.Items ??= new ObservableCollection<MediaItem>();
+                FilterProgressRemovals(response.Section, removalRevision);
                 ApplyRefreshedSection(HomeRowWindow.Complete(shown, response.Section, current, ++_rowCompletionOrder));
             }).ConfigureAwait(false);
         }
@@ -685,6 +717,7 @@ public partial class HomeViewModel : ObservableObject,
         HasMore = source.HasMore,
         ShownCount = source.ShownCount,
         CompletedOrder = source.CompletedOrder,
+        ReadLanguageGeneration = source.ReadLanguageGeneration,
         Items = loadFailed
             ? new ObservableCollection<MediaItem>()
             : new ObservableCollection<MediaItem>(source.Items ?? []),
@@ -707,6 +740,7 @@ public partial class HomeViewModel : ObservableObject,
         HasMore = cached?.HasMore ?? false,
         ShownCount = cached?.ShownCount,
         CompletedOrder = cached?.CompletedOrder ?? 0,
+        ReadLanguageGeneration = cached?.ReadLanguageGeneration,
         Items = cached?.LoadCompleted == true && cached.LoadFailed == false
             ? cached.Items
             : new ObservableCollection<MediaItem>(),
@@ -837,6 +871,13 @@ public partial class HomeViewModel : ObservableObject,
         foreach (var entry in _layoutOrder)
         {
             if (!projected.TryGetValue(entry.Id, out var section)) continue;
+            // Layout metadata owns hero placement. A cached partial response
+            // must not demote a row that the new layout just made featured.
+            if (section.Featured != entry.Featured)
+            {
+                section = HomeSectionDedupe.Snapshot(section);
+                section.Featured = entry.Featured;
+            }
             if (TryApplyRefreshedSection(FeaturedSections, section)) continue;
             TryApplyRefreshedSection(Sections, section);
         }
@@ -965,6 +1006,7 @@ public partial class HomeViewModel : ObservableObject,
             // Restore on failure
             LocalLog.AppendException("errors.txt", ex, "HomeViewModel.DismissItemAsync");
             RestoreDismissedItem();
+            QueueRealtimeRefresh("home_dismissal_undo", _loadedContext);
             ShowUndoBanner = false;
             ClearDismissState();
             return;
@@ -988,6 +1030,7 @@ public partial class HomeViewModel : ObservableObject,
             await _homeApi.UndoDismissalAsync(_lastDismissedSurface, _lastDismissedItemId);
             if (generation != _undoGeneration || (_dismissContext.HasValue && !_homeApi.IsCurrentContext(_dismissContext.Value))) return;
             RestoreDismissedItem();
+            QueueRealtimeRefresh("home_dismissal_undo", _loadedContext);
         }
         catch (Exception ex)
         {
@@ -1001,6 +1044,13 @@ public partial class HomeViewModel : ObservableObject,
 
     private void RestoreDismissedItem()
     {
+        // Responses read before Undo describe the dismissed state. Retire
+        // their generation before restoring the visible/cache snapshot.
+        _sectionLoadCts?.Cancel();
+        _sectionLoadCts?.Dispose();
+        _sectionLoadCts = new CancellationTokenSource();
+        ++_sectionLoadGeneration;
+        if (_lastDismissedItemId != null) _progressRemovals.Remove(_lastDismissedItemId);
         if (_dismissSnapshot != null)
         {
             _dismissSnapshot.Restore(FeaturedSections.Concat(Sections));
