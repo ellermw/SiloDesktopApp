@@ -6783,10 +6783,10 @@ public partial class PlayerService : IDisposable
             var activeFileId = _playbackManager?.CurrentSession?.MediaFileId ?? 0;
             if (activeFileId == fileId && _playbackManager?.WatchDetail != null)
             {
-                _playbackManager.WatchDetail.Intro = version.Intro;
-                _playbackManager.WatchDetail.Credits = version.Credits;
-                _playbackManager.WatchDetail.Recap = version.Recap;
-                _playbackManager.WatchDetail.Preview = version.Preview;
+                if (payload.TryGetProperty("intro", out _)) _playbackManager.WatchDetail.Intro = version.Intro;
+                if (payload.TryGetProperty("credits", out _)) _playbackManager.WatchDetail.Credits = version.Credits;
+                if (payload.TryGetProperty("recap", out _)) _playbackManager.WatchDetail.Recap = version.Recap;
+                if (payload.TryGetProperty("preview", out _)) _playbackManager.WatchDetail.Preview = version.Preview;
                 SendMarkersToOsc();
                 InvokeSubscribersSafely(MarkersChanged, nameof(MarkersChanged));
             }

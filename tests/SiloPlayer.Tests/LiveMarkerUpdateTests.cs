@@ -22,6 +22,40 @@ public class LiveMarkerUpdateTests
         Assert.Equal(10, version.Intro!.End); Assert.Equal(9, version.Recap!.End);
     }
     [Theory]
+    [InlineData("start", "end", "\"5\"", "\"30\"")]
+    [InlineData("start_seconds", "end_seconds", "\"5\"", "\"30\"")]
+    [InlineData("start", "end", "5", "\"30\"")]
+    [InlineData("start_seconds", "end_seconds", "\"5\"", "30")]
+    public void String_encoded_timing_matches_watch_ranges(string startKey, string endKey, string start, string end)
+    {
+        var original = new TimeRange { Start = 5, End = 30, Source = "scanner", Confidence = .8 };
+        var version = new FileVersion { Intro = original };
+        using var payload = JsonDocument.Parse($$$"""{"intro":{"{{{startKey}}}":{{{start}}},"{{{endKey}}}":{{{end}}}}}""");
+        PlaybackMarkerUpdate.Apply(version, payload.RootElement);
+        Assert.Same(original, version.Intro);
+        Assert.Equal(5, version.Intro!.Start); Assert.Equal(30, version.Intro.End);
+        Assert.Equal(.8, version.Intro.Confidence);
+    }
+    [Theory]
+    [InlineData("confidence", "\"0.9\"", .9)]
+    [InlineData("confidence", "\"invalid\"", null)]
+    [InlineData("confidence", "{}", null)]
+    [InlineData("confidence", "false", null)]
+    [InlineData("source", "5", null)]
+    [InlineData("provider", "[]", null)]
+    [InlineData("algorithm", "true", null)]
+    public void Optional_provenance_types_do_not_interrupt_live_timing_updates(string field, string value, double? confidence)
+    {
+        var version = new FileVersion { Intro = new() { Start = 1, End = 4, Source = "plugin", Provider = "introdb", Confidence = .8, Algorithm = "v4" } };
+        using var payload = JsonDocument.Parse($$$"""{"marker_segments":[{"kind":"intro","start_seconds":5,"end_seconds":30}],"intro":{"start":5,"end":30,"{{{field}}}":{{{value}}}},"credits":{"start":90,"end":100},"recap":{"start":1,"end":4},"preview":{"start":70,"end":75}}""");
+        PlaybackMarkerUpdate.Apply(version, payload.RootElement);
+        Assert.Single(version.MarkerSegments!);
+        Assert.Equal(5, version.Intro!.Start); Assert.Equal(30, version.Intro.End);
+        Assert.Equal(confidence, version.Intro.Confidence);
+        Assert.Null(version.Intro.Source); Assert.Null(version.Intro.Provider); Assert.Null(version.Intro.Algorithm);
+        Assert.Equal(100, version.Credits!.End); Assert.Equal(4, version.Recap!.End); Assert.Equal(75, version.Preview!.End);
+    }
+    [Theory]
     [InlineData("null")]
     [InlineData("{}")]
     [InlineData("false")]

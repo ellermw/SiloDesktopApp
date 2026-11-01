@@ -13,14 +13,12 @@ public partial class PlayerService
     private ApiRequestContext? _markerDetailsContext;
     private SettingsApi? _markerDetailsEvents;
     private long _markerDetailsGeneration;
-    private long _markerDetailsFileGeneration;
     public MarkerDetailsPreferences MarkerDetails
     {
         get
         {
             lock (_markerDetailsGate)
                 return ReferenceEquals(_markerDetailsAuthority, _activeAuthority) &&
-                    _markerDetailsFileGeneration == Volatile.Read(ref _fileLoadGeneration) &&
                     _markerDetailsContext is { } context && _activeAuthority.ApiClient.IsCurrentContext(context) ? _markerDetails : new();
         }
     }
@@ -60,7 +58,6 @@ public partial class PlayerService
         {
             if (ct.IsCancellationRequested || !Current()) return;
             _markerDetails = preferences; _markerDetailsAuthority = authority; _markerDetailsContext = context;
-            _markerDetailsFileGeneration = fileGeneration;
             SendMarkerDetailsToOsc();
         }
         _subtitleDispatcher?.TryEnqueue(() =>
@@ -75,8 +72,8 @@ public partial class PlayerService
         lock (_markerDetailsGate)
         {
             ++_markerDetailsGeneration;
-            _markerDetails = new(); _markerDetailsAuthority = null; _markerDetailsContext = null;
-            SendMarkerDetailsToOsc();
+            // Retire in-flight reads and old labels, not this owner's accepted preferences.
+            SendMarkerDetailsToOsc(clear: true);
         }
     }
 
@@ -119,7 +116,7 @@ public partial class PlayerService
         };
     }
 
-    private void SendMarkerDetailsToOsc()
+    private void SendMarkerDetailsToOsc(bool clear = false)
     {
         lock (_markerDetailsGate)
         {
@@ -135,7 +132,7 @@ public partial class PlayerService
                 ["content_id"] = content, ["file_id"] = file, ["load_generation"] = load,
                 ["preference_generation"] = _markerDetailsGeneration,
             };
-            foreach (var kind in new[] { "intro", "recap", "credits", "preview" }) labels[kind] = GetMarkerDetailsLabel(kind) ?? "";
+            foreach (var kind in new[] { "intro", "recap", "credits", "preview" }) labels[kind] = clear ? "" : GetMarkerDetailsLabel(kind) ?? "";
             if (!ReferenceEquals(player, _mpv) || !ReferenceEquals(authority, _activeAuthority) || !authority.ApiClient.IsCurrentContext(context)
                 || load != Volatile.Read(ref _fileLoadGeneration) || file != (_playbackManager?.CurrentSession?.MediaFileId ?? 0)
                 || content != (ContentId ?? WatchDetail?.ContentId ?? "")) return;

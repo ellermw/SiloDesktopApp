@@ -69,6 +69,17 @@ internal static class MarkerDetailsNativeFixture
             await player.RefreshMarkerDetailsPreferencesAsync();
             Expect(player.MarkerDetails.ShowConfidence && player.MarkerDetails.ShowSource &&
                 player.GetMarkerDetailsLabel("intro") == "80% · TheIntroDB", "A failed optional read retains accepted preferences and labels");
+            Set(player, "_fileLoadGeneration", (long)typeof(PlayerService).GetField("_fileLoadGeneration", Fields)!.GetValue(player)! + 1);
+            Expect(player.GetMarkerDetailsLabel("intro") == "80% · TheIntroDB", "A transport reload does not hide accepted owner preferences");
+            await player.RefreshMarkerDetailsPreferencesAsync();
+            Expect(player.MarkerDetails.ShowConfidence && player.MarkerDetails.ShowSource &&
+                player.GetMarkerDetailsLabel("intro") == "80% · TheIntroDB", "A failed post-reload read retains accepted preferences");
+            Call(player, "ResetMarkerDetails");
+            Set(player, "_playRequestGeneration", (long)typeof(PlayerService).GetField("_playRequestGeneration", Fields)!.GetValue(player)! + 1);
+            Set(player, "_fileLoadGeneration", (long)typeof(PlayerService).GetField("_fileLoadGeneration", Fields)!.GetValue(player)! + 1);
+            await player.RefreshMarkerDetailsPreferencesAsync();
+            Expect(player.MarkerDetails.ShowConfidence && player.MarkerDetails.ShowSource &&
+                player.GetMarkerDetailsLabel("intro") == "80% · TheIntroDB", "A new-item reset and failed read retain the same owner's accepted preferences");
             wire.FailMarkerReads = false; wire.Confidence = wire.Source = false;
             await player.RefreshMarkerDetailsPreferencesAsync();
             Expect(!player.MarkerDetails.ShowConfidence && !player.MarkerDetails.ShowSource &&
@@ -176,6 +187,28 @@ internal static class MarkerDetailsNativeFixture
                 Check(player.ActiveIntro?.Start == 5 && player.ActiveIntro?.End == 30 && player.ActiveCredits?.Start == 90,
                     "Native skip timing must retain the same top-level fallback");
             }
+
+            var nested = (detail.PlaybackVariants ?? []).SelectMany(variant => variant.Parts ?? [])
+                .SelectMany(part => part.Versions ?? []).Single(version => version.FileId == 8);
+            nested.Intro = nested.Credits = nested.Recap = nested.Preview = null;
+            var intro = detail.Intro; var recap = detail.Recap; var preview = detail.Preview;
+            typeof(PlaybackManager).GetProperty("CurrentSession")!.SetValue(manager, new PlaybackStartResponse { MediaFileId = 8 });
+            using (var payload = JsonDocument.Parse("""{"file_id":8,"credits":{"start":85,"end":105}}"""))
+                Call(player, "ApplyRealtimeMarkersUpdated", payload.RootElement);
+            await Until(() => mpv.GetPropertyDouble("user-data/marker-fallback/file_id") == 8 &&
+                mpv.GetPropertyDouble("user-data/marker-fallback/credits_end") == 105);
+            Check(ReferenceEquals(detail.Intro, intro) && ReferenceEquals(detail.Recap, recap) && ReferenceEquals(detail.Preview, preview),
+                "A partial nested-file update must preserve unmentioned top-level fallback ranges");
+            Check(player.ActiveIntro?.Start == 5 && player.ActiveIntro?.End == 30 && player.ActiveCredits?.End == 105,
+                "Native timing must retain the fallback intro while applying the live credits");
+            foreach (var (kind, start, end) in new[] { ("intro", 5, 30), ("recap", 1, 4), ("preview", 70, 75) })
+                Check(mpv.GetPropertyDouble($"user-data/marker-fallback/{kind}_start") == start &&
+                    mpv.GetPropertyDouble($"user-data/marker-fallback/{kind}_end") == end,
+                    $"A partial nested-file update lost the OSC {kind} fallback");
+            using (var payload = JsonDocument.Parse("""{"file_id":8,"intro":null}"""))
+                Call(player, "ApplyRealtimeMarkersUpdated", payload.RootElement);
+            await Until(() => mpv.GetPropertyDouble("user-data/marker-fallback/intro_end") == 0);
+            Check(detail.Intro is null && player.ActiveIntro is null, "An explicit live withdrawal still clears the fallback intro");
         }
         finally { Set(player, "_mpv", null); }
     }
