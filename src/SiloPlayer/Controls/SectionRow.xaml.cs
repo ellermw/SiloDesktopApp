@@ -97,6 +97,7 @@ public sealed partial class SectionRow : UserControl
     }
 
     public Action<HomeSectionWithItems>? OnRetry { get; set; }
+    public Action<HomeSectionWithItems>? OnNearEnd { get; set; }
 
     public SectionRow()
     {
@@ -466,6 +467,9 @@ public sealed partial class SectionRow : UserControl
         // only when there's more content in that direction.
         LeftFadeGradient.Opacity = _canScrollPrev ? 1.0 : 0.0;
         RightFadeGradient.Opacity = _canScrollNext ? 1.0 : 0.0;
+        if (IsLoaded && Section is { HasMore: true, LoadCompleted: true } section && viewport > 0 && extent > 0
+            && extent - viewport - offset <= viewport)
+            OnNearEnd?.Invoke(section);
     }
 
     // ─── Hover-reveal ───────────────────────────────────────────────────

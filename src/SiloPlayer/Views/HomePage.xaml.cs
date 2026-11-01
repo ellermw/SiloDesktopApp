@@ -412,6 +412,7 @@ public sealed partial class HomePage : Page
         };
         ApplySectionRowWidth(row, ActualWidth);
         row.OnRetry = failed => _ = ViewModel.RetrySectionAsync(failed.Id);
+        row.OnNearEnd = partial => _ = ViewModel.CompleteSectionAsync(partial.Id);
         ConfigureSectionNavigation(row, section);
         return row;
     }

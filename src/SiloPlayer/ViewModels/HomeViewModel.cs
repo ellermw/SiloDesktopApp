@@ -22,6 +22,8 @@ public partial class HomeViewModel : ObservableObject,
     private readonly Microsoft.UI.Dispatching.DispatcherQueue? _dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
     private IReadOnlyList<HomeSection> _layoutOrder = [];
     private readonly Dictionary<string, HomeSectionWithItems> _rawSections = new(StringComparer.Ordinal);
+    private readonly HashSet<(int Generation, string SectionId)> _completingSections = [];
+    private long _rowCompletionOrder;
     private HashSet<string> _avoidDuplicateTypes = new(StringComparer.Ordinal);
 
     public HomeViewModel(HomeApi homeApi, AuthService authService, SettingsApi? settingsApi = null)
@@ -130,7 +132,7 @@ public partial class HomeViewModel : ObservableObject,
 
                     if (message.Completed)
                     {
-                        section.Items.RemoveAt(i);
+                        HomeRowWindow.RemoveAt(section, i);
                     }
                     else
                     {
@@ -160,7 +162,7 @@ public partial class HomeViewModel : ObservableObject,
                 if (item.ContentId == contentId
                     || (seriesId != null && (item.SeriesId == seriesId || item.ContentId == seriesId)))
                 {
-                    section.Items.RemoveAt(i);
+                    HomeRowWindow.RemoveAt(section, i);
                     removedAny = true;
                 }
             }
@@ -193,6 +195,7 @@ public partial class HomeViewModel : ObservableObject,
     private MediaItem? _lastDismissedItem;
     private HomeSectionWithItems? _lastDismissedSection;
     private int _lastDismissedIndex;
+    private bool _lastDismissedWasInitial;
 
     private DateTime _lastLoadedAt = DateTime.MinValue;
     private bool _loadInProgress;
@@ -502,6 +505,11 @@ public partial class HomeViewModel : ObservableObject,
         // Gather all placeholder sections in display order (featured first).
         var targets = FeaturedSections.Concat(Sections).ToList();
         if (targets.Count == 0) return;
+        // Capture cache state on the UI thread before semaphore continuations
+        // resume on worker threads. The cache itself belongs to this thread.
+        var reads = targets.ToDictionary(section => section.Id, section => (
+            Whole: ShouldReadWhole(section),
+            Shown: _rawSections.TryGetValue(section.Id, out var cached) ? HomeSectionDedupe.Snapshot(cached) : null));
 
         using var gate = new SemaphoreSlim(MaxConcurrentSectionRequests);
         var tasks = targets.Select(async section =>
@@ -510,7 +518,9 @@ public partial class HomeViewModel : ObservableObject,
             try
             {
                 var sectionId = section.Id;
-                var resp = await _homeApi.GetSectionItemsAsync(sectionId, ct).ConfigureAwait(false);
+                var read = reads[sectionId];
+                var resp = await (read.Whole ? _homeApi.GetSectionItemsAsync(sectionId, ct)
+                    : _homeApi.GetInitialSectionItemsAsync(sectionId, ct)).ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
                 await RunOnUiThreadAsync(() =>
                 {
@@ -524,6 +534,8 @@ public partial class HomeViewModel : ObservableObject,
                     completed.LoadFailed = false;
                     completed.LoadCompleted = true;
                     completed.Items ??= new ObservableCollection<MediaItem>();
+                    if (!PrepareReadResult(completed, read.Shown, read.Whole)) return;
+                    PreserveExpandedState(completed);
                     ApplyRefreshedSection(completed);
                 }).ConfigureAwait(false);
             }
@@ -570,10 +582,13 @@ public partial class HomeViewModel : ObservableObject,
         var retryGeneration = _sectionLoadGeneration;
         var retryProfileId = _loadedProfileId;
         var retryToken = _sectionLoadCts?.Token ?? CancellationToken.None;
+        var whole = ShouldReadWhole(current);
+        var shown = _rawSections.TryGetValue(sectionId, out var retryRaw) ? HomeSectionDedupe.Snapshot(retryRaw) : null;
         ReplaceInBoundCollection(CloneSection(current, loadFailed: false, loadCompleted: false));
         try
         {
-            var response = await _homeApi.GetSectionItemsAsync(sectionId);
+            var response = await (whole ? _homeApi.GetSectionItemsAsync(sectionId, retryToken)
+                : _homeApi.GetInitialSectionItemsAsync(sectionId, retryToken));
             if (!IsCurrentSectionRetry(retryGeneration, retryToken, retryProfileId, sectionId))
                 return;
 
@@ -581,6 +596,8 @@ public partial class HomeViewModel : ObservableObject,
             completed.LoadFailed = false;
             completed.LoadCompleted = true;
             completed.Items ??= new ObservableCollection<MediaItem>();
+            if (!PrepareReadResult(completed, shown, whole)) return;
+            PreserveExpandedState(completed);
             ApplyRefreshedSection(completed);
         }
         catch (Exception ex)
@@ -590,6 +607,63 @@ public partial class HomeViewModel : ObservableObject,
 
             LogSectionFetchFailure(sectionId, ex);
             ReplaceInBoundCollection(CloneSection(current, loadFailed: true, loadCompleted: true));
+        }
+    }
+
+    private bool ShouldReadWhole(HomeSectionWithItems section)
+        => section.Featured || (_rawSections.TryGetValue(section.Id, out var cached) && HomeRowWindow.IsExpanded(cached));
+
+    private bool PrepareReadResult(HomeSectionWithItems incoming, HomeSectionWithItems? shown, bool whole)
+    {
+        if (!_rawSections.TryGetValue(incoming.Id, out var current)) return true;
+        // A whole-row completion can overtake a bounded refresh in the same
+        // generation. Its expanded result must keep ownership of the cache.
+        if (!whole && HomeRowWindow.IsExpanded(current)) return false;
+        if (shown != null) HomeRowWindow.FilterRemoved(shown, current, incoming);
+        return true;
+    }
+
+    private void PreserveExpandedState(HomeSectionWithItems incoming)
+    {
+        if (incoming.Featured || incoming.HasMore) return;
+        _rawSections.TryGetValue(incoming.Id, out var cached);
+        if (HomeRowWindow.IsExpanded(cached) || incoming.Items.Count > HomeRowWindow.InitialItemLimit)
+        {
+            incoming.ShownCount = Math.Min(cached?.ShownCount ?? HomeRowWindow.InitialItemLimit, incoming.Items.Count);
+            incoming.CompletedOrder = cached?.CompletedOrder > 0 ? cached.CompletedOrder : ++_rowCompletionOrder;
+        }
+    }
+
+    /// <summary>Recover the rest of a partial row without shifting cards already shown.</summary>
+    public async Task CompleteSectionAsync(string sectionId)
+    {
+        var generation = _sectionLoadGeneration;
+        var ct = _sectionLoadCts?.Token ?? CancellationToken.None;
+        var key = (generation, sectionId);
+        if (!IsCurrentSectionLoad(generation, ct, sectionId)
+            || !_rawSections.TryGetValue(sectionId, out var raw) || !raw.HasMore
+            || !_completingSections.Add(key)) return;
+        var shown = HomeSectionDedupe.Snapshot(raw);
+        try
+        {
+            var response = await _homeApi.GetSectionItemsAsync(sectionId, ct).ConfigureAwait(false);
+            await RunOnUiThreadAsync(() =>
+            {
+                if (!IsCurrentSectionLoad(generation, ct, sectionId)
+                    || !_rawSections.TryGetValue(sectionId, out var current) || !current.HasMore
+                    || response.Section == null) return;
+                ApplyRefreshedSection(HomeRowWindow.Complete(shown, response.Section, current, ++_rowCompletionOrder));
+            }).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            // Keep the partial row usable. A later near-end event retries.
+            LogSectionFetchFailure(sectionId, ex);
+        }
+        finally
+        {
+            await RunOnUiThreadAsync(() => _completingSections.Remove(key)).ConfigureAwait(false);
         }
     }
 
@@ -608,6 +682,9 @@ public partial class HomeViewModel : ObservableObject,
         Customized = source.Customized,
         LoadFailed = loadFailed,
         LoadCompleted = loadCompleted ?? source.LoadCompleted,
+        HasMore = source.HasMore,
+        ShownCount = source.ShownCount,
+        CompletedOrder = source.CompletedOrder,
         Items = loadFailed
             ? new ObservableCollection<MediaItem>()
             : new ObservableCollection<MediaItem>(source.Items ?? []),
@@ -627,6 +704,9 @@ public partial class HomeViewModel : ObservableObject,
         Customized = meta.Customized,
         LoadFailed = false,
         LoadCompleted = cached?.LoadCompleted == true && cached.LoadFailed == false,
+        HasMore = cached?.HasMore ?? false,
+        ShownCount = cached?.ShownCount,
+        CompletedOrder = cached?.CompletedOrder ?? 0,
         Items = cached?.LoadCompleted == true && cached.LoadFailed == false
             ? cached.Items
             : new ObservableCollection<MediaItem>(),
@@ -760,6 +840,10 @@ public partial class HomeViewModel : ObservableObject,
             if (TryApplyRefreshedSection(FeaturedSections, section)) continue;
             TryApplyRefreshedSection(Sections, section);
         }
+        // A duplicate-filtered or dismissed partial row has no carousel left
+        // to report near-end demand, so recover its remaining cards now.
+        foreach (var section in FeaturedSections.Concat(Sections).Where(section => section.HasMore && section.Items.Count == 0).ToList())
+            _ = CompleteSectionAsync(section.Id);
     }
 
     private async Task LoadRecipeTypesAsync(int generation, CancellationToken ct)
@@ -849,13 +933,15 @@ public partial class HomeViewModel : ObservableObject,
         _lastDismissedItem = request.Item;
         _lastDismissedSection = request.Section;
         _lastDismissedIndex = request.Section.Items.IndexOf(request.Item);
+        _lastDismissedWasInitial = !request.Section.ShownCount.HasValue || _lastDismissedIndex < request.Section.ShownCount.Value;
 
         // Remove from UI immediately
-        request.Section.Items.Remove(request.Item);
+        var dismissedIndex = request.Section.Items.IndexOf(request.Item);
+        if (dismissedIndex >= 0) HomeRowWindow.RemoveAt(request.Section, dismissedIndex);
         if (_rawSections.TryGetValue(request.Section.Id, out var raw))
         {
             var original = raw.Items.FirstOrDefault(item => item.ContentId == request.Item.ContentId);
-            if (original != null) raw.Items.Remove(original);
+            if (original != null) HomeRowWindow.RemoveAt(raw, raw.Items.IndexOf(original));
         }
         BumpRenderRevision();
 
@@ -925,9 +1011,13 @@ public partial class HomeViewModel : ObservableObject,
         {
             var idx = Math.Min(_lastDismissedIndex, _lastDismissedSection.Items.Count);
             _lastDismissedSection.Items.Insert(idx, _lastDismissedItem);
+            if (_lastDismissedWasInitial && _lastDismissedSection.ShownCount.HasValue) _lastDismissedSection.ShownCount++;
             if (_rawSections.TryGetValue(_lastDismissedSection.Id, out var raw)
                 && !raw.Items.Any(item => item.ContentId == _lastDismissedItem.ContentId))
+            {
                 raw.Items.Insert(Math.Min(_lastDismissedIndex, raw.Items.Count), _lastDismissedItem);
+                if (_lastDismissedWasInitial && raw.ShownCount.HasValue) raw.ShownCount++;
+            }
             BumpRenderRevision();
         }
     }
@@ -941,6 +1031,7 @@ public partial class HomeViewModel : ObservableObject,
         _lastDismissedItem = null;
         _lastDismissedSection = null;
         _lastDismissedIndex = 0;
+        _lastDismissedWasInitial = false;
     }
 
     private async Task AutoHideUndoBannerAsync()

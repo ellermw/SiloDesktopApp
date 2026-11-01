@@ -17,3 +17,11 @@ The update dialog retains its bounded scrolling body and fixed actions. Channel 
 ## Historical release documentation
 
 The [1.2.516 release ledger](releases/1.2.516.md), [1.2.515 handoff](archive/2026-10-29-release-1.2.515-handoff.md), [1.2.514 handoff](archive/2026-10-29-release-1.2.514-handoff.md) and [earlier handoffs](archive/2026-10-29-development-handoffs.md) describe historical releases, not this PR's source identity or verification status.
+
+## Approved Beta Task E — bounded Home rows (2026-11-01)
+
+Task E deliberately uses Beta base `a15621a0d6d5960d6b31a620a23ae259d734dedb`, whose unchanged source version is **1.2.519**, newer than the historical 1.2.517 context above. Branch `codex/server-home-window` implements advertised first-20 Home row reads and complete recovery against official Silo main `63ef34b236b88dc77acca1a9a3ed90235377691f`. Featured and expanded rows read whole. Stable completion preserves order, removals, duplicate priority, cache ownership and Undo boundaries.
+
+The final full unit suite passed **2,817/2,817** and the fresh Release app publish passed. Candidate `SiloPlayer.dll` SHA256: `EAD30AC02DAA9FCF86B32D1724E8D5CF95CBDA35A37A300F03F87FB428BF648B`. Final native verification is **pending** at handoff: the queued `home-row-window` runner includes the new actual carousel/Dismiss/Undo cases and existing Home current regressions. The earlier native run passed before the final Undo boundary correction. The parent task must record final native completion before pushing.
+
+See [Task E handoff](superpowers/handoffs/2026-11-01-bounded-home-rows.md). Detailed receipts and exact committed source identity are under `D:/SiloPlayer/.codex-tmp/server-align-nov01/task-e-report.md`. This candidate has not been pushed, packaged as an installer, published, installed or used to restart the installed player. Historical release receipts remain unchanged.
