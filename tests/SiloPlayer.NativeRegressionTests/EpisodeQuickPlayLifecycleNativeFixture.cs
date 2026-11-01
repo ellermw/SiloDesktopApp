@@ -367,6 +367,66 @@ internal static partial class EpisodeQuickPlayNativeFixture
         await Until(() => play.IsEnabled); await Task.Delay(60);
         Check(!scope.Player.IsLoading && scope.Overlay.Visibility == Visibility.Collapsed && scope.Wire.Starts.Count == 0,
             "A canceled queued successor prevented the retired request from hiding its own loading surface.");
+        CheckAbandonedHandoff(scope);
+
+        foreach (var departure in new[] { "cancellation", "profile" })
+        {
+            await scope.ResetAsync();
+            scope.Wire.AcceptStart = true;
+            var manager = new PlaybackManager(scope.Playback, scope.Catalog, scope.Auth, scope.Client);
+            manager.UseWatchDetail(new() { ContentId = "outgoing", Type = "episode", Versions = [new() { FileId = 42, Duration = 1200 }] });
+            await manager.StartSessionAsync(42, 91);
+            scope.Wire.AcceptStart = false;
+            scope.Wire.Starts.Clear();
+            SetField(scope.Player, "_playbackManager", manager);
+            SetField(scope.Player, "_activeTransportPlan", PlaybackTransportPlanner.Plan(manager.CurrentSession!));
+            typeof(PlayerService).GetProperty("ContentId")!.SetValue(scope.Player, "outgoing");
+            typeof(PlayerService).GetMethod("SetState", Private)!.Invoke(scope.Player, [PlayerState.Minimized]);
+
+            scope.Wire.HoldWatch = "abandoned-scoped-start";
+            var identity = scope.Client.CaptureIdentityContext();
+            var first = scope.Player.PlayAsync(scope.Wire.HoldWatch, libraryId: 73, expectedIdentityContext: identity);
+            await scope.Wire.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var gate = (SemaphoreSlim)GetField(scope.Player, "_authoritySwitchGate")!;
+            var handoff = gate.WaitAsync();
+            using var successorLifetime = new CancellationTokenSource();
+            var second = scope.Player.PlayAsync("abandoned-scoped-successor", cancellationToken: successorLifetime.Token,
+                expectedIdentityContext: identity);
+            var handoffReleased = false;
+            try
+            {
+                await handoff.WaitAsync(TimeSpan.FromSeconds(3));
+                await first;
+                Check(scope.Player.State == PlayerState.Minimized && scope.Player.Manager == null &&
+                    (bool)GetField(scope.Player, "_switchingContent")!,
+                    "The scoped successor did not reserve a hand-off after retiring outgoing playback.");
+                if (departure == "cancellation") successorLifetime.Cancel();
+                else scope.Auth.SelectProfile("departed-successor", profile: new() { Id = "departed-successor", Name = "Replacement" });
+                gate.Release();
+                handoffReleased = true;
+                await second;
+                await Task.Delay(60);
+                Check(scope.Wire.Stops == 1 && scope.Wire.Starts.Count == 0 && scope.Wire.Watches.Count == 1 &&
+                    !scope.Player.IsLoading && scope.Overlay.Visibility == Visibility.Collapsed,
+                    $"The abandoned scoped successor ({departure}) changed sessions or stranded its loading surface.");
+                CheckAbandonedHandoff(scope);
+            }
+            finally
+            {
+                if (!handoffReleased) _ = handoff.ContinueWith(_ => gate.Release(), TaskScheduler.Default);
+                successorLifetime.Cancel();
+                scope.Wire.ReleaseWatch.TrySetResult();
+                await Task.WhenAll(first, second);
+            }
+        }
+    }
+
+    private static void CheckAbandonedHandoff(LifecycleScope scope)
+    {
+        Check(scope.Player.State == PlayerState.Idle && scope.Player.ContentId == null && scope.Player.ActiveLibraryId == null &&
+            scope.Player.Manager == null && !(bool)GetField(scope.Player, "_switchingContent")! &&
+            GetField(scope.Player, "_activeTransportPlan") == null && !PlaybackConnectionService.For(scope.Playback).IsMediaActive,
+            "An abandoned successor stranded the retired content identity, EOF guard, player state or media-active flag.");
     }
 
     private static async Task VerifyRoomIntentAsync(LifecycleScope scope)

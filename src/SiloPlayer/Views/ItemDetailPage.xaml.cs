@@ -8098,7 +8098,7 @@ public sealed partial class ItemDetailPage : Page
         };
         quickPlayButton.Click += async (_, _) =>
         {
-            if (!quickPlayButton.IsEnabled || !IsCurrentCardOwner() || !episode.Files.Any(file => file.Unreadable != true)) return;
+            if (!quickPlayButton.IsEnabled || !IsCurrentCardOwner() || episode.Files?.Any(file => file.Unreadable != true) != true) return;
             quickPlayButton.IsEnabled = false;
             // A rendered card may outlive an access revision, but not its
             // account/profile. Preparation captures fresh read contexts under
@@ -8246,7 +8246,7 @@ public sealed partial class ItemDetailPage : Page
             owner: moreButton).ShowAt(moreButton);
         actionLayer.Children.Add(quickWatchedButton);
         actionLayer.Children.Add(moreButton);
-        if (episode.Files.Any(file => file.Unreadable != true)) actionLayer.Children.Add(quickPlayButton);
+        if (episode.Files?.Any(file => file.Unreadable != true) == true) actionLayer.Children.Add(quickPlayButton);
 
         root.Children.Add(button);
         root.Children.Add(actionLayer);

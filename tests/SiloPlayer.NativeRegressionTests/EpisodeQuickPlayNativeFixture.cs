@@ -99,15 +99,23 @@ internal static partial class EpisodeQuickPlayNativeFixture
             fixture.Player.SetWatchTogetherPlayback(false);
             typeof(PlayerService).GetField("_mpv", Private)!.SetValue(fixture.Player, null);
 
-            foreach (var files in new List<EpisodeFile>[] { [], [new() { Unreadable = true }], [new() { Unreadable = null }], [new() { Unreadable = true }, new() { Unreadable = false }] })
+            foreach (var files in new List<EpisodeFile>?[] { null, [], [new() { Unreadable = true }], [new() { Unreadable = null }], [new() { Unreadable = true }, new() { Unreadable = false }] })
             {
-                var available = Card(new() { ContentId = "availability", Title = "Availability", Files = files });
+                var available = Card(new() { ContentId = "availability", Title = "Availability", Files = files! });
                 await Task.Delay(30); available.UpdateLayout();
                 var action = Descendants<Button>(available).SingleOrDefault(button => AutomationProperties.GetName(button).StartsWith("Play "));
-                Check((action != null && action.IsEnabled && action.Visibility == Visibility.Visible) == files.Any(file => file.Unreadable != true),
+                Check((action != null && action.IsEnabled && action.Visibility == Visibility.Visible) == (files?.Any(file => file.Unreadable != true) == true),
                     "Quick play does not follow authorized nullable unreadable file fields.");
                 parent.Children.Remove(available);
             }
+
+            var watchesBeforeMissingFiles = fixture.Wire.Watches.Count;
+            var originalFiles = episode.Files;
+            episode.Files = null!;
+            Invoke(play!); await Task.Delay(50);
+            Check(play!.IsEnabled && fixture.Wire.Watches.Count == watchesBeforeMissingFiles,
+                "A missing file array at click time started playback or left the action disabled.");
+            episode.Files = originalFiles;
 
             var spoiler = new Episode { ContentId = "spoiler-fixture", Title = "Protected episode", Overview = "Synthetic secret.",
                 Files = [new() { FileId = 42 }], StillUrl = "https://quickplay.fixture.invalid/still" };

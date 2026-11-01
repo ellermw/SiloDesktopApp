@@ -123,6 +123,8 @@ public partial class PlayerService : IDisposable
     private readonly SemaphoreSlim _playRequestGate = new(1, 1);
     private CancellationTokenSource? _playRequestCts;
     private CancellationTokenSource? _scopedViewerPlayCts;
+    private object? _viewerPlayReservation;
+    private string? _retiredPlayContentId;
     private long _playRequestGeneration;
     private CancellationTokenSource? _fileLoadTimeoutCts;
     private long _fileLoadGeneration;
@@ -1870,6 +1872,8 @@ public partial class PlayerService : IDisposable
         // Accept newer viewer intent immediately, even when the earlier start
         // is still holding the authority gate. Queued requests never cancel
         // established playback merely by reserving their place.
+        var reservation = new object();
+        Interlocked.Exchange(ref _viewerPlayReservation, reservation);
         var previousIntent = Interlocked.Exchange(ref _scopedViewerPlayCts, scopedIntent);
         try { previousIntent?.Cancel(); } catch (ObjectDisposedException) { }
         try
@@ -1920,12 +1924,48 @@ public partial class PlayerService : IDisposable
         catch (OperationCanceledException) when (scopedIntent?.IsCancellationRequested == true) { }
         finally
         {
-            if (scopedIntent != null)
+            try
             {
-                Interlocked.CompareExchange(ref _scopedViewerPlayCts, null, scopedIntent);
-                scopedIntent.Dispose();
+                // A reservation may be canceled at the gate or lose its owner
+                // before core takes over. Wait for the retired start's cleanup,
+                // then repair only the latest abandoned hand-off under the gate.
+                if (ReferenceEquals(reservation, Volatile.Read(ref _viewerPlayReservation)))
+                {
+                    await _authoritySwitchGate.WaitAsync();
+                    try
+                    {
+                        if (ReferenceEquals(reservation, Volatile.Read(ref _viewerPlayReservation)))
+                            CompleteRetiredPlayHandoff();
+                    }
+                    finally { _authoritySwitchGate.Release(); }
+                }
+            }
+            finally
+            {
+                if (scopedIntent != null)
+                {
+                    Interlocked.CompareExchange(ref _scopedViewerPlayCts, null, scopedIntent);
+                    scopedIntent.Dispose();
+                }
             }
         }
+    }
+
+    // Called under _authoritySwitchGate; an entered successor clears this
+    // marker before taking ownership of the retired content's state.
+    private void CompleteRetiredPlayHandoff()
+    {
+        var retiredContentId = _retiredPlayContentId;
+        _retiredPlayContentId = null;
+        if (retiredContentId == null || ContentId != retiredContentId ||
+            _playbackManager != null || _playbackCts != null) return;
+        _switchingContent = false;
+        _activeTransportPlan = null;
+        ContentId = null;
+        ActiveLibraryId = null;
+        _videoWindow?.Hide();
+        SetState(PlayerState.Idle);
+        SetConnectionMediaActive(false);
     }
 
     private bool IsCurrentViewerPlayOwner(PlaybackAuthorityScope authority, ApiIdentityContext owner) =>
@@ -2069,6 +2109,7 @@ public partial class PlayerService : IDisposable
             _switchingContent = wasSwitchingContent;
             throw;
         }
+        _retiredPlayContentId = null;
         StopSubtitleSync();
         ClearLiveSubtitleTranslation(restorePreviousSubtitle: false);
         // Fetch the effective device/profile style in parallel with playback
@@ -2404,22 +2445,13 @@ public partial class PlayerService : IDisposable
                 _playbackManager = null;
                 _playbackCts = null;
                 IsLoading = false;
-                // A successor has reserved playback, even if it has not yet
-                // entered this gate. Idle would detach its Watch Party session.
+                // Preserve the EOF guard during a reserved hand-off, but leave
+                // cleanup for the latest reservation if it never reaches core.
                 var superseded = requestGeneration != Volatile.Read(ref _playRequestGeneration) ||
                     !ReferenceEquals(scopedIntent, Volatile.Read(ref _scopedViewerPlayCts));
+                _retiredPlayContentId = contentId;
                 if (!superseded)
-                {
-                    _switchingContent = false;
-                    _activeTransportPlan = null;
-                }
-                if (!superseded && ContentId == contentId)
-                {
-                    ContentId = null;
-                    ActiveLibraryId = null;
-                    _videoWindow?.Hide();
-                    SetState(PlayerState.Idle);
-                }
+                    CompleteRetiredPlayHandoff();
             }
             loadingWindow?.HideLoadingOverlay(loadingOwner);
             if (requestManager != null)
