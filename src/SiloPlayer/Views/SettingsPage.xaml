@@ -389,7 +389,7 @@
                             <StackPanel x:Name="AccountSignOutOtherSessionsGroup" Spacing="4" Visibility="Collapsed">
                                 <CheckBox x:Name="AccountSignOutOtherSessions" IsChecked="False"
                                           Checked="AccountSignOutOtherSessions_Changed" Unchecked="AccountSignOutOtherSessions_Changed"
-                                          AutomationProperties.HelpText="Other browsers and apps must sign in again with the new password. This app stays signed in, and API keys keep working.">
+                                          AutomationProperties.HelpText="{Binding Text, ElementName=AccountSignOutOtherSessionsDescription, Mode=OneWay}">
                                     <TextBlock Text="Sign out of other devices" TextWrapping="Wrap" />
                                 </CheckBox>
                                 <TextBlock x:Name="AccountSignOutOtherSessionsDescription" FontSize="12" TextWrapping="Wrap"

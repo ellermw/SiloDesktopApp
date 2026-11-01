@@ -11,6 +11,17 @@ public sealed class AccountPasswordTests
     private const string SupportsSessions = """{"state":"available","allowed":true,"sign_out_other_sessions":true,"requires_current_password":true,"minimum_password_length":8,"maximum_password_bytes":72}""";
 
     [Fact]
+    public async Task LegacyDefaultCancellationArgumentRemainsSourceCompatibleAndOmitsSessionMember()
+    {
+        var (_, client, handler) = Create();
+        var api = new AccountPasswordApi(client);
+        await api.ChangePasswordAsync(client.CaptureContext(), "old password", "new password", default);
+        using var body = JsonDocument.Parse(handler.Body!);
+        Assert.False(body.RootElement.TryGetProperty("sign_out_other_sessions", out _));
+        Assert.Equal("POST /api/v2/account/password", Assert.Single(handler.Requests));
+    }
+
+    [Fact]
     public async Task AdvertisedSessionOptionIsAvailableToThePasswordForm()
     {
         var (vm, _, handler) = Create();

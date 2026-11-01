@@ -66,6 +66,11 @@ internal static class PasswordSessionsNativeFixture
                 Check(option.IsChecked == false, "Option starts unchecked on each visit");
             }
             Check(option.IsEnabled && AutomationProperties.GetHelpText(option).Contains("API keys"), "Option enabled with accessible explanation");
+            var explanation = description.Text;
+            description.Text = "Synthetic alternate session explanation.";
+            await Until(() => AutomationProperties.GetHelpText(option) == description.Text);
+            description.Text = explanation;
+            await Until(() => AutomationProperties.GetHelpText(option) == description.Text);
             // Force a compact form to prove native text wrapping and ordering.
             var form = (StackPanel)page.FindName("AccountPasswordForm");
             form.Width = 300;
@@ -118,6 +123,9 @@ internal static class PasswordSessionsNativeFixture
         {
             handler.Pending?.TrySetResult(new(HttpStatusCode.NoContent));
             if (page is not null) parent.Children.Remove(page);
+            // Allow native Unloaded handlers to release the fixture account
+            // before restoring or disposing its service provider, including failures.
+            await Task.Delay(100);
             servicesField.SetValue(null, previous);
         }
     }
