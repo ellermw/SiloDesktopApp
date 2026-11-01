@@ -630,7 +630,13 @@ public partial class HomeViewModel : ObservableObject,
         completed.Items ??= new ObservableCollection<MediaItem>();
         if (!PrepareReadResult(completed, shown, whole)) return;
         FilterProgressRemovals(completed, removalRevision);
-        PreserveExpandedState(completed);
+        // A new server ranking must not promote retained tail cards into the
+        // initial prefix. Refresh expanded rows through the stable merge too.
+        if (whole && !completed.Featured && _rawSections.TryGetValue(completed.Id, out var current)
+            && HomeRowWindow.IsExpanded(current))
+            completed = HomeRowWindow.Complete(shown ?? current, completed, current, ++_rowCompletionOrder);
+        else
+            PreserveExpandedState(completed);
         ApplyRefreshedSection(completed);
         // Demand survives a same-owner generation change, even when the new
         // bounded read reconciles to exactly the same mounted cards.

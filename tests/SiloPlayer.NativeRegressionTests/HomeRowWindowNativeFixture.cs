@@ -174,12 +174,23 @@ internal static class HomeRowWindowNativeFixture
                 && vm.Sections[0].Items.Count == 25 && wire.Whole == 2 && wire.Capped == 1,
                 "An expanded truncated refresh must make one uncapped request, not rearm completion.");
 
-            wire.PartialWhole = false; wire.Title = "Full";
+            wire.PartialWhole = false; wire.ReverseWhole = true; wire.Title = "Full";
             vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
             await Until(() => vm.Sections[0].Title == "Full");
             Require(!vm.Sections[0].HasMore && vm.Sections[0].Items.Count == 35 && vm.Sections[0].ShownCount == 20
                 && vm.Sections[0].CompletedOrder == order && wire.Whole == 3,
                 "A later whole refresh must recover new cards without promoting earlier tail cards to initial priority.");
+            Require(vm.Sections[0].Items.Select(item => item.ContentId).SequenceEqual(
+                Enumerable.Range(1, 25).Concat(Enumerable.Range(26, 10).Reverse()).Select(i => $"alpha-{i}")),
+                "A reversed whole refresh must retain the initial IDs and tail order, then append unseen cards.");
+            var later = new HomeSectionWithItems { Id = "later", SectionType = "continue_watching",
+                Items = new() { new() { ContentId = "alpha-1" }, new() { ContentId = "alpha-25" } } };
+            var projected = HomeSectionDedupe.Project([new() { Id = "row" }, new() { Id = "later" }],
+                new Dictionary<string, HomeSectionWithItems> { ["row"] = vm.Sections[0], ["later"] = later },
+                new HashSet<string> { "continue_watching" });
+            Require(projected["later"].Items.Select(item => item.ContentId).SequenceEqual(new[] { "alpha-25" })
+                && projected["row"].Items.Take(20).Select(item => item.ContentId).SequenceEqual(Enumerable.Range(1, 20).Select(i => $"alpha-{i}")),
+                "Original initial cards must retain duplicate priority while retained tail cards yield to another row's initial cards.");
         }
         finally { wire.Release.TrySetResult(); if (row != null) parent.Children.Remove(row); Retire(vm); }
     }
@@ -272,7 +283,7 @@ internal static class HomeRowWindowNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         public int Capped, Whole; public bool HoldWhole, FailWhole, HoldRefresh, DuplicateFirst;
-        public bool HoldFirstWhole, FailFirstWhole, NullFirstWhole, PartialWhole;
+        public bool HoldFirstWhole, FailFirstWhole, NullFirstWhole, PartialWhole, ReverseWhole;
         public string Title = "Progress";
         public TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -304,8 +315,10 @@ internal static class HomeRowWindowNativeFixture
                 if (HoldFirstWhole && attempt == 1) { Started.TrySetResult(); await Release.Task.WaitAsync(ct); }
                 else if (HoldWhole) { Started.TrySetResult(); await Release.Task; }
             }
+            var cards = Enumerable.Range(1, capped ? 20 : PartialWhole ? 25 : 35);
+            if (!capped && ReverseWhole) cards = cards.Reverse();
             return Json(JsonSerializer.Serialize(new { id = "row", title = Title, section_type = DuplicateFirst ? "hidden_gems" : "continue_watching", item_limit = capped ? 20 : 50,
-                total_count = 35, has_more = capped || PartialWhole, items = Enumerable.Range(1, capped ? 20 : PartialWhole ? 25 : 35).Select(i => new { content_id = $"{profile}-{i}", title = $"Card{i}", type = "movie" }) }));
+                total_count = 35, has_more = capped || PartialWhole, items = cards.Select(i => new { content_id = $"{profile}-{i}", title = $"Card{i}", type = "movie" }) }));
         }
         private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
     }
