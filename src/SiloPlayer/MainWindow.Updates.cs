@@ -15,6 +15,7 @@ public sealed partial class MainWindow
 {
     private AppUpdateService? _appUpdates;
     private CancellationTokenSource? _appUpdateLifetime;
+    internal CancellationToken AppUpdateLifetimeToken => _appUpdateLifetime?.Token ?? new CancellationToken(true);
     private Task _appUpdateLoop = Task.CompletedTask;
     private ContentDialog? _appUpdateDialog;
     private StackPanel? _updateBodyPanel;
@@ -162,10 +163,19 @@ public sealed partial class MainWindow
         {
             if (_refreshingUpdatePreferences || channelCombo.SelectedIndex < 0 || _updateDialogBusy) return;
             var channel = (AppUpdateChannel)channelCombo.SelectedIndex;
-            var preferences = App.Services.GetRequiredService<SettingsService>(); var config = preferences.Load(); config.UpdateChannel = channel; preferences.Save(config);
-            try { await updateService.SetChannelAsync(channel, _appUpdateLifetime!.Token); await updateService.CheckAsync(_appUpdateLifetime.Token); }
+            var ct = AppUpdateLifetimeToken;
+            try
+            {
+                await updateService.SetChannelAsync(channel, ct);
+                ct.ThrowIfCancellationRequested();
+                if (updateService.Channel != channel || updateService.IsChangingChannel) return;
+                var preferences = App.Services.GetRequiredService<SettingsService>(); var config = preferences.Load();
+                config.UpdateChannel = channel; preferences.Save(config);
+                await updateService.CheckAsync(ct);
+            }
             catch (OperationCanceledException) { }
             catch (Exception ex) { LocalLog.AppendException("updates.txt", ex, "dialog_update_channel"); }
+            finally { RefreshUpdateDialog(); }
         };
         panel.Children.Add(channelCombo);
         _updateBetaWarning = new TextBlock { Name = "AppUpdateBetaWarning", Text = "Beta releases may contain bugs. Choose Stable for regular approved updates.",

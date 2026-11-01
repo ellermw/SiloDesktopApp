@@ -17,8 +17,10 @@ public static class UpdateInstallation
         {
             var launcher = Path.Combine(root, "SiloPlayer.exe");
             UpdateManifestValidation.EnsureOrdinaryPath(launcher);
-            return Version.TryParse(System.Diagnostics.FileVersionInfo.GetVersionInfo(launcher).FileVersion, out var version)
-                && version >= new Version(1, 2, 517, 0);
+            // FileVersion 1.2.517.0 also shipped without the full-update gate.
+            // The apphost copies AssemblyTitle into its FileDescription resource.
+            return string.Equals(System.Diagnostics.FileVersionInfo.GetVersionInfo(launcher).FileDescription,
+                "Silo Desktop Player launcher; FullUpdateGate=1", StringComparison.Ordinal);
         }
         catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException or System.Security.SecurityException or System.ComponentModel.Win32Exception)
         {

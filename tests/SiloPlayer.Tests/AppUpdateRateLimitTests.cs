@@ -10,6 +10,35 @@ namespace SiloPlayer.Tests;
 public sealed class AppUpdateRateLimitTests
 {
     [Theory]
+    [InlineData("timeout")]
+    [InlineData("transport")]
+    [InlineData("invalid-data")]
+    [InlineData("success")]
+    public async Task InFlightCheckCannotEraseASharedAuthorityCooldown(string outcome)
+    {
+        using var clock = new Clock(); using var wire = new Wire { Hold = true }; using var http = new HttpClient(wire);
+        var service = new AppUpdateService(http, Path.GetTempPath(), new Version(1, 2, 334), timeProvider: clock);
+        var check = service.CheckAsync();
+        await wire.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var until = clock.GetUtcNow().AddHours(1);
+        service.ApplyAuthorityCooldown(until); // e.g. independently rate-limited installed helper.
+        wire.Failure = outcome switch
+        {
+            "timeout" => new TaskCanceledException("Synthetic timeout"),
+            "transport" => new HttpRequestException("Synthetic transport failure"),
+            "invalid-data" => new InvalidDataException("Synthetic invalid metadata"),
+            _ => null
+        };
+        wire.Release.TrySetResult();
+        await check.WaitAsync(TimeSpan.FromSeconds(5));
+        var cooldown = typeof(AppUpdateService).GetField("_rateLimitedUntil", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        Assert.Equal(until, Assert.IsType<DateTimeOffset>(cooldown.GetValue(service)));
+        await service.CheckAsync();
+        Assert.Equal(1, wire.Checks);
+        Assert.Contains("limiting update checks", service.State.Error);
+    }
+
+    [Theory]
     [InlineData(403, "date", 45)]
     [InlineData(429, "none", 5)]
     [InlineData(403, "invalid-reset", 5)]
@@ -175,6 +204,7 @@ public sealed class AppUpdateRateLimitTests
     {
         private static readonly byte[] Package = "Synthetic update; never executed"u8.ToArray();
         public bool Limited, Hold;
+        public Exception? Failure;
         public int Checks, Downloads;
         public TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -185,6 +215,7 @@ public sealed class AppUpdateRateLimitTests
             { Downloads++; return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Package) }; }
             Assert.Equal("api.github.com", request.RequestUri.Host); Checks++;
             if (Hold) { Entered.TrySetResult(); await Release.Task.WaitAsync(ct); }
+            if (Failure is { } failure) throw failure;
             if (Limited)
             {
                 var limited = new HttpResponseMessage(HttpStatusCode.TooManyRequests);

@@ -89,11 +89,15 @@ public sealed class FullInstallerFallbackTests
     }
 
     [Theory]
-    [InlineData("1.2.516.0", false)]
-    [InlineData("1.2.517.0", true)]
-    [InlineData("1.2.517.12", true)]
-    [InlineData(null, false)]
-    public async Task VersionedFullMigrationRequiresARootLauncherThatChecksTheFullUpdateGate(string? launcherVersion, bool supported)
+    [InlineData("1.2.516.0", null, false)]
+    [InlineData("1.2.517.0", null, false)]
+    [InlineData("1.2.517.12", null, false)]
+    [InlineData("1.2.999.0", null, false)]
+    [InlineData("1.2.517.0", "Silo Desktop Player launcher; FullUpdateGate=1", true)]
+    [InlineData("1.2.517.12", "Silo Desktop Player launcher; FullUpdateGate=1", true)]
+    [InlineData("1.2.517.0", "Silo Desktop Player launcher; FullUpdateGate=0", false)]
+    [InlineData(null, null, false)]
+    public async Task VersionedFullMigrationRequiresARootLauncherThatChecksTheFullUpdateGate(string? launcherVersion, string? launcherTitle, bool supported)
     {
         var sandbox = Path.Combine(Path.GetTempPath(), "silo-full-launcher-" + Guid.NewGuid().ToString("N"));
         var install = Path.Combine(sandbox, "installation"); var cache = Path.Combine(sandbox, "cache");
@@ -104,9 +108,10 @@ public sealed class FullInstallerFallbackTests
         static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
         var script = Path.Combine(sandbox, "launcher-check.ps1");
         var stamp = launcherVersion is null ? "" : $"[assembly: System.Reflection.AssemblyFileVersion(\"{launcherVersion}\")]";
+        if (launcherTitle is not null) stamp += $"[assembly: System.Reflection.AssemblyTitle(\"{launcherTitle}\")]";
         await File.WriteAllTextAsync(script, $$"""
             $ErrorActionPreference='Stop'
-            # Only the PE version is relevant to the conservative deferral policy.
+            # The PE capability resource, not the version alone, authorizes migration.
             # This synthetic launcher and the dummy setup are never executed.
             Add-Type -TypeDefinition '{{stamp}} public static class SyntheticLauncher { public static void Main() {} }' -OutputAssembly {{Quote(Path.Combine(install, "SiloPlayer.exe"))}} -OutputType ConsoleApplication
             & {{Quote(FindHelper())}} -Version '1.2.517.12' -Sha256 '{{Convert.ToHexString(SHA256.HashData(bytes))}}' -ExpectedSize {{bytes.Length}} -AppPath {{Quote(Path.Combine(install, "versions", "1.2.517.2", "SiloPlayer.exe"))}} -InstallRoot {{Quote(install)}} -VerifyOnly -ValidateExitGate -ValidationRoot {{Quote(cache)}}

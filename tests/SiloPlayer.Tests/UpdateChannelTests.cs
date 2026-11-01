@@ -17,6 +17,58 @@ public sealed class UpdateChannelTests : IDisposable
         ReleaseVersion.Parse(installed).GetWindowsVersion()) { InstalledReleaseVersion = ReleaseVersion.Parse(installed) };
 
     [Fact]
+    public async Task SwitchingBeforeDispatchSpendsNoRequestsAndKeepsTheNewChannelsConditionalCache()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")], Conditional = true };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.CheckAsync();
+        Task? changing = null;
+        void SelectBeta(AppUpdateState state)
+        {
+            if (state.IsChecking) changing = service.SetChannelAsync(AppUpdateChannel.Beta);
+        }
+        service.Changed += SelectBeta;
+        try { await service.CheckAsync(); }
+        finally { service.Changed -= SelectBeta; }
+        Assert.NotNull(changing);
+        await changing!.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Single(wire.Requests); // The superseded Stable check dispatched nothing.
+        await service.CheckAsync();
+        Assert.Equal(3, wire.Requests.Count);
+        Assert.Equal("\"stable\"", wire.Requests[1].ETag);
+        Assert.Null(wire.Requests[2].ETag);
+        await service.CheckAsync();
+        Assert.Equal(5, wire.Requests.Count);
+        Assert.Equal("\"catalog1\"", wire.Requests[4].ETag);
+        Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+    }
+
+    [Fact]
+    public async Task SupersededRateLimitFailureCannotChangeTheNewEpochsCooldown()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var service = Create(http);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.BeforeCatalog = async _ =>
+        {
+            entered.TrySetResult(); await finish.Task;
+            throw new UpdateCheckRateLimitedException(HttpStatusCode.TooManyRequests, TimeSpan.FromHours(4));
+        };
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        var check = service.CheckAsync();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var changing = service.SetChannelAsync(AppUpdateChannel.Stable);
+        var until = DateTimeOffset.UtcNow.AddHours(1);
+        service.ApplyAuthorityCooldown(until);
+        finish.TrySetResult();
+        await Task.WhenAll(check, changing).WaitAsync(TimeSpan.FromSeconds(10));
+        var cooldown = typeof(AppUpdateService).GetField("_rateLimitedUntil", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        Assert.Equal(until, Assert.IsType<DateTimeOffset>(cooldown.GetValue(service)));
+        await service.CheckAsync();
+        Assert.Equal(2, wire.Requests.Count);
+    }
+
+    [Fact]
     public async Task ExistingClientsDefaultToStableLatestOnly()
     {
         using var wire = new Wire { Stable = Release("1.2.518"), Catalog = [Release("1.2.519-beta.1")] };

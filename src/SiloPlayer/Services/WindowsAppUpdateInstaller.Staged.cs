@@ -73,11 +73,14 @@ public sealed partial class WindowsAppUpdateInstaller
     {
         var pipe=Interlocked.Exchange(ref stagedPipe,null);
         if(pipe is null)return;
-        using(pipe)
-        using(var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-            if(stagedCloseArmed)UpdateHostProtocol.WriteAsync(pipe,new("close",stagedTransaction),deadline.Token).GetAwaiter().GetResult();
-        stagedTransaction=null;
-        stagedCloseArmed=false;
+        try
+        {
+            using(pipe)
+            using(var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                if(stagedCloseArmed && pipe.IsConnected)UpdateHostProtocol.WriteAsync(pipe,new("close",stagedTransaction),deadline.Token).GetAwaiter().GetResult();
+        }
+        catch(Exception ex){LocalLog.AppendLine("updates.txt","staged_close_confirmation_failed kind="+ex.GetType().Name);}
+        finally{CancelPreparedHandoff();}
     }
     public void ArmNormalClose(){if(!HasPreparedHandoff)throw new InvalidOperationException("The update handoff is unavailable.");stagedCloseArmed=true;}
     public void CancelPreparedHandoff(){Interlocked.Exchange(ref stagedPipe,null)?.Dispose();stagedTransaction=null;stagedCloseArmed=false;}

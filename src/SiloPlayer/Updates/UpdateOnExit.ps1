@@ -163,14 +163,13 @@ try {
     if ($actual -ine $Sha256) {throw 'Installer checksum verification failed.'}
     if ($VerifyOnly -and -not $ValidateExitGate) {Write-Result 'verified' 'Package verified; no installation was launched.' $gateName;exit 0}
     if ($paths.Versioned) {
-        # Incremental updates leave the root launcher immutable. Launchers before
-        # 1.2.517.0 do not check the distinct full-update gate held across setup.
+        # Incremental updates leave the root launcher immutable. FileVersion alone
+        # is ambiguous: gate-less builds also used 1.2.517.0. Require the explicit
+        # AssemblyTitle/FileDescription capability resource on the root apphost.
         # Never run setup with that launch-exclusion gap; require manual migration.
         $failureState='deferred'
         Assert-OrdinaryPath $paths.Restart
-        $launcherVersion=$null
-        if (-not [version]::TryParse([Diagnostics.FileVersionInfo]::GetVersionInfo($paths.Restart).FileVersion,[ref]$launcherVersion) -or
-            $launcherVersion -lt [version]'1.2.517.0') {
+        if ([Diagnostics.FileVersionInfo]::GetVersionInfo($paths.Restart).FileDescription -cne 'Silo Desktop Player launcher; FullUpdateGate=1') {
             throw 'The installed launcher does not support safe in-app full updates. Close Silo and run the full installer manually.'
         }
         $failureState='failed'

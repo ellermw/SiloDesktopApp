@@ -10,6 +10,26 @@ namespace SiloPlayer.Tests;
 
 public sealed class UpdateChannelSettingsTests : IDisposable
 {
+    [Theory]
+    [InlineData("Views/SettingsPage.Updates.cs", "await updates.SetChannelAsync(channel, ct);", "settings.UpdateChannel = channel; preferences.Save(settings);", "await updates.CheckAsync(ct);")]
+    [InlineData("MainWindow.Updates.cs", "await updateService.SetChannelAsync(channel, ct);", "config.UpdateChannel = channel; preferences.Save(config);", "await updateService.CheckAsync(ct);")]
+    public void ChannelSelectionPersistsOnlyAfterALiveSuccessfulTransition(string file, string apply, string save, string check)
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", file));
+        var applied = source.IndexOf(apply, StringComparison.Ordinal);
+        var persisted = source.IndexOf(save, StringComparison.Ordinal);
+        var checkedAt = source.IndexOf(check, StringComparison.Ordinal);
+        Assert.True(applied >= 0 && persisted > applied && checkedAt > persisted);
+        Assert.Contains("ct.ThrowIfCancellationRequested();", source[applied..persisted]);
+        Assert.Contains("IsChangingChannel) return;", source[applied..persisted]);
+        Assert.Contains("AppUpdateLifetimeToken", source);
+        if (file.StartsWith("Views/", StringComparison.Ordinal))
+        {
+            Assert.Contains("_settingsUpdateLifetime?.Cancel();", source);
+            Assert.Contains("_settingsUpdateLifetime?.Dispose();", source);
+        }
+    }
+
     private readonly string root = Path.Combine(Path.GetTempPath(), "silo-channel-settings-" + Guid.NewGuid().ToString("N"));
     private async Task WriteExistingAsync(JsonNode? channel = null, bool includeChannel = false)
     {

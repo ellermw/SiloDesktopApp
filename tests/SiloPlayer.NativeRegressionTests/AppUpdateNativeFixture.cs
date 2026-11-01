@@ -1,4 +1,5 @@
 using System.Net;
+using System.IO.Pipes;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -594,6 +595,7 @@ internal static class AppUpdateNativeFixture
     private static async Task CheckChannelsAsync(MainWindow window, FrameworkElement root, IServiceProvider services,
         AppUpdateService updates, NavigationService navigation)
     {
+        await CheckStagedCloseConfirmationAsync();
         navigation.Navigate<SettingsPage>();
         await Until(() => navigation.Frame?.Content is SettingsPage { IsLoaded: true });
         var settings = (SettingsPage)navigation.Frame!.Content; settings.SelectSettingsSection("Playback");
@@ -601,7 +603,15 @@ internal static class AppUpdateNativeFixture
             ?? throw new InvalidOperationException("Settings is missing the Stable/Beta channel selection.");
         if (combo.SelectedIndex != 0 || updates.Channel != AppUpdateChannel.Stable) throw new InvalidOperationException("Stable is not the native default.");
         var warning = (TextBlock)settings.FindName("AppUpdateSettingsBetaWarning");
-        combo.SelectedIndex = 1;
+        var operation = (SemaphoreSlim)typeof(AppUpdateService).GetField("_operation", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(updates)!;
+        await operation.WaitAsync();
+        try
+        {
+            combo.SelectedIndex = 1;
+            if (!updates.IsChangingChannel || services.GetRequiredService<SettingsService>().Load().UpdateChannel != AppUpdateChannel.Stable)
+                throw new InvalidOperationException("Settings persisted a channel before its transition completed.");
+        }
+        finally { operation.Release(); }
         await Until(() => updates.Channel == AppUpdateChannel.Beta && updates.State.Release?.IsBeta == true && warning.Visibility == Visibility.Visible);
         if (services.GetRequiredService<SettingsService>().Load().UpdateChannel != AppUpdateChannel.Beta)
             throw new InvalidOperationException("Native channel selection did not persist.");
@@ -639,6 +649,44 @@ internal static class AppUpdateNativeFixture
         if (services.GetRequiredService<UpdateWire>().Downloads != 0 || services.GetRequiredService<SafeInstaller>().Calls != 0)
             throw new InvalidOperationException("Channel presentation started a package or setup.");
         Program.Log("PASS: native settings/dialog persist Stable/Beta, show semantic installed/available identities and beta warning, retire old offers, wait for Stable without downgrade and preserve reopen state without setup.");
+    }
+
+    private static async Task CheckStagedCloseConfirmationAsync()
+    {
+        var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+        var pipeField = typeof(WindowsAppUpdateInstaller).GetField("stagedPipe", flags)!;
+        var transactionField = typeof(WindowsAppUpdateInstaller).GetField("stagedTransaction", flags)!;
+        var armedField = typeof(WindowsAppUpdateInstaller).GetField("stagedCloseArmed", flags)!;
+        foreach (var scenario in new[] { "connected", "peer-exited", "disposed", "unarmed" })
+        {
+            var installer = new WindowsAppUpdateInstaller(Path.Combine(Program.ResultDirectory, "synthetic-close-cache"));
+            var name = "SiloUpdate-" + Guid.NewGuid().ToString("N");
+            using var pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+            using var client = new NamedPipeClientStream(".", name, PipeDirection.InOut, PipeOptions.Asynchronous);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var connection = pipe.WaitForConnectionAsync(deadline.Token);
+            await client.ConnectAsync(deadline.Token); await connection;
+            var transaction = Guid.NewGuid().ToString("N");
+            pipeField.SetValue(installer, pipe); transactionField.SetValue(installer, transaction);
+            if (!installer.HasPreparedHandoff) throw new InvalidOperationException("Synthetic handoff did not connect.");
+            if (scenario != "unarmed") installer.ArmNormalClose();
+            if (scenario == "peer-exited") client.Dispose();
+            if (scenario == "disposed") pipe.Dispose();
+            installer.ConfirmNormalClose(); // Must not throw even if the earlier IsConnected observation is stale.
+            if (installer.HasPreparedHandoff || pipeField.GetValue(installer) is not null
+                || transactionField.GetValue(installer) is not null || (bool)armedField.GetValue(installer)!)
+                throw new InvalidOperationException("Close confirmation retained a dead or already-consumed handoff.");
+            installer.ConfirmNormalClose(); // Once-only/no-send path.
+            if (scenario == "connected")
+            {
+                var message = await UpdateHostProtocol.ReadAsync(client, deadline.Token);
+                if (message.Kind != "close" || message.TransactionId != transaction)
+                    throw new InvalidOperationException("Armed normal close lost its transaction confirmation.");
+            }
+            if (scenario == "unarmed" && await client.ReadAsync(new byte[1], deadline.Token) != 0)
+                throw new InvalidOperationException("Unarmed handoff sent a close confirmation.");
+        }
+        Program.Log("PASS: staged close confirms only armed handoffs and tolerates exited/disposed pipes without aborting normal close; synthetic pipes only, no updater/setup.");
     }
 
     private static async Task CheckFullFallbackAsync(MainWindow window, IServiceProvider services, AppUpdateService updates,

@@ -14,6 +14,14 @@ public sealed class SideBySideInstallationTests : IDisposable
     public SideBySideInstallationTests() => Directory.CreateDirectory(Root);
 
     [Fact]
+    public void BuiltRootApphostCarriesTheFullUpdateGateCapabilityResource()
+    {
+        var (launcher, _) = CreateLauncherFixture();
+        Assert.Equal("Silo Desktop Player launcher; FullUpdateGate=1", FileVersionInfo.GetVersionInfo(launcher).FileDescription);
+        Assert.True(UpdateInstallation.SupportsVersionedFullInstaller(Root));
+    }
+
+    [Fact]
     public void MutexIdentityMatchesLegacyCanonicalRoot()
     {
         var hash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(Root).ToUpperInvariant())))[..16];
