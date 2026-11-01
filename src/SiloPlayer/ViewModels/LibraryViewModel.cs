@@ -299,7 +299,7 @@ public partial class LibraryViewModel : ObservableObject
         Items.Clear();
         // Cards load immediately; optional facets are requested when the
         // filter sheet is opened, matching the WebUI's browsing path.
-        await LoadWindowAsync(0, PageSize, force: true);
+        await Task.WhenAll(LoadWindowAsync(0, PageSize, force: true), EnsureLetterIndexAsync());
     }
 
     [RelayCommand]
@@ -323,143 +323,7 @@ public partial class LibraryViewModel : ObservableObject
     {
         StartNewCatalogQuery();
         Items.Clear();
-        await LoadWindowAsync(0, PageSize, force: true);
-    }
-
-    // Cached letter->offset mapping per library, built on first use
-    private Dictionary<char, int>? _letterOffsets;
-    private int _letterOffsetLibraryId;
-
-    [RelayCommand]
-    private async Task JumpToLetterAsync(string letter)
-    {
-        if (Library == null || TotalCount == 0) return;
-
-        var sortChanged = !string.Equals(SelectedSort, "title", StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(SelectedOrder, "asc", StringComparison.OrdinalIgnoreCase);
-        var knownTotal = TotalCount;
-        var knownTotalIsExact = _hasExactTotal;
-        SelectedSort = "title";
-        SelectedOrder = "asc";
-
-        if (sortChanged)
-        {
-            StartNewCatalogQuery();
-            // Sorting does not change membership, so retain the known total while
-            // clearing every page/window/snapshot tied to the old sort order.
-            TotalCount = knownTotal;
-            DisplayTotalCount = knownTotal;
-            _estimatedTotalItems = knownTotal;
-            _hasExactTotal = knownTotalIsExact;
-            HasMore = knownTotal > PageSize;
-            Items.Clear();
-        }
-
-        if (letter == "#")
-        {
-            if (!sortChanged)
-            {
-                StartNewCatalogQuery();
-                Items.Clear();
-            }
-            await LoadWindowAsync(0, PageSize, force: true);
-            return;
-        }
-
-        IsLoading = true;
-
-        try
-        {
-            // Build letter offset cache on first use (or if library changed)
-            if (_letterOffsets == null || _letterOffsetLibraryId != Library.Id)
-            {
-                await BuildLetterOffsetsAsync();
-            }
-
-            char target = char.ToUpper(letter[0]);
-            int targetOffset;
-            if (_letterOffsets != null && _letterOffsets.TryGetValue(target, out int cachedOffset))
-            {
-                targetOffset = (cachedOffset / PageSize) * PageSize;
-            }
-            else
-            {
-                // Fallback: rough estimate
-                int letterIndex = target - 'A' + 1;
-                targetOffset = (int)((letterIndex / 27.0) * TotalCount);
-                targetOffset = (targetOffset / PageSize) * PageSize;
-            }
-
-            await LoadWindowAsync(targetOffset, PageSize, force: true);
-        }
-        finally
-        {
-            IsLoading = false;
-        }
-    }
-
-    private async Task BuildLetterOffsetsAsync()
-    {
-        if (Library == null) return;
-
-        _letterOffsets = new Dictionary<char, int>();
-        _letterOffsetLibraryId = Library.Id;
-
-        // Sample ~20 evenly spaced points across the catalog to map letter positions
-        int sampleCount = 20;
-        int step = Math.Max(1, TotalCount / sampleCount);
-        var samples = new List<(int offset, char letter)>();
-
-        var tasks = new List<Task<(int offset, char letter)>>();
-        for (int i = 0; i < sampleCount && i * step < TotalCount; i++)
-        {
-            int offset = i * step;
-            tasks.Add(ProbeSingleAsync(offset));
-        }
-
-        var results = await Task.WhenAll(tasks);
-        samples.AddRange(results.Where(r => r.letter != '\0'));
-        samples.Sort((a, b) => a.offset.CompareTo(b.offset));
-
-        // For each letter A-Z, find the lowest offset where that letter first appears
-        for (char c = 'A'; c <= 'Z'; c++)
-        {
-            int bestOffset = 0;
-            for (int i = 0; i < samples.Count; i++)
-            {
-                if (samples[i].letter < c)
-                    bestOffset = samples[i].offset;
-                else if (samples[i].letter == c)
-                {
-                    bestOffset = samples[i].offset;
-                    break;
-                }
-                else
-                    break;
-            }
-            _letterOffsets[c] = bestOffset;
-        }
-    }
-
-    private async Task<(int offset, char letter)> ProbeSingleAsync(int offset)
-    {
-        try
-        {
-            var probe = await _catalogApi.GetCatalogAsync(
-                libraryId: Library!.Id, sort: "title", order: "asc", limit: 1, offset: offset);
-            if (probe.Items.Count > 0)
-            {
-                var title = probe.Items[0].Title.TrimStart();
-                if (title.Length > 0)
-                {
-                    char c = char.ToUpper(title[0]);
-                    if (c >= 'A' && c <= 'Z')
-                        return (offset, c);
-                }
-            }
-        }
-        catch { }
-        return (offset, '\0');
+        await Task.WhenAll(LoadWindowAsync(0, PageSize, force: true), EnsureLetterIndexAsync());
     }
 
     public async Task EnsureRangeLoadedAsync(int startIndex, int endIndex)
@@ -760,6 +624,7 @@ public partial class LibraryViewModel : ObservableObject
 
     private int StartNewCatalogQuery()
     {
+        ResetLetterIndex();
         _catalogContext = _catalogApi.CaptureContext();
         CancelWindowLoad();
         CancelCurrentCatalogQuery();
@@ -787,6 +652,7 @@ public partial class LibraryViewModel : ObservableObject
 
     public void CancelCatalogLoads()
     {
+        ResetLetterIndex();
         _loadedFiltersLibraryId = null;
         CancelWindowLoad();
         CancelCurrentCatalogQuery();
@@ -807,6 +673,7 @@ public partial class LibraryViewModel : ObservableObject
     /// </summary>
     public void SuspendCatalogLoads()
     {
+        ResetLetterIndex();
         CancelWindowLoad();
         CancelCurrentCatalogQuery();
         _catalogQueryCts = new CancellationTokenSource();

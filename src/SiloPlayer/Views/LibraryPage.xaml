@@ -305,7 +305,8 @@
         </controls:WrapPanel>
 
         <!-- Pixel scrolling with a bounded set of cards for 100k-scale libraries. -->
-        <Grid x:Name="LibraryContentArea" Grid.Row="3" Visibility="Collapsed">
+        <Grid x:Name="LibraryContentArea" Grid.Row="3" Visibility="Collapsed"
+              SizeChanged="LibraryContentArea_SizeChanged" ColumnDefinitions="*,Auto">
             <ScrollViewer x:Name="LibrarySkeletonScroll" Padding="48,0,48,24"
                           VerticalScrollBarVisibility="Disabled" Visibility="Collapsed"
                           Canvas.ZIndex="20" Background="{StaticResource AppBackgroundBrush}">
@@ -333,6 +334,15 @@
                         HorizontalAlignment="Left"
                         VerticalAlignment="Top" />
                 </ScrollViewer>
+            </Border>
+
+            <!-- Outside the pixel canvas: reserve a column for quick navigation. -->
+            <Border x:Name="LibraryLetterRail" Grid.Column="1" Visibility="Collapsed"
+                    VerticalAlignment="Center" Margin="0,8,8,64" Padding="4,6"
+                    Background="{StaticResource SurfaceBrush}"
+                    BorderBrush="{StaticResource BorderBrush}" BorderThickness="1"
+                    CornerRadius="18" AutomationProperties.Name="Jump to letter">
+                <Grid x:Name="LibraryLetterButtons" KeyDown="LibraryLetterButtons_KeyDown" />
             </Border>
 
             <!-- Loading indicator overlaid at bottom of viewport -->

@@ -10,21 +10,10 @@ public partial class CatalogApi
         string? yearMax, string? q, string? type, int limit, int offset, bool includeTotal, string? snapshot,
         string? source, string? scope, string? sectionId, string? collectionId, int? queryLimit, CancellationToken ct, string? nextCursor)
     {
-        var baseRules = new List<QueryRule>();
-        void BaseRule(string field, string op, string? value) { if (value != null) baseRules.Add(new() { Field = field, Op = op, Value = value }); }
-        BaseRule("genre", "is", genre); BaseRule("content_rating", "is", contentRating);
-        BaseRule("year", "gte", yearMin); BaseRule("year", "lte", yearMax);
         // Plain GET filters combine with the structured expression using AND.
         // Distribute them through OR groups so no original group is flattened
         // or accidentally made optional in the body-only representation.
-        if (baseRules.Count > 0)
-        {
-            if (match == "any")
-                groups = groups.SelectMany(group => group.Match == "any"
-                    ? group.Rules.Select(rule => new QueryGroup { Match = "all", Rules = new[] { rule }.Concat(baseRules).ToList() })
-                    : new[] { new QueryGroup { Match = "all", Rules = group.Rules.Concat(baseRules).ToList() } }).ToList();
-            else groups = groups.Concat(new[] { new QueryGroup { Match = "all", Rules = baseRules } }).ToList();
-        }
+        groups = WithCatalogBaseFilters(groups, match, genre, contentRating, yearMin, yearMax);
         match = match == "any" && groups.Count > 1 ? "any" : "all";
         var body = new Dictionary<string, object?>
         {
