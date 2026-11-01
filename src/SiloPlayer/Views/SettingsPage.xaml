@@ -730,6 +730,18 @@
                         <Border Style="{StaticResource SettingsSeparator}" />
 
                         <!-- Skip recaps -->
+                        <StackPanel Spacing="12" Margin="0,0,0,16"
+                                    Visibility="{x:Bind ViewModel.MarkerDetailsSettingsAvailable, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                            <ToggleSwitch x:Name="MarkerConfidenceToggle" Header="Show marker confidence"
+                                          IsOn="{x:Bind ViewModel.ShowMarkerConfidence, Mode=TwoWay}" />
+                            <TextBlock Text="Show the source's confidence above the skip button. Percentages are comparable only within the same source."
+                                       TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" />
+                            <ToggleSwitch x:Name="MarkerSourceToggle" Header="Show marker source"
+                                          IsOn="{x:Bind ViewModel.ShowMarkerSource, Mode=TwoWay}" />
+                            <TextBlock Text="Show whether the marker was detected, edited, or supplied by a provider."
+                                       TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" />
+                            <Border Style="{StaticResource SettingsSeparator}" />
+                        </StackPanel>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />

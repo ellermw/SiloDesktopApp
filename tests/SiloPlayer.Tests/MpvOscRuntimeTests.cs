@@ -5,6 +5,55 @@ namespace SiloPlayer.Tests;
 public sealed class MpvOscRuntimeTests
 {
     [Theory]
+    [InlineData("intro")]
+    [InlineData("recap")]
+    [InlineData("credits")]
+    public void MarkerDetailsAreEscapedAndDoNotResetPendingSkipState(string kind)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string>
+        { [kind] = "92% · TheIntroDB {\\fs99}provider\\Nname" });
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local state = osc_test_state
+            state.osc_disabled = false
+            state.duration = 100
+            state.{{kind}}_start = {{(kind == "credits" ? "90" : "0")}}
+            state.{{kind}}_end = {{(kind == "credits" ? "100" : "30")}}
+            state.time_pos = {{(kind == "credits" ? "95" : "5")}}
+            state.next_ep_available = false
+            osc_test_check()
+            local pending = {target=30}
+            state.intro_pending = pending
+            state.intro_prompt_remaining = 3.25
+            state.intro_undo_origin = 7
+            local key = state.intro_prompt_key
+            handlers['osc-set-marker-details']([==[{{json}}]==])
+            local preserved = state.intro_pending == pending and state.intro_prompt_remaining == 3.25
+                and state.intro_undo_origin == 7 and state.intro_prompt_key == key
+            local filled = marker_overlay or 'NO OVERLAY'
+            handlers['osc-set-marker-details']('{}')
+            local cleared = not marker_overlay:find('92%', 1, true) and state.intro_pending == pending
+                and state.intro_prompt_remaining == 3.25 and state.intro_undo_origin == 7
+            mp.set_property('user-data/marker-test', 'PRESERVED:'..tostring(preserved)..':CLEARED:'..tostring(cleared)..':'..filled)
+            """, rawAss: true, resultProperty: "user-data/marker-test", beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local create = mp.create_osd_overlay
+            mp.create_osd_overlay = function(kind)
+                local overlay = create(kind)
+                overlay.update = function(self)
+                    if self.data and self.data:find('Skip ', 1, true) then marker_overlay = self.data end
+                end
+                return overlay
+            end
+            """);
+        Assert.Contains("PRESERVED:true", output);
+        Assert.Contains("CLEARED:true", output);
+        Assert.Contains("92%", output); Assert.Contains("TheIntroDB", output);
+        Assert.DoesNotContain("{\\fs99}", output);
+    }
+
+    [Theory]
     [InlineData("off", false, false)]
     [InlineData("select", false, false)]
     [InlineData("off", true, false)]

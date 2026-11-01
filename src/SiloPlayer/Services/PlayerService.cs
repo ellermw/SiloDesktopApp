@@ -1274,7 +1274,7 @@ public partial class PlayerService : IDisposable
     public TimeRange? ActiveRecap => ActiveMarker("recap", ActiveVersion?.Recap ?? WatchDetail?.Recap);
     public TimeRange? ActivePreview => ActiveMarker("preview", ActiveVersion?.Preview ?? WatchDetail?.Preview);
     private TimeRange? ActiveMarker(string kind, TimeRange? legacy) => ActiveVersion?.MarkerSegments is { } segments
-        ? PlaybackMarkerRanges.Active(segments, kind, Position) : legacy;
+        ? PlaybackMarkerRanges.Active(segments, kind, Position, MarkerProvenanceFor(kind)) : legacy;
 
     // ── Events ───────────────────────────────────────────────────────────
 
@@ -5320,11 +5320,13 @@ public partial class PlayerService : IDisposable
 
         var json = System.Text.Json.JsonSerializer.Serialize(markers);
         _mpv.SendScriptMessage("osc-set-markers", json);
+        SendMarkerDetailsToOsc();
     }
 
     private async Task SendAutoSkipSettingsToOscAsync(CancellationToken ct)
     {
         await RefreshSeekPreferencesAsync(ct);
+        await RefreshMarkerDetailsPreferencesAsync(ct);
         var profileId = _authService.SelectedProfileId;
         var intro = false;
         var credits = false;
@@ -6251,6 +6253,7 @@ public partial class PlayerService : IDisposable
         NetworkInformation.NetworkStatusChanged -= OnPlaybackNetworkChanged;
         _localAuthority.Auth.LoggedOut -= RetireConnectionObservation;
         if (_subtitlePreferenceEvents != null) _subtitlePreferenceEvents.LocalProfileSettingChanged -= OnSubtitlePreferenceChanged;
+        if (_markerDetailsEvents != null) _markerDetailsEvents.LocalProfileSettingChanged -= OnMarkerDetailsSettingChanged;
         _subtitleOffsetDelay?.Cancel();
         _closing = true;
         _authorityLifetimeCts.Cancel();

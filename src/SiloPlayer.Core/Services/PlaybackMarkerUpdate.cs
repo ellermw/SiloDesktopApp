@@ -15,8 +15,15 @@ public static class PlaybackMarkerUpdate
         if (payload.TryGetProperty("recap", out var recap)) version.Recap = Range(recap);
         if (payload.TryGetProperty("preview", out var preview)) version.Preview = Range(preview);
     }
-    private static TimeRange? Range(JsonElement value) => value.ValueKind == JsonValueKind.Object
-        && value.TryGetProperty("start", out var a) && a.ValueKind == JsonValueKind.Number && a.TryGetDouble(out var start)
-        && value.TryGetProperty("end", out var b) && b.ValueKind == JsonValueKind.Number && b.TryGetDouble(out var end)
-        && double.IsFinite(start) && double.IsFinite(end) && start >= 0 && end > start ? new() { Start = start, End = end } : null;
+    private static readonly JsonSerializerOptions RangeJson = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+    private static TimeRange? Range(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object) return null;
+        if (!(value.TryGetProperty("start_seconds", out var a) || value.TryGetProperty("start", out a)) ||
+            !(value.TryGetProperty("end_seconds", out var b) || value.TryGetProperty("end", out b)) ||
+            a.ValueKind != JsonValueKind.Number || !a.TryGetDouble(out var start) ||
+            b.ValueKind != JsonValueKind.Number || !b.TryGetDouble(out var end) ||
+            !double.IsFinite(start) || !double.IsFinite(end) || start < 0 || end <= start) return null;
+        return JsonSerializer.Deserialize<TimeRange>(value.GetRawText(), RangeJson);
+    }
 }

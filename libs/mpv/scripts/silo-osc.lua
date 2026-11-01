@@ -3917,6 +3917,14 @@ render_skip_button = function()
     draw_text(ass, r.x + r.w / 2, r.y + r.h / 2, state.skip_label,
         fs, config.text_color, "00", 1.0, 5, nil, true)
 
+    local kind = state.skip_label == "Skip Recap" and "recap"
+        or state.skip_label == "Skip Credits" and "credits" or "intro"
+    local details = state.marker_details and state.marker_details[kind]
+    if type(details) == "string" and details ~= "" then
+        draw_text(ass, r.x + r.w, r.y - 8 * sc, ass_escape_text(truncate_chars(details, 90)),
+            math.floor(12 * sc), config.text_color, "40", 1.0, 3, nil, true)
+    end
+
     if not state.skip_overlay then
         state.skip_overlay = mp.create_osd_overlay("ass-events")
     end
@@ -5454,6 +5462,7 @@ local function observe_properties()
             end
             state.marker_payload_json = json_str
             local incoming_content_id = tostring(data.content_id or "")
+            if state.marker_content_id ~= incoming_content_id then state.marker_details = {} end
             local reset_auto_skip = data.reset_auto_skip == true
                 or state.marker_content_id ~= incoming_content_id
             state.marker_content_id = incoming_content_id
@@ -5474,6 +5483,18 @@ local function observe_properties()
                 state.credits_auto_skipped = false
             end
         end
+    end)
+
+    -- Cosmetic metadata has its own message. Never reset marker countdown,
+    -- pending seek or undo ownership when only a display preference changes.
+    mp.register_script_message("osc-set-marker-details", function(json_str)
+        local ok, data = pcall(require("mp.utils").parse_json, json_str)
+        if not ok or type(data) ~= "table" then return end
+        state.marker_details = {}
+        for _, kind in ipairs({"intro", "recap", "credits", "preview"}) do
+            if type(data[kind]) == "string" then state.marker_details[kind] = data[kind] end
+        end
+        render_skip_button()
     end)
 
     mp.register_script_message("osc-set-seek-intervals", function(back, forward)
