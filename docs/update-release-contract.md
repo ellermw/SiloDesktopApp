@@ -44,6 +44,8 @@ An unavailable or explicitly unsupported incremental migration can use an indepe
 
 Stable is the default for existing/missing/invalid preferences. Beta is opt-in and shows a warning. Selection persists across restarts/upgrades without changing account/profile/playback data. A channel change cancels and retires old checks, downloads and prepared offers. ETags are scoped to their endpoint/channel; shared absolute authority cooldowns survive changes. Beta->Stable never silently downgrades: an ahead-of-stable beta waits for a suitable approved stable version.
 
+Update checks serialize behind other checks, channel transitions and cache cleanup. A check requested while a download is active or pending returns immediately without disturbing the transfer. Cancellation while waiting completes the check without changing the active operation's state. After acquiring the operation gate, checks read the current channel epoch and retain epoch guards on publication so old-channel work cannot revive an offer.
+
 ## Rollout
 
 Existing clients have no Beta preference and continue receiving approved stable updates. They must first receive a channel-capable client **and its matching version-local helper** through an approved stable update or an owner-run full installer before opting into Beta. The root Protocol1 launcher stays immutable for compatible changed-file updates. A stable promotion is a newly stamped/verified stable artifact, not a metadata-only relabel of this Beta. Both fresh and upgraded preferences default Stable unless a valid Beta selection was saved; installing a Beta manually does not opt in on the user's behalf.

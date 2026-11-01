@@ -76,6 +76,43 @@ public sealed class UpdateChannelTests : IDisposable
     }
 
     [Fact]
+    public async Task CancelingAQueuedCheckDoesNotDisturbTheActiveCheckOrReleaseItsGate()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")] };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finish = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        wire.BeforeCatalog = async ct => { entered.TrySetResult(); await finish.Task.WaitAsync(ct); };
+        var active = service.CheckAsync();
+        Task? next = null;
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            var checking = service.State;
+            using var stop = new CancellationTokenSource();
+            var canceled = service.CheckAsync(stop.Token);
+            Assert.False(canceled.IsCompleted);
+            stop.Cancel();
+            await canceled.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.True(canceled.IsCompletedSuccessfully);
+            Assert.Same(checking, service.State);
+            Assert.Equal(2, wire.Requests.Count);
+            next = service.CheckAsync();
+            Assert.False(next.IsCompleted);
+        }
+        finally
+        {
+            finish.TrySetResult();
+            await active.WaitAsync(TimeSpan.FromSeconds(10));
+            if (next is not null) await next.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        Assert.Null(service.State.Error);
+        Assert.Equal("1.2.518-beta.12", service.State.Release?.DisplayVersion);
+        Assert.Equal(4, wire.Requests.Count);
+    }
+
+    [Fact]
     public async Task CatalogPaginationAndPrecedenceDoNotDependOnPublicationOrder()
     {
         using var wire = new Wire { Catalog = [Release("1.2.518-beta.2")], SecondPage = [Release("1.2.518-beta.12")] };

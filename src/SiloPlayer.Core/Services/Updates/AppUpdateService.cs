@@ -36,8 +36,8 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
             while (!ct.IsCancellationRequested)
             {
                 await CheckAsync(ct).ConfigureAwait(false);
-                // A skipped check can overlap a manual request or download.
-                // Wait for its result before choosing the next interval.
+                // Serialize interval selection with subsequent operations, including
+                // a transfer that caused this check to be skipped.
                 await _operation.WaitAsync(ct).ConfigureAwait(false);
                 TimeSpan delay;
                 try { delay = NextCheckDelay(); }
@@ -72,12 +72,20 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
     public async Task CheckAsync(CancellationToken ct = default)
     {
         var epoch = Volatile.Read(ref _channelEpoch);
-        // Checks must not queue behind a long-running transfer or disturb its state.
-        if (!await _operation.WaitAsync(0, ct).ConfigureAwait(false))
-            return;
-        epoch = Volatile.Read(ref _channelEpoch);
+        var entered = false;
         try
         {
+            Task wait;
+            lock (_transferGate)
+            {
+                // Do not queue behind an active or pending long-running transfer.
+                // Otherwise serialize checks with checks, channel changes and cleanup.
+                if (_transferCancellation is not null || !_transfer.IsCompleted) return;
+                wait = _operation.WaitAsync(ct);
+            }
+            await wait.ConfigureAwait(false);
+            entered = true;
+            epoch = Volatile.Read(ref _channelEpoch);
             if (IsChangingChannel) return;
             if (InstalledReleaseVersion is { } identity && identity.GetWindowsVersion() != GitHubReleaseReader.Normalize(currentVersion))
                 throw new InvalidDataException("The installed semantic and Windows versions disagree.");
@@ -113,7 +121,9 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            SetState(State with { IsChecking = false, Error = "The update check was canceled. Try again." }, expectedChannelEpoch: epoch);
+            // A canceled waiter never owned the state of the active operation.
+            if (entered)
+                SetState(State with { IsChecking = false, Error = "The update check was canceled. Try again." }, expectedChannelEpoch: epoch);
         }
         catch (Exception ex)
         {
@@ -126,7 +136,7 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
             SetState(State with { IsChecking = false, Error = ex is OperationCanceledException
                 ? "The update check timed out. Try again." : "Could not check for updates. " + ex.Message }, expectedChannelEpoch: epoch);
         }
-        finally { _operation.Release(); }
+        finally { if (entered) _operation.Release(); }
     }
 
     private void SetState(AppUpdateState state, bool notify = true, long? expectedChannelEpoch = null)
