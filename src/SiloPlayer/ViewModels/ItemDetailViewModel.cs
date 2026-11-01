@@ -193,7 +193,7 @@ public partial class ItemDetailViewModel : ObservableObject,
                 // feedback or rollback authority of an in-flight local mark.
                 if (ToggleWatchedCommand is { IsRunning: true, ExecutionTask: { } mutation })
                     await mutation.WaitAsync(ct);
-                await _pendingLocalProgressSave.WaitAsync(ct);
+                await WaitForLocalProgressSettlementAsync(ct);
                 if (!_stateRefreshActive || ct.IsCancellationRequested || !ReferenceEquals(Item, item)
                     || LibraryId != libraryId || !_catalogApi.IsCurrentContext(message.Context)) continue;
                 revision = Volatile.Read(ref _localStateGeneration);
@@ -247,6 +247,25 @@ public partial class ItemDetailViewModel : ObservableObject,
                 if (ReferenceEquals(_activeRemoteState, message)) _activeRemoteState = null;
             }
         }
+    }
+
+    private async Task WaitForLocalProgressSettlementAsync(CancellationToken ct)
+    {
+        while (true)
+        {
+            var pending = _pendingLocalProgressSave;
+            await pending.WaitAsync(ct);
+            // A newer final save may have joined while this barrier waited.
+            if (ReferenceEquals(pending, _pendingLocalProgressSave)) return;
+        }
+    }
+
+    private static async Task ProgressSaveSettledAsync(Task persisted)
+    {
+        // The write owner reports failure. A read waits for settlement rather
+        // than preserving a failed task as a permanent refresh prohibition.
+        try { await persisted.ConfigureAwait(false); }
+        catch (Exception) { }
     }
 
     private void ApplyWatchedChange(MediaSurfaceChanged message)
@@ -348,7 +367,9 @@ public partial class ItemDetailViewModel : ObservableObject,
         {
             Interlocked.Increment(ref _watchedStateGeneration);
             Interlocked.Increment(ref _localStateGeneration);
-            _pendingLocalProgressSave = Task.WhenAll(_pendingLocalProgressSave, message.Persisted);
+            var settled = ProgressSaveSettledAsync(message.Persisted);
+            _pendingLocalProgressSave = _pendingLocalProgressSave.IsCompleted
+                ? settled : Task.WhenAll(_pendingLocalProgressSave, settled);
             if (_activeRemoteState is { } active) _pendingRemoteState = MergeState(_pendingRemoteState, active);
         }
         var episodeSpoilersChanged = false;

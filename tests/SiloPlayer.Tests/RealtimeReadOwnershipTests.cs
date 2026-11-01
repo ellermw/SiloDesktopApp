@@ -94,6 +94,32 @@ public sealed class RealtimeReadOwnershipTests
     }
 
     [Fact]
+    public async Task FailedFinalSaveThenSuccessfulSaveCannotPoisonLaterRemoteRefreshOrRestoreAnOldSnapshot()
+    {
+        using var f = new Fixture(); f.Seed();
+        f.Wire.Count = 1; f.Wire.Position = 40; f.Wire.HoldEpisodes = true;
+        var operation = f.Vm.RefreshMediaStateAsync(f.Change(EpisodeA));
+        var oldEpisodes = await f.Wire.NextAsync();
+        var failedSave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Messenger.Send(new PlaybackProgressUpdated(EpisodeA, 900, 1000, false) { Persisted = failedSave.Task });
+        failedSave.SetException(new HttpRequestException("Synthetic failed final progress save."));
+        var successfulSave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Messenger.Send(new PlaybackProgressUpdated(EpisodeA, 950, 1000, false) { Persisted = successfulSave.Task });
+        f.Raw(EpisodeB); f.Clock.Advance(1000);
+        f.Wire.HoldEpisodes = false; oldEpisodes.Release();
+        Assert.Equal(950, f.Vm.Episodes[0].UserData!.PositionSeconds);
+        f.Wire.Count = 2; f.Wire.Position = 950; successfulSave.SetResult();
+        await operation.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, f.Vm.Item!.UserData!.WatchedCount);
+        Assert.Equal(950, f.Vm.Episodes[0].UserData!.PositionSeconds);
+        Assert.Equal(2, f.Wire.DetailReads);
+        // Recovery lasts beyond the first sweep; a later remote event still reads.
+        f.Wire.Count = 3;
+        await f.Vm.RefreshMediaStateAsync(f.Change(EpisodeB));
+        Assert.Equal(3, f.Vm.Item.UserData.WatchedCount);
+    }
+
+    [Fact]
     public async Task SiblingTicksDoNotAbortRealWatchPreparationButOwnAndContainerChangesStillRetireIt()
     {
         using var f = new Fixture();

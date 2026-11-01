@@ -58,3 +58,15 @@ Standards four findings and Spec six findings overlap in six grounded behaviors.
 Evidence so far: review-red-owned 7 expected behavioral failures; review-green-owned 7 passed; review-red-season-native actual hidden Play failure; review-focused-migration exposed 15 old cache-only fixture failures; after HTTP fixture migration, review-green-focused passed 122. Full and fresh Release receipts follow. No further generic review loop is requested by the parent.
 
 Final correction evidence: review-full-unit 2,839/2,839 passed (zero failures/skips); review-release-app succeeded, DLL637F11276FDA9055728ED073B76BB9CD317EAA44B210C268F8B73F6A9202DA88. review-green-season-native and review-native-watched both pass this same output. The updated native fixture checks explicit season target null→playable→null→playable and existing sibling isolation. review-final-source-binding.json hashes 1,006 tracked product inputs, all unchanged since publish began; final commit is bound after commit. No push, install or installed app control.
+
+## Failed local-save barrier follow-up (dc8a7c13 baseline)
+
+Parent identified a concrete failure chain: Task.WhenAll retains a failed local final-save task forever, preventing later remote reads even after a successful local save. Preserve the existing 637F app/output and all prior evidence.
+
+- [x] Reproduce failed save → newer successful save → raw/coalesced event using real messenger/cache registrations and an older held HTTP episode snapshot.
+- [x] Track final-save settlement independently from success/failure; keep local ownership revisions and wait for all current save barriers before taking the next owned snapshot.
+- [x] Run focused red/green, complete suite, fresh Release and same-output native routes; bind final source and commit only this material correction.
+
+`barrier-red` reproduced the material concern: expected aggregate2, actual0 at the final backend snapshot despite the newer successful save. The correction observes each save's settlement without propagating its failure into the read barrier, retires completed predecessor barriers, and rechecks whether another local save joined while awaiting. Existing local ownership generation checks still reject the held pre-save episode snapshot. No broader review work is included.
+
+Final barrier evidence: focused123/123, full2,840/2,840 with zero failures/skips, fresh Release5169E2C32429414CACC83E9BADE6D1D56DD88E54CC106953BC8C304D9DF6810C; barrier-native-series and barrier-native-watched pass the same app. barrier-final-source-binding.json records 1,006 product hashes unchanged since Publish began. The prior637F output remains frozen; no push or installed app action.
