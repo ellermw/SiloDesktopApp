@@ -50,6 +50,35 @@ public sealed class AppUpdateDownloadTests : IDisposable
     }
 
     [Fact]
+    public async Task CheckDuringDownloadReturnsImmediatelyWithoutDisturbingTheTransfer()
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var wire = new Wire { Response = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = new StreamContent(new Waiting(Package, entered, release)) }) };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.CheckAsync();
+        var download = service.DownloadAsync();
+        try
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            var downloading = service.State;
+            var check = service.CheckAsync();
+            Assert.True(check.IsCompletedSuccessfully);
+            await check;
+            Assert.Same(downloading, service.State);
+            Assert.True(service.State.IsDownloading);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await download.WaitAsync(TimeSpan.FromSeconds(30));
+        }
+        Assert.Null(service.State.Error);
+        Assert.NotNull(service.State.ReadyInstaller);
+    }
+
+    [Fact]
     public async Task PlaybackStillDefersAnAutomaticTransferQueuedBehindACheck()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire);

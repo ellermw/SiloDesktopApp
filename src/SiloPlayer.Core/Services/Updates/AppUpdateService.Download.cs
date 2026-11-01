@@ -99,7 +99,9 @@ public sealed partial class AppUpdateService
             if(PreferIncrementalUpdates)
             {
                 if (release.HasInvalidIncrementalAssets) throw new InvalidDataException("The incremental release metadata is invalid.");
-                if (release.Incremental is not null)
+                // A verified migration decision belongs to this release and is retired
+                // with it. Re-clicks must reuse the full installer, not retry the manifest.
+                if (release.Incremental is not null && !State.RequiresFullInstaller)
                 {
                     try
                     {

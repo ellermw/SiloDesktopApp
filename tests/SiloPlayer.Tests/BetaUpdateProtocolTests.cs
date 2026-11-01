@@ -191,6 +191,17 @@ public sealed class BetaUpdateProtocolTests : IDisposable
         Assert.Equal(Assets.FullPackage, await File.ReadAllBytesAsync(installer)); Assert.True(await service.ReverifyReadyAsync());
         Assert.Null(service.State.PreparedPackage); Assert.Equal(1, wire.FullInstallerRequests);
         Assert.False(service.ShouldInstallOnExit); // A full migration requires an explicit manual choice.
+
+        // The explicit install click reuses the verified fallback even if manifest
+        // transport has since become unavailable.
+        var manifestRequests = wire.ManifestRequests;
+        wire.FailManifestRequests = true;
+        await service.DownloadAsync();
+        Assert.Null(service.State.Error); Assert.True(service.State.RequiresFullInstaller);
+        Assert.Equal(installer, service.State.ReadyInstaller);
+        Assert.Equal(manifestRequests, wire.ManifestRequests);
+        Assert.Equal(1, wire.FullInstallerRequests);
+        Assert.True(await service.ReverifyReadyAsync());
     }
 
     [Theory]
@@ -307,7 +318,8 @@ public sealed class BetaUpdateProtocolTests : IDisposable
         internal static readonly byte[] FullPackage = Encoding.UTF8.GetBytes("synthetic full package");
         internal static string FullHash => Convert.ToHexString(SHA256.HashData(FullPackage));
         public bool BadManifestHash, IncompletePair, TruncateNextRange;
-        public int FullInstallerRequests;
+        public int FullInstallerRequests, ManifestRequests;
+        public bool FailManifestRequests;
         public List<(long From, long To)> Ranges = [];
         public List<string> Metadata = [];
         public IncrementalReleaseAssets Incremental(string version)
@@ -344,6 +356,11 @@ public sealed class BetaUpdateProtocolTests : IDisposable
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json, Encoding.UTF8, "application/json") });
             }
             var name = Path.GetFileName(uri.AbsolutePath);
+            if (name == UpdateManifestValidation.ManifestName)
+            {
+                ManifestRequests++;
+                if (FailManifestRequests) throw new HttpRequestException("Synthetic manifest outage.");
+            }
             if (name == "SiloInstaller-Windows-x64.exe") { FullInstallerRequests++; return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(FullPackage) }); }
             var bytes = File.ReadAllBytes(Path.Combine(directory!, name));
             if (request.Headers.Range is { } range)

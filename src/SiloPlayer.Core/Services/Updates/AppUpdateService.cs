@@ -72,8 +72,8 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
     public async Task CheckAsync(CancellationToken ct = default)
     {
         var epoch = Volatile.Read(ref _channelEpoch);
-        // Allow brief overlaps, but leave the active operation's state untouched if still busy.
-        if (!await _operation.WaitAsync(TimeSpan.FromSeconds(12), ct).ConfigureAwait(false))
+        // Checks must not queue behind a long-running transfer or disturb its state.
+        if (!await _operation.WaitAsync(0, ct).ConfigureAwait(false))
             return;
         epoch = Volatile.Read(ref _channelEpoch);
         try
