@@ -1,6 +1,6 @@
 # installer/build.ps1
 # Builds the Silo Desktop Player installer.
-# Prerequisites: dotnet SDK, Inno Setup 6
+# Prerequisites: dotnet SDK, Inno Setup 6.3.0 or newer
 # Usage: pwsh -File installer/build.ps1
 # PublishDirectory is the fresh installation-layout root, with the client under
 # versions/<four-part-version>/ and its updater host under Updater/. Use a fresh
@@ -167,7 +167,12 @@ if (-not $IsccPath) {
     Write-Error "Inno Setup not found. Install with: winget install JRSoftware.InnoSetup"
     exit 1
 }
-Write-Host "Using ISCC: $IsccPath"
+$IsccVersionInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($IsccPath)
+$IsccVersion = [version]::new($IsccVersionInfo.FileMajorPart, $IsccVersionInfo.FileMinorPart, $IsccVersionInfo.FileBuildPart, $IsccVersionInfo.FilePrivatePart)
+if ($IsccVersion -lt [version]'6.3.0.0') {
+    throw "Inno Setup 6.3.0 or newer is required for semantic AppVersion and VersionInfoProductTextVersion. Found $IsccVersion at '$IsccPath'. Upgrade Inno Setup before building."
+}
+Write-Host "Using ISCC: $IsccPath ($IsccVersion)"
 
 # Check Windows App SDK runtime installer
 $WinAppSdkInstaller = "$InstallerDir\deps\windowsappruntimeinstall-x64.exe"

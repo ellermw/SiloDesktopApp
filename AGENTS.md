@@ -20,7 +20,7 @@ Native WinUI 3/.NET 8 Windows client with embedded libmpv. Match the current Sil
 - `src/SiloPlayer.Core`: API models/services, authentication, playback authority, SiloCast transport/handoff.
 - `src/SiloPlayer.Player`: native libmpv integration.
 - `tests`: unit, receiver/discovery, published playback and native regression fixtures.
-- `installer/build.ps1`: existing supported x64 publish/installer workflow; preserve native dependency validation and QA signing policy.
+- `installer/build.ps1`: existing supported x64 publish/installer workflow; requires Inno Setup 6.3.0 or newer for semantic AppVersion and product text versions. Preserve native dependency validation and QA signing policy.
 
 Use the current source/API contracts. The old Continuum/API v1 primer is historical context, not the current protocol specification.
 
