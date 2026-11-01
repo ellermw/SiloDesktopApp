@@ -60,9 +60,9 @@ public class HomeApi(SiloApiClient client)
         if (capabilities.RowItemLimitMax is > 0 && capabilities.SectionItemLimitMax is > 0)
         {
             limit = capabilities.SectionItemLimitMax.Value;
-            if (itemLimit > 0) limit = Math.Min(limit.Value, itemLimit);
-            // A first-window ceiling smaller than the recipe is not a whole
-            // read budget. Preserve the uncapped path rather than shrink it.
+            // The recipe's display itemLimit must not cap completion at the
+            // initial window. Ask for the section maximum, or fall back to an
+            // uncapped read if that exceeds the advertised query ceiling.
             if (limit.Value > capabilities.RowItemLimitMax.Value) limit = null;
         }
         return await ReadSectionItemsAsync(owner, language, sectionId, limit, ct).ConfigureAwait(false);

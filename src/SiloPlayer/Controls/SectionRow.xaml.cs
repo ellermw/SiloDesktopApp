@@ -42,6 +42,7 @@ public sealed partial class SectionRow : UserControl
     private double _dragStartX;
     private double _dragStartOffset;
     private bool _isDragging;
+    private bool _dragCompletionDemandStarted;
     private System.Collections.ObjectModel.ObservableCollection<MediaItem>? _observedItems;
     private string? _lastRenderedSectionId;
     private string? _lastRenderedTemplateKey;
@@ -355,7 +356,8 @@ public sealed partial class SectionRow : UserControl
         // Initial layout can already be within one viewport of the tail on
         // wide displays. Wait for forward movement or explicit navigation.
         var offset = CardsScrollViewer.HorizontalOffset;
-        if (offset > _lastHorizontalOffset + 1) _completionDemandArmed = true;
+        // Custom drags arm once in PointerMoved, not on each scroll update.
+        if (_dragPointerId == null && offset > _lastHorizontalOffset + 1) _completionDemandArmed = true;
         _lastHorizontalOffset = offset;
         UpdateScrollBounds();
     }
@@ -408,6 +410,7 @@ public sealed partial class SectionRow : UserControl
         if (!point.Properties.IsLeftButtonPressed && !point.IsInContact)
             return;
 
+        ResetDragState();
         _dragPointerId = e.Pointer.PointerId;
         _dragStartX = point.Position.X;
         _dragStartOffset = CardsScrollViewer.HorizontalOffset;
@@ -438,7 +441,9 @@ public sealed partial class SectionRow : UserControl
             _dragStartOffset - delta,
             0,
             CardsScrollViewer.ScrollableWidth);
-        if (delta < 0) _completionDemandArmed = true;
+        if (delta < 0) ArmDragCompletionDemand();
+        // A deferred ViewChanged after release is still part of this drag.
+        _lastHorizontalOffset = target;
         CardsScrollViewer.ChangeView(target, null, null, disableAnimation: true);
         UpdateScrollBounds();
         e.Handled = true;
@@ -462,10 +467,19 @@ public sealed partial class SectionRow : UserControl
     private void CardsScrollViewer_PointerCaptureLost(object sender, PointerRoutedEventArgs e)
         => ResetDragState();
 
+    private void ArmDragCompletionDemand()
+    {
+        if (_dragCompletionDemandStarted) return;
+        _dragCompletionDemandStarted = true;
+        _completionDemandArmed = true;
+    }
+
     private void ResetDragState()
     {
         _dragPointerId = null;
         _isDragging = false;
+        _dragCompletionDemandStarted = false;
+        _completionDemandArmed = false;
     }
 
     private void UpdateScrollBounds()

@@ -116,17 +116,19 @@ public class HomeRowCapabilityTests
     }
 
     [Theory]
-    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 50, "?item_limit=50")]
+    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 20, "?item_limit=100")]
+    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 50, "?item_limit=100")]
+    [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":30}", 50, "?item_limit=30")]
     [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 150, "?item_limit=100")]
     [InlineData("{\"row_item_limit_max\":40,\"section_item_limit_max\":100}", 50, "")]
-    [InlineData("{\"row_item_limit_max\":40,\"section_item_limit_max\":100}", 30, "?item_limit=30")]
+    [InlineData("{\"row_item_limit_max\":40,\"section_item_limit_max\":100}", 30, "")]
     [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":60}", 80, "?item_limit=60")]
     [InlineData("{\"row_item_limit_max\":100,\"section_item_limit_max\":100}", 0, "?item_limit=100")]
     [InlineData("{\"row_item_limit_max\":100}", 50, "")]
     [InlineData("{\"section_item_limit_max\":100}", 50, "")]
     [InlineData("{\"row_item_limit_max\":0,\"section_item_limit_max\":100}", 50, "")]
     [InlineData("null", 50, "")]
-    public async Task HomeWholeReadUsesAdvertisedMaximaClampedToTheConfiguredRow(string capabilities, int itemLimit, string expectedQuery)
+    public async Task HomeWholeReadUsesAdvertisedSectionMaximumRegardlessOfDisplayBudget(string capabilities, int itemLimit, string expectedQuery)
     {
         using var wire = new Wire { Capabilities = capabilities }; using var http = new HttpClient(wire);
         var api = new HomeApi(Client(http));
@@ -161,12 +163,36 @@ public class HomeRowCapabilityTests
         wire.Section = Section(35, 50, false);
         var whole = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 50)).Section!;
         var completed = HomeRowWindow.Complete(expanded, whole, expanded, 2);
-        Assert.Equal(new[] { "?item_limit=20", "?item_limit=50", "?item_limit=50" }, wire.Rows.Select(row => row.Query));
+        Assert.Equal(new[] { "?item_limit=20", "?item_limit=100", "?item_limit=100" }, wire.Rows.Select(row => row.Query));
         Assert.Equal(Enumerable.Range(1, 35).Select(i => $"card{i}"), completed.Items.Select(item => item.ContentId));
         Assert.True(completed.HasReadWhole);
         Assert.False(completed.CanComplete);
         Assert.Equal(20, completed.ShownCount);
         Assert.Equal(1, completed.CompletedOrder);
+    }
+
+    [Fact]
+    public async Task TwentyCardDisplayBudgetDoesNotDiscardTheWholeResponsesUnseenCards()
+    {
+        static string Section(int count) => JsonSerializer.Serialize(new
+        {
+            id = "row", item_limit = 20, has_more = true,
+            items = Enumerable.Range(1, count).Select(i => new { content_id = $"card{i}" })
+        });
+        using var wire = new Wire { Section = Section(20) }; using var http = new HttpClient(wire);
+        var api = new HomeApi(Client(http));
+        var initial = (await api.GetInitialSectionItemsAsync("row")).Section!;
+        wire.Section = Section(35);
+        var whole = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 20)).Section!;
+        var expanded = HomeRowWindow.Complete(initial, whole, initial, 1);
+        Assert.Equal(new[] { "?item_limit=20", "?item_limit=100" }, wire.Rows.Select(row => row.Query));
+        Assert.Equal(Enumerable.Range(1, 35).Select(i => $"card{i}"), expanded.Items.Select(item => item.ContentId));
+        Assert.True(expanded.CanComplete);
+        var repeated = (await api.GetWholeSectionItemsAsync(api.CaptureContext(), api.LanguageGeneration, "row", 20)).Section!;
+        var completed = HomeRowWindow.Complete(expanded, repeated, expanded, 2);
+        Assert.Equal(expanded.Items.Select(item => item.ContentId), completed.Items.Select(item => item.ContentId));
+        Assert.True(completed.HasMore); Assert.True(completed.HasReadWhole); Assert.False(completed.CanComplete);
+        Assert.Equal(20, completed.ShownCount); Assert.Equal(1, completed.CompletedOrder);
     }
 
     [Fact]

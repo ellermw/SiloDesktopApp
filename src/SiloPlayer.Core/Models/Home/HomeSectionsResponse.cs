@@ -15,8 +15,8 @@ public class HomeSectionWithItems
     public int ItemLimit { get; set; }
     public int TotalCount { get; set; }
     public bool HasMore { get; set; }
-    // A whole-row request is only complete when the server reports no more
-    // cards; server truncation must leave forward completion available.
+    // A whole-row read may stop completion despite HasMore when it adds no
+    // unseen cards. Preserve the wire flag without offering an endless retry.
     [JsonIgnore] public bool HasReadWhole { get; set; }
     [JsonIgnore] public bool CanComplete => HasMore && !HasReadWhole;
     [JsonIgnore] public int? ShownCount { get; set; }

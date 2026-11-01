@@ -62,21 +62,22 @@ public class HomeRowWindowTests
     }
 
     [Fact]
-    public void CompletionHonorsWholeRowsOwnLimitWhenItDrawsDifferentCards()
+    public void CompletionKeepsEveryUnseenCardWhenTheWholeRowDrawsDifferentCards()
     {
         var shown = Row("one", "two"); var whole = Row("three", "four", "five"); whole.ItemLimit = 3;
-        Assert.Equal(["one", "two", "three"], HomeRowWindow.Complete(shown, whole, shown, 1).Items.Select(i => i.ContentId));
+        Assert.Equal(["one", "two", "three", "four", "five"], HomeRowWindow.Complete(shown, whole, shown, 1).Items.Select(i => i.ContentId));
     }
 
     [Fact]
-    public void CompletionCapsAnOversizedResponseAtTheRowsOwnLimit()
+    public void CompletionDoesNotDiscardUnseenCardsWhenTheServerEchoesTheDisplayLimit()
     {
         var shown = Row(Enumerable.Range(1, 20).Select(i => $"card{i}").ToArray());
         var whole = Row(Enumerable.Range(1, 35).Select(i => $"card{i}").ToArray());
         whole.ItemLimit = 20;
         var completed = HomeRowWindow.Complete(shown, whole, shown, 1);
-        Assert.Equal(20, completed.Items.Count);
-        Assert.Equal(shown.Items.Select(i => i.ContentId), completed.Items.Select(i => i.ContentId));
+        Assert.Equal(35, completed.Items.Count);
+        Assert.Equal(whole.Items.Select(i => i.ContentId), completed.Items.Select(i => i.ContentId));
+        Assert.Equal(20, completed.ShownCount);
     }
 
     [Fact]
@@ -84,7 +85,7 @@ public class HomeRowWindowTests
     {
         var shown = Row("one", "two", "three");
         var whole = Row("four", "five"); whole.ItemLimit = 2;
-        Assert.Equal(["one", "two", "three"], HomeRowWindow.Complete(shown, whole, shown, 1).Items.Select(i => i.ContentId));
+        Assert.Equal(["one", "two", "three", "four", "five"], HomeRowWindow.Complete(shown, whole, shown, 1).Items.Select(i => i.ContentId));
     }
 
     [Theory]
@@ -97,7 +98,7 @@ public class HomeRowWindowTests
     }
 
     [Fact]
-    public void TruncatedCompletionStaysPartialAndFurtherCompletionRetainsInitialPriority()
+    public void TruncatedCompletionStopsWhenUnchangedAndLaterWholeDataRetainsInitialPriority()
     {
         var shown = Row("one", "two"); shown.HasMore = true;
         var partial = Row("one", "two", "three"); partial.HasMore = true;
@@ -108,7 +109,8 @@ public class HomeRowWindowTests
         Assert.True(HomeRowWindow.IsExpanded(first));
         Assert.Equal(2, first.ShownCount);
         var unchanged = HomeRowWindow.Complete(first, partial, first, 8);
-        Assert.Equal(HomeSectionChange.None, HomeSectionReconciler.Apply(first, unchanged));
+        Assert.True(unchanged.HasReadWhole); Assert.False(unchanged.CanComplete);
+        Assert.Equal(HomeSectionChange.Metadata, HomeSectionReconciler.Apply(first, unchanged));
         var completed = HomeRowWindow.Complete(first, Row("one", "two", "three", "four"), first, 9);
         Assert.False(completed.HasMore);
         Assert.True(completed.HasReadWhole);
@@ -116,6 +118,26 @@ public class HomeRowWindowTests
         Assert.Equal(["one", "two", "three", "four"], completed.Items.Select(i => i.ContentId));
         Assert.Equal(2, completed.ShownCount);
         Assert.Equal(7, completed.CompletedOrder);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(20)]
+    [InlineData(50)]
+    public void RepeatedTruncatedCompletionStopsWithoutRestoringConcurrentRemovals(int limit)
+    {
+        var shown = Row("one", "removed", "two"); shown.HasMore = true;
+        var current = Row("one", "two"); current.HasMore = true;
+        var whole = Row("two", "removed", "one", "one"); whole.HasMore = true; whole.ItemLimit = limit;
+        var completed = HomeRowWindow.Complete(shown, whole, current, 7);
+        Assert.Equal(["one", "two"], completed.Items.Select(item => item.ContentId));
+        Assert.True(completed.HasMore); Assert.True(completed.HasReadWhole); Assert.False(completed.CanComplete);
+        Assert.Equal(2, completed.ShownCount); Assert.Equal(7, completed.CompletedOrder);
+        var mounted = new HomeSectionWithItems();
+        HomeSectionReconciler.Apply(mounted, HomeSectionDedupe.Snapshot(completed));
+        Assert.False(mounted.CanComplete);
+        Assert.Equal(HomeSectionChange.None, HomeSectionReconciler.Apply(mounted,
+            HomeRowWindow.Complete(shown, whole, mounted, 8)));
     }
 
     [Theory]
@@ -131,7 +153,7 @@ public class HomeRowWindowTests
 
         var completed = HomeRowWindow.Complete(HomeSectionDedupe.Snapshot(current), whole, current, 8);
 
-        Assert.Equal(limit == 2 ? new[] { "one", "omitted", "tail" } : new[] { "one", "omitted", "tail", "new" },
+        Assert.Equal(new[] { "one", "omitted", "tail", "new" },
             completed.Items.Select(item => item.ContentId));
         Assert.True(completed.Items.Count >= current.Items.Count);
         Assert.Same(whole.Items[1], completed.Items[0]);

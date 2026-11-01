@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using System.Text.Json;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Automation.Provider;
@@ -21,6 +22,10 @@ internal static class HomeRowWindowNativeFixture
         foreach (var interruption in new[] { "refresh", "error", "null", "persistent-error", "persistent-null" })
             await DemandRecoveryAsync(parent, interruption);
         await TruncatedCompletionAsync(parent);
+        await NoProgressCompletionAsync(parent, legacy: false, repeatCompletion: false);
+        await NoProgressCompletionAsync(parent, legacy: false, repeatCompletion: true);
+        await NoProgressCompletionAsync(parent, legacy: true, repeatCompletion: true);
+        await DragDemandAsync(parent);
         await RetryAndRemovalAsync();
         await ConcurrentRefreshAsync();
         await HiddenPartialAsync();
@@ -212,8 +217,8 @@ internal static class HomeRowWindowNativeFixture
             wire.Release.TrySetResult();
             await Until(() => vm.Sections[0].Items.Count == 25); await Task.Delay(100);
             Require(vm.Sections[0].HasMore && !vm.Sections[0].HasReadWhole && vm.Sections[0].CanComplete
-                && vm.Sections[0].ShownCount == 20 && wire.LastWholeQuery == "?item_limit=50",
-                "A truncated whole response must remain retrievable, using the layout's budget rather than the initial20.");
+                && vm.Sections[0].ShownCount == 20 && wire.LastWholeQuery == "?item_limit=100",
+                "A truncated whole response that adds cards must remain retrievable, using the section maximum rather than the display budget.");
             var order = vm.Sections[0].CompletedOrder;
             var initialDemands = demands;
             for (var repeat = 0; repeat < 3; repeat++)
@@ -231,7 +236,7 @@ internal static class HomeRowWindowNativeFixture
             await Until(() => vm.Sections[0].Items.Count == 35);
             Require(!vm.Sections[0].HasMore && vm.Sections[0].HasReadWhole && !vm.Sections[0].CanComplete
                 && vm.Sections[0].ShownCount == 20 && vm.Sections[0].CompletedOrder == order
-                && wire.Whole == 2 && wire.LastWholeQuery == "?item_limit=50",
+                && wire.Whole == 2 && wire.LastWholeQuery == "?item_limit=100",
                 "Fresh forward navigation must retrieve the remaining cards without losing initial priority.");
             initialDemands = demands;
             for (var repeat = 0; repeat < 3; repeat++)
@@ -250,11 +255,11 @@ internal static class HomeRowWindowNativeFixture
 
             wire.PartialWhole = true; wire.Title = "Still truncated"; vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
             await Until(() => vm.Sections[0].Title == "Still truncated"); await Task.Delay(150);
-            Require(vm.Sections[0].HasMore && !vm.Sections[0].HasReadWhole && vm.Sections[0].CanComplete
+            Require(vm.Sections[0].HasMore && vm.Sections[0].HasReadWhole && !vm.Sections[0].CanComplete
                 && vm.Sections[0].Items.Count == 25 && vm.Sections[0].ShownCount == 20
                 && vm.Sections[0].CompletedOrder == order && wire.Whole == 3 && wire.Capped == 1
-                && wire.LastWholeQuery == "?item_limit=50",
-                "An expanded truncated refresh must retain the whole-row budget, priority and retrievable state without looping.");
+                && wire.LastWholeQuery == "?item_limit=100",
+                "An expanded truncated refresh that adds no cards must retain priority but stop offering identical completion reads.");
 
             wire.PartialWhole = false; wire.ReverseWhole = true; wire.Title = "Full";
             vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
@@ -275,6 +280,103 @@ internal static class HomeRowWindowNativeFixture
                 "The refreshed initial-card budget must retain duplicate priority while the refreshed tail yields to another row's initial cards.");
         }
         finally { wire.Release.TrySetResult(); if (row != null) parent.Children.Remove(row); Retire(vm); }
+    }
+
+    private static async Task NoProgressCompletionAsync(StackPanel parent, bool legacy, bool repeatCompletion)
+    {
+        using var wire = new Wire { PartialWhole = true, UnsupportedCapabilities = legacy }; using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://home-window.invalid");
+        using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("alpha");
+        var vm = new HomeViewModel(new HomeApi(client), auth); vm.SetActive(true);
+        SectionRow? row = null;
+        try
+        {
+            await vm.LoadCommand.ExecuteAsync(null); await Until(() => vm.Sections.FirstOrDefault()?.LoadCompleted == true);
+            await vm.CompleteSectionAsync("row");
+            Require(vm.Sections[0].Items.Count == 25, "The first whole read must retain every returned card.");
+            if (!legacy && repeatCompletion) await vm.CompleteSectionAsync("row");
+            if (legacy || repeatCompletion)
+                Require(vm.Sections[0].HasReadWhole && !vm.Sections[0].CanComplete,
+                    "A completion returning the same truncated set must immediately stop further completion.");
+            else
+            {
+                var reads = wire.Whole;
+                wire.CardsOverride = Enumerable.Range(1, 30).ToArray(); wire.Title = "Progressing whole refresh";
+                vm.QueueRealtimeRefresh("playback_progress", client.CaptureContext());
+                await Until(() => vm.Sections[0].Title == wire.Title); await Task.Delay(150);
+                Require(wire.Whole == reads + 1 && vm.Sections[0].Items.Count == 30 && vm.Sections[0].CanComplete,
+                    "Even a progressing truncated whole refresh must not auto-chain the same request.");
+                reads = wire.Whole; wire.NullWhole = true;
+                vm.QueueRealtimeRefresh("playback_progress", client.CaptureContext());
+                await Until(() => wire.Whole == reads + 1); await Task.Delay(150);
+                Require(wire.Whole == reads + 1 && vm.Sections[0].Items.Count == 30 && vm.Sections[0].CanComplete,
+                    "A JSON null fallback is not a successful no-progress read and must preserve completion state.");
+                wire.NullWhole = false;
+            }
+            row = new SectionRow { Width = 900, Section = HomeSectionDedupe.Snapshot(vm.Sections[0]),
+                OnNearEnd = section => _ = vm.CompleteSectionAsync(section.Id) };
+            parent.Children.Add(row); await Task.Delay(120); row.UpdateLayout();
+            var scroll = (ScrollViewer)row.FindName("CardsScrollViewer");
+            for (var repeat = 0; repeat < 3; repeat++)
+            {
+                var reads = wire.Whole;
+                wire.Title = $"No progress {repeat}";
+                vm.QueueRealtimeRefresh("playback_progress", client.CaptureContext());
+                await Until(() => vm.Sections[0].Title == wire.Title); await Task.Delay(150);
+                Require(wire.Whole == reads + 1, "An expanded realtime refresh must make exactly one whole read, not chain another identical request.");
+                Require(vm.Sections[0].HasMore && vm.Sections[0].HasReadWhole && !vm.Sections[0].CanComplete,
+                    "Repeated truncation without new cards must stop completion while preserving the server flag.");
+                row.Section = HomeSectionDedupe.Snapshot(vm.Sections[0]); row.UpdateLayout();
+                scroll.ChangeView(scroll.ScrollableWidth, null, null, true); await Task.Delay(60);
+                Require(!((Button)row.FindName("ScrollRightBtn")).IsEnabled
+                    && ((Microsoft.UI.Xaml.UIElement)row.FindName("RightFadeGradient")).Opacity == 0,
+                    "No-progress completion must disable the forward arrow and fade at the tail.");
+                await vm.CompleteSectionAsync("row");
+                Require(wire.Whole == reads + 1, "Tail demand must not reread a row that made no progress.");
+            }
+        }
+        finally { if (row != null) parent.Children.Remove(row); Retire(vm); }
+    }
+
+    private static async Task DragDemandAsync(StackPanel parent)
+    {
+        using var wire = new Wire { FailWhole = true }; using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://home-window.invalid");
+        using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("alpha");
+        var vm = new HomeViewModel(new HomeApi(client), auth);
+        SectionRow? row = null;
+        try
+        {
+            await vm.LoadCommand.ExecuteAsync(null); await Until(() => vm.Sections.FirstOrDefault()?.Items.Count == 20);
+            var demands = 0;
+            row = new SectionRow { Width = 900, Section = vm.Sections[0],
+                OnNearEnd = section => { demands++; _ = vm.CompleteSectionAsync(section.Id); } };
+            parent.Children.Add(row); await Task.Delay(120); row.UpdateLayout();
+            var scroll = (ScrollViewer)row.FindName("CardsScrollViewer");
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var pointer = typeof(SectionRow).GetField("_dragPointerId", flags)!;
+            var arm = typeof(SectionRow).GetMethod("ArmDragCompletionDemand", flags)!;
+            var reset = typeof(SectionRow).GetMethod("ResetDragState", flags)!;
+            var bounds = typeof(SectionRow).GetMethod("UpdateScrollBounds", flags)!;
+            // Drive the real drag-demand latch and ScrollViewer events without
+            // synthesizing platform PointerRoutedEventArgs.
+            pointer.SetValue(row, (uint)1); arm.Invoke(row, null);
+            scroll.ChangeView(scroll.ScrollableWidth, null, null, true); bounds.Invoke(row, null);
+            await Until(() => wire.Whole == 2); await Task.Delay(150);
+            for (var move = 0; move < 4; move++)
+            {
+                arm.Invoke(row, null);
+                scroll.ChangeView(Math.Max(0, scroll.ScrollableWidth - 20), null, null, true); await Task.Delay(40);
+                scroll.ChangeView(scroll.ScrollableWidth, null, null, true); bounds.Invoke(row, null); await Task.Delay(150);
+                Require(demands == 1 && wire.Whole == 2, "Moves within one drag must not bypass an exhausted cycle's cooldown.");
+            }
+            reset.Invoke(row, null); pointer.SetValue(row, (uint)2); arm.Invoke(row, null);
+            wire.FailWhole = false; bounds.Invoke(row, null);
+            await Until(() => vm.Sections[0].Items.Count == 35);
+            Require(demands == 2 && wire.Whole == 3, "A fresh forward drag must still be able to retry.");
+            reset.Invoke(row, null);
+        }
+        finally { if (row != null) parent.Children.Remove(row); Retire(vm); }
     }
 
     private static async Task RetryAndRemovalAsync()

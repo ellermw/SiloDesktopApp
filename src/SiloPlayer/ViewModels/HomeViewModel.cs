@@ -553,7 +553,7 @@ public partial class HomeViewModel : ObservableObject,
                     // alive instead of turning a malformed/partial response into
                     // a UI-thread NullReferenceException.
                     var completed = resp?.Section ?? CloneSection(section, loadFailed: false);
-                    ApplySectionReadResult(completed, read.Shown, read.Whole, removalRevision);
+                    ApplySectionReadResult(completed, read.Shown, read.Whole, removalRevision, resp?.Section != null);
                 }).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -614,7 +614,7 @@ public partial class HomeViewModel : ObservableObject,
                 return;
 
             var completed = response?.Section ?? CloneSection(current, loadFailed: false);
-            ApplySectionReadResult(completed, shown, whole, removalRevision);
+            ApplySectionReadResult(completed, shown, whole, removalRevision, response?.Section != null);
         }
         catch (Exception ex)
         {
@@ -630,25 +630,30 @@ public partial class HomeViewModel : ObservableObject,
         => _layoutOrder.FirstOrDefault(entry => entry.Id == section.Id)?.Featured == true
             || (_rawSections.TryGetValue(section.Id, out var cached) && HomeRowWindow.IsExpanded(cached));
 
-    // Bounded responses may echo item_limit=20. The layout retains the row's
-    // configured budget, which is authoritative for whole reads.
+    // Pass the layout's display budget, never the bounded response's echo.
+    // HomeApi negotiates the whole-read ceiling independently of this value.
     private int WholeItemLimit(string sectionId)
         => _layoutOrder.FirstOrDefault(entry => entry.Id == sectionId)?.ItemLimit ?? 0;
 
-    private void ApplySectionReadResult(HomeSectionWithItems completed, HomeSectionWithItems? shown, bool whole, long removalRevision)
+    private void ApplySectionReadResult(HomeSectionWithItems completed, HomeSectionWithItems? shown, bool whole, long removalRevision, bool receivedSection)
     {
         completed.LoadFailed = false;
         completed.LoadCompleted = true;
         completed.Items ??= new ObservableCollection<MediaItem>();
         if (!PrepareReadResult(completed, shown, whole)) return;
         FilterProgressRemovals(completed, removalRevision);
+        if (whole && receivedSection && shown != null && _rawSections.TryGetValue(completed.Id, out var current))
+        {
+            var seen = shown.Items.Concat(current.Items).Select(item => item.ContentId).ToHashSet(StringComparer.Ordinal);
+            if (!completed.Items.Any(item => !seen.Contains(item.ContentId))) completed.HasReadWhole = true;
+        }
         // Refresh membership, order and card data belong to the server. The
         // stable prefix merge is only for CompleteSectionAsync's first expansion.
         PreserveExpandedState(completed);
-        ApplyRefreshedSection(completed);
-        // Demand survives a same-owner generation change, even when the new
-        // bounded read reconciles to exactly the same mounted cards.
-        if (!completed.CanComplete)
+        ApplyRefreshedSection(completed, whole);
+        // Demand survives a bounded read overtaking completion, but a whole
+        // refresh already serviced it; do not chain an identical whole read.
+        if (whole || !completed.CanComplete)
         {
             _completionWantedSections.Remove(completed.Id);
             _completionRetryAfter.Remove(completed.Id);
@@ -733,7 +738,7 @@ public partial class HomeViewModel : ObservableObject,
                         response.Section.Items ??= new ObservableCollection<MediaItem>();
                         FilterProgressRemovals(response.Section, removalRevision);
                         var completed = HomeRowWindow.Complete(shown, response.Section, current, ++_rowCompletionOrder);
-                        ApplyRefreshedSection(completed);
+                        ApplyRefreshedSection(completed, whole: true);
                         if (!completed.CanComplete) _completionWantedSections.Remove(sectionId);
                         applied = true;
                     }).ConfigureAwait(false);
@@ -937,13 +942,13 @@ public partial class HomeViewModel : ObservableObject,
     private HomeSectionWithItems? FindMountedSection(string sectionId) =>
         FeaturedSections.Concat(Sections).FirstOrDefault(section => section.Id == sectionId);
 
-    private void ApplyRefreshedSection(HomeSectionWithItems updated)
+    private void ApplyRefreshedSection(HomeSectionWithItems updated, bool whole = false)
     {
         _rawSections[updated.Id] = HomeSectionDedupe.Snapshot(updated);
-        ApplySectionProjection();
+        ApplySectionProjection(whole ? updated.Id : null);
     }
 
-    private void ApplySectionProjection()
+    private void ApplySectionProjection(string? wholeReadSectionId = null)
     {
         var projected = HomeSectionDedupe.Project(_layoutOrder, _rawSections, _avoidDuplicateTypes);
         foreach (var entry in _layoutOrder)
@@ -960,8 +965,10 @@ public partial class HomeViewModel : ObservableObject,
             TryApplyRefreshedSection(Sections, section);
         }
         // A duplicate-filtered or dismissed partial row has no carousel left
-        // to report near-end demand, so recover its remaining cards now.
-        foreach (var section in FeaturedSections.Concat(Sections).Where(section => section.CanComplete && section.Items.Count == 0).ToList())
+        // to report near-end demand. Recover it unless this projection already
+        // applied its whole read; an identical request cannot page further.
+        foreach (var section in FeaturedSections.Concat(Sections).Where(section => section.CanComplete && section.Items.Count == 0
+            && section.Id != wholeReadSectionId).ToList())
             _ = CompleteSectionAsync(section.Id, userDemand: false);
     }
 

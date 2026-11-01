@@ -41,10 +41,13 @@ public static class HomeRowWindow
         }
         var seen = shown.Items.Concat(current.Items).Select(item => item.ContentId).ToHashSet(StringComparer.Ordinal);
         var rest = whole.Items.Where(item => seen.Add(item.ContentId));
-        var limit = whole.ItemLimit > 0 ? Math.Max(prefix.Count, whole.ItemLimit) : int.MaxValue;
-        result.Items = new(prefix.Concat(rest).Take(limit));
+        // The server already budgets its response. An echoed display limit
+        // must not discard unseen cards, including when we retain old cards.
+        result.Items = new(prefix.Concat(rest));
         result.HasMore = whole.HasMore;
-        result.HasReadWhole = !whole.HasMore;
+        // There is no paging cursor: repeating a whole read that adds nothing
+        // cannot move forward. A later refresh can discover changed cards.
+        result.HasReadWhole = !whole.HasMore || result.Items.Count == prefix.Count;
         result.ShownCount = Math.Min(initialCount, result.Items.Count);
         result.CompletedOrder = current.CompletedOrder > 0 ? current.CompletedOrder : completedOrder;
         result.LoadCompleted = true;
