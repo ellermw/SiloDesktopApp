@@ -191,6 +191,67 @@ public sealed class ItemDetailWatchedMutationTests
         }
     }
 
+    [Theory]
+    [InlineData("series", false)]
+    [InlineData("series", true)]
+    [InlineData("season", false)]
+    [InlineData("season", true)]
+    public async Task RemoteReadRetiredBeforeLocalWatchedWriteSettlesIsRetriedAfterwards(string type, bool fail)
+    {
+        var dispatcher = new QueuedContext();
+        Scope scope = null!;
+        dispatcher.Run(() => scope = new Scope(type, false)
+            { Delayed = new(TaskCreationOptions.RunContinuationsAsynchronously) });
+        using (scope)
+        {
+            var pendingRead = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var detailReads = 0;
+            var watchedCount = fail ? 1 : 2;
+            scope.Read = request =>
+            {
+                var seasons = request.RequestUri!.AbsolutePath.EndsWith("/seasons");
+                if (!seasons && ++detailReads == 1) return pendingRead.Task;
+                Assert.True(scope.Delayed!.Task.IsCompleted, "The retry read must wait for the local write to settle.");
+                object body = seasons
+                    ? new { items = new[] { new { content_id = "season", user_data = new { played = !fail, watched_count = watchedCount } } } }
+                    : new { content_id = "current", play_content_id = "canonical-target",
+                        user_data = new { played = !fail, watched_count = watchedCount, unplayed_count = 2 - watchedCount } };
+                return Task.FromResult(Json(JsonSerializer.Serialize(body)));
+            };
+            Task remote = Task.CompletedTask;
+            dispatcher.Run(() => remote = scope.Vm.RefreshMediaStateAsync(new(scope.Client.CaptureContext(),
+                new HashSet<string>(["unknown-episode"]), new HashSet<string>(["current"]))));
+            await dispatcher.RunNextAsync(); // Start the owned read before the local toggle.
+            Assert.Equal(1, detailReads);
+            Task local = Task.CompletedTask;
+            dispatcher.Run(() => local = scope.Vm.ToggleWatchedCommand.ExecuteAsync(null));
+            pendingRead.SetResult(Json("""
+                {"content_id":"current","play_content_id":"retired-target","user_data":{"played":false,"watched_count":0}}
+                """));
+            try
+            {
+                // Drain the old response while the POST is still held. The
+                // sweep must retain its scope and wait, not retire its task.
+                await dispatcher.RunNextAsync();
+                Assert.False(local.IsCompleted);
+                Assert.False(remote.IsCompleted);
+                Assert.Equal(1, detailReads);
+                Assert.Equal(0, scope.Vm.Item!.UserData!.WatchedCount);
+                Assert.True(scope.Vm.IsWatched);
+            }
+            finally
+            {
+                scope.Delayed!.TrySetResult(new HttpResponseMessage(fail ? HttpStatusCode.Forbidden : HttpStatusCode.NoContent));
+                await dispatcher.PumpUntilAsync(Task.WhenAll(local, remote));
+            }
+            Assert.InRange(detailReads, 2, 3);
+            Assert.Equal(watchedCount, scope.Vm.Item!.UserData!.WatchedCount);
+            Assert.Equal(!fail, scope.Vm.IsWatched);
+            Assert.Equal("canonical-target", scope.Vm.Item.PlayContentId);
+            if (type == "series") Assert.Equal(watchedCount, scope.Vm.Seasons[0].UserData!.WatchedCount);
+        }
+    }
+
     [Fact]
     public async Task PreMutationEpisodeReadIsRetriedBeforeItCanOverwriteAcceptedCascade()
     {

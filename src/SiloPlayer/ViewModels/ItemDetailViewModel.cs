@@ -335,6 +335,14 @@ public partial class ItemDetailViewModel : ObservableObject,
                         _remoteStateReadCts = null;
                         _remoteStateReadContext = null;
                     }
+                    // A local toggle can retire this snapshot before its write
+                    // publishes feedback. Keep the scope alive so the next pass
+                    // waits for that write instead of losing the remote change.
+                    if (_stateRefreshActive && !ct.IsCancellationRequested
+                        && ReferenceEquals(Item, item) && LibraryId == libraryId
+                        && _catalogApi.IsCurrentContext(message.Context)
+                        && revision != Volatile.Read(ref _localStateGeneration))
+                        _pendingRemoteState = MergeState(_pendingRemoteState, message);
                     if (ReferenceEquals(_activeRemoteState, message)) _activeRemoteState = null;
                 }
             }
