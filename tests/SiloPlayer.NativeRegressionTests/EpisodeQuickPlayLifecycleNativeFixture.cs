@@ -29,6 +29,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
             ("scoped watch freshness", () => VerifyScopedWatchFreshnessAsync(scope)),
             ("scoped watch retry and prefetch", () => VerifyScopedWatchPreparationAsync(scope)),
             ("access refresh ownership", () => VerifyAccessRefreshAsync(scope)),
+            ("ambiguous start is not recreated", () => VerifyAmbiguousStartAsync(scope)),
             ("superseded starts retain player state", () => VerifySupersededStateAsync(scope)),
             ("watch cancellation and resize/navigation", () => VerifyCancellationAsync(scope)),
             ("profile ownership across preparation awaits", () => VerifyPreparationOwnerAsync(scope)),
@@ -261,6 +262,36 @@ internal static partial class EpisodeQuickPlayNativeFixture
         Check(scope.Wire.Watches.Count == 2 && scope.Wire.Starts.Count == 0 && !scope.Player.IsLoading &&
             scope.Player.ErrorMessage == "Your access changed while preparing playback. Please try again.",
             "Repeated access refreshes leaked internal owner errors or retried without a bound.");
+    }
+
+    private static async Task VerifyAmbiguousStartAsync(LifecycleScope scope)
+    {
+        scope.Wire.AcceptStart = scope.Wire.HoldStart = true;
+        var identity = scope.Client.CaptureIdentityContext();
+        using var lifetime = new CancellationTokenSource();
+        var pending = scope.Player.PlayAsync("ambiguous-start", cancellationToken: lifetime.Token,
+            expectedIdentityContext: identity);
+        try
+        {
+            await scope.Wire.BoundaryStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            scope.Client.InvalidateAccessContext();
+            // Model the delivery layer exhausting its own budget after dispatch,
+            // without canceling the viewer's request or changing their identity.
+            scope.Wire.ReleaseBoundary.TrySetCanceled();
+            await pending.WaitAsync(TimeSpan.FromSeconds(3));
+            Check(!lifetime.IsCancellationRequested && scope.Client.IsCurrentIdentityContext(identity) &&
+                scope.Wire.Starts.Count == 1,
+                "An ambiguous start cancellation after access refresh created a new playback attempt.");
+            Check(!scope.Player.IsLoading && scope.Player.State == PlayerState.Idle && scope.Player.Manager == null &&
+                GetField(scope.Player, "_activeTransportPlan") == null && scope.Player.ErrorMessage != null,
+                "Ambiguous start delivery did not release preparation state and surface its failure.");
+        }
+        finally
+        {
+            scope.Wire.ReleaseBoundary.TrySetResult();
+            lifetime.Cancel();
+            await pending;
+        }
     }
 
     private static async Task VerifySupersededStateAsync(LifecycleScope scope)

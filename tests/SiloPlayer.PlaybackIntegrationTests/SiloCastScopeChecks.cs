@@ -43,7 +43,7 @@ internal static class SiloCastScopeChecks
         var playbackCore = typeof(PlayerService).GetMethod("GetOrFetchWatchDetailCoreAsync", BindingFlags.Instance | BindingFlags.NonPublic)
             ?? throw new InvalidOperationException("Published PlayerService lacks the playback watch boundary.");
         var remoteWatch = await (Task<WatchDetailResponse>)playbackCore.Invoke(service,
-            ["same-movie", true, CancellationToken.None, null, null, null])!;
+            ["same-movie", true, CancellationToken.None, null, null, null, null])!;
         Require(remoteWatch.Title == "remote watch", "Playback consumed a browsing prefetch or used local credentials.");
         service.PrefetchWatchDetail("hover-movie");
         var hover = await service.GetOrFetchWatchDetailAsync("hover-movie");
@@ -67,7 +67,7 @@ internal static class SiloCastScopeChecks
             try
             {
                 var sameServerWatch = await (Task<WatchDetailResponse>)playbackCore.Invoke(service,
-                    ["hover-movie", true, CancellationToken.None, null, null, null])!;
+                    ["hover-movie", true, CancellationToken.None, null, null, null, null])!;
                 Require(sameServerWatch.Title == "same-server remote watch" && sameServerHandler.Requests.Count == 1 &&
                         sameServerHandler.Requests.Single().Authorization == "Bearer same-server-remote-access",
                     "Equal URL/profile/epochs allowed a remote identity to consume a local browsing prefetch.");
@@ -88,7 +88,7 @@ internal static class SiloCastScopeChecks
             .SequenceEqual(new[] { "?library_id=7&file_id=42", "?library_id=9&file_id=43" }),
             "Library/file watch routes were dropped or fetched more than once.");
         var remoteLibraryWatch = await (Task<WatchDetailResponse>)playbackCore.Invoke(service,
-            ["library-movie", true, CancellationToken.None, 7, 42, null])!;
+            ["library-movie", true, CancellationToken.None, 7, 42, null, null])!;
         Require(remoteLibraryWatch.Title == "remote watch" && remoteLibraryWatch.PreparedLibraryId == 7 && remoteLibraryWatch.PreparedFileId == 42,
             "Remote playback lost the current library/file overload.");
 

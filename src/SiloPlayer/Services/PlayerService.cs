@@ -1941,7 +1941,10 @@ public partial class PlayerService : IDisposable
                 // A reservation may be canceled at the gate or lose its owner
                 // before core takes over. Wait for the retired start's cleanup,
                 // then repair only the latest abandoned hand-off under the gate.
-                if (ReferenceEquals(reservation, Volatile.Read(ref _viewerPlayReservation)))
+                // Close owns cleanup after retiring the authority lifetime; a
+                // canceled queued request must not wait for that gate again.
+                if (!_authorityLifetimeCts.IsCancellationRequested &&
+                    ReferenceEquals(reservation, Volatile.Read(ref _viewerPlayReservation)))
                 {
                     await _authoritySwitchGate.WaitAsync();
                     try
@@ -2082,7 +2085,7 @@ public partial class PlayerService : IDisposable
             requestToken.ThrowIfCancellationRequested();
             if (!IsCurrentOwner()) throw new OperationCanceledException("Playback request owner departed.", requestToken);
         }
-        async Task<T> PrepareAsync<T>(Func<ApiRequestContext?, Task<T>> prepare)
+        async Task<T> PrepareReadAsync<T>(Func<ApiRequestContext?, Task<T>> prepare)
         {
             for (var attempt = 0; ; attempt++)
             {
@@ -2099,7 +2102,7 @@ public partial class PlayerService : IDisposable
                     context is { } read && !authority.ApiClient.IsCurrentContext(read))
                 {
                     // Retry retired reads once, never recapturing a departed
-                    // account/profile or retrying a successfully accepted start.
+                    // account/profile. Session creation is outside this helper.
                     if (attempt != 0)
                         throw new InvalidOperationException("Your access changed while preparing playback. Please try again.", ex);
                 }
@@ -2255,7 +2258,7 @@ public partial class PlayerService : IDisposable
             if (expectedIdentity.HasValue)
             {
                 EnsureMpvInitialized();
-                watchDetail = await PrepareAsync(context => GetOrFetchWatchDetailCoreAsync(contentId, consumePrefetch: true,
+                watchDetail = await PrepareReadAsync(context => GetOrFetchWatchDetailCoreAsync(contentId, consumePrefetch: true,
                     ct: requestToken, libraryId: libraryId, fileId: fileId, authority: authority, expectedContext: context));
             }
             else if (prefetchedWatchDetail != null &&
@@ -2325,55 +2328,54 @@ public partial class PlayerService : IDisposable
             // viewer choice. Omit Auto so the server can honor remembered
             // tracks and refine compatibility on the source it actually plays.
             var selectedAudioTrackIndex = audioTrackIndex;
-            var preparedStart = await PrepareAsync(async context =>
-            {
-                var qualityPreferences = await _playbackManager.ResolveQualityPreferencesAsync(requestToken, context);
-                EnsureCurrentOwner();
-                var candidateVersion = SelectVersion(watchDetail, fileId, qualityPreferences.Quality)
-                    ?? throw new InvalidOperationException("No playable version found.");
-                Resolution = candidateVersion.Resolution;
-                _requestedMediaFileId = candidateVersion.FileId;
-                var candidatePosition = IsAudiobook
-                    ? Math.Max(0, absoluteStartPosition - _audiobookPartOffsetSeconds)
-                    : absoluteStartPosition;
+            var preparedQuality = await PrepareReadAsync(async context =>
+                (Preferences: await _playbackManager.ResolveQualityPreferencesAsync(requestToken, context), Context: context));
+            var qualityPreferences = preparedQuality.Preferences;
+            EnsureCurrentOwner();
+            var candidateVersion = SelectVersion(watchDetail, fileId, qualityPreferences.Quality)
+                ?? throw new InvalidOperationException("No playable version found.");
+            Resolution = candidateVersion.Resolution;
+            _requestedMediaFileId = candidateVersion.FileId;
+            var startPosition = IsAudiobook
+                ? Math.Max(0, absoluteStartPosition - _audiobookPartOffsetSeconds)
+                : absoluteStartPosition;
 
-                PlaybackStartResponse startedSession;
-                try
-                {
-                    startedSession = await _playbackManager.StartSessionAsync(
-                        candidateVersion.FileId,
-                        candidatePosition,
-                        forceStartPosition: IsAudiobook || fromStart || startPositionOverride.HasValue,
-                        audioTrackIndex: selectedAudioTrackIndex,
-                        forceDirectAudioSelection: selectedAudioTrackIndex.HasValue,
-                        disableProgressPersistence: IsAudiobook,
-                        ct: requestToken,
-                        preferences: qualityPreferences,
-                        expectedContext: context);
-                }
-                catch (ApiException ex) when (
-                    ex.StatusCode == 429 &&
-                    ex.ErrorCode == "too_many_streams" &&
-                    !retiringSessionTask.IsCompleted)
-                {
-                    LogToFile("state_trace.txt", "Next playback session reached a one-stream limit; waiting for the retiring session and retrying once.");
-                    await retiringSessionTask.WaitAsync(requestToken);
-                    EnsureCurrentOwner();
-                    startedSession = await _playbackManager.StartSessionAsync(
-                        candidateVersion.FileId,
-                        candidatePosition,
-                        forceStartPosition: IsAudiobook || fromStart || startPositionOverride.HasValue,
-                        audioTrackIndex: selectedAudioTrackIndex,
-                        forceDirectAudioSelection: selectedAudioTrackIndex.HasValue,
-                        disableProgressPersistence: IsAudiobook,
-                        ct: requestToken,
-                        preferences: qualityPreferences,
-                        expectedContext: context);
-                }
-                return (Session: startedSession, Position: candidatePosition);
-            });
-            var session = preparedStart.Session;
-            var startPosition = preparedStart.Position;
+            // A canceled start may already have reached the server. Only the
+            // API delivery layer may retry it, retaining the same attempt ID;
+            // a retired read context must never create another start attempt.
+            PlaybackStartResponse session;
+            try
+            {
+                session = await _playbackManager.StartSessionAsync(
+                    candidateVersion.FileId,
+                    startPosition,
+                    forceStartPosition: IsAudiobook || fromStart || startPositionOverride.HasValue,
+                    audioTrackIndex: selectedAudioTrackIndex,
+                    forceDirectAudioSelection: selectedAudioTrackIndex.HasValue,
+                    disableProgressPersistence: IsAudiobook,
+                    ct: requestToken,
+                    preferences: qualityPreferences,
+                    expectedContext: preparedQuality.Context);
+            }
+            catch (ApiException ex) when (
+                ex.StatusCode == 429 &&
+                ex.ErrorCode == "too_many_streams" &&
+                !retiringSessionTask.IsCompleted)
+            {
+                LogToFile("state_trace.txt", "Next playback session reached a one-stream limit; waiting for the retiring session and retrying once.");
+                await retiringSessionTask.WaitAsync(requestToken);
+                EnsureCurrentOwner();
+                session = await _playbackManager.StartSessionAsync(
+                    candidateVersion.FileId,
+                    startPosition,
+                    forceStartPosition: IsAudiobook || fromStart || startPositionOverride.HasValue,
+                    audioTrackIndex: selectedAudioTrackIndex,
+                    forceDirectAudioSelection: selectedAudioTrackIndex.HasValue,
+                    disableProgressPersistence: IsAudiobook,
+                    ct: requestToken,
+                    preferences: qualityPreferences,
+                    expectedContext: preparedQuality.Context);
+            }
             EnsureCurrentOwner();
             var bestVersion = watchDetail.Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
                 ?? throw new InvalidOperationException("The accepted playback source is missing from the version inventory.");
