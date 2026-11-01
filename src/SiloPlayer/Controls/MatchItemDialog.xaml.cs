@@ -149,6 +149,7 @@ public sealed partial class MatchItemDialog : ContentDialog
             return;
         var selected = _selectedCandidate; var scope = _candidateScope;
         var dispatched = false;
+        var rejected = false;
         ItemMatchApplyResponse? applied = null;
         _applying = true;
         ApplyMatchButton.IsEnabled = false;
@@ -187,10 +188,14 @@ public sealed partial class MatchItemDialog : ContentDialog
         catch (OperationCanceledException) when (_lifetime.IsCancellationRequested && !dispatched) { }
         catch (Exception ex)
         {
+            // A definite rejection did not commit a replacement. Keep retry and
+            // unrelated prefetched details available, even if the owner departed.
+            rejected = dispatched && ex is ApiException { StatusCode: >= 400 and < 500 };
+            if (rejected) App.Services.GetService<ItemDetailPrefetchCache>()?.Invalidate(_itemId);
             // A failed inventory read makes the picker unavailable and retires
             // candidates, but only a changed inventory snapshot is scope drift.
             if (!CanAct || !_scope.State.IsCurrent(scope)) return;
-            ApplyStatusText.Text = dispatched
+            ApplyStatusText.Text = dispatched && !rejected
                 ? $"Match could not be applied or confirmed: {ex.Message} Reload the item before trying again."
                 : $"Match could not be applied: {ex.Message}";
             ApplyStatusText.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
@@ -198,7 +203,7 @@ public sealed partial class MatchItemDialog : ContentDialog
         }
         finally
         {
-            if (dispatched && applied == null)
+            if (dispatched && applied == null && !rejected)
             {
                 // A lost response may conceal a committed non-idempotent write.
                 // Do not arm another attempt in this dialog.

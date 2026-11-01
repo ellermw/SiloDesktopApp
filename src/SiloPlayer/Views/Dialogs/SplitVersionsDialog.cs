@@ -248,6 +248,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         await _scope.RefreshAsync();
         if (!ScopeOwner || !PlanScopeCurrent(scope) || revision != _planRevision || !PlanValid) return;
         string? targetId = null;
+        var rejected = false;
         try
         {
             // Once dispatched, the non-idempotent write must outlive its surface.
@@ -260,11 +261,27 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
             if (!ScopeOwner || !PlanScopeCurrent(scope) || revision != _planRevision) return;
             HasSaved = true; DispatcherQueue.TryEnqueue(() => { if (ScopeOwner && PlanScopeCurrent(scope) && revision == _planRevision) Hide(); });
         }
+        catch (ApiException error) when (error.StatusCode is >= 400 and < 500)
+        {
+            rejected = true;
+            throw;
+        }
         catch (Exception error) when (ScopeOwner)
         {
             throw new InvalidOperationException($"Split could not be confirmed: {error.Message} Reload the item before trying again.", error);
         }
-        finally { InvalidateAppliedSplit(targetId); }
+        finally
+        {
+            if (rejected)
+            {
+                // A rejected commit has no unknown target and must not evict
+                // unrelated detail or publish an unconfirmed-write warning.
+                var cache = App.Services.GetService<ItemDetailPrefetchCache>();
+                cache?.Invalidate(ItemId);
+                cache?.Invalidate(_seriesId);
+            }
+            else InvalidateAppliedSplit(targetId);
+        }
     }
     private void InvalidateAppliedSplit(string? targetId)
     {

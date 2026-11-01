@@ -21,6 +21,7 @@ using SiloPlayer.Services;
 
 internal static class MatchSplitScopeNativeFixture
 {
+    private const string WriteError = "Synthetic write error";
     internal static async Task RunAsync(StackPanel parent, bool reviewOnly = false, bool specOnly = false, bool onlineOnly = false)
     {
         var slot = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -76,7 +77,9 @@ internal static class MatchSplitScopeNativeFixture
             await MatchInventoryAsync(owner, wire);
             await MatchPreflightFailuresAsync(owner, wire);
             await MatchTimeoutsAsync(owner, wire);
+            await MatchApplyErrorsAsync(owner, wire);
             await SplitTimeoutsAsync(owner, wire);
+            await SplitCommitErrorsAsync(owner, wire);
             await UnreadableInventoryAsync(owner, wire);
             await MatchBlockedScopesAsync(owner, wire);
             await CuratorAsync(owner, wire, auth);
@@ -418,6 +421,67 @@ internal static class MatchSplitScopeNativeFixture
             finally { wire.DenyInventory = wire.TimeoutInventory = false; dialog.Hide(); await showing; }
         }
     }
+    private static async Task MatchApplyErrorsAsync(FrameworkElement owner, Wire wire)
+    {
+        foreach (var status in new[] { 400, 403, 422, 500 })
+        {
+            wire.Files = [("1", 2), ("2", 2)]; var dialog = Match(owner); var showing = dialog.ShowAsync();
+            try
+            {
+                await Until(() => Search(dialog).IsEnabled); await SearchAndChooseAsync(dialog);
+                var cache = (ItemDetailPrefetchCache)SiloPlayer.App.Services.GetService(typeof(ItemDetailPrefetchCache))!;
+                var ids = new[] { "fixture", "fixture-target", "unrelated" };
+                var cached = await Task.WhenAll(ids.Select(id => cache.GetAsync(id, default)));
+                var apply = All<Button>(dialog).Single(button => button.Name == "ApplyMatchButton");
+                var writes = wire.Count("apply"); wire.ApplyStatusCode = status; Invoke(apply);
+                await Until(() => All<TextBlock>(dialog).Any(text => text.Name == "ApplyStatusText" && text.Visibility == Visibility.Visible && text.Text.Contains(WriteError)));
+                var rejected = status < 500;
+                Check(!dialog.HasAppliedMatch && wire.Count("apply") == writes + 1, "Failed Match Apply reports success or retries automatically");
+                Check(All<TextBlock>(dialog).Single(text => text.Name == "ApplyStatusText").Text == (rejected
+                    ? $"Match could not be applied: {WriteError}"
+                    : $"Match could not be applied or confirmed: {WriteError} Reload the item before trying again."), "Match misclassifies its server error");
+                Check(apply.IsEnabled == rejected && Search(dialog).IsEnabled == rejected && Refresh(dialog).IsEnabled == rejected, "Match does not distinguish retryable rejection from unknown outcome");
+                for (var i = 0; i < ids.Length; i++)
+                    Check(ReferenceEquals(cached[i], await cache.GetAsync(ids[i], default)) == (rejected && i > 0), "Match failure invalidates the wrong cached detail");
+                if (rejected)
+                {
+                    wire.ApplyStatusCode = null; Invoke(apply); await Until(() => dialog.HasAppliedMatch);
+                    Check(wire.Count("apply") == writes + 2 && wire.Last("apply").Body.GetProperty("library_id").GetString() == "2", "Rejected Match cannot retry in its captured library");
+                }
+            }
+            finally { wire.ApplyStatusCode = null; dialog.Hide(); await showing; }
+        }
+    }
+    private static async Task SplitCommitErrorsAsync(FrameworkElement owner, Wire wire)
+    {
+        foreach (var status in new[] { 400, 403, 422, 500 })
+        {
+            wire.Files = [("1", 2), ("2", 2)]; var dialog = Split(owner, seriesId: "fixture-series"); var showing = dialog.ShowAsync();
+            try
+            {
+                await Until(() => All<CheckBox>(dialog).Any(check => AutomationProperties.GetName(check) == "Select /fixture/1.mkv"));
+                File(dialog, "1").IsChecked = true; await SearchAndChooseAsync(dialog); await Until(() => dialog.IsPrimaryButtonEnabled);
+                var cache = (ItemDetailPrefetchCache)SiloPlayer.App.Services.GetService(typeof(ItemDetailPrefetchCache))!;
+                var ids = new[] { "fixture", "fixture-series", "fixture-target", "unrelated" };
+                var cached = await Task.WhenAll(ids.Select(id => cache.GetAsync(id, default)));
+                var commits = wire.Commits; wire.CommitStatusCode = status;
+                Invoke(All<Button>(dialog).Single(button => button.Name == "PrimaryButton"));
+                await Until(() => !ActionBusy(dialog) && ActionStatus(dialog).Text.Contains(WriteError));
+                var rejected = status < 500;
+                Check(!dialog.HasSaved && wire.Commits == commits + 1, "Failed Split reports success or retries automatically");
+                Check(ActionStatus(dialog).Text == (rejected ? WriteError : $"Split could not be confirmed: {WriteError} Reload the item before trying again."), "Split misclassifies its server error");
+                for (var i = 0; i < ids.Length; i++)
+                    Check(ReferenceEquals(cached[i], await cache.GetAsync(ids[i], default)) == (rejected && i > 1), "Split failure invalidates the wrong cached detail");
+                if (rejected)
+                {
+                    Check(dialog.IsPrimaryButtonEnabled && Search(dialog).IsEnabled && Refresh(dialog).IsEnabled, "Rejected Split does not restore usable commands");
+                    wire.CommitStatusCode = null; Invoke(All<Button>(dialog).Single(button => button.Name == "PrimaryButton")); await Until(() => dialog.HasSaved);
+                    Check(wire.Commits == commits + 2, "Rejected Split cannot retry its accepted plan");
+                }
+            }
+            finally { wire.CommitStatusCode = null; dialog.Hide(); await showing; }
+        }
+    }
     private static async Task SplitTimeoutsAsync(FrameworkElement owner, Wire wire)
     {
         wire.Files = [("1", 2), ("2", 2)]; var dialog = Split(owner); var showing = dialog.ShowAsync();
@@ -678,6 +742,7 @@ internal static class MatchSplitScopeNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         public (string Id, int Library)[] Files = []; public List<Call> Calls = []; public string Root = "/fixture"; public int FileReads, DetailReads; public string? InventoryJson; public bool DenyInventory, PaginatedInventory, TimeoutInventory, TimeoutSearch, TimeoutPreview, TimeoutApply, TimeoutCommit, ApplyWasCanceled, SplitWasCanceled; public TaskCompletionSource? SearchGate, PreviewGate, ApplyGate, CommitGate, DetailGate, FileGate;
+        public int? ApplyStatusCode, CommitStatusCode;
         public int Count(string suffix) => Calls.Count(call => call.Path.EndsWith("/" + suffix));
         public Call Last(string suffix) => Calls.Last(call => call.Path.EndsWith("/" + suffix));
         public int Commits => Calls.Count(call => call.Path.EndsWith("/split") && !call.Body.GetProperty("dry_run").GetBoolean());
@@ -698,6 +763,10 @@ internal static class MatchSplitScopeNativeFixture
             else
             {
                 var body = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync(ct)); Calls.Add(new(path, body));
+                var failureStatus = path.EndsWith("/apply") ? ApplyStatusCode
+                    : path.EndsWith("/split") && !body.GetProperty("dry_run").GetBoolean() ? CommitStatusCode : null;
+                if (failureStatus is { } status)
+                    return new((HttpStatusCode)status) { Content = new StringContent(JsonSerializer.Serialize(new { error = "synthetic_error", message = WriteError })) };
                 if (path.EndsWith("/search")) { if (TimeoutSearch) throw new TaskCanceledException("Synthetic search timeout"); if (SearchGate != null) await SearchGate.Task; json = "{\"candidates\":[{\"title\":\"Scoped candidate\",\"year\":2026,\"provider_ids\":{\"tmdb\":\"42\"}}]}"; }
                 else if (path.EndsWith("/apply")) { if (TimeoutApply) throw new TaskCanceledException("Synthetic apply timeout"); if (ApplyGate != null) await ApplyGate.Task; ApplyWasCanceled = ct.IsCancellationRequested; json = "{\"content_id\":\"fixture-target\",\"updated\":true}"; }
                 else { if (body.GetProperty("dry_run").GetBoolean() && TimeoutPreview) throw new TaskCanceledException("Synthetic preview timeout"); if (body.GetProperty("dry_run").GetBoolean() && PreviewGate != null) await PreviewGate.Task; if (!body.GetProperty("dry_run").GetBoolean()) { SplitWasCanceled = false; if (CommitGate != null) await CommitGate.Task; SplitWasCanceled = ct.IsCancellationRequested; if (TimeoutCommit) throw new TaskCanceledException("Synthetic split response timeout"); } json = JsonSerializer.Serialize(new { dry_run = body.GetProperty("dry_run").GetBoolean(), files_moved = body.GetProperty("file_ids").GetArrayLength(), target_content_id = "fixture-target", target_created = true, reattribution = new { progress_moved = 1, history_moved = 1, history_ambiguous = 0, downloads = 0 } }); }
