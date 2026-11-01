@@ -29,6 +29,8 @@ public partial class LibraryViewModel : ObservableObject
     private string? _snapshot;
     private ApiRequestContext? _catalogContext;
     private int _estimatedTotalItems;
+    private int _observedCatalogEnd;
+    private int? _catalogEndTotal;
     private bool _hasExactTotal;
     private int _lastVisibleEndIndex = PageSize - 1;
     private int _queryVersion;
@@ -299,7 +301,9 @@ public partial class LibraryViewModel : ObservableObject
         Items.Clear();
         // Cards load immediately; optional facets are requested when the
         // filter sheet is opened, matching the WebUI's browsing path.
-        await LoadWindowAsync(0, PageSize, force: true);
+        var cards = LoadWindowAsync(0, PageSize, force: true);
+        _ = EnsureLetterIndexAsync();
+        await cards;
     }
 
     [RelayCommand]
@@ -323,143 +327,9 @@ public partial class LibraryViewModel : ObservableObject
     {
         StartNewCatalogQuery();
         Items.Clear();
-        await LoadWindowAsync(0, PageSize, force: true);
-    }
-
-    // Cached letter->offset mapping per library, built on first use
-    private Dictionary<char, int>? _letterOffsets;
-    private int _letterOffsetLibraryId;
-
-    [RelayCommand]
-    private async Task JumpToLetterAsync(string letter)
-    {
-        if (Library == null || TotalCount == 0) return;
-
-        var sortChanged = !string.Equals(SelectedSort, "title", StringComparison.OrdinalIgnoreCase)
-            || !string.Equals(SelectedOrder, "asc", StringComparison.OrdinalIgnoreCase);
-        var knownTotal = TotalCount;
-        var knownTotalIsExact = _hasExactTotal;
-        SelectedSort = "title";
-        SelectedOrder = "asc";
-
-        if (sortChanged)
-        {
-            StartNewCatalogQuery();
-            // Sorting does not change membership, so retain the known total while
-            // clearing every page/window/snapshot tied to the old sort order.
-            TotalCount = knownTotal;
-            DisplayTotalCount = knownTotal;
-            _estimatedTotalItems = knownTotal;
-            _hasExactTotal = knownTotalIsExact;
-            HasMore = knownTotal > PageSize;
-            Items.Clear();
-        }
-
-        if (letter == "#")
-        {
-            if (!sortChanged)
-            {
-                StartNewCatalogQuery();
-                Items.Clear();
-            }
-            await LoadWindowAsync(0, PageSize, force: true);
-            return;
-        }
-
-        IsLoading = true;
-
-        try
-        {
-            // Build letter offset cache on first use (or if library changed)
-            if (_letterOffsets == null || _letterOffsetLibraryId != Library.Id)
-            {
-                await BuildLetterOffsetsAsync();
-            }
-
-            char target = char.ToUpper(letter[0]);
-            int targetOffset;
-            if (_letterOffsets != null && _letterOffsets.TryGetValue(target, out int cachedOffset))
-            {
-                targetOffset = (cachedOffset / PageSize) * PageSize;
-            }
-            else
-            {
-                // Fallback: rough estimate
-                int letterIndex = target - 'A' + 1;
-                targetOffset = (int)((letterIndex / 27.0) * TotalCount);
-                targetOffset = (targetOffset / PageSize) * PageSize;
-            }
-
-            await LoadWindowAsync(targetOffset, PageSize, force: true);
-        }
-        finally
-        {
-            IsLoading = false;
-        }
-    }
-
-    private async Task BuildLetterOffsetsAsync()
-    {
-        if (Library == null) return;
-
-        _letterOffsets = new Dictionary<char, int>();
-        _letterOffsetLibraryId = Library.Id;
-
-        // Sample ~20 evenly spaced points across the catalog to map letter positions
-        int sampleCount = 20;
-        int step = Math.Max(1, TotalCount / sampleCount);
-        var samples = new List<(int offset, char letter)>();
-
-        var tasks = new List<Task<(int offset, char letter)>>();
-        for (int i = 0; i < sampleCount && i * step < TotalCount; i++)
-        {
-            int offset = i * step;
-            tasks.Add(ProbeSingleAsync(offset));
-        }
-
-        var results = await Task.WhenAll(tasks);
-        samples.AddRange(results.Where(r => r.letter != '\0'));
-        samples.Sort((a, b) => a.offset.CompareTo(b.offset));
-
-        // For each letter A-Z, find the lowest offset where that letter first appears
-        for (char c = 'A'; c <= 'Z'; c++)
-        {
-            int bestOffset = 0;
-            for (int i = 0; i < samples.Count; i++)
-            {
-                if (samples[i].letter < c)
-                    bestOffset = samples[i].offset;
-                else if (samples[i].letter == c)
-                {
-                    bestOffset = samples[i].offset;
-                    break;
-                }
-                else
-                    break;
-            }
-            _letterOffsets[c] = bestOffset;
-        }
-    }
-
-    private async Task<(int offset, char letter)> ProbeSingleAsync(int offset)
-    {
-        try
-        {
-            var probe = await _catalogApi.GetCatalogAsync(
-                libraryId: Library!.Id, sort: "title", order: "asc", limit: 1, offset: offset);
-            if (probe.Items.Count > 0)
-            {
-                var title = probe.Items[0].Title.TrimStart();
-                if (title.Length > 0)
-                {
-                    char c = char.ToUpper(title[0]);
-                    if (c >= 'A' && c <= 'Z')
-                        return (offset, c);
-                }
-            }
-        }
-        catch { }
-        return (offset, '\0');
+        var cards = LoadWindowAsync(0, PageSize, force: true);
+        _ = EnsureLetterIndexAsync();
+        await cards;
     }
 
     public async Task EnsureRangeLoadedAsync(int startIndex, int endIndex)
@@ -484,6 +354,7 @@ public partial class LibraryViewModel : ObservableObject
 
     public MediaItem? GetWindowItem(int absoluteIndex)
     {
+        if (_hasExactTotal && absoluteIndex >= TotalCount) return null;
         var relativeIndex = absoluteIndex - WindowStartIndex;
         if (WindowStartIndex >= 0 && relativeIndex >= 0 && relativeIndex < _windowItems.Count)
             return _windowItems[relativeIndex];
@@ -591,6 +462,9 @@ public partial class LibraryViewModel : ObservableObject
         var context = _catalogApi.CaptureContext();
         if (_catalogContext != null && _catalogContext != context) StartNewCatalogQuery();
         _catalogContext = context;
+        // The still-visible viewport must not cancel an explicit letter seek.
+        // The page retries its latest range once the jump has completed.
+        if (!force && IsLetterJumpInProgress) return Task.CompletedTask;
         var viewportVersion = ++_viewportRequestVersion;
         EnsureExactCountRequested();
         startIndex = TotalCount > 0 ? Math.Clamp(startIndex, 0, TotalCount - 1) : 0;
@@ -712,6 +586,11 @@ public partial class LibraryViewModel : ObservableObject
             {
                 if (ct.IsCancellationRequested || queryVersion != _queryVersion || windowVersion != _windowLoadVersion)
                     return;
+                // A count may have landed while this speculative window was
+                // in flight. Even total_exact on a skip-total window cannot
+                // enlarge that count or replace the still-usable active window.
+                if (_hasExactTotal && startIndex >= TotalCount)
+                    return;
 
                 ApplyWindowResponse(startIndex, response, includeTotal, preserveAdjacent: !force);
                 RememberWindow(startIndex, response, includeTotal);
@@ -738,7 +617,12 @@ public partial class LibraryViewModel : ObservableObject
                 $"catalog_cursor_recovery start={startIndex} count={itemCount} query_version={_queryVersion} prior_scope_retired=true retry_without_cursor=true");
             _pendingWindowStart = startIndex;
             _pendingWindowEnd = startIndex + itemCount - 1;
+            var recoveryQueryVersion = _queryVersion;
             await (_pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force: true, allowCursorRecovery: false));
+            // Only restore the optional rail after fresh cards succeed. A
+            // failed cursor recovery must not trigger another capability read.
+            if (recoveryQueryVersion == _queryVersion && ErrorMessage is null && WindowStartIndex >= 0)
+                _ = EnsureLetterIndexAsync();
         }
         catch (Exception ex)
         {
@@ -760,6 +644,7 @@ public partial class LibraryViewModel : ObservableObject
 
     private int StartNewCatalogQuery()
     {
+        ResetLetterIndex();
         _catalogContext = _catalogApi.CaptureContext();
         CancelWindowLoad();
         CancelCurrentCatalogQuery();
@@ -771,6 +656,8 @@ public partial class LibraryViewModel : ObservableObject
         _recentWindows.Clear();
         _snapshot = null;
         _estimatedTotalItems = 0;
+        _observedCatalogEnd = 0;
+        _catalogEndTotal = null;
         _hasExactTotal = false;
         _lastVisibleEndIndex = PageSize - 1;
         TotalCount = 0;
@@ -787,6 +674,7 @@ public partial class LibraryViewModel : ObservableObject
 
     public void CancelCatalogLoads()
     {
+        ResetLetterIndex();
         _loadedFiltersLibraryId = null;
         CancelWindowLoad();
         CancelCurrentCatalogQuery();
@@ -807,6 +695,7 @@ public partial class LibraryViewModel : ObservableObject
     /// </summary>
     public void SuspendCatalogLoads()
     {
+        ResetLetterIndex();
         CancelWindowLoad();
         CancelCurrentCatalogQuery();
         _catalogQueryCts = new CancellationTokenSource();
@@ -952,11 +841,7 @@ public partial class LibraryViewModel : ObservableObject
         {
             var result = await FetchWindowPageAsync(0, true, snapshot, ct);
             if (ct.IsCancellationRequested || version != _queryVersion || !result.TotalExact) return;
-            _hasExactTotal = true;
-            _estimatedTotalItems = Math.Max(0, result.Total);
-            DisplayTotalCount = _estimatedTotalItems;
-            TotalCount = _estimatedTotalItems;
-            Items.SetCount(_estimatedTotalItems);
+            ApplyExactCatalogTotal(result.Total);
             WindowLoaded?.Invoke();
         }
         catch (OperationCanceledException) { }
@@ -1035,6 +920,8 @@ public partial class LibraryViewModel : ObservableObject
             _completedBoundaries[startIndex + CatalogWindowPageSize] = new(startIndex, version, context, queryKey, response.Snapshot, response.Page.NextCursor);
             while (_completedBoundaries.Count > 16) _completedBoundaries.Remove(_completedBoundaries.Keys.First());
         }
+        if (response.Items.Count > 0)
+            _observedCatalogEnd = Math.Max(_observedCatalogEnd, startIndex + response.Items.Count);
         return response;
     }
 
@@ -1161,19 +1048,32 @@ public partial class LibraryViewModel : ObservableObject
         return group;
     }
 
+    private bool HasTrustworthyExactTotal(CatalogResponse response, bool includeTotal) => response.TotalExact &&
+        (includeTotal || !_hasExactTotal || response.Total <= TotalCount) &&
+        (includeTotal || response.Total > 0 || (!_hasExactTotal && response.Items.Count == 0 && !response.HasMore));
+
     private void ApplyWindowResponse(int startIndex, CatalogResponse response, bool includeTotal, bool preserveAdjacent = false)
     {
+        // Count requests publish separately in LoadExactCountAsync; cached
+        // windows must not restore an extent that an exact count retired.
+        if (_hasExactTotal && startIndex >= TotalCount)
+            return;
         if (!string.IsNullOrWhiteSpace(response.Snapshot))
             _snapshot = response.Snapshot;
 
-        if (preserveAdjacent && response.Items.Count > 0 && WindowStartIndex >= 0 &&
-            startIndex <= WindowEndIndex + 1 && startIndex + response.Items.Count >= WindowStartIndex)
+        // Do not mutate the response: FetchWindowAsync may still be appending
+        // pages to it. Publish only the part inside the authoritative extent.
+        var items = _hasExactTotal
+            ? response.Items.Take(TotalCount - startIndex).ToList() : response.Items;
+        if (preserveAdjacent && items.Count > 0 && WindowStartIndex >= 0 &&
+            startIndex <= WindowEndIndex + 1 && startIndex + items.Count >= WindowStartIndex)
         {
             // Small edge fetches must not fragment the active viewport across
             // more cache entries than the eviction limit. Keep a bounded,
             // contiguous active window and retain the existing item objects.
             var first = Math.Min(WindowStartIndex, startIndex);
-            var last = Math.Max(WindowEndIndex, startIndex + response.Items.Count - 1);
+            var last = Math.Max(WindowEndIndex, startIndex + items.Count - 1);
+            if (_hasExactTotal) last = Math.Min(last, TotalCount - 1);
             if (last - first + 1 > 1200)
             {
                 if (startIndex < WindowStartIndex) last = first + 1199;
@@ -1181,46 +1081,50 @@ public partial class LibraryViewModel : ObservableObject
             }
             var merged = new MediaItem[last - first + 1];
             for (var i = first; i <= last; i++)
-                merged[i - first] = i >= startIndex && i < startIndex + response.Items.Count
-                    ? response.Items[i - startIndex]
+                merged[i - first] = i >= startIndex && i < startIndex + items.Count
+                    ? items[i - startIndex]
                     : _windowItems[i - WindowStartIndex];
             _windowItems = merged;
             WindowStartIndex = first;
         }
         else
         {
-            _windowItems = response.Items;
-            WindowStartIndex = response.Items.Count == 0 ? -1 : startIndex;
+            _windowItems = items;
+            WindowStartIndex = items.Count == 0 ? -1 : startIndex;
         }
-        HasMore = response.HasMore;
+        HasMore = response.HasMore && (!_hasExactTotal || startIndex + items.Count < TotalCount);
 
-        var hasTrustworthyExactTotal = response.TotalExact &&
-            (includeTotal || response.Total > 0 || (!_hasExactTotal && response.Items.Count == 0 && !response.HasMore));
-        if (hasTrustworthyExactTotal)
+        if (HasTrustworthyExactTotal(response, includeTotal))
         {
-            _hasExactTotal = true;
-            _estimatedTotalItems = response.Total;
-            DisplayTotalCount = response.Total;
-            TotalCount = response.Total;
-            Items.SetCount(response.Total);
+            ApplyExactCatalogTotal(response.Total);
             return;
         }
 
-        if (_hasExactTotal && _estimatedTotalItems > 0)
+        if (_hasExactTotal)
         {
-            TotalCount = _estimatedTotalItems;
-            Items.SetCount(_estimatedTotalItems);
+            ApplyExactCatalogTotal(_estimatedTotalItems);
             return;
         }
 
         var loadedEnd = startIndex + response.Items.Count;
+        if (!response.HasMore)
+            _catalogEndTotal = loadedEnd;
+        else if (_catalogEndTotal is int knownEnd && loadedEnd >= knownEnd)
+            _catalogEndTotal = null;
+
+        if (LetterIndex is not null)
+        {
+            // An index replaces the speculative runway, not the observed cards.
+            // A non-exact terminal page cannot invalidate the index extent.
+            ApplyLetterIndexTotal(LetterIndex.Total);
+            return;
+        }
         if (response.Total > 0)
             _estimatedTotalItems = Math.Max(response.Total, loadedEnd);
         else if (!response.HasMore)
             _estimatedTotalItems = loadedEnd;
         else
             _estimatedTotalItems = Math.Max(_estimatedTotalItems, loadedEnd + PageSize * 5);
-
         TotalCount = _estimatedTotalItems;
         Items.SetCount(_estimatedTotalItems);
     }
@@ -1274,6 +1178,16 @@ public partial class LibraryViewModel : ObservableObject
             TotalCount = 0;
             Items.SetCount(0);
             HasMore = false;
+            return;
+        }
+
+        if (!highestPageHasMore) _catalogEndTotal = maxLoadedEnd;
+        else if (_catalogEndTotal is int knownEnd && maxLoadedEnd >= knownEnd) _catalogEndTotal = null;
+
+        if (LetterIndex is not null)
+        {
+            ApplyLetterIndexTotal(LetterIndex.Total);
+            HasMore = highestPageHasMore;
             return;
         }
 

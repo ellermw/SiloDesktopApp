@@ -4,7 +4,7 @@ public sealed record QueryEditorCapabilities(bool ExtendedRules, IReadOnlySet<st
 
 public partial class CatalogApi
 {
-    private sealed class SearchRuleCapabilities { public bool ExtendedQueryRules { get; set; } public bool FacetValueSearch { get; set; } public bool ShowTitleRules { get; set; } }
+    private sealed class SearchRuleCapabilities { public bool ExtendedQueryRules { get; set; } public bool FacetValueSearch { get; set; } public bool ShowTitleRules { get; set; } public bool LetterIndex { get; set; } }
     private sealed record SearchRuleCache(ApiRequestContext Context, DateTime LoadedAt, SearchRuleCapabilities Value);
     private SearchRuleCache? _searchRuleCache;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<ApiRequestContext, SemaphoreSlim> _searchRuleGates = new();
