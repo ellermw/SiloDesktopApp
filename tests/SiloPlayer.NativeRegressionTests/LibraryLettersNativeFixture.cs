@@ -41,6 +41,7 @@ internal static class LibraryLettersNativeFixture
         {
             foreach (var (type, width, height) in new[] { ("movie", 1280, 1000), ("audiobook", 960, 550) })
             {
+                wire.LetterIndexGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 window.AppWindow.ResizeClient(new(width, height));
                 frame = new Frame { Width = width, Height = height }; parent.Children.Add(frame); navigation.Frame = frame;
                 frame.Navigate(typeof(LibraryPage), new Library { Id = wire.LibraryId++, Name = "Fixture library", Type = type });
@@ -51,7 +52,19 @@ internal static class LibraryLettersNativeFixture
                 var scroll = (ScrollViewer)page.FindName("LibraryScroller");
                 var rail = (Border)page.FindName("LibraryLetterRail");
                 var letters = (Grid)page.FindName("LibraryLetterButtons");
+                page.UpdateLayout();
+                await Until(() => scroll.ViewportWidth > 0);
+                await Task.Delay(150);
+                var pendingIndexWidth = scroll.ViewportWidth;
+                if (page.ViewModel.LetterIndex is not null || letters.Children.Cast<Button>().Any(button => button.IsEnabled))
+                    throw new InvalidOperationException("The pending index must not enable guessed letters.");
+                wire.LetterIndexGate.TrySetResult();
+                await page.ViewModel.EnsureLetterIndexAsync();
                 await Until(() => rail.Visibility == Visibility.Visible && letters.Children.Count == 27);
+                page.UpdateLayout();
+                await Task.Delay(100);
+                if (Math.Abs(scroll.ViewportWidth - pendingIndexWidth) > .1)
+                    throw new InvalidOperationException("Index arrival changed the catalog viewport width.");
                 var buttons = letters.Children.Cast<Button>().ToArray();
                 Button Letter(string letter) => buttons.Single(button => (string)button.Tag == letter);
                 if (Letter("B").IsEnabled || !Letter("Z").IsEnabled || buttons.Count(button => button.IsTabStop) != 1)
@@ -85,6 +98,20 @@ internal static class LibraryLettersNativeFixture
                     if (button.ActualHeight < 10 || point.Y < 0 || point.Y + button.ActualHeight > content.ActualHeight + 1)
                         throw new InvalidOperationException("A letter is clipped by the native content viewport.");
                 }
+                var cachedWidth = scroll.ViewportWidth;
+                wire.LetterIndexGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                page.ViewModel.SuspendCatalogLoads();
+                var reopen = (Task)typeof(LibraryPage).GetMethod("EnsureLibraryCatalogLoadedAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, null)!;
+                await reopen.WaitAsync(TimeSpan.FromSeconds(1));
+                await Task.Delay(100); page.UpdateLayout();
+                if (page.ViewModel.LetterIndex is not null || Math.Abs(scroll.ViewportWidth - cachedWidth) > .1)
+                    throw new InvalidOperationException("A cached return waited for the index or changed the catalog width.");
+                wire.LetterIndexGate.TrySetResult();
+                await page.ViewModel.EnsureLetterIndexAsync();
+                await Until(() => rail.Visibility == Visibility.Visible);
+                page.UpdateLayout(); await Task.Delay(100);
+                if (Math.Abs(scroll.ViewportWidth - cachedWidth) > .1)
+                    throw new InvalidOperationException("A replacement index changed the cached catalog width.");
                 page.ViewModel.SelectedSort = "year";
                 await Until(() => rail.Visibility == Visibility.Collapsed);
                 page.ViewModel.SelectedSort = "title";
@@ -105,6 +132,7 @@ internal static class LibraryLettersNativeFixture
         }
         finally
         {
+            wire.LetterIndexGate?.TrySetResult();
             frame?.Navigate(typeof(Page)); if (frame is not null) parent.Children.Remove(frame);
             await Task.Delay(150); navigation.Frame = null; field.SetValue(null, previous);
         }
@@ -116,17 +144,18 @@ internal static class LibraryLettersNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         internal int InvalidCursors, LibraryId = 11;
+        internal TaskCompletionSource? LetterIndexGate;
         internal List<int> Seeks { get; } = [];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
             if (path == "/api/v2/catalog/search/capabilities") return Reply(new { letter_index = true });
-            if (path == "/api/v2/catalog/letters") return Reply(new
+            if (path == "/api/v2/catalog/letters") return CompleteLetterIndexAsync(Reply(new
             {
                 total = 1000,
                 letters = new[] { new { letter = "#", count = 20, position = 0 }, new { letter = "A", count = 679, position = 20 }, new { letter = "M", count = 300, position = 600 }, new { letter = "Z", count = 1, position = 999 } },
                 runs = new[] { new { letter = "#", position = 0 }, new { letter = "A", position = 20 }, new { letter = "M", position = 600 }, new { letter = "A", position = 900 }, new { letter = "Z", position = 999 } },
-            });
+            }), ct);
             if (path == "/api/v2/catalog")
             {
                 var query = request.RequestUri.Query.TrimStart('?').Split('&').Select(pair => pair.Split('=', 2))
@@ -151,6 +180,11 @@ internal static class LibraryLettersNativeFixture
             if (path.EndsWith("/layout") || path.EndsWith("/sections")) return Reply(new { sections = Array.Empty<object>() });
             if (path.EndsWith("/filters")) return Reply(new { genres = Array.Empty<string>() });
             return Reply(new { status = 404, detail = "No isolated fixture value" }, HttpStatusCode.NotFound);
+        }
+        private async Task<HttpResponseMessage> CompleteLetterIndexAsync(Task<HttpResponseMessage> reply, CancellationToken ct)
+        {
+            if (LetterIndexGate is { } gate) await gate.Task.WaitAsync(ct);
+            return await reply;
         }
         private static Task<HttpResponseMessage> Reply(object body, HttpStatusCode status = HttpStatusCode.OK)
             => Task.FromResult(new HttpResponseMessage(status) { Content = new StringContent(JsonSerializer.Serialize(body), System.Text.Encoding.UTF8, "application/json") });

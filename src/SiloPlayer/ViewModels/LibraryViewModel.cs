@@ -1075,6 +1075,7 @@ public partial class LibraryViewModel : ObservableObject
             return;
         }
 
+        var priorEstimate = _estimatedTotalItems;
         var loadedEnd = startIndex + response.Items.Count;
         if (response.Total > 0)
             _estimatedTotalItems = Math.Max(response.Total, loadedEnd);
@@ -1083,6 +1084,11 @@ public partial class LibraryViewModel : ObservableObject
         else
             _estimatedTotalItems = Math.Max(_estimatedTotalItems, loadedEnd + PageSize * 5);
 
+        if (LetterIndex is not null)
+        {
+            ApplyLetterIndexTotal(Math.Max(priorEstimate, LetterIndex.Total));
+            return;
+        }
         TotalCount = _estimatedTotalItems;
         Items.SetCount(_estimatedTotalItems);
     }

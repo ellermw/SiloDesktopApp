@@ -306,7 +306,11 @@
 
         <!-- Pixel scrolling with a bounded set of cards for 100k-scale libraries. -->
         <Grid x:Name="LibraryContentArea" Grid.Row="3" Visibility="Collapsed"
-              SizeChanged="LibraryContentArea_SizeChanged" ColumnDefinitions="*,Auto">
+              SizeChanged="LibraryContentArea_SizeChanged">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition x:Name="LibraryLetterColumn" Width="0" />
+            </Grid.ColumnDefinitions>
             <ScrollViewer x:Name="LibrarySkeletonScroll" Padding="48,0,48,24"
                           VerticalScrollBarVisibility="Disabled" Visibility="Collapsed"
                           Canvas.ZIndex="20" Background="{StaticResource AppBackgroundBrush}">

@@ -39,9 +39,15 @@ public partial class LibraryViewModel
 
     private async Task LoadLetterIndexAsync(string key, CancellationToken ct)
     {
+        var libraryId = Library!.Id;
+        var order = SelectedOrder;
+        var type = SelectedType;
+        var groups = BuildAdvancedGroups();
+        var queryFingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(key)))[..16];
         try
         {
-            var index = await _catalogApi.GetCatalogLettersAsync(Library!.Id, SelectedOrder,
+            var index = await _catalogApi.GetCatalogLettersAsync(libraryId, order,
                 genre: UseAdvancedRules ? null : SelectedGenre,
                 studio: UseAdvancedRules ? null : SelectedStudio,
                 contentRating: UseAdvancedRules ? null : SelectedContentRating,
@@ -49,16 +55,16 @@ public partial class LibraryViewModel
                 resolution: UseAdvancedRules ? null : SelectedResolution,
                 audioLanguage: UseAdvancedRules ? null : SelectedAudioLanguage,
                 yearMin: UseAdvancedRules ? null : SelectedYearMin,
-                yearMax: UseAdvancedRules ? null : SelectedYearMax, type: SelectedType,
+                yearMax: UseAdvancedRules ? null : SelectedYearMax, type: type,
                 extraRules: BuildExtraRules(), extraRulesMatch: AdvancedRulesMatch,
-                queryGroups: BuildAdvancedGroups(), queryGroupsMatch: AdvancedRulesMatch, ct: ct);
+                queryGroups: groups, queryGroupsMatch: AdvancedRulesMatch, ct: ct);
             if (ct.IsCancellationRequested || key != LetterQueryKey()) return;
             LetterIndex = index;
             if (index is not null)
             {
-                // Index and cards are separate reads: a scan must not hide any
-                // larger extent already observed by the page request.
-                ApplyExactCatalogTotal(index.Total);
+                // The index supplies a provisional extent, never authority
+                // over an exact total returned by the catalog itself.
+                ApplyLetterIndexTotal(index.Total);
                 WindowLoaded?.Invoke();
             }
         }
@@ -66,11 +72,18 @@ public partial class LibraryViewModel
         {
             if (_letterIndexKey == key) _letterIndexKey = null;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
-            // This optional navigation aid must never turn a usable catalog
-            // into an error or manufacture approximate positions.
-            if (_letterIndexKey == key) LetterIndex = null;
+            SiloPlayer.Core.Services.LocalLog.AppendException("catalog_errors.txt", ex,
+                $"catalog_letters library={libraryId} order={order} type={type ?? "all"} group_count={groups?.Count ?? 0} query_fingerprint={queryFingerprint}");
+            // Keep browsing usable, but allow the next request to retry this
+            // optional aid after a transport or protocol failure.
+            if (_letterIndexKey == key)
+            {
+                _letterIndexKey = null;
+                _letterIndexTask = null;
+                LetterIndex = null;
+            }
         }
     }
 
@@ -98,15 +111,22 @@ public partial class LibraryViewModel
         LetterIndex = null;
     }
 
+    private void ApplyLetterIndexTotal(int total)
+    {
+        if (_hasExactTotal) return;
+        var floor = Math.Max(_estimatedTotalItems, WindowEndIndex + 1);
+        if (_pageResponses.Count > 0)
+            floor = Math.Max(floor, _pageResponses.Max(page => page.Key * PageSize + page.Value.Items.Count));
+        _estimatedTotalItems = Math.Max(total, floor);
+        TotalCount = DisplayTotalCount = _estimatedTotalItems;
+        Items.SetCount(TotalCount);
+    }
+
     private void ApplyExactCatalogTotal(int total)
     {
-        // Without an independent letter read, retain the catalog's existing
-        // exact-total authority (including rejecting an inconsistent tail).
-        var floor = LetterIndex is null ? 0 : Math.Max(LetterIndex.Total, WindowEndIndex + 1);
-        if (LetterIndex is not null && _pageResponses.Count > 0)
-            floor = Math.Max(floor, _pageResponses.Max(page => page.Key * PageSize + page.Value.Items.Count));
-        if (_hasExactTotal && LetterIndex is not null) floor = Math.Max(floor, _estimatedTotalItems);
-        _estimatedTotalItems = Math.Max(Math.Max(0, total), floor);
+        // Catalog counts are authoritative even if an older index or estimate
+        // was larger (for example after items are removed during a scan).
+        _estimatedTotalItems = Math.Max(0, total);
         _hasExactTotal = true;
         TotalCount = DisplayTotalCount = _estimatedTotalItems;
         Items.SetCount(TotalCount);

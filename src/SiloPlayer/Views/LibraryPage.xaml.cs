@@ -2615,7 +2615,7 @@ public sealed partial class LibraryPage : Page,
             // Leaving for an item detail may have canceled optional filters
             // before they arrived, even though the cards are already cached.
             if (FiltersSheet.IsOpen) _ = ViewModel.EnsureFiltersLoadedAsync();
-            await ViewModel.EnsureLetterIndexAsync();
+            _ = ViewModel.EnsureLetterIndexAsync();
             return;
         }
 

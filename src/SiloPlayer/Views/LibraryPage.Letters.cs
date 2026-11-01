@@ -19,8 +19,10 @@ public sealed partial class LibraryPage
     private string? _activeLibraryLetter;
     private string? _chosenLibraryEndLetter;
 
-    private bool CanShowLibraryLetters => _isNavigated && _currentTab == "Library" &&
-        _currentAudiobookAxis == "books" && ViewModel.SelectedSort == "title" &&
+    private bool IsLibraryLetterGrid => _isNavigated && _currentTab == "Library" &&
+        _currentAudiobookAxis == "books" && ViewModel.SelectedSort == "title";
+
+    private bool CanShowLibraryLetters => IsLibraryLetterGrid &&
         ViewModel.LetterIndex is { Total: > 0, Letters.Count: > 0 };
 
     private void InitializeLibraryLetters()
@@ -82,11 +84,15 @@ public sealed partial class LibraryPage
 
     private void UpdateLibraryLetterLayout()
     {
+        // Reserve space based only on grid mode and viewport height, not on
+        // index availability. Resetting or receiving an index must not resize
+        // the posters or change the item at the saved pixel scroll offset.
+        var available = Math.Max(14, LibraryContentArea.ActualHeight - 88);
+        var columns = available < 540 ? 2 : 1;
+        LibraryLetterColumn.Width = new GridLength(IsLibraryLetterGrid ? columns * 24 + 18 : 0);
         if (LibraryLetterRail.Visibility != Visibility.Visible) return;
         // Keep all 27 targets inside the space below the toolbar, including on
         // short windows. Fill down each column, matching the WebUI's order.
-        var available = Math.Max(14, LibraryContentArea.ActualHeight - 88);
-        var columns = available < 540 ? 2 : 1;
         var rows = columns == 2 ? 14 : 27;
         LibraryLetterRail.Height = Math.Min(672, available + 14);
         if (LibraryLetterButtons.RowDefinitions.Count == rows) return;

@@ -120,13 +120,57 @@ public sealed class LibraryLetterNavigationTests
     }
 
     [Fact]
-    public async Task LateSmallerPageCountRetainsPreviouslyKnownIndexTotal()
+    public async Task LateExactCatalogCountReplacesLargerIndexTotal()
     {
         using var wire = new Wire { HoldCatalog = true, IndexTotal = 1200, CatalogTotal = 800 }; var model = wire.Create();
         var load = model.LoadCommand.ExecuteAsync(null);
         await model.EnsureLetterIndexAsync(); Assert.Equal(1200, model.LetterIndex!.Total);
         wire.ReleaseCatalog.TrySetResult(); await load;
+        Assert.Equal(800, model.TotalCount);
+        Assert.Equal(800, model.DisplayTotalCount);
+        Assert.Equal(800, model.Items.Count);
+        await model.LoadWindowAsync(799, 1, force: true);
+        Assert.NotNull(model.GetWindowItem(799));
+        Assert.All(wire.Seeks, seek => Assert.InRange(seek, 0, 799));
+    }
+
+    [Fact]
+    public async Task LateLargerIndexCannotOverrideExactCatalogTotal()
+    {
+        using var wire = new Wire { HoldIndex = true, IndexTotal = 1200, CatalogTotal = 800 }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        Assert.Equal(800, model.TotalCount);
+        wire.ReleaseIndex.TrySetResult(); await model.EnsureLetterIndexAsync();
+        Assert.Equal(1200, model.LetterIndex!.Total);
+        Assert.Equal(800, model.TotalCount);
+        Assert.Equal(800, model.Items.Count);
+    }
+
+    [Fact]
+    public async Task ExactCatalogTotalCanShrinkAfterAnEarlierExactCount()
+    {
+        using var wire = new Wire { CatalogTotal = 1200, IndexTotal = 1200 }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
         Assert.Equal(1200, model.TotalCount);
+        wire.CatalogTotal = 800;
+        await model.LoadWindowAsync(720, 80, force: true);
+        Assert.Equal(800, model.TotalCount);
+        Assert.Equal(800, model.DisplayTotalCount);
+        Assert.Equal(800, model.Items.Count);
+    }
+
+    [Fact]
+    public async Task ProvisionalIndexDoesNotSuppressAuthoritativeCountRequest()
+    {
+        using var wire = new Wire { CatalogExact = false, ExactCountTotal = 800, IndexTotal = 1200 }; var model = wire.Create();
+        var counted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        model.WindowLoaded += () => { if (model.TotalCount == 800) counted.TrySetResult(); };
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        Assert.Equal(1200, model.TotalCount);
+        wire.ReleaseExactCount.TrySetResult();
+        await counted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(800, model.DisplayTotalCount);
+        Assert.Equal(800, model.Items.Count);
     }
 
     [Fact]
@@ -151,7 +195,43 @@ public sealed class LibraryLetterNavigationTests
         await model.JumpToLetterCommand.ExecuteAsync("M");
         Assert.Null(model.LetterIndex); Assert.Null(model.ErrorMessage);
         Assert.NotNull(model.GetWindowItem(0)); Assert.Equal(0, wire.ProbeRequests);
+        Assert.Equal(2, wire.IndexRequests);
+    }
+
+    [Fact]
+    public async Task FailedIndexCanBeRetriedAndPublishExactLetters()
+    {
+        using var wire = new Wire { FailIndex = true }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        Assert.Null(model.LetterIndex);
         Assert.Equal(1, wire.IndexRequests);
+        wire.FailIndex = false;
+        await model.EnsureLetterIndexAsync();
+        Assert.Equal(2, wire.IndexRequests);
+        Assert.NotNull(model.LetterIndex);
+        var jumped = -1; model.LetterJumpRequested += position => jumped = position;
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+        Assert.Equal(742, jumped);
+        Assert.Equal(2, wire.IndexRequests);
+        Assert.Null(model.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task IndexFailureIsLoggedWithScopeWithoutShowingCatalogError()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "library-letters-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using var operation = SiloPlayer.Core.Services.LocalLog.BeginOperation("letters-test", directory);
+            using var wire = new Wire { FailIndex = true }; var model = wire.Create();
+            await model.LoadCommand.ExecuteAsync(null);
+            var log = File.ReadAllText(Path.Combine(directory, "catalog_errors.txt"));
+            Assert.Contains("catalog_letters library=7 order=asc type=all group_count=0 query_fingerprint=", log);
+            Assert.Contains("status=503", log);
+            Assert.Null(model.ErrorMessage);
+            Assert.NotNull(model.GetWindowItem(0));
+        }
+        finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
     }
 
     [Fact]
@@ -201,6 +281,8 @@ public sealed class LibraryLetterNavigationTests
         internal int CatalogTotal = 1000;
         internal int IndexTotal = 1000;
         internal bool CatalogExact = true;
+        internal int? ExactCountTotal;
+        internal readonly TaskCompletionSource ReleaseExactCount = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool HoldCatalog;
         internal readonly TaskCompletionSource ReleaseCatalog = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource IndexStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -227,7 +309,11 @@ public sealed class LibraryLetterNavigationTests
                 var limit = int.Parse(q["limit"]); var seek = q.TryGetValue("seek", out var value) ? int.Parse(value) : 0;
                 Seeks.Add(seek); if (limit == 1) ProbeRequests++;
                 if (HoldCatalog) await ReleaseCatalog.Task;
-                return Reply(new { total = CatalogExact ? CatalogTotal : 0, total_exact = CatalogExact, items = Enumerable.Range(seek, Math.Min(limit, CatalogTotal - seek)).Select(i => new { content_id = "item" + i, title = (i < 742 ? "A " : i < 749 ? "M " : "N ") + i, type = "movie" }), page = new { has_more = seek + limit < CatalogTotal } });
+                var countOnly = !q.ContainsKey("skip_total") && ExactCountTotal.HasValue;
+                if (countOnly) await ReleaseExactCount.Task;
+                var total = countOnly ? ExactCountTotal!.Value : CatalogTotal;
+                var exact = countOnly || CatalogExact;
+                return Reply(new { total = exact ? total : 0, total_exact = exact, items = Enumerable.Range(seek, Math.Max(0, Math.Min(limit, total - seek))).Select(i => new { content_id = "item" + i, title = (i < 742 ? "A " : i < 749 ? "M " : "N ") + i, type = "movie" }), page = new { has_more = seek + limit < total } });
             }
             return Reply(new { }, HttpStatusCode.NotFound);
         }
