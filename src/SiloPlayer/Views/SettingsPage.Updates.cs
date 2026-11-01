@@ -9,7 +9,6 @@ namespace SiloPlayer.Views;
 public sealed partial class SettingsPage
 {
     private AppUpdateService? _settingsUpdates;
-    private CancellationTokenSource? _settingsUpdateLifetime;
     private bool _syncingUpdateSettings;
 
     private void InitializeAppUpdateSettings()
@@ -17,8 +16,6 @@ public sealed partial class SettingsPage
         if (_settingsUpdates is not null) return;
         _settingsUpdates = App.Services.GetService<AppUpdateService>();
         if (_settingsUpdates is null) return;
-        _settingsUpdateLifetime = CancellationTokenSource.CreateLinkedTokenSource(
-            App.MainWindowInstance?.AppUpdateLifetimeToken ?? CancellationToken.None);
         AppUpdatesSettingsCard.Visibility = Visibility.Visible;
         _settingsUpdates.Changed += OnUpdateSettingsState;
         SynchronizeUpdateSettings();
@@ -26,9 +23,6 @@ public sealed partial class SettingsPage
 
     private void ReleaseAppUpdateSettings()
     {
-        _settingsUpdateLifetime?.Cancel();
-        _settingsUpdateLifetime?.Dispose();
-        _settingsUpdateLifetime = null;
         if (_settingsUpdates is not null) _settingsUpdates.Changed -= OnUpdateSettingsState;
         _settingsUpdates = null;
     }
@@ -59,16 +53,14 @@ public sealed partial class SettingsPage
 
     private async void AppUpdateSettingsChannelChanged(object sender, SelectionChangedEventArgs args)
     {
-        if (_syncingUpdateSettings || _settingsUpdates is not { } updates || _settingsUpdateLifetime is null || AppUpdateSettingsChannelCombo.SelectedIndex < 0) return;
+        if (_syncingUpdateSettings || _settingsUpdates is not { } updates || AppUpdateSettingsChannelCombo.SelectedIndex < 0) return;
         var channel = (AppUpdateChannel)AppUpdateSettingsChannelCombo.SelectedIndex;
-        var ct = _settingsUpdateLifetime.Token;
+        var ct = App.MainWindowInstance?.AppUpdateLifetimeToken ?? CancellationToken.None;
         try
         {
             await updates.SetChannelAsync(channel, ct);
             ct.ThrowIfCancellationRequested();
             if (updates.Channel != channel || updates.IsChangingChannel) return;
-            var preferences = App.Services.GetRequiredService<SettingsService>(); var settings = preferences.Load();
-            settings.UpdateChannel = channel; preferences.Save(settings);
             await updates.CheckAsync(ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }

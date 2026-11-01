@@ -13,7 +13,9 @@ public sealed class FullInstallerInvocationTests
     [InlineData("forced-root", "not the registered machine installation")]
     [InlineData("legacy", "independent release authority")]
     [InlineData("hkcu-only", "registered machine installation")]
+    [InlineData("hkcu-only-legacy", "registered machine installation")]
     [InlineData("unprotected", "protected machine installation")]
+    [InlineData("unprotected-legacy", "protected machine installation")]
     public async Task DirectHelperInvocationCannotUseCallerHashOrLegacyArgumentsToAuthorizeSetup(string scenario, string expectedError)
     {
         var sandbox = Path.Combine(Path.GetTempPath(), "silo-full-invocation-" + Guid.NewGuid().ToString("N"));
@@ -22,7 +24,7 @@ public sealed class FullInstallerInvocationTests
         const string numeric = "1.2.517.12";
         Directory.CreateDirectory(install);
         Directory.CreateDirectory(Path.Combine(cache, numeric));
-        var versioned = scenario != "legacy";
+        var versioned = scenario is not ("legacy" or "hkcu-only-legacy" or "unprotected-legacy");
         if (versioned)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(client)!);
@@ -40,8 +42,8 @@ public sealed class FullInstallerInvocationTests
         var source = scenario == "forced-legacy" || !versioned ? Path.Combine(install, "SiloPlayer.exe") : client;
         var requestedRoot = scenario == "forced-root" ? Path.GetDirectoryName(client)! : install;
         var rootArgument = scenario is "forced-legacy" or "versioned-no-root" ? "" : " -InstallRoot " + Quote(requestedRoot);
-        var registration = scenario == "hkcu-only" ? "''" : Quote(install);
-        var permissions = scenario == "unprotected" ? "throw 'A protected machine installation is required.'" : "";
+        var registration = scenario.StartsWith("hkcu-only", StringComparison.Ordinal) ? "''" : Quote(install);
+        var permissions = scenario.StartsWith("unprotected", StringComparison.Ordinal) ? "throw 'A protected machine installation is required.'" : "";
         var copy = Path.Combine(sandbox, "helper.ps1");
         try
         {

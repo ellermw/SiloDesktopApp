@@ -11,26 +11,86 @@ namespace SiloPlayer.Tests;
 public sealed class UpdateChannelSettingsTests : IDisposable
 {
     [Theory]
-    [InlineData("Views/SettingsPage.Updates.cs", "await updates.SetChannelAsync(channel, ct);", "settings.UpdateChannel = channel; preferences.Save(settings);", "await updates.CheckAsync(ct);")]
-    [InlineData("MainWindow.Updates.cs", "await updateService.SetChannelAsync(channel, ct);", "config.UpdateChannel = channel; preferences.Save(config);", "await updateService.CheckAsync(ct);")]
-    public void ChannelSelectionPersistsOnlyAfterALiveSuccessfulTransition(string file, string apply, string save, string check)
+    [InlineData("Views/SettingsPage.Updates.cs", "await updates.SetChannelAsync(channel, ct);", "await updates.CheckAsync(ct);")]
+    [InlineData("MainWindow.Updates.cs", "await updateService.SetChannelAsync(channel, ct);", "await updateService.CheckAsync(ct);")]
+    public void ChannelSelectionUsesAppLifetimeAndServiceOwnedPersistence(string file, string apply, string check)
     {
         var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", file));
         var applied = source.IndexOf(apply, StringComparison.Ordinal);
-        var persisted = source.IndexOf(save, StringComparison.Ordinal);
         var checkedAt = source.IndexOf(check, StringComparison.Ordinal);
-        Assert.True(applied >= 0 && persisted > applied && checkedAt > persisted);
-        Assert.Contains("ct.ThrowIfCancellationRequested();", source[applied..persisted]);
-        Assert.Contains("IsChangingChannel) return;", source[applied..persisted]);
+        Assert.True(applied >= 0 && checkedAt > applied);
+        Assert.Contains("ct.ThrowIfCancellationRequested();", source[applied..checkedAt]);
+        Assert.Contains("IsChangingChannel) return;", source[applied..checkedAt]);
+        Assert.DoesNotContain(".UpdateChannel = channel", source);
         Assert.Contains("AppUpdateLifetimeToken", source);
-        if (file.StartsWith("Views/", StringComparison.Ordinal))
-        {
-            Assert.Contains("_settingsUpdateLifetime?.Cancel();", source);
-            Assert.Contains("_settingsUpdateLifetime?.Dispose();", source);
-        }
+        Assert.DoesNotContain("_settingsUpdateLifetime", source);
+        var app = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "App.xaml.cs"));
+        Assert.Contains("PersistChannel=channel =>", app);
+        Assert.Contains("settings.UpdateChannel=channel;", app);
+        Assert.Contains("try { preferences.Save(settings); }", app);
     }
 
     private readonly string root = Path.Combine(Path.GetTempPath(), "silo-channel-settings-" + Guid.NewGuid().ToString("N"));
+
+    [Theory]
+    [InlineData(AppUpdateChannel.Stable)]
+    [InlineData(AppUpdateChannel.Beta)]
+    public async Task CancelingTheDrainWhileTheOperationGateIsHeldKeepsRuntimeAndSavedChannelsTogether(AppUpdateChannel initial)
+    {
+        await WriteExistingAsync(JsonValue.Create((int)initial), true);
+        var preferences = new SettingsService(root);
+        using var http = new HttpClient(new Wire());
+        var service = new AppUpdateService(http, Path.Combine(root, "cache"), new Version(1, 2, 517, 0))
+        {
+            Channel = initial,
+            InstalledReleaseVersion = ReleaseVersion.Parse("1.2.517"),
+            PersistChannel = channel =>
+            {
+                var settings = preferences.Load(); settings.UpdateChannel = channel; preferences.Save(settings);
+            }
+        };
+        await service.CheckAsync();
+        var operation = (SemaphoreSlim)typeof(AppUpdateService).GetField("_operation",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(service)!;
+        await operation.WaitAsync();
+        var selected = initial == AppUpdateChannel.Beta ? AppUpdateChannel.Stable : AppUpdateChannel.Beta;
+        using var stop = new CancellationTokenSource();
+        try
+        {
+            var changing = service.SetChannelAsync(selected, stop.Token);
+            Assert.False(changing.IsCompleted);
+            Assert.Equal(selected, service.Channel);
+            Assert.Equal(service.Channel, new SettingsService(root).Load().UpdateChannel);
+            stop.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => changing);
+            Assert.False(service.IsChangingChannel);
+            Assert.Equal(selected, service.Channel);
+            Assert.Equal(service.Channel, new SettingsService(root).Load().UpdateChannel);
+            Assert.Null(service.State.Release); Assert.Null(service.State.ReadyInstaller); Assert.Null(service.State.PreparedPackage);
+            Assert.Contains("has not been checked", service.State.Error!);
+            Assert.False(service.ShouldInstallOnExit);
+            AssertPreserved(new SettingsService(root).Load());
+        }
+        finally { operation.Release(); }
+        await service.CheckAsync();
+        Assert.Null(service.State.Error);
+        Assert.Equal(service.Channel, new SettingsService(root).Load().UpdateChannel);
+        Assert.Equal(selected == AppUpdateChannel.Beta, service.State.Release?.IsBeta == true);
+    }
+
+    [Fact]
+    public async Task FailedPreferenceSaveLeavesRuntimeStateAndAuthorityUntouched()
+    {
+        using var http = new HttpClient(new Wire());
+        var service = new AppUpdateService(http, Path.Combine(root, "cache"), new Version(1, 2, 517, 0))
+        { PersistChannel = _ => throw new IOException("Synthetic save failure") };
+        await service.CheckAsync();
+        var state = service.State;
+        await Assert.ThrowsAsync<IOException>(() => service.SetChannelAsync(AppUpdateChannel.Beta));
+        Assert.Equal(AppUpdateChannel.Stable, service.Channel);
+        Assert.False(service.IsChangingChannel);
+        Assert.Same(state, service.State);
+    }
     private async Task WriteExistingAsync(JsonNode? channel = null, bool includeChannel = false)
     {
         Directory.CreateDirectory(root);

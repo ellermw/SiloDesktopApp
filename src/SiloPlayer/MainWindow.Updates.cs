@@ -110,7 +110,7 @@ public sealed partial class MainWindow
         RefreshUpdateDialog();
         _appUpdates.SetPlaybackActive(_playerService.State != PlayerState.Idle || _playerService.IsLoading);
         if (state.Release is not null && !state.RequiresFullInstaller && !state.IsChecking && !state.IsDownloading && state.ReadyInstaller is null && state.PreparedPackage is null && state.Error is null
-            && _appUpdates.Mode == AppUpdateMode.Automatic && _playerService.State == PlayerState.Idle && !_playerService.IsLoading)
+            && _appUpdates.Mode == AppUpdateMode.Automatic && _playerService.State == PlayerState.Idle && !_playerService.IsLoading && !RequiresManualFullInstaller(state))
             _ = _appUpdates.DownloadAsync(automatic: true, ct: _appUpdateLifetime!.Token);
     }
 
@@ -169,8 +169,6 @@ public sealed partial class MainWindow
                 await updateService.SetChannelAsync(channel, ct);
                 ct.ThrowIfCancellationRequested();
                 if (updateService.Channel != channel || updateService.IsChangingChannel) return;
-                var preferences = App.Services.GetRequiredService<SettingsService>(); var config = preferences.Load();
-                config.UpdateChannel = channel; preferences.Save(config);
                 await updateService.CheckAsync(ct);
             }
             catch (OperationCanceledException) { }
@@ -230,7 +228,9 @@ public sealed partial class MainWindow
 
     private bool RequiresManualFullInstaller(AppUpdateState state)
     {
-        if (!state.RequiresFullInstaller) return false;
+        // Legacy clients always use the full installer, even before a download
+        // has discovered a versioned migration fallback.
+        if (state.Release is null || (!state.RequiresFullInstaller && _appUpdates?.PreferIncrementalUpdates != false)) return false;
         try { return App.Services.GetService<IAppUpdateInstaller>()?.CanScheduleFullInstaller != true; }
         catch (Exception ex)
         {
@@ -260,11 +260,11 @@ public sealed partial class MainWindow
         if (_updateBetaWarning is not null) _updateBetaWarning.Visibility = _appUpdates.Channel == AppUpdateChannel.Beta || _appUpdates.InstalledReleaseVersion?.IsPrerelease == true ? Visibility.Visible : Visibility.Collapsed;
         if (_updateFullInstallerNote is not null)
         {
-            _updateFullInstallerNote.Visibility = state.RequiresFullInstaller ? Visibility.Visible : Visibility.Collapsed;
+            _updateFullInstallerNote.Visibility = state.RequiresFullInstaller || manualInstaller ? Visibility.Visible : Visibility.Collapsed;
             _updateFullInstallerNote.Text = manualInstaller ? UpdateInstallation.ManualFullInstallerMessage
                 : "This update needs the full installer. Silo must close first; playback will be saved. Choose Install full update to continue.";
         }
-        if (_updateKeepOpenNote is not null) _updateKeepOpenNote.Visibility = state.RequiresFullInstaller ? Visibility.Collapsed : Visibility.Visible;
+        if (_updateKeepOpenNote is not null) _updateKeepOpenNote.Visibility = state.RequiresFullInstaller || manualInstaller ? Visibility.Collapsed : Visibility.Visible;
         foreach (var child in _updateBodyPanel.Children)
         {
             if (child is TextBlock { Name: "AppUpdateReleaseNotes" } notes) notes.Text = state.Release?.Notes ?? "No new release notes are available.";
@@ -289,6 +289,10 @@ public sealed partial class MainWindow
         if (App.Services.GetService<IAppUpdateInstaller>()?.IsSupported != true)
         {
             App.Services.GetRequiredService<ToastService>().Error("Install Silo using its Windows installer before using in-app updates."); return;
+        }
+        if (RequiresManualFullInstaller(_appUpdates.State))
+        {
+            App.Services.GetRequiredService<ToastService>().Error(UpdateInstallation.ManualFullInstallerMessage); return;
         }
         _updateDialogBusy = true; RefreshUpdateDialog();
         using var consent = CancellationTokenSource.CreateLinkedTokenSource(_appUpdateLifetime!.Token);
@@ -336,7 +340,7 @@ public sealed partial class MainWindow
             if (_updateSessionEnding || (!_manualUpdateRequested && !_appUpdates.ShouldInstallOnExit)) return allowClose;
             var installer = App.Services.GetService<IAppUpdateInstaller>();
             if (installer?.IsSupported != true || !await _appUpdates.ReverifyReadyAsync()) return allowClose;
-            if (_appUpdates.State.RequiresFullInstaller && !installer.CanScheduleFullInstaller) return allowClose;
+            if (RequiresManualFullInstaller(_appUpdates.State)) return allowClose;
             if(_appUpdates.State is {PreparedPackage:{ } package,Release:{ } release} && installer is IStagedAppUpdateInstaller staged)
             {
                 if(!staged.HasPreparedHandoff && !await staged.PrepareAsync(release,package,_manualUpdateRequested,_updateHwnd.ToInt64(),CancellationToken.None))

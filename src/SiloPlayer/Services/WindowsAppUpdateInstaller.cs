@@ -34,13 +34,24 @@ public sealed partial class WindowsAppUpdateInstaller(string cacheDirectory) : I
         }
     }
 
-    public bool CanScheduleFullInstaller
+    // Avoid walking the installation on every UI/progress refresh. Scheduling
+    // independently rechecks registration and permissions before any handoff.
+    private readonly Lazy<bool> _fullInstallerCapability = new(ProbeFullInstallerCapability);
+    public bool CanScheduleFullInstaller => _fullInstallerCapability.Value;
+
+    private static bool ProbeFullInstallerCapability()
     {
-        get
+        try
         {
-            var root = Environment.ProcessPath is { } executable ? UpdateInstallation.FindRegisteredRoot(executable) : null;
-            return root is not null && (SameDirectory(root, AppContext.BaseDirectory)
-                || UpdateInstallation.SupportsVersionedFullInstaller(root));
+            var root = Environment.ProcessPath is { } executable ? UpdateInstallation.FindRegisteredRoot(executable, machineOnly: true) : null;
+            if (root is null || (!SameDirectory(root, AppContext.BaseDirectory)
+                && !UpdateInstallation.SupportsVersionedFullInstaller(root))) return false;
+            UpdateInstallation.RequireProtectedFullInstallerInstallation(root, AppContext.BaseDirectory);
+            return true;
+        }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException or System.Security.SecurityException or System.ComponentModel.Win32Exception)
+        {
+            return false;
         }
     }
 
@@ -63,9 +74,10 @@ public sealed partial class WindowsAppUpdateInstaller(string cacheDirectory) : I
             var pe = FileVersionInfo.GetVersionInfo(expected);
             if (new Version(pe.FileMajorPart, pe.FileMinorPart, pe.FileBuildPart, pe.FilePrivatePart) != numeric)
                 throw new InvalidDataException("The installer version does not match the verified release.");
-            var installationRoot = UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!)
+            var installationRoot = UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!, machineOnly: true)
                 ?? throw new InvalidOperationException("The registered installation was not found.");
             var versioned = !SameDirectory(installationRoot, AppContext.BaseDirectory);
+            await Task.Run(() => UpdateInstallation.RequireProtectedFullInstallerInstallation(installationRoot, AppContext.BaseDirectory), ct);
             var helper = Path.Combine(AppContext.BaseDirectory, "Updates", "UpdateOnExit.ps1");
             if (versioned)
             {
@@ -73,7 +85,6 @@ public sealed partial class WindowsAppUpdateInstaller(string cacheDirectory) : I
                 // old or unrecognized launcher before starting a helper or closing Silo.
                 if (!UpdateInstallation.SupportsVersionedFullInstaller(installationRoot))
                     throw new InvalidOperationException(UpdateInstallation.ManualFullInstallerMessage);
-                await Task.Run(() => UpdateInstallation.RequireProtectedMachineInstallation(installationRoot, AppContext.BaseDirectory), ct);
                 var sourceVersion = Path.GetFileName(Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory));
                 if (SideBySideInstallation.ReadState(installationRoot)?.ActiveVersion != sourceVersion
                     || !SideBySideInstallation.VerifyInstalledClientFile(installationRoot, sourceVersion, "SiloPlayer.exe").Equals(Environment.ProcessPath, StringComparison.OrdinalIgnoreCase))

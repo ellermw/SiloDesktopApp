@@ -31,6 +31,9 @@ internal static class UpdateWorker
             if(!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))throw new InvalidOperationException("Administrator approval is required.");
             UpdateInstallation.RequireProtectedMachineInstallation(root,directory);
             if(!UpdatePipeIdentity.MatchesProcess(options.ParentPid,options.ParentStart,Path.Combine(directory,"SiloPlayer.exe")))throw new InvalidDataException("The original Silo process changed.");
+            // The current client can reconcile an automatic pending update too.
+            // Its identity must pass before the runner can confirm that transaction.
+            _=SideBySideInstallation.VerifyInstalledClientIdentity(root,Path.GetFileName(directory));
             parent=Process.GetProcessById(options.ParentPid);
             if(parent.StartTime.ToUniversalTime().Ticks!=options.ParentStart)throw new InvalidDataException("The original Silo process changed.");
             _=parent.SafeHandle;
@@ -55,7 +58,13 @@ internal static class UpdateWorker
             var authority=new IncrementalReleaseAuthority(http).FetchAsync(tag,target,ct).GetAwaiter().GetResult();
             return new(options.PackageDirectory,authority.ManifestPath,authority.Release.Incremental!.ManifestSha256,authority.Manifest);
         }
-        public void AuthorizeNewClient(string executable)=>UpdateFirewall.Authorize(executable);
+        public void AuthorizeNewClient(string executable)
+        {
+            // Check the independently hashed staged assembly before activation,
+            // including automatic updates that will not send a ready frame.
+            _=SideBySideInstallation.VerifyInstalledClientIdentity(root,Path.GetFileName(Path.GetDirectoryName(executable)!));
+            UpdateFirewall.Authorize(executable);
+        }
         public void Send(UpdateHostMessage message,CancellationToken ct)
         {
             using var deadline=CancellationTokenSource.CreateLinkedTokenSource(ct);deadline.CancelAfter(TimeSpan.FromSeconds(15));
@@ -73,7 +82,12 @@ internal static class UpdateWorker
                 if(UpdateInstallation.MatchRegisteredRoot(image,new[]{root}) is not null)throw new IOException("Close the other Silo window before updating.");
             }
         }
-        public bool MatchesReadyProcess(UpdateHostMessage message,string executable)=>UpdatePipeIdentity.MatchesProcess(message.ProcessId,message.StartUtcTicks,executable);
+        public bool MatchesReadyProcess(UpdateHostMessage message,string executable)
+        {
+            if(!UpdatePipeIdentity.MatchesProcess(message.ProcessId,message.StartUtcTicks,executable))return false;
+            _=SideBySideInstallation.VerifyInstalledClientIdentity(root,Path.GetFileName(Path.GetDirectoryName(executable)!));
+            return true;
+        }
         public bool IsVersionInUse(string versionDirectory)
         {
             try

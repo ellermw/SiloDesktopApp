@@ -30,6 +30,11 @@ internal static class AppUpdateNativeFixture
         services.AddSingleton(provider => new AppUpdateService(new HttpClient(provider.GetRequiredService<UpdateWire>()),
             Path.Combine(Program.ResultDirectory, "updates"), typeof(App).Assembly.GetName().Version!)
             { InstalledReleaseVersion = ReleaseVersion.FromAssembly(typeof(App).Assembly),
+                PersistChannel = channel =>
+                {
+                    var preferences = provider.GetRequiredService<SettingsService>(); var settings = preferences.Load();
+                    settings.UpdateChannel = channel; preferences.Save(settings);
+                },
                 PreferIncrementalUpdates = (Environment.GetEnvironmentVariable("SILO_NATIVE_UPDATE_EXIT") ?? "").StartsWith("full-fallback", StringComparison.Ordinal) });
         services.AddSingleton<SafeInstaller>();
         services.AddSingleton<SafeStagedInstaller>();
@@ -608,10 +613,18 @@ internal static class AppUpdateNativeFixture
         try
         {
             combo.SelectedIndex = 1;
-            if (!updates.IsChangingChannel || services.GetRequiredService<SettingsService>().Load().UpdateChannel != AppUpdateChannel.Stable)
-                throw new InvalidOperationException("Settings persisted a channel before its transition completed.");
+            if (!updates.IsChangingChannel || services.GetRequiredService<SettingsService>().Load().UpdateChannel != updates.Channel)
+                throw new InvalidOperationException("Settings did not persist the channel before draining old work.");
+            navigation.Navigate<HomePage>();
+            await Until(() => navigation.Frame?.Content is HomePage { IsLoaded: true });
+            if (!updates.IsChangingChannel) throw new InvalidOperationException("Leaving Settings canceled the app-owned transition.");
         }
         finally { operation.Release(); }
+        await Until(() => updates.Channel == AppUpdateChannel.Beta && !updates.IsChangingChannel && updates.State.Release?.IsBeta == true);
+        navigation.Navigate<SettingsPage>(); await Until(() => navigation.Frame?.Content is SettingsPage { IsLoaded: true });
+        settings = (SettingsPage)navigation.Frame!.Content; settings.SelectSettingsSection("Playback");
+        combo = (ComboBox)settings.FindName("AppUpdateSettingsChannelCombo");
+        warning = (TextBlock)settings.FindName("AppUpdateSettingsBetaWarning");
         await Until(() => updates.Channel == AppUpdateChannel.Beta && updates.State.Release?.IsBeta == true && warning.Visibility == Visibility.Visible);
         if (services.GetRequiredService<SettingsService>().Load().UpdateChannel != AppUpdateChannel.Beta)
             throw new InvalidOperationException("Native channel selection did not persist.");

@@ -18,6 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="SiloPlayer.Tests" />
     <EmbeddedResource Include="Models\Settings\device-settings.json" />
   </ItemGroup>
 

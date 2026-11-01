@@ -265,6 +265,14 @@ public partial class App : Application
             Path.Combine(appDataDir, "updates"), typeof(App).Assembly.GetName().Version!,
             message => LocalLog.AppendLine("updates.txt", message))
             {Channel=provider.GetRequiredService<SettingsService>().Load().UpdateChannel,
+                PersistChannel=channel =>
+                {
+                    var preferences=provider.GetRequiredService<SettingsService>(); var settings=preferences.Load();
+                    var previous=settings.UpdateChannel;
+                    settings.UpdateChannel=channel;
+                    try { preferences.Save(settings); }
+                    catch { settings.UpdateChannel=previous; throw; }
+                },
                 InstalledReleaseVersion=ReadInstalledReleaseVersion(),
                 PreferIncrementalUpdates=PreferIncrementalUpdates(),
                 InstalledPayloadDirectory=AppContext.BaseDirectory,InstallationRoot=UpdateInstallation.FindRegisteredRoot(Environment.ProcessPath!)});

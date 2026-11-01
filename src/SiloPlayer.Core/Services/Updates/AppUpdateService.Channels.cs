@@ -5,6 +5,7 @@ namespace SiloPlayer.Core.Services.Updates;
 public sealed partial class AppUpdateService
 {
     public ReleaseVersion? InstalledReleaseVersion { get; init; }
+    public Action<AppUpdateChannel>? PersistChannel { private get; init; }
     private readonly object _channelGate = new();
     private long _channelEpoch;
     private int _channel, _changingChannel;
@@ -25,6 +26,10 @@ public sealed partial class AppUpdateService
         lock (_channelGate)
         {
             if (Channel == channel && !IsChangingChannel) return;
+            // Commit the preference before publishing the channel. Cancellation
+            // below only abandons the drain, never an already-saved selection.
+            // A failed save leaves runtime authority and the epoch untouched.
+            PersistChannel?.Invoke(channel);
             epoch = ++_channelEpoch;
             Volatile.Write(ref _channel, (int)channel);
             Volatile.Write(ref _changingChannel, 1);

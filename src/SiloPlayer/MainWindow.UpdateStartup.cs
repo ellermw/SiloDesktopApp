@@ -19,6 +19,10 @@ public sealed partial class MainWindow
             if(root is null || SideBySideInstallation.ReadState(root) is not {TransactionId:{ } transaction,PendingVersion:{ } version})return;
             // Local UI readiness only. Server/network state is intentionally not part of startup success.
             SideBySideInstallation.RecordReady(root);
+            // Keep the local observation even on failure, but never confirm a
+            // target whose stamped identity disagrees with the activated version.
+            var installed = ReleaseVersion.FromAssembly(typeof(App).Assembly);
+            if (installed.GetWindowsVersion().ToString(4) != version) throw new InvalidDataException("Installed update identity does not match the activated version.");
             var args=Environment.GetCommandLineArgs();
             var index=Array.IndexOf(args,"--silo-update-ready");
             if(index>=0 && index+1<args.Length && Regex.IsMatch(args[index+1],@"^SiloUpdate-[a-f0-9]{32}$"))
@@ -39,9 +43,6 @@ public sealed partial class MainWindow
                 var confirmed=await UpdateHostProtocol.ReadAsync(pipe,deadline.Token);
                 if(confirmed.Kind!="confirmed" || confirmed.TransactionId!=transaction)return;
             }
-            // Display identity must not prevent the readiness/confirmation handshake.
-            var installed = ReleaseVersion.FromAssembly(typeof(App).Assembly);
-            if (installed.GetWindowsVersion().ToString(4) != version) throw new InvalidDataException("Installed update identity does not match the activated version.");
             var receiptDirectory=SideBySideInstallation.GetBootReceiptDirectory(root);
             Directory.CreateDirectory(receiptDirectory);
             var shown=Path.Combine(receiptDirectory,"success-"+transaction+".shown");

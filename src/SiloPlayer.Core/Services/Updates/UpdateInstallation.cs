@@ -9,7 +9,7 @@ public static class UpdateInstallation
     private const string UninstallKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{B8E2F4A1-3C5D-4E6F-9A1B-2D3E4F5A6B7C}_is1";
     private static readonly HashSet<string> PrivilegedOwners = ["S-1-5-18","S-1-5-32-544","S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"];
 
-    public const string ManualFullInstallerMessage = "The installed launcher does not support safe in-app full updates. Download the full installer from the release page, then close Silo and run it manually.";
+    public const string ManualFullInstallerMessage = "This installation does not support safe in-app full updates. Download the full installer from the release page, then close Silo and run it manually.";
 
     public static bool SupportsVersionedFullInstaller(string root)
     {
@@ -43,11 +43,18 @@ public static class UpdateInstallation
 
     /// <summary>Inventory hashes in a user-writable installation cannot authorize elevation.</summary>
     public static void RequireProtectedMachineInstallation(string root,string versionDirectory)
+        => RequireProtectedInstallation(root,versionDirectory,allowLegacyRoot:false);
+
+    public static void RequireProtectedFullInstallerInstallation(string root,string payloadDirectory)
+        => RequireProtectedInstallation(root,payloadDirectory,allowLegacyRoot:true);
+
+    private static void RequireProtectedInstallation(string root,string versionDirectory,bool allowLegacyRoot)
     {
         var canonical=Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
         if(!string.Equals(FindRegisteredRoot(Path.Combine(canonical,"SiloPlayer.exe"),machineOnly:true),canonical,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("A protected machine installation is required. Use the full installer.");
         var version=Path.GetFullPath(versionDirectory);
-        if(!version.StartsWith(canonical+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("The updater escaped the installation.");
+        if(!(allowLegacyRoot && Path.TrimEndingDirectorySeparator(version).Equals(canonical,StringComparison.OrdinalIgnoreCase))
+            && !version.StartsWith(canonical+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("The updater escaped the installation.");
         for(var directory=new DirectoryInfo(canonical);directory is not null;directory=directory.Parent)
         {
             UpdateManifestValidation.EnsureOrdinaryPath(directory.FullName);

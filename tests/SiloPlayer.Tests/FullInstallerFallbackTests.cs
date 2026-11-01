@@ -8,6 +8,29 @@ namespace SiloPlayer.Tests;
 public sealed class FullInstallerFallbackTests
 {
     [Fact]
+    public void FullInstallerCapabilityAndSchedulingUseMachineRegistrationAndProtectedPermissionsForLegacyToo()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "WindowsAppUpdateInstaller.cs"));
+        var capability = source[source.IndexOf("public bool CanScheduleFullInstaller", StringComparison.Ordinal)..source.IndexOf("public async Task<bool> ScheduleAsync", StringComparison.Ordinal)];
+        Assert.Contains("FindRegisteredRoot(executable, machineOnly: true)", capability);
+        Assert.Contains("if (root is null", capability);
+        var permissions = capability.IndexOf("UpdateInstallation.RequireProtectedFullInstallerInstallation(root, AppContext.BaseDirectory);", StringComparison.Ordinal);
+        Assert.True(permissions >= 0 && permissions < capability.IndexOf("return true;", StringComparison.Ordinal));
+        Assert.Contains("return false;", capability[permissions..]);
+        var schedule = source[source.IndexOf("public async Task<bool> ScheduleAsync", StringComparison.Ordinal)..];
+        Assert.Contains("FindRegisteredRoot(Environment.ProcessPath!, machineOnly: true)", schedule);
+        permissions = schedule.IndexOf("UpdateInstallation.RequireProtectedFullInstallerInstallation(installationRoot, AppContext.BaseDirectory)", StringComparison.Ordinal);
+        Assert.True(permissions >= 0 && permissions < schedule.IndexOf("if (versioned)", StringComparison.Ordinal));
+        Assert.True(permissions < schedule.IndexOf("Process.Start(start)", StringComparison.Ordinal));
+        var window = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "MainWindow.Updates.cs"));
+        Assert.Contains("_appUpdates?.PreferIncrementalUpdates != false", window);
+        Assert.Contains("&& !RequiresManualFullInstaller(state)", window);
+        var click = window[window.IndexOf("private async void InstallAppUpdate_Click", StringComparison.Ordinal)..];
+        Assert.True(click.IndexOf("if (RequiresManualFullInstaller(_appUpdates.State))", StringComparison.Ordinal)
+            < click.IndexOf("await _appUpdates.DownloadAsync", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task FullMigrationBlocksClientStartupWithoutDeadlockingInstallerInitialization()
     {
         var exe = Path.Combine(Path.GetTempPath(), "silo-full-gate-" + Guid.NewGuid().ToString("N"), "SiloPlayer.exe");
