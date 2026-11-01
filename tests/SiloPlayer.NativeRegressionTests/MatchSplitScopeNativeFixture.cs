@@ -245,4 +245,3 @@ internal static class MatchSplitScopeNativeFixture
         }
     }
 }
-
