@@ -167,8 +167,35 @@ if (-not $IsccPath) {
     Write-Error "Inno Setup not found. Install with: winget install JRSoftware.InnoSetup"
     exit 1
 }
-$IsccVersionInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($IsccPath)
-$IsccVersion = [version]::new($IsccVersionInfo.FileMajorPart, $IsccVersionInfo.FileMinorPart, $IsccVersionInfo.FileBuildPart, $IsccVersionInfo.FilePrivatePart)
+function Get-InnoSetupVersion([string]$CompilerPath) {
+    # Current Inno Setup 6 releases (6.7.x) ship ISCC.exe without numeric version resources (they read 0.0.0.0).
+    # The uninstaller beside it carries the release as ProductVersion, and the installer's uninstall entry records it.
+    $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($CompilerPath)
+    $fromCompiler = [version]::new($info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart, $info.FilePrivatePart)
+    if ($fromCompiler -gt [version]'0.0.0.0') { return $fromCompiler }
+    $directory = Split-Path $CompilerPath -Parent
+    $candidates = @()
+    $uninstaller = Join-Path $directory 'unins000.exe'
+    if (Test-Path $uninstaller) { $candidates += [Diagnostics.FileVersionInfo]::GetVersionInfo($uninstaller).ProductVersion }
+    $uninstallKeys = 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1',
+        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1'
+    foreach ($key in $uninstallKeys) {
+        $entry = Get-ItemProperty $key -ErrorAction SilentlyContinue
+        if ($entry -and $entry.InstallLocation -and
+            [IO.Path]::GetFullPath($entry.InstallLocation).TrimEnd('\') -ieq [IO.Path]::GetFullPath($directory).TrimEnd('\')) {
+            $candidates += $entry.DisplayVersion
+        }
+    }
+    foreach ($text in $candidates) {
+        if ("$text" -match '^\s*(\d+)\.(\d+)(?:\.(\d+))?') {
+            $build = if ($Matches[3]) { [int]$Matches[3] } else { 0 }  # no ?? : build.ps1 also runs in Windows PowerShell 5.1
+            return [version]::new([int]$Matches[1], [int]$Matches[2], $build, 0)
+        }
+    }
+    return $fromCompiler
+}
+$IsccVersion = Get-InnoSetupVersion $IsccPath
 if ($IsccVersion -lt [version]'6.3.0.0') {
     throw "Inno Setup 6.3.0 or newer is required for semantic AppVersion and VersionInfoProductTextVersion. Found $IsccVersion at '$IsccPath'. Upgrade Inno Setup before building."
 }
