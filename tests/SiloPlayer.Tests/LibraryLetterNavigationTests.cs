@@ -66,19 +66,81 @@ public sealed class LibraryLetterNavigationTests
     [InlineData("profile")]
     [InlineData("language")]
     [InlineData("filter")]
+    [InlineData("library")]
     [InlineData("navigation")]
     public async Task LateIndexCannotPublishAfterOwnerChanges(string change)
     {
         using var wire = new Wire { HoldIndex = true }; var model = wire.Create();
         var load = model.LoadCommand.ExecuteAsync(null);
         await wire.IndexStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var indexRead = model.EnsureLetterIndexAsync();
         if (change == "profile") wire.Client.SetProfile("new-synthetic-profile");
         else if (change == "language") wire.Client.LocalizedReads.NotifySettingChanged("catalog.metadata_language");
         else if (change == "filter") model.SelectedGenre = "Comedy";
+        else if (change == "library") model.Library = new Library { Id = 8, Type = "movie" };
         else model.SuspendCatalogLoads();
         wire.ReleaseIndex.TrySetResult();
-        await load;
+        await Task.WhenAll(load, indexRead);
         Assert.Null(model.LetterIndex);
+    }
+
+    [Fact]
+    public async Task FirstCardsDoNotWaitForOptionalLetterIndex()
+    {
+        using var wire = new Wire { HoldIndex = true }; var model = wire.Create();
+        var load = model.LoadCommand.ExecuteAsync(null);
+        try
+        {
+            await wire.IndexStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await load.WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.NotNull(model.GetWindowItem(0));
+        }
+        finally { wire.ReleaseIndex.TrySetResult(); await model.EnsureLetterIndexAsync(); }
+    }
+
+    [Fact]
+    public async Task LaterCardsCanExtendPastAnOlderIndexTotal()
+    {
+        using var wire = new Wire { CatalogTotal = 1200, CatalogExact = false }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        await model.LoadWindowAsync(960, 100, force: true);
+        Assert.True(model.TotalCount >= 1060);
+        Assert.NotNull(model.GetWindowItem(1050));
+    }
+
+    [Fact]
+    public async Task LateSmallerIndexRetainsPreviouslyKnownCatalogTotal()
+    {
+        using var wire = new Wire { HoldIndex = true, IndexTotal = 800 }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null);
+        Assert.Equal(1000, model.TotalCount);
+        wire.ReleaseIndex.TrySetResult(); await model.EnsureLetterIndexAsync();
+        Assert.Equal(800, model.LetterIndex!.Total);
+        Assert.Equal(1000, model.TotalCount);
+    }
+
+    [Fact]
+    public async Task LateSmallerPageCountRetainsPreviouslyKnownIndexTotal()
+    {
+        using var wire = new Wire { HoldCatalog = true, IndexTotal = 1200, CatalogTotal = 800 }; var model = wire.Create();
+        var load = model.LoadCommand.ExecuteAsync(null);
+        await model.EnsureLetterIndexAsync(); Assert.Equal(1200, model.LetterIndex!.Total);
+        wire.ReleaseCatalog.TrySetResult(); await load;
+        Assert.Equal(1200, model.TotalCount);
+    }
+
+    [Fact]
+    public async Task ANewerClickRetiresAnOlderPendingJump()
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumped = new List<int>(); model.LetterJumpRequested += jumped.Add;
+        wire.HoldCatalog = true;
+        var oldJump = model.JumpToLetterCommand.ExecuteAsync("M");
+        wire.HoldCatalog = false;
+        await model.JumpToLetterCommand.ExecuteAsync("A");
+        wire.ReleaseCatalog.TrySetResult(); await oldJump;
+        Assert.Equal(new[] { 0 }, jumped);
     }
 
     [Fact]
@@ -90,6 +152,17 @@ public sealed class LibraryLetterNavigationTests
         Assert.Null(model.LetterIndex); Assert.Null(model.ErrorMessage);
         Assert.NotNull(model.GetWindowItem(0)); Assert.Equal(0, wire.ProbeRequests);
         Assert.Equal(1, wire.IndexRequests);
+    }
+
+    [Fact]
+    public async Task EmptyLibraryHasNoInventedJump()
+    {
+        using var wire = new Wire { IndexTotal = 0, CatalogTotal = 0 }; var model = wire.Create();
+        var jumps = 0; model.LetterJumpRequested += _ => jumps++;
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        await model.JumpToLetterCommand.ExecuteAsync("A");
+        Assert.Equal(0, model.TotalCount); Assert.Empty(model.LetterIndex!.Letters);
+        Assert.Equal(0, jumps); Assert.Null(model.ErrorMessage);
     }
 
     [Fact]
@@ -125,6 +198,11 @@ public sealed class LibraryLetterNavigationTests
         internal int IndexRequests, ProbeRequests;
         internal string? IndexBody;
         internal bool HoldIndex, FailIndex;
+        internal int CatalogTotal = 1000;
+        internal int IndexTotal = 1000;
+        internal bool CatalogExact = true;
+        internal bool HoldCatalog;
+        internal readonly TaskCompletionSource ReleaseCatalog = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource IndexStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly TaskCompletionSource ReleaseIndex = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal readonly List<int> Seeks = [];
@@ -140,14 +218,16 @@ public sealed class LibraryLetterNavigationTests
                 IndexStarted.TrySetResult();
                 if (HoldIndex) await ReleaseIndex.Task; // Deliberately ignore cancellation to model a late transport.
                 if (FailIndex) return Reply(new { detail = "Synthetic unavailable index" }, HttpStatusCode.ServiceUnavailable);
-                return Reply(new { total = 1000, letters = new[] { new { letter = "A", count = 742, position = 0 }, new { letter = "M", count = 7, position = 742 }, new { letter = "N", count = 251, position = 749 } }, runs = new[] { new { letter = "A", position = 0 }, new { letter = "M", position = 742 }, new { letter = "N", position = 749 } } });
+                if (IndexTotal == 0) return Reply(new { total = 0, letters = Array.Empty<object>(), runs = Array.Empty<object>() });
+                return Reply(new { total = IndexTotal, letters = new[] { new { letter = "A", count = 742, position = 0 }, new { letter = "M", count = 7, position = 742 }, new { letter = "N", count = IndexTotal - 749, position = 749 } }, runs = new[] { new { letter = "A", position = 0 }, new { letter = "M", position = 742 }, new { letter = "N", position = 749 } } });
             }
             if (path == "/api/v2/catalog")
             {
                 var q = request.RequestUri.Query.TrimStart('?').Split('&').Select(x => x.Split('=', 2)).ToDictionary(x => x[0], x => Uri.UnescapeDataString(x[1]));
                 var limit = int.Parse(q["limit"]); var seek = q.TryGetValue("seek", out var value) ? int.Parse(value) : 0;
                 Seeks.Add(seek); if (limit == 1) ProbeRequests++;
-                return Reply(new { total = 1000, total_exact = true, items = Enumerable.Range(seek, Math.Min(limit, 1000 - seek)).Select(i => new { content_id = "item" + i, title = (i < 742 ? "A " : i < 749 ? "M " : "N ") + i, type = "movie" }), page = new { has_more = seek + limit < 1000 } });
+                if (HoldCatalog) await ReleaseCatalog.Task;
+                return Reply(new { total = CatalogExact ? CatalogTotal : 0, total_exact = CatalogExact, items = Enumerable.Range(seek, Math.Min(limit, CatalogTotal - seek)).Select(i => new { content_id = "item" + i, title = (i < 742 ? "A " : i < 749 ? "M " : "N ") + i, type = "movie" }), page = new { has_more = seek + limit < CatalogTotal } });
             }
             return Reply(new { }, HttpStatusCode.NotFound);
         }

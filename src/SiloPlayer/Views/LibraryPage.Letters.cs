@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Services;
 using Windows.System;
 
 namespace SiloPlayer.Views;
@@ -112,7 +113,7 @@ public sealed partial class LibraryPage
             return;
         }
         var layout = GetGridLayout();
-        var maxOffset = Helpers.VirtualGridScrollGate.GetMaxVerticalOffset(
+        var maxOffset = VirtualGridScrollGate.GetMaxVerticalOffset(
             ViewModel.TotalCount, layout.Columns, layout.RowHeight, GetLibraryViewportHeight());
         var atBottom = Math.Abs(_libraryVerticalOffset - maxOffset) < 2;
         if (!atBottom) _chosenLibraryEndLetter = null;
@@ -160,7 +161,7 @@ public sealed partial class LibraryPage
             UpdateVirtualGridMetrics();
             var layout = GetGridLayout();
             var offset = (index / layout.Columns) * layout.RowHeight;
-            var maxOffset = Helpers.VirtualGridScrollGate.GetMaxVerticalOffset(
+            var maxOffset = VirtualGridScrollGate.GetMaxVerticalOffset(
                 ViewModel.TotalCount, layout.Columns, layout.RowHeight, GetLibraryViewportHeight());
             _chosenLibraryEndLetter = offset >= maxOffset ? owner?.LetterAtIndex(index) : null;
             SetLibraryVerticalOffset(offset, force: true);

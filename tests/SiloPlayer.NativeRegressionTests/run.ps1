@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)][string] $AppDirectory,
-    [ValidateSet('request-interactions', 'conditional-dialogs', 'media-parity', 'account-parity', 'account-coverage', 'account-latest', 'browse-parity', 'browse-acceptance', 'request-detail-parity', 'shared-controls', 'personal-lists', 'upstream-shell', 'shared-appearance', 'settings-visual-regressions', 'library-cursor', 'server-favicon')][string] $Only
+    [ValidateSet('request-interactions', 'conditional-dialogs', 'media-parity', 'account-parity', 'account-coverage', 'account-latest', 'browse-parity', 'browse-acceptance', 'request-detail-parity', 'shared-controls', 'personal-lists', 'upstream-shell', 'shared-appearance', 'settings-visual-regressions', 'library-cursor', 'library-letters', 'server-favicon')][string] $Only
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,6 +18,9 @@ Copy-Item -Path (Join-Path $appPath 'SiloPlayer.*') -Destination $referencePath
 # can omit those loose assets, so supply the repository's fixture resources in
 # the test's own staging directory without modifying the published build.
 Copy-Item -LiteralPath (Join-Path $repoRoot 'src\SiloPlayer\Assets') -Destination $referencePath -Recurse
+# Referenced WinUI content also imports this published helper path. Stage its
+# tested bytes in the fixture reference; never rewrite the supplied publish.
+Copy-Item -LiteralPath (Join-Path $appPath 'Updates') -Destination $referencePath -Recurse
 $projectPath = Join-Path $PSScriptRoot 'SiloPlayer.NativeRegressionTests.csproj'
 dotnet build $projectPath -nologo -v:q "-p:SiloPlayerAssemblyDirectory=$referencePath"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

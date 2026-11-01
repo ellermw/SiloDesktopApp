@@ -58,10 +58,7 @@ public partial class LibraryViewModel
             {
                 // Index and cards are separate reads: a scan must not hide any
                 // larger extent already observed by the page request.
-                _estimatedTotalItems = Math.Max(index.Total, WindowEndIndex + 1);
-                _hasExactTotal = true;
-                TotalCount = DisplayTotalCount = _estimatedTotalItems;
-                Items.SetCount(TotalCount);
+                ApplyExactCatalogTotal(index.Total);
                 WindowLoaded?.Invoke();
             }
         }
@@ -99,5 +96,19 @@ public partial class LibraryViewModel
         _letterIndexKey = null;
         _letterIndexTask = null;
         LetterIndex = null;
+    }
+
+    private void ApplyExactCatalogTotal(int total)
+    {
+        // Without an independent letter read, retain the catalog's existing
+        // exact-total authority (including rejecting an inconsistent tail).
+        var floor = LetterIndex is null ? 0 : Math.Max(LetterIndex.Total, WindowEndIndex + 1);
+        if (LetterIndex is not null && _pageResponses.Count > 0)
+            floor = Math.Max(floor, _pageResponses.Max(page => page.Key * PageSize + page.Value.Items.Count));
+        if (_hasExactTotal && LetterIndex is not null) floor = Math.Max(floor, _estimatedTotalItems);
+        _estimatedTotalItems = Math.Max(Math.Max(0, total), floor);
+        _hasExactTotal = true;
+        TotalCount = DisplayTotalCount = _estimatedTotalItems;
+        Items.SetCount(TotalCount);
     }
 }

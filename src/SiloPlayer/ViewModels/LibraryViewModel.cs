@@ -299,7 +299,9 @@ public partial class LibraryViewModel : ObservableObject
         Items.Clear();
         // Cards load immediately; optional facets are requested when the
         // filter sheet is opened, matching the WebUI's browsing path.
-        await Task.WhenAll(LoadWindowAsync(0, PageSize, force: true), EnsureLetterIndexAsync());
+        var cards = LoadWindowAsync(0, PageSize, force: true);
+        _ = EnsureLetterIndexAsync();
+        await cards;
     }
 
     [RelayCommand]
@@ -323,7 +325,9 @@ public partial class LibraryViewModel : ObservableObject
     {
         StartNewCatalogQuery();
         Items.Clear();
-        await Task.WhenAll(LoadWindowAsync(0, PageSize, force: true), EnsureLetterIndexAsync());
+        var cards = LoadWindowAsync(0, PageSize, force: true);
+        _ = EnsureLetterIndexAsync();
+        await cards;
     }
 
     public async Task EnsureRangeLoadedAsync(int startIndex, int endIndex)
@@ -819,11 +823,7 @@ public partial class LibraryViewModel : ObservableObject
         {
             var result = await FetchWindowPageAsync(0, true, snapshot, ct);
             if (ct.IsCancellationRequested || version != _queryVersion || !result.TotalExact) return;
-            _hasExactTotal = true;
-            _estimatedTotalItems = Math.Max(0, result.Total);
-            DisplayTotalCount = _estimatedTotalItems;
-            TotalCount = _estimatedTotalItems;
-            Items.SetCount(_estimatedTotalItems);
+            ApplyExactCatalogTotal(result.Total);
             WindowLoaded?.Invoke();
         }
         catch (OperationCanceledException) { }
@@ -1065,18 +1065,13 @@ public partial class LibraryViewModel : ObservableObject
             (includeTotal || response.Total > 0 || (!_hasExactTotal && response.Items.Count == 0 && !response.HasMore));
         if (hasTrustworthyExactTotal)
         {
-            _hasExactTotal = true;
-            _estimatedTotalItems = response.Total;
-            DisplayTotalCount = response.Total;
-            TotalCount = response.Total;
-            Items.SetCount(response.Total);
+            ApplyExactCatalogTotal(response.Total);
             return;
         }
 
         if (_hasExactTotal && _estimatedTotalItems > 0)
         {
-            TotalCount = _estimatedTotalItems;
-            Items.SetCount(_estimatedTotalItems);
+            ApplyExactCatalogTotal(Math.Max(_estimatedTotalItems, startIndex + response.Items.Count));
             return;
         }
 
