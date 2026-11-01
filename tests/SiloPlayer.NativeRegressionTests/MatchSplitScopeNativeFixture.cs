@@ -19,7 +19,7 @@ using SiloPlayer.Services;
 
 internal static class MatchSplitScopeNativeFixture
 {
-    internal static async Task RunAsync(StackPanel parent, bool reviewOnly = false)
+    internal static async Task RunAsync(StackPanel parent, bool reviewOnly = false, bool specOnly = false)
     {
         var slot = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var original = (IServiceProvider)slot.GetValue(null)!;
@@ -33,6 +33,19 @@ internal static class MatchSplitScopeNativeFixture
         {
             window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1000, 900)); window.AppWindow.Show(false); await Task.Delay(120);
+            if (specOnly)
+            {
+                var failures = new List<Exception>();
+                async Task Case(string name, Func<Task> run) { try { await run(); Program.Log("PASS spec: " + name); } catch (Exception error) { Program.Log("FAIL spec: " + name + " — " + error); failures.Add(error); } }
+                await Case("Match click scope survives preflight", () => PreflightScopeAsync(owner, wire, split: false, changeFiles: false));
+                await Case("Split click library survives preflight", () => PreflightScopeAsync(owner, wire, split: true, changeFiles: false));
+                await Case("Split click selection survives preflight", () => PreflightScopeAsync(owner, wire, split: true, changeFiles: true));
+                await Case("card pre-dialog permission departure", () => CardPermissionDepartureAsync(owner, wire, auth));
+                await Case("Match inventory pages stop after demotion", () => InventoryDemotionAsync(owner, wire, auth, split: false));
+                await Case("Split inventory pages stop after demotion", () => InventoryDemotionAsync(owner, wire, auth, split: true));
+                if (failures.Count > 0) throw new AggregateException(failures);
+                return;
+            }
             if (reviewOnly)
             {
                 var failures = new List<Exception>();
@@ -56,6 +69,53 @@ internal static class MatchSplitScopeNativeFixture
             Program.Log("PASS: actual Match and Split controls preserve library scope across search, choice, preview and commit; retire stale inventory/selection/results; enforce curator/admin and account/profile ownership.");
         }
         finally { wire.SearchGate?.TrySetResult(); wire.PreviewGate?.TrySetResult(); wire.ApplyGate?.TrySetResult(); slot.SetValue(null, original); window.Close(); }
+    }
+    private static async Task PreflightScopeAsync(FrameworkElement owner, Wire wire, bool split, bool changeFiles)
+    {
+        wire.Files = [("1", 2), ("2", 7), ("3", 7)]; ContentDialog dialog = split ? Split(owner) : Match(owner); var showing = dialog.ShowAsync(); await Task.Delay(140);
+        try
+        {
+            await Until(() => Libraries(dialog).Items.Count == 2);
+            if (split) { File(dialog, "1").IsChecked = true; if (!changeFiles) File(dialog, "2").IsChecked = true; }
+            if (!changeFiles) Pick(dialog, 2);
+            var searches = wire.Count("search"); var reads = wire.FileReads;
+            wire.FileGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var search = (Task)dialog.GetType().GetMethod(split ? "SearchAsync" : "DoSearchAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!;
+            await Until(() => wire.FileReads > reads);
+            if (changeFiles) { File(dialog, "2").IsChecked = true; File(dialog, "1").IsChecked = false; }
+            else Pick(dialog, 7);
+            wire.FileGate.SetResult(); wire.FileGate = null; await search;
+            Check(wire.Count("search") == searches, "Search adopted a changed library or file selection during its initial inventory GET");
+            await SearchAndChooseAsync(dialog); Check(wire.Last("search").Body.GetProperty("library_id").GetString() == "7", "Fresh click cannot search the new scope after abandoning preflight");
+        }
+        finally { wire.FileGate?.TrySetResult(); wire.FileGate = null; dialog.Hide(); await showing; }
+    }
+    private static async Task CardPermissionDepartureAsync(Grid root, Wire wire, AuthService auth)
+    {
+        wire.Files = [("1", 2), ("2", 2)]; var surface = new Grid(); root.Children.Add(surface); await Task.Delay(80);
+        var client = (SiloApiClient)SiloPlayer.App.Services.GetService(typeof(SiloApiClient))!; var reads = wire.DetailReads;
+        wire.DetailGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var action = (Task)typeof(MediaItemMenu).GetMethod("ShowMatchItemDialogAsync", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null,
+            [new MediaItem { ContentId = "fixture", Type = "movie", Title = "Fixture" }, new CatalogApi(client), SiloPlayer.App.Services.GetService(typeof(ToastService)), (Action)(() => throw new InvalidOperationException("Retired card callback")), root.XamlRoot, surface])!;
+        try
+        {
+            await Until(() => wire.DetailReads > reads); auth.SetCurrentUser(new() { Id = "fixture", Role = "user" }); Admin(auth);
+            wire.DetailGate.SetResult(); wire.DetailGate = null; await Task.Delay(160);
+            Check(PopupMatch(root) == null, "Card launch revived after curation permission was revoked and restored during its GET"); await action;
+        }
+        finally { wire.DetailGate?.TrySetResult(); wire.DetailGate = null; PopupMatch(root)?.Hide(); await action; root.Children.Remove(surface); Admin(auth); }
+    }
+    private static async Task InventoryDemotionAsync(FrameworkElement owner, Wire wire, AuthService auth, bool split)
+    {
+        wire.Files = Enumerable.Range(1, 201).Select(n => (n.ToString(), 2)).ToArray(); wire.PaginatedInventory = true; wire.FileGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = wire.FileReads; ContentDialog dialog = split ? Split(owner) : Match(owner); var showing = dialog.ShowAsync();
+        try
+        {
+            await Until(() => wire.FileReads > reads); auth.SetCurrentUser(new() { Id = "fixture", Role = "user", Permissions = [AuthorizationPolicy.MetadataCuration] });
+            wire.FileGate.SetResult(); wire.FileGate = null; await Task.Delay(180);
+            Check(wire.FileReads == reads + 1, "Inventory dispatched a second administrator page after demotion to curator");
+        }
+        finally { wire.FileGate?.TrySetResult(); wire.FileGate = null; wire.PaginatedInventory = false; dialog.Hide(); await showing; Admin(auth); }
     }
     private static async Task UnmatchedWithoutChoiceAsync(FrameworkElement owner, Wire wire)
     {
@@ -338,7 +398,7 @@ internal static class MatchSplitScopeNativeFixture
     private sealed record Call(string Path, JsonElement Body);
     private sealed class Wire : HttpMessageHandler
     {
-        public (string Id, int Library)[] Files = []; public List<Call> Calls = []; public int FileReads, DetailReads; public bool DenyInventory; public TaskCompletionSource? SearchGate, PreviewGate, ApplyGate, CommitGate, DetailGate;
+        public (string Id, int Library)[] Files = []; public List<Call> Calls = []; public int FileReads, DetailReads; public bool DenyInventory, PaginatedInventory; public TaskCompletionSource? SearchGate, PreviewGate, ApplyGate, CommitGate, DetailGate, FileGate;
         public int Count(string suffix) => Calls.Count(call => call.Path.EndsWith("/" + suffix));
         public Call Last(string suffix) => Calls.Last(call => call.Path.EndsWith("/" + suffix));
         public int Commits => Calls.Count(call => call.Path.EndsWith("/split") && !call.Body.GetProperty("dry_run").GetBoolean());
@@ -347,7 +407,12 @@ internal static class MatchSplitScopeNativeFixture
             var path = request.RequestUri!.AbsolutePath; string json;
             if (path == "/api/v2/catalog/items/fixture") { DetailReads++; if (DetailGate != null) await DetailGate.Task; return new(HttpStatusCode.OK) { Content = new StringContent("{\"content_id\":\"fixture\",\"title\":\"Fixture\",\"type\":\"movie\",\"user_state\":{}}") }; }
             if (path.EndsWith("/files") && DenyInventory) { FileReads++; return new(HttpStatusCode.Forbidden) { Content = new StringContent("{\"error\":\"forbidden\"}") }; }
-            if (path.EndsWith("/files")) { FileReads++; json = JsonSerializer.Serialize(new { items = Files.Select(file => new { id = file.Id, library_id = file.Library.ToString(), observed_root_path = "/fixture", file_path = $"/fixture/{file.Id}.mkv" }), page = new { has_more = false } }); }
+            if (path.EndsWith("/files"))
+            {
+                FileReads++; var laterPage = request.RequestUri.Query.Contains("cursor="); if (FileGate != null) await FileGate.Task;
+                var files = PaginatedInventory ? laterPage ? Files.Skip(200) : Files.Take(200) : Files;
+                json = JsonSerializer.Serialize(new { items = files.Select(file => new { id = file.Id, library_id = file.Library.ToString(), observed_root_path = "/fixture", file_path = $"/fixture/{file.Id}.mkv" }), page = new { has_more = PaginatedInventory && !laterPage, next_cursor = "next" } });
+            }
             else
             {
                 var body = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync(ct)); Calls.Add(new(path, body));

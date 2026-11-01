@@ -7,3 +7,5 @@
 5. Run full unit suite, diff check and self review, commit assigned branch, record exact commands/results/limits in report and append current-development handoff.
 
 Review corrections: reproduce each reported behavior on the first final publish (review-red, review-red-02), apply focused fixes, then run core/API tests and a fresh app publish. The full match-split-scope route now includes the review regressions and existing media-tools fixtures. Finish with a final full unit run, source review, new receipts, report responses to each finding, and parent re-review; no remote actions.
+
+Spec-axis follow-up: freeze 8a325bd1 artifacts, reproduce the three findings in six actual-control cases (spec-red-02), change the three owning UI paths only, then focused/full unit checks, a fresh Release publish and the complete native route. Parent source-reviews this correction and its red/green evidence; no generic additional review loop or remote action.

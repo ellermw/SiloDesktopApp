@@ -91,7 +91,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
     }
     private void AuthorityChanged()
     {
-        if (!ScopeOwner) _authorityRetired = true;
+        if (!ScopeOwner) { _authorityRetired = true; Lifetime.Cancel(); }
         DispatcherQueue.TryEnqueue(() => { if (!ScopeOwner) { _candidate = null; _candidates.Children.Clear(); _searchRevision++; PlanChanged(); SetEditing(false); } UpdateCommands(); });
     }
     private void ScopeChanged()
@@ -147,12 +147,13 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
     private async Task SearchAsync()
     {
         if (_searching || Busy || !Ready || !ScopeOwner) return;
+        if (!_scope.CanSearch) return;
         _searching = true; UpdateCommands();
-        var revision = -1; var scope = _scope.State.Capture();
+        var revision = ++_searchRevision; var scope = _scope.State.Capture();
         try
         {
-            await _scope.RefreshAsync(); if (!ScopeOwner || !_scope.CanSearch) return;
-            revision = ++_searchRevision; scope = _scope.State.Capture();
+            await _scope.RefreshAsync();
+            if (!ScopeOwner || !_scope.IsCurrent(scope) || revision != _searchRevision) return;
             _candidate = null; _unmatched.IsChecked = false; _candidates.Children.Clear(); PlanChanged();
             var response = await _maintenanceApi.SearchMatchesAsync(Context, ItemId, new ItemMatchSearchRequest { Title = string.IsNullOrWhiteSpace(_title.Text) ? null : _title.Text, Year = int.TryParse(_year.Text, out var year) ? year : null, TmdbId = string.IsNullOrWhiteSpace(_tmdb.Text) ? null : _tmdb.Text, ImdbId = string.IsNullOrWhiteSpace(_imdb.Text) ? null : _imdb.Text, TvdbId = string.IsNullOrWhiteSpace(_tvdb.Text) ? null : _tvdb.Text, LibraryId = scope.LibraryId }, Lifetime.Token); RequireAuthority();
             await _scope.RefreshAsync();

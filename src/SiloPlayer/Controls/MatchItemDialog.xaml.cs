@@ -123,7 +123,7 @@ public sealed partial class MatchItemDialog : ContentDialog
     }
     private void AuthorityChanged()
     {
-        if (!CanAct) _authorityRetired = true;
+        if (!CanAct) { _authorityRetired = true; _lifetime.Cancel(); }
         DispatcherQueue.TryEnqueue(() => { if (!CanAct) RetireCandidates(); UpdateCommands(); });
     }
     private void RetireCandidates()
@@ -611,8 +611,7 @@ public sealed partial class MatchItemDialog : ContentDialog
     private async Task DoSearchAsync()
     {
         if (_searching || _applying || !CanAct) return;
-        try { await _scope.RefreshAsync(); } catch (OperationCanceledException) { return; } catch (Exception ex) { EmptyText.Text = ex.Message; EmptyText.Visibility = Visibility.Visible; return; }
-        if (!CanAct || !_scope.CanSearch || _searching || _applying) return;
+        if (!_scope.CanSearch) return;
         var scope = _scope.State.Capture(); var revision = ++_searchRevision;
         var isVideo = IsVideoMatchType(_itemType);
         var title = (isVideo ? TitleBox.Text : GenericTitleBox.Text).Trim();
@@ -639,6 +638,8 @@ public sealed partial class MatchItemDialog : ContentDialog
 
         try
         {
+            await _scope.RefreshAsync();
+            if (!CanAct || !_scope.IsCurrent(scope) || revision != _searchRevision) return;
             var request = new ItemMatchSearchRequest
             {
                 Title = title.Length > 0 ? title : null,

@@ -343,13 +343,16 @@ public static class MediaItemMenu
         var surface = owner ?? frame?.Content as FrameworkElement ?? root.Content as FrameworkElement;
         if (surface?.IsLoaded != true) return;
         var frameContent = frame?.Content;
+        bool Authorized() => client.IsCurrentContext(context) && auth.SessionGeneration == session
+            && auth.CurrentUser?.Id == userId && AuthorizationPolicy.CanCurateMetadata(auth);
         using var lifetime = new CancellationTokenSource();
         void Departed(object sender, RoutedEventArgs args) => lifetime.Cancel();
         void Navigated(object sender, NavigationEventArgs args) => lifetime.Cancel();
+        void AuthorityChanged() { if (!Authorized()) lifetime.Cancel(); }
         surface.Unloaded += Departed; if (frame != null) frame.Navigated += Navigated;
+        auth.UserChanged += AuthorityChanged; auth.LoggedOut += AuthorityChanged;
         bool Current() => !lifetime.IsCancellationRequested && surface.IsLoaded && surface.XamlRoot == root
-            && (frame == null || ReferenceEquals(frame.Content, frameContent)) && client.IsCurrentContext(context)
-            && auth.SessionGeneration == session && auth.CurrentUser?.Id == userId && AuthorizationPolicy.CanCurateMetadata(auth);
+            && (frame == null || ReferenceEquals(frame.Content, frameContent)) && Authorized();
         try
         {
             if (!Current()) return;
@@ -386,7 +389,7 @@ public static class MediaItemMenu
         {
             if (Current()) toast.Error(ex);
         }
-        finally { surface.Unloaded -= Departed; if (frame != null) frame.Navigated -= Navigated; }
+        finally { surface.Unloaded -= Departed; if (frame != null) frame.Navigated -= Navigated; auth.UserChanged -= AuthorityChanged; auth.LoggedOut -= AuthorityChanged; }
     }
 
     private static MenuFlyoutItem BuildItem(string text, string glyph, Action onClick)
