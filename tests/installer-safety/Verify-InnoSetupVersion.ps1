@@ -35,7 +35,9 @@ Assert-Version (ConvertTo-InnoSetupVersion '6.7') '6.7.0.0' 'two-part version'
 Assert-Version (ConvertTo-InnoSetupVersion '6.7.2.1 (release)') '6.7.2.1' 'four-part version'
 Assert-Version (ConvertTo-InnoSetupVersion 'Inno Setup 6.7.2') '6.7.2.0' 'named ProductVersion'
 Assert-Version (ConvertTo-InnoSetupVersion 'v6.7.2') '6.7.2.0' 'prefixed ProductVersion'
-foreach ($text in @('', 'unknown', '0.0.0.0', '6.7.2.1.9', '999999999999.7.2', 'Inno Setup 6 Command-Line Compiler')) {
+Assert-Version (ConvertTo-InnoSetupVersion 'Inno Setup Setup Data (6.4.2)') '6.4.2.0' 'descriptive ProductVersion'
+Assert-Version (ConvertTo-InnoSetupVersion 'Inno Setup version 6.7.2') '6.7.2.0' 'descriptive DisplayVersion'
+foreach ($text in @('', 'unknown', '0.0.0.0', '6.7.2.1.9', '999999999999.7.2', 'Inno Setup 6 Command-Line Compiler', 'Inno Setup Setup Data (6.4.2.1.9)', 'Inno Setup Setup Data (999999999999.4.2)')) {
     if ($null -ne (ConvertTo-InnoSetupVersion $text)) { throw "Invalid/absent version accepted: '$text'" }
 }
 Assert-Version (Select-InnoSetupVersion -RegistryVersions '6.7.2' -UninstallerVersions '0.0.0.0') '6.7.2.0' 'zero-first fallback'
@@ -154,6 +156,12 @@ try {
     $uninstallerInfo.FileMajorPart = 0
     $uninstallerInfo.FileMinorPart = 0
     $uninstallerInfo.FileBuildPart = 0
+    $uninstallerInfo.ProductVersion = 'Inno Setup Setup Data (6.4.2)'
+    Assert-Version (Get-InnoSetupVersion $compiler) '6.4.2.0' 'uninstaller descriptive ProductVersion with zero numeric resource'
+    $script:registryEntries['HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Inno Setup 6_is1'] =
+        [pscustomobject]@{ InstallLocation = $fixture; DisplayVersion = 'Inno Setup version 6.7.2' }
+    Assert-Version (Get-InnoSetupVersion $compiler) '6.7.2.0' 'matching registry descriptive DisplayVersion'
+    $script:registryEntries.Clear()
     $uninstallerInfo.ProductVersion = '6.5.3'
     Assert-Version (Get-InnoSetupVersion $compiler) '6.5.3.0' 'uninstaller ProductVersion fallback'
 

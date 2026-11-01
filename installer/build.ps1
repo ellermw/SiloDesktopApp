@@ -168,7 +168,9 @@ if (-not $IsccPath) {
     exit 1
 }
 function ConvertTo-InnoSetupVersion([string]$Text) {
-    if ($Text -match '^\s*(?:Inno Setup\s+|v)?(\d+\.\d+(?:\.\d+){0,2})(?=$|[^\d.])') {
+    # ProductVersion and DisplayVersion may embed the version in descriptive text.
+    # Bound the whole token so malformed versions cannot yield a valid substring.
+    if ($Text -match '(?<![\w.])v?(\d+\.\d+(?:\.\d+){0,2})(?![\w.])') {
         $parsed = $null
         if ([version]::TryParse($Matches[1], [ref]$parsed)) {
             $version = [version]::new($parsed.Major, $parsed.Minor, [Math]::Max(0, $parsed.Build), [Math]::Max(0, $parsed.Revision))
