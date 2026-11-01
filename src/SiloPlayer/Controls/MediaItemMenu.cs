@@ -342,6 +342,8 @@ public static class MediaItemMenu
             if (node is Frame sourceFrame) { frame = sourceFrame; break; }
         var surface = owner ?? frame?.Content as FrameworkElement ?? root.Content as FrameworkElement;
         if (surface?.IsLoaded != true) return;
+        var itemProperty = surface switch { LandscapeCard => LandscapeCard.MediaItemProperty, PosterCard => PosterCard.MediaItemProperty, _ => null };
+        bool OwnsItem() => itemProperty == null || ReferenceEquals(surface.GetValue(itemProperty), item);
         var frameContent = frame?.Content;
         bool Authorized() => client.IsCurrentContext(context) && auth.SessionGeneration == session
             && auth.CurrentUser?.Id == userId && AuthorizationPolicy.CanCurateMetadata(auth);
@@ -349,9 +351,11 @@ public static class MediaItemMenu
         void Departed(object sender, RoutedEventArgs args) => lifetime.Cancel();
         void Navigated(object sender, NavigationEventArgs args) => lifetime.Cancel();
         void AuthorityChanged() { if (!Authorized()) lifetime.Cancel(); }
+        var itemChanged = itemProperty == null ? 0 : surface.RegisterPropertyChangedCallback(itemProperty,
+            (_, _) => { if (!OwnsItem()) lifetime.Cancel(); });
         surface.Unloaded += Departed; if (frame != null) frame.Navigated += Navigated;
         auth.UserChanged += AuthorityChanged; auth.LoggedOut += AuthorityChanged;
-        bool Current() => !lifetime.IsCancellationRequested && surface.IsLoaded && surface.XamlRoot == root
+        bool Current() => !lifetime.IsCancellationRequested && OwnsItem() && surface.IsLoaded && surface.XamlRoot == root
             && (frame == null || ReferenceEquals(frame.Content, frameContent)) && Authorized();
         try
         {
@@ -389,7 +393,11 @@ public static class MediaItemMenu
         {
             if (Current()) toast.Error(ex);
         }
-        finally { surface.Unloaded -= Departed; if (frame != null) frame.Navigated -= Navigated; auth.UserChanged -= AuthorityChanged; auth.LoggedOut -= AuthorityChanged; }
+        finally
+        {
+            if (itemProperty != null) surface.UnregisterPropertyChangedCallback(itemProperty, itemChanged);
+            surface.Unloaded -= Departed; if (frame != null) frame.Navigated -= Navigated; auth.UserChanged -= AuthorityChanged; auth.LoggedOut -= AuthorityChanged;
+        }
     }
 
     private static MenuFlyoutItem BuildItem(string text, string glyph, Action onClick)

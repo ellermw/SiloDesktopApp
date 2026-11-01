@@ -29,6 +29,32 @@ public sealed class ItemLibraryScopeTests
         Assert.Empty(scope.LibraryIds); Assert.True(scope.CanSearch); Assert.Null(scope.LibraryId);
         scope.ReplaceFiles([]); Assert.True(scope.CanSearch); Assert.False(scope.NeedsChoice);
     }
+    [Theory]
+    [InlineData(null)]
+    [InlineData(2)]
+    public void SuccessfulEmptyOrUnreadableInventoryFallsBackEvenWithPageScope(int? pageLibrary)
+    {
+        var scope = new ItemLibraryScope(pageLibrary, false, true);
+        Assert.False(scope.CanSearch);
+        scope.ReplaceFiles([]); Assert.True(scope.CanSearch); Assert.Null(scope.LibraryId);
+        scope.ReplaceFiles(Files(("a", null), ("b", "bad"), ("c", 0)));
+        Assert.True(scope.CanSearch); Assert.Null(scope.LibraryId);
+        scope.ReplaceFiles(Files(("a", 7))); if (pageLibrary.HasValue) Assert.False(scope.CanSearch);
+    }
+    [Theory]
+    [InlineData("file_path")]
+    [InlineData("observed_root_path")]
+    [InlineData("season_number")]
+    [InlineData("episode_number")]
+    public void CompleteSplitInventoryRetiresPreviewWhenMembershipIsUnchanged(string field)
+    {
+        var scope = new ItemLibraryScope(2, true, true);
+        var file = new Dictionary<string, object> { ["id"] = "a", ["library_id"] = "2", ["file_path"] = "/old/a.mkv", ["observed_root_path"] = "/old", ["season_number"] = 1, ["episode_number"] = 1 };
+        scope.ReplaceFiles([JsonSerializer.SerializeToElement(file)]); scope.SelectFiles(["a"]); var preview = scope.Capture();
+        file[field] = field.EndsWith("number") ? 2 : "/new";
+        Assert.True(scope.ReplaceFiles([JsonSerializer.SerializeToElement(file)])); Assert.False(scope.IsInventoryCurrent(preview));
+        var current = scope.Capture(); Assert.False(scope.ReplaceFiles([JsonSerializer.SerializeToElement(file.Reverse().ToDictionary())])); Assert.True(scope.IsInventoryCurrent(current));
+    }
     [Fact]
     public void CuratorsWithoutInventoryKeepScopedAndUnscopedMatch()
     {

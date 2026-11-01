@@ -19,7 +19,7 @@ using SiloPlayer.Services;
 
 internal static class MatchSplitScopeNativeFixture
 {
-    internal static async Task RunAsync(StackPanel parent, bool reviewOnly = false, bool specOnly = false)
+    internal static async Task RunAsync(StackPanel parent, bool reviewOnly = false, bool specOnly = false, bool onlineOnly = false)
     {
         var slot = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var original = (IServiceProvider)slot.GetValue(null)!;
@@ -33,6 +33,17 @@ internal static class MatchSplitScopeNativeFixture
         {
             window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             window.AppWindow.ResizeClient(new Windows.Graphics.SizeInt32(1000, 900)); window.AppWindow.Show(false); await Task.Delay(120);
+            if (onlineOnly)
+            {
+                var failures = new List<Exception>();
+                async Task Case(string name, Func<Task> run) { try { await run(); Program.Log("PASS online: " + name); } catch (Exception error) { Program.Log("FAIL online: " + name + " — " + error); failures.Add(error); } }
+                await Case("scoped empty and unreadable Match inventory", () => EmptyScopedMatchAsync(owner, wire));
+                foreach (var poster in new[] { false, true }) foreach (var apply in new[] { false, true })
+                    await Case($"{(poster ? "PosterCard" : "LandscapeCard")} rebind during {(apply ? "Apply" : "detail GET")}", () => CardRebindAsync(owner, wire, poster, apply));
+                await Case("Split path and root changes retire accepted preview", () => SplitPathChangeAsync(owner, wire));
+                if (failures.Count > 0) throw new AggregateException(failures);
+                return;
+            }
             if (specOnly)
             {
                 var failures = new List<Exception>();
@@ -69,6 +80,66 @@ internal static class MatchSplitScopeNativeFixture
             Program.Log("PASS: actual Match and Split controls preserve library scope across search, choice, preview and commit; retire stale inventory/selection/results; enforce curator/admin and account/profile ownership.");
         }
         finally { wire.SearchGate?.TrySetResult(); wire.PreviewGate?.TrySetResult(); wire.ApplyGate?.TrySetResult(); slot.SetValue(null, original); window.Close(); }
+    }
+    private static async Task EmptyScopedMatchAsync(FrameworkElement owner, Wire wire)
+    {
+        foreach (var unreadable in new[] { false, true })
+        {
+            wire.Files = unreadable ? [("1", 0), ("2", 0)] : [];
+            var dialog = Match(owner, 2); var showing = dialog.ShowAsync(); await Task.Delay(140);
+            try
+            {
+                Check(Search(dialog).IsEnabled, "Successful empty/unreadable page-scoped inventory blocks server defaults");
+                await SearchAndChooseAsync(dialog); Check(!wire.Last("search").Body.TryGetProperty("library_id", out _), "Empty page-scoped Match sends stale library");
+                Invoke(All<Button>(dialog).Single(button => button.Name == "ApplyMatchButton")); await Until(() => dialog.HasAppliedMatch);
+                Check(!wire.Last("apply").Body.TryGetProperty("library_id", out _), "Empty page-scoped Apply sends stale library");
+            }
+            finally { dialog.Hide(); await showing; }
+        }
+    }
+    private static async Task CardRebindAsync(Grid root, Wire wire, bool poster, bool apply)
+    {
+        wire.Files = [("1", 2), ("2", 2)];
+        var item = new MediaItem { ContentId = "fixture", Type = "movie", Title = "Fixture" };
+        FrameworkElement surface = poster ? new PosterCard { MediaItem = item } : new LandscapeCard { MediaItem = item };
+        root.Children.Add(surface); await Task.Delay(120); Check(surface.IsLoaded, "Card was not loaded");
+        void Bind(MediaItem value) { if (surface is PosterCard p) p.MediaItem = value; else ((LandscapeCard)surface).MediaItem = value; }
+        var client = (SiloApiClient)SiloPlayer.App.Services.GetService(typeof(SiloApiClient))!; var changes = 0; var reads = wire.DetailReads;
+        if (!apply) wire.DetailGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var action = (Task)typeof(MediaItemMenu).GetMethod("ShowMatchItemDialogAsync", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null,
+            [item, new CatalogApi(client), SiloPlayer.App.Services.GetService(typeof(ToastService)), (Action)(() => changes++), root.XamlRoot, surface])!;
+        MatchItemDialog? active = null;
+        try
+        {
+            await Until(() => wire.DetailReads > reads);
+            if (apply)
+            {
+                await Until(() => PopupMatch(root) != null); active = PopupMatch(root)!; await Until(() => Search(active).IsEnabled); await SearchAndChooseAsync(active);
+                wire.ApplyGate = new(TaskCreationOptions.RunContinuationsAsynchronously); var writes = wire.Count("apply"); Invoke(All<Button>(active).Single(button => button.Name == "ApplyMatchButton")); await Until(() => wire.Count("apply") > writes);
+            }
+            Bind(new MediaItem { ContentId = "replacement", Type = "movie", Title = "Replacement" }); Bind(item);
+            Check(surface.IsLoaded, "Rebinding unexpectedly unloaded the card");
+            wire.DetailGate?.TrySetResult(); wire.ApplyGate?.TrySetResult(); wire.DetailGate = wire.ApplyGate = null; await Task.Delay(180);
+            Check(PopupMatch(root) == null && active?.HasAppliedMatch != true && changes == 0, "Loaded card rebind restored old Match authority/callback"); await action;
+        }
+        finally { wire.DetailGate?.TrySetResult(); wire.ApplyGate?.TrySetResult(); wire.DetailGate = wire.ApplyGate = null; PopupMatch(root)?.Hide(); await action; root.Children.Remove(surface); }
+    }
+    private static async Task SplitPathChangeAsync(FrameworkElement owner, Wire wire)
+    {
+        wire.Files = [("1", 2), ("2", 2), ("3", 2)]; wire.Root = "/fixture";
+        var dialog = Split(owner, 2); var showing = dialog.ShowAsync(); await Task.Delay(140);
+        try
+        {
+            await Until(() => Search(dialog).IsEnabled); File(dialog, "1").IsChecked = true; await SearchAndChooseAsync(dialog); await Until(() => dialog.IsPrimaryButtonEnabled);
+            var commits = wire.Commits; wire.Root = "/rescanned";
+            var submit = (Task)typeof(SplitVersionsDialog).GetMethod("SubmitAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!; await submit;
+            Check(wire.Commits == commits && !dialog.HasSaved && !dialog.IsPrimaryButtonEnabled, "Split commits preview accepted before path/root inventory update");
+            await Until(() => All<CheckBox>(dialog).Any(box => AutomationProperties.GetName(box) == "Select /rescanned/1.mkv"));
+            await SearchAndChooseAsync(dialog); await Until(() => dialog.IsPrimaryButtonEnabled);
+            Invoke(All<Button>(dialog).Single(button => button.Name == "PrimaryButton")); await Until(() => dialog.HasSaved);
+            Check(wire.Commits == commits + 1, "Fresh Split preview cannot commit changed paths");
+        }
+        finally { dialog.Hide(); await showing; wire.Root = "/fixture"; }
     }
     private static async Task PreflightScopeAsync(FrameworkElement owner, Wire wire, bool split, bool changeFiles)
     {
@@ -398,7 +469,7 @@ internal static class MatchSplitScopeNativeFixture
     private sealed record Call(string Path, JsonElement Body);
     private sealed class Wire : HttpMessageHandler
     {
-        public (string Id, int Library)[] Files = []; public List<Call> Calls = []; public int FileReads, DetailReads; public bool DenyInventory, PaginatedInventory; public TaskCompletionSource? SearchGate, PreviewGate, ApplyGate, CommitGate, DetailGate, FileGate;
+        public (string Id, int Library)[] Files = []; public List<Call> Calls = []; public string Root = "/fixture"; public int FileReads, DetailReads; public bool DenyInventory, PaginatedInventory; public TaskCompletionSource? SearchGate, PreviewGate, ApplyGate, CommitGate, DetailGate, FileGate;
         public int Count(string suffix) => Calls.Count(call => call.Path.EndsWith("/" + suffix));
         public Call Last(string suffix) => Calls.Last(call => call.Path.EndsWith("/" + suffix));
         public int Commits => Calls.Count(call => call.Path.EndsWith("/split") && !call.Body.GetProperty("dry_run").GetBoolean());
@@ -411,7 +482,7 @@ internal static class MatchSplitScopeNativeFixture
             {
                 FileReads++; var laterPage = request.RequestUri.Query.Contains("cursor="); if (FileGate != null) await FileGate.Task;
                 var files = PaginatedInventory ? laterPage ? Files.Skip(200) : Files.Take(200) : Files;
-                json = JsonSerializer.Serialize(new { items = files.Select(file => new { id = file.Id, library_id = file.Library.ToString(), observed_root_path = "/fixture", file_path = $"/fixture/{file.Id}.mkv" }), page = new { has_more = PaginatedInventory && !laterPage, next_cursor = "next" } });
+                json = JsonSerializer.Serialize(new { items = files.Select(file => new { id = file.Id, library_id = file.Library.ToString(), observed_root_path = Root, file_path = $"{Root}/{file.Id}.mkv" }), page = new { has_more = PaginatedInventory && !laterPage, next_cursor = "next" } });
             }
             else
             {

@@ -19,3 +19,11 @@ The five behavior findings were reproduced against the preserved first final pub
 ## Independent spec review corrections
 
 At 8a325bd1, the three source findings were reproduced against the frozen reviewed app. Search now captures its library/selection revision before the initial inventory refresh, retires drifted clicks, and requires a new click for the new scope. Card Match observes account/curation changes before its detail GET, so same-user permission revocation and restoration cannot revive the launch. Permanent authority retirement now also cancels the dialog lifetime: existing pagination token/context checks stop before the next administrator inventory GET. The correction touches only MatchItemDialog, SplitVersionsDialog and MediaItemMenu product code; the API/picker contracts are unchanged. Six focused native spec cases cover Match library, Split library, Split file selection, pre-dialog permission restoration, and both paginated inventory consumers. Earlier builds/receipts remain preserved.
+
+## PR #67 external inline corrections
+
+Verified the remote Task C head was 27bd4ca2 before editing and official main remained 63ef34b236b88dc77acca1a9a3ed90235377691f. All three inline findings are supported. A successful empty/no-readable-library inventory falls back unscoped even when launched with a page library; only positive membership in other libraries establishes departure and blocks that explicit Match scope. Failed inventory reads still block, and curator/admin endpoint gates remain unchanged.
+
+A loaded LandscapeCard or PosterCard can change its MediaItem without unloading. Match captures that exact object and observes its dependency property before the detail GET; a rebind permanently cancels the lifetime through dialog/apply completion, including a rebind back to the original item. Other owner/navigation/account/permission guards remain in place.
+
+Inventory equality includes the entire pinned AdminItemFile contract: id, normalized positive library_id, file_path, observed_root_path, season_number and episode_number. Any change retires the captured revision and updates displayed files. Split cannot commit an accepted preview across a path/root/episode change with unchanged IDs/library; a fresh search/preview is required. File/property ordering and equivalent numeric/string library IDs do not cause false changes.
