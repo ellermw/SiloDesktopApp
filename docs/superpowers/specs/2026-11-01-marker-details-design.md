@@ -13,3 +13,5 @@ Approaches: reuse a shared C# label formatter and send a separate cosmetic OSC m
 Read/setting results and queued rendering belong to one authority/context/load generation. Metadata for a previous file/version must not leak to its replacement. Repeated occurrences use the singular range's provenance for that kind.
 
 Verification uses actual API DTO reads, unit reducers/formatters, Lua runtime cases and synthetic native controls. No installed-player or production setup actions. Delivery is a focused Beta PR; pipeline owns release stamps and artifacts.
+
+Review ruling: production video uses the OSC surface. The shell deliberately keeps the legacy WinUI PlayerOverlay dormant; its details line is compatibility coverage only. This change preserves that architecture and does not activate another overlay or claim that its synthetic fixture certifies a production native surface.

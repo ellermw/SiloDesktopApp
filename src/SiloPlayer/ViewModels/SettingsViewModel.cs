@@ -616,10 +616,6 @@ public partial class SettingsViewModel : ObservableObject
                 try
                 {
                     SeekSettingsAvailable = false;
-                    MarkerDetailsSettingsAvailable = false;
-                    _markerDetailsSettingsContext = null;
-                    _markerSettingEdits.Clear();
-                    ShowMarkerConfidence = ShowMarkerSource = false;
                     SeekSettingsStatus = "Checking seek settings compatibility…";
                     var capability = await _settingsApi.GetContractCapabilitiesAsync();
                     if (!_settingsApi.IsCurrentContext(context)) return;
@@ -627,15 +623,9 @@ public partial class SettingsViewModel : ObservableObject
                     var keys = supported ? ContractPlaybackSettingKeys : ContractPlaybackSettingKeys.Except(SeekPreferences.Keys).ToArray();
                     EpisodeSpoilersSupported = capability.ApiVersion == 1 && capability.Revision >= 17;
                     if (EpisodeSpoilersSupported) keys = [.. keys, "catalog.hide_unwatched_episode_images", "catalog.hide_unwatched_episode_overviews"];
-                    if (MarkerDetailsPreferences.Supports(capability)) keys = [.. keys, .. MarkerDetailsPreferences.Keys];
                     var response = await _settingsApi.GetContractEffectiveSettingsAsync(keys);
                     if (!_settingsApi.IsCurrentContext(context)) return;
                     SeekSettingsAvailable = supported && SeekPreferences.Keys.All(key => response.Settings.Any(entry => entry.Key == key));
-                    var markerDetails = MarkerDetailsPreferences.Read(capability, response);
-                    _markerDetailsSettingsContext = context;
-                    MarkerDetailsSettingsAvailable = markerDetails.Supported;
-                    ShowMarkerConfidence = markerDetails.ShowConfidence;
-                    ShowMarkerSource = markerDetails.ShowSource;
                     SeekSettingsStatus = SeekSettingsAvailable ? "" : "This server does not support profile seek intervals.";
                     var values = response.Settings.ToDictionary(setting => setting.Key, StringComparer.Ordinal);
 

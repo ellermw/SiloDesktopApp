@@ -1269,12 +1269,12 @@ public partial class PlayerService : IDisposable
     public List<FileVersion> Versions { get; private set; } = [];
     public FileVersion? ActiveVersion => Versions.FirstOrDefault(v => v.FileId == (_playbackManager?.CurrentSession?.MediaFileId ?? 0));
     public IReadOnlyList<AudiobookChapterInfo> AudiobookChapters => BuildAudiobookChapters();
-    public TimeRange? ActiveIntro => ActiveMarker("intro", ActiveVersion?.Intro ?? WatchDetail?.Intro);
-    public TimeRange? ActiveCredits => ActiveMarker("credits", ActiveVersion?.Credits ?? WatchDetail?.Credits);
-    public TimeRange? ActiveRecap => ActiveMarker("recap", ActiveVersion?.Recap ?? WatchDetail?.Recap);
-    public TimeRange? ActivePreview => ActiveMarker("preview", ActiveVersion?.Preview ?? WatchDetail?.Preview);
-    private TimeRange? ActiveMarker(string kind, TimeRange? legacy) => ActiveVersion?.MarkerSegments is { } segments
-        ? PlaybackMarkerRanges.Active(segments, kind, Position, MarkerProvenanceFor(kind)) : legacy;
+    public TimeRange? ActiveIntro => ActiveMarker("intro");
+    public TimeRange? ActiveCredits => ActiveMarker("credits");
+    public TimeRange? ActiveRecap => ActiveMarker("recap");
+    public TimeRange? ActivePreview => ActiveMarker("preview");
+    private TimeRange? ActiveMarker(string kind) => CurrentMarkerVersion?.MarkerSegments is { } segments
+        ? PlaybackMarkerRanges.Active(segments, kind, Position, MarkerProvenanceFor(kind)) : MarkerProvenanceFor(kind);
 
     // ── Events ───────────────────────────────────────────────────────────
 
@@ -5300,33 +5300,38 @@ public partial class PlayerService : IDisposable
 
     private void SendMarkersToOsc()
     {
+        lock (_markerDetailsGate)
+        {
         if (_mpv == null || _playbackManager?.WatchDetail == null) return;
         var wd = _playbackManager.WatchDetail;
 
         var markers = new
         {
-            content_id = ContentId,
+            content_id = ContentId ?? wd.ContentId,
+            file_id = _playbackManager.CurrentSession?.MediaFileId ?? 0,
+            load_generation = Volatile.Read(ref _fileLoadGeneration),
             reset_auto_skip = _autoSkipMarkerIdentity.ShouldResetFor(ContentId),
-            marker_segments = ActiveVersion?.MarkerSegments,
-            intro_start = (ActiveVersion?.Intro ?? wd.Intro)?.Start ?? 0,
-            intro_end = (ActiveVersion?.Intro ?? wd.Intro)?.End ?? 0,
-            recap_start = (ActiveVersion?.Recap ?? wd.Recap)?.Start ?? 0,
-            recap_end = (ActiveVersion?.Recap ?? wd.Recap)?.End ?? 0,
-            credits_start = (ActiveVersion?.Credits ?? wd.Credits)?.Start ?? 0,
-            credits_end = (ActiveVersion?.Credits ?? wd.Credits)?.End ?? 0,
-            preview_start = (ActiveVersion?.Preview ?? wd.Preview)?.Start ?? 0,
-            preview_end = (ActiveVersion?.Preview ?? wd.Preview)?.End ?? 0
+            marker_segments = CurrentMarkerVersion?.MarkerSegments,
+            intro_start = MarkerProvenanceFor("intro")?.Start ?? 0,
+            intro_end = MarkerProvenanceFor("intro")?.End ?? 0,
+            recap_start = MarkerProvenanceFor("recap")?.Start ?? 0,
+            recap_end = MarkerProvenanceFor("recap")?.End ?? 0,
+            credits_start = MarkerProvenanceFor("credits")?.Start ?? 0,
+            credits_end = MarkerProvenanceFor("credits")?.End ?? 0,
+            preview_start = MarkerProvenanceFor("preview")?.Start ?? 0,
+            preview_end = MarkerProvenanceFor("preview")?.End ?? 0
         };
 
         var json = System.Text.Json.JsonSerializer.Serialize(markers);
         _mpv.SendScriptMessage("osc-set-markers", json);
         SendMarkerDetailsToOsc();
+        }
     }
 
     private async Task SendAutoSkipSettingsToOscAsync(CancellationToken ct)
     {
+        _ = RefreshMarkerDetailsPreferencesAsync(ct);
         await RefreshSeekPreferencesAsync(ct);
-        await RefreshMarkerDetailsPreferencesAsync(ct);
         var profileId = _authService.SelectedProfileId;
         var intro = false;
         var credits = false;
@@ -6769,10 +6774,11 @@ public partial class PlayerService : IDisposable
             if (!payload.TryGetProperty("file_id", out var fileIdEl) || !fileIdEl.TryGetInt32(out var fileId))
                 return;
 
-            var version = Versions.FirstOrDefault(v => v.FileId == fileId);
-            if (version == null) return;
+            var versions = MarkerVersions().Where(version => version.FileId == fileId).ToArray();
+            if (versions.Length == 0) return;
 
-            PlaybackMarkerUpdate.Apply(version, payload);
+            foreach (var candidate in versions) PlaybackMarkerUpdate.Apply(candidate, payload);
+            var version = versions[0];
 
             var activeFileId = _playbackManager?.CurrentSession?.MediaFileId ?? 0;
             if (activeFileId == fileId && _playbackManager?.WatchDetail != null)

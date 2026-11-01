@@ -5,6 +5,50 @@ namespace SiloPlayer.Tests;
 public sealed class MpvOscRuntimeTests
 {
     [Theory]
+    [InlineData("content")]
+    [InlineData("file")]
+    [InlineData("load")]
+    [InlineData("preference")]
+    public void OldMarkerDetailsCannotPaintAfterTheirOwnerWasReplaced(string departure)
+    {
+        var content = departure == "content" ? "old" : "current";
+        var file = departure == "file" ? 7 : 8;
+        var load = departure == "load" ? 1 : 2;
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            handlers['osc-set-markers']('{"content_id":"current","file_id":8,"load_generation":2,"intro_start":5,"intro_end":30}')
+            handlers['osc-set-marker-details']('{"content_id":"current","file_id":8,"load_generation":2,"preference_generation":2,"intro":"CURRENT"}')
+            handlers['osc-set-marker-details']('{"content_id":"{{content}}","file_id":{{file}},"load_generation":{{load}},"preference_generation":1,"intro":"OLD"}')
+            mp.set_property('user-data/details-owner', tostring(osc_test_state.marker_details.intro))
+            """, rawAss: true, resultProperty: "user-data/details-owner", beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """);
+        Assert.Equal("CURRENT", output);
+    }
+
+    [Fact]
+    public void SameTimingRepublishPreservesUndoWhenInitialResetFlagIsConsumed()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            handlers['osc-set-markers']('{"content_id":"episode","intro_start":5,"intro_end":30,"reset_auto_skip":true}')
+            local pending = {target=30}
+            state.intro_pending, state.intro_undo_origin = pending, 7
+            state.intro_prompt_remaining, state.intro_prompt_key = 3.25, 'owner-key'
+            handlers['osc-set-markers']('{"content_id":"episode","intro_start":5,"intro_end":30,"reset_auto_skip":false}')
+            local kept = state.intro_pending == pending and state.intro_undo_origin == 7
+                and state.intro_prompt_remaining == 3.25 and state.intro_prompt_key == 'owner-key'
+            mp.set_property('user-data/timing-identity', tostring(kept))
+            """, rawAss: true, resultProperty: "user-data/timing-identity", beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """);
+        Assert.Equal("true", output);
+    }
+
+    [Theory]
     [InlineData("intro")]
     [InlineData("recap")]
     [InlineData("credits")]

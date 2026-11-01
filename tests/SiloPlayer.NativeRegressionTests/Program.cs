@@ -226,6 +226,11 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await MarkerDetailsNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "marker-review")
+            {
+                await MarkerDetailsNativeFixture.RunReviewAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "burned-in-subtitle-switch")
             {
                 await BurnedInSubtitleSwitchNativeFixture.RunAsync(parent);

@@ -58,6 +58,18 @@ public sealed class MarkerProvenanceTests
         Assert.Null(version.Intro); Assert.Empty(version.MarkerSegments!);
     }
 
+    [Fact]
+    public void TimingOnlyNoOpNotificationRetainsTheWatchProvenance()
+    {
+        var original = new TimeRange { Start = 5, End = 30, Source = "plugin", Provider = "introdb", Confidence = .92, Algorithm = "v4" };
+        var version = new FileVersion { Intro = original,
+            MarkerSegments = [new() { Kind = "intro", StartSeconds = 5, EndSeconds = 30 }] };
+        using var message = JsonDocument.Parse("""{"intro":{"start":5,"end":30},"credits":null,"recap":null,"preview":null,"marker_segments":[{"kind":"intro","start_seconds":5,"end_seconds":30}]}""");
+        PlaybackMarkerUpdate.Apply(version, message.RootElement);
+        Assert.Same(original, version.Intro);
+        Assert.Equal("92% · TheIntroDB", MarkerProvenance.Label(version.Intro, true, true));
+    }
+
     [Theory]
     [InlineData(23, true, false)]
     [InlineData(24, false, false)]

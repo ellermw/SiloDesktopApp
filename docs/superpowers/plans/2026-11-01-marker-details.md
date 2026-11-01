@@ -22,5 +22,5 @@
 - [x] Add compatible TimeRange metadata/read handling, formatter and repeated-occurrence preservation; verify focused red/green cases.
 - [x] Add typed capability-gated effective preferences and settings switches with context/lifetime guards.
 - [x] Render native and OSC labels via separate cosmetic messages; verify native/Lua behavior and unchanged transport.
-- [ ] Run main suite, Release publish and scoped native checks; independent Standards/Spec review and corrections.
-- [ ] Refresh remote heads/threads, inspect gate, push exact reviewed branch and open Beta PR.
+- [x] Run main suite, Release publish and scoped native checks; independent Standards/Spec review and corrections.
+- Delivery gate: refresh remote heads/threads, inspect the clean exact-source gate, then push the reviewed branch and open its Beta PR. The external task report records the resulting PR receipt.

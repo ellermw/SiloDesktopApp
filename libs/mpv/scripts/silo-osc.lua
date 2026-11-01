@@ -5455,17 +5455,34 @@ local function observe_properties()
     mp.register_script_message("osc-set-markers", function(json_str)
         local ok, data = pcall(require("mp.utils").parse_json, json_str)
         if ok and data then
-            if state.marker_payload_json ~= json_str then
+            local incoming_content_id = tostring(data.content_id or "")
+            local content_changed = state.marker_content_id ~= incoming_content_id
+            local owner_changed = content_changed
+                or state.marker_file_id ~= tonumber(data.file_id)
+                or state.marker_load_generation ~= tonumber(data.load_generation)
+            local changed = content_changed or state.marker_file_id ~= tonumber(data.file_id)
+            for _, kind in ipairs({"intro", "recap", "credits", "preview"}) do
+                if (state[kind .. "_start"] or 0) ~= (tonumber(data[kind .. "_start"]) or 0)
+                    or (state[kind .. "_end"] or 0) ~= (tonumber(data[kind .. "_end"]) or 0) then changed = true end
+            end
+            local before, after = state.marker_segments or {}, type(data.marker_segments) == "table" and data.marker_segments or {}
+            if #before ~= #after then changed = true end
+            for index, segment in ipairs(after) do
+                local old = before[index]
+                if not old or old.kind ~= segment.kind or old.start_seconds ~= segment.start_seconds
+                    or old.end_seconds ~= segment.end_seconds then changed = true end
+            end
+            if changed or data.reset_auto_skip == true then
                 state.intro_pending = nil
                 state.intro_undo_origin = nil
                 state.intro_prompt_key = nil
             end
-            state.marker_payload_json = json_str
-            local incoming_content_id = tostring(data.content_id or "")
-            if state.marker_content_id ~= incoming_content_id then state.marker_details = {} end
+            if owner_changed then state.marker_details = {}; state.marker_details_generation = -1 end
             local reset_auto_skip = data.reset_auto_skip == true
-                or state.marker_content_id ~= incoming_content_id
+                or content_changed
             state.marker_content_id = incoming_content_id
+            state.marker_file_id = tonumber(data.file_id)
+            state.marker_load_generation = tonumber(data.load_generation)
             state.marker_segments = type(data.marker_segments) == "table" and data.marker_segments or nil
             state.intro_start = tonumber(data.intro_start) or 0
             state.intro_end = tonumber(data.intro_end) or 0
@@ -5490,6 +5507,14 @@ local function observe_properties()
     mp.register_script_message("osc-set-marker-details", function(json_str)
         local ok, data = pcall(require("mp.utils").parse_json, json_str)
         if not ok or type(data) ~= "table" then return end
+        if state.marker_load_generation ~= nil then
+            local generation = tonumber(data.preference_generation)
+            if tostring(data.content_id or "") ~= state.marker_content_id
+                or tonumber(data.file_id) ~= state.marker_file_id
+                or tonumber(data.load_generation) ~= state.marker_load_generation
+                or not generation or generation < (state.marker_details_generation or -1) then return end
+            state.marker_details_generation = generation
+        end
         state.marker_details = {}
         for _, kind in ipairs({"intro", "recap", "credits", "preview"}) do
             if type(data[kind]) == "string" then state.marker_details[kind] = data[kind] end
