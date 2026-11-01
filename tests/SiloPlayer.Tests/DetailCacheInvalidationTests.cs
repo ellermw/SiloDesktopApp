@@ -176,6 +176,26 @@ public sealed class DetailCacheInvalidationTests
         GC.KeepAlive(revision);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RemoteContainerWithoutSeriesScopeRetiresDescendantWatchSnapshots(bool coalesced)
+    {
+        var (freshness, messenger, revision) = CreateFreshness();
+        var server = new FakeWatch { Position = 1200 };
+        var held = await freshness.ReadAsync("episode:show-s01e01",
+            server.Read("episode:show-s01e01", "series:show"), CancellationToken.None);
+        using var http = new HttpClient(new RejectingHandler());
+        var client = new SiloPlayer.Core.Api.SiloApiClient(http);
+        client.SetBaseUrl("https://container-scope.invalid");
+        client.SetProfile("profile");
+        messenger.Send(new MediaStateInvalidated(client.CaptureContext(),
+            new HashSet<string>(["series:show-S01"]), new HashSet<string>(), RefreshDetails: coalesced));
+
+        Assert.False(freshness.IsCurrent(held));
+        GC.KeepAlive(revision);
+    }
+
     [Fact]
     public async Task ReplayRightAfterCloseReadsTheServerOnlyAfterTheFinalSave()
     {

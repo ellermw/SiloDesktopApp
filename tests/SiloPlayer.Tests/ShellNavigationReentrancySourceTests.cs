@@ -21,6 +21,30 @@ public sealed class ShellNavigationReentrancySourceTests
         Assert.Contains("if (_settingsSidebarSynchronizationQueued) return;", queue);
     }
 
+    [Fact]
+    public void ReconnectKeepsHealthyDetailsButStillSchedulesDeferredShellHydrationAndRetriesFailedRoutes()
+    {
+        var source = ReadRepoFile("src", "SiloPlayer", "MainWindow.xaml.cs").ReplaceLineEndings("\n");
+        var catchUp = MethodBody(source, "private void OnReadCatchUpRequested(");
+        var detailStart = catchUp.IndexOf("if (ContentFrame.Content is ItemDetailPage)", StringComparison.Ordinal);
+        Assert.True(detailStart >= 0);
+        var detailBranch = MethodBody(catchUp[detailStart..], "if (ContentFrame.Content is ItemDetailPage)");
+        Assert.Contains("_pendingDetailCatchUp = true;", detailBranch);
+        Assert.Contains("ApplyPendingAccessRefresh();", detailBranch);
+
+        var apply = MethodBody(source, "private void ApplyPendingAccessRefresh(");
+        Assert.Contains("!_pendingAccessRefresh && !_pendingDetailCatchUp", apply);
+        Assert.Contains("PlayerState.Expanded or PlayerState.Fullscreen", apply);
+        Assert.Contains("var preserveDetail = !_pendingAccessRefresh", apply);
+        Assert.Contains("detail.ViewModel.Item != null", apply);
+        Assert.Contains("detail.ViewModel.FailureKind == DetailFailureKind.None", apply);
+        Assert.Contains("if (!preserveDetail) ShowMainNavigation();", apply);
+        Assert.Contains("LoadShellNavigationAsync(shellKey, token)", apply);
+        Assert.Contains("RefreshUserNavigationCapabilitiesAsync(shellKey, token)", apply);
+        Assert.Contains("if (!preserveDetail)\n            TryShellAction(\"access_active_route\"", apply);
+        Assert.Contains("_navigationService.RefreshCurrentEntry()", apply);
+    }
+
     private static string MethodBody(string source, string signature)
     {
         var start = source.IndexOf(signature, StringComparison.Ordinal);

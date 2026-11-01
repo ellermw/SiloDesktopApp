@@ -8,9 +8,10 @@ namespace SiloPlayer.Services;
 /// <summary>Owns captured realtime invalidations until bounded UI dispatch.</summary>
 public sealed class RealtimeMediaStateRefresh : IDisposable
 {
-    private readonly SiloApiClient _client;
+    private readonly Func<ApiRequestContext> _captureContext;
+    private readonly Func<ApiRequestContext, bool> _isCurrentContext;
     private readonly Action<Action> _enqueue;
-    private readonly IMessenger _messenger;
+    private readonly Action<MediaStateInvalidated> _publish;
     private readonly TimeProvider _time;
     private readonly object _gate = new();
     private readonly HashSet<string> _items = new(StringComparer.Ordinal);
@@ -25,16 +26,31 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
 
     public RealtimeMediaStateRefresh(SiloApiClient client, Action<Action> enqueue,
         IMessenger? messenger = null, TimeProvider? timeProvider = null)
+        : this(client.CaptureContext, client.IsCurrentContext, enqueue,
+            message => (messenger ?? WeakReferenceMessenger.Default).Send(message), timeProvider) { }
+
+    // A mounted detail uses the same bounded batching for local progress, but
+    // delivers only to itself: the original local message already invalidated caches.
+    internal RealtimeMediaStateRefresh(CatalogApi catalog, Action<Action> enqueue,
+        Action<MediaStateInvalidated> publish, TimeProvider? timeProvider = null)
+        : this(catalog.CaptureContext, catalog.IsCurrentContext, enqueue, publish, timeProvider) { }
+
+    private RealtimeMediaStateRefresh(Func<ApiRequestContext> captureContext,
+        Func<ApiRequestContext, bool> isCurrentContext, Action<Action> enqueue,
+        Action<MediaStateInvalidated> publish, TimeProvider? timeProvider)
     {
-        _client = client; _enqueue = enqueue;
-        _messenger = messenger ?? WeakReferenceMessenger.Default;
+        _captureContext = captureContext; _isCurrentContext = isCurrentContext;
+        _enqueue = enqueue; _publish = publish;
         _time = timeProvider ?? TimeProvider.System;
     }
+
+    internal void Invalidate(MediaStateInvalidated message) =>
+        Queue(message.Context, message.ContentIds.ToArray(), message.SeriesIds.ToArray(), message.CatchUp);
 
     public void ReceiveRealtime(string channel, string eventName, JsonElement data)
     {
         // Capture before any dispatcher work. The payload never outlives its JSON owner.
-        var context = _client.CaptureContext();
+        var context = _captureContext();
         if (channel != "user_state" || eventName != "user_state.changed" || data.ValueKind != JsonValueKind.Object
             || Text(data, "change") is not ("watched" or "progress")
             || Text(data, "content_id") is not { Length: > 0 } id
@@ -58,14 +74,14 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
         {
             lock (_gate)
             {
-                if (_disposed || epoch != _epoch || !_client.IsCurrentContext(context)) return;
+                if (_disposed || epoch != _epoch || !_isCurrentContext(context)) return;
                 if (_context != context)
                 {
                     ClearPending();
                     _context = context;
                 }
                 // Immediately protect prefetched /watch and detail reads. No scalar patching.
-                _messenger.Send(new MediaStateInvalidated(context, items.ToHashSet(StringComparer.Ordinal),
+                _publish(new MediaStateInvalidated(context, items.ToHashSet(StringComparer.Ordinal),
                     series.ToHashSet(StringComparer.Ordinal), catchUp, RefreshDetails: false));
                 if (_items.Count == 0 && _series.Count == 0 && !_catchUp)
                     _deadline = _time.GetUtcNow() + TimeSpan.FromSeconds(1);
@@ -94,7 +110,7 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
             var message = new MediaStateInvalidated(context, _items.ToHashSet(StringComparer.Ordinal),
                 _series.ToHashSet(StringComparer.Ordinal), _catchUp);
             ClearPending();
-            if (_client.IsCurrentContext(context)) _messenger.Send(message);
+            if (_isCurrentContext(context)) _publish(message);
         }
     }
 

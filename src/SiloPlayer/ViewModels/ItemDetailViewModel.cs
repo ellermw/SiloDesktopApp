@@ -7,6 +7,7 @@ using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
+using SiloPlayer.Services;
 
 namespace SiloPlayer.ViewModels;
 
@@ -24,6 +25,9 @@ public partial class ItemDetailViewModel : ObservableObject,
     private long _episodesLoadGeneration;
     private long _watchedStateGeneration;
     private bool _stateRefreshActive = true;
+    private readonly SynchronizationContext? _stateContext = SynchronizationContext.Current;
+    private readonly object _remoteStateGate = new();
+    private readonly RealtimeMediaStateRefresh _localProgressRefresh;
     private Task? _remoteStateRefresh;
     private MediaStateInvalidated? _pendingRemoteState;
     private MediaStateInvalidated? _activeRemoteState;
@@ -49,6 +53,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         _catalogApi = catalogApi;
         _detailPrefetchCache = detailPrefetchCache;
+        _localProgressRefresh = new(catalogApi, EnqueueStateRefresh, Receive);
         // F4: subscribe to media-surface changes so if the same item is
         // favorited / watchlisted / watched from another surface (context
         // menu on a poster card, etc.), this VM reflects it immediately.
@@ -89,7 +94,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         _detailPrefetchCache.Invalidate(message.ContentId);
         if (message.Kind == MediaSurfaceChangeKind.PlaybackProgress)
         {
-            Receive(StateInvalidation(message));
+            if (_stateRefreshActive) _localProgressRefresh.Invalidate(StateInvalidation(message));
             return;
         }
         if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared)
@@ -138,24 +143,47 @@ public partial class ItemDetailViewModel : ObservableObject,
     /// <summary>Refresh retained state without replacing the detail or changing playback/room intent.</summary>
     public Task RefreshMediaStateAsync(MediaStateInvalidated message)
     {
-        if (!_stateRefreshActive || !_catalogApi.IsCurrentContext(message.Context)) return Task.CompletedTask;
-        if (Item is not { } item)
+        if (_stateContext != null && !ReferenceEquals(SynchronizationContext.Current, _stateContext))
         {
-            if (_loadCts is { IsCancellationRequested: false })
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _stateContext.Post(async _ =>
             {
-                _initialRemoteState = MergeState(_initialRemoteState, message);
-                ++_initialStateRevision;
-            }
-            return Task.CompletedTask;
+                try { await RefreshMediaStateCoreAsync(message); completion.TrySetResult(); }
+                catch (Exception ex) { completion.TrySetException(ex); }
+            }, null);
+            return completion.Task;
         }
-        if (!IsRelatedState(message, item)) return Task.CompletedTask;
-        if (_remoteStateReadContext is { } reading && reading != message.Context) _remoteStateReadCts?.Cancel();
-        if (!message.RefreshDetails) return Task.CompletedTask;
-        // A still-owned snapshot finishes even when another sweep is due.
-        // Retain its scope in the trailing work until all of its reads settle.
-        _pendingRemoteState = MergeState(_pendingRemoteState, MergeState(_activeRemoteState, message));
-        if (_remoteStateRefresh is not { IsCompleted: false }) _remoteStateRefresh = RefreshRemoteStateLoopAsync();
-        return _remoteStateRefresh;
+        return RefreshMediaStateCoreAsync(message);
+    }
+
+    private Task RefreshMediaStateCoreAsync(MediaStateInvalidated message)
+    {
+        lock (_remoteStateGate)
+        {
+            if (!_stateRefreshActive || !_catalogApi.IsCurrentContext(message.Context)) return Task.CompletedTask;
+            if (Item is not { } item)
+            {
+                if (_loadCts is { IsCancellationRequested: false })
+                {
+                    _initialRemoteState = MergeState(_initialRemoteState, message);
+                    ++_initialStateRevision;
+                }
+                return Task.CompletedTask;
+            }
+            if (!IsRelatedState(message, item)) return Task.CompletedTask;
+            if (_remoteStateReadContext is { } reading && reading != message.Context) _remoteStateReadCts?.Cancel();
+            if (!message.RefreshDetails) return Task.CompletedTask;
+            // A still-owned snapshot finishes even when another sweep is due.
+            // Retain its scope in the trailing work until all of its reads settle.
+            _pendingRemoteState = MergeState(_pendingRemoteState, MergeState(_activeRemoteState, message));
+            return _remoteStateRefresh ??= RefreshRemoteStateLoopAsync();
+        }
+    }
+
+    private void EnqueueStateRefresh(Action action)
+    {
+        if (_stateContext == null || ReferenceEquals(SynchronizationContext.Current, _stateContext)) action();
+        else _stateContext.Post(_ => action(), null);
     }
 
     private static MediaStateInvalidated MergeState(MediaStateInvalidated? earlier, MediaStateInvalidated later) =>
@@ -171,10 +199,23 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         // Yield so the owning task is assigned before a synchronous fixture/cache response completes.
         await Task.Yield();
-        while (_pendingRemoteState is { } message)
+        while (true)
         {
-            _pendingRemoteState = null;
-            _activeRemoteState = message;
+            MediaStateInvalidated message;
+            lock (_remoteStateGate)
+            {
+                if (_pendingRemoteState is not { } pending)
+                {
+                    // Retire ownership atomically with the empty-queue check.
+                    // A concurrent sender now starts a loop instead of losing a wakeup.
+                    _activeRemoteState = null;
+                    _remoteStateRefresh = null;
+                    return;
+                }
+                message = pending;
+                _pendingRemoteState = null;
+                _activeRemoteState = message;
+            }
             var item = Item;
             var libraryId = LibraryId;
             var selectedSeason = SelectedSeasonNumber;
@@ -184,9 +225,12 @@ public partial class ItemDetailViewModel : ObservableObject,
             bool Current() => _stateRefreshActive && ReferenceEquals(Item, item) && LibraryId == libraryId
                 && !ct.IsCancellationRequested && revision == Volatile.Read(ref _localStateGeneration)
                 && _catalogApi.IsCurrentContext(message.Context);
-            if (item == null || !Current() || !IsRelatedState(message, item)) continue;
-            _remoteStateReadCts = readOwner;
-            _remoteStateReadContext = message.Context;
+            lock (_remoteStateGate)
+            {
+                if (item == null || !Current() || !IsRelatedState(message, item)) continue;
+                _remoteStateReadCts = readOwner;
+                _remoteStateReadContext = message.Context;
+            }
             try
             {
                 // An echoed/other-device event must not retire the accepted
@@ -208,6 +252,7 @@ public partial class ItemDetailViewModel : ObservableObject,
                 if (!Current()) continue;
                 // A named series relates its aggregate seasons, not its other episode leaves.
                 var refreshEpisodes = Episodes.Count > 0 && (message.CatchUp || message.ContentIds.Contains(item.ContentId)
+                    || (!string.IsNullOrEmpty(item.SeriesId) && message.ContentIds.Contains(item.SeriesId))
                     || Seasons.Any(s => message.ContentIds.Contains(s.ContentId))
                     || Episodes.Any(e => message.ContentIds.Contains(e.ContentId)));
                 EpisodesResponse? episodes = null;
@@ -223,6 +268,17 @@ public partial class ItemDetailViewModel : ObservableObject,
                     item.PlaySeasonNumber = refreshed.PlaySeasonNumber;
                 }
                 IsWatched = item.UserData?.Played ?? false;
+                if (message.CatchUp)
+                {
+                    if (refreshed.UserState != null)
+                    {
+                        item.UserState = refreshed.UserState;
+                        IsFavorite = item.UserState.IsFavorite;
+                        InWatchlist = item.UserState.InWatchlist;
+                    }
+                    item.UserRating = refreshed.UserRating;
+                    UserRating = item.UserRating;
+                }
                 if (seasons != null)
                     foreach (var loaded in Seasons)
                         if (seasons.Seasons.FirstOrDefault(s => s.ContentId == loaded.ContentId) is { } fresh)
@@ -234,17 +290,21 @@ public partial class ItemDetailViewModel : ObservableObject,
                 OnPropertyChanged(nameof(Item));
                 if (seasons != null) OnPropertyChanged(nameof(Seasons));
                 if (episodes != null) OnPropertyChanged(nameof(Episodes));
+                if (message.CatchUp && _similarLoaded && Current()) await LoadSimilarAsync();
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Realtime detail-state refresh failed: {ex.Message}"); }
             finally
             {
-                if (ReferenceEquals(_remoteStateReadCts, readOwner))
+                lock (_remoteStateGate)
                 {
-                    _remoteStateReadCts = null;
-                    _remoteStateReadContext = null;
+                    if (ReferenceEquals(_remoteStateReadCts, readOwner))
+                    {
+                        _remoteStateReadCts = null;
+                        _remoteStateReadContext = null;
+                    }
+                    if (ReferenceEquals(_activeRemoteState, message)) _activeRemoteState = null;
                 }
-                if (ReferenceEquals(_activeRemoteState, message)) _activeRemoteState = null;
             }
         }
     }
@@ -253,10 +313,12 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         while (true)
         {
-            var pending = _pendingLocalProgressSave;
+            Task pending;
+            lock (_remoteStateGate) pending = _pendingLocalProgressSave;
             await pending.WaitAsync(ct);
             // A newer final save may have joined while this barrier waited.
-            if (ReferenceEquals(pending, _pendingLocalProgressSave)) return;
+            lock (_remoteStateGate)
+                if (ReferenceEquals(pending, _pendingLocalProgressSave)) return;
         }
     }
 
@@ -368,9 +430,12 @@ public partial class ItemDetailViewModel : ObservableObject,
             Interlocked.Increment(ref _watchedStateGeneration);
             Interlocked.Increment(ref _localStateGeneration);
             var settled = ProgressSaveSettledAsync(message.Persisted);
-            _pendingLocalProgressSave = _pendingLocalProgressSave.IsCompleted
-                ? settled : Task.WhenAll(_pendingLocalProgressSave, settled);
-            if (_activeRemoteState is { } active) _pendingRemoteState = MergeState(_pendingRemoteState, active);
+            lock (_remoteStateGate)
+            {
+                _pendingLocalProgressSave = _pendingLocalProgressSave.IsCompleted
+                    ? settled : Task.WhenAll(_pendingLocalProgressSave, settled);
+                if (_activeRemoteState is { } active) _pendingRemoteState = MergeState(_pendingRemoteState, active);
+            }
         }
         var episodeSpoilersChanged = false;
         foreach (var episode in Episodes.Where(episode => episode.ContentId == message.ContentId))
@@ -502,12 +567,16 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     public void CancelPendingLoads()
     {
-        _stateRefreshActive = false;
-        _pendingRemoteState = null;
-        _activeRemoteState = null;
-        _initialRemoteState = null;
-        _pendingLocalProgressSave = Task.CompletedTask;
-        _remoteStateReadCts?.Cancel();
+        _localProgressRefresh.Reset();
+        lock (_remoteStateGate)
+        {
+            _stateRefreshActive = false;
+            _pendingRemoteState = null;
+            _activeRemoteState = null;
+            _initialRemoteState = null;
+            _pendingLocalProgressSave = Task.CompletedTask;
+            _remoteStateReadCts?.Cancel();
+        }
         Interlocked.Increment(ref _watchedStateGeneration);
         Interlocked.Increment(ref _localStateGeneration);
         _loadCts?.Cancel();

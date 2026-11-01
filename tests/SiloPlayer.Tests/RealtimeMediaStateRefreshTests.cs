@@ -38,6 +38,26 @@ public sealed class RealtimeMediaStateRefreshTests
     }
 
     [Fact]
+    public void LocalProgressUsesTheSameDeadlineAndRetainsItsUnionedScope()
+    {
+        using var fixture = new Fixture();
+        var messages = new List<MediaStateInvalidated>();
+        using var local = new RealtimeMediaStateRefresh(new CatalogApi(fixture.Client),
+            action => action(), messages.Add, fixture.Clock);
+        for (var n = 0; n < 10; n++)
+        {
+            local.Invalidate(new(fixture.Client.CaptureContext(), new HashSet<string>(["episode-" + n]),
+                new HashSet<string>(["series-" + n])));
+            fixture.Clock.Advance(100);
+        }
+
+        var batch = Assert.Single(messages.Where(m => m.RefreshDetails));
+        Assert.Equal(10, batch.ContentIds.Count);
+        Assert.Equal(10, batch.SeriesIds.Count);
+        Assert.Empty(fixture.Messages); // local batching must not rebroadcast global invalidations
+    }
+
+    [Fact]
     public void InputQueuedAheadOfTheDueTimerCannotRetireTheDeadlineFlush()
     {
         using var fixture = new Fixture();

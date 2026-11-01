@@ -49,9 +49,7 @@ public static class DetailCacheInvalidation
     // A season id ("series:show-S01") without its series id cannot be matched
     // to episodes; treat it as affecting everything rather than nothing.
     private static string?[] ScopeOf(MediaSurfaceChanged message)
-        => message.ContentId.StartsWith("series:", StringComparison.Ordinal) && string.IsNullOrEmpty(message.SeriesId)
-            ? []
-            : WatchScope([message.ContentId], string.IsNullOrEmpty(message.SeriesId) ? [] : [message.SeriesId]);
+        => WatchScope([message.ContentId], string.IsNullOrEmpty(message.SeriesId) ? [] : [message.SeriesId]);
 
     // A named series relates aggregate detail state, not every episode's
     // playback position. Only an actual series/season container mutation
@@ -59,8 +57,10 @@ public static class DetailCacheInvalidation
     private static string?[] WatchScope(IEnumerable<string> contentIds, IEnumerable<string> seriesIds)
     {
         var items = contentIds.ToArray();
-        return (items.Any(id => id.StartsWith("series:", StringComparison.Ordinal))
-            ? items.Concat(seriesIds) : items).Cast<string?>().ToArray();
+        var series = seriesIds.Where(id => !string.IsNullOrEmpty(id)).ToArray();
+        var containerChanged = items.Any(id => id.StartsWith("series:", StringComparison.Ordinal));
+        if (containerChanged && series.Length == 0) return [];
+        return (containerChanged ? items.Concat(series) : items).Cast<string?>().ToArray();
     }
 
     // A player-close message arrives before its final write finishes. Clear

@@ -1432,6 +1432,7 @@ public sealed partial class MainWindow : Window
 
     private bool _navInitialized;
     private bool _pendingAccessRefresh;
+    private bool _pendingDetailCatchUp;
     private string? _hydratedShellKey;
     private bool _playerPrewarmed;
 
@@ -1466,9 +1467,14 @@ public sealed partial class MainWindow : Window
             _catalogApi.InvalidateFilterCache();
             _catalogApi.InvalidateRatingCapability();
             App.Services.GetRequiredService<ItemDetailPrefetchCache>().Clear();
-            // Keep the mounted detail and playback/room intents. Its retained
-            // state is refreshed by the captured, coalesced catch-up above.
-            if (ContentFrame.Content is ItemDetailPage) return;
+            // Keep healthy details mounted, but do not drop shell hydration
+            // (including when foreground playback defers it).
+            if (ContentFrame.Content is ItemDetailPage)
+            {
+                _pendingDetailCatchUp = true;
+                ApplyPendingAccessRefresh();
+                return;
+            }
             if (ContentFrame.Content is HomePage home && NavView.IsPaneVisible &&
                 _playerService.State is not (PlayerState.Expanded or PlayerState.Fullscreen))
             {
@@ -1494,10 +1500,15 @@ public sealed partial class MainWindow : Window
 
     private void ApplyPendingAccessRefresh()
     {
-        if (!_pendingAccessRefresh || !CanExposeAuthenticatedNavigation || !NavView.IsPaneVisible ||
+        if ((!_pendingAccessRefresh && !_pendingDetailCatchUp) || !CanExposeAuthenticatedNavigation || !NavView.IsPaneVisible ||
             _playerService.State is PlayerState.Expanded or PlayerState.Fullscreen) return;
+        // Access changes still remount the route. Reconnect alone preserves a
+        // healthy detail; a failed initial load needs the normal navigation retry.
+        var preserveDetail = !_pendingAccessRefresh && ContentFrame.Content is ItemDetailPage detail
+            && detail.ViewModel.Item != null && detail.ViewModel.FailureKind == DetailFailureKind.None;
         _pendingAccessRefresh = false;
-        ShowMainNavigation();
+        _pendingDetailCatchUp = false;
+        if (!preserveDetail) ShowMainNavigation();
         CancelShellHydration();
         _shellHydrationCts = new CancellationTokenSource();
         var shellKey = GetAuthenticatedShellKey();
@@ -1508,7 +1519,8 @@ public sealed partial class MainWindow : Window
         _ = RunShellWorkAsync("access_library_navigation", () => LoadShellNavigationAsync(shellKey, token));
         _ = RunShellWorkAsync("access_navigation_capabilities", () => RefreshUserNavigationCapabilitiesAsync(shellKey, token));
         // Foreground playback retains its surface and requests. Catch up the covered route when it becomes useful.
-        TryShellAction("access_active_route", () => _navigationService.RefreshCurrentEntry());
+        if (!preserveDetail)
+            TryShellAction("access_active_route", () => _navigationService.RefreshCurrentEntry());
     }
 
     public void ShowMainNavigation()
@@ -2382,6 +2394,7 @@ public sealed partial class MainWindow : Window
         BuildPluginApps([]);
         _sidebarPins = [];
         _hydratedShellKey = null;
+        _pendingDetailCatchUp = false;
         CancelShellHydration();
         ReleaseNotificationSubscription();
         _brandingLoadGate.Cancel();
