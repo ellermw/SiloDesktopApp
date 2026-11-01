@@ -36,7 +36,7 @@ internal static class PasswordSessionsNativeFixture
             .AddTransient(_ => new SettingsViewModel(api, new CatalogApi(client), authApi,
                 new HistoryImportApi(client), new WatchProvidersApi(client), auth, theme, settings,
                 new AccessibilityService(settings, theme))).BuildServiceProvider();
-        servicesField.SetValue(null, services);
+        servicesField.SetValue(null, new FixtureServices(services, (IServiceProvider)previous!));
         SettingsPage? page = null;
         try
         {
@@ -125,6 +125,10 @@ internal static class PasswordSessionsNativeFixture
     private static void Check(bool value, string message)
     {
         if (!value) throw new InvalidOperationException(message);
+    }
+    private sealed class FixtureServices(IServiceProvider primary, IServiceProvider fallback) : IServiceProvider
+    {
+        public object? GetService(Type type) => primary.GetService(type) ?? fallback.GetService(type);
     }
     private static void Invoke(SettingsPage page, string name, params object[] args)
         => typeof(SettingsPage).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, args);

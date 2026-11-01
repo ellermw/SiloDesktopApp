@@ -1,5 +1,17 @@
 # Current development — 1.2.517
 
+## Password session revocation — 2026-11-01 task handoff
+
+Task branch `codex/server-password-sessions` deliberately starts from the approved newer source `a15621a0d6d5960d6b31a620a23ae259d734dedb`, stamped **1.2.519**. This section is a task handoff, not a new release or installer receipt. Official server/WebUI reference is `63ef34b236b88dc77acca1a9a3ed90235377691f` (`internal/apiv2/account.go` and `web/src/pages/settings/AccountSettings.tsx`).
+
+Password settings now offer an unchecked **Sign out of other devices** checkbox only when the server advertises support and permits password changes. Requests omit the member unless selected; the server preserves this sign-in and API keys. Selection follows existing page/profile ownership and resets on reload, departure and success. Success feedback uses the captured request choice.
+
+Fresh synthetic verification for this source: focused account-password **29/29**, full unit suite **2813/2813**, successful self-contained Release `win-x64` app publish, and successful `password-sessions` native fixture checking actual visibility/default/toggle/payload/pending/reset/current-session behavior and compact wrapped layout. All .NET commands held `SiloOct18Build`; pinned mpv hash matched `engine.json`. Existing unit, app and native compiler warnings remain documented in the logs. Native `run.ps1` remains unchanged; the external task runner staged published references including `Updates`.
+
+Evidence: `D:/SiloPlayer/.codex-tmp/server-align-nov01/password/{focusedgreen2,fullmain,releaseapp,nativecontrols}` and `D:/SiloPlayer/.codex-tmp/server-align-nov01/task-a-report.md`. Owned publish: `.codex-tmp/password-releaseapp-client`, `SiloPlayer.dll` SHA256 `5F2C544FF5D67497A7C1B378D99EE54FF8F06AEB5A9CDEED1EC7536EA87B9CF2`. Tests/publish preceded the implementation commit `fdfa908a0651c14c2ea883252fa2ccc8301ef8ea`; their baseline HEAD receipts accompany the working-tree changes subsequently committed there. The final fixture-only service-resolution adjustment was verified by the native run.
+
+No release stamps changed, installer ran, installed player was controlled, real account was accessed, or release was published by this task. Live multi-device revocation and complete WebUI visual parity are outside this synthetic evidence. Parent task owns independent review and Beta PR delivery.
+
 ## Opt-in Beta update channel (PR #62)
 
 PR #62 adds Stable-default, opt-in Beta updates. The source is stamped **1.2.517**, with numeric AssemblyVersion/FileVersion **1.2.517.0**, in the app and update helper projects; the installer defaults match. This is a stable source identity, not a `1.2.523-beta.1` package. The PR base is `fdccad18` (abbreviated commit ID).

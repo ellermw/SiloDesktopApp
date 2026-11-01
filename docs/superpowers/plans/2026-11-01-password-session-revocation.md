@@ -20,10 +20,10 @@ Absent capability must omit the member even if selection is attempted. Unsupport
 
 ## Tasks
 
-- [ ] Add behavioral regressions to AccountPasswordTests for the review focus, observe missing feature failure under the build mutex.
-- [ ] Extend AccountPasswordCapability with SignOutOtherSessions; add optional supported opt-in serialization to AccountPasswordApi.ChangePasswordAsync while preserving existing callers.
-- [ ] Add CanSignOutOtherSessions and guarded SignOutOtherSessions selection, capture request before pending state, reset on deactivation/success, notify capability changes and preserve generation guards.
-- [ ] Add wrapped checkbox/help in SettingsPage XAML and synchronization/event handler in SettingsPage.AccountPassword.cs; disable pending selection.
-- [ ] Add dedicated PasswordSessionsNativeFixture and Program route `password-sessions` with synthetic service isolation, actual controls and layout assertions; leave shared run.ps1 untouched.
-- [ ] Run focused and full SiloPlayer.Tests, fresh Release publish and native fixture under mutex; inspect diff and record exact evidence/limits in task report and development handoff.
-- [ ] Commit assigned branch after successful relevant unit tests; parent performs independent review and remote delivery.
+- [x] Add behavioral regressions to AccountPasswordTests for the review focus, observe missing feature failure under the build mutex.
+- [x] Extend AccountPasswordCapability with SignOutOtherSessions; add optional supported opt-in serialization to AccountPasswordApi.ChangePasswordAsync while preserving existing callers.
+- [x] Add CanSignOutOtherSessions and guarded SignOutOtherSessions selection, capture request before pending state, reset on deactivation/success, notify capability changes and preserve generation guards.
+- [x] Add wrapped checkbox/help in SettingsPage XAML and synchronization/event handler in SettingsPage.AccountPassword.cs; disable pending selection.
+- [x] Add dedicated PasswordSessionsNativeFixture and Program route `password-sessions` with synthetic service isolation, actual controls and layout assertions; leave shared run.ps1 untouched.
+- [x] Run focused and full SiloPlayer.Tests, fresh Release publish and native fixture under mutex; inspect diff and record exact evidence/limits in task report and development handoff.
+- [x] Commit assigned branch after successful relevant unit tests; parent performs independent review and remote delivery.
