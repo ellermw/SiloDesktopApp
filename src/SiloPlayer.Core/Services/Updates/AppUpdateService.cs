@@ -102,10 +102,14 @@ public sealed partial class AppUpdateService(HttpClient http, string cacheDirect
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
             deadline.CancelAfter(TimeSpan.FromSeconds(12));
             var check = await new GitHubReleaseReader(http, timeProvider).ReadForChannelAsync(currentVersion, InstalledReleaseVersion, Channel, _lastCheck, deadline.Token).ConfigureAwait(false);
-            if (epoch != Volatile.Read(ref _channelEpoch)) return;
-            _lastCheck = check; lock(_cooldownGate)_rateLimitedUntil = null;
+            lock (_channelGate)
+            {
+                if (epoch != _channelEpoch) return;
+                _lastCheck = check;
+                Interlocked.Exchange(ref _lastSuccessfulCheckStamp, System.Diagnostics.Stopwatch.GetTimestamp());
+            }
+            lock(_cooldownGate)_rateLimitedUntil = null;
             var release = check.Release;
-            Interlocked.Exchange(ref _lastSuccessfulCheckStamp, System.Diagnostics.Stopwatch.GetTimestamp());
             var previous=State;
             var same = release is not null && previous.Release?.Version == release.Version && previous.Release.Tag == release.Tag && previous.Release.Sha256 == release.Sha256
                 && previous.Release.Size == release.Size && previous.Release.InstallerUrl == release.InstallerUrl

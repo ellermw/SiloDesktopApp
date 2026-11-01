@@ -502,6 +502,37 @@ public sealed class UpdateChannelTests : IDisposable
     }
 
     [Fact]
+    public async Task CancelingAChannelSwitchWhileItsOperationGateIsHeldRetiresValidatorsAndSuccessStamp()
+    {
+        using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")], Conditional = true };
+        using var http = new HttpClient(wire); var service = Create(http);
+        await service.SetChannelAsync(AppUpdateChannel.Beta); await service.CheckAsync();
+        var flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var cache = typeof(AppUpdateService).GetField("_lastCheck", flags)!;
+        var stamp = typeof(AppUpdateService).GetField("_lastSuccessfulCheckStamp", flags)!;
+        var operation = (SemaphoreSlim)typeof(AppUpdateService).GetField("_operation", flags)!.GetValue(service)!;
+        Assert.NotNull(cache.GetValue(service)); Assert.True((long)stamp.GetValue(service)! > 0);
+        await operation.WaitAsync();
+        try
+        {
+            using var stop = new CancellationTokenSource();
+            var changing = service.SetChannelAsync(AppUpdateChannel.Stable, stop.Token);
+            Assert.False(changing.IsCompleted);
+            stop.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => changing);
+            Assert.False(service.IsChangingChannel); Assert.Equal(AppUpdateChannel.Stable, service.Channel);
+            Assert.Null(cache.GetValue(service)); Assert.Equal(0L, (long)stamp.GetValue(service)!);
+            Assert.Null(service.State.Release); Assert.False(service.ShouldInstallOnExit);
+        }
+        finally { operation.Release(); }
+        var before = wire.Requests.Count;
+        await service.CheckAsync();
+        Assert.Null(service.State.Error);
+        Assert.Single(wire.Requests.Skip(before));
+        Assert.Null(wire.Requests[before].ETag);
+    }
+
+    [Fact]
     public async Task LatestSelectionWinsWhenTwoChannelChangesWaitBehindAnOldCheck()
     {
         using var wire = new Wire { Catalog = [Release("1.2.518-beta.12")] };

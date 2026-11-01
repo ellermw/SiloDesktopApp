@@ -1,6 +1,6 @@
 param([int]$ParentPid, [long]$ParentStartTicks, [string]$Version, [string]$Sha256,
     [long]$ExpectedSize, [string]$AppPath, [switch]$Restart, [switch]$VerifyOnly, [string]$ValidationRoot, [string]$HandoffToken, [switch]$ValidateExitGate,
-    [string]$InstallRoot)
+    [string]$InstallRoot, [string]$ReleaseTag, [string]$InstallerUrl)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version 2
 $root=$null; $gate=$null; $gateOwned=$false; $packageStream=$null; $failureState='failed'
@@ -73,6 +73,67 @@ function New-UpdateSetupStartInfo([string]$Package,[string]$AppDirectory,[string
     $start.Arguments='/SILENT /SUPPRESSMSGBOXES /SP- /NORESTART /NOCLOSEAPPLICATIONS /NOFORCECLOSEAPPLICATIONS /NORESTARTAPPLICATIONS /DIR="'+$AppDirectory+'" /LOG="'+$InstallerLog+'"'
     return $start
 }
+function Get-UpdateReleaseMetadata([string]$Tag) {
+    # The tag is validated by Confirm-UpdateReleaseAuthority before constructing
+    # this pinned, unauthenticated endpoint. Never follow a redirect or a caller URL.
+    $uri=[uri]('https://api.github.com/repos/ellermw/SiloDesktopApp/releases/tags/'+$Tag)
+    $request=[Net.WebRequest]::CreateHttp($uri)
+    $request.AllowAutoRedirect=$false;$request.UseDefaultCredentials=$false;$request.Credentials=$null
+    $request.UserAgent='SiloDesktopApp-Updater';$request.Accept='application/vnd.github+json'
+    $request.Headers.Add('X-GitHub-Api-Version','2026-03-10')
+    $request.Timeout=12000;$request.ReadWriteTimeout=12000
+    $response=$null;$body=$null;$bytes=New-Object IO.MemoryStream
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    try {
+        $response=$request.GetResponse()
+        if($response.StatusCode -ne [Net.HttpStatusCode]::OK -or $response.ResponseUri -ne $uri -or
+            $response.ContentLength -gt 524288 -or ($response.ContentEncoding -and $response.ContentEncoding -ine 'identity')){
+            throw 'Could not establish full installer release authority.'
+        }
+        $body=$response.GetResponseStream();$buffer=New-Object byte[] 8192
+        while($true){
+            $remaining=12000-$clock.ElapsedMilliseconds
+            if($remaining -le 0){throw 'Full installer release authority timed out.'}
+            $body.ReadTimeout=[int]$remaining
+            $count=$body.Read($buffer,0,$buffer.Length)
+            if($count -eq 0){break}
+            if($bytes.Length+$count -gt 524288){throw 'Full installer release metadata is too large.'}
+            $bytes.Write($buffer,0,$count)
+        }
+        return ([Text.Encoding]::UTF8.GetString($bytes.ToArray()) | ConvertFrom-Json)
+    } finally {
+        if($body){$body.Dispose()};if($response){$response.Dispose()};$bytes.Dispose()
+    }
+}
+function Confirm-UpdateReleaseAuthority([string]$Tag,[string]$TargetVersion,[string]$Digest,[long]$Size,[string]$Url) {
+    $identity=[regex]::Match($Tag,'\Av(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-beta\.([1-9][0-9]*)|\.0)?\z')
+    if($Tag.Length -gt 64 -or !$identity.Success){throw 'Invalid full installer release tag.'}
+    $major=[int]$identity.Groups[1].Value;$minor=[int]$identity.Groups[2].Value;$patch=[int]$identity.Groups[3].Value
+    $beta=if($identity.Groups[4].Success){[int]$identity.Groups[4].Value}else{0}
+    if($major -gt 65534 -or $minor -gt 65534 -or $patch -gt 65534 -or $beta -gt 65534 -or ($beta -gt 0 -and $patch -lt 1)){
+        throw 'Unsupported full installer release identity.'
+    }
+    $numeric=if($beta -gt 0){[version]::new($major,$minor,($patch-1),$beta)}else{[version]::new($major,$minor,$patch,0)}
+    if($numeric.ToString(4) -cne $TargetVersion){throw 'Full installer tag and numeric version disagree.'}
+    $expectedUrl='https://github.com/ellermw/SiloDesktopApp/releases/download/'+$Tag+'/SiloInstaller-Windows-x64.exe'
+    if($Url -cne $expectedUrl){throw 'Full installer URL is outside the expected release.'}
+    $metadata=Get-UpdateReleaseMetadata $Tag
+    $published=[DateTimeOffset]::MinValue
+    if($metadata.tag_name -cne $Tag -or $metadata.draft -isnot [bool] -or $metadata.draft -or
+        $metadata.prerelease -isnot [bool] -or $metadata.prerelease -ne ($beta -gt 0) -or
+        ![DateTimeOffset]::TryParse($metadata.published_at,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::AssumeUniversal,[ref]$published)){
+        throw 'The independently fetched release identity is invalid.'
+    }
+    $assets=@($metadata.assets | Where-Object {$_.name -ceq 'SiloInstaller-Windows-x64.exe'})
+    if($assets.Count -ne 1){throw 'The release has no unique Windows x64 installer.'}
+    $asset=$assets[0]
+    if($asset.state -cne 'uploaded' -or ($asset.size -isnot [int] -and $asset.size -isnot [long]) -or
+        $asset.size -le 0 -or $asset.size -gt 536870912 -or $asset.size -ne $Size -or
+        $asset.browser_download_url -cne $expectedUrl -or $asset.digest -cnotmatch '\Asha256:[a-fA-F0-9]{64}\z' -or
+        $asset.digest.Substring(7) -ine $Digest){
+        throw 'The installer disagrees with independent release authority.'
+    }
+}
 try {
     $parsed=$null
     if (-not [version]::TryParse($Version,[ref]$parsed) -or $parsed.Build -lt 0 -or $parsed.Revision -lt 0 -or
@@ -111,6 +172,9 @@ try {
             throw 'The installed launcher does not support safe in-app full updates. Close Silo and run the full installer manually.'
         }
         $failureState='failed'
+        # VerifyOnly cannot launch setup. Real versioned handoffs must obtain
+        # fresh tag authority even when the caller supplied a matching local hash.
+        if(-not $VerifyOnly){Confirm-UpdateReleaseAuthority $ReleaseTag $Version $Sha256 $ExpectedSize $InstallerUrl}
     }
     if (-not $VerifyOnly) {
     if ($HandoffToken -notmatch '^[a-f0-9]{32}$') {throw 'Missing normal-close confirmation identity.'}

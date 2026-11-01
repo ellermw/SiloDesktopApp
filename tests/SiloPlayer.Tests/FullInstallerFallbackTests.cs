@@ -146,6 +146,36 @@ public sealed class FullInstallerFallbackTests
     }
 
     [Fact]
+    public async Task LinkedInstallationRootOrAncestorCannotThrowFromTheFullInstallerCapabilityProbe()
+    {
+        var sandbox = Path.Combine(Path.GetTempPath(), "silo-full-linked-" + Guid.NewGuid().ToString("N"));
+        var target = Path.Combine(sandbox, "target"); var link = Path.Combine(sandbox, "junction");
+        Directory.CreateDirectory(Path.Combine(target, "child"));
+        static string Quote(string value) => "'" + value.Replace("'", "''") + "'";
+        var start = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"))
+        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var arg in new[] { "-NoProfile", "-NonInteractive", "-Command",
+            $"$ErrorActionPreference='Stop'; New-Item -ItemType Junction -Path {Quote(link)} -Target {Quote(target)} | Out-Null" }) start.ArgumentList.Add(arg);
+        try
+        {
+            using var process = Process.Start(start)!;
+            var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30));
+            Assert.True(process.ExitCode == 0, await output + await error);
+            foreach (var root in new[] { link, Path.Combine(link, "child") })
+            {
+                Assert.Throws<InvalidDataException>(() => UpdateManifestValidation.EnsureOrdinaryPath(Path.Combine(root, "SiloPlayer.exe")));
+                Assert.False(UpdateInstallation.SupportsVersionedFullInstaller(root));
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(link)) Directory.Delete(link);
+            Directory.Delete(sandbox, true);
+        }
+    }
+
+    [Fact]
     public void FullScheduleRechecksRootLauncherBeforeAnyHelperHandoff()
     {
         var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Services", "WindowsAppUpdateInstaller.cs"));

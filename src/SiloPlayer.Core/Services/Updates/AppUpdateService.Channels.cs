@@ -29,6 +29,8 @@ public sealed partial class AppUpdateService
             Volatile.Write(ref _channel, (int)channel);
             Volatile.Write(ref _changingChannel, 1);
             // Withdraw consent/authority immediately, before waiting out old IO.
+            _lastCheck = null; // A validator belongs only to its old endpoint/representation.
+            Interlocked.Exchange(ref _lastSuccessfulCheckStamp, 0);
             Volatile.Write(ref _state, UncheckedChannelState());
         }
         NotifyChanged(State);
@@ -38,8 +40,6 @@ public sealed partial class AppUpdateService
             await StopAsync().ConfigureAwait(false);
             await _operation.WaitAsync(ct).ConfigureAwait(false); entered = true;
             if (epoch != Volatile.Read(ref _channelEpoch)) return;
-            _lastCheck = null; // A validator belongs only to its old endpoint/representation.
-            Interlocked.Exchange(ref _lastSuccessfulCheckStamp, 0);
             SetState(UncheckedChannelState(), expectedChannelEpoch: epoch);
         }
         finally

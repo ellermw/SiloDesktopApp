@@ -218,8 +218,16 @@ public sealed partial class MainWindow
         }
     }
 
-    private bool RequiresManualFullInstaller(AppUpdateState state) => state.RequiresFullInstaller
-        && App.Services.GetService<IAppUpdateInstaller>()?.CanScheduleFullInstaller != true;
+    private bool RequiresManualFullInstaller(AppUpdateState state)
+    {
+        if (!state.RequiresFullInstaller) return false;
+        try { return App.Services.GetService<IAppUpdateInstaller>()?.CanScheduleFullInstaller != true; }
+        catch (Exception ex)
+        {
+            LocalLog.AppendException("updates.txt", ex, "full_installer_capability_failed");
+            return true;
+        }
+    }
 
     private void RefreshUpdateDialog()
     {

@@ -20,7 +20,7 @@ public static class UpdateInstallation
             return Version.TryParse(System.Diagnostics.FileVersionInfo.GetVersionInfo(launcher).FileVersion, out var version)
                 && version >= new Version(1, 2, 517, 0);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or System.Security.SecurityException or System.ComponentModel.Win32Exception)
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException or ArgumentException or System.Security.SecurityException or System.ComponentModel.Win32Exception)
         {
             return false;
         }
