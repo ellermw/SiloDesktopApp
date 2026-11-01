@@ -369,7 +369,8 @@ public static class MediaItemMenu
                 detail.Type,
                 libraryId: null,
                 versions: detail.Versions,
-                folderPaths: detail.FolderPaths)
+                folderPaths: detail.FolderPaths,
+                seriesId: detail.SeriesId)
             {
                 XamlRoot = root,
             };
@@ -379,14 +380,9 @@ public static class MediaItemMenu
             {
                 if (!Current()) return;
                 var moved = dialog.AppliedContentId is {} target && target != item.ContentId;
-                App.Services.GetService<ItemDetailPrefetchCache>()?.Invalidate(item.ContentId);
                 if (moved && navigation?.Frame?.Content is ItemDetailPage current && current.ViewModel.Item?.ContentId == item.ContentId)
                     navigation.NavigateReplacingCurrentEntry<ItemDetailPage>(dialog.AppliedContentId);
                 else stateChanged?.Invoke();
-                WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
-                    MediaSurfaceChangeKind.ItemMetadataRefreshed,
-                    item.ContentId,
-                    item.SeriesId));
             }
         }
         catch (Exception ex)

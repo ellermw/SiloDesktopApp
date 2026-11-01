@@ -1,3 +1,5 @@
+using CommunityToolkit.Mvvm.Messaging;
+using SiloPlayer.Messaging;
 using System.Net;
 using System.Reflection;
 using System.Text.Json;
@@ -72,10 +74,13 @@ internal static class MatchSplitScopeNativeFixture
             }
             await MatchChoicesAsync(owner, wire);
             await MatchInventoryAsync(owner, wire);
+            await MatchTimeoutsAsync(owner, wire);
+            await UnreadableInventoryAsync(owner, wire);
             await MatchBlockedScopesAsync(owner, wire);
             await CuratorAsync(owner, wire, auth);
             await SplitAsync(owner, wire);
             await SplitRetirementAsync(owner, wire);
+            await SplitCommitRefreshAsync(owner, wire);
             await DepartureAsync(owner, wire, client, auth);
             Program.Log("PASS: actual Match and Split controls preserve library scope across search, choice, preview and commit; retire stale inventory/selection/results; enforce curator/admin and account/profile ownership.");
         }
@@ -105,6 +110,8 @@ internal static class MatchSplitScopeNativeFixture
         root.Children.Add(surface); await Task.Delay(120); Check(surface.IsLoaded, "Card was not loaded");
         void Bind(MediaItem value) { if (surface is PosterCard p) p.MediaItem = value; else ((LandscapeCard)surface).MediaItem = value; }
         var client = (SiloApiClient)SiloPlayer.App.Services.GetService(typeof(SiloApiClient))!; var changes = 0; var reads = wire.DetailReads;
+        var cache = (ItemDetailPrefetchCache)SiloPlayer.App.Services.GetService(typeof(ItemDetailPrefetchCache))!;
+        var cachedSource = await cache.GetAsync("fixture", default); var cachedTarget = await cache.GetAsync("fixture-target", default);
         if (!apply) wire.DetailGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
         var action = (Task)typeof(MediaItemMenu).GetMethod("ShowMatchItemDialogAsync", BindingFlags.Static | BindingFlags.NonPublic)!.Invoke(null,
             [item, new CatalogApi(client), SiloPlayer.App.Services.GetService(typeof(ToastService)), (Action)(() => changes++), root.XamlRoot, surface])!;
@@ -121,6 +128,11 @@ internal static class MatchSplitScopeNativeFixture
             Check(surface.IsLoaded, "Rebinding unexpectedly unloaded the card");
             wire.DetailGate?.TrySetResult(); wire.ApplyGate?.TrySetResult(); wire.DetailGate = wire.ApplyGate = null; await Task.Delay(180);
             Check(PopupMatch(root) == null && active?.HasAppliedMatch != true && changes == 0, "Loaded card rebind restored old Match authority/callback"); await action;
+            if (apply)
+            {
+                Check(!wire.ApplyWasCanceled, "Card rebind canceled a dispatched non-idempotent Match");
+                Check(!ReferenceEquals(cachedSource, await cache.GetAsync("fixture", default)) && !ReferenceEquals(cachedTarget, await cache.GetAsync("fixture-target", default)), "Rebound Match left source or replacement detail cached");
+            }
         }
         finally { wire.DetailGate?.TrySetResult(); wire.ApplyGate?.TrySetResult(); wire.DetailGate = wire.ApplyGate = null; PopupMatch(root)?.Hide(); await action; root.Children.Remove(surface); }
     }
@@ -239,6 +251,10 @@ internal static class MatchSplitScopeNativeFixture
     {
         wire.Files = [("1", 2), ("2", 2)]; var surface = new Grid(); root.Children.Add(surface); await Task.Delay(80);
         var method = typeof(MediaItemMenu).GetMethod("ShowMatchItemDialogAsync", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var cache = (ItemDetailPrefetchCache)SiloPlayer.App.Services.GetService(typeof(ItemDetailPrefetchCache))!;
+        var cachedSource = await cache.GetAsync("fixture", default); var cachedTarget = await cache.GetAsync("fixture-target", default);
+        var context = WireClient().CaptureContext(); var notice = new MatchNotice();
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(notice, (recipient, message) => ((MatchNotice)recipient).Context = message.Context);
         var changes = 0; if (!apply) wire.DetailGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
         var reads = wire.DetailReads;
         MatchItemDialog? active = null;
@@ -258,8 +274,14 @@ internal static class MatchSplitScopeNativeFixture
             Check(PopupMatch(root) == null, "Departed card read opened or retained an old Match dialog");
             Check(active?.HasAppliedMatch != true, "Departed card Apply publishes success using window authority");
             Check(changes == 0, "Departed card Apply invoked its old callback"); await action;
+            if (apply)
+            {
+                Check(!wire.ApplyWasCanceled, "Surface departure canceled a dispatched non-idempotent Match");
+                Check(!ReferenceEquals(cachedSource, await cache.GetAsync("fixture", default)) && !ReferenceEquals(cachedTarget, await cache.GetAsync("fixture-target", default)), "Departed Match left source or replacement detail cached");
+                Check(notice.Context == context, "Departed Match did not publish its captured context");
+            }
         }
-        finally { wire.DetailGate?.TrySetResult(); wire.ApplyGate?.TrySetResult(); wire.DetailGate = wire.ApplyGate = null; PopupMatch(root)?.Hide(); await action; root.Children.Remove(surface); }
+        finally { WeakReferenceMessenger.Default.UnregisterAll(notice); wire.DetailGate?.TrySetResult(); wire.ApplyGate?.TrySetResult(); wire.DetailGate = wire.ApplyGate = null; PopupMatch(root)?.Hide(); await action; root.Children.Remove(surface); }
         static SiloApiClient WireClient() => (SiloApiClient)SiloPlayer.App.Services.GetService(typeof(SiloApiClient))!;
     }
     private static async Task MutationReloadAsync(Grid root)
@@ -332,6 +354,66 @@ internal static class MatchSplitScopeNativeFixture
         finally { dialog.Hide(); await showing; }
         wire.Files = []; dialog = Match(owner); showing = dialog.ShowAsync(); await Task.Delay(140);
         try { await Until(() => Search(dialog).IsEnabled); await SearchAndChooseAsync(dialog); Check(!wire.Last("search").Body.TryGetProperty("library_id", out _), "Empty successful inventory invents a Match library"); }
+        finally { dialog.Hide(); await showing; }
+    }
+    private static async Task UnreadableInventoryAsync(FrameworkElement owner, Wire wire)
+    {
+        try
+        {
+            foreach (var inventory in new[] { "{\"items\":[]}", "{\"items\":[{\"id\":\"1\"},{\"id\":\"2\",\"library_id\":\"bad\"}]}" })
+            {
+                wire.InventoryJson = inventory; var match = Match(owner, 2); var showing = match.ShowAsync();
+                try
+                {
+                    await Until(() => All<Button>(match).Any(button => button.Name == "SearchButton" && button.IsEnabled)); await SearchAndChooseAsync(match);
+                    Check(!wire.Last("search").Body.TryGetProperty("library_id", out _), "Scoped Match without readable libraries lost server defaults");
+                }
+                finally { match.Hide(); await showing; }
+            }
+            wire.InventoryJson = "{\"items\":[{\"id\":\"1\",\"file_path\":\"/fixture/1.mkv\"},{\"id\":\"1\",\"file_path\":\"/fixture/1.mkv\"},{},{\"id\":\"2\",\"file_path\":\"/fixture/2.mkv\"}]}";
+            var split = Split(owner, 2); var splitting = split.ShowAsync();
+            try
+            {
+                await Until(() => All<CheckBox>(split).Any(check => AutomationProperties.GetName(check) == "Select /fixture/1.mkv"));
+                File(split, "1").IsChecked = true; await SearchAndChooseAsync(split);
+                Check(wire.Last("search").Body.GetProperty("library_id").GetString() == "2", "Split without readable libraries lost its page fallback");
+                await Until(() => split.IsPrimaryButtonEnabled);
+            }
+            finally { split.Hide(); await splitting; }
+        }
+        finally { wire.InventoryJson = null; }
+    }
+    private static async Task MatchTimeoutsAsync(FrameworkElement owner, Wire wire)
+    {
+        wire.Files = [("1", 2), ("2", 2)]; var dialog = Match(owner); var showing = dialog.ShowAsync();
+        try
+        {
+            await Until(() => All<Button>(dialog).Any(button => button.Name == "SearchButton" && button.IsEnabled)); wire.TimeoutSearch = true;
+            await (Task)typeof(MatchItemDialog).GetMethod("DoSearchAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!;
+            Check(All<TextBlock>(dialog).Any(text => text.Visibility == Visibility.Visible && text.Text.Contains("Error:")), "A non-lifetime search timeout is hidden");
+            wire.TimeoutSearch = false; await SearchAndChooseAsync(dialog); wire.TimeoutApply = true;
+            Invoke(All<Button>(dialog).Single(button => button.Name == "ApplyMatchButton"));
+            await Until(() => All<TextBlock>(dialog).Any(text => text.Visibility == Visibility.Visible && text.Text.Contains("Reload the item")));
+            Check(!dialog.HasAppliedMatch, "Timed-out Match reports success");
+        }
+        finally { wire.TimeoutSearch = wire.TimeoutApply = false; dialog.Hide(); await showing; }
+    }
+    private static async Task SplitCommitRefreshAsync(FrameworkElement owner, Wire wire)
+    {
+        wire.Files = [("1", 2), ("2", 2)]; var dialog = Split(owner); var showing = dialog.ShowAsync();
+        try
+        {
+            await Until(() => All<CheckBox>(dialog).Any(check => AutomationProperties.GetName(check) == "Select /fixture/1.mkv"));
+            File(dialog, "1").IsChecked = true;
+            All<CheckBox>(dialog).Single(box => box.Content as string == "Detach as unmatched (identify later)").IsChecked = true;
+            await Until(() => dialog.IsPrimaryButtonEnabled);
+            var commits = wire.Commits; var previews = wire.Count("split");
+            wire.Files = [("1", 2), ("2", 2), ("3", 2)];
+            Invoke(All<Button>(dialog).Single(button => button.Name == "PrimaryButton"));
+            await Until(() => All<TextBlock>(dialog).Any(text => text.Text.Contains("Item files changed.")));
+            await Until(() => wire.Count("split") > previews && dialog.IsPrimaryButtonEnabled);
+            Check(wire.Commits == commits && !dialog.HasSaved, "Inventory drift committed instead of regenerating the unmatched preview");
+        }
         finally { dialog.Hide(); await showing; }
     }
     private static async Task MatchBlockedScopesAsync(FrameworkElement owner, Wire wire)
@@ -409,6 +491,7 @@ internal static class MatchSplitScopeNativeFixture
             await SearchAndChooseAsync(dialog); await Until(() => dialog.IsPrimaryButtonEnabled);
             var commits = wire.Commits; wire.Files = [("1", 2), ("2", 7), ("3", 2)]; Invoke(All<Button>(dialog).Single(button => button.Name == "PrimaryButton"));
             await Until(() => !dialog.IsPrimaryButtonEnabled); await Task.Delay(100); Check(wire.Commits == commits && !dialog.HasSaved, "Split commits a changed-inventory preview");
+            Check(All<TextBlock>(dialog).Any(text => text.Text.Contains("Item files changed.")), "Candidate invalidation gives no recovery guidance");
         }
         finally { wire.SearchGate?.TrySetResult(); wire.SearchGate = null; wire.PreviewGate?.TrySetResult(); wire.PreviewGate = null; dialog.Hide(); await showing; }
     }
@@ -464,12 +547,16 @@ internal static class MatchSplitScopeNativeFixture
     private static void Invoke(Button button) => ((IInvokeProvider)new ButtonAutomationPeer(button).GetPattern(PatternInterface.Invoke)).Invoke();
     private static async Task Until(Func<bool> ready) { for (var i = 0; i < 250; i++) { if (ready()) return; await Task.Delay(20); } throw new TimeoutException("Identity scope controls did not settle"); }
     private static IEnumerable<T> All<T>(DependencyObject node) where T : DependencyObject { if (node is T value) yield return value; for (var i = 0; i < VisualTreeHelper.GetChildrenCount(node); i++) foreach (var child in All<T>(VisualTreeHelper.GetChild(node, i))) yield return child; }
+    private sealed class MatchNotice { public ApiRequestContext? Context; }
     private sealed class Services(IServiceProvider original, SiloApiClient client, AuthService auth) : IServiceProvider
-    { public object? GetService(Type type) => type == typeof(SiloApiClient) ? client : type == typeof(AuthService) ? auth : type == typeof(MediaMaintenanceApi) ? new MediaMaintenanceApi(client) : original.GetService(type); }
+    {
+        private readonly ItemDetailPrefetchCache _cache = new((id, _) => Task.FromResult(new MediaItemDetail { ContentId = id, Type = "movie", Title = "Fixture" }));
+        public object? GetService(Type type) => type == typeof(SiloApiClient) ? client : type == typeof(AuthService) ? auth : type == typeof(MediaMaintenanceApi) ? new MediaMaintenanceApi(client) : type == typeof(ItemDetailPrefetchCache) ? _cache : original.GetService(type);
+    }
     private sealed record Call(string Path, JsonElement Body);
     private sealed class Wire : HttpMessageHandler
     {
-        public (string Id, int Library)[] Files = []; public List<Call> Calls = []; public string Root = "/fixture"; public int FileReads, DetailReads; public bool DenyInventory, PaginatedInventory; public TaskCompletionSource? SearchGate, PreviewGate, ApplyGate, CommitGate, DetailGate, FileGate;
+        public (string Id, int Library)[] Files = []; public List<Call> Calls = []; public string Root = "/fixture"; public int FileReads, DetailReads; public string? InventoryJson; public bool DenyInventory, PaginatedInventory, TimeoutSearch, TimeoutApply, ApplyWasCanceled; public TaskCompletionSource? SearchGate, PreviewGate, ApplyGate, CommitGate, DetailGate, FileGate;
         public int Count(string suffix) => Calls.Count(call => call.Path.EndsWith("/" + suffix));
         public Call Last(string suffix) => Calls.Last(call => call.Path.EndsWith("/" + suffix));
         public int Commits => Calls.Count(call => call.Path.EndsWith("/split") && !call.Body.GetProperty("dry_run").GetBoolean());
@@ -480,15 +567,17 @@ internal static class MatchSplitScopeNativeFixture
             if (path.EndsWith("/files") && DenyInventory) { FileReads++; return new(HttpStatusCode.Forbidden) { Content = new StringContent("{\"error\":\"forbidden\"}") }; }
             if (path.EndsWith("/files"))
             {
-                FileReads++; var laterPage = request.RequestUri.Query.Contains("cursor="); if (FileGate != null) await FileGate.Task;
+                FileReads++;
+                if (InventoryJson != null) return new(HttpStatusCode.OK) { Content = new StringContent(InventoryJson) };
+                var laterPage = request.RequestUri.Query.Contains("cursor="); if (FileGate != null) await FileGate.Task;
                 var files = PaginatedInventory ? laterPage ? Files.Skip(200) : Files.Take(200) : Files;
                 json = JsonSerializer.Serialize(new { items = files.Select(file => new { id = file.Id, library_id = file.Library.ToString(), observed_root_path = Root, file_path = $"{Root}/{file.Id}.mkv" }), page = new { has_more = PaginatedInventory && !laterPage, next_cursor = "next" } });
             }
             else
             {
                 var body = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync(ct)); Calls.Add(new(path, body));
-                if (path.EndsWith("/search")) { if (SearchGate != null) await SearchGate.Task; json = "{\"candidates\":[{\"title\":\"Scoped candidate\",\"year\":2026,\"provider_ids\":{\"tmdb\":\"42\"}}]}"; }
-                else if (path.EndsWith("/apply")) { if (ApplyGate != null) await ApplyGate.Task; json = "{\"content_id\":\"fixture-target\",\"updated\":true}"; }
+                if (path.EndsWith("/search")) { if (TimeoutSearch) throw new TaskCanceledException("Synthetic search timeout"); if (SearchGate != null) await SearchGate.Task; json = "{\"candidates\":[{\"title\":\"Scoped candidate\",\"year\":2026,\"provider_ids\":{\"tmdb\":\"42\"}}]}"; }
+                else if (path.EndsWith("/apply")) { if (TimeoutApply) throw new TaskCanceledException("Synthetic apply timeout"); if (ApplyGate != null) await ApplyGate.Task; ApplyWasCanceled = ct.IsCancellationRequested; json = "{\"content_id\":\"fixture-target\",\"updated\":true}"; }
                 else { if (body.GetProperty("dry_run").GetBoolean() && PreviewGate != null) await PreviewGate.Task; if (!body.GetProperty("dry_run").GetBoolean() && CommitGate != null) await CommitGate.Task; json = JsonSerializer.Serialize(new { dry_run = body.GetProperty("dry_run").GetBoolean(), files_moved = body.GetProperty("file_ids").GetArrayLength(), target_content_id = "fixture-target", target_created = true, reattribution = new { progress_moved = 1, history_moved = 1, history_ambiguous = 0, downloads = 0 } }); }
             }
             return new(HttpStatusCode.OK) { Content = new StringContent(json) };

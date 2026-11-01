@@ -54,7 +54,7 @@ internal sealed class ItemLibraryScopePicker : StackPanel
         try
         {
             if (!_current()) throw new OperationCanceledException("Identity action owner changed.", _lifetime);
-            var files = await _api.GetFilesAsync(_context, _itemId, _lifetime);
+            var files = ItemLibraryScope.NormalizeFiles(await _api.GetFilesAsync(_context, _itemId, _lifetime));
             if (!_current()) throw new OperationCanceledException("Identity action owner changed.", _lifetime);
             var wasAvailable = _available; _available = true;
             var changed = State.ReplaceFiles(files);
@@ -75,7 +75,7 @@ internal sealed class ItemLibraryScopePicker : StackPanel
         foreach (var id in State.LibraryIds) _libraries.Items.Add(new ComboBoxItem { Content = $"Library {id}", Tag = id });
         _libraries.SelectedItem = _libraries.Items.OfType<ComboBoxItem>().FirstOrDefault(item => (int)item.Tag == State.LibraryId);
         _label.Visibility = _libraries.Visibility = State.AllowsChoice ? Visibility.Visible : Visibility.Collapsed;
-        _status.Text = !State.Loaded ? "Loading item libraries…" : State.NeedsChoice ? "Choose the library whose identity settings should be used." : !State.CanSearch ? "No readable item library is available in this scope." : State.LibraryIds.Count == 0 ? "No library is assigned. Server defaults will be used." : "";
+        _status.Text = !State.Loaded ? "Loading item libraries…" : State.NeedsChoice ? "Choose the library whose identity settings should be used." : !State.CanSearch ? "No readable item library is available in this scope." : State.LibraryIds.Count == 0 ? State.LibraryId is {} pageLibrary ? $"No inventory library is assigned. Page library {pageLibrary} will be used." : "No library is assigned. Server defaults will be used." : "";
         _status.Visibility = string.IsNullOrEmpty(_status.Text) ? Visibility.Collapsed : Visibility.Visible;
         _changing = false; SetEditing(_editing);
     }
