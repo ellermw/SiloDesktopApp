@@ -68,8 +68,8 @@ public sealed partial class ItemDetailPage
         if (admin) Add("View Play History", "history", async () => await new PlayHistoryDialog(item.ContentId) { XamlRoot = XamlRoot }.ShowAsync(), AuthorizationPolicy.IsActingAdmin);
         if (item.Type is "movie" or "episode" && AuthorizationPolicy.CanEditMarkers(auth))
             Add("Edit Markers", "tags", () => ShowItemActionAsync(item, new MarkerEditorDialog(item.ContentId)), AuthorizationPolicy.CanEditMarkers);
-        if (curate && (item.Type == "series" || item.Type == "movie" && item.Versions.Count > 1))
-            Add("Split Versions", "scissors", () => ShowItemActionAsync(item, new SplitVersionsDialog(item, ViewModel.LibraryId)), AuthorizationPolicy.CanCurateMetadata);
+        if (admin && (item.Type == "series" || item.Type == "movie" && item.Versions.Count > 1))
+            Add("Split Versions", "scissors", () => ShowItemActionAsync(item, new SplitVersionsDialog(item, ViewModel.LibraryId)), AuthorizationPolicy.IsActingAdmin);
         if (admin && currentCapabilities && _offerSeekPreviews)
             Add("Seek Previews", "gallery-horizontal", () => ShowItemActionAsync(item, new SeekPreviewsDialog(item.ContentId, item.Versions.ToDictionary(version => version.FileId.ToString(), version => string.IsNullOrWhiteSpace(version.FileName) ? "File " + version.FileId : version.FileName))), AuthorizationPolicy.IsActingAdmin);
         if (admin && (item.Type == "episode" || item.Type == "movie" && currentCapabilities && _offerMarkerDetection))
@@ -139,10 +139,15 @@ public sealed partial class ItemDetailPage
     private async Task ShowItemActionAsync(MediaItemDetail item, ItemScopedDialog dialog)
     {
         var client = App.Services.GetRequiredService<SiloApiClient>(); var context = client.CaptureContext();
-        if (!IsCurrentDetail(item.ContentId)) return;
-        dialog.BindNavigation(_navigationCts?.Token ?? default); dialog.XamlRoot = XamlRoot; await dialog.ShowAsync();
-        if (!dialog.HasSaved || !IsCurrentDetail(item.ContentId) || !client.IsCurrentContext(context)) return;
+        var auth = App.Services.GetRequiredService<AuthService>(); var session = auth.SessionGeneration; var userId = auth.CurrentUser?.Id;
+        var libraryId = ViewModel.LibraryId; var token = _navigationCts?.Token ?? default;
+        bool Current() => !token.IsCancellationRequested && IsCurrentDetail(item.ContentId) && ViewModel.LibraryId == libraryId
+            && client.IsCurrentContext(context) && auth.SessionGeneration == session && auth.CurrentUser?.Id == userId
+            && (dialog is not SplitVersionsDialog || AuthorizationPolicy.IsActingAdmin(auth));
+        if (!Current()) return;
+        dialog.BindNavigation(token); dialog.XamlRoot = XamlRoot; await dialog.ShowAsync();
+        if (!dialog.HasSaved || !Current()) return;
         await ViewModel.LoadCommand.ExecuteAsync(item.ContentId);
-        if (IsCurrentDetail(item.ContentId) && client.IsCurrentContext(context)) UpdateUI();
+        if (Current()) UpdateUI();
     }
 }

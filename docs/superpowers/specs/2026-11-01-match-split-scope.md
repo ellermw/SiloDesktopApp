@@ -1,0 +1,13 @@
+# Match and Split library lifecycle
+
+Approved Task C; desktop base a15621a0, source version 1.2.519. Official read-only source is 63ef34b236b88dc77acca1a9a3ed90235377691f; behavior introduced by cb73e114bd09ba0bc748a156f0f129b4bd12822e is present in current MatchItemDialog.tsx, SplitItemDialog.tsx and lib/itemLibraries.ts.
+
+Match search/apply accept library_id and require metadata curation. Item inventory /admin/items/{id}/files and Split require acting-admin (internal/apiv2/admin_catalog_split.go). Curators must retain Match without attempting admin inventory; Split must not claim curator authorization. Inventory file.library_id is a v2 ID string (positive integer), not the watch-detail version or a global first library. ItemLibraryPicker labels may fall back to the ID without requiring an admin library-list endpoint.
+
+Detail launches pass their current library. Admin Match loads complete item inventory, infers its single library, or requires an explicit item library choice. Search and Apply use the same captured library. Split infers one library shared by selected files, falls back to a valid page library, then requires a choice. Split request itself has no library_id; its candidate and accepted dry-run remain tied to the exact captured inventory, selected files and scope.
+
+Operation-boundary inventory revalidation and a visible Refresh libraries command retire candidates and previews on inventory changes, including changes that leave the same effective library. No steady background poll. Search responses, candidate callbacks, preview responses and mutation completion must validate captured revision, captured account/profile, curation/admin permission and navigation lifetime before UI/cache/navigation effects. Do not mutate shared detail records. A changed plan requires a fresh search/preview.
+
+Verification is synthetic only: focused regression tests, full unit suite, Release app publish, actual-dialog native fixture. Native fixtures use an in-memory handler and synthetic identities only. No installed player, installer, real metadata operation, publication, or version stamp change.
+
+Compatibility edge: a successfully empty inventory (or no valid inventory library IDs) keeps unscoped Match available, matching resolveMatchFolderID's zero-folder/default behavior. A failed inventory read is not an empty inventory and blocks search/apply. An explicitly scoped item that left that page library also remains blocked. Curators never call the admin-only inventory endpoint; their supplied scope or unscoped server resolution is preserved. This resolves the brief's absent/no-readable-library ambiguity against the pinned authoritative contract.

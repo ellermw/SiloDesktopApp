@@ -70,21 +70,32 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
         string itemId,
         ItemMatchSearchRequest request,
         CancellationToken ct = default)
+        => SearchMatchesAsync(client.CaptureContext(), itemId, request, ct);
+
+    public async Task<ItemMatchSearchResponse> SearchMatchesAsync(
+        ApiRequestContext context, string itemId, ItemMatchSearchRequest request, CancellationToken ct = default)
     {
         EnsureSecureBaseUrl();
-        return client.PostAsync<ItemMatchSearchResponse>(
+        RequireCurrent(context, ct);
+        var result = await client.SendRequestAsync<ItemMatchSearchResponse>(context, HttpMethod.Post,
             $"/api/v2/admin/items/{Uri.EscapeDataString(itemId)}/match/search",
             V2Json.Body(request),
             ct);
+        RequireCurrent(context, ct);
+        return result;
     }
 
-    public async Task<ItemMatchApplyResponse> ApplyMatchAsync(
+    public Task<ItemMatchApplyResponse> ApplyMatchAsync(
         string itemId,
         ItemMatchApplyRequest request,
         CancellationToken ct = default)
+        => ApplyMatchAsync(client.CaptureContext(), itemId, request, ct);
+
+    public async Task<ItemMatchApplyResponse> ApplyMatchAsync(
+        ApiRequestContext context, string itemId, ItemMatchApplyRequest request, CancellationToken ct = default)
     {
         EnsureSecureBaseUrl();
-        var context = client.CaptureContext();
+        RequireCurrent(context, ct);
         var result = await client.SendRequestWithoutRefreshAsync<ItemMatchApplyResponse>(context, HttpMethod.Post,
             $"/api/v2/admin/items/{Uri.EscapeDataString(itemId)}/match/apply",
             V2Json.Body(request),
@@ -92,6 +103,12 @@ public sealed class MediaMaintenanceApi(SiloApiClient client)
         ct.ThrowIfCancellationRequested();
         if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Match response authority changed.", ct);
         return result ?? new();
+    }
+
+    private void RequireCurrent(ApiRequestContext context, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Match owner changed.", ct);
     }
 
     public Task<MetadataRefreshReceipt> RefreshMetadataAsync(

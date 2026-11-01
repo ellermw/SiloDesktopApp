@@ -9,6 +9,7 @@ using Windows.UI;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.MediaMaintenance;
 using SiloPlayer.Core.Models.Playback;
+using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
 
 namespace SiloPlayer.Controls;
@@ -18,7 +19,18 @@ public sealed partial class MatchItemDialog : ContentDialog
     private readonly MediaMaintenanceApi _maintenanceApi;
     private readonly string _itemId;
     private readonly string _itemType;
-    private readonly int? _libraryId;
+    private readonly SiloApiClient _client;
+    private readonly AuthService _auth;
+    private readonly ApiRequestContext _context;
+    private readonly long _session;
+    private readonly string? _userId;
+    private readonly bool _inventory;
+    private readonly ItemLibraryScopePicker _scope;
+    private readonly CancellationTokenSource _lifetime = new();
+    private CancellationTokenRegistration _navigationRegistration;
+    private ItemLibraryScope.Scope _candidateScope;
+    private int _searchRevision;
+    private volatile bool _authorityRetired;
     private readonly List<ProviderIdInput> _providerIdInputs = [];
     private MatchCandidate? _selectedCandidate;
     private bool _searching;
@@ -45,8 +57,14 @@ public sealed partial class MatchItemDialog : ContentDialog
         _maintenanceApi = App.Services.GetRequiredService<MediaMaintenanceApi>();
         _itemId = itemId;
         _itemType = string.IsNullOrWhiteSpace(itemType) ? "item" : itemType.Trim().ToLowerInvariant();
-        _libraryId = libraryId;
+        _client = App.Services.GetRequiredService<SiloApiClient>();
+        _auth = App.Services.GetRequiredService<AuthService>();
+        _context = _client.CaptureContext(); _session = _auth.SessionGeneration; _userId = _auth.CurrentUser?.Id;
+        _inventory = AuthorizationPolicy.IsActingAdmin(_auth);
         this.InitializeComponent();
+        _scope = new(_client, _context, itemId, libraryId, split: false, inventory: _inventory, () => CanAct, _lifetime.Token);
+        LibraryScopeHost.Content = _scope; LibraryScopeHost.Visibility = _inventory ? Visibility.Visible : Visibility.Collapsed; _scope.Changed += RetireCandidates;
+        SearchButton.IsEnabled = false;
         EditorDialogPresentation.Configure(this, 512, new Thickness(24));
         var heading = new Grid();
         heading.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
@@ -60,8 +78,15 @@ public sealed partial class MatchItemDialog : ContentDialog
         ((StackPanel)SearchButton.Content).Children.Insert(0, WebUiIcon.Create("search", 16, (Brush)Application.Current.Resources["AccentForegroundBrush"]));
         foreach (var box in new[] { TitleBox, YearBox, ImdbIdBox, TmdbIdBox, TvdbIdBox, GenericTitleBox, GenericYearBox })
             ConfigureInput(box);
-        Opened += (_, _) => { EditorDialogPresentation.PlaceCornerClose(this, heading, close); UpdateViewport(); if (XamlRoot != null) XamlRoot.Changed += RootChanged; };
-        Closed += (_, _) => { if (XamlRoot != null) XamlRoot.Changed -= RootChanged; };
+        Opened += async (_, _) =>
+        {
+            _auth.UserChanged += AuthorityChanged; _auth.LoggedOut += AuthorityChanged;
+            EditorDialogPresentation.PlaceCornerClose(this, heading, close); UpdateViewport(); if (XamlRoot != null) XamlRoot.Changed += RootChanged;
+            try { await _scope.RefreshAsync(); } catch (OperationCanceledException) { } catch (Exception ex) { EmptyText.Text = ex.Message; EmptyText.Visibility = Visibility.Visible; }
+            UpdateCommands();
+        };
+        Closing += (_, args) => { if (_applying) args.Cancel = true; };
+        Closed += (_, _) => { _lifetime.Cancel(); _navigationRegistration.Dispose(); _auth.UserChanged -= AuthorityChanged; _auth.LoggedOut -= AuthorityChanged; if (XamlRoot != null) XamlRoot.Changed -= RootChanged; };
         SizeChanged += (_, _) => UpdateViewport();
 
         CurrentTitleText.Text = string.IsNullOrWhiteSpace(title) ? "Untitled" : title;
@@ -88,11 +113,36 @@ public sealed partial class MatchItemDialog : ContentDialog
         PopulateLocalMedia(versions, folderPaths, _itemType == "series");
     }
 
+    private bool CanAct => !_authorityRetired && !_lifetime.IsCancellationRequested && _client.IsCurrentContext(_context)
+        && _auth.SessionGeneration == _session && _auth.CurrentUser?.Id == _userId && AuthorizationPolicy.CanCurateMetadata(_auth)
+        && (!_inventory || AuthorizationPolicy.IsActingAdmin(_auth));
+    public void BindNavigation(CancellationToken token)
+    {
+        _navigationRegistration.Dispose();
+        _navigationRegistration = token.Register(() => { _lifetime.Cancel(); DispatcherQueue.TryEnqueue(() => { RetireCandidates(); if (!_applying) Hide(); }); });
+    }
+    private void AuthorityChanged()
+    {
+        if (!CanAct) _authorityRetired = true;
+        DispatcherQueue.TryEnqueue(() => { if (!CanAct) RetireCandidates(); UpdateCommands(); });
+    }
+    private void RetireCandidates()
+    {
+        _searchRevision++; _selectedCandidate = null; ResultsPanel.Children.Clear(); ResultsSection.Visibility = Visibility.Collapsed;
+        ApplyMatchButton.Visibility = ApplyMatchFooter.Visibility = Visibility.Collapsed; ApplyStatusText.Visibility = Visibility.Collapsed; UpdateCommands(); UpdateViewport();
+    }
+    private void UpdateCommands()
+    {
+        SearchButton.IsEnabled = CanAct && _scope.CanSearch && !_searching && !_applying;
+        ApplyMatchButton.IsEnabled = CanAct && _selectedCandidate != null && _scope.IsCurrent(_candidateScope) && !_applying && !_searching;
+        _scope.SetEditing(CanAct && !_applying);
+    }
+
     private async void ApplyMatch_Click(object sender, RoutedEventArgs args)
     {
-        if (_selectedCandidate == null || _applying)
+        if (_selectedCandidate == null || _applying || _searching || !CanAct || !_scope.IsCurrent(_candidateScope))
             return;
-        var selected = _selectedCandidate;
+        var selected = _selectedCandidate; var scope = _candidateScope;
         _applying = true;
         ApplyMatchButton.IsEnabled = false;
         SearchButton.IsEnabled = false;
@@ -102,17 +152,24 @@ public sealed partial class MatchItemDialog : ContentDialog
         ApplyStatusText.Visibility = Visibility.Visible;
         try
         {
-            var result = await _maintenanceApi.ApplyMatchAsync(_itemId, new ItemMatchApplyRequest
+            UpdateCommands();
+            await _scope.RefreshAsync();
+            if (!CanAct || !_scope.IsCurrent(scope) || _selectedCandidate != selected) return;
+            var result = await _maintenanceApi.ApplyMatchAsync(_context, _itemId, new ItemMatchApplyRequest
             {
                 ProviderIds = selected.ProviderIds,
-            });
+                LibraryId = scope.LibraryId,
+            }, _lifetime.Token);
+            if (!CanAct || !_scope.IsCurrent(scope) || _selectedCandidate != selected) return;
             AppliedContentId = string.IsNullOrWhiteSpace(result.ContentId) ? _itemId : result.ContentId;
             HasAppliedMatch = true;
             App.Services.GetService<SiloPlayer.Services.ToastService>()?.Success("Match applied");
-            Hide();
+            _applying = false; Hide();
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
+            if (!CanAct || !_scope.IsCurrent(scope)) return;
             ApplyStatusText.Text = $"Match could not be applied: {ex.Message}";
             ApplyStatusText.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
             ApplyMatchButton.Content = "Apply Match";
@@ -121,7 +178,8 @@ public sealed partial class MatchItemDialog : ContentDialog
         finally
         {
             _applying = false;
-            SearchButton.IsEnabled = !_searching;
+            ApplyMatchButton.Content = "Apply Match"; UpdateCommands();
+            if (_lifetime.IsCancellationRequested) Hide();
         }
     }
 
@@ -552,7 +610,10 @@ public sealed partial class MatchItemDialog : ContentDialog
 
     private async Task DoSearchAsync()
     {
-        if (_searching || _applying) return;
+        if (_searching || _applying || !CanAct) return;
+        try { await _scope.RefreshAsync(); } catch (OperationCanceledException) { return; } catch (Exception ex) { EmptyText.Text = ex.Message; EmptyText.Visibility = Visibility.Visible; return; }
+        if (!CanAct || !_scope.CanSearch || _searching || _applying) return;
+        var scope = _scope.State.Capture(); var revision = ++_searchRevision;
         var isVideo = IsVideoMatchType(_itemType);
         var title = (isVideo ? TitleBox.Text : GenericTitleBox.Text).Trim();
         var yearText = (isVideo ? YearBox.Text : GenericYearBox.Text).Trim();
@@ -586,10 +647,12 @@ public sealed partial class MatchItemDialog : ContentDialog
                 TmdbId = tmdbId.Length > 0 ? tmdbId : null,
                 TvdbId = tvdbId.Length > 0 ? tvdbId : null,
                 ProviderIds = providerIds,
-                LibraryId = _libraryId,
+                LibraryId = scope.LibraryId,
             };
 
-            var response = await _maintenanceApi.SearchMatchesAsync(_itemId, request);
+            var response = await _maintenanceApi.SearchMatchesAsync(_context, _itemId, request, _lifetime.Token);
+            await _scope.RefreshAsync();
+            if (!CanAct || !_scope.IsCurrent(scope) || revision != _searchRevision) return;
             TruncatedText.Visibility = response.Truncated ? Visibility.Visible : Visibility.Collapsed;
 
             if (response.Candidates.Count == 0)
@@ -602,12 +665,14 @@ public sealed partial class MatchItemDialog : ContentDialog
                 ResultsSection.Visibility = Visibility.Visible;
                 foreach (var candidate in response.Candidates)
                 {
-                    ResultsPanel.Children.Add(BuildCandidateRow(candidate));
+                    ResultsPanel.Children.Add(BuildCandidateRow(candidate, scope, revision));
                 }
             }
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex)
         {
+            if (!CanAct || revision != _searchRevision) return;
             EmptyText.Text = $"Error: {ex.Message}";
             EmptyText.Visibility = Visibility.Visible;
         }
@@ -616,12 +681,12 @@ public sealed partial class MatchItemDialog : ContentDialog
             _searching = false;
             LoadingRing.IsActive = false;
             LoadingRing.Visibility = Visibility.Collapsed;
-            SearchButton.IsEnabled = true;
+            UpdateCommands();
             SearchButtonText.Text = "Search";
         }
     }
 
-    private FrameworkElement BuildCandidateRow(MatchCandidate candidate)
+    private FrameworkElement BuildCandidateRow(MatchCandidate candidate, ItemLibraryScope.Scope scope, int revision)
     {
         var matchedFallbackTitle = candidate.TitleIsFallback &&
             !string.IsNullOrWhiteSpace(candidate.MatchedTitle) &&
@@ -640,6 +705,7 @@ public sealed partial class MatchItemDialog : ContentDialog
             Padding = new Thickness(12),
             CornerRadius = new CornerRadius(8)
         };
+        AutomationProperties.SetName(rowBtn, displayTitle);
 
         var root = new Grid { ColumnSpacing = 12 };
         root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(64) });
@@ -773,8 +839,11 @@ public sealed partial class MatchItemDialog : ContentDialog
         rowBtn.Content = root;
 
         var capturedCandidate = candidate;
-        rowBtn.Click += (_, _) =>
+        rowBtn.Click += async (_, _) =>
         {
+            if (_applying || _searching || !CanAct || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
+            try { await _scope.RefreshAsync(); } catch (OperationCanceledException) { return; } catch (Exception) { return; }
+            if (_applying || _searching || !CanAct || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
             // Deselect all, select this one
             foreach (var child in ResultsPanel.Children)
             {
@@ -787,11 +856,11 @@ public sealed partial class MatchItemDialog : ContentDialog
             rowBtn.Background = (SolidColorBrush)Application.Current.Resources["AccentBackgroundBrush"];
             rowBtn.BorderBrush = (SolidColorBrush)Application.Current.Resources["AccentBrush"];
             _selectedCandidate = capturedCandidate;
-            if (_applying) return;
+            _candidateScope = scope;
             ApplyStatusText.Visibility = Visibility.Collapsed;
             ApplyMatchButton.Visibility = Visibility.Visible;
             ApplyMatchFooter.Visibility = Visibility.Visible;
-            ApplyMatchButton.IsEnabled = true;
+            UpdateCommands();
             ApplyMatchButton.Content = "Apply Match";
             UpdateViewport();
         };

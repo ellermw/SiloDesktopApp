@@ -332,9 +332,13 @@ public static class MediaItemMenu
     {
         if (root == null) return;
 
+        var client = App.Services.GetRequiredService<SiloApiClient>(); var context = client.CaptureContext();
+        var auth = App.Services.GetRequiredService<AuthService>(); var session = auth.SessionGeneration; var userId = auth.CurrentUser?.Id;
+        bool Current() => client.IsCurrentContext(context) && auth.SessionGeneration == session && auth.CurrentUser?.Id == userId && AuthorizationPolicy.CanCurateMetadata(auth);
         try
         {
             var detail = await catalog.GetItemDetailAsync(item.ContentId);
+            if (!Current()) return;
             var dialog = new MatchItemDialog(
                 detail.ContentId,
                 detail.Title,
@@ -349,6 +353,7 @@ public static class MediaItemMenu
             await dialog.ShowAsync();
             if (dialog.HasAppliedMatch)
             {
+                if (!Current()) return;
                 var moved = dialog.AppliedContentId is {} target && target != item.ContentId;
                 App.Services.GetService<ItemDetailPrefetchCache>()?.Invalidate(item.ContentId);
                 var navigation = App.Services.GetService<NavigationService>();
@@ -363,7 +368,7 @@ public static class MediaItemMenu
         }
         catch (Exception ex)
         {
-            toast.Error(ex);
+            if (Current()) toast.Error(ex);
         }
     }
 
