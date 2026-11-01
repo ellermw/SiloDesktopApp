@@ -14,7 +14,6 @@ namespace SiloPlayer.Views.Dialogs;
 public sealed class SplitVersionsDialog : ItemScopedDialog
 {
     private readonly MediaSplitApi _api;
-    private readonly MediaMaintenanceApi _maintenanceApi;
     private readonly ItemLibraryScopePicker _scope;
     private ItemLibraryScope.Scope _candidateScope, _acceptedScope;
     private IReadOnlyList<JsonElement>? _inventoryFiles;
@@ -37,14 +36,14 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
     private readonly HashSet<string> _selected = [];
     private List<JsonElement> _allFiles = [];
     private MatchCandidate? _candidate;
-    private bool _changing, _searching, _previewing;
+    private bool _changing, _searching, _previewing, _refreshPreviewAfterAction;
     private int _planRevision, _searchRevision;
     private int _acceptedRevision = -1;
     private CancellationTokenSource? _previewLifetime;
 
     public SplitVersionsDialog(MediaItemDetail item, int? libraryId) : base(item.ContentId, "Split Versions", "", 672, "Split", AuthorizationPolicy.IsActingAdmin, maxHeightRatio: .85)
     {
-        _api = new(Client); _maintenanceApi = new(Client); _session = Auth.SessionGeneration; _userId = Auth.CurrentUser?.Id; Body.Children.RemoveAt(0);
+        _api = new(Client); _session = Auth.SessionGeneration; _userId = Auth.CurrentUser?.Id; Body.Children.RemoveAt(0);
         _scope = new(Client, Context, ItemId, libraryId, split: true, inventory: true, () => ScopeOwner, Lifetime.Token);
         Body.Children.Insert(0, new Border { Background = Brush("SurfaceBrush"), CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 8, 12, 8), Child = Text(item.Title + (item.Year > 0 ? $" ({item.Year})" : "") + "   " + item.Type) });
         _files.ItemTemplate = (DataTemplate)XamlReader.Load("<DataTemplate xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\"><ContentControl HorizontalContentAlignment=\"Stretch\" IsTabStop=\"False\"/></DataTemplate>");
@@ -155,7 +154,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
             await _scope.RefreshAsync();
             if (!ScopeOwner || !_scope.IsCurrent(scope) || revision != _searchRevision) return;
             _candidate = null; _unmatched.IsChecked = false; _candidates.Children.Clear(); PlanChanged();
-            var response = await _maintenanceApi.SearchMatchesAsync(Context, ItemId, new ItemMatchSearchRequest { Title = string.IsNullOrWhiteSpace(_title.Text) ? null : _title.Text, Year = int.TryParse(_year.Text, out var year) ? year : null, TmdbId = string.IsNullOrWhiteSpace(_tmdb.Text) ? null : _tmdb.Text, ImdbId = string.IsNullOrWhiteSpace(_imdb.Text) ? null : _imdb.Text, TvdbId = string.IsNullOrWhiteSpace(_tvdb.Text) ? null : _tvdb.Text, LibraryId = scope.LibraryId }, Lifetime.Token); RequireAuthority();
+            var response = await _api.SearchAsync(Context, ItemId, new ItemMatchSearchRequest { Title = string.IsNullOrWhiteSpace(_title.Text) ? null : _title.Text, Year = int.TryParse(_year.Text, out var year) ? year : null, TmdbId = string.IsNullOrWhiteSpace(_tmdb.Text) ? null : _tmdb.Text, ImdbId = string.IsNullOrWhiteSpace(_imdb.Text) ? null : _imdb.Text, TvdbId = string.IsNullOrWhiteSpace(_tvdb.Text) ? null : _tvdb.Text, LibraryId = scope.LibraryId }, Lifetime.Token); RequireAuthority();
             await _scope.RefreshAsync();
             if (!ScopeOwner || !_scope.IsCurrent(scope) || revision != _searchRevision) return;
             if (response.Candidates.Count == 0) _candidates.Children.Add(Text("No candidates found.", 14, true));
@@ -192,7 +191,8 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         _changing = true; foreach (var group in _groups) group.Root.IsChecked = group.Ids.All(_selected.Contains); _changing = false;
         _warning.Text = _selected.Count > 0 && _selected.Count == _allFiles.Count ? "All files are selected — that is a re-match, not a split. Use “Match Item” instead, or deselect the files that are correct." : "";
         _previewBox.Visibility = PlanValid ? Visibility.Visible : Visibility.Collapsed; _previewText.Text = "Previewing…"; Status.Text = ""; UpdateCommands();
-        if (!PlanValid || !Ready || !CanAct || Busy) return;
+        if (Busy) { _refreshPreviewAfterAction = true; return; }
+        if (!PlanValid || !Ready || !CanAct) return;
         var lifetime = _previewLifetime = CancellationTokenSource.CreateLinkedTokenSource(Lifetime.Token); var request = BuildRequest(true); _ = PreviewAsync(revision, _scope.State.Capture(), request, lifetime.Token);
     }
     private async Task PreviewAsync(int revision, ItemLibraryScope.Scope scope, object request, CancellationToken ct)
@@ -217,7 +217,24 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         finally { if (revision == _planRevision) { _previewing = false; UpdateCommands(); } }
     }
     protected override void UpdateCommands() { base.UpdateCommands(); IsPrimaryButtonEnabled &= PlanValid && _acceptedRevision == _planRevision && PlanScopeCurrent(_acceptedScope) && !_previewing && !_searching; _search.IsEnabled = Ready && ScopeOwner && _scope.CanSearch && !Busy && !_searching; }
-    protected override void SetEditing(bool enabled) { _editing = enabled; _scope?.SetEditing(enabled, canRefresh: !Busy && ScopeOwner); foreach (var control in new Control[] { _title, _year, _tmdb, _imdb, _tvdb, _unmatched, _history }) control.IsEnabled = enabled; foreach (var check in _checks.Values) check.IsEnabled = enabled; foreach (var group in _groups) group.Root.IsEnabled = enabled; foreach (var choice in _candidates.Children.OfType<Button>()) choice.IsEnabled = enabled; }
+    protected override void SetEditing(bool enabled)
+    {
+        _editing = enabled; _scope?.SetEditing(enabled, canRefresh: !Busy && ScopeOwner);
+        foreach (var control in new Control[] { _title, _year, _tmdb, _imdb, _tvdb, _unmatched, _history }) control.IsEnabled = enabled;
+        foreach (var check in _checks.Values) check.IsEnabled = enabled;
+        foreach (var group in _groups) group.Root.IsEnabled = enabled;
+        foreach (var choice in _candidates.Children.OfType<Button>()) choice.IsEnabled = enabled;
+        // RunActionAsync restores editing after clearing Busy. Inventory drift
+        // during commit preflight must restart the preview, not strand it.
+        if (!Busy && _refreshPreviewAfterAction)
+        {
+            _refreshPreviewAfterAction = false;
+            if (!ScopeOwner) return;
+            PlanChanged();
+            Status.Text = PlanValid ? "Item files changed. Review the updated preview before splitting."
+                : "Item files changed. Search again and review a new preview before splitting.";
+        }
+    }
     protected override async Task SubmitAsync()
     {
         if (!PlanValid || _acceptedRevision != _planRevision || !PlanScopeCurrent(_acceptedScope) || _previewing || _searching) return;

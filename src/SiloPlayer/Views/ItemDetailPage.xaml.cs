@@ -4130,7 +4130,8 @@ public sealed partial class ItemDetailPage : Page
             item.Type,
             libraryId: libraryId,
             versions: versions,
-            folderPaths: item.FolderPaths)
+            folderPaths: item.FolderPaths,
+            seriesId: item.SeriesId)
         {
             XamlRoot = this.XamlRoot
         };
@@ -4148,19 +4149,16 @@ public sealed partial class ItemDetailPage : Page
     private async Task CompleteAppliedMatchAsync(MediaItemDetail item, string? replacement, Func<bool>? current = null)
     {
         if (current?.Invoke() == false) return;
-        App.Services.GetRequiredService<ItemDetailPrefetchCache>().Invalidate(item.ContentId);
         if (replacement != null && replacement != item.ContentId)
         {
             if (_currentContentId == item.ContentId)
                 App.Services.GetRequiredService<NavigationService>().NavigateReplacingCurrentEntry<ItemDetailPage>(MediaNavigationContext.Detail(replacement, ViewModel.LibraryId));
-            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.ItemMetadataRefreshed, item.ContentId, item.SeriesId));
             return;
         }
         if (_currentContentId != item.ContentId) return;
         await ViewModel.ReloadAsync(item.ContentId);
         if (current?.Invoke() == false) return;
         UpdateUI();
-        WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.ItemMetadataRefreshed, item.ContentId, item.SeriesId));
     }
 
     // ===== Media Locations (permission-gated read-only detail) =====

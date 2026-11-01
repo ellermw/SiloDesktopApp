@@ -18,6 +18,7 @@ public sealed class ItemLibraryScope(int? pageLibraryId, bool split, bool hasInv
         {
             if (!hasInventory) return pageLibraryId;
             var libraries = LibraryIds;
+            if (libraries.Count == 0) return split && pageLibraryId is > 0 ? pageLibraryId : null;
             if (SelectedLibraryId.HasValue) return SelectedLibraryId;
             if (pageLibraryId.HasValue && libraries.Contains(pageLibraryId.Value)) return pageLibraryId;
             if (pageLibraryId.HasValue && !split) return null;
@@ -29,10 +30,20 @@ public sealed class ItemLibraryScope(int? pageLibraryId, bool split, bool hasInv
     public bool AllowsChoice => hasInventory && Loaded && LibraryIds.Count > 1 && !SelectedLibraryId.HasValue
         && (!pageLibraryId.HasValue || split && !LibraryIds.Contains(pageLibraryId.Value));
     public bool NeedsChoice => hasInventory && Loaded && LibraryIds.Count > 1 && !LibraryId.HasValue && (!pageLibraryId.HasValue || split);
-    public bool CanSearch => Loaded && (!hasInventory || LibraryId.HasValue || !pageLibraryId.HasValue && LibraryIds.Count == 0);
+    public bool CanSearch => Loaded && (!hasInventory || LibraryId.HasValue || LibraryIds.Count == 0);
+    // Cursor pages can overlap while a scan changes inventory. Use the same
+    // readable, unique rows for scope inference and the Split file picker.
+    public static List<JsonElement> NormalizeFiles(IEnumerable<JsonElement> files)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        return files.Where(file => file.ValueKind == JsonValueKind.Object
+            && file.TryGetProperty("id", out var id)
+            && id.ValueKind is JsonValueKind.String or JsonValueKind.Number
+            && !string.IsNullOrWhiteSpace(id.ToString()) && seen.Add(id.ToString())).ToList();
+    }
     public bool ReplaceFiles(IEnumerable<JsonElement> files)
     {
-        var next = files.ToDictionary(file => file.GetProperty("id").ToString(), file =>
+        var next = NormalizeFiles(files).ToDictionary(file => file.GetProperty("id").ToString(), file =>
             file.TryGetProperty("library_id", out var value) && int.TryParse(value.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0 ? (int?)id : null);
         var changed = !Loaded || next.Count != _files.Count || next.Any(pair => !_files.TryGetValue(pair.Key, out var library) || library != pair.Value);
         Loaded = true;

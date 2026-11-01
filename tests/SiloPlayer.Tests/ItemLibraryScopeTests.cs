@@ -29,6 +29,42 @@ public sealed class ItemLibraryScopeTests
         Assert.Empty(scope.LibraryIds); Assert.True(scope.CanSearch); Assert.Null(scope.LibraryId);
         scope.ReplaceFiles([]); Assert.True(scope.CanSearch); Assert.False(scope.NeedsChoice);
     }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ScopedMatchWithoutReadableLibrariesUsesDefaultsAndCanRecover(bool empty)
+    {
+        var scope = new ItemLibraryScope(5, false, true);
+        scope.ReplaceFiles(empty ? [] : Files(("a", null), ("b", "bad"), ("c", "0")));
+        Assert.True(scope.CanSearch); Assert.Null(scope.LibraryId); Assert.False(scope.NeedsChoice);
+        var fallback = scope.Capture();
+        scope.ReplaceFiles(Files(("a", 5)));
+        Assert.False(scope.IsCurrent(fallback)); Assert.True(scope.CanSearch); Assert.Equal(5, scope.LibraryId);
+        scope.ReplaceFiles(Files(("a", 7)));
+        Assert.False(scope.CanSearch);
+    }
+    [Fact]
+    public void SplitWithoutReadableInventoryLibrariesFallsBackToItsPageLibrary()
+    {
+        var scope = new ItemLibraryScope(5, true, true);
+        scope.ReplaceFiles(Files(("a", null), ("b", "bad")));
+        scope.SelectFiles(["a"]);
+        Assert.True(scope.CanSearch); Assert.Equal(5, scope.LibraryId);
+        scope.ReplaceFiles([]); Assert.True(scope.CanSearch); Assert.Equal(5, scope.LibraryId);
+    }
+    [Fact]
+    public void OverlappingAndUnreadableInventoryRowsDoNotBreakScopeOrSplitRows()
+    {
+        var rows = new[] { "{\"id\":\"a\",\"library_id\":\"5\"}", "{\"id\":\"a\",\"library_id\":\"5\"}",
+            "{}", "{\"id\":null}", "{\"id\":\" \"}", "{\"id\":{}}", "null", "{\"id\":2,\"library_id\":5}" }
+            .Select(json => JsonSerializer.Deserialize<JsonElement>(json)).ToArray();
+        var readable = ItemLibraryScope.NormalizeFiles(rows);
+        Assert.Equal(new[] { "a", "2" }, readable.Select(file => file.GetProperty("id").ToString()));
+        var scope = new ItemLibraryScope(5, false, true);
+        scope.ReplaceFiles(rows); Assert.True(scope.CanSearch); Assert.Equal(5, scope.LibraryId);
+        var captured = scope.Capture();
+        Assert.False(scope.ReplaceFiles(readable)); Assert.True(scope.IsCurrent(captured));
+    }
     [Fact]
     public void CuratorsWithoutInventoryKeepScopedAndUnscopedMatch()
     {

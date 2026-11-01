@@ -1,3 +1,4 @@
+using CommunityToolkit.Mvvm.Messaging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI;
 using Microsoft.UI.Xaml.Automation;
@@ -11,6 +12,7 @@ using SiloPlayer.Core.Models.MediaMaintenance;
 using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Helpers;
+using SiloPlayer.Messaging;
 
 namespace SiloPlayer.Controls;
 
@@ -19,6 +21,7 @@ public sealed partial class MatchItemDialog : ContentDialog
     private readonly MediaMaintenanceApi _maintenanceApi;
     private readonly string _itemId;
     private readonly string _itemType;
+    private readonly string? _seriesId;
     private readonly SiloApiClient _client;
     private readonly AuthService _auth;
     private readonly ApiRequestContext _context;
@@ -52,10 +55,11 @@ public sealed partial class MatchItemDialog : ContentDialog
         string itemType,
         int? libraryId,
         IList<FileVersion>? versions,
-        IList<string>? folderPaths)
+        IList<string>? folderPaths,
+        string? seriesId = null)
     {
         _maintenanceApi = App.Services.GetRequiredService<MediaMaintenanceApi>();
-        _itemId = itemId;
+        _itemId = itemId; _seriesId = seriesId;
         _itemType = string.IsNullOrWhiteSpace(itemType) ? "item" : itemType.Trim().ToLowerInvariant();
         _client = App.Services.GetRequiredService<SiloApiClient>();
         _auth = App.Services.GetRequiredService<AuthService>();
@@ -143,6 +147,8 @@ public sealed partial class MatchItemDialog : ContentDialog
         if (_selectedCandidate == null || _applying || _searching || !CanAct || !_scope.IsCurrent(_candidateScope))
             return;
         var selected = _selectedCandidate; var scope = _candidateScope;
+        var dispatched = false;
+        ItemMatchApplyResponse? applied = null;
         _applying = true;
         ApplyMatchButton.IsEnabled = false;
         SearchButton.IsEnabled = false;
@@ -155,32 +161,59 @@ public sealed partial class MatchItemDialog : ContentDialog
             UpdateCommands();
             await _scope.RefreshAsync();
             if (!CanAct || !_scope.IsCurrent(scope) || _selectedCandidate != selected) return;
-            var result = await _maintenanceApi.ApplyMatchAsync(_context, _itemId, new ItemMatchApplyRequest
+            // Once dispatched this non-idempotent write must finish independently
+            // of the launching surface; only its UI effects belong to the lifetime.
+            dispatched = true;
+            applied = await _maintenanceApi.ApplyMatchAsync(_context, _itemId, new ItemMatchApplyRequest
             {
                 ProviderIds = selected.ProviderIds,
                 LibraryId = scope.LibraryId,
-            }, _lifetime.Token);
+            }, CancellationToken.None);
+            InvalidateAppliedMatch(applied);
             if (!CanAct || !_scope.IsCurrent(scope) || _selectedCandidate != selected) return;
-            AppliedContentId = string.IsNullOrWhiteSpace(result.ContentId) ? _itemId : result.ContentId;
+            AppliedContentId = string.IsNullOrWhiteSpace(applied.ContentId) ? _itemId : applied.ContentId;
             HasAppliedMatch = true;
             App.Services.GetService<SiloPlayer.Services.ToastService>()?.Success("Match applied");
             _applying = false; Hide();
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested && !dispatched) { }
         catch (Exception ex)
         {
             if (!CanAct || !_scope.IsCurrent(scope)) return;
-            ApplyStatusText.Text = $"Match could not be applied: {ex.Message}";
+            ApplyStatusText.Text = dispatched
+                ? $"Match could not be applied or confirmed: {ex.Message} Reload the item before trying again."
+                : $"Match could not be applied: {ex.Message}";
             ApplyStatusText.Foreground = (Brush)Application.Current.Resources["ErrorBrush"];
             ApplyMatchButton.Content = "Apply Match";
             ApplyMatchButton.IsEnabled = _selectedCandidate != null;
         }
         finally
         {
+            if (dispatched && applied == null) InvalidateAppliedMatch(null);
             _applying = false;
             ApplyMatchButton.Content = "Apply Match"; UpdateCommands();
             if (_lifetime.IsCancellationRequested) Hide();
         }
+    }
+
+    private void InvalidateAppliedMatch(ItemMatchApplyResponse? applied)
+    {
+        var cache = App.Services.GetService<ItemDetailPrefetchCache>();
+        if (applied == null)
+            // A timeout or retired API context can hide a committed replacement ID.
+            cache?.Clear();
+        else
+        {
+            cache?.Invalidate(_itemId);
+            cache?.Invalidate(applied.ContentId);
+        }
+        // Shared invalidation is independent of navigation/permissions, but a
+        // departed account/profile must never refresh another owner's surfaces.
+        if (!_client.IsCurrentContext(_context) || _auth.SessionGeneration != _session || _auth.CurrentUser?.Id != _userId) return;
+        WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
+            MediaSurfaceChangeKind.ItemMetadataRefreshed, _itemId, _seriesId, context: _context));
+        if (applied == null)
+            App.Services.GetService<SiloPlayer.Services.ToastService>()?.Warning("Match outcome could not be confirmed. Reload the item before trying again.");
     }
 
     private void UpdateViewport()
@@ -670,7 +703,7 @@ public sealed partial class MatchItemDialog : ContentDialog
                 }
             }
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException) when (_lifetime.IsCancellationRequested) { }
         catch (Exception ex)
         {
             if (!CanAct || revision != _searchRevision) return;
