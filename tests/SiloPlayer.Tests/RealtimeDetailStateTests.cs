@@ -331,6 +331,69 @@ public sealed class RealtimeDetailStateTests
         Assert.Equal(31, episodeData!.PositionSeconds);
     }
 
+    [Theory]
+    [InlineData("series", "seasons", false)]
+    [InlineData("series", "episodes", false)]
+    [InlineData("series", "episodes", true)]
+    [InlineData("season", "episodes", false)]
+    public async Task CompanionFailureKeepsAuthoritativeDetailAndOtherSuccessfulCompanions(
+        string type, string failedCompanion, bool canonicalSeason)
+    {
+        using var scope = new Scope(type) { IncludeTarget = true, FreshTarget = "new-target", ContainerPlayed = true };
+        var item = scope.Vm.Item!;
+        item.PlayContentId = "old-target";
+        scope.Vm.SelectedSeasonNumber = 1;
+        if (canonicalSeason) scope.Vm.EpisodesSeasonContentId = "season";
+        var seasonData = scope.Vm.Seasons[0].UserData;
+        var episodeData = scope.Vm.Episodes[0].UserData;
+        var detailNotified = false;
+        var failed = false;
+        scope.Vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(scope.Vm.Item)) detailNotified = true;
+        };
+        scope.OverrideResponse = request =>
+        {
+            if (!request.RequestUri!.AbsolutePath.EndsWith("/" + failedCompanion)) return null;
+            failed = true;
+            Assert.True(detailNotified);
+            Assert.True(scope.Vm.IsWatched);
+            Assert.Equal(4, item.UserData!.WatchedCount);
+            Assert.Equal("new-target", item.PlayContentId);
+            return new(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent("""{"error":{"code":"service_unavailable","message":"Synthetic companion failure"}}""",
+                    Encoding.UTF8, "application/json")
+            };
+        };
+
+        await scope.Vm.RefreshMediaStateAsync(scope.Message() with { CatchUp = true });
+
+        Assert.True(failed);
+        Assert.True(detailNotified);
+        Assert.Same(item, scope.Vm.Item);
+        Assert.True(scope.Vm.IsWatched);
+        Assert.True(item.UserData!.Played);
+        Assert.Equal(4, item.UserData.WatchedCount);
+        Assert.Equal("new-target", item.PlayContentId);
+        Assert.Equal(2, item.PlaySeasonNumber);
+        if (failedCompanion == "seasons")
+        {
+            Assert.Same(seasonData, scope.Vm.Seasons[0].UserData);
+            Assert.Equal(4, seasonData!.UnplayedCount);
+            Assert.Equal(1, scope.EpisodeReads);
+            Assert.True(scope.Vm.Episodes[0].UserData!.Played);
+            Assert.Equal(0, scope.Vm.Episodes[0].UserData!.PositionSeconds);
+        }
+        else
+        {
+            Assert.Same(episodeData, scope.Vm.Episodes[0].UserData);
+            Assert.False(episodeData!.Played);
+            Assert.Equal(31, episodeData.PositionSeconds);
+            if (type == "series") Assert.Equal(2, scope.Vm.Seasons[0].UserData!.WatchedCount);
+        }
+    }
+
     [Fact]
     public async Task SingleSeasonSpecialsRefreshUsesTheCanonicalSourceOfTheVisibleRows()
     {

@@ -42,6 +42,8 @@ public sealed class ShellNavigationReentrancySourceTests
         Assert.True(healthStart >= 0);
         var health = page[healthStart..page.IndexOf(';', healthStart)];
         Assert.Contains("ViewModel.Item != null", health);
+        Assert.Contains("ViewModel.Item.Type is \"series\" or \"season\"", health);
+        Assert.Contains("!ViewModel.SimilarLoadFailed", health);
         Assert.Contains("ViewModel.FailureKind == DetailFailureKind.None", health);
         Assert.Contains("!ViewModel.SeasonsLoadFailed", health);
         Assert.Contains("!ViewModel.EpisodesLoadFailed", health);

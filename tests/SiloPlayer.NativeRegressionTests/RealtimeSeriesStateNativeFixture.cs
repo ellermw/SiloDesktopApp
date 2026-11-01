@@ -10,6 +10,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
+using SiloPlayer.Core.Models.Playback;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
@@ -103,6 +104,9 @@ internal static class RealtimeSeriesStateNativeFixture
                     vm.EpisodesLoadFailed = true;
                     Check(!page.CanPreserveOnReconnect, "A failed episodes query must remount on reconnect.");
                     vm.EpisodesLoadFailed = false;
+                    vm.SimilarLoadFailed = true;
+                    Check(!page.CanPreserveOnReconnect, "A failed similar query must remount on reconnect.");
+                    vm.SimilarLoadFailed = false;
                     wire.FailEpisodes = true;
                     var loaded = await (Task<bool>)typeof(ItemDetailPage).GetMethod("LoadSeasonEpisodesAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
                         .Invoke(page, ["season", 1, navigation.Token])!;
@@ -116,6 +120,29 @@ internal static class RealtimeSeriesStateNativeFixture
                     Program.Log($"PASS: captured unknown-episode event refreshes mounted native {type} aggregate/season counts and leaves sibling state/badge untouched.");
                 }
                 finally { vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page); }
+            }
+            foreach (var type in new[] { "movie", "episode" })
+            {
+                var page = new ItemDetailPage();
+                var vm = page.ViewModel;
+                vm.Item = new() { ContentId = type, Type = type, UserData = new() { PositionSeconds = 31 } };
+                var mountedWatch = new WatchDetailResponse
+                    { ContentId = type, Type = type, UserData = new() { PositionSeconds = 31 } };
+                Set(page, "_watchDetail", mountedWatch);
+                try
+                {
+                    await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(),
+                        new HashSet<string>(), CatchUp: true));
+                    Check(vm.Item.UserData?.PositionSeconds == 900 && mountedWatch.UserData.PositionSeconds == 31,
+                        "The catch-up fixture must have a newer catalog position than the mounted /watch snapshot.");
+                    Check(!page.CanPreserveOnReconnect,
+                        "A playable leaf must remount to refresh its stale /watch position and resume controls.");
+                    Set(page, "_watchDetail", null!);
+                    ((UIElement)page.FindName("SiblingEpisodesSection")).Visibility = Visibility.Collapsed;
+                    Check(!page.CanPreserveOnReconnect,
+                        "A missing /watch response or collapsed failed sibling rail must not survive reconnect.");
+                }
+                finally { vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); }
             }
         }
         finally { slot.SetValue(null, original); }
@@ -151,9 +178,9 @@ internal static class RealtimeSeriesStateNativeFixture
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
                     { Content = new StringContent("{\"error\":{\"code\":\"service_unavailable\",\"message\":\"Synthetic companion failure\"}}", Encoding.UTF8, "application/json") });
             object body = path.StartsWith("/api/v2/catalog/items/") ?
-                new { content_id = path.EndsWith("/season") ? "season" : "series", type = path.EndsWith("/season") ? "season" : "series",
+                new { content_id = path.Split('/').Last(), type = path.Split('/').Last(),
                     play_content_id = Target, play_season_number = 1,
-                    user_data = new { watched_count = Count, unplayed_count = 2, in_progress_count = 1, played = false }, user_state = new { } } :
+                    user_data = new { watched_count = Count, unplayed_count = 2, in_progress_count = 1, played = false, position_seconds = 900 }, user_state = new { } } :
                 path.EndsWith("/seasons") ? new { items = new[] { new { content_id = "season", season_number = 1, episode_count = 4,
                     user_data = new { watched_count = 2, unplayed_count = 2, in_progress_count = 1, played = false } } } } :
                 path.Contains("progress/capabilities") ? new { clear_resume_position = false } : new { items = Array.Empty<object>() };

@@ -253,22 +253,6 @@ public partial class ItemDetailViewModel : ObservableObject,
                 // discarding this request each time another device advances.
                 var refreshed = await _catalogApi.GetItemDetailAsync(item.ContentId, libraryId, ct);
                 if (!Current()) continue;
-                var seasons = item.Type == "series" && Seasons.Count > 0
-                    ? await _catalogApi.GetSeasonsAsync(item.ContentId, libraryId, ct) : null;
-                if (!Current()) continue;
-                // A named series relates its aggregate seasons, not its other episode leaves.
-                var refreshEpisodes = Episodes.Count > 0 && (message.CatchUp || message.ContentIds.Contains(item.ContentId)
-                    || (!string.IsNullOrEmpty(item.SeriesId) && message.ContentIds.Contains(item.SeriesId))
-                    || Seasons.Any(s => message.ContentIds.Contains(s.ContentId))
-                    || Episodes.Any(e => message.ContentIds.Contains(e.ContentId)));
-                EpisodesResponse? episodes = null;
-                if (refreshEpisodes && item.Type == "season")
-                    episodes = await _catalogApi.GetItemEpisodesAsync(item.ContentId, libraryId, ct);
-                else if (refreshEpisodes && item.Type == "series" && episodesSeasonContentId != null)
-                    episodes = await _catalogApi.GetItemEpisodesAsync(episodesSeasonContentId, libraryId, ct);
-                else if (refreshEpisodes && item.Type == "series" && selectedSeason >= 0)
-                    episodes = await _catalogApi.GetEpisodesAsync(item.ContentId, selectedSeason, libraryId, ct);
-                if (!Current()) continue;
                 if (refreshed.UserData is { } userData)
                 {
                     item.UserData = userData;
@@ -290,17 +274,51 @@ public partial class ItemDetailViewModel : ObservableObject,
                     item.UserRating = refreshed.UserRating;
                     UserRating = item.UserRating;
                 }
-                if (seasons != null)
-                    foreach (var loaded in Seasons)
-                        if (seasons.Seasons.FirstOrDefault(s => s.ContentId == loaded.ContentId) is { UserData: { } fresh })
-                            loaded.UserData = fresh;
-                if (episodes != null && SelectedSeasonNumber == selectedSeason && EpisodesSeasonContentId == episodesSeasonContentId)
-                    foreach (var loaded in Episodes)
-                        if (episodes.Episodes.FirstOrDefault(e => e.ContentId == loaded.ContentId) is { UserData: { } fresh })
-                            loaded.UserData = fresh;
+                // The authoritative detail is useful even if a companion read
+                // fails. Commit and notify before starting those independent reads.
                 OnPropertyChanged(nameof(Item));
-                if (seasons != null) OnPropertyChanged(nameof(Seasons));
-                if (episodes != null) OnPropertyChanged(nameof(Episodes));
+                if (!Current()) continue;
+                if (item.Type == "series" && Seasons.Count > 0)
+                {
+                    try
+                    {
+                        var seasons = await _catalogApi.GetSeasonsAsync(item.ContentId, libraryId, ct);
+                        if (!Current()) continue;
+                        foreach (var loaded in Seasons)
+                            if (seasons.Seasons.FirstOrDefault(s => s.ContentId == loaded.ContentId) is { UserData: { } fresh })
+                                loaded.UserData = fresh;
+                        OnPropertyChanged(nameof(Seasons));
+                    }
+                    catch (Exception ex) when (!ct.IsCancellationRequested)
+                    { System.Diagnostics.Debug.WriteLine($"Realtime seasons-state refresh failed: {ex.Message}"); }
+                }
+                if (!Current()) continue;
+                // A named series relates its aggregate seasons, not its other episode leaves.
+                var refreshEpisodes = Episodes.Count > 0 && (message.CatchUp || message.ContentIds.Contains(item.ContentId)
+                    || (!string.IsNullOrEmpty(item.SeriesId) && message.ContentIds.Contains(item.SeriesId))
+                    || Seasons.Any(s => message.ContentIds.Contains(s.ContentId))
+                    || Episodes.Any(e => message.ContentIds.Contains(e.ContentId)));
+                if (refreshEpisodes)
+                {
+                    try
+                    {
+                        EpisodesResponse? episodes = null;
+                        if (item.Type == "season")
+                            episodes = await _catalogApi.GetItemEpisodesAsync(item.ContentId, libraryId, ct);
+                        else if (item.Type == "series" && episodesSeasonContentId != null)
+                            episodes = await _catalogApi.GetItemEpisodesAsync(episodesSeasonContentId, libraryId, ct);
+                        else if (item.Type == "series" && selectedSeason >= 0)
+                            episodes = await _catalogApi.GetEpisodesAsync(item.ContentId, selectedSeason, libraryId, ct);
+                        if (!Current()) continue;
+                        if (episodes != null && SelectedSeasonNumber == selectedSeason && EpisodesSeasonContentId == episodesSeasonContentId)
+                            foreach (var loaded in Episodes)
+                                if (episodes.Episodes.FirstOrDefault(e => e.ContentId == loaded.ContentId) is { UserData: { } fresh })
+                                    loaded.UserData = fresh;
+                        if (episodes != null) OnPropertyChanged(nameof(Episodes));
+                    }
+                    catch (Exception ex) when (!ct.IsCancellationRequested)
+                    { System.Diagnostics.Debug.WriteLine($"Realtime episodes-state refresh failed: {ex.Message}"); }
+                }
                 if (message.CatchUp && _similarLoaded && Current()) await LoadSimilarAsync();
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { }

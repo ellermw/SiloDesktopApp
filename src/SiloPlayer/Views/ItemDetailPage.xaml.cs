@@ -25,9 +25,12 @@ public sealed partial class ItemDetailPage : Page
     private static readonly UrlToImageSourceConverter RemoteImageConverter = new();
     private readonly UICustomizationService _uiCustomizationService;
     public ItemDetailViewModel ViewModel { get; }
+    // Only container details have a complete retained-state catch-up. Leaves
+    // must remount to refresh /watch, resume choices and page-owned companions.
     public bool CanPreserveOnReconnect => ViewModel.Item != null
+        && (ViewModel.Item.Type is "series" or "season")
         && ViewModel.FailureKind == DetailFailureKind.None
-        && !ViewModel.SeasonsLoadFailed && !ViewModel.EpisodesLoadFailed
+        && !ViewModel.SeasonsLoadFailed && !ViewModel.EpisodesLoadFailed && !ViewModel.SimilarLoadFailed
         && EpisodesLoadError.Visibility != Visibility.Visible
         && SeasonEpisodesFatalError.Visibility != Visibility.Visible;
     private CancellationTokenSource? _imageCts;
