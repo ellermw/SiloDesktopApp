@@ -350,9 +350,12 @@ public partial class PlayerService : IDisposable
         CancellationToken ct,
         int? libraryId = null,
         int? fileId = null,
-        PlaybackAuthorityScope? authority = null)
+        PlaybackAuthorityScope? authority = null,
+        ApiRequestContext? expectedContext = null)
         => _watchDetailFreshness.GetCurrentAsync(
-            token => GetOrFetchWatchDetailOnceAsync(contentId, consumePrefetch, token, libraryId, fileId, authority),
+            token => expectedContext.HasValue
+                ? FetchWatchDetailAfterFinalSaveAsync(authority ?? _activeAuthority, contentId, libraryId, fileId, token, expectedContext)
+                : GetOrFetchWatchDetailOnceAsync(contentId, consumePrefetch, token, libraryId, fileId, authority),
             _ => _watchDetailPrefetches.Invalidate(WatchPreparationKey(contentId, libraryId, fileId)),
             ct);
 
@@ -410,9 +413,10 @@ public partial class PlayerService : IDisposable
     /// and stamps the response with the user-state revision of the read.
     /// </summary>
     private Task<WatchDetailResponse> FetchWatchDetailAfterFinalSaveAsync(
-        PlaybackAuthorityScope authority, string contentId, int? libraryId, int? fileId, CancellationToken ct)
+        PlaybackAuthorityScope authority, string contentId, int? libraryId, int? fileId, CancellationToken ct,
+        ApiRequestContext? expectedContext = null)
         => _watchDetailFreshness.ReadAsync(contentId,
-            token => authority.PlaybackApi.GetWatchDetailAsync(contentId, libraryId, fileId, token), ct);
+            token => authority.PlaybackApi.GetWatchDetailAsync(contentId, libraryId, fileId, token, expectedContext), ct);
 
     /// <summary>True when no progress/watched mutation happened since this response's server read.</summary>
     private bool IsCurrentWatchDetail(WatchDetailResponse detail) => _watchDetailFreshness.IsCurrent(detail);
@@ -2007,17 +2011,37 @@ public partial class PlayerService : IDisposable
         ApiRequestContext? expectedContext = null)
     {
         var authority = _activeAuthority;
-        bool IsCurrentOwner() => expectedContext is not { } owner || IsCurrentViewerPlayOwner(authority, owner);
+        var identity = authority.ApiClient.CaptureIdentityContext();
+        if (expectedContext is { } expected && !authority.ApiClient.IsCurrentContext(expected))
+            throw new OperationCanceledException("Playback request owner departed.", requestToken);
+        var requestGeneration = Volatile.Read(ref _playRequestGeneration);
+        var scopedIntent = Volatile.Read(ref _scopedViewerPlayCts);
+        // Access revisions retire reads, not the accepted account/profile's
+        // playback intent. Each preparation read still validates its context.
+        bool IsCurrentOwner() => !expectedContext.HasValue ||
+            authority.ApiClient.IsCurrentIdentityContext(identity) &&
+            App.Services.GetService<WatchTogetherCoordinator>()?.ActiveRoom == null;
         void EnsureCurrentOwner()
         {
             requestToken.ThrowIfCancellationRequested();
             if (!IsCurrentOwner()) throw new OperationCanceledException("Playback request owner departed.", requestToken);
         }
         EnsureCurrentOwner();
-        // Drain before changing subtitle/navigation/loading state or retiring
-        // the outgoing session. The owner may depart while this gate waits.
-        await CancelAndDrainTransportRestartsAsync(requestToken);
-        EnsureCurrentOwner();
+        // Suppress outgoing EOF throughout the drain, but leave navigation,
+        // subtitles and the session intact until the owner is revalidated.
+        var wasSwitchingContent = _switchingContent;
+        _switchingContent = true;
+        try
+        {
+            await CancelAndDrainTransportRestartsAsync(requestToken);
+            _switchingContent = true;
+            EnsureCurrentOwner();
+        }
+        catch
+        {
+            _switchingContent = wasSwitchingContent;
+            throw;
+        }
         StopSubtitleSync();
         ClearLiveSubtitleTranslation(restorePreviousSubtitle: false);
         // Fetch the effective device/profile style in parallel with playback
@@ -2124,6 +2148,7 @@ public partial class PlayerService : IDisposable
         var loadingOwner = new object();
         loadingWindow?.ShowLoadingOverlay(loadingOwner);
 
+        PlaybackManager? requestManager = null;
         try
         {
             var passthrough = _settingsService.Load().AudioBitstreamPassthrough
@@ -2134,7 +2159,7 @@ public partial class PlayerService : IDisposable
                     MaxChannels = 8,
                 }
                 : null;
-            _playbackManager = new PlaybackManager(_playbackApi, _catalogApi, _authService, _apiClient, passthrough);
+            _playbackManager = requestManager = new PlaybackManager(_playbackApi, _catalogApi, _authService, _apiClient, passthrough);
             _playbackManager.ProgressReportingFailed += OnProgressReportingFailed;
 
             // Start the network request before initializing libmpv. The native
@@ -2148,7 +2173,8 @@ public partial class PlayerService : IDisposable
             if (expectedContext.HasValue)
             {
                 EnsureMpvInitialized();
-                watchDetail = await _playbackApi.GetWatchDetailAsync(contentId, libraryId, fileId, requestToken, expectedContext);
+                watchDetail = await GetOrFetchWatchDetailCoreAsync(contentId, consumePrefetch: true,
+                    ct: requestToken, libraryId: libraryId, fileId: fileId, authority: authority, expectedContext: expectedContext);
             }
             else if (prefetchedWatchDetail != null &&
                 string.Equals(prefetchedWatchDetail.ContentId, contentId, StringComparison.Ordinal) &&
@@ -2242,7 +2268,8 @@ public partial class PlayerService : IDisposable
                     forceDirectAudioSelection: selectedAudioTrackIndex.HasValue,
                     disableProgressPersistence: IsAudiobook,
                     ct: requestToken,
-                    preferences: qualityPreferences);
+                    preferences: qualityPreferences,
+                    expectedContext: expectedContext);
             }
             catch (ApiException ex) when (
                 ex.StatusCode == 429 &&
@@ -2260,7 +2287,8 @@ public partial class PlayerService : IDisposable
                     forceDirectAudioSelection: selectedAudioTrackIndex.HasValue,
                     disableProgressPersistence: IsAudiobook,
                     ct: requestToken,
-                    preferences: qualityPreferences);
+                    preferences: qualityPreferences,
+                    expectedContext: expectedContext);
             }
             EnsureCurrentOwner();
             bestVersion = watchDetail.Versions.FirstOrDefault(v => v.FileId == session.MediaFileId)
@@ -2339,26 +2367,35 @@ public partial class PlayerService : IDisposable
         catch (Exception) when (requestToken.IsCancellationRequested || !IsCurrentOwner())
         {
             playbackCts.Cancel();
-            CancelPendingFileLoadTimeout();
-            StopDirectStreamProxy();
-            StopHlsProxy();
-            var canceledManager = _playbackManager;
-            _playbackManager = null;
-            _playbackCts = null;
-            IsLoading = false;
-            _switchingContent = false;
-            _activeTransportPlan = null;
-            ContentId = null;
-            ActiveLibraryId = null;
-            _videoWindow?.Hide();
-            SetState(PlayerState.Idle);
-            loadingWindow?.HideLoadingOverlay(loadingOwner);
-            if (canceledManager != null)
+            if (ReferenceEquals(_playbackCts, playbackCts) && ReferenceEquals(_playbackManager, requestManager))
             {
-                try { await canceledManager.StopSessionAsync(); }
+                CancelPendingFileLoadTimeout();
+                StopDirectStreamProxy();
+                StopHlsProxy();
+                _playbackManager = null;
+                _playbackCts = null;
+                IsLoading = false;
+                _switchingContent = false;
+                _activeTransportPlan = null;
+                // A successor has reserved playback, even if it has not yet
+                // entered this gate. Idle would detach its Watch Party session.
+                var superseded = requestGeneration != Volatile.Read(ref _playRequestGeneration) ||
+                    !ReferenceEquals(scopedIntent, Volatile.Read(ref _scopedViewerPlayCts));
+                if (!superseded && ContentId == contentId)
+                {
+                    ContentId = null;
+                    ActiveLibraryId = null;
+                    _videoWindow?.Hide();
+                    SetState(PlayerState.Idle);
+                }
+            }
+            loadingWindow?.HideLoadingOverlay(loadingOwner);
+            if (requestManager != null)
+            {
+                try { await requestManager.StopSessionAsync(); }
                 catch (Exception stopEx) { LogToFile("state_trace.txt", $"Canceled start cleanup error: {stopEx.Message}"); }
-                canceledManager.ProgressReportingFailed -= OnProgressReportingFailed;
-                canceledManager.Dispose();
+                requestManager.ProgressReportingFailed -= OnProgressReportingFailed;
+                requestManager.Dispose();
             }
             playbackCts.Dispose();
             throw new OperationCanceledException("Playback request retired.", requestToken);

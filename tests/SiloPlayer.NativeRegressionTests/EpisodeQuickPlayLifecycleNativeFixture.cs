@@ -26,6 +26,9 @@ internal static partial class EpisodeQuickPlayNativeFixture
         foreach (var (name, run) in new (string, Func<Task>)[]
         {
             ("transport owner", () => VerifyTransportOwnerAsync(scope)),
+            ("scoped watch freshness", () => VerifyScopedWatchFreshnessAsync(scope)),
+            ("access refresh ownership", () => VerifyAccessRefreshAsync(scope)),
+            ("superseded starts retain player state", () => VerifySupersededStateAsync(scope)),
             ("watch cancellation and resize/navigation", () => VerifyCancellationAsync(scope)),
             ("profile ownership across preparation awaits", () => VerifyPreparationOwnerAsync(scope)),
             ("newer viewer click", () => VerifyNewerIntentAsync(scope)),
@@ -51,17 +54,120 @@ internal static partial class EpisodeQuickPlayNativeFixture
         scope.Wire.AcceptStart = false;
         SetField(scope.Player, "_playbackManager", manager);
         typeof(PlayerService).GetProperty("ContentId")!.SetValue(scope.Player, "outgoing");
+        typeof(PlayerService).GetMethod("SetState", Private)!.Invoke(scope.Player, [PlayerState.Minimized]);
         var gate = (SemaphoreSlim)GetField(scope.Player, "_transportRestartGate")!;
         await gate.WaitAsync();
         var pending = scope.Player.PlayAsync("departed", expectedContext: scope.Client.CaptureContext());
-        await Task.Delay(60);
-        scope.Auth.SelectProfile("replacement", profile: new() { Id = "replacement", Name = "Replacement fixture" });
-        gate.Release();
+        try
+        {
+            await Task.Delay(60);
+            Check((bool)GetField(scope.Player, "_switchingContent")!, "Outgoing EOF is unguarded while the transport drain waits.");
+            typeof(PlayerService).GetMethod("HandleMpvEndSignal", Private)!.Invoke(scope.Player, ["end-file"]);
+            await Task.Delay(40);
+            Check(scope.Player.State == PlayerState.Minimized && ReferenceEquals(scope.Player.Manager, manager) && scope.Wire.Stops == 0,
+                "Outgoing EOF closed playback while the successor was draining transport.");
+            scope.Auth.SelectProfile("replacement", profile: new() { Id = "replacement", Name = "Replacement fixture" });
+        }
+        finally { gate.Release(); }
         await pending;
         Check(scope.Wire.Watches.Count == 0 && scope.Wire.Stops == 0 && ReferenceEquals(scope.Player.Manager, manager) &&
             !(bool)GetField(scope.Player, "_switchingContent")!,
             "Releasing the held transport drain retired outgoing playback or prepared work after the initiating profile departed.");
         lock (scope.Wire.Requests) Check(scope.Wire.Requests.All(request => request.Profile != "replacement"), "Transport drain issued a request under the replacement profile.");
+    }
+
+    private static async Task VerifyScopedWatchFreshnessAsync(LifecycleScope scope)
+    {
+        var freshness = (WatchDetailFreshness<WatchDetailResponse>)GetField(scope.Player, "_watchDetailFreshness")!;
+        var saved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        freshness.TrackFinalSave("same-episode", saved.Task);
+        var replay = scope.Player.PlayAsync("same-episode", expectedContext: scope.Client.CaptureContext());
+        try
+        {
+            await Task.Delay(80);
+            Check(scope.Wire.Watches.Count == 0 && !replay.IsCompleted, "Scoped /watch bypassed the pending final-save barrier.");
+            scope.Wire.ResumePosition = 137;
+            saved.TrySetResult();
+            await replay;
+            Check(scope.Wire.Starts.Single().GetProperty("start_position").GetDouble() == 137,
+                "Scoped replay did not use the final saved position.");
+        }
+        finally { saved.TrySetResult(); }
+
+        await scope.ResetAsync();
+        scope.Wire.HoldWatch = "mutated-episode";
+        var pending = scope.Player.PlayAsync("mutated-episode", expectedContext: scope.Client.CaptureContext());
+        await scope.Wire.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        ((UserStateRevision)GetField(scope.Player, "_userStateRevision")!).Advance("mutated-episode");
+        scope.Wire.ReleaseWatch.TrySetResult();
+        await pending;
+        Check(scope.Wire.Watches.Count == 2 && scope.Wire.Starts.Count == 1,
+            "Scoped /watch consumed a response invalidated by a racing progress/watched mutation.");
+    }
+
+    private static async Task VerifyAccessRefreshAsync(LifecycleScope scope)
+    {
+        var page = scope.MountSeries("rendered-before-refresh"); await Task.Delay(80); page.UpdateLayout();
+        var play = ResumeButton((Panel)page.FindName("EpisodesPanel"));
+        scope.Client.InvalidateAccessContext();
+        Invoke(play);
+        await Until(() => scope.Wire.Starts.Count == 1 && play.IsEnabled);
+        Check(scope.Wire.Watches.Count == 1, "An access refresh made a rendered Play button inert.");
+
+        await scope.ResetAsync();
+        scope.Wire.AcceptStart = true;
+        page = scope.MountSeries("refresh-at-expanded"); await Task.Delay(80); page.UpdateLayout();
+        play = ResumeButton((Panel)page.FindName("EpisodesPanel"));
+        var refreshed = false;
+        void OnStateChanged(PlayerState state)
+        {
+            if (state != PlayerState.Expanded) return;
+            refreshed = true;
+            scope.Client.InvalidateAccessContext();
+        }
+        scope.Player.StateChanged += OnStateChanged;
+        try
+        {
+            Invoke(play);
+            await Until(() => play.IsEnabled && scope.Wire.Starts.Count == 1);
+            Check(refreshed && scope.Player.State == PlayerState.Expanded && scope.Player.Manager?.CurrentSession != null &&
+                GetField(scope.Player, "_activeTransportPlan") != null,
+                "An access-only refresh at Expanded silently abandoned the accepted scoped session.");
+        }
+        finally { scope.Player.StateChanged -= OnStateChanged; }
+    }
+
+    private static async Task VerifySupersededStateAsync(LifecycleScope scope)
+    {
+        foreach (var scoped in new[] { false, true })
+        {
+            await scope.ResetAsync();
+            typeof(PlayerService).GetMethod("SetState", Private)!.Invoke(scope.Player, [PlayerState.Minimized]);
+            var states = new List<PlayerState>();
+            void OnStateChanged(PlayerState state) => states.Add(state);
+            scope.Player.StateChanged += OnStateChanged;
+            scope.Wire.HoldWatch = "superseded-a";
+            var first = scope.Player.PlayAsync("superseded-a", expectedContext: scoped ? scope.Client.CaptureContext() : null);
+            await scope.Wire.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var releaseFirst = scope.Wire.ReleaseWatch;
+            scope.Wire.HoldWatch = "successor-b";
+            scope.Wire.WatchStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            scope.Wire.ReleaseWatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var second = scope.Player.PlayAsync("successor-b", expectedContext: scoped ? scope.Client.CaptureContext() : null);
+            try
+            {
+                await scope.Wire.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                await first;
+                Check(!states.Contains(PlayerState.Idle) && scope.Player.State == PlayerState.Minimized && scope.Player.ContentId == "successor-b",
+                    "A superseded start emitted global Idle or cleared the successor's playback identity.");
+            }
+            finally
+            {
+                releaseFirst.TrySetResult(); scope.Wire.ReleaseWatch.TrySetResult();
+                await Task.WhenAll(first, second);
+                scope.Player.StateChanged -= OnStateChanged;
+            }
+        }
     }
 
     private static async Task VerifyCancellationAsync(LifecycleScope scope)
@@ -82,12 +188,24 @@ internal static partial class EpisodeQuickPlayNativeFixture
                 scope.Window.AppWindow.ResizeClient(new(650, 900)); await Task.Delay(60);
                 typeof(ItemDetailPage).GetMethod("BuildEpisodeRows", Private)!.Invoke(page, null);
                 page.UpdateLayout();
+                await Task.Delay(80);
+                Check(!ReferenceEquals(button, ResumeButton((Panel)page.FindName("EpisodesPanel"))) &&
+                    !button.IsEnabled && scope.Player.IsLoading && scope.Overlay.Visibility == Visibility.Visible && scope.Wire.Starts.Count == 0,
+                    "A cosmetic grid rebuild canceled the accepted start instead of retaining its loading owner.");
+                var startsBeforeRelease = scope.Wire.Starts.Count;
+                scope.Wire.ReleaseWatch.TrySetResult();
+                await Until(() => button.IsEnabled);
+                Check(scope.Wire.Starts.Count == startsBeforeRelease + 1 && scope.Player.ContentId == "pending-resize",
+                    "The accepted start did not reach session creation after the grid rebuild.");
             }
-            else scope.Frame.Navigate(typeof(Page));
-            await Until(() => button.IsEnabled);
-            await Task.Delay(80);
-            Check(!scope.Player.IsLoading && !(bool)GetField(scope.Player, "_switchingContent")! && scope.Overlay.Visibility == Visibility.Collapsed,
-                "Accepted card retirement stranded loading/switching state or the actual shell overlay.");
+            else
+            {
+                scope.Frame.Navigate(typeof(Page));
+                await Until(() => button.IsEnabled);
+                await Task.Delay(80);
+                Check(!scope.Player.IsLoading && !(bool)GetField(scope.Player, "_switchingContent")! && scope.Overlay.Visibility == Visibility.Collapsed,
+                    "Navigation departure stranded loading/switching state or the actual shell overlay.");
+            }
             scope.Wire.ReleaseWatch.TrySetResult(); scope.Wire.HoldWatch = null;
             await scope.Player.PlayAsync("successor-" + departure, expectedContext: scope.Client.CaptureContext());
             Check(scope.Wire.Starts.Count > 0 && !scope.Player.IsLoading, "Cancellation prevented a subsequent authorized playback request.");
@@ -342,6 +460,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
             Services.GetRequiredService<NavigationService>().Frame = Frame;
             await Player.CloseAsync();
             Wire.HoldWatch = null; Wire.HoldCapability = Wire.HoldStart = Wire.HoldStage = Wire.AcceptStart = false;
+            Wire.ResumePosition = 91;
             Wire.WatchStarted = new(TaskCreationOptions.RunContinuationsAsynchronously); Wire.ReleaseWatch = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Wire.BoundaryStarted = new(TaskCreationOptions.RunContinuationsAsynchronously); Wire.ReleaseBoundary = new(TaskCreationOptions.RunContinuationsAsynchronously);
             Wire.Watches.Clear(); Wire.Starts.Clear(); Wire.Stages.Clear(); Wire.Requests.Clear(); Wire.Stops = Wire.Suggestions = 0;

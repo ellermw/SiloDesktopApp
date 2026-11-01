@@ -7875,7 +7875,7 @@ public sealed partial class ItemDetailPage : Page
     private FrameworkElement CreateEpisodeCard(Episode episode, bool isCurrent = false)
     {
         var api = App.Services.GetRequiredService<SiloApiClient>();
-        var owner = api.CaptureContext();
+        var identity = api.CaptureIdentityContext();
         var ownerItem = ViewModel.Item;
         var libraryId = ViewModel.LibraryId;
         var contentId = episode.ContentId;
@@ -7883,8 +7883,9 @@ public sealed partial class ItemDetailPage : Page
         var actionLifetime = CancellationTokenSource.CreateLinkedTokenSource(navigationToken);
         var actionToken = actionLifetime.Token;
         var retired = false;
-        bool IsCurrentOwner() => !retired && !actionToken.IsCancellationRequested && IsLoaded &&
-            api.IsCurrentContext(owner) && ReferenceEquals(ViewModel.Item, ownerItem) && ViewModel.LibraryId == libraryId;
+        bool IsCurrentPageOwner() => !navigationToken.IsCancellationRequested && IsLoaded &&
+            api.IsCurrentIdentityContext(identity) && ReferenceEquals(ViewModel.Item, ownerItem) && ViewModel.LibraryId == libraryId;
+        bool IsCurrentCardOwner() => !retired && !actionToken.IsCancellationRequested && IsCurrentPageOwner();
         void RetireAction()
         {
             if (retired) return;
@@ -8097,8 +8098,21 @@ public sealed partial class ItemDetailPage : Page
         };
         quickPlayButton.Click += async (_, _) =>
         {
-            if (!quickPlayButton.IsEnabled || !IsCurrentOwner() || !episode.Files.Any(file => file.Unreadable != true)) return;
+            if (!quickPlayButton.IsEnabled || !IsCurrentCardOwner() || !episode.Files.Any(file => file.Unreadable != true)) return;
             quickPlayButton.IsEnabled = false;
+            // A rendered card may outlive an access revision, but not its
+            // account/profile. Capture the read context per accepted action.
+            var owner = api.CaptureContext();
+            // Cosmetic grid rebuilds retire the old button, not an accepted
+            // start. Only navigation or a real page owner change cancels it.
+            using var acceptedLifetime = CancellationTokenSource.CreateLinkedTokenSource(navigationToken);
+            var acceptedToken = acceptedLifetime.Token;
+            bool IsCurrentOwner() => !acceptedToken.IsCancellationRequested && IsCurrentPageOwner();
+            void OnAcceptedOwnerChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+            {
+                if (!IsCurrentPageOwner()) acceptedLifetime.Cancel();
+            }
+            ViewModel.PropertyChanged += OnAcceptedOwnerChanged;
             try
             {
                 var player = App.Services.GetRequiredService<Services.PlayerService>();
@@ -8117,27 +8131,31 @@ public sealed partial class ItemDetailPage : Page
                     var playback = App.Services.GetRequiredService<PlaybackApi>();
                     if (room.IsHost && !room.IsVoteMode && room.Room?.Phase == "lobby")
                     {
-                        var response = await playback.StageWatchTogetherRoomItemAsync(room.RoomId, contentId, libraryId: libraryId, ct: actionToken);
+                        var response = await playback.StageWatchTogetherRoomItemAsync(room.RoomId, contentId, libraryId: libraryId, ct: acceptedToken);
                         if (!IsCurrentOwner() || !ReferenceEquals(coordinator.ActiveRoom, room)) return;
                         room.Room = response.Room;
                     }
                     else
                         await playback.CreateWatchTogetherSuggestionAsync(room.RoomId, room.RoomToken, contentId, "episode", episode.Title,
-                            posterUrl: episode.StillUrl, ct: actionToken);
+                            posterUrl: episode.StillUrl, ct: acceptedToken);
                     if (IsCurrentOwner() && ReferenceEquals(coordinator.ActiveRoom, room))
                         App.Services.GetRequiredService<NavigationService>().Navigate<WatchTogetherRoomPage>(new WatchTogetherRoomNavigationArgs
                         { RoomId = room.RoomId, RoomAccessToken = room.RoomToken });
                     return;
                 }
                 await player.PlayAsync(
-                    contentId, libraryId: libraryId, cancellationToken: actionToken, expectedContext: owner);
+                    contentId, libraryId: libraryId, cancellationToken: acceptedToken, expectedContext: owner);
             }
             catch (OperationCanceledException) when (!IsCurrentOwner()) { }
             catch (Exception ex)
             {
                 if (IsCurrentOwner()) App.Services.GetRequiredService<Services.ToastService>().Error(ex);
             }
-            finally { quickPlayButton.IsEnabled = true; }
+            finally
+            {
+                ViewModel.PropertyChanged -= OnAcceptedOwnerChanged;
+                quickPlayButton.IsEnabled = true;
+            }
         };
         var quickWatchedIcon = new FontIcon { FontSize = 18, Foreground = new SolidColorBrush(Microsoft.UI.Colors.White) };
         var quickWatchedButton = new Button

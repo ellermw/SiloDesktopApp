@@ -30,13 +30,11 @@ public partial class PlaybackApi
         var authority = client.CaptureIdentityContext();
         if (expectedContext is { } expected && !client.IsCurrentContext(expected))
             throw new OperationCanceledException("Playback start owner changed.", ct);
-        // Bind every capability read and delivery attempt to the initiating
-        // request, including retries. Never recapture ambient profile headers
-        // between an owner check and constructing the outgoing HTTP request.
+        // Validate a scoped read owner at entry, then bind delivery and retries
+        // atomically to this identity. An access/cache refresh is not an account
+        // or profile departure and must not abandon an accepted start.
         Task<T> SendOwnedAsync<T>(HttpMethod method, string path, object? body, CancellationToken token) =>
-            expectedContext is { } context
-                ? client.SendRequestAsync<T>(context, method, path, body, token)
-                : client.SendIdentityBoundRequestAsync<T>(authority, method, path, body, token);
+            client.SendIdentityBoundRequestAsync<T>(authority, method, path, body, token);
         foreach (var entry in _sessions)
             if (entry.Value.Context != authority) _sessions.TryRemove(entry.Key, out _);
         for (var attempt = 0; ; attempt++)
@@ -259,7 +257,8 @@ public partial class PlaybackApi
             request.CancelAfter(perRequest);
             try { return await deliver(request.Token).ConfigureAwait(false); }
             catch (Exception ex) when (attempt < 2 && !deadline.IsCancellationRequested &&
-                ex is HttpRequestException or IOException or System.Text.Json.JsonException or OperationCanceledException)
+                (ex is HttpRequestException or IOException or System.Text.Json.JsonException ||
+                    ex is OperationCanceledException && (request.IsCancellationRequested || ex.InnerException is TimeoutException)))
             {
                 EnsureAuthority(authority);
                 await Task.Delay(TimeSpan.FromMilliseconds(300 * (attempt + 1)), deadline.Token).ConfigureAwait(false);

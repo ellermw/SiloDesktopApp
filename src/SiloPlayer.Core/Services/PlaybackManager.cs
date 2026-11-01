@@ -143,9 +143,10 @@ public partial class PlaybackManager : IDisposable
         CancellationToken ct = default,
         PlaybackQualityPreferences? preferences = null,
         int? subtitleTrackIndex = null,
-        bool preserveTrackIntent = false)
+        bool preserveTrackIntent = false,
+        ApiRequestContext? expectedContext = null)
     {
-        preferences ??= await ResolveQualityPreferencesAsync(ct).ConfigureAwait(false);
+        preferences ??= await ResolveQualityPreferencesAsync(ct, expectedContext).ConfigureAwait(false);
         if (!_apiClient.IsCurrentContext(preferences.Context)) throw new OperationCanceledException("Playback quality owner changed.", ct);
         if (!preserveTrackIntent) ResetLocalTrackIntent();
         var subtitleRevision = CaptureSubtitleRevision();
@@ -178,9 +179,8 @@ public partial class PlaybackManager : IDisposable
 
         LogToStateTrace($"StartSession v3: fileId={fileId}, pos={startPosition}, force={forceStartPosition}, attempt={request.PlaybackAttemptId}, codecs_video=[{string.Join(",", capabilities.CodecsVideo)}], codecs_audio=[{string.Join(",", capabilities.CodecsAudio)}], max_res={capabilities.MaxResolution}, hdr={capabilities.Hdr}");
 
-        await ConfigureConnectionStartAsync(request, preferences, ct).ConfigureAwait(false);
-        if (!_apiClient.IsCurrentContext(preferences.Context)) throw new OperationCanceledException("Playback owner changed.", ct);
-        var decision = await _playbackApi.StartPlaybackV3Async(request, ct, preferences.Context).ConfigureAwait(false);
+        await ConfigureConnectionStartAsync(request, preferences, ct, expectedContext).ConfigureAwait(false);
+        var decision = await _playbackApi.StartPlaybackV3Async(request, ct, expectedContext).ConfigureAwait(false);
         _connectionFeatures = request.ClientFeatures.ToArray();
         var response = AdoptProtocolV3Decision(decision, request.PlaybackAttemptId, request.QualityPreference, request.BandwidthCapKbps);
         _recoveryAttemptHistory.Reset();
