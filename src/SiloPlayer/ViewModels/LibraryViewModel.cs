@@ -583,9 +583,9 @@ public partial class LibraryViewModel : ObservableObject
                 if (ct.IsCancellationRequested || queryVersion != _queryVersion || windowVersion != _windowLoadVersion)
                     return;
                 // A count may have landed while this speculative window was
-                // in flight. An out-of-range page cannot enlarge that count
-                // or replace the still-usable active window.
-                if (_hasExactTotal && startIndex >= TotalCount && !HasTrustworthyExactTotal(response, includeTotal))
+                // in flight. Even total_exact on a skip-total window cannot
+                // enlarge that count or replace the still-usable active window.
+                if (_hasExactTotal && startIndex >= TotalCount)
                     return;
 
                 ApplyWindowResponse(startIndex, response, includeTotal, preserveAdjacent: !force);
@@ -613,8 +613,12 @@ public partial class LibraryViewModel : ObservableObject
                 $"catalog_cursor_recovery start={startIndex} count={itemCount} query_version={_queryVersion} prior_scope_retired=true retry_without_cursor=true");
             _pendingWindowStart = startIndex;
             _pendingWindowEnd = startIndex + itemCount - 1;
-            _ = EnsureLetterIndexAsync();
+            var recoveryQueryVersion = _queryVersion;
             await (_pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force: true, allowCursorRecovery: false));
+            // Only restore the optional rail after fresh cards succeed. A
+            // failed cursor recovery must not trigger another capability read.
+            if (recoveryQueryVersion == _queryVersion && ErrorMessage is null && WindowStartIndex >= 0)
+                _ = EnsureLetterIndexAsync();
         }
         catch (Exception ex)
         {
@@ -1045,7 +1049,9 @@ public partial class LibraryViewModel : ObservableObject
 
     private void ApplyWindowResponse(int startIndex, CatalogResponse response, bool includeTotal, bool preserveAdjacent = false)
     {
-        if (_hasExactTotal && startIndex >= TotalCount && !HasTrustworthyExactTotal(response, includeTotal))
+        // Count requests publish separately in LoadExactCountAsync; cached
+        // windows must not restore an extent that an exact count retired.
+        if (_hasExactTotal && startIndex >= TotalCount)
             return;
         if (!string.IsNullOrWhiteSpace(response.Snapshot))
             _snapshot = response.Snapshot;

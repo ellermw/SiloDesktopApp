@@ -312,12 +312,15 @@ public sealed class LibraryLetterNavigationTests
     }
 
     [Theory]
-    [InlineData(900, 800)] // Empty page beyond the newly counted end.
-    [InlineData(900, 1000)] // Older non-empty page beyond that end.
-    [InlineData(720, 1000)] // Older page overlapping the newly counted end.
-    public async Task InFlightSkipTotalWindowCannotEnlargeALaterExactCount(int start, int catalogTotal)
+    [InlineData(900, 800, false)] // Empty page beyond the newly counted end.
+    [InlineData(900, 1000, false)] // Older non-empty page beyond that end.
+    [InlineData(720, 1000, false)] // Older page overlapping the newly counted end.
+    [InlineData(900, 800, true)] // An exact-total empty page is still an older window.
+    [InlineData(900, 1000, true)] // An older exact total cannot restore phantom slots.
+    [InlineData(800, 1000, true)] // The first index beyond the exact extent is also retired.
+    public async Task InFlightSkipTotalWindowCannotEnlargeALaterExactCount(int start, int catalogTotal, bool windowTotalExact)
     {
-        using var wire = new Wire { CatalogExact = false, ExactCountTotal = 800, IndexTotal = 1200 };
+        using var wire = new Wire { CatalogExact = false, ExactCountTotal = 800, IndexTotal = 1200, TailPosition = 1040 };
         var model = wire.Create();
         var counted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         model.WindowLoaded += () => { if (model.DisplayTotalCount == 800) counted.TrySetResult(); };
@@ -325,6 +328,7 @@ public sealed class LibraryLetterNavigationTests
         Assert.Equal(1200, model.TotalCount);
         var original = model.GetWindowItem(0);
         Assert.NotNull(original);
+        wire.WindowTotalExact = windowTotalExact;
         wire.HoldCatalog = true;
         var pending = model.LoadWindowAsync(start, 100, force: true);
         try
@@ -350,6 +354,11 @@ public sealed class LibraryLetterNavigationTests
         else Assert.NotNull(model.GetWindowItem(799));
         Assert.False(model.IsLoading);
         Assert.Null(model.ErrorMessage);
+        var tail = Assert.Single(model.LetterIndex!.Letters, entry => entry.Letter == "N");
+        Assert.True(tail.Position >= model.TotalCount); // Rail's disabled predicate.
+        var requests = wire.Seeks.Count;
+        await model.JumpToLetterCommand.ExecuteAsync("N");
+        Assert.Equal(requests, wire.Seeks.Count);
     }
 
     [Fact]
