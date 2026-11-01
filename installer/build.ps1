@@ -168,7 +168,7 @@ if (-not $IsccPath) {
     exit 1
 }
 function ConvertTo-InnoSetupVersion([string]$Text) {
-    if ($Text -match '^\s*(\d+\.\d+(?:\.\d+){0,2})(?=$|[^\d.])') {
+    if ($Text -match '^\s*(?:Inno Setup\s+|v)?(\d+\.\d+(?:\.\d+){0,2})(?=$|[^\d.])') {
         $parsed = $null
         if ([version]::TryParse($Matches[1], [ref]$parsed)) {
             $version = [version]::new($parsed.Major, $parsed.Minor, [Math]::Max(0, $parsed.Build), [Math]::Max(0, $parsed.Revision))
@@ -191,27 +191,21 @@ function Select-InnoSetupVersion([string[]]$RegistryVersions, [string[]]$Uninsta
 }
 
 function Get-InnoSetupVersion([string]$CompilerPath) {
-    # Some releases omit ISCC.exe's numeric version resource. Prefer compiler-owned
-    # metadata (including its help banner) before consulting installation metadata.
-    $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($CompilerPath)
-    $fromCompiler = [version]::new($info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart, $info.FilePrivatePart)
-    if ($fromCompiler -gt [version]'0.0.0.0') { return $fromCompiler }
-    $fromProduct = ConvertTo-InnoSetupVersion $info.ProductVersion
-    if ($fromProduct) { return $fromProduct }
-    try {
-        # A help invocation may exit nonzero; only its version banner matters here.
-        $PSNativeCommandUseErrorActionPreference = $false
-        $helpOutput = & $CompilerPath '/?' 2>&1
-        foreach ($line in $helpOutput) {
-            if ("$line" -match '^\s*(?:Compiler engine version:\s*(?:Inno Setup\s+)?|Inno Setup\s+)(\d+\.\d+(?:\.\d+){0,2})(?=\s|$)') {
-                $fromHelp = ConvertTo-InnoSetupVersion $Matches[1]
-                if ($fromHelp) { return $fromHelp }
-            }
-        }
-    } catch {
-        # An unavailable compiler query must not prevent the metadata fallbacks.
-    }
+    # Some releases omit ISCC.exe's version resource. The adjacent ISCmplr.dll
+    # owns the compiler engine version; /? only prints usage, not that version.
     $directory = [IO.Path]::GetFullPath((Split-Path $CompilerPath -Parent)).TrimEnd('\')
+    foreach ($file in @($CompilerPath, (Join-Path $directory 'ISCmplr.dll'))) {
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
+        try {
+            $info = (Get-Item -LiteralPath $file -ErrorAction Stop).VersionInfo
+            $fromCompiler = [version]::new($info.FileMajorPart, $info.FileMinorPart, $info.FileBuildPart, $info.FilePrivatePart)
+            if ($fromCompiler -gt [version]'0.0.0.0') { return $fromCompiler }
+            $fromProduct = ConvertTo-InnoSetupVersion $info.ProductVersion
+            if ($fromProduct) { return $fromProduct }
+        } catch {
+            # Unreadable compiler resources must not prevent installation fallbacks.
+        }
+    }
     $uninstallerVersions = @()
     $uninstaller = Join-Path $directory 'unins000.exe'
     if (Test-Path -LiteralPath $uninstaller -PathType Leaf) {
@@ -241,7 +235,7 @@ function Get-InnoSetupVersion([string]$CompilerPath) {
 }
 $IsccVersion = Get-InnoSetupVersion $IsccPath
 if ($IsccVersion -eq [version]'0.0.0.0') {
-    throw "The Inno Setup version could not be determined at '$IsccPath'. Checked ISCC.exe's numeric and ProductVersion resources, its /? banner, adjacent unins000.exe, and matching uninstall registry entries. Reinstall Inno Setup with its standard installer before building."
+    throw "The Inno Setup version could not be determined at '$IsccPath'. Checked ISCC.exe's and adjacent ISCmplr.dll's numeric and ProductVersion resources, adjacent unins000.exe, and matching uninstall registry entries. Reinstall Inno Setup with its standard installer before building."
 }
 if ($IsccVersion -lt [version]'6.3.0.0') {
     throw "Inno Setup 6.3.0 or newer is required for semantic AppVersion and VersionInfoProductTextVersion. Found $IsccVersion at '$IsccPath'. Upgrade Inno Setup before building."
