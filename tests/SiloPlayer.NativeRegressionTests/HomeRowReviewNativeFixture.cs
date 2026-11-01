@@ -33,6 +33,8 @@ internal static class HomeRowReviewNativeFixture
         await Case("null-whole-mounted-hero", () => NullRowAsync(parent, true));
         await Case("queued-row-ui-collection-ownership", QueuedUiOwnershipAsync);
         await Case("promoted-hero-whole", PromotedHeroAsync);
+        await Case("featured-configured-budget-with-capabilities", FeaturedReadsKeepConfiguredBudgetAsync);
+        await Case("expanded-refresh-with-capabilities", ExpandedRefreshWithCapabilitiesAsync);
         await Case("expanded-hero-round-trip", ExpandedHeroRoundTripAsync);
         await Case("translated-prefix-and-tail", LanguageAsync);
         await Case("real-menu-undo-vs-refresh", () => MenuAsync(parent, true));
@@ -119,13 +121,56 @@ internal static class HomeRowReviewNativeFixture
 
     private static async Task PromotedHeroAsync()
     {
-        using var session = new Session(new Wire()); var vm = session.Vm; var wire = session.Wire;
+        using var session = new Session(new Wire { Capabilities = "{\"row_item_limit_max\":100,\"section_item_limit_max\":100}" });
+        var vm = session.Vm; var wire = session.Wire;
         await vm.LoadCommand.ExecuteAsync(null); await Until(() => vm.Sections.FirstOrDefault()?.Items.Count == 20);
         wire.Hero = true; vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
         await Until(() => wire.Requests.Count >= 2); await Task.Delay(100);
         Require(vm.FeaturedSections.Count == 1 && vm.FeaturedSections[0].Featured && vm.FeaturedSections[0].Items.Count == 35,
             "Promoted first-featured row must recover35 cards; count=" + vm.FeaturedSections.FirstOrDefault()?.Items.Count);
         Require(wire.Requests.Last().Query == "", "Promoted hero must issue an uncapped read.");
+    }
+
+    private static async Task FeaturedReadsKeepConfiguredBudgetAsync()
+    {
+        using var session = new Session(new Wire { Hero = true, SectionCount = 2, ConfiguredItemLimit = 10,
+            Capabilities = "{\"row_item_limit_max\":100,\"section_item_limit_max\":100}" });
+        var vm = session.Vm; var wire = session.Wire;
+        void CheckRows()
+        {
+            Require(vm.FeaturedSections.Count == 1 && vm.Sections.Count == 1,
+                "The first featured section must be the hero; the additional featured section must remain a row.");
+            Require(vm.FeaturedSections.Concat(vm.Sections).All(row => row.Featured && row.ItemLimit == 10 && row.Items.Count == 10),
+                "Advertised section maxima must not inflate either featured section's configured ten-card budget.");
+            Require(wire.Requests.All(read => read.Query == ""), "Featured initial, retry and refresh reads must be uncapped.");
+        }
+        await vm.LoadCommand.ExecuteAsync(null);
+        await Until(() => vm.FeaturedSections.Concat(vm.Sections).Count(row => row.LoadCompleted) == 2);
+        CheckRows();
+        await vm.RetrySectionAsync("row1"); await vm.RetrySectionAsync("row2");
+        CheckRows();
+        wire.Title = "Featured refresh"; vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
+        await Until(() => vm.FeaturedSections.Concat(vm.Sections).All(row => row.Title == wire.Title));
+        CheckRows();
+        Require(wire.Requests.Count == 6, "Each featured section must be read once per initial, retry and refresh cycle.");
+    }
+
+    private static async Task ExpandedRefreshWithCapabilitiesAsync()
+    {
+        using var session = new Session(new Wire { Capabilities = "{\"row_item_limit_max\":100,\"section_item_limit_max\":100}" });
+        var vm = session.Vm; var wire = session.Wire;
+        await vm.LoadCommand.ExecuteAsync(null); await Until(() => vm.Sections.FirstOrDefault()?.Items.Count == 20);
+        await vm.CompleteSectionAsync("row");
+        var order = vm.Sections[0].CompletedOrder;
+        Require(vm.Sections[0].Items.Count == 35 && order > 0, "Explicit completion must recover the bounded row's tail.");
+        wire.Title = "Expanded refresh"; vm.InvalidateCache(); await vm.LoadCommand.ExecuteAsync(null);
+        await Until(() => vm.Sections.FirstOrDefault()?.Title == wire.Title);
+        await vm.RetrySectionAsync("row");
+        Require(vm.Sections[0].Items.Count == 35 && vm.Sections[0].ItemLimit == 50
+            && vm.Sections[0].ShownCount == 20 && vm.Sections[0].CompletedOrder == order,
+            "Expanded refresh and retry must keep the configured budget and initial/tail priority.");
+        Require(wire.Requests.Select(read => read.Query).SequenceEqual(new[] { "?item_limit=20", "?item_limit=100", "", "" }),
+            "Only explicit completion may request the advertised section maximum.");
     }
 
     private static async Task ExpandedHeroRoundTripAsync()
@@ -250,6 +295,8 @@ internal static class HomeRowReviewNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         public bool Batch, Hero, HoldRefresh, HoldWhole, Dismissed, NullItems; public string Language = "EN", Title = "Progress"; public int UndoCalls;
+        public string Capabilities = "{\"row_item_limit_max\":100}";
+        public int SectionCount = 1, ConfiguredItemLimit = 50;
         public ConcurrentQueue<Read> Requests = new(); public ConcurrentQueue<string> MutationProfiles = new();
         public TaskCompletionSource FirstFive = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseFirst = new(TaskCreationOptions.RunContinuationsAsynchronously),
             RefreshStarted = new(TaskCreationOptions.RunContinuationsAsynchronously), ReleaseRefresh = new(TaskCreationOptions.RunContinuationsAsynchronously),
@@ -265,10 +312,12 @@ internal static class HomeRowReviewNativeFixture
                 if (request.Method == HttpMethod.Put) Dismissed = true; else { Dismissed = false; UndoCalls++; }
                 return new(HttpStatusCode.NoContent);
             }
-            if (path.EndsWith("/capabilities")) return Json("""{"row_item_limit_max":100}""");
-            if (path.EndsWith("/layout")) return Json(JsonSerializer.Serialize(new { sections = Enumerable.Range(1, Batch ? 6 : 1).Select(i => new {
-                id = Batch ? $"row{i}" : "row", title = "Progress", section_type = "continue_watching", featured = Hero, item_limit = 50 }) }));
+            if (path.EndsWith("/capabilities")) return Json(Capabilities);
+            if (path.EndsWith("/layout")) return Json(JsonSerializer.Serialize(new { sections = Enumerable.Range(1, Batch ? 6 : SectionCount).Select(i => new {
+                id = Batch || SectionCount > 1 ? $"row{i}" : "row", title = "Progress", section_type = "continue_watching", featured = Hero, item_limit = ConfiguredItemLimit }) }));
             var id = path.Split('/')[5]; var capped = request.RequestUri.Query == "?item_limit=20";
+            var itemLimit = request.RequestUri.Query.StartsWith("?item_limit=", StringComparison.Ordinal)
+                ? int.Parse(request.RequestUri.Query["?item_limit=".Length..]) : ConfiguredItemLimit;
             var dismissed = Dismissed; var language = Language; var hero = Hero;
             var account = request.Headers.Authorization?.Parameter == "initial-fixture-account" ? "initial-fixture"
                 : request.Headers.Authorization?.Parameter == "replacement-fixture-account" ? "replacement-fixture" : "missing";
@@ -277,8 +326,8 @@ internal static class HomeRowReviewNativeFixture
             if (capped && Interlocked.Increment(ref _capped) > 1 && HoldRefresh) { RefreshStarted.TrySetResult(); await ReleaseRefresh.Task; }
             if (!capped && HoldWhole) { WholeStarted.TrySetResult(); await ReleaseWhole.Task; }
             if (NullItems) return Json("null");
-            return Json(JsonSerializer.Serialize(new { id, title = Title, section_type = "continue_watching", featured = hero, item_limit = capped ? 20 : 50,
-                total_count = 35, has_more = capped, items = Enumerable.Range(1, capped ? 20 : 35).Where(i => !dismissed || i is not (1 or 21)).Select(i => new {
+            return Json(JsonSerializer.Serialize(new { id, title = Title, section_type = "continue_watching", featured = hero, item_limit = itemLimit,
+                total_count = 35, has_more = capped, items = Enumerable.Range(1, Math.Min(35, itemLimit)).Where(i => !dismissed || i is not (1 or 21)).Select(i => new {
                     content_id = i is 1 or 21 ? $"episode{i}" : $"movie{i}", series_id = i is 1 or 21 ? "show" : null, type = i is 1 or 21 ? "episode" : "movie",
                     title = language == "FR" ? $"FR Carte{i}" : $"EN Card{i}", overview = language == "FR" ? $"FR Résumé{i}" : $"EN Overview{i}",
                     progress_updated_at = "2026-11-01T00:00:00Z" }) }));

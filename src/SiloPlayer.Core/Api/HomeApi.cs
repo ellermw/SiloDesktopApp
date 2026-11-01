@@ -51,7 +51,7 @@ public class HomeApi(SiloApiClient client)
     public Task<HomeSectionItemsResponse> GetSectionItemsAsync(ApiRequestContext owner, long language, string sectionId, CancellationToken ct = default)
         => ReadSectionItemsAsync(owner, language, sectionId, null, ct);
 
-    /// <summary>Home's featured, expanded and completion reads request the advertised whole-row budget.</summary>
+    /// <summary>Explicit partial-row completion requests the advertised whole-row budget; featured and expanded refreshes use GetSectionItemsAsync.</summary>
     public async Task<HomeSectionItemsResponse> GetWholeSectionItemsAsync(ApiRequestContext owner, long language,
         string sectionId, int itemLimit, CancellationToken ct = default)
     {
