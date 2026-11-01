@@ -33,6 +33,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
             ("profile ownership across preparation awaits", () => VerifyPreparationOwnerAsync(scope)),
             ("newer viewer click", () => VerifyNewerIntentAsync(scope)),
             ("canceled queued successor", () => VerifyCanceledSuccessorAsync(scope)),
+            ("loading overlay ownership", () => VerifyLoadingOverlayOwnershipAsync(scope)),
             ("attached room authority", () => VerifyRoomIntentAsync(scope)),
             ("rewatch accessible label", () => VerifyRewatchLabelAsync(parent)),
             ("hover/focus union", () => VerifyFocusUnionAsync(parent)),
@@ -305,7 +306,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
             scope.Wire.ReleaseWatch.TrySetResult(); scope.Wire.HoldWatch = null;
             await scope.Player.PlayAsync("successor-" + departure, expectedContext: scope.Client.CaptureContext());
             Check(scope.Wire.Starts.Count > 0 && !scope.Player.IsLoading, "Cancellation prevented a subsequent authorized playback request.");
-            scope.Window.HideLoadingOverlay(); await Task.Delay(40);
+            scope.Window.HideLoadingOverlay(GetField(scope.Window, "_loadingOverlayOwner")); await Task.Delay(40);
         }
     }
 
@@ -419,6 +420,100 @@ internal static partial class EpisodeQuickPlayNativeFixture
                 await Task.WhenAll(first, second);
             }
         }
+    }
+
+    private static async Task VerifyLoadingOverlayOwnershipAsync(LifecycleScope scope)
+    {
+        // Owner-less compatibility calls may release only their own surface.
+        scope.Window.ShowLoadingOverlay();
+        await Until(() => scope.Overlay.Visibility == Visibility.Visible);
+        scope.Window.HideLoadingOverlay();
+        await Until(() => scope.Overlay.Visibility == Visibility.Collapsed);
+        var firstOwner = new object();
+        var successorOwner = new object();
+        scope.Window.ShowLoadingOverlay(firstOwner);
+        scope.Window.HideLoadingOverlay();
+        scope.Window.ShowLoadingOverlay();
+        await Task.Delay(40);
+        Check(scope.Overlay.Visibility == Visibility.Visible && ReferenceEquals(GetField(scope.Window, "_loadingOverlayOwner"), firstOwner),
+            "An owner-less call hid or took ownership of a scoped loading surface.");
+        scope.Window.ShowLoadingOverlay(successorOwner);
+        scope.Window.HideLoadingOverlay(firstOwner);
+        await Task.Delay(40);
+        Check(scope.Overlay.Visibility == Visibility.Visible && ReferenceEquals(GetField(scope.Window, "_loadingOverlayOwner"), successorOwner),
+            "Retired cleanup hid the successor's loading surface.");
+        scope.Window.ShowPlaybackError("Successor error", "Keep this error visible.");
+        scope.Window.HideLoadingOverlay(successorOwner);
+        scope.Window.HideLoadingOverlay();
+        scope.Window.ShowLoadingOverlay();
+        await Task.Delay(40);
+        var errorState = (FrameworkElement)((FrameworkElement)scope.Window.Content).FindName("ErrorState");
+        Check(scope.Overlay.Visibility == Visibility.Visible && errorState.Visibility == Visibility.Visible,
+            "A stale or owner-less loading call replaced the successor's error surface.");
+        await scope.ResetAsync();
+
+        // Capture the production native callback without leaving the synthetic
+        // player subscribed to asynchronous native events in other cases.
+        typeof(PlayerService).GetMethod("WireMpvEvents", Private)!.Invoke(scope.Player, null);
+        var restarted = (Action)GetField(scope.Player, "_mpvPlaybackRestartedHandler")!;
+        typeof(PlayerService).GetMethod("UnwireMpvEvents", Private)!.Invoke(scope.Player, null);
+        foreach (var successorError in new[] { false, true })
+        {
+            await scope.ResetAsync();
+            using var lifetime = new CancellationTokenSource();
+            var outgoingOwner = new object();
+            SetField(scope.Player, "_mpvLoadingOverlayOwner", outgoingOwner);
+            scope.Window.ShowLoadingOverlay(outgoingOwner);
+            scope.Wire.HoldWatch = "scoped-overlay-owner";
+            var pending = scope.Player.PlayAsync(scope.Wire.HoldWatch, cancellationToken: lifetime.Token,
+                expectedIdentityContext: scope.Client.CaptureIdentityContext());
+            try
+            {
+                await scope.Wire.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+                await Until(() => scope.Overlay.Visibility == Visibility.Visible);
+                var requestOwner = GetField(scope.Player, "_playbackCts");
+                restarted(); // The outgoing file produces its delayed first frame.
+                scope.Window.ShowLoadingOverlay();
+                await Task.Delay(40);
+                Check(scope.Player.IsLoading && scope.Overlay.Visibility == Visibility.Visible &&
+                    ReferenceEquals(GetField(scope.Window, "_loadingOverlayOwner"), requestOwner),
+                    "Outgoing first output or an owner-less Show stole the pending quick play's loading surface.");
+                if (successorError) scope.Window.ShowPlaybackError("Successor error", "Keep this error visible.");
+                lifetime.Cancel();
+                await pending;
+                await Task.Delay(40);
+                Check(!scope.Player.IsLoading && scope.Player.State == PlayerState.Idle &&
+                    scope.Overlay.Visibility == (successorError ? Visibility.Visible : Visibility.Collapsed) &&
+                    (!successorError || errorState.Visibility == Visibility.Visible),
+                    "Canceled quick play stranded loading over Idle or hid a successor's error surface.");
+            }
+            finally
+            {
+                lifetime.Cancel();
+                scope.Wire.ReleaseWatch.TrySetResult();
+                await pending;
+            }
+        }
+
+        await scope.ResetAsync();
+        scope.Wire.AcceptStart = true;
+        await scope.Player.PlayAsync("native-overlay-owner", expectedIdentityContext: scope.Client.CaptureIdentityContext());
+        await Until(() => scope.Overlay.Visibility == Visibility.Visible);
+        var nativeOwner = GetField(scope.Player, "_playbackCts");
+        Check(nativeOwner != null && ReferenceEquals(GetField(scope.Player, "_mpvLoadingOverlayOwner"), nativeOwner) &&
+            ReferenceEquals(GetField(scope.Window, "_loadingOverlayOwner"), nativeOwner),
+            "BeginMpvLoad replaced the preparation surface's owner.");
+        restarted();
+        await Until(() => scope.Overlay.Visibility == Visibility.Collapsed);
+        scope.Window.ShowLoadingOverlay(nativeOwner);
+        await Until(() => scope.Overlay.Visibility == Visibility.Visible);
+        typeof(PlayerService).GetMethod("EnterPlaybackTerminalState", Private)!.Invoke(scope.Player,
+            [new InvalidOperationException("Fixture interruption"), 91d, "fixture", true]);
+        await Until(() => scope.Overlay.Visibility == Visibility.Collapsed);
+        scope.Window.ShowLoadingOverlay(nativeOwner);
+        await Until(() => scope.Overlay.Visibility == Visibility.Visible);
+        await scope.Player.CloseAsync();
+        await Until(() => scope.Overlay.Visibility == Visibility.Collapsed);
     }
 
     private static void CheckAbandonedHandoff(LifecycleScope scope)
@@ -624,7 +719,7 @@ internal static partial class EpisodeQuickPlayNativeFixture
             Auth.SelectProfile("fixture", profile: new() { Id = "fixture", Name = "Fixture" });
             await Services.GetRequiredService<EpisodeSpoilerPreferences>().EnsureLoadedAsync();
             await Services.GetRequiredService<UICustomizationService>().EnsureLoadedAsync();
-            Window.AppWindow.ResizeClient(new(1100, 900)); Window.HideLoadingOverlay(); await Task.Delay(30);
+            Window.AppWindow.ResizeClient(new(1100, 900)); Window.HideLoadingOverlay(GetField(Window, "_loadingOverlayOwner")); await Task.Delay(30);
         }
         public async ValueTask DisposeAsync()
         {

@@ -142,6 +142,9 @@ public partial class PlayerService : IDisposable
     private PlaybackTerminalState? _playbackTerminalState;
     private bool? _recoveryPauseIntentOverride;
     private CancellationTokenSource? _playbackCts;
+    // Native output belongs to the last submitted load, not a successor that
+    // is still preparing its watch detail/session under a new playback CTS.
+    private object? _mpvLoadingOverlayOwner;
     private CancellationTokenSource? _chapterThumbnailCts;
     private readonly ConcurrentDictionary<int, byte> _chapterThumbnailRequests = new();
     private readonly object _chapterThumbnailFileLock = new();
@@ -778,6 +781,7 @@ public partial class PlayerService : IDisposable
         CancellationTokenSource ownerCts)
     {
         var ct = ownerCts.Token;
+        var loadingOwner = _playbackCts;
         var gateEntered = false;
         try
         {
@@ -801,8 +805,8 @@ public partial class PlayerService : IDisposable
 
             _switchingContent = true;
             IsLoading = true;
-            App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
-                () => App.MainWindowInstance?.ShowLoadingOverlay());
+            if (loadingOwner != null)
+                App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
             var seekPaused = forceResume ? false : wasPaused;
             manager.UpdatePosition(ToSessionPosition(mediaPosition), seekPaused);
             // Progress persistence is not part of the transport dependency
@@ -845,11 +849,10 @@ public partial class PlayerService : IDisposable
                 _switchingContent = false;
                 IsLoading = false;
                 LogToFile("player_seek_error.txt", ex.ToString());
+                if (loadingOwner != null)
+                    App.MainWindowInstance?.HideLoadingOverlay(loadingOwner);
                 App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(() =>
-                {
-                    App.MainWindowInstance?.HideLoadingOverlay();
-                    _mpv?.ShowOsdText("Seek failed", 2500);
-                });
+                    _mpv?.ShowOsdText("Seek failed", 2500));
                 if (_idleRemuxResume.IsReopening)
                 {
                     _recoveryPauseIntentOverride = _idleRemuxResume.DesiredPaused;
@@ -2213,7 +2216,9 @@ public partial class PlayerService : IDisposable
         _playbackCts = playbackCts;
 
         var loadingWindow = App.MainWindowInstance;
-        var loadingOwner = new object();
+        // Retain the same surface owner through preparation, native loading,
+        // recovery, cancellation and close.
+        var loadingOwner = playbackCts;
         loadingWindow?.ShowLoadingOverlay(loadingOwner);
 
         PlaybackManager? requestManager = null;
@@ -2568,6 +2573,7 @@ public partial class PlayerService : IDisposable
         var manager = _playbackManager ?? throw new InvalidOperationException("The playback session is unavailable.");
         var sessionId = manager.SessionId
             ?? throw new InvalidOperationException("The playback session ended before media loading began.");
+        var loadingOwner = _playbackCts;
 
         // Retire the outgoing file's asynchronous subtitle work before loadfile:
         // the next FILE_LOADED can be delayed by the replacement HTTP stream.
@@ -2585,8 +2591,8 @@ public partial class PlayerService : IDisposable
         _switchingContent = true;
         IsLoading = true;
         SetConnectionMediaActive(true);
-        App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
-            () => App.MainWindowInstance?.ShowLoadingOverlay());
+        if (loadingOwner != null)
+            App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
 
         try
         {
@@ -2610,6 +2616,7 @@ public partial class PlayerService : IDisposable
             mpv.Pause();
             // Do not carry an original file's aid into a single-track remux/HLS load.
             mpv.SetProperty("aid", "auto");
+            Volatile.Write(ref _mpvLoadingOverlayOwner, loadingOwner);
             mpv.LoadFile(prepared.LocalUrl, null, prepared.MpvLoadStartSeconds);
         }
         catch
@@ -3012,15 +3019,16 @@ public partial class PlayerService : IDisposable
         var roomStartupPosition = IsWatchTogetherPlayback && !_transportHasFirstOutput
             ? RoomPlaybackStartPosition?.Invoke() : null;
         var resumePosition = roomStartupPosition ?? Math.Max(0, currentPosition - (_transportHasFirstOutput ? 2 : 0));
-        var ct = _playbackCts?.Token ?? CancellationToken.None;
+        var loadingOwner = _playbackCts;
+        var ct = loadingOwner?.Token ?? CancellationToken.None;
 
         _prematureEofRecoveryActive = true;
         _prematureEofRecoveryPosition = resumePosition;
         _switchingContent = true;
         IsLoading = true;
 
-        var dispatcher = App.MainWindowInstance?.DispatcherQueue;
-        dispatcher?.TryEnqueue(() => App.MainWindowInstance?.ShowLoadingOverlay());
+        if (loadingOwner != null)
+            App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
 
         try
         {
@@ -3158,6 +3166,7 @@ public partial class PlayerService : IDisposable
         string trigger,
         bool wasPaused)
     {
+        var loadingOwner = _playbackCts;
         if (_idleRemuxResume.IsReopening) wasPaused = _idleRemuxResume.DesiredPaused;
         _idleRemuxResume.Reset();
         CancelPendingFileLoadTimeout();
@@ -3207,8 +3216,8 @@ public partial class PlayerService : IDisposable
                 ["can_retry"] = description.CanRetry,
             }));
 
-        App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
-            () => App.MainWindowInstance?.HideLoadingOverlay());
+        if (loadingOwner != null)
+            App.MainWindowInstance?.HideLoadingOverlay(loadingOwner);
         LogToFile(
             "state_trace.txt",
             $"Playback terminal state: trigger={trigger} position={position:F1} " +
@@ -4496,13 +4505,15 @@ public partial class PlayerService : IDisposable
 
         _mpvPlaybackRestartedHandler = () =>
         {
+            var loadingOwner = Volatile.Read(ref _mpvLoadingOverlayOwner);
             _transportHasFirstOutput = true;
             // MPV_EVENT_PLAYBACK_RESTART is the first-frame-ready boundary for
             // an initial load and fires again after seeks/cache recovery. Keep
             // the opaque startup surface visible through FILE_LOADED so the
             // user never sees an unlabelled black-frame gap.
             _mpv?.SendScriptMessage("osc-set-loading", "false");
-            App.MainWindowInstance?.HideLoadingOverlay();
+            if (loadingOwner != null)
+                App.MainWindowInstance?.HideLoadingOverlay(loadingOwner);
             LogToFile("state_trace.txt", "PlaybackRestarted fired (video output ready)");
             ReportFirstOutput();
         };
@@ -4872,7 +4883,8 @@ public partial class PlayerService : IDisposable
         if (mpv == null || manager?.CurrentSession is not { } session) return false;
         var authority = _activeAuthority;
         var authorityToken = _authorityLifetimeCts.Token;
-        var ct = _playbackCts?.Token ?? CancellationToken.None;
+        var loadingOwner = _playbackCts;
+        var ct = loadingOwner?.Token ?? CancellationToken.None;
         bool CurrentOwner() => !_closing && !ct.IsCancellationRequested && !authorityToken.IsCancellationRequested &&
             ReferenceEquals(authority, _activeAuthority) && ReferenceEquals(manager, _playbackManager) && ReferenceEquals(mpv, _mpv);
         await CancelAndDrainTransportRestartsAsync(ct);
@@ -4896,8 +4908,8 @@ public partial class PlayerService : IDisposable
             _switchingContent = true;
             IsLoading = true;
             _mpv.Pause();
-            App.MainWindowInstance?.DispatcherQueue?.TryEnqueue(
-                () => App.MainWindowInstance?.ShowLoadingOverlay());
+            if (loadingOwner != null)
+                App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
 
             PlaybackStartResponse replanned;
             PreparedPlaybackTransport preparedV3;
@@ -5884,7 +5896,8 @@ public partial class PlayerService : IDisposable
         var authority = _activeAuthority;
         var manager = _playbackManager;
         if (_mpv == null || manager == null) return;
-        using var switchCts = CancellationTokenSource.CreateLinkedTokenSource(_playbackCts?.Token ?? CancellationToken.None, _authorityLifetimeCts.Token);
+        var loadingOwner = _playbackCts;
+        using var switchCts = CancellationTokenSource.CreateLinkedTokenSource(loadingOwner?.Token ?? CancellationToken.None, _authorityLifetimeCts.Token);
         var ct = switchCts.Token;
         bool CurrentSwitch() => !ct.IsCancellationRequested && !_closing &&
             ReferenceEquals(authority, _activeAuthority) && ReferenceEquals(manager, _playbackManager);
@@ -5906,7 +5919,8 @@ public partial class PlayerService : IDisposable
         _switchingContent = true;
         _qualitySwitchActive = true;
         IsLoading = true;
-        App.MainWindowInstance?.ShowLoadingOverlay();
+        if (loadingOwner != null)
+            App.MainWindowInstance?.ShowLoadingOverlay(loadingOwner);
         try
         {
             var quality = tierId.ToLowerInvariant() switch
@@ -5953,7 +5967,8 @@ public partial class PlayerService : IDisposable
             _switchingContent = false;
             _qualitySwitchActive = false;
             IsLoading = false;
-            App.MainWindowInstance?.HideLoadingOverlay();
+            if (loadingOwner != null)
+                App.MainWindowInstance?.HideLoadingOverlay(loadingOwner);
             LogToFile("player_quality_switch_error.txt", ex.ToString());
             var (title, detail) = DescribePlaybackError(ex);
             ErrorMessage = detail;
@@ -6281,6 +6296,8 @@ public partial class PlayerService : IDisposable
         LogToFile("state_trace.txt", $"CloseAsync called: State={State} _switchingContent={_switchingContent}");
         await CancelAndDrainPlayRequestAsync();
         await CancelAndDrainTransportRestartsAsync();
+        var loadingOwner = _playbackCts;
+        Volatile.Write(ref _mpvLoadingOverlayOwner, null);
         CancelPendingFileLoadTimeout();
         CancelPendingLoadedMediaInitialization();
         StopPlaybackStallWatchdog();
@@ -6393,7 +6410,8 @@ public partial class PlayerService : IDisposable
         // so a subsequent PlayAsync starts from a known-clean state.
         ClearNextEpisodeHint();
 
-        App.MainWindowInstance?.HideLoadingOverlay();
+        if (loadingOwner != null)
+            App.MainWindowInstance?.HideLoadingOverlay(loadingOwner);
         _videoWindow?.Hide();
         SetState(PlayerState.Idle);
         if (!ReferenceEquals(closingAuthority, _localAuthority))

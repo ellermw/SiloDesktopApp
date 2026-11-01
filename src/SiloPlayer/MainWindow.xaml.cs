@@ -2614,11 +2614,20 @@ public sealed partial class MainWindow : Window
     }
 
     private object? _loadingOverlayOwner;
+    private readonly object _legacyLoadingOverlayOwner = new();
 
     public void ShowLoadingOverlay(object? owner = null)
     {
-        var currentOwner = owner ?? new object();
-        Interlocked.Exchange(ref _loadingOverlayOwner, currentOwner);
+        var currentOwner = owner ?? _legacyLoadingOverlayOwner;
+        // Legacy callers may reuse their own surface, never take a request's
+        // loading surface (or replace a playback error).
+        if (owner == null)
+        {
+            var previousOwner = Interlocked.CompareExchange(ref _loadingOverlayOwner, currentOwner, null);
+            if (previousOwner != null && !ReferenceEquals(previousOwner, currentOwner)) return;
+        }
+        else
+            Interlocked.Exchange(ref _loadingOverlayOwner, currentOwner);
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!ReferenceEquals(Volatile.Read(ref _loadingOverlayOwner), currentOwner)) return;
@@ -2630,10 +2639,10 @@ public sealed partial class MainWindow : Window
 
     public void HideLoadingOverlay(object? owner = null)
     {
+        var currentOwner = owner ?? _legacyLoadingOverlayOwner;
         DispatcherQueue.TryEnqueue(() =>
         {
-            if (owner != null && !ReferenceEquals(Interlocked.CompareExchange(ref _loadingOverlayOwner, null, owner), owner)) return;
-            if (owner == null) Interlocked.Exchange(ref _loadingOverlayOwner, null);
+            if (!ReferenceEquals(Interlocked.CompareExchange(ref _loadingOverlayOwner, null, currentOwner), currentOwner)) return;
             LoadingOverlay.Visibility = Visibility.Collapsed;
         });
     }
