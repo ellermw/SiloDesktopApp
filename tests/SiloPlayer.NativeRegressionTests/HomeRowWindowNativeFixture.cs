@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text.Json;
+using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
@@ -12,6 +14,10 @@ internal static class HomeRowWindowNativeFixture
     internal static async Task RunAsync(StackPanel parent)
     {
         await ScrollAndRefreshAsync(parent);
+        await WideInitialLayoutAsync(parent);
+        foreach (var interruption in new[] { "refresh", "error", "null", "persistent-error" })
+            await DemandRecoveryAsync(parent, interruption);
+        await TruncatedCompletionAsync();
         await RetryAndRemovalAsync();
         await ConcurrentRefreshAsync();
         await HiddenPartialAsync();
@@ -58,6 +64,91 @@ internal static class HomeRowWindowNativeFixture
             Program.Log("PASS: actual SectionRow ViewChanged recovered cards21-35 once; expanded refresh retained first card.");
         }
         finally { if (row != null) parent.Children.Remove(row); Retire(vm); }
+    }
+
+    private static async Task WideInitialLayoutAsync(StackPanel parent)
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://home-window.invalid");
+        using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("alpha");
+        var vm = new HomeViewModel(new HomeApi(client), auth);
+        SectionRow? row = null;
+        try
+        {
+            await vm.LoadCommand.ExecuteAsync(null); await Until(() => vm.Sections.FirstOrDefault()?.Items.Count == 20);
+            row = new SectionRow { Width = 2560, Section = vm.Sections[0], OnNearEnd = section => _ = vm.CompleteSectionAsync(section.Id) };
+            parent.Children.Add(row); await Task.Delay(150); row.UpdateLayout(); await Task.Delay(100);
+            var scroll = (ScrollViewer)row.FindName("CardsScrollViewer");
+            Require(scroll.ScrollableWidth > 0 && scroll.ScrollableWidth <= scroll.ViewportWidth,
+                "Wide-layout fixture must start within one viewport of the partial tail.");
+            Require(wire.Capped == 1 && wire.Whole == 0, "Initial wide layout must not immediately reread the whole row.");
+            scroll.ChangeView(scroll.ScrollableWidth, null, null, true);
+            await Until(() => vm.Sections[0].Items.Count == 35);
+            Require(wire.Whole == 1, "Forward scrolling must still complete the wide row.");
+        }
+        finally { if (row != null) parent.Children.Remove(row); Retire(vm); }
+    }
+
+    private static async Task DemandRecoveryAsync(StackPanel parent, string interruption)
+    {
+        using var wire = new Wire { HoldFirstWhole = interruption == "refresh", FailFirstWhole = interruption == "error",
+            NullFirstWhole = interruption == "null", FailWhole = interruption == "persistent-error" };
+        using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://home-window.invalid");
+        using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("alpha");
+        var vm = new HomeViewModel(new HomeApi(client), auth); vm.SetActive(true);
+        SectionRow? row = null;
+        try
+        {
+            await vm.LoadCommand.ExecuteAsync(null); await Until(() => vm.Sections.FirstOrDefault()?.Items.Count == 20);
+            row = new SectionRow { Width = 900, Section = vm.Sections[0], OnNearEnd = section => _ = vm.CompleteSectionAsync(section.Id) };
+            parent.Children.Add(row); await Task.Delay(120); row.UpdateLayout();
+            var scroll = (ScrollViewer)row.FindName("CardsScrollViewer");
+            Require(scroll.ScrollableWidth > 0, "Recovery fixture must have a scrollable partial row.");
+            scroll.ChangeView(scroll.ScrollableWidth, null, null, true);
+            if (interruption == "refresh")
+            {
+                await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(4));
+                vm.QueueRealtimeRefresh("playback_progress", client.CaptureContext());
+                await Until(() => wire.Capped == 2);
+            }
+            else if (interruption == "persistent-error")
+            {
+                await Until(() => wire.Whole == 2); await Task.Delay(150);
+                Require(vm.Sections[0].HasMore && vm.Sections[0].Items.Count == 20 && wire.Whole == 2,
+                    "Persistent errors must retain the partial row and bound automatic retries.");
+                wire.FailWhole = false;
+                var next = (Button)row.FindName("ScrollRightBtn");
+                Require(next.IsEnabled, "Forward navigation must remain available at a partial row's maximum offset.");
+                ((IInvokeProvider)new ButtonAutomationPeer(next).GetPattern(PatternInterface.Invoke)).Invoke();
+            }
+            // No further scrolling (or left-and-back gesture) after the first
+            // demand: unchanged refreshes and transient failures must recover.
+            await Until(() => vm.Sections[0].Items.Count == 35);
+            Require(!vm.Sections[0].HasMore && wire.Whole >= 2, "Completion demand was lost after " + interruption);
+        }
+        finally { wire.Release.TrySetResult(); if (row != null) parent.Children.Remove(row); Retire(vm); }
+    }
+
+    private static async Task TruncatedCompletionAsync()
+    {
+        using var wire = new Wire { PartialWhole = true }; using var http = new HttpClient(wire);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://home-window.invalid");
+        using var auth = new AuthService(client, new AuthApi(client)); auth.SelectProfile("alpha");
+        var vm = new HomeViewModel(new HomeApi(client), auth);
+        try
+        {
+            await vm.LoadCommand.ExecuteAsync(null); await Until(() => vm.Sections.FirstOrDefault()?.Items.Count == 20);
+            await vm.CompleteSectionAsync("row");
+            Require(vm.Sections[0].HasMore && vm.Sections[0].Items.Count == 25 && vm.Sections[0].ShownCount == 20,
+                "A truncated whole response must retain has_more and the initial-card boundary.");
+            var order = vm.Sections[0].CompletedOrder;
+            wire.PartialWhole = false; await vm.CompleteSectionAsync("row");
+            Require(!vm.Sections[0].HasMore && vm.Sections[0].Items.Count == 35 && vm.Sections[0].ShownCount == 20
+                && vm.Sections[0].CompletedOrder == order && wire.Whole == 2,
+                "Further demand must be rearmed without promoting earlier tail cards to initial priority.");
+        }
+        finally { Retire(vm); }
     }
 
     private static async Task RetryAndRemovalAsync()
@@ -148,6 +239,7 @@ internal static class HomeRowWindowNativeFixture
     private sealed class Wire : HttpMessageHandler
     {
         public int Capped, Whole; public bool HoldWhole, FailWhole, HoldRefresh, DuplicateFirst;
+        public bool HoldFirstWhole, FailFirstWhole, NullFirstWhole, PartialWhole;
         public string Title = "Progress";
         public TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -173,12 +265,14 @@ internal static class HomeRowWindowNativeFixture
             }
             else
             {
-                Whole++;
-                if (FailWhole) return new(HttpStatusCode.BadRequest) { Content = new StringContent("""{"status":400,"detail":"fixture failure"}""") };
-                if (HoldWhole) { Started.TrySetResult(); await Release.Task; }
+                var attempt = Interlocked.Increment(ref Whole);
+                if (FailWhole || (FailFirstWhole && attempt == 1)) return new(HttpStatusCode.BadRequest) { Content = new StringContent("""{"status":400,"detail":"fixture failure"}""") };
+                if (NullFirstWhole && attempt == 1) return Json("null");
+                if (HoldFirstWhole && attempt == 1) { Started.TrySetResult(); await Release.Task.WaitAsync(ct); }
+                else if (HoldWhole) { Started.TrySetResult(); await Release.Task; }
             }
             return Json(JsonSerializer.Serialize(new { id = "row", title = Title, section_type = DuplicateFirst ? "hidden_gems" : "continue_watching", item_limit = capped ? 20 : 50,
-                total_count = 35, has_more = capped, items = Enumerable.Range(1, capped ? 20 : 35).Select(i => new { content_id = $"{profile}-{i}", title = $"Card{i}", type = "movie" }) }));
+                total_count = 35, has_more = capped || PartialWhole, items = Enumerable.Range(1, capped ? 20 : PartialWhole ? 25 : 35).Select(i => new { content_id = $"{profile}-{i}", title = $"Card{i}", type = "movie" }) }));
         }
         private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json") };
     }

@@ -51,6 +51,52 @@ public class HomeRowWindowTests
     }
 
     [Fact]
+    public void CompletionCapsAnOversizedResponseAtTheRowsOwnLimit()
+    {
+        var shown = Row(Enumerable.Range(1, 20).Select(i => $"card{i}").ToArray());
+        var whole = Row(Enumerable.Range(1, 35).Select(i => $"card{i}").ToArray());
+        whole.ItemLimit = 20;
+        var completed = HomeRowWindow.Complete(shown, whole, shown, 1);
+        Assert.Equal(20, completed.Items.Count);
+        Assert.Equal(shown.Items.Select(i => i.ContentId), completed.Items.Select(i => i.ContentId));
+    }
+
+    [Fact]
+    public void CompletionNeverDropsTheShownPrefixWhenTheRowsLimitDecreases()
+    {
+        var shown = Row("one", "two", "three");
+        var whole = Row("four", "five"); whole.ItemLimit = 2;
+        Assert.Equal(["one", "two", "three"], HomeRowWindow.Complete(shown, whole, shown, 1).Items.Select(i => i.ContentId));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void CompletionWithoutAPositiveLimitKeepsAllUnseenCards(int limit)
+    {
+        var shown = Row("one"); var whole = Row("two", "three"); whole.ItemLimit = limit;
+        Assert.Equal(["one", "two", "three"], HomeRowWindow.Complete(shown, whole, shown, 1).Items.Select(i => i.ContentId));
+    }
+
+    [Fact]
+    public void TruncatedCompletionStaysPartialAndFurtherCompletionRetainsInitialPriority()
+    {
+        var shown = Row("one", "two"); shown.HasMore = true;
+        var partial = Row("one", "two", "three"); partial.HasMore = true;
+        var first = HomeRowWindow.Complete(shown, partial, shown, 7);
+        Assert.True(first.HasMore);
+        Assert.True(HomeRowWindow.IsExpanded(first));
+        Assert.Equal(2, first.ShownCount);
+        var unchanged = HomeRowWindow.Complete(first, partial, first, 8);
+        Assert.Equal(HomeSectionChange.None, HomeSectionReconciler.Apply(first, unchanged));
+        var completed = HomeRowWindow.Complete(first, Row("one", "two", "three", "four"), first, 9);
+        Assert.False(completed.HasMore);
+        Assert.Equal(["one", "two", "three", "four"], completed.Items.Select(i => i.ContentId));
+        Assert.Equal(2, completed.ShownCount);
+        Assert.Equal(7, completed.CompletedOrder);
+    }
+
+    [Fact]
     public void RemovingAnInitialCardDoesNotPromoteTailAboveOtherRowsInitialCards()
     {
         var early = Row("one", "two", "shared"); early.Id = "early"; early.ShownCount = 2; early.CompletedOrder = 1;

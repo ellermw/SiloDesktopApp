@@ -7,8 +7,8 @@ public static class HomeRowWindow
 {
     public const int InitialItemLimit = 20;
 
-    public static bool IsExpanded(HomeSectionWithItems? row) => row is { HasMore: false }
-        && (row.ShownCount.HasValue || row.Items.Count > InitialItemLimit);
+    public static bool IsExpanded(HomeSectionWithItems? row) => row != null
+        && (row.ShownCount.HasValue || (!row.HasMore && row.Items.Count > InitialItemLimit));
 
     public static void RemoveAt(HomeSectionWithItems row, int index)
     {
@@ -32,17 +32,20 @@ public static class HomeRowWindow
         // their order only where the new whole response supplies current text;
         // never carry an old-language object into the new-language result.
         var prefix = current.Items.ToList();
+        var initialCount = current.ShownCount ?? prefix.Count;
         if (current.ReadLanguageGeneration != whole.ReadLanguageGeneration)
         {
             var translated = whole.Items.DistinctBy(item => item.ContentId).ToDictionary(item => item.ContentId, StringComparer.Ordinal);
+            initialCount = current.Items.Take(initialCount).Count(item => translated.ContainsKey(item.ContentId));
             prefix = current.Items.Where(item => translated.ContainsKey(item.ContentId)).Select(item => translated[item.ContentId]).ToList();
         }
         var seen = shown.Items.Concat(current.Items).Select(item => item.ContentId).ToHashSet(StringComparer.Ordinal);
         var rest = whole.Items.Where(item => seen.Add(item.ContentId));
-        result.Items = new(prefix.Concat(rest).Take(Math.Max(whole.ItemLimit, whole.Items.Count)));
-        result.HasMore = false;
-        result.ShownCount = Math.Min(prefix.Count, result.Items.Count);
-        result.CompletedOrder = completedOrder;
+        var limit = whole.ItemLimit > 0 ? Math.Max(prefix.Count, whole.ItemLimit) : int.MaxValue;
+        result.Items = new(prefix.Concat(rest).Take(limit));
+        result.HasMore = whole.HasMore;
+        result.ShownCount = Math.Min(initialCount, result.Items.Count);
+        result.CompletedOrder = current.CompletedOrder > 0 ? current.CompletedOrder : completedOrder;
         result.LoadCompleted = true;
         result.LoadFailed = false;
         return result;

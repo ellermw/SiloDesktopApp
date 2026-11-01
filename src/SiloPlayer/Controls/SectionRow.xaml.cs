@@ -31,6 +31,7 @@ public sealed partial class SectionRow : UserControl
     private bool _hasKeyboardFocus;
     private bool _canScrollPrev;
     private bool _canScrollNext;
+    private bool _completionDemandArmed;
     private bool _isPinned;
     private int? _libraryId;
     private bool _useTitleViewLink;
@@ -227,6 +228,7 @@ public sealed partial class SectionRow : UserControl
             : useLandscape ? "LandscapeCardTemplate"
             : "PosterCardTemplate";
         var templateChanged = !string.Equals(_lastRenderedTemplateKey, templateKey, StringComparison.Ordinal);
+        if (!isSameSection || templateChanged) _completionDemandArmed = false;
         var template = (DataTemplate)this.Resources[templateKey];
         if (!ReferenceEquals(CardsRepeater.ItemTemplate, template)) CardsRepeater.ItemTemplate = template;
         if (!ReferenceEquals(CardsRepeater.ItemsSource, section.Items)) CardsRepeater.ItemsSource = section.Items;
@@ -343,6 +345,9 @@ public sealed partial class SectionRow : UserControl
 
     private void CardsScrollViewer_ViewChanged(object? sender, ScrollViewerViewChangedEventArgs e)
     {
+        // Initial layout can already be within one viewport of the tail on
+        // wide displays. Wait for forward movement or explicit navigation.
+        if (CardsScrollViewer.HorizontalOffset > 1) _completionDemandArmed = true;
         UpdateScrollBounds();
     }
 
@@ -380,7 +385,9 @@ public sealed partial class SectionRow : UserControl
                 e.Handled = true;
                 break;
             case VirtualKey.End:
+                _completionDemandArmed = true;
                 CardsScrollViewer.ChangeView(CardsScrollViewer.ScrollableWidth, null, null);
+                UpdateScrollBounds();
                 e.Handled = true;
                 break;
         }
@@ -422,7 +429,9 @@ public sealed partial class SectionRow : UserControl
             _dragStartOffset - delta,
             0,
             CardsScrollViewer.ScrollableWidth);
+        if (delta < 0) _completionDemandArmed = true;
         CardsScrollViewer.ChangeView(target, null, null, disableAnimation: true);
+        UpdateScrollBounds();
         e.Handled = true;
     }
 
@@ -457,7 +466,10 @@ public sealed partial class SectionRow : UserControl
         double offset = CardsScrollViewer.HorizontalOffset;
 
         _canScrollPrev = offset > 1;
-        _canScrollNext = offset < extent - viewport - 1 && extent > viewport + 1;
+        // Keep forward navigation available at the current tail for partial
+        // rows, including when all initially served cards fit on screen.
+        _canScrollNext = (offset < extent - viewport - 1 && extent > viewport + 1)
+            || Section is { HasMore: true, LoadCompleted: true };
 
         ScrollLeftBtn.IsEnabled = _canScrollPrev;
         ScrollRightBtn.IsEnabled = _canScrollNext;
@@ -467,7 +479,7 @@ public sealed partial class SectionRow : UserControl
         // only when there's more content in that direction.
         LeftFadeGradient.Opacity = _canScrollPrev ? 1.0 : 0.0;
         RightFadeGradient.Opacity = _canScrollNext ? 1.0 : 0.0;
-        if (IsLoaded && Section is { HasMore: true, LoadCompleted: true } section && viewport > 0 && extent > 0
+        if (IsLoaded && _completionDemandArmed && Section is { HasMore: true, LoadCompleted: true } section && viewport > 0 && extent > 0
             && extent - viewport - offset <= viewport)
             OnNearEnd?.Invoke(section);
     }
@@ -665,11 +677,14 @@ public sealed partial class SectionRow : UserControl
 
     private void ScrollByPage(int direction)
     {
+        if (direction > 0) _completionDemandArmed = true;
         var page = Math.Max(240, CardsScrollViewer.ViewportWidth * 0.82);
         var target = Math.Clamp(
             CardsScrollViewer.HorizontalOffset + (page * direction),
             0,
             CardsScrollViewer.ScrollableWidth);
         CardsScrollViewer.ChangeView(target, null, null);
+        // ChangeView need not raise ViewChanged when already at the end.
+        UpdateScrollBounds();
     }
 }

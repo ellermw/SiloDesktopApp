@@ -23,6 +23,7 @@ public partial class HomeViewModel : ObservableObject,
     private IReadOnlyList<HomeSection> _layoutOrder = [];
     private readonly Dictionary<string, HomeSectionWithItems> _rawSections = new(StringComparer.Ordinal);
     private readonly HashSet<(int Generation, string SectionId)> _completingSections = [];
+    private readonly HashSet<string> _completionWantedSections = new(StringComparer.Ordinal);
     private long _rowCompletionOrder;
     private long _progressRemovalRevision;
     private readonly Dictionary<string, (long Revision, string? SeriesId)> _progressRemovals = new(StringComparer.Ordinal);
@@ -385,6 +386,7 @@ public partial class HomeViewModel : ObservableObject,
             FeaturedSections.Clear();
             Sections.Clear();
             _rawSections.Clear();
+            _completionWantedSections.Clear();
             _progressRemovals.Clear();
             _layoutOrder = [];
             _avoidDuplicateTypes.Clear();
@@ -422,6 +424,7 @@ public partial class HomeViewModel : ObservableObject,
             var activeIds = layout.Sections.Select(section => section.Id).ToHashSet(StringComparer.Ordinal);
             foreach (var staleId in _rawSections.Keys.Where(id => !activeIds.Contains(id)).ToList())
                 _rawSections.Remove(staleId);
+            _completionWantedSections.RemoveWhere(id => !activeIds.Contains(id));
 
             var previous = FeaturedSections
                 .Concat(Sections)
@@ -629,6 +632,10 @@ public partial class HomeViewModel : ObservableObject,
         FilterProgressRemovals(completed, removalRevision);
         PreserveExpandedState(completed);
         ApplyRefreshedSection(completed);
+        // Demand survives a same-owner generation change, even when the new
+        // bounded read reconciles to exactly the same mounted cards.
+        if (!completed.HasMore) _completionWantedSections.Remove(completed.Id);
+        else if (_completionWantedSections.Contains(completed.Id)) _ = CompleteSectionAsync(completed.Id);
     }
 
     private void FilterProgressRemovals(HomeSectionWithItems incoming, long readRevision)
@@ -655,7 +662,7 @@ public partial class HomeViewModel : ObservableObject,
 
     private void PreserveExpandedState(HomeSectionWithItems incoming)
     {
-        if (incoming.Featured || incoming.HasMore) return;
+        if (incoming.Featured) return;
         _rawSections.TryGetValue(incoming.Id, out var cached);
         if (HomeRowWindow.IsExpanded(cached) || incoming.Items.Count > HomeRowWindow.InitialItemLimit)
         {
@@ -671,29 +678,53 @@ public partial class HomeViewModel : ObservableObject,
         var ct = _sectionLoadCts?.Token ?? CancellationToken.None;
         var key = (generation, sectionId);
         if (!IsCurrentSectionLoad(generation, ct, sectionId)
-            || !_rawSections.TryGetValue(sectionId, out var raw) || !raw.HasMore
-            || !_completingSections.Add(key)) return;
+            || !_rawSections.TryGetValue(sectionId, out var raw) || !raw.HasMore) return;
+        _completionWantedSections.Add(sectionId);
+        if (!_completingSections.Add(key)) return;
         var owner = _loadedContext!.Value;
         var language = _homeApi.LanguageGeneration;
         var removalRevision = _progressRemovalRevision;
         var shown = HomeSectionDedupe.Snapshot(raw);
         try
         {
-            var response = await _homeApi.GetSectionItemsAsync(owner, language, sectionId, ct).ConfigureAwait(false);
-            await RunOnUiThreadAsync(() =>
+            // Retry one transient failure/null response without requiring a
+            // ViewChanged event at maximum offset. Bound retries so a broken
+            // endpoint cannot create an automatic request loop.
+            for (var attempt = 0; attempt < 2; attempt++)
             {
-                if (!IsCurrentSectionLoad(generation, ct, sectionId)
-                    || !_rawSections.TryGetValue(sectionId, out var current) || !current.HasMore
-                    || response.Section == null) return;
-                response.Section.Items ??= new ObservableCollection<MediaItem>();
-                FilterProgressRemovals(response.Section, removalRevision);
-                ApplyRefreshedSection(HomeRowWindow.Complete(shown, response.Section, current, ++_rowCompletionOrder));
-            }).ConfigureAwait(false);
+                var applied = false;
+                try
+                {
+                    var response = await _homeApi.GetSectionItemsAsync(owner, language, sectionId, ct).ConfigureAwait(false);
+                    await RunOnUiThreadAsync(() =>
+                    {
+                        if (!IsCurrentSectionLoad(generation, ct, sectionId)
+                            || !_homeApi.IsCurrentReadContext(owner, language)
+                            || !_rawSections.TryGetValue(sectionId, out var current) || !current.HasMore
+                            || response.Section == null) return;
+                        response.Section.Items ??= new ObservableCollection<MediaItem>();
+                        FilterProgressRemovals(response.Section, removalRevision);
+                        var completed = HomeRowWindow.Complete(shown, response.Section, current, ++_rowCompletionOrder);
+                        ApplyRefreshedSection(completed);
+                        if (!completed.HasMore) _completionWantedSections.Remove(sectionId);
+                        applied = true;
+                    }).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested || !_homeApi.IsCurrentReadContext(owner, language)) { throw; }
+                catch (Exception ex) { LogSectionFetchFailure(sectionId, ex); }
+
+                if (applied || attempt == 1) return;
+                await Task.Delay(RealtimeRefreshDebounce, ct).ConfigureAwait(false);
+                var stillWanted = false;
+                await RunOnUiThreadAsync(() => stillWanted = IsCurrentSectionLoad(generation, ct, sectionId)
+                    && _homeApi.IsCurrentReadContext(owner, language)
+                    && _completionWantedSections.Contains(sectionId)).ConfigureAwait(false);
+                if (!stillWanted) return;
+            }
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested || !_homeApi.IsCurrentReadContext(owner, language)) { }
         catch (Exception ex)
         {
-            // Keep the partial row usable. A later near-end event retries.
             LogSectionFetchFailure(sectionId, ex);
         }
         finally
