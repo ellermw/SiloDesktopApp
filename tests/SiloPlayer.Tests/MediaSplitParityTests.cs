@@ -14,6 +14,27 @@ public sealed class MediaSplitParityTests
         var files = await new MediaSplitApi(client).GetFilesAsync(client.CaptureContext(), "movie/one");
         Assert.Equal(2, files.Count); Assert.Contains("limit=200&cursor=next", wire.Paths[1]); Assert.Contains("movie%2Fone", wire.Paths[0]);
     }
+    [Fact]
+    public async Task SplitIdentitySearchRetainsHttpSupportAndCapturedLibrary()
+    {
+        using var wire = new Wire((_, _) => "{\"candidates\":[]}");
+        using var http = new HttpClient(wire); var client = Client(http); client.SetBaseUrl("http://split-fixture.invalid");
+        var context = client.CaptureContext(); var api = new MediaSplitApi(client);
+        await api.SearchAsync(context, "movie/one", new SiloPlayer.Core.Models.MediaMaintenance.ItemMatchSearchRequest { LibraryId = 5 });
+        Assert.Contains("movie%2Fone/match/search", Assert.Single(wire.Paths));
+        using var body = JsonDocument.Parse(wire.Body!); Assert.Equal("5", body.RootElement.GetProperty("library_id").GetString());
+        client.SetProfile("changed");
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => api.SearchAsync(context, "movie/one", new()));
+        Assert.Single(wire.Paths);
+    }
+    [Fact]
+    public async Task SplitIdentitySearchRejectsAResponseAfterProfileDeparture()
+    {
+        using var wire = new Wire((_, _) => "{\"candidates\":[]}");
+        using var http = new HttpClient(wire); var client = Client(http); wire.After = () => client.SetProfile("changed");
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new MediaSplitApi(client).SearchAsync(client.CaptureContext(), "fixture", new()));
+        Assert.Single(wire.Paths);
+    }
     [Theory]
     [InlineData(null)]
     [InlineData("same")]

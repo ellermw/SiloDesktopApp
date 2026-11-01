@@ -1,11 +1,15 @@
+using CommunityToolkit.Mvvm.Messaging;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Markup;
 using SiloPlayer.Converters;
+using SiloPlayer.Controls;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.MediaMaintenance;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Messaging;
 using System.Text.Json;
 
 namespace SiloPlayer.Views.Dialogs;
@@ -13,7 +17,13 @@ namespace SiloPlayer.Views.Dialogs;
 public sealed class SplitVersionsDialog : ItemScopedDialog
 {
     private readonly MediaSplitApi _api;
-    private readonly int? _libraryId;
+    private readonly string? _seriesId;
+    private readonly ItemLibraryScopePicker _scope;
+    private ItemLibraryScope.Scope _candidateScope, _acceptedScope;
+    private IReadOnlyList<JsonElement>? _inventoryFiles;
+    private readonly long _session;
+    private readonly string? _userId;
+    private volatile bool _authorityRetired;
     private readonly ItemsRepeater _files = new() { Layout = new StackLayout { Spacing = 4 }, VerticalCacheLength = 1 };
     private readonly StackPanel _candidates = new() { Spacing = 4 };
     private sealed record FileRow(string Id, string Path, string Caption, List<string>? GroupIds = null);
@@ -30,14 +40,15 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
     private readonly HashSet<string> _selected = [];
     private List<JsonElement> _allFiles = [];
     private MatchCandidate? _candidate;
-    private bool _changing, _searching, _previewing;
+    private bool _changing, _searching, _previewing, _refreshPreviewAfterAction, _applyUnconfirmed;
     private int _planRevision, _searchRevision;
     private int _acceptedRevision = -1;
     private CancellationTokenSource? _previewLifetime;
 
-    public SplitVersionsDialog(MediaItemDetail item, int? libraryId) : base(item.ContentId, "Split Versions", "", 672, "Split", AuthorizationPolicy.CanCurateMetadata, maxHeightRatio: .85)
+    public SplitVersionsDialog(MediaItemDetail item, int? libraryId) : base(item.ContentId, "Split Versions", "", 672, "Split", AuthorizationPolicy.IsActingAdmin, maxHeightRatio: .85)
     {
-        _api = new(Client); _libraryId = libraryId; Body.Children.RemoveAt(0);
+        _api = new(Client); _seriesId = item.SeriesId; _session = Auth.SessionGeneration; _userId = Auth.CurrentUser?.Id; Body.Children.RemoveAt(0);
+        _scope = new(Client, Context, ItemId, libraryId, split: true, inventory: true, () => ScopeOwner, Lifetime.Token);
         Body.Children.Insert(0, new Border { Background = Brush("SurfaceBrush"), CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 8, 12, 8), Child = Text(item.Title + (item.Year > 0 ? $" ({item.Year})" : "") + "   " + item.Type) });
         _files.ItemTemplate = (DataTemplate)XamlReader.Load("<DataTemplate xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\"><ContentControl HorizontalContentAlignment=\"Stretch\" IsTabStop=\"False\"/></DataTemplate>");
         _files.ElementPrepared += PrepareFile;
@@ -53,7 +64,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         var fileScroll = new ScrollViewer { Content = _files, MaxHeight = 256, Padding = new Thickness(12, 8, 12, 8), HorizontalContentAlignment = HorizontalAlignment.Stretch, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, HorizontalScrollMode = ScrollMode.Disabled };
         AutomationProperties.SetName(fileScroll, "Files to move");
         Body.Children.Add(Text("Files to move")); Body.Children.Add(new Border { Child = fileScroll, CornerRadius = new CornerRadius(8), BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1) }); _warning.Foreground = Brush("ErrorBrush"); Body.Children.Add(_warning);
-        Body.Children.Add(Text("Correct identity for the moved files"));
+        Body.Children.Add(_scope); Body.Children.Add(Text("Correct identity for the moved files"));
         var fields = new Grid { RowSpacing = 12, ColumnSpacing = 12 }; fields.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); fields.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
         for (var row = 0; row < 3; row++) fields.RowDefinitions.Add(new() { Height = GridLength.Auto });
         Grid.SetColumnSpan(_title, 2); fields.Children.Add(_title);
@@ -65,16 +76,51 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         Body.Children.Add(Text("Resume points and downloads tied to the moved files always follow them. This controls history rows without per-file evidence.", 12, true));
         _previewBox = new Border { Child = _previewText, CornerRadius = new CornerRadius(8), Background = Brush("SurfaceBrush"), BorderBrush = Brush("BorderBrush"), BorderThickness = new Thickness(1), Padding = new Thickness(12, 8, 12, 8), Visibility = Visibility.Collapsed }; Body.Children.Add(_previewBox);
         _unmatched.Checked += (_, _) => { _candidate = null; PlanChanged(); }; _unmatched.Unchecked += (_, _) => PlanChanged(); _history.SelectionChanged += (_, _) => PlanChanged();
-        _search.Click += async (_, _) => await SearchAsync(); Closed += (_, _) => { _previewLifetime?.Cancel(); _previewLifetime?.Dispose(); };
+        _scope.Changed += ScopeChanged;
+        _search.Click += async (_, _) => await SearchAsync();
+        Opened += (_, _) => { Auth.UserChanged += AuthorityChanged; Auth.LoggedOut += AuthorityChanged; };
+        Closed += (_, _) => { Auth.UserChanged -= AuthorityChanged; Auth.LoggedOut -= AuthorityChanged; _previewLifetime?.Cancel(); _previewLifetime?.Dispose(); };
     }
     private static TextBox Input(string placeholder, string name)
     { var input = new TextBox { PlaceholderText = placeholder, FontSize = 14, Height = 36, MinHeight = 0, MinWidth = 0, Padding = new Thickness(12, 6, 12, 6) }; AutomationProperties.SetName(input, name); return input; }
     private static string Value(JsonElement value, string key) => value.TryGetProperty(key, out var property) ? property.ToString() : "";
-    private bool PlanValid => _selected.Count > 0 && _selected.Count < _allFiles.Count && (_unmatched.IsChecked == true || _candidate != null);
+    private bool ScopeOwner => !_authorityRetired && CanAct && Auth.SessionGeneration == _session && Auth.CurrentUser?.Id == _userId;
+    private bool PlanValid => !_applyUnconfirmed && ScopeOwner && _scope.InventoryAvailable && _selected.Count > 0 && _selected.Count < _allFiles.Count && (_unmatched.IsChecked == true || _candidate != null && _scope.IsCurrent(_candidateScope));
+    private bool PlanScopeCurrent(ItemLibraryScope.Scope scope) => _unmatched.IsChecked == true ? _scope.IsInventoryCurrent(scope) : _scope.IsCurrent(scope);
     protected override async Task LoadAsync()
     {
-        _allFiles = await _api.GetFilesAsync(Context, ItemId, Lifetime.Token); RequireAuthority();
+        await _scope.RefreshAsync(); RequireAuthority();
         if (_allFiles.Count < 2) { Body.Children.Insert(2, Text("This item has only one file; splitting needs at least two.", 14, true)); return; }
+    }
+    private void AuthorityChanged()
+    {
+        if (!ScopeOwner) { _authorityRetired = true; Lifetime.Cancel(); }
+        DispatcherQueue.TryEnqueue(() => { if (!ScopeOwner) { _candidate = null; _candidates.Children.Clear(); _searchRevision++; PlanChanged(); SetEditing(false); } UpdateCommands(); });
+    }
+    private void ScopeChanged()
+    {
+        _searchRevision++; _candidate = null; _candidates.Children.Clear();
+        Ready = _scope.InventoryAvailable && ScopeOwner;
+        if (Ready) Status.Text = "";
+        if (!ReferenceEquals(_inventoryFiles, _scope.Files))
+        {
+            _inventoryFiles = _scope.Files; _allFiles = _scope.Files.ToList();
+            var ids = _allFiles.Select(file => Value(file, "id")).ToHashSet(StringComparer.Ordinal);
+            _selected.RemoveWhere(id => !ids.Contains(id));
+            RebuildFiles();
+        }
+        SetEditing(Ready && !Busy);
+        if (!_changing && _scope.InventoryAvailable) PlanChanged();
+        else if (!_scope.InventoryAvailable)
+        {
+            // A failed read disarms the plan, but is not inventory/target drift.
+            // Keep its revision so the owning preview can report the read error.
+            _acceptedRevision = -1; UpdateCommands();
+        }
+    }
+    private void RebuildFiles()
+    {
+        _files.ItemsSource = null; _checks.Clear(); _groups.Clear(); _rows = [];
         foreach (var grouping in _allFiles.GroupBy(file => Value(file, "observed_root_path")).OrderBy(group => group.Key, StringComparer.CurrentCulture))
         {
             var ids = grouping.Select(file => Value(file, "id")).ToList();
@@ -95,7 +141,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         if (isGroup) _groups.Add((check, row.GroupIds!)); else _checks.Add(row.Id, check);
         void Changed(object sender, RoutedEventArgs args)
         {
-            if (_changing || !Ready || Busy || !CanAct) return;
+            if (_changing || _applyUnconfirmed || !Ready || Busy || !ScopeOwner) return;
             var select = check.IsChecked == true; _changing = true;
             foreach (var id in row.GroupIds ?? [row.Id])
             {
@@ -107,14 +153,26 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         check.Checked += Changed; check.Unchecked += Changed;
         ((ContentControl)args.Element).Content = check;
     }
+    private bool VerifySearchScope(ItemLibraryScope.Scope scope)
+    {
+        if (_scope.State.IsCurrent(scope)) return true;
+        Status.Text = "Item files changed. Search again and review a new preview before splitting.";
+        return false;
+    }
     private async Task SearchAsync()
     {
-        if (_searching || Busy || !Ready || !CanAct) return;
-        var revision = ++_searchRevision; _searching = true; _candidate = null; _unmatched.IsChecked = false; _candidates.Children.Clear(); PlanChanged(); UpdateCommands();
+        if (_applyUnconfirmed || _searching || Busy || !Ready || !ScopeOwner) return;
+        if (!_scope.CanSearch) return;
+        _searching = true; UpdateCommands();
+        var revision = ++_searchRevision; var scope = _scope.State.Capture();
         try
         {
-            var response = await _api.SearchAsync(Context, ItemId, new ItemMatchSearchRequest { Title = string.IsNullOrWhiteSpace(_title.Text) ? null : _title.Text, Year = int.TryParse(_year.Text, out var year) ? year : null, TmdbId = string.IsNullOrWhiteSpace(_tmdb.Text) ? null : _tmdb.Text, ImdbId = string.IsNullOrWhiteSpace(_imdb.Text) ? null : _imdb.Text, TvdbId = string.IsNullOrWhiteSpace(_tvdb.Text) ? null : _tvdb.Text, LibraryId = _libraryId }, Lifetime.Token); RequireAuthority();
-            if (revision != _searchRevision) return;
+            await _scope.RefreshAsync();
+            if (!ScopeOwner || !VerifySearchScope(scope) || revision != _searchRevision) return;
+            _candidate = null; _unmatched.IsChecked = false; _candidates.Children.Clear(); PlanChanged();
+            var response = await _api.SearchAsync(Context, ItemId, new ItemMatchSearchRequest { Title = string.IsNullOrWhiteSpace(_title.Text) ? null : _title.Text, Year = int.TryParse(_year.Text, out var year) ? year : null, TmdbId = string.IsNullOrWhiteSpace(_tmdb.Text) ? null : _tmdb.Text, ImdbId = string.IsNullOrWhiteSpace(_imdb.Text) ? null : _imdb.Text, TvdbId = string.IsNullOrWhiteSpace(_tvdb.Text) ? null : _tvdb.Text, LibraryId = scope.LibraryId }, Lifetime.Token); RequireAuthority();
+            await _scope.RefreshAsync();
+            if (!ScopeOwner || !VerifySearchScope(scope) || revision != _searchRevision) return;
             if (response.Candidates.Count == 0) _candidates.Children.Add(Text("No candidates found.", 14, true));
             foreach (var candidate in response.Candidates)
             {
@@ -122,11 +180,25 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
                 row.Children.Add(new Border { Width = 40, Height = 56, CornerRadius = new CornerRadius(4), Background = Brush("SurfaceBrush"), Child = new Image { Width = 40, Height = 56, Stretch = Stretch.UniformToFill, Source = string.IsNullOrEmpty(candidate.ImageUrl) ? null : (ImageSource)new UrlToImageSourceConverter().Convert(candidate.ImageUrl, typeof(ImageSource), null!, "") } });
                 var copy = new StackPanel(); copy.Children.Add(new TextBlock { Text = candidate.Title, FontSize = 14, TextTrimming = TextTrimming.CharacterEllipsis }); copy.Children.Add(Text(candidate.Year > 0 ? candidate.Year.ToString() : "", 12, true)); Grid.SetColumn(copy, 1); row.Children.Add(copy);
                 var choice = new Button { Content = row, HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(8), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), BorderBrush = Brush("BorderBrush") }; AutomationProperties.SetName(choice, candidate.Title);
-                choice.Click += (_, _) => { if (Busy || !CanAct) return; _candidate = candidate; _changing = true; _unmatched.IsChecked = false; _changing = false; foreach (var option in _candidates.Children.OfType<Button>()) option.BorderBrush = Brush(option == choice ? "AccentBrush" : "BorderBrush"); PlanChanged(); }; _candidates.Children.Add(choice);
+                choice.Click += async (_, _) =>
+                {
+                    if (_applyUnconfirmed || Busy || _searching || !ScopeOwner || !VerifySearchScope(scope) || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
+                    try { await _scope.RefreshAsync(); }
+                    catch (OperationCanceledException) when (Lifetime.IsCancellationRequested) { return; }
+                    catch (Exception error)
+                    {
+                        if (ScopeOwner && _scope.State.IsCurrent(scope)) Status.Text = error.Message;
+                        return;
+                    }
+                    if (_applyUnconfirmed || Busy || _searching || !ScopeOwner || !VerifySearchScope(scope) || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
+                    _candidate = candidate; _candidateScope = scope; _changing = true; _unmatched.IsChecked = false; _changing = false;
+                    foreach (var option in _candidates.Children.OfType<Button>()) option.BorderBrush = Brush(option == choice ? "AccentBrush" : "BorderBrush"); PlanChanged();
+                }; _candidates.Children.Add(choice);
             }
         }
-        catch (OperationCanceledException) { }
-        catch (Exception error) { Status.Text = error.Message; }
+        catch (OperationCanceledException) when (Lifetime.IsCancellationRequested) { }
+        // A failed refresh retires the search revision without changing its scope.
+        catch (Exception error) { if (ScopeOwner && _scope.State.IsCurrent(scope)) Status.Text = error.Message; }
         finally { _searching = false; UpdateCommands(); }
     }
     private object BuildRequest(bool dryRun) => new
@@ -136,37 +208,143 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
     };
     private void PlanChanged()
     {
-        if (_changing) return;
+        if (_changing || _applyUnconfirmed) return;
+        _changing = true; _scope.SelectFiles(_selected); _changing = false;
         var revision = ++_planRevision; _acceptedRevision = -1; _previewing = false; _previewLifetime?.Cancel(); _previewLifetime?.Dispose(); _previewLifetime = null;
         _changing = true; foreach (var group in _groups) group.Root.IsChecked = group.Ids.All(_selected.Contains); _changing = false;
         _warning.Text = _selected.Count > 0 && _selected.Count == _allFiles.Count ? "All files are selected — that is a re-match, not a split. Use “Match Item” instead, or deselect the files that are correct." : "";
-        _previewBox.Visibility = PlanValid ? Visibility.Visible : Visibility.Collapsed; _previewText.Text = "Previewing…"; Status.Text = ""; UpdateCommands();
-        if (!PlanValid || !Ready || !CanAct || Busy) return;
-        var lifetime = _previewLifetime = CancellationTokenSource.CreateLinkedTokenSource(Lifetime.Token); var request = BuildRequest(true); _ = PreviewAsync(revision, request, lifetime.Token);
+        _previewBox.Visibility = PlanValid ? Visibility.Visible : Visibility.Collapsed; _previewText.Text = ""; Status.Text = ""; UpdateCommands();
+        if (Busy) { _refreshPreviewAfterAction = true; return; }
+        if (!PlanValid || !Ready || !CanAct) return;
+        _previewText.Text = "Previewing…";
+        var lifetime = _previewLifetime = CancellationTokenSource.CreateLinkedTokenSource(Lifetime.Token); var request = BuildRequest(true); _ = PreviewAsync(revision, _scope.State.Capture(), request, lifetime.Token);
     }
-    private async Task PreviewAsync(int revision, object request, CancellationToken ct)
+    private async Task PreviewAsync(int revision, ItemLibraryScope.Scope scope, object request, CancellationToken ct)
     {
         try
         {
-            await Task.Delay(400, ct); RequireAuthority(); _previewing = true; UpdateCommands(); var response = await _api.SplitAsync(Context, ItemId, request, ct); RequireAuthority();
-            if (revision != _planRevision || ct.IsCancellationRequested) return;
+            await Task.Delay(400, ct); RequireAuthority(); await _scope.RefreshAsync();
+            if (!ScopeOwner || !PlanScopeCurrent(scope) || revision != _planRevision || ct.IsCancellationRequested) return;
+            _previewing = true; UpdateCommands(); var response = await _api.SplitAsync(Context, ItemId, request, ct); RequireAuthority();
+            await _scope.RefreshAsync();
+            if (!ScopeOwner || !PlanScopeCurrent(scope) || revision != _planRevision || ct.IsCancellationRequested) return;
             if (!response.TryGetProperty("dry_run", out var dryRun) || dryRun.ValueKind != JsonValueKind.True) throw new InvalidOperationException("The server did not return a split preview. Close and reopen to try again.");
             var report = response.GetProperty("reattribution"); var count = Value(response, "files_moved");
             _previewText.Text = $"Preview — {count} {(count == "1" ? "file" : "files")} → {Value(response, "target_content_id")}" + (Value(response, "target_created") == "True" ? "   new item" : "") + $"\n• {Value(report, "progress_moved")} resume points move\n• {Value(report, "history_moved")} history entries move, {Value(report, "history_ambiguous")} stay for lack of evidence\n• {Value(report, "downloads")} downloads move";
             if (response.TryGetProperty("episode_pairs", out var pairs) && pairs.TryGetInt32(out var episodes) && episodes > 0) _previewText.Text += $"\n• {episodes} episodes re-anchored";
             int Count(string key) => response.TryGetProperty(key, out var values) && values.ValueKind == JsonValueKind.Array ? values.GetArrayLength() : 0;
             if (Count("root_overrides") + Count("file_overrides") > 0) _previewText.Text += $"\n• {Count("root_overrides")} folder / {Count("file_overrides")} file identity override(s) pinned for future scans";
-            _acceptedRevision = revision;
+            _acceptedRevision = revision; _acceptedScope = scope;
         }
-        catch (OperationCanceledException) { }
-        catch (Exception error) { if (revision == _planRevision && CanAct) { Status.Text = error.Message; _previewText.Text = "Preview could not be loaded. Change the selection or target to try again."; } }
-        finally { if (revision == _planRevision) { _previewing = false; UpdateCommands(); } }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (Exception error)
+        {
+            if (revision == _planRevision && ScopeOwner && _scope.State.IsInventoryCurrent(scope))
+            {
+                Status.Text = error.Message;
+                _previewBox.Visibility = Visibility.Visible;
+                _previewText.Text = _scope.InventoryAvailable
+                    ? "Preview could not be loaded. Change the selection or target to try again."
+                    : "Preview could not be loaded. Refresh item libraries to try again.";
+            }
+        }
+        finally
+        {
+            if (revision == _planRevision)
+            {
+                _previewing = false;
+                if (_acceptedRevision != revision && _previewText.Text == "Previewing…")
+                { _previewText.Text = ""; _previewBox.Visibility = Visibility.Collapsed; }
+                UpdateCommands();
+            }
+        }
     }
-    protected override void UpdateCommands() { base.UpdateCommands(); IsPrimaryButtonEnabled &= PlanValid && _acceptedRevision == _planRevision && !_previewing && !_searching; _search.IsEnabled = Ready && CanAct && !Busy && !_searching; }
-    protected override void SetEditing(bool enabled) { _editing = enabled; foreach (var control in new Control[] { _title, _year, _tmdb, _imdb, _tvdb, _unmatched, _history }) control.IsEnabled = enabled; foreach (var check in _checks.Values) check.IsEnabled = enabled; foreach (var group in _groups) group.Root.IsEnabled = enabled; foreach (var choice in _candidates.Children.OfType<Button>()) choice.IsEnabled = enabled; }
+    protected override void UpdateCommands() { base.UpdateCommands(); IsPrimaryButtonEnabled &= PlanValid && _acceptedRevision == _planRevision && PlanScopeCurrent(_acceptedScope) && !_previewing && !_searching; _search.IsEnabled = !_applyUnconfirmed && Ready && ScopeOwner && _scope.CanSearch && !Busy && !_searching; }
+    protected override void SetEditing(bool enabled)
+    {
+        enabled &= !_applyUnconfirmed;
+        _editing = enabled; _scope?.SetEditing(enabled, canRefresh: !_applyUnconfirmed && !Busy && ScopeOwner);
+        foreach (var control in new Control[] { _title, _year, _tmdb, _imdb, _tvdb, _unmatched, _history }) control.IsEnabled = enabled;
+        foreach (var check in _checks.Values) check.IsEnabled = enabled;
+        foreach (var group in _groups) group.Root.IsEnabled = enabled;
+        foreach (var choice in _candidates.Children.OfType<Button>()) choice.IsEnabled = enabled;
+        // RunActionAsync restores editing after clearing Busy. Inventory drift
+        // during commit preflight must restart the preview, not strand it.
+        if (!Busy && _refreshPreviewAfterAction)
+        {
+            _refreshPreviewAfterAction = false;
+            // A failed read also retires the plan, but is not evidence of drift.
+            // Preserve RunActionAsync's error and leave the inventory retry available.
+            if (_applyUnconfirmed || !ScopeOwner || !_scope.InventoryAvailable) return;
+            PlanChanged();
+            Status.Text = PlanValid ? "Item files changed. Review the updated preview before splitting."
+                : "Item files changed. Search again and review a new preview before splitting.";
+        }
+    }
     protected override async Task SubmitAsync()
     {
-        if (!PlanValid || _acceptedRevision != _planRevision || _previewing || _searching) return;
-        await _api.SplitAsync(Context, ItemId, BuildRequest(false), Lifetime.Token); RequireAuthority(); HasSaved = true; DispatcherQueue.TryEnqueue(Hide);
+        if (!PlanValid || _acceptedRevision != _planRevision || !PlanScopeCurrent(_acceptedScope) || _previewing || _searching) return;
+        var revision = _planRevision; var scope = _acceptedScope; var request = BuildRequest(false);
+        await _scope.RefreshAsync();
+        if (!ScopeOwner || !PlanScopeCurrent(scope) || revision != _planRevision || !PlanValid) return;
+        string? targetId = null;
+        var rejected = false;
+        try
+        {
+            // Once dispatched, the non-idempotent write must outlive its surface.
+            // Authority still gates local completion, not shared cache invalidation.
+            var response = await _api.SplitAsync(Context, ItemId, request, CancellationToken.None);
+            if (!response.TryGetProperty("target_content_id", out var target) || target.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(target.GetString()))
+                throw new InvalidOperationException("The server did not confirm the split target.");
+            targetId = target.GetString();
+            if (!ScopeOwner || !PlanScopeCurrent(scope) || revision != _planRevision) return;
+            HasSaved = true; DispatcherQueue.TryEnqueue(() => { if (ScopeOwner && PlanScopeCurrent(scope) && revision == _planRevision) Hide(); });
+        }
+        catch (ApiException error) when (error.StatusCode is >= 400 and < 500)
+        {
+            rejected = true;
+            throw;
+        }
+        catch (Exception error) when (ScopeOwner)
+        {
+            throw new InvalidOperationException($"Split could not be confirmed: {error.Message} Reload the item before trying again.", error);
+        }
+        finally
+        {
+            if (rejected)
+            {
+                // A rejected commit has no unknown target and must not evict
+                // unrelated detail or publish an unconfirmed-write warning.
+                var cache = App.Services.GetService<ItemDetailPrefetchCache>();
+                cache?.Invalidate(ItemId);
+                cache?.Invalidate(_seriesId);
+            }
+            else
+            {
+                // A lost response may conceal a committed non-idempotent write.
+                // Only reopening/reloading the item can arm a new attempt.
+                if (targetId == null) _applyUnconfirmed = true;
+                InvalidateAppliedSplit(targetId);
+            }
+        }
+    }
+    private void InvalidateAppliedSplit(string? targetId)
+    {
+        var cache = App.Services.GetService<ItemDetailPrefetchCache>();
+        if (targetId == null)
+            // A lost response or retired API context can conceal a committed target.
+            cache?.Clear();
+        else
+        {
+            cache?.Invalidate(ItemId);
+            cache?.Invalidate(_seriesId);
+            cache?.Invalidate(targetId);
+        }
+        if (!Client.IsCurrentContext(Context) || Auth.SessionGeneration != _session || Auth.CurrentUser?.Id != _userId) return;
+        WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
+            MediaSurfaceChangeKind.ItemMetadataRefreshed, ItemId, _seriesId, context: Context));
+        if (targetId == null)
+            App.Services.GetService<SiloPlayer.Services.ToastService>()?.Warning("Split outcome could not be confirmed. Reload the item before trying again.");
     }
 }

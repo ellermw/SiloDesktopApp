@@ -180,7 +180,7 @@ public class OverlayConfigResponse
     public string? Defaults { get; set; }
 }
 
-public class SettingsApi(SiloApiClient client)
+public partial class SettingsApi(SiloApiClient client)
 {
     private SubtitlePreferences? _subtitles;
     public SubtitlePreferences Subtitles => _subtitles ??= new(this);

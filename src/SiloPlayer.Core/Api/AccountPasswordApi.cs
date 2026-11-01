@@ -13,6 +13,19 @@ public sealed class AccountPasswordApi(SiloApiClient client)
 
     public Task ChangePasswordAsync(ApiRequestContext context, string currentPassword, string newPassword,
         CancellationToken ct = default)
-        => client.SendNoContentRequestAsync(context, HttpMethod.Post, "/api/v2/account/password",
-            new { current_password = currentPassword, new_password = newPassword }, ct);
+        => ChangePasswordAsync(context, currentPassword, newPassword, false, ct);
+
+    // Require both arguments so legacy four-argument calls with default remain unambiguous.
+    public Task ChangePasswordAsync(ApiRequestContext context, string currentPassword, string newPassword,
+        bool signOutOtherSessions, CancellationToken ct)
+    {
+        var body = new Dictionary<string, object>
+        {
+            ["current_password"] = currentPassword,
+            ["new_password"] = newPassword
+        };
+        // Older servers reject this member even when it is false.
+        if (signOutOtherSessions) body["sign_out_other_sessions"] = true;
+        return client.SendNoContentRequestAsync(context, HttpMethod.Post, "/api/v2/account/password", body, ct);
+    }
 }

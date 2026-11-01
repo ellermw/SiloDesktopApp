@@ -99,7 +99,7 @@ public sealed class UserDialogParitySourceTests
         Assert.Contains("No folder paths are available for this item.", source);
         Assert.Contains("Copied root path", source);
         Assert.Contains("Failed to copy path", source);
-        Assert.Contains("if (_searching || _applying) return", source);
+        Assert.Contains("if (_searching || _applying || !CanAct) return", source);
     }
 
     [Fact]

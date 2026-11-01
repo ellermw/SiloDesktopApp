@@ -1281,12 +1281,12 @@ public partial class PlayerService : IDisposable
     public List<FileVersion> Versions { get; private set; } = [];
     public FileVersion? ActiveVersion => Versions.FirstOrDefault(v => v.FileId == (_playbackManager?.CurrentSession?.MediaFileId ?? 0));
     public IReadOnlyList<AudiobookChapterInfo> AudiobookChapters => BuildAudiobookChapters();
-    public TimeRange? ActiveIntro => ActiveMarker("intro", ActiveVersion?.Intro ?? WatchDetail?.Intro);
-    public TimeRange? ActiveCredits => ActiveMarker("credits", ActiveVersion?.Credits ?? WatchDetail?.Credits);
-    public TimeRange? ActiveRecap => ActiveMarker("recap", ActiveVersion?.Recap ?? WatchDetail?.Recap);
-    public TimeRange? ActivePreview => ActiveMarker("preview", ActiveVersion?.Preview ?? WatchDetail?.Preview);
-    private TimeRange? ActiveMarker(string kind, TimeRange? legacy) => ActiveVersion?.MarkerSegments is { } segments
-        ? PlaybackMarkerRanges.Active(segments, kind, Position) : legacy;
+    public TimeRange? ActiveIntro => ActiveMarker("intro");
+    public TimeRange? ActiveCredits => ActiveMarker("credits");
+    public TimeRange? ActiveRecap => ActiveMarker("recap");
+    public TimeRange? ActivePreview => ActiveMarker("preview");
+    private TimeRange? ActiveMarker(string kind) => CurrentMarkerVersion?.MarkerSegments is { } segments
+        ? PlaybackMarkerRanges.Active(segments, kind, Position, MarkerProvenanceFor(kind)) : MarkerTimingFor(kind);
 
     // ── Events ───────────────────────────────────────────────────────────
 
@@ -5512,30 +5512,37 @@ public partial class PlayerService : IDisposable
 
     private void SendMarkersToOsc()
     {
+        lock (_markerDetailsGate)
+        {
         if (_mpv == null || _playbackManager?.WatchDetail == null) return;
         var wd = _playbackManager.WatchDetail;
 
         var markers = new
         {
-            content_id = ContentId,
+            content_id = ContentId ?? wd.ContentId,
+            file_id = _playbackManager.CurrentSession?.MediaFileId ?? 0,
+            load_generation = Volatile.Read(ref _fileLoadGeneration),
             reset_auto_skip = _autoSkipMarkerIdentity.ShouldResetFor(ContentId),
-            marker_segments = ActiveVersion?.MarkerSegments,
-            intro_start = (ActiveVersion?.Intro ?? wd.Intro)?.Start ?? 0,
-            intro_end = (ActiveVersion?.Intro ?? wd.Intro)?.End ?? 0,
-            recap_start = (ActiveVersion?.Recap ?? wd.Recap)?.Start ?? 0,
-            recap_end = (ActiveVersion?.Recap ?? wd.Recap)?.End ?? 0,
-            credits_start = (ActiveVersion?.Credits ?? wd.Credits)?.Start ?? 0,
-            credits_end = (ActiveVersion?.Credits ?? wd.Credits)?.End ?? 0,
-            preview_start = (ActiveVersion?.Preview ?? wd.Preview)?.Start ?? 0,
-            preview_end = (ActiveVersion?.Preview ?? wd.Preview)?.End ?? 0
+            marker_segments = CurrentMarkerVersion?.MarkerSegments?.Where(segment => segment is not null).ToArray(),
+            intro_start = MarkerTimingFor("intro")?.Start ?? 0,
+            intro_end = MarkerTimingFor("intro")?.End ?? 0,
+            recap_start = MarkerTimingFor("recap")?.Start ?? 0,
+            recap_end = MarkerTimingFor("recap")?.End ?? 0,
+            credits_start = MarkerTimingFor("credits")?.Start ?? 0,
+            credits_end = MarkerTimingFor("credits")?.End ?? 0,
+            preview_start = MarkerTimingFor("preview")?.Start ?? 0,
+            preview_end = MarkerTimingFor("preview")?.End ?? 0
         };
 
         var json = System.Text.Json.JsonSerializer.Serialize(markers);
         _mpv.SendScriptMessage("osc-set-markers", json);
+        SendMarkerDetailsToOsc();
+        }
     }
 
     private async Task SendAutoSkipSettingsToOscAsync(CancellationToken ct)
     {
+        _ = RefreshMarkerDetailsPreferencesAsync(ct);
         await RefreshSeekPreferencesAsync(ct);
         var profileId = _authService.SelectedProfileId;
         var intro = false;
@@ -6469,6 +6476,7 @@ public partial class PlayerService : IDisposable
         NetworkInformation.NetworkStatusChanged -= OnPlaybackNetworkChanged;
         _localAuthority.Auth.LoggedOut -= RetireConnectionObservation;
         if (_subtitlePreferenceEvents != null) _subtitlePreferenceEvents.LocalProfileSettingChanged -= OnSubtitlePreferenceChanged;
+        if (_markerDetailsEvents != null) _markerDetailsEvents.LocalProfileSettingChanged -= OnMarkerDetailsSettingChanged;
         _subtitleOffsetDelay?.Cancel();
         _closing = true;
         _authorityLifetimeCts.Cancel();
@@ -6984,18 +6992,19 @@ public partial class PlayerService : IDisposable
             if (!payload.TryGetProperty("file_id", out var fileIdEl) || !fileIdEl.TryGetInt32(out var fileId))
                 return;
 
-            var version = Versions.FirstOrDefault(v => v.FileId == fileId);
-            if (version == null) return;
+            var versions = MarkerVersions().Where(version => version.FileId == fileId).ToArray();
+            if (versions.Length == 0) return;
 
-            PlaybackMarkerUpdate.Apply(version, payload);
+            foreach (var candidate in versions) PlaybackMarkerUpdate.Apply(candidate, payload);
+            var version = versions[0];
 
             var activeFileId = _playbackManager?.CurrentSession?.MediaFileId ?? 0;
             if (activeFileId == fileId && _playbackManager?.WatchDetail != null)
             {
-                _playbackManager.WatchDetail.Intro = version.Intro;
-                _playbackManager.WatchDetail.Credits = version.Credits;
-                _playbackManager.WatchDetail.Recap = version.Recap;
-                _playbackManager.WatchDetail.Preview = version.Preview;
+                if (payload.TryGetProperty("intro", out _)) _playbackManager.WatchDetail.Intro = version.Intro;
+                if (payload.TryGetProperty("credits", out _)) _playbackManager.WatchDetail.Credits = version.Credits;
+                if (payload.TryGetProperty("recap", out _)) _playbackManager.WatchDetail.Recap = version.Recap;
+                if (payload.TryGetProperty("preview", out _)) _playbackManager.WatchDetail.Preview = version.Preview;
                 SendMarkersToOsc();
                 InvokeSubscribersSafely(MarkersChanged, nameof(MarkersChanged));
             }
