@@ -81,6 +81,8 @@ internal static class MatchSplitScopeNativeFixture
             await SplitAsync(owner, wire);
             await SplitRetirementAsync(owner, wire);
             await SplitCommitRefreshAsync(owner, wire);
+            await SplitCommitInventoryFailureAsync(owner, wire);
+            await SplitCommitTimeoutAsync(owner, wire, client);
             await DepartureAsync(owner, wire, client, auth);
             Program.Log("PASS: actual Match and Split controls preserve library scope across search, choice, preview and commit; retire stale inventory/selection/results; enforce curator/admin and account/profile ownership.");
         }
@@ -307,7 +309,9 @@ internal static class MatchSplitScopeNativeFixture
     private sealed class ViewModelServices(IServiceProvider original, ItemDetailViewModel vm) : IServiceProvider
     { public object? GetService(Type type) => type == typeof(ItemDetailViewModel) ? vm : original.GetService(type); }
     private static MatchItemDialog Match(FrameworkElement owner, int? library = null) => new("fixture", "Fixture", 2026, "movie", library, null, null) { XamlRoot = owner.XamlRoot };
-    private static SplitVersionsDialog Split(FrameworkElement owner, int? library = null) => new(new MediaItemDetail { ContentId = "fixture", Title = "Fixture", Type = "movie" }, library) { XamlRoot = owner.XamlRoot };
+    private static SplitVersionsDialog Split(FrameworkElement owner, int? library = null, string? seriesId = null) => new(new MediaItemDetail { ContentId = "fixture", Title = "Fixture", Type = "movie", SeriesId = seriesId }, library) { XamlRoot = owner.XamlRoot };
+    private static TextBlock ActionStatus(ItemScopedDialog dialog) => (TextBlock)typeof(ItemScopedDialog).GetField("Status", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!;
+    private static bool ActionBusy(ItemScopedDialog dialog) => (bool)typeof(ItemScopedDialog).GetField("Busy", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(dialog)!;
     private static void Admin(AuthService auth) => auth.SetCurrentUser(new() { Id = "fixture", Role = "admin" });
     private static ComboBox Libraries(DependencyObject dialog) => All<ComboBox>(dialog).Single(box => AutomationProperties.GetName(box) == "Identity search library");
     private static Button Search(DependencyObject dialog) => All<Button>(dialog).Single(button => button.Name == "SearchButton" || button.Content as string == "Search");
@@ -415,6 +419,48 @@ internal static class MatchSplitScopeNativeFixture
             Check(wire.Commits == commits && !dialog.HasSaved, "Inventory drift committed instead of regenerating the unmatched preview");
         }
         finally { dialog.Hide(); await showing; }
+    }
+    private static async Task SplitCommitInventoryFailureAsync(FrameworkElement owner, Wire wire)
+    {
+        foreach (var unmatched in new[] { false, true })
+        {
+            wire.Files = [("1", 2), ("2", 2)]; var dialog = Split(owner); var showing = dialog.ShowAsync();
+            try
+            {
+                await Until(() => Search(dialog).IsEnabled); File(dialog, "1").IsChecked = true;
+                if (unmatched) All<CheckBox>(dialog).Single(box => box.Content as string == "Detach as unmatched (identify later)").IsChecked = true;
+                else await SearchAndChooseAsync(dialog);
+                await Until(() => dialog.IsPrimaryButtonEnabled);
+                var commits = wire.Commits; wire.DenyInventory = true;
+                Invoke(All<Button>(dialog).Single(button => button.Name == "PrimaryButton"));
+                await Until(() => !ActionBusy(dialog) && !string.IsNullOrEmpty(ActionStatus(dialog).Text));
+                Check(ActionStatus(dialog).Text == "HTTP 403", "Failed Split preflight overwrites the inventory read error with drift guidance");
+                Check(wire.Commits == commits && !dialog.HasSaved && !dialog.IsPrimaryButtonEnabled && Refresh(dialog).IsEnabled, "Failed inventory read commits Split or disables its retry");
+                wire.DenyInventory = false; Invoke(Refresh(dialog)); await Until(() => Search(dialog).IsEnabled);
+                if (!unmatched) await SearchAndChooseAsync(dialog);
+                await Until(() => dialog.IsPrimaryButtonEnabled);
+            }
+            finally { wire.DenyInventory = false; dialog.Hide(); await showing; }
+        }
+    }
+    private static async Task SplitCommitTimeoutAsync(FrameworkElement owner, Wire wire, SiloApiClient client)
+    {
+        wire.Files = [("1", 2), ("2", 2)]; var dialog = Split(owner); var showing = dialog.ShowAsync();
+        var cache = (ItemDetailPrefetchCache)SiloPlayer.App.Services.GetService(typeof(ItemDetailPrefetchCache))!;
+        var ids = new[] { "fixture", "fixture-target", "unrelated" };
+        var cached = await Task.WhenAll(ids.Select(id => cache.GetAsync(id, default)));
+        var notice = new MatchNotice(); var context = client.CaptureContext();
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(notice, (recipient, message) => ((MatchNotice)recipient).Context = message.Context);
+        try
+        {
+            await Until(() => Search(dialog).IsEnabled); File(dialog, "1").IsChecked = true; await SearchAndChooseAsync(dialog); await Until(() => dialog.IsPrimaryButtonEnabled);
+            wire.TimeoutCommit = true; Invoke(All<Button>(dialog).Single(button => button.Name == "PrimaryButton"));
+            await Until(() => !ActionBusy(dialog) && ActionStatus(dialog).Text.Contains("Reload the item"));
+            Check(!dialog.HasSaved && ActionStatus(dialog).Text.Contains("Split could not be confirmed"), "Lost Split response silently reports completion or an owner change");
+            for (var i = 0; i < ids.Length; i++) Check(!ReferenceEquals(cached[i], await cache.GetAsync(ids[i], default)), "Unconfirmed Split leaves shared detail cached");
+            Check(notice.Context == context, "Unconfirmed Split does not publish an owner-tagged refresh");
+        }
+        finally { wire.TimeoutCommit = false; WeakReferenceMessenger.Default.UnregisterAll(notice); dialog.Hide(); await showing; }
     }
     private static async Task MatchBlockedScopesAsync(FrameworkElement owner, Wire wire)
     {
@@ -527,7 +573,12 @@ internal static class MatchSplitScopeNativeFixture
         finally { split.Hide(); await splitShowing; Admin(auth); }
         foreach (var departure in new[] { "profile", "account", "permission", "navigation" })
         {
-            Admin(auth); client.ClearProfile(); using var navigation = new CancellationTokenSource(); split = Split(owner); split.BindNavigation(navigation.Token); splitShowing = split.ShowAsync(); await Task.Delay(140);
+            Admin(auth); client.ClearProfile(); using var navigation = new CancellationTokenSource(); split = Split(owner, seriesId: "fixture-series"); split.BindNavigation(navigation.Token); splitShowing = split.ShowAsync(); await Task.Delay(140);
+            var cache = (ItemDetailPrefetchCache)SiloPlayer.App.Services.GetService(typeof(ItemDetailPrefetchCache))!;
+            var ids = new[] { "fixture", "fixture-target", "fixture-series", "unrelated" };
+            var cached = await Task.WhenAll(ids.Select(id => cache.GetAsync(id, default)));
+            var context = client.CaptureContext(); var notice = new MatchNotice();
+            WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(notice, (recipient, message) => ((MatchNotice)recipient).Context = message.Context);
             try
             {
                 await Until(() => Search(split).IsEnabled); File(split, "1").IsChecked = true; await SearchAndChooseAsync(split); await Until(() => split.IsPrimaryButtonEnabled);
@@ -537,10 +588,19 @@ internal static class MatchSplitScopeNativeFixture
                 else if (departure == "account") auth.SetCurrentUser(new() { Id = "other", Role = "admin" });
                 else if (departure == "permission") auth.SetCurrentUser(new() { Id = "fixture", Role = "user" });
                 else navigation.Cancel();
-                wire.CommitGate.SetResult(); wire.CommitGate = null; await Task.Delay(140);
+                wire.CommitGate.SetResult(); wire.CommitGate = null; await Until(() => !ActionBusy(split));
                 Check(!split.HasSaved, "Delayed Split commit publishes success after " + departure + " departure");
+                Check(!wire.SplitWasCanceled, "Owner departure cancels a dispatched non-idempotent Split");
+                for (var i = 0; i < 3; i++) Check(!ReferenceEquals(cached[i], await cache.GetAsync(ids[i], default)), "Departed Split leaves source, target or series detail cached");
+                Check(departure is "profile" or "account" ? notice.Context == null : notice.Context == context,
+                    "Departed Split published a refresh for the wrong owner");
+                var unrelated = await cache.GetAsync(ids[3], default);
+                // SetCurrentUser changes the fixture's auth owner, not its API context;
+                // only the profile switch loses the confirmed target response here.
+                Check(departure == "profile" ? !ReferenceEquals(cached[3], unrelated) : ReferenceEquals(cached[3], unrelated),
+                    "Split did not distinguish a confirmed target from an unknown outcome");
             }
-            finally { wire.CommitGate?.TrySetResult(); wire.CommitGate = null; split.Hide(); await splitShowing; }
+            finally { WeakReferenceMessenger.Default.UnregisterAll(notice); wire.CommitGate?.TrySetResult(); wire.CommitGate = null; split.Hide(); await splitShowing; }
         }
     }
     private static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
@@ -556,7 +616,7 @@ internal static class MatchSplitScopeNativeFixture
     private sealed record Call(string Path, JsonElement Body);
     private sealed class Wire : HttpMessageHandler
     {
-        public (string Id, int Library)[] Files = []; public List<Call> Calls = []; public string Root = "/fixture"; public int FileReads, DetailReads; public string? InventoryJson; public bool DenyInventory, PaginatedInventory, TimeoutSearch, TimeoutApply, ApplyWasCanceled; public TaskCompletionSource? SearchGate, PreviewGate, ApplyGate, CommitGate, DetailGate, FileGate;
+        public (string Id, int Library)[] Files = []; public List<Call> Calls = []; public string Root = "/fixture"; public int FileReads, DetailReads; public string? InventoryJson; public bool DenyInventory, PaginatedInventory, TimeoutSearch, TimeoutApply, TimeoutCommit, ApplyWasCanceled, SplitWasCanceled; public TaskCompletionSource? SearchGate, PreviewGate, ApplyGate, CommitGate, DetailGate, FileGate;
         public int Count(string suffix) => Calls.Count(call => call.Path.EndsWith("/" + suffix));
         public Call Last(string suffix) => Calls.Last(call => call.Path.EndsWith("/" + suffix));
         public int Commits => Calls.Count(call => call.Path.EndsWith("/split") && !call.Body.GetProperty("dry_run").GetBoolean());
@@ -578,7 +638,7 @@ internal static class MatchSplitScopeNativeFixture
                 var body = JsonSerializer.Deserialize<JsonElement>(await request.Content!.ReadAsStringAsync(ct)); Calls.Add(new(path, body));
                 if (path.EndsWith("/search")) { if (TimeoutSearch) throw new TaskCanceledException("Synthetic search timeout"); if (SearchGate != null) await SearchGate.Task; json = "{\"candidates\":[{\"title\":\"Scoped candidate\",\"year\":2026,\"provider_ids\":{\"tmdb\":\"42\"}}]}"; }
                 else if (path.EndsWith("/apply")) { if (TimeoutApply) throw new TaskCanceledException("Synthetic apply timeout"); if (ApplyGate != null) await ApplyGate.Task; ApplyWasCanceled = ct.IsCancellationRequested; json = "{\"content_id\":\"fixture-target\",\"updated\":true}"; }
-                else { if (body.GetProperty("dry_run").GetBoolean() && PreviewGate != null) await PreviewGate.Task; if (!body.GetProperty("dry_run").GetBoolean() && CommitGate != null) await CommitGate.Task; json = JsonSerializer.Serialize(new { dry_run = body.GetProperty("dry_run").GetBoolean(), files_moved = body.GetProperty("file_ids").GetArrayLength(), target_content_id = "fixture-target", target_created = true, reattribution = new { progress_moved = 1, history_moved = 1, history_ambiguous = 0, downloads = 0 } }); }
+                else { if (body.GetProperty("dry_run").GetBoolean() && PreviewGate != null) await PreviewGate.Task; if (!body.GetProperty("dry_run").GetBoolean()) { SplitWasCanceled = false; if (CommitGate != null) await CommitGate.Task; SplitWasCanceled = ct.IsCancellationRequested; if (TimeoutCommit) throw new TaskCanceledException("Synthetic split response timeout"); } json = JsonSerializer.Serialize(new { dry_run = body.GetProperty("dry_run").GetBoolean(), files_moved = body.GetProperty("file_ids").GetArrayLength(), target_content_id = "fixture-target", target_created = true, reattribution = new { progress_moved = 1, history_moved = 1, history_ambiguous = 0, downloads = 0 } }); }
             }
             return new(HttpStatusCode.OK) { Content = new StringContent(json) };
         }

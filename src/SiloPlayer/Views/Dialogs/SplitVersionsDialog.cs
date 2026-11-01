@@ -1,3 +1,5 @@
+using CommunityToolkit.Mvvm.Messaging;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Markup;
@@ -7,6 +9,7 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Models.MediaMaintenance;
 using SiloPlayer.Core.Services;
+using SiloPlayer.Messaging;
 using System.Text.Json;
 
 namespace SiloPlayer.Views.Dialogs;
@@ -14,6 +17,7 @@ namespace SiloPlayer.Views.Dialogs;
 public sealed class SplitVersionsDialog : ItemScopedDialog
 {
     private readonly MediaSplitApi _api;
+    private readonly string? _seriesId;
     private readonly ItemLibraryScopePicker _scope;
     private ItemLibraryScope.Scope _candidateScope, _acceptedScope;
     private IReadOnlyList<JsonElement>? _inventoryFiles;
@@ -43,7 +47,7 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
 
     public SplitVersionsDialog(MediaItemDetail item, int? libraryId) : base(item.ContentId, "Split Versions", "", 672, "Split", AuthorizationPolicy.IsActingAdmin, maxHeightRatio: .85)
     {
-        _api = new(Client); _session = Auth.SessionGeneration; _userId = Auth.CurrentUser?.Id; Body.Children.RemoveAt(0);
+        _api = new(Client); _seriesId = item.SeriesId; _session = Auth.SessionGeneration; _userId = Auth.CurrentUser?.Id; Body.Children.RemoveAt(0);
         _scope = new(Client, Context, ItemId, libraryId, split: true, inventory: true, () => ScopeOwner, Lifetime.Token);
         Body.Children.Insert(0, new Border { Background = Brush("SurfaceBrush"), CornerRadius = new CornerRadius(8), Padding = new Thickness(12, 8, 12, 8), Child = Text(item.Title + (item.Year > 0 ? $" ({item.Year})" : "") + "   " + item.Type) });
         _files.ItemTemplate = (DataTemplate)XamlReader.Load("<DataTemplate xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\"><ContentControl HorizontalContentAlignment=\"Stretch\" IsTabStop=\"False\"/></DataTemplate>");
@@ -229,7 +233,9 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         if (!Busy && _refreshPreviewAfterAction)
         {
             _refreshPreviewAfterAction = false;
-            if (!ScopeOwner) return;
+            // A failed read also retires the plan, but is not evidence of drift.
+            // Preserve RunActionAsync's error and leave the inventory retry available.
+            if (!ScopeOwner || !_scope.InventoryAvailable) return;
             PlanChanged();
             Status.Text = PlanValid ? "Item files changed. Review the updated preview before splitting."
                 : "Item files changed. Search again and review a new preview before splitting.";
@@ -241,8 +247,41 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         var revision = _planRevision; var scope = _acceptedScope; var request = BuildRequest(false);
         await _scope.RefreshAsync();
         if (!ScopeOwner || !PlanScopeCurrent(scope) || revision != _planRevision || !PlanValid) return;
-        await _api.SplitAsync(Context, ItemId, request, Lifetime.Token); RequireAuthority();
-        if (!ScopeOwner || !PlanScopeCurrent(scope) || revision != _planRevision) return;
-        HasSaved = true; DispatcherQueue.TryEnqueue(() => { if (ScopeOwner && PlanScopeCurrent(scope) && revision == _planRevision) Hide(); });
+        string? targetId = null;
+        try
+        {
+            // Once dispatched, the non-idempotent write must outlive its surface.
+            // Authority still gates local completion, not shared cache invalidation.
+            var response = await _api.SplitAsync(Context, ItemId, request, CancellationToken.None);
+            if (!response.TryGetProperty("target_content_id", out var target) || target.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(target.GetString()))
+                throw new InvalidOperationException("The server did not confirm the split target.");
+            targetId = target.GetString();
+            if (!ScopeOwner || !PlanScopeCurrent(scope) || revision != _planRevision) return;
+            HasSaved = true; DispatcherQueue.TryEnqueue(() => { if (ScopeOwner && PlanScopeCurrent(scope) && revision == _planRevision) Hide(); });
+        }
+        catch (Exception error) when (ScopeOwner)
+        {
+            throw new InvalidOperationException($"Split could not be confirmed: {error.Message} Reload the item before trying again.", error);
+        }
+        finally { InvalidateAppliedSplit(targetId); }
+    }
+    private void InvalidateAppliedSplit(string? targetId)
+    {
+        var cache = App.Services.GetService<ItemDetailPrefetchCache>();
+        if (targetId == null)
+            // A lost response or retired API context can conceal a committed target.
+            cache?.Clear();
+        else
+        {
+            cache?.Invalidate(ItemId);
+            cache?.Invalidate(_seriesId);
+            cache?.Invalidate(targetId);
+        }
+        if (!Client.IsCurrentContext(Context) || Auth.SessionGeneration != _session || Auth.CurrentUser?.Id != _userId) return;
+        WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
+            MediaSurfaceChangeKind.ItemMetadataRefreshed, ItemId, _seriesId, context: Context));
+        if (targetId == null)
+            App.Services.GetService<SiloPlayer.Services.ToastService>()?.Warning("Split outcome could not be confirmed. Reload the item before trying again.");
     }
 }
