@@ -98,9 +98,28 @@ public partial class LibraryViewModel
         var entry = index.Letters.FirstOrDefault(x => x.Letter == letter.ToUpperInvariant());
         if (entry is null || entry.Position >= TotalCount) return;
         var key = _letterIndexKey;
-        await LoadWindowAsync(entry.Position, PageSize, force: true);
-        if (jump == _letterJumpVersion && key == LetterQueryKey() && ReferenceEquals(index, LetterIndex)
-            && entry.Position < TotalCount && GetWindowItem(entry.Position) is not null)
+        var previousStart = WindowStartIndex;
+        var previousItems = _windowItems;
+        var previousWindows = _recentWindows.ToArray();
+        var previousHasMore = HasMore;
+        var load = LoadWindowAsync(entry.Position, PageSize, force: true);
+        var viewportVersion = _viewportRequestVersion;
+        await load;
+        if (jump != _letterJumpVersion || key != LetterQueryKey() || !ReferenceEquals(index, LetterIndex)
+            || viewportVersion != _viewportRequestVersion) return;
+        if (GetWindowItem(entry.Position) is null)
+        {
+            // Index and page reads are not a snapshot. A missing target must
+            // not strand the unchanged viewport on an empty/distant window.
+            _windowItems = previousItems;
+            WindowStartIndex = previousStart;
+            _recentWindows.Clear();
+            foreach (var window in previousWindows) _recentWindows.AddLast(window);
+            HasMore = previousHasMore;
+            WindowLoaded?.Invoke();
+            return;
+        }
+        if (entry.Position < TotalCount)
             LetterJumpRequested?.Invoke(entry.Position);
     }
 
@@ -116,8 +135,9 @@ public partial class LibraryViewModel
     {
         if (_hasExactTotal) return;
         // Do not carry a no-total runway estimate into the indexed extent.
-        // Only real returned cards can extend it, and a known end can trim it.
-        _estimatedTotalItems = _catalogEndTotal ?? Math.Max(total, _observedCatalogEnd);
+        // A non-exact terminal page may be older than the index. Retain both
+        // the index extent and any larger extent established by real cards.
+        _estimatedTotalItems = Math.Max(total, Math.Max(_catalogEndTotal ?? 0, _observedCatalogEnd));
         TotalCount = _estimatedTotalItems;
         Items.SetCount(TotalCount);
         // DisplayTotalCount remains unknown until the catalog supplies a count.

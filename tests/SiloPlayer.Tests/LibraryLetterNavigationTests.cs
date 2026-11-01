@@ -113,7 +113,7 @@ public sealed class LibraryLetterNavigationTests
     [Theory]
     [InlineData(1000)]
     [InlineData(1200)]
-    public async Task TerminalPageTrimsIndexedExtentWithoutAnExactCount(int indexTotal)
+    public async Task TerminalPageRetainsIndexedAndObservedExtentsWithoutAnExactCount(int indexTotal)
     {
         using var wire = new Wire { CatalogExact = false, IndexTotal = indexTotal }; var model = wire.Create();
         await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
@@ -122,19 +122,20 @@ public sealed class LibraryLetterNavigationTests
         Assert.Equal(0, model.DisplayTotalCount);
         await model.LoadWindowAsync(900, 100, force: true);
         Assert.False(model.HasMore);
-        Assert.Equal(1000, model.TotalCount);
-        Assert.Equal(1000, model.Items.Count);
+        Assert.Equal(Math.Max(indexTotal, 1000), model.TotalCount);
+        Assert.Equal(Math.Max(indexTotal, 1000), model.Items.Count);
         Assert.NotNull(model.GetWindowItem(999));
-        // An earlier window must not restore the stale index or its runway.
+        // Neither a terminal page nor an earlier window is an exact count.
+        // Trim speculative runway, but not the index or actual returned cards.
         await model.LoadWindowAsync(0, 100, force: true);
-        Assert.Equal(1000, model.TotalCount);
+        Assert.Equal(Math.Max(indexTotal, 1000), model.TotalCount);
         Assert.Equal(0, model.DisplayTotalCount);
     }
 
     [Fact]
-    public async Task LateIndexCannotExpandAnAlreadyObservedCatalogEnd()
+    public async Task LateLargerIndexKeepsTailReachableAfterAnObservedCatalogEnd()
     {
-        using var wire = new Wire { CatalogExact = false, HoldIndex = true, IndexTotal = 1200 }; var model = wire.Create();
+        using var wire = new Wire { CatalogExact = false, HoldIndex = true, IndexTotal = 1200, TailPosition = 1199 }; var model = wire.Create();
         var load = model.LoadCommand.ExecuteAsync(null);
         try
         {
@@ -144,12 +145,55 @@ public sealed class LibraryLetterNavigationTests
             await model.LoadWindowAsync(720, 100, force: true);
             await model.LoadWindowAsync(900, 100, force: true);
             Assert.Equal(1000, model.TotalCount);
+            // A scan adds titles after the terminal page but before the index.
+            wire.CatalogTotal = 1200;
         }
         finally { wire.ReleaseIndex.TrySetResult(); await model.EnsureLetterIndexAsync(); }
         Assert.Equal(1200, model.LetterIndex!.Total);
-        Assert.Equal(1000, model.TotalCount);
-        Assert.Equal(1000, model.Items.Count);
+        Assert.Equal(1200, model.TotalCount);
+        Assert.Equal(1200, model.Items.Count);
         Assert.Equal(0, model.DisplayTotalCount);
+        var tail = Assert.Single(model.LetterIndex.Letters, entry => entry.Letter == "N");
+        Assert.True(tail.Count > 0 && tail.Position < model.TotalCount); // Rail's enabled predicate.
+        var jumped = -1; model.LetterJumpRequested += position => jumped = position;
+        await model.JumpToLetterCommand.ExecuteAsync("N");
+        Assert.Equal(1199, jumped);
+        Assert.NotNull(model.GetWindowItem(1199));
+    }
+
+    [Theory]
+    [InlineData(1000)] // The aligned target window is empty.
+    [InlineData(1190)] // The window has cards, but not the selected target.
+    public async Task MissingLetterTargetRestoresActiveAndCachedCards(int catalogTotal)
+    {
+        using var wire = new Wire { CatalogExact = false, IndexTotal = 1200, TailPosition = 1199,
+            CatalogTotal = catalogTotal };
+        var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        await model.LoadWindowAsync(120, 100);
+        var original = model.GetWindowItem(120);
+        var cached = model.GetWindowItem(0);
+        var start = model.WindowStartIndex;
+        var end = model.WindowEndIndex;
+        Assert.NotNull(original); Assert.NotNull(cached);
+        var jumped = new List<int>(); model.LetterJumpRequested += jumped.Add;
+
+        await model.JumpToLetterCommand.ExecuteAsync("N");
+
+        Assert.Empty(jumped);
+        Assert.Equal(start, model.WindowStartIndex);
+        Assert.Equal(end, model.WindowEndIndex);
+        Assert.Same(original, model.GetWindowItem(120));
+        Assert.Same(cached, model.GetWindowItem(0));
+        Assert.True(model.HasMore);
+        Assert.Equal(1200, model.TotalCount);
+        Assert.Equal(0, model.DisplayTotalCount);
+        Assert.False(model.IsLoading);
+        Assert.Null(model.ErrorMessage);
+        // A failed optional jump must leave ordinary navigation usable.
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+        Assert.Equal(new[] { 742 }, jumped);
+        Assert.NotNull(model.GetWindowItem(742));
     }
 
     [Fact]
@@ -229,6 +273,7 @@ public sealed class LibraryLetterNavigationTests
         await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
         var jumps = 0; model.LetterJumpRequested += _ => jumps++;
         wire.HoldCatalog = true;
+        wire.WindowTotalExact = true; // Explicit newer count, rather than a skip-total estimate.
         var pending = model.JumpToLetterCommand.ExecuteAsync("N");
         wire.CatalogTotal = 800;
         wire.ReleaseCatalog.TrySetResult();
@@ -245,6 +290,7 @@ public sealed class LibraryLetterNavigationTests
         await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
         Assert.Equal(1200, model.TotalCount);
         wire.CatalogTotal = 800;
+        wire.WindowTotalExact = true; // A later response explicitly supplies a new exact count.
         await model.LoadWindowAsync(720, 80, force: true);
         Assert.Equal(800, model.TotalCount);
         Assert.Equal(800, model.DisplayTotalCount);
@@ -265,6 +311,47 @@ public sealed class LibraryLetterNavigationTests
         Assert.Equal(800, model.Items.Count);
     }
 
+    [Theory]
+    [InlineData(900, 800)] // Empty page beyond the newly counted end.
+    [InlineData(900, 1000)] // Older non-empty page beyond that end.
+    [InlineData(720, 1000)] // Older page overlapping the newly counted end.
+    public async Task InFlightSkipTotalWindowCannotEnlargeALaterExactCount(int start, int catalogTotal)
+    {
+        using var wire = new Wire { CatalogExact = false, ExactCountTotal = 800, IndexTotal = 1200 };
+        var model = wire.Create();
+        var counted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        model.WindowLoaded += () => { if (model.DisplayTotalCount == 800) counted.TrySetResult(); };
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        Assert.Equal(1200, model.TotalCount);
+        var original = model.GetWindowItem(0);
+        Assert.NotNull(original);
+        wire.HoldCatalog = true;
+        var pending = model.LoadWindowAsync(start, 100, force: true);
+        try
+        {
+            Assert.Contains(start, wire.Seeks);
+            Assert.False(pending.IsCompleted);
+            wire.CatalogTotal = catalogTotal;
+            wire.ReleaseExactCount.TrySetResult();
+            await counted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(800, model.TotalCount);
+        }
+        finally { wire.ReleaseCatalog.TrySetResult(); await pending; }
+
+        Assert.Equal(800, model.TotalCount);
+        Assert.Equal(800, model.DisplayTotalCount);
+        Assert.Equal(800, model.Items.Count);
+        if (start >= 800)
+        {
+            Assert.Same(original, model.GetWindowItem(0));
+            Assert.Equal(0, model.WindowStartIndex);
+            Assert.Null(model.GetWindowItem(start));
+        }
+        else Assert.NotNull(model.GetWindowItem(799));
+        Assert.False(model.IsLoading);
+        Assert.Null(model.ErrorMessage);
+    }
+
     [Fact]
     public async Task ANewerClickRetiresAnOlderPendingJump()
     {
@@ -277,6 +364,26 @@ public sealed class LibraryLetterNavigationTests
         await model.JumpToLetterCommand.ExecuteAsync("A");
         wire.ReleaseCatalog.TrySetResult(); await oldJump;
         Assert.Equal(new[] { 0 }, jumped);
+    }
+
+    [Fact]
+    public async Task MissingOlderTargetCannotRestoreCardsOverANewerJump()
+    {
+        using var wire = new Wire { CatalogExact = false, IndexTotal = 1200, TailPosition = 1199 };
+        var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumped = new List<int>(); model.LetterJumpRequested += jumped.Add;
+        wire.HoldCatalog = true;
+        var older = model.JumpToLetterCommand.ExecuteAsync("N");
+        wire.HoldCatalog = false;
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+        var current = model.GetWindowItem(742);
+        Assert.NotNull(current);
+        wire.ReleaseCatalog.TrySetResult(); await older;
+        Assert.Equal(new[] { 742 }, jumped);
+        Assert.Same(current, model.GetWindowItem(742));
+        Assert.True(model.HasWindow(742, 742));
+        Assert.False(model.IsLoading);
     }
 
     [Fact]
@@ -477,6 +584,7 @@ public sealed class LibraryLetterNavigationTests
         internal int IndexTotal = 1000;
         internal int TailPosition = 749;
         internal bool CatalogExact = true;
+        internal bool WindowTotalExact;
         internal int? ExactCountTotal;
         internal readonly TaskCompletionSource ReleaseExactCount = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal bool HoldCatalog;
@@ -514,7 +622,9 @@ public sealed class LibraryLetterNavigationTests
                 var countOnly = !q.ContainsKey("skip_total") && ExactCountTotal.HasValue;
                 if (countOnly) await ReleaseExactCount.Task;
                 var total = countOnly ? ExactCountTotal!.Value : CatalogTotal;
-                var exact = countOnly || CatalogExact;
+                // Normal skip-total windows have no authoritative count.
+                // Only explicit opt-in cases model a server returning one anyway.
+                var exact = q.ContainsKey("skip_total") ? WindowTotalExact : countOnly || CatalogExact;
                 return Reply(new { total = exact ? total : 0, total_exact = exact, items = Enumerable.Range(seek, Math.Max(0, Math.Min(limit, total - seek))).Select(i => new { content_id = "item" + i, title = (i < 742 ? "A " : i < TailPosition ? "M " : "N ") + i, type = "movie" }), page = new { has_more = seek + limit < total } });
             }
             return Reply(new { }, HttpStatusCode.NotFound);

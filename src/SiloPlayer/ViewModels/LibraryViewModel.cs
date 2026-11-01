@@ -582,6 +582,11 @@ public partial class LibraryViewModel : ObservableObject
             {
                 if (ct.IsCancellationRequested || queryVersion != _queryVersion || windowVersion != _windowLoadVersion)
                     return;
+                // A count may have landed while this speculative window was
+                // in flight. An out-of-range page cannot enlarge that count
+                // or replace the still-usable active window.
+                if (_hasExactTotal && startIndex >= TotalCount && !HasTrustworthyExactTotal(response, includeTotal))
+                    return;
 
                 ApplyWindowResponse(startIndex, response, includeTotal, preserveAdjacent: !force);
                 RememberWindow(startIndex, response, includeTotal);
@@ -1035,8 +1040,13 @@ public partial class LibraryViewModel : ObservableObject
         return group;
     }
 
+    private bool HasTrustworthyExactTotal(CatalogResponse response, bool includeTotal) => response.TotalExact &&
+        (includeTotal || response.Total > 0 || (!_hasExactTotal && response.Items.Count == 0 && !response.HasMore));
+
     private void ApplyWindowResponse(int startIndex, CatalogResponse response, bool includeTotal, bool preserveAdjacent = false)
     {
+        if (_hasExactTotal && startIndex >= TotalCount && !HasTrustworthyExactTotal(response, includeTotal))
+            return;
         if (!string.IsNullOrWhiteSpace(response.Snapshot))
             _snapshot = response.Snapshot;
 
@@ -1068,17 +1078,15 @@ public partial class LibraryViewModel : ObservableObject
         }
         HasMore = response.HasMore;
 
-        var hasTrustworthyExactTotal = response.TotalExact &&
-            (includeTotal || response.Total > 0 || (!_hasExactTotal && response.Items.Count == 0 && !response.HasMore));
-        if (hasTrustworthyExactTotal)
+        if (HasTrustworthyExactTotal(response, includeTotal))
         {
             ApplyExactCatalogTotal(response.Total);
             return;
         }
 
-        if (_hasExactTotal && _estimatedTotalItems > 0)
+        if (_hasExactTotal)
         {
-            ApplyExactCatalogTotal(Math.Max(_estimatedTotalItems, startIndex + response.Items.Count));
+            ApplyExactCatalogTotal(_estimatedTotalItems);
             return;
         }
 
@@ -1091,7 +1099,7 @@ public partial class LibraryViewModel : ObservableObject
         if (LetterIndex is not null)
         {
             // An index replaces the speculative runway, not the observed cards.
-            // A terminal page takes precedence over an older index total.
+            // A non-exact terminal page cannot invalidate the index extent.
             ApplyLetterIndexTotal(LetterIndex.Total);
             return;
         }
