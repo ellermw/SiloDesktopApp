@@ -16,7 +16,7 @@ public partial class CatalogApi
         var context = client.CaptureContext();
         var language = client.LocalizedReads.Generation;
         var groups = BuildCatalogRuleGroups(studio, country, resolution, audioLanguage, extraRules,
-            extraRulesMatch, queryGroups);
+            extraRulesMatch, queryGroups, queryGroupsMatch);
         var match = queryGroups is null ? "all" : queryGroupsMatch;
         groups = WithCatalogBaseFilters(groups, match, genre, contentRating, yearMin, yearMax);
         var body = new Dictionary<string, object?>
@@ -32,25 +32,47 @@ public partial class CatalogApi
         var capabilities = await GetSearchRuleCapabilitiesAsync(context, ct);
         ct.ThrowIfCancellationRequested();
         if (!capabilities.LetterIndex) return null;
-        var response = await client.SendRequestAsync<CatalogLettersResponse>(context, HttpMethod.Post,
-            "/api/v2/catalog/letters", frozenBody, ct);
-        ct.ThrowIfCancellationRequested();
-        client.LocalizedReads.ThrowIfChanged(language);
-        if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Catalog letter authority changed.", ct);
-        response.Validate();
-        return response;
+        try
+        {
+            var response = await client.SendRequestAsync<CatalogLettersResponse>(context, HttpMethod.Post,
+                "/api/v2/catalog/letters", frozenBody, ct);
+            ct.ThrowIfCancellationRequested();
+            client.LocalizedReads.ThrowIfChanged(language);
+            if (!client.IsCurrentContext(context)) throw new OperationCanceledException("Catalog letter authority changed.", ct);
+            response.Validate();
+            return response;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException("Catalog letter index failed after the server advertised letter_index=true.", ex);
+        }
     }
 
     private static List<QueryGroup> BuildCatalogRuleGroups(string? studio, string? country, string? resolution,
         string? audioLanguage, IReadOnlyList<QueryRule>? extraRules, string extraRulesMatch,
-        IReadOnlyList<QueryGroup>? queryGroups)
+        IReadOnlyList<QueryGroup>? queryGroups, string queryGroupsMatch)
     {
-        if (queryGroups is not null) return queryGroups.Where(group => group.Rules.Count > 0).ToList();
+        var groups = queryGroups?.Where(group => group.Rules.Count > 0).ToList() ?? [];
         var rules = new List<QueryRule>();
         void Add(string field, string? value) { if (!string.IsNullOrWhiteSpace(value)) rules.Add(new() { Field = field, Op = "is", Value = value }); }
         Add("studio", studio); Add("country", country); Add("resolution", resolution); Add("audio_language", audioLanguage);
         if (extraRules is not null) rules.AddRange(extraRules);
-        return rules.Count == 0 ? [] : [new() { Match = extraRulesMatch == "any" ? "any" : "all", Rules = rules }];
+        if (rules.Count == 0) return groups;
+        var additional = new QueryGroup { Match = extraRulesMatch == "any" ? "any" : "all", Rules = rules };
+        if (groups.Count == 0 || queryGroupsMatch != "any") return groups.Concat(new[] { additional }).ToList();
+
+        // Supplemental filters are ANDed with the structured expression, even
+        // when its top-level groups (or the additional rules) use OR.
+        static IEnumerable<List<QueryRule>> Branches(QueryGroup group) => group.Match == "any"
+            ? group.Rules.Select(rule => new List<QueryRule> { rule })
+            : new[] { group.Rules };
+        return groups.SelectMany(group => Branches(group).SelectMany(branch =>
+            Branches(additional).Select(extra => new QueryGroup
+            {
+                Match = "all", AdditionalProperties = group.AdditionalProperties,
+                Rules = branch.Concat(extra).ToList(),
+            }))).ToList();
     }
 
     private static List<QueryGroup> WithCatalogBaseFilters(List<QueryGroup> groups, string match,

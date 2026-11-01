@@ -104,8 +104,52 @@ public sealed class LibraryLetterNavigationTests
         using var wire = new Wire { CatalogTotal = 1200, CatalogExact = false }; var model = wire.Create();
         await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
         await model.LoadWindowAsync(960, 100, force: true);
-        Assert.True(model.TotalCount >= 1060);
+        Assert.Equal(1060, model.TotalCount);
+        Assert.Equal(1060, model.Items.Count);
+        Assert.Equal(0, model.DisplayTotalCount);
         Assert.NotNull(model.GetWindowItem(1050));
+    }
+
+    [Theory]
+    [InlineData(1000)]
+    [InlineData(1200)]
+    public async Task TerminalPageTrimsIndexedExtentWithoutAnExactCount(int indexTotal)
+    {
+        using var wire = new Wire { CatalogExact = false, IndexTotal = indexTotal }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        await model.LoadWindowAsync(800, 100, force: true);
+        Assert.Equal(indexTotal, model.TotalCount);
+        Assert.Equal(0, model.DisplayTotalCount);
+        await model.LoadWindowAsync(900, 100, force: true);
+        Assert.False(model.HasMore);
+        Assert.Equal(1000, model.TotalCount);
+        Assert.Equal(1000, model.Items.Count);
+        Assert.NotNull(model.GetWindowItem(999));
+        // An earlier window must not restore the stale index or its runway.
+        await model.LoadWindowAsync(0, 100, force: true);
+        Assert.Equal(1000, model.TotalCount);
+        Assert.Equal(0, model.DisplayTotalCount);
+    }
+
+    [Fact]
+    public async Task LateIndexCannotExpandAnAlreadyObservedCatalogEnd()
+    {
+        using var wire = new Wire { CatalogExact = false, HoldIndex = true, IndexTotal = 1200 }; var model = wire.Create();
+        var load = model.LoadCommand.ExecuteAsync(null);
+        try
+        {
+            await load;
+            // Grow the unindexed runway until the final page can be requested.
+            await model.LoadWindowAsync(360, 100, force: true);
+            await model.LoadWindowAsync(720, 100, force: true);
+            await model.LoadWindowAsync(900, 100, force: true);
+            Assert.Equal(1000, model.TotalCount);
+        }
+        finally { wire.ReleaseIndex.TrySetResult(); await model.EnsureLetterIndexAsync(); }
+        Assert.Equal(1200, model.LetterIndex!.Total);
+        Assert.Equal(1000, model.TotalCount);
+        Assert.Equal(1000, model.Items.Count);
+        Assert.Equal(0, model.DisplayTotalCount);
     }
 
     [Fact]
@@ -144,6 +188,54 @@ public sealed class LibraryLetterNavigationTests
         Assert.Equal(1200, model.LetterIndex!.Total);
         Assert.Equal(800, model.TotalCount);
         Assert.Equal(800, model.Items.Count);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TailLetterOutsideExactExtentIsRefusedInsteadOfClamped(bool indexArrivesLast)
+    {
+        using var wire = new Wire { HoldIndex = indexArrivesLast, HoldCatalog = !indexArrivesLast,
+            IndexTotal = 1200, TailPosition = 1040, CatalogTotal = 800 };
+        var model = wire.Create();
+        var load = model.LoadCommand.ExecuteAsync(null);
+        if (indexArrivesLast)
+        {
+            await load;
+            wire.ReleaseIndex.TrySetResult();
+        }
+        else
+        {
+            await model.EnsureLetterIndexAsync();
+            wire.ReleaseCatalog.TrySetResult();
+            await load;
+        }
+        await model.EnsureLetterIndexAsync();
+        var jumped = new List<int>(); model.LetterJumpRequested += jumped.Add;
+        var requests = wire.Seeks.Count;
+        await model.JumpToLetterCommand.ExecuteAsync("N");
+        Assert.Empty(jumped);
+        Assert.Equal(requests, wire.Seeks.Count);
+        Assert.Equal(800, model.TotalCount);
+        await model.JumpToLetterCommand.ExecuteAsync("M");
+        Assert.Equal(new[] { 742 }, jumped);
+        Assert.NotNull(model.GetWindowItem(742));
+    }
+
+    [Fact]
+    public async Task CountShrinkingDuringLetterLoadDoesNotPublishAFalseJump()
+    {
+        using var wire = new Wire { CatalogTotal = 1200, IndexTotal = 1200, TailPosition = 1040 }; var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        var jumps = 0; model.LetterJumpRequested += _ => jumps++;
+        wire.HoldCatalog = true;
+        var pending = model.JumpToLetterCommand.ExecuteAsync("N");
+        wire.CatalogTotal = 800;
+        wire.ReleaseCatalog.TrySetResult();
+        await pending;
+        Assert.Equal(800, model.TotalCount);
+        Assert.Equal(0, jumps);
+        Assert.Null(model.GetWindowItem(1040));
     }
 
     [Fact]
@@ -198,6 +290,34 @@ public sealed class LibraryLetterNavigationTests
         Assert.Equal(2, wire.IndexRequests);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WindowPublicationsDoNotRetryFailedLetterIndex(bool failCapabilities)
+    {
+        // The view must only render publications, not turn them into retries.
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Views", "LibraryPage.xaml.cs"));
+        var start = source.IndexOf("private void OnLibraryWindowLoaded()", StringComparison.Ordinal);
+        var end = source.IndexOf("private void QueueRenderVirtualGrid", start, StringComparison.Ordinal);
+        Assert.DoesNotContain("EnsureLetterIndexAsync", source[start..end]);
+
+        using var wire = new Wire { FailIndex = true, FailCapabilities = failCapabilities }; var model = wire.Create();
+        var publications = 0; model.WindowLoaded += () => publications++;
+        await model.LoadCommand.ExecuteAsync(null);
+        for (var startIndex = 120; startIndex <= 840; startIndex += 120)
+            await model.LoadWindowAsync(startIndex, 100, force: true);
+        Assert.True(publications >= 8);
+        Assert.Equal(1, wire.CapabilityRequests);
+        Assert.Equal(failCapabilities ? 0 : 1, wire.IndexRequests);
+        Assert.Null(model.ErrorMessage);
+        Assert.NotNull(model.GetWindowItem(840));
+        // Returning to the page is an explicit, bounded retry trigger.
+        model.SuspendCatalogLoads();
+        await model.EnsureLetterIndexAsync();
+        Assert.Equal(failCapabilities ? 2 : 1, wire.CapabilityRequests);
+        Assert.Equal(failCapabilities ? 0 : 2, wire.IndexRequests);
+    }
+
     [Fact]
     public async Task FailedIndexCanBeRetriedAndPublishExactLetters()
     {
@@ -228,6 +348,7 @@ public sealed class LibraryLetterNavigationTests
             var log = File.ReadAllText(Path.Combine(directory, "catalog_errors.txt"));
             Assert.Contains("catalog_letters library=7 order=asc type=all group_count=0 query_fingerprint=", log);
             Assert.Contains("status=503", log);
+            Assert.Contains("failed after the server advertised letter_index=true", log);
             Assert.Null(model.ErrorMessage);
             Assert.NotNull(model.GetWindowItem(0));
         }
@@ -261,6 +382,80 @@ public sealed class LibraryLetterNavigationTests
     }
 
     [Fact]
+    public async Task MultipleGuidedLanguagesRetainStudioActorRatingAndTechnicalFilters()
+    {
+        using var wire = new Wire(); var model = wire.Create();
+        model.SelectedOriginalLanguages = ["en", "fr"];
+        model.SelectedStudio = "Studio"; model.SelectedCountry = "GB";
+        model.SelectedResolution = "1080p"; model.SelectedAudioLanguage = "en";
+        model.SelectedActor = "Actor"; model.SelectedMinimumRating = "7";
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        using var catalog = JsonDocument.Parse(wire.CatalogGroups!);
+        using var index = JsonDocument.Parse(wire.IndexBody!);
+        var groups = index.RootElement.GetProperty("groups");
+        Assert.Equal(catalog.RootElement.GetRawText(), groups.GetRawText());
+        Assert.Equal("all", wire.CatalogMatch);
+        Assert.Equal("all", index.RootElement.GetProperty("match").GetString());
+        Assert.Equal(2, groups.GetArrayLength());
+        Assert.Equal("any", groups[0].GetProperty("match").GetString());
+        Assert.Equal(new[] { "en", "fr" }, groups[0].GetProperty("rules").EnumerateArray()
+            .Select(rule => rule.GetProperty("value").GetString()).ToArray());
+        var supplemental = groups[1];
+        Assert.Equal("all", supplemental.GetProperty("match").GetString());
+        foreach (var (field, value) in new[] { ("studio", "Studio"), ("country", "GB"),
+            ("resolution", "1080p"), ("audio_language", "en"), ("actor", "Actor") })
+            Assert.Contains(supplemental.GetProperty("rules").EnumerateArray(), rule =>
+                rule.GetProperty("field").GetString() == field && rule.GetProperty("value").GetString() == value);
+        Assert.Contains(supplemental.GetProperty("rules").EnumerateArray(), rule =>
+            rule.GetProperty("field").GetString() == "rating_imdb" &&
+            rule.GetProperty("op").GetString() == "gte" && rule.GetProperty("value").GetDouble() == 7);
+    }
+
+    [Theory]
+    [InlineData("all", "all")]
+    [InlineData("all", "any")]
+    [InlineData("any", "all")]
+    [InlineData("any", "any")]
+    public async Task SupplementalFiltersConjoinWithStructuredGroupsUnderBothMatchModes(string match, string extraMatch)
+    {
+        using var wire = new Wire(); var api = new CatalogApi(wire.Client);
+        QueryGroup[] queryGroups =
+        [
+            new() { Match = "any", Rules = [new() { Field = "original_language", Op = "is", Value = "en" },
+                new() { Field = "original_language", Op = "is", Value = "fr" }] },
+            new() { Match = "all", Rules = [new() { Field = "genre", Op = "is", Value = "Drama" }] },
+        ];
+        QueryRule[] extras = [new() { Field = "actor", Op = "is", Value = "Actor" }];
+        await api.GetCatalogAsync(7, studio: "Studio", queryGroups: queryGroups, queryGroupsMatch: match,
+            extraRules: extras, extraRulesMatch: extraMatch);
+        await api.GetCatalogLettersAsync(7, studio: "Studio", queryGroups: queryGroups, queryGroupsMatch: match,
+            extraRules: extras, extraRulesMatch: extraMatch);
+        using var catalog = JsonDocument.Parse(wire.CatalogGroups!);
+        using var index = JsonDocument.Parse(wire.IndexBody!);
+        var groups = index.RootElement.GetProperty("groups");
+        Assert.Equal(catalog.RootElement.GetRawText(), groups.GetRawText());
+        Assert.Equal(wire.CatalogMatch, index.RootElement.GetProperty("match").GetString());
+        // Check the whole truth table, not just the presence of filter badges.
+        var values = new[] { "en", "fr", "Drama", "Studio", "Actor" };
+        for (var mask = 0; mask < 32; mask++)
+        {
+            bool Has(int bit) => (mask & (1 << bit)) != 0;
+            var present = values.Where((_, bit) => Has(bit)).ToHashSet();
+            var languages = Has(0) || Has(1);
+            var structured = match == "any" ? languages || Has(2) : languages && Has(2);
+            var supplemental = extraMatch == "any" ? Has(3) || Has(4) : Has(3) && Has(4);
+            var results = groups.EnumerateArray().Select(group =>
+            {
+                var rules = group.GetProperty("rules").EnumerateArray()
+                    .Select(rule => present.Contains(rule.GetProperty("value").GetString()!));
+                return group.GetProperty("match").GetString() == "any" ? rules.Any(value => value) : rules.All(value => value);
+            });
+            var actual = match == "any" ? results.Any(value => value) : results.All(value => value);
+            Assert.Equal(structured && supplemental, actual);
+        }
+    }
+
+    [Fact]
     public void RunsIdentifyRepeatedLetterBlocksAndRejectInvalidPositions()
     {
         var index = new CatalogLettersResponse { Total = 6, Letters = [new() { Letter = "A", Count = 4, Position = 0 }, new() { Letter = "#", Count = 2, Position = 2 }],
@@ -275,11 +470,12 @@ public sealed class LibraryLetterNavigationTests
         private readonly HttpClient http;
         internal readonly SiloApiClient Client;
         internal bool Supported = true;
-        internal int IndexRequests, ProbeRequests;
-        internal string? IndexBody;
-        internal bool HoldIndex, FailIndex;
+        internal int IndexRequests, ProbeRequests, CapabilityRequests;
+        internal string? IndexBody, CatalogGroups, CatalogMatch;
+        internal bool HoldIndex, FailIndex, FailCapabilities;
         internal int CatalogTotal = 1000;
         internal int IndexTotal = 1000;
+        internal int TailPosition = 749;
         internal bool CatalogExact = true;
         internal int? ExactCountTotal;
         internal readonly TaskCompletionSource ReleaseExactCount = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -293,7 +489,12 @@ public sealed class LibraryLetterNavigationTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
-            if (path.EndsWith("/search/capabilities")) return Reply(new { letter_index = Supported });
+            if (path.EndsWith("/search/capabilities"))
+            {
+                CapabilityRequests++;
+                return FailCapabilities ? Reply(new { detail = "Synthetic unavailable capability probe" }, HttpStatusCode.ServiceUnavailable)
+                    : Reply(new { letter_index = Supported });
+            }
             if (path.EndsWith("/catalog/letters"))
             {
                 IndexRequests++; IndexBody = await request.Content!.ReadAsStringAsync(ct);
@@ -301,11 +502,12 @@ public sealed class LibraryLetterNavigationTests
                 if (HoldIndex) await ReleaseIndex.Task; // Deliberately ignore cancellation to model a late transport.
                 if (FailIndex) return Reply(new { detail = "Synthetic unavailable index" }, HttpStatusCode.ServiceUnavailable);
                 if (IndexTotal == 0) return Reply(new { total = 0, letters = Array.Empty<object>(), runs = Array.Empty<object>() });
-                return Reply(new { total = IndexTotal, letters = new[] { new { letter = "A", count = 742, position = 0 }, new { letter = "M", count = 7, position = 742 }, new { letter = "N", count = IndexTotal - 749, position = 749 } }, runs = new[] { new { letter = "A", position = 0 }, new { letter = "M", position = 742 }, new { letter = "N", position = 749 } } });
+                return Reply(new { total = IndexTotal, letters = new[] { new { letter = "A", count = 742, position = 0 }, new { letter = "M", count = TailPosition - 742, position = 742 }, new { letter = "N", count = IndexTotal - TailPosition, position = TailPosition } }, runs = new[] { new { letter = "A", position = 0 }, new { letter = "M", position = 742 }, new { letter = "N", position = TailPosition } } });
             }
             if (path == "/api/v2/catalog")
             {
                 var q = request.RequestUri.Query.TrimStart('?').Split('&').Select(x => x.Split('=', 2)).ToDictionary(x => x[0], x => Uri.UnescapeDataString(x[1]));
+                CatalogGroups = q.GetValueOrDefault("groups"); CatalogMatch = q.GetValueOrDefault("match", "all");
                 var limit = int.Parse(q["limit"]); var seek = q.TryGetValue("seek", out var value) ? int.Parse(value) : 0;
                 Seeks.Add(seek); if (limit == 1) ProbeRequests++;
                 if (HoldCatalog) await ReleaseCatalog.Task;
@@ -313,7 +515,7 @@ public sealed class LibraryLetterNavigationTests
                 if (countOnly) await ReleaseExactCount.Task;
                 var total = countOnly ? ExactCountTotal!.Value : CatalogTotal;
                 var exact = countOnly || CatalogExact;
-                return Reply(new { total = exact ? total : 0, total_exact = exact, items = Enumerable.Range(seek, Math.Max(0, Math.Min(limit, total - seek))).Select(i => new { content_id = "item" + i, title = (i < 742 ? "A " : i < 749 ? "M " : "N ") + i, type = "movie" }), page = new { has_more = seek + limit < total } });
+                return Reply(new { total = exact ? total : 0, total_exact = exact, items = Enumerable.Range(seek, Math.Max(0, Math.Min(limit, total - seek))).Select(i => new { content_id = "item" + i, title = (i < 742 ? "A " : i < TailPosition ? "M " : "N ") + i, type = "movie" }), page = new { has_more = seek + limit < total } });
             }
             return Reply(new { }, HttpStatusCode.NotFound);
         }

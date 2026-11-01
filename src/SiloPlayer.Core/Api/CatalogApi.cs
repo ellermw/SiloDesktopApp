@@ -128,7 +128,7 @@ public partial class CatalogApi(SiloApiClient client)
 
         // V2 accepts structured JSON rule groups, not bracketed query keys.
         var groups = BuildCatalogRuleGroups(studio, country, resolution, audioLanguage,
-            extraRules, extraRulesMatch, queryGroups);
+            extraRules, extraRulesMatch, queryGroups, queryGroupsMatch);
         if (queryGroups != null)
         {
             query += $"&match={Uri.EscapeDataString(queryGroupsMatch == "any" ? "any" : "all")}";

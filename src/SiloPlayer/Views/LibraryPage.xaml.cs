@@ -1589,7 +1589,6 @@ public sealed partial class LibraryPage : Page,
             UpdateVirtualGridMetrics();
             QueueRenderVirtualGrid(force: true);
             UpdateLibraryLetters();
-            _ = ViewModel.EnsureLetterIndexAsync();
         });
     }
 

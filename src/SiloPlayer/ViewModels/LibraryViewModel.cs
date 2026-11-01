@@ -29,6 +29,8 @@ public partial class LibraryViewModel : ObservableObject
     private string? _snapshot;
     private ApiRequestContext? _catalogContext;
     private int _estimatedTotalItems;
+    private int _observedCatalogEnd;
+    private int? _catalogEndTotal;
     private bool _hasExactTotal;
     private int _lastVisibleEndIndex = PageSize - 1;
     private int _queryVersion;
@@ -606,6 +608,7 @@ public partial class LibraryViewModel : ObservableObject
                 $"catalog_cursor_recovery start={startIndex} count={itemCount} query_version={_queryVersion} prior_scope_retired=true retry_without_cursor=true");
             _pendingWindowStart = startIndex;
             _pendingWindowEnd = startIndex + itemCount - 1;
+            _ = EnsureLetterIndexAsync();
             await (_pendingWindowTask = LoadWindowCoreAsync(startIndex, itemCount, force: true, allowCursorRecovery: false));
         }
         catch (Exception ex)
@@ -640,6 +643,8 @@ public partial class LibraryViewModel : ObservableObject
         _recentWindows.Clear();
         _snapshot = null;
         _estimatedTotalItems = 0;
+        _observedCatalogEnd = 0;
+        _catalogEndTotal = null;
         _hasExactTotal = false;
         _lastVisibleEndIndex = PageSize - 1;
         TotalCount = 0;
@@ -902,6 +907,8 @@ public partial class LibraryViewModel : ObservableObject
             _completedBoundaries[startIndex + CatalogWindowPageSize] = new(startIndex, version, context, queryKey, response.Snapshot, response.Page.NextCursor);
             while (_completedBoundaries.Count > 16) _completedBoundaries.Remove(_completedBoundaries.Keys.First());
         }
+        if (response.Items.Count > 0)
+            _observedCatalogEnd = Math.Max(_observedCatalogEnd, startIndex + response.Items.Count);
         return response;
     }
 
@@ -1075,20 +1082,25 @@ public partial class LibraryViewModel : ObservableObject
             return;
         }
 
-        var priorEstimate = _estimatedTotalItems;
         var loadedEnd = startIndex + response.Items.Count;
+        if (!response.HasMore)
+            _catalogEndTotal = loadedEnd;
+        else if (_catalogEndTotal is int knownEnd && loadedEnd >= knownEnd)
+            _catalogEndTotal = null;
+
+        if (LetterIndex is not null)
+        {
+            // An index replaces the speculative runway, not the observed cards.
+            // A terminal page takes precedence over an older index total.
+            ApplyLetterIndexTotal(LetterIndex.Total);
+            return;
+        }
         if (response.Total > 0)
             _estimatedTotalItems = Math.Max(response.Total, loadedEnd);
         else if (!response.HasMore)
             _estimatedTotalItems = loadedEnd;
         else
             _estimatedTotalItems = Math.Max(_estimatedTotalItems, loadedEnd + PageSize * 5);
-
-        if (LetterIndex is not null)
-        {
-            ApplyLetterIndexTotal(Math.Max(priorEstimate, LetterIndex.Total));
-            return;
-        }
         TotalCount = _estimatedTotalItems;
         Items.SetCount(_estimatedTotalItems);
     }
@@ -1142,6 +1154,16 @@ public partial class LibraryViewModel : ObservableObject
             TotalCount = 0;
             Items.SetCount(0);
             HasMore = false;
+            return;
+        }
+
+        if (!highestPageHasMore) _catalogEndTotal = maxLoadedEnd;
+        else if (_catalogEndTotal is int knownEnd && maxLoadedEnd >= knownEnd) _catalogEndTotal = null;
+
+        if (LetterIndex is not null)
+        {
+            ApplyLetterIndexTotal(LetterIndex.Total);
+            HasMore = highestPageHasMore;
             return;
         }
 

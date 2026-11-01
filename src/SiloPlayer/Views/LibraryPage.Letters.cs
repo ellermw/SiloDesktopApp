@@ -56,7 +56,7 @@ public sealed partial class LibraryPage
     private void LibraryLetters_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(ViewModel.LetterIndex) or nameof(ViewModel.SelectedSort) or
-            nameof(ViewModel.SelectedOrder) or nameof(ViewModel.Library))
+            nameof(ViewModel.SelectedOrder) or nameof(ViewModel.Library) or nameof(ViewModel.TotalCount))
             DispatcherQueue.TryEnqueue(UpdateLibraryLetters);
     }
 
@@ -71,11 +71,13 @@ public sealed partial class LibraryPage
         foreach (var (letter, button) in _libraryLetterButtons)
         {
             var entry = CanShowLibraryLetters ? ViewModel.LetterIndex?.Letters.FirstOrDefault(item => item.Letter == letter) : null;
-            button.IsEnabled = entry is { Count: > 0 };
+            button.IsEnabled = entry is { Count: > 0 } && entry.Position < ViewModel.TotalCount;
             var spoken = letter == "#" ? "Numbers and symbols" : letter;
             var count = entry?.Count ?? 0;
             AutomationProperties.SetName(button, $"{spoken}, {(count == 0 ? "no titles" : count == 1 ? "1 title" : $"{count:N0} titles")}");
         }
+        if (_chosenLibraryEndLetter is not null && !_libraryLetterButtons[_chosenLibraryEndLetter].IsEnabled)
+            _chosenLibraryEndLetter = null;
         UpdateLibraryLetterLayout();
         UpdateActiveLibraryLetter(force: true);
     }
@@ -163,6 +165,7 @@ public sealed partial class LibraryPage
         DispatcherQueue.TryEnqueue(() =>
         {
             if (!CanShowLibraryLetters || !ReferenceEquals(owner, ViewModel.LetterIndex) ||
+                index >= ViewModel.TotalCount || ViewModel.GetWindowItem(index) is null ||
                 !catalog.IsCurrentContext(context) || catalog.FilterCacheGeneration != language) return;
             UpdateVirtualGridMetrics();
             var layout = GetGridLayout();

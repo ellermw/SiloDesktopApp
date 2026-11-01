@@ -76,8 +76,8 @@ public partial class LibraryViewModel
         {
             SiloPlayer.Core.Services.LocalLog.AppendException("catalog_errors.txt", ex,
                 $"catalog_letters library={libraryId} order={order} type={type ?? "all"} group_count={groups?.Count ?? 0} query_fingerprint={queryFingerprint}");
-            // Keep browsing usable, but allow the next request to retry this
-            // optional aid after a transport or protocol failure.
+            // Keep browsing usable. Only explicit query/return/jump requests
+            // retry this optional aid; publishing card windows must not retry it.
             if (_letterIndexKey == key)
             {
                 _letterIndexKey = null;
@@ -96,10 +96,11 @@ public partial class LibraryViewModel
         var index = LetterIndex;
         if (jump != _letterJumpVersion || index is null || _letterIndexKey != LetterQueryKey()) return;
         var entry = index.Letters.FirstOrDefault(x => x.Letter == letter.ToUpperInvariant());
-        if (entry is null) return;
+        if (entry is null || entry.Position >= TotalCount) return;
         var key = _letterIndexKey;
         await LoadWindowAsync(entry.Position, PageSize, force: true);
-        if (jump == _letterJumpVersion && key == LetterQueryKey() && ReferenceEquals(index, LetterIndex))
+        if (jump == _letterJumpVersion && key == LetterQueryKey() && ReferenceEquals(index, LetterIndex)
+            && entry.Position < TotalCount && GetWindowItem(entry.Position) is not null)
             LetterJumpRequested?.Invoke(entry.Position);
     }
 
@@ -114,12 +115,12 @@ public partial class LibraryViewModel
     private void ApplyLetterIndexTotal(int total)
     {
         if (_hasExactTotal) return;
-        var floor = Math.Max(_estimatedTotalItems, WindowEndIndex + 1);
-        if (_pageResponses.Count > 0)
-            floor = Math.Max(floor, _pageResponses.Max(page => page.Key * PageSize + page.Value.Items.Count));
-        _estimatedTotalItems = Math.Max(total, floor);
-        TotalCount = DisplayTotalCount = _estimatedTotalItems;
+        // Do not carry a no-total runway estimate into the indexed extent.
+        // Only real returned cards can extend it, and a known end can trim it.
+        _estimatedTotalItems = _catalogEndTotal ?? Math.Max(total, _observedCatalogEnd);
+        TotalCount = _estimatedTotalItems;
         Items.SetCount(TotalCount);
+        // DisplayTotalCount remains unknown until the catalog supplies a count.
     }
 
     private void ApplyExactCatalogTotal(int total)
