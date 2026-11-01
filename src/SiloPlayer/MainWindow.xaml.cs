@@ -1694,7 +1694,7 @@ public sealed partial class MainWindow : Window
             if (channel == "user_settings" && eventName == "user_settings.changed"
                 && data.ValueKind == System.Text.Json.JsonValueKind.Object
                 && (!data.TryGetProperty("profile_id", out var changedProfile) || changedProfile.ValueKind == System.Text.Json.JsonValueKind.String && changedProfile.GetString() == _authService.SelectedProfileId)
-                && data.TryGetProperty("key", out var subtitleKey) && subtitleKey.ValueKind == System.Text.Json.JsonValueKind.String && subtitleKey.GetString() is "playback.subtitle_appearance" or "player.subtitle_sync_ms")
+                && data.TryGetProperty("key", out var subtitleKey) && subtitleKey.ValueKind == System.Text.Json.JsonValueKind.String && subtitleKey.GetString() is "playback.subtitle_appearance" or "player.subtitle_sync_ms" or MarkerDetailsPreferences.ConfidenceKey or MarkerDetailsPreferences.SourceKey)
                 App.Services.GetRequiredService<SettingsApi>().NotifyLocalizedSettingChanged(subtitleKey.GetString()!);
         }
         if (_notificationSubscription == null ||

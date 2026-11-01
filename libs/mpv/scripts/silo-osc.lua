@@ -3917,6 +3917,14 @@ render_skip_button = function()
     draw_text(ass, r.x + r.w / 2, r.y + r.h / 2, state.skip_label,
         fs, config.text_color, "00", 1.0, 5, nil, true)
 
+    local kind = state.skip_label == "Skip Recap" and "recap"
+        or state.skip_label == "Skip Credits" and "credits" or "intro"
+    local details = state.marker_details and state.marker_details[kind]
+    if type(details) == "string" and details ~= "" then
+        draw_text(ass, r.x + r.w, r.y - 8 * sc, ass_escape_text(truncate_chars(details, 90)),
+            math.floor(12 * sc), config.text_color, "40", 1.0, 3, nil, true)
+    end
+
     if not state.skip_overlay then
         state.skip_overlay = mp.create_osd_overlay("ass-events")
     end
@@ -3937,19 +3945,25 @@ check_skip_markers = function()
         state.auto_skipped_segments = state.auto_skipped_segments or {}
         for _, kind in ipairs({"intro", "recap", "credits", "preview"}) do
             local first, last = 0, 0
+            local has_segments = false
             for _, segment in ipairs(state.marker_segments) do
                 local a, b = tonumber(segment.start_seconds), tonumber(segment.end_seconds)
+                if segment.kind == kind then has_segments = true end
                 if segment.kind == kind and a and b and b > a and pos >= a and pos < b then
                     first, last = a, b
                     break
                 end
             end
-            local key = kind .. ":" .. tostring(first) .. ":" .. tostring(last)
-            if state[kind .. "_segment_key"] ~= key then
-                state[kind .. "_segment_key"] = key
-                state[kind .. "_auto_skipped"] = state.auto_skipped_segments[key] == true
+            -- Only kinds represented in the segment list are authoritative.
+            -- Other kinds retain the host's singular watch-range fallback.
+            if has_segments then
+                local key = kind .. ":" .. tostring(first) .. ":" .. tostring(last)
+                if state[kind .. "_segment_key"] ~= key then
+                    state[kind .. "_segment_key"] = key
+                    state[kind .. "_auto_skipped"] = state.auto_skipped_segments[key] == true
+                end
+                state[kind .. "_start"], state[kind .. "_end"] = first, last
             end
-            state[kind .. "_start"], state[kind .. "_end"] = first, last
         end
     end
 
@@ -5447,16 +5461,41 @@ local function observe_properties()
     mp.register_script_message("osc-set-markers", function(json_str)
         local ok, data = pcall(require("mp.utils").parse_json, json_str)
         if ok and data then
-            if state.marker_payload_json ~= json_str then
+            local incoming_content_id = tostring(data.content_id or "")
+            local content_changed = state.marker_content_id ~= incoming_content_id
+            local owner_changed = content_changed
+                or state.marker_file_id ~= tonumber(data.file_id)
+                or state.marker_load_generation ~= tonumber(data.load_generation)
+            local changed = content_changed or state.marker_file_id ~= tonumber(data.file_id)
+            -- check_skip_markers projects the singular state ranges onto the
+            -- active segment. Compare payloads, not that mutable projection.
+            local previous_ranges, incoming_ranges = state.marker_payload_ranges or {}, {}
+            for _, kind in ipairs({"intro", "recap", "credits", "preview"}) do
+                for _, edge in ipairs({"_start", "_end"}) do
+                    local key = kind .. edge
+                    incoming_ranges[key] = tonumber(data[key]) or 0
+                    if (previous_ranges[key] or 0) ~= incoming_ranges[key] then changed = true end
+                end
+            end
+            state.marker_payload_ranges = incoming_ranges
+            local before, after = state.marker_segments or {}, type(data.marker_segments) == "table" and data.marker_segments or {}
+            if #before ~= #after then changed = true end
+            for index, segment in ipairs(after) do
+                local old = before[index]
+                if not old or old.kind ~= segment.kind or old.start_seconds ~= segment.start_seconds
+                    or old.end_seconds ~= segment.end_seconds then changed = true end
+            end
+            if changed or data.reset_auto_skip == true then
                 state.intro_pending = nil
                 state.intro_undo_origin = nil
                 state.intro_prompt_key = nil
             end
-            state.marker_payload_json = json_str
-            local incoming_content_id = tostring(data.content_id or "")
+            if owner_changed then state.marker_details = {}; state.marker_details_generation = -1 end
             local reset_auto_skip = data.reset_auto_skip == true
-                or state.marker_content_id ~= incoming_content_id
+                or content_changed
             state.marker_content_id = incoming_content_id
+            state.marker_file_id = tonumber(data.file_id)
+            state.marker_load_generation = tonumber(data.load_generation)
             state.marker_segments = type(data.marker_segments) == "table" and data.marker_segments or nil
             state.intro_start = tonumber(data.intro_start) or 0
             state.intro_end = tonumber(data.intro_end) or 0
@@ -5474,6 +5513,26 @@ local function observe_properties()
                 state.credits_auto_skipped = false
             end
         end
+    end)
+
+    -- Cosmetic metadata has its own message. Never reset marker countdown,
+    -- pending seek or undo ownership when only a display preference changes.
+    mp.register_script_message("osc-set-marker-details", function(json_str)
+        local ok, data = pcall(require("mp.utils").parse_json, json_str)
+        if not ok or type(data) ~= "table" then return end
+        if state.marker_load_generation ~= nil then
+            local generation = tonumber(data.preference_generation)
+            if tostring(data.content_id or "") ~= state.marker_content_id
+                or tonumber(data.file_id) ~= state.marker_file_id
+                or tonumber(data.load_generation) ~= state.marker_load_generation
+                or not generation or generation < (state.marker_details_generation or -1) then return end
+            state.marker_details_generation = generation
+        end
+        state.marker_details = {}
+        for _, kind in ipairs({"intro", "recap", "credits", "preview"}) do
+            if type(data[kind]) == "string" then state.marker_details[kind] = data[kind] end
+        end
+        render_skip_button()
     end)
 
     mp.register_script_message("osc-set-seek-intervals", function(back, forward)
