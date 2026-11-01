@@ -153,6 +153,12 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         check.Checked += Changed; check.Unchecked += Changed;
         ((ContentControl)args.Element).Content = check;
     }
+    private bool VerifySearchScope(ItemLibraryScope.Scope scope)
+    {
+        if (_scope.State.IsCurrent(scope)) return true;
+        Status.Text = "Item files changed. Search again and review a new preview before splitting.";
+        return false;
+    }
     private async Task SearchAsync()
     {
         if (_applyUnconfirmed || _searching || Busy || !Ready || !ScopeOwner) return;
@@ -162,11 +168,11 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
         try
         {
             await _scope.RefreshAsync();
-            if (!ScopeOwner || !_scope.IsCurrent(scope) || revision != _searchRevision) return;
+            if (!ScopeOwner || !VerifySearchScope(scope) || revision != _searchRevision) return;
             _candidate = null; _unmatched.IsChecked = false; _candidates.Children.Clear(); PlanChanged();
             var response = await _api.SearchAsync(Context, ItemId, new ItemMatchSearchRequest { Title = string.IsNullOrWhiteSpace(_title.Text) ? null : _title.Text, Year = int.TryParse(_year.Text, out var year) ? year : null, TmdbId = string.IsNullOrWhiteSpace(_tmdb.Text) ? null : _tmdb.Text, ImdbId = string.IsNullOrWhiteSpace(_imdb.Text) ? null : _imdb.Text, TvdbId = string.IsNullOrWhiteSpace(_tvdb.Text) ? null : _tvdb.Text, LibraryId = scope.LibraryId }, Lifetime.Token); RequireAuthority();
             await _scope.RefreshAsync();
-            if (!ScopeOwner || !_scope.IsCurrent(scope) || revision != _searchRevision) return;
+            if (!ScopeOwner || !VerifySearchScope(scope) || revision != _searchRevision) return;
             if (response.Candidates.Count == 0) _candidates.Children.Add(Text("No candidates found.", 14, true));
             foreach (var candidate in response.Candidates)
             {
@@ -176,16 +182,23 @@ public sealed class SplitVersionsDialog : ItemScopedDialog
                 var choice = new Button { Content = row, HorizontalContentAlignment = HorizontalAlignment.Stretch, HorizontalAlignment = HorizontalAlignment.Stretch, Padding = new Thickness(8), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), BorderBrush = Brush("BorderBrush") }; AutomationProperties.SetName(choice, candidate.Title);
                 choice.Click += async (_, _) =>
                 {
-                    if (_applyUnconfirmed || Busy || _searching || !ScopeOwner || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
-                    try { await _scope.RefreshAsync(); } catch (OperationCanceledException) { return; } catch (Exception) { return; }
-                    if (_applyUnconfirmed || Busy || _searching || !ScopeOwner || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
+                    if (_applyUnconfirmed || Busy || _searching || !ScopeOwner || !VerifySearchScope(scope) || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
+                    try { await _scope.RefreshAsync(); }
+                    catch (OperationCanceledException) when (Lifetime.IsCancellationRequested) { return; }
+                    catch (Exception error)
+                    {
+                        if (ScopeOwner && _scope.State.IsCurrent(scope)) Status.Text = error.Message;
+                        return;
+                    }
+                    if (_applyUnconfirmed || Busy || _searching || !ScopeOwner || !VerifySearchScope(scope) || revision != _searchRevision || !_scope.IsCurrent(scope)) return;
                     _candidate = candidate; _candidateScope = scope; _changing = true; _unmatched.IsChecked = false; _changing = false;
                     foreach (var option in _candidates.Children.OfType<Button>()) option.BorderBrush = Brush(option == choice ? "AccentBrush" : "BorderBrush"); PlanChanged();
                 }; _candidates.Children.Add(choice);
             }
         }
         catch (OperationCanceledException) when (Lifetime.IsCancellationRequested) { }
-        catch (Exception error) { if (ScopeOwner && revision == _searchRevision) Status.Text = error.Message; }
+        // A failed refresh retires the search revision without changing its scope.
+        catch (Exception error) { if (ScopeOwner && _scope.State.IsCurrent(scope)) Status.Text = error.Message; }
         finally { _searching = false; UpdateCommands(); }
     }
     private object BuildRequest(bool dryRun) => new

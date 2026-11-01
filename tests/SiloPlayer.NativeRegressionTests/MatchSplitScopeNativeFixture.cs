@@ -79,6 +79,8 @@ internal static class MatchSplitScopeNativeFixture
             await MatchTimeoutsAsync(owner, wire);
             await MatchApplyErrorsAsync(owner, wire);
             await SplitTimeoutsAsync(owner, wire);
+            await SplitSearchInventoryDriftAsync(owner, wire);
+            await SplitSearchInventoryFailuresAsync(owner, wire);
             await SplitPreviewInventoryFailuresAsync(owner, wire);
             await SplitCommitErrorsAsync(owner, wire);
             await UnreadableInventoryAsync(owner, wire);
@@ -511,6 +513,71 @@ internal static class MatchSplitScopeNativeFixture
             await Until(() => dialog.IsPrimaryButtonEnabled);
         }
         finally { wire.TimeoutSearch = wire.TimeoutPreview = false; dialog.Hide(); await showing; }
+    }
+    private static async Task SplitSearchInventoryDriftAsync(FrameworkElement owner, Wire wire)
+    {
+        foreach (var phase in new[] { "before-search", "after-search", "candidate" })
+        {
+            wire.Files = [("1", 2), ("2", 2), ("3", 2)]; var dialog = Split(owner); var showing = dialog.ShowAsync();
+            Task SearchAsync() => (Task)typeof(SplitVersionsDialog).GetMethod("SearchAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!;
+            try
+            {
+                await Until(() => All<CheckBox>(dialog).Any(check => AutomationProperties.GetName(check) == "Select /fixture/1.mkv" && check.IsEnabled));
+                File(dialog, "1").IsChecked = true;
+                if (phase == "candidate") await SearchAsync();
+                var searches = wire.Count("search");
+                if (phase == "after-search")
+                {
+                    wire.SearchGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var search = SearchAsync(); await Until(() => wire.Count("search") > searches);
+                    wire.Files = [("1", 2), ("2", 2), ("3", 2), ("4", 2)];
+                    wire.SearchGate.SetResult(); wire.SearchGate = null; await search;
+                }
+                else
+                {
+                    wire.Files = [("1", 2), ("2", 2), ("3", 2), ("4", 2)];
+                    if (phase == "candidate") Invoke(Candidate(dialog)); else await SearchAsync();
+                }
+                await Until(() => ActionStatus(dialog).Text == "Item files changed. Search again and review a new preview before splitting.");
+                Check(ActionStatus(dialog).Visibility == Visibility.Visible && !dialog.IsPrimaryButtonEnabled
+                    && !All<Button>(dialog).Any(button => AutomationProperties.GetName(button) == "Scoped candidate"), "Split hides search/candidate inventory drift or retains stale candidates");
+                Check(wire.Count("search") == searches + (phase == "after-search" ? 1 : 0), "Split search adopts a changed preflight inventory");
+                await SearchAndChooseAsync(dialog); await Until(() => dialog.IsPrimaryButtonEnabled);
+            }
+            finally { wire.SearchGate?.TrySetResult(); wire.SearchGate = null; dialog.Hide(); await showing; }
+        }
+    }
+    private static async Task SplitSearchInventoryFailuresAsync(FrameworkElement owner, Wire wire)
+    {
+        foreach (var phase in new[] { "before-search", "after-search", "candidate" })
+        foreach (var timeout in new[] { false, true })
+        {
+            wire.Files = [("1", 2), ("2", 2), ("3", 2)]; var dialog = Split(owner); var showing = dialog.ShowAsync();
+            Task SearchAsync() => (Task)typeof(SplitVersionsDialog).GetMethod("SearchAsync", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(dialog, null)!;
+            try
+            {
+                await Until(() => Search(dialog).IsEnabled);
+                if (phase == "candidate") await SearchAsync();
+                if (phase == "after-search")
+                {
+                    wire.SearchGate = new(TaskCreationOptions.RunContinuationsAsynchronously); var searches = wire.Count("search");
+                    var search = SearchAsync(); await Until(() => wire.Count("search") > searches);
+                    wire.DenyInventory = !timeout; wire.TimeoutInventory = timeout;
+                    wire.SearchGate.SetResult(); wire.SearchGate = null; await search;
+                }
+                else
+                {
+                    wire.DenyInventory = !timeout; wire.TimeoutInventory = timeout;
+                    if (phase == "candidate") Invoke(Candidate(dialog)); else await SearchAsync();
+                }
+                await Until(() => ActionStatus(dialog).Text == (timeout ? "Synthetic inventory timeout" : "HTTP 403"));
+                Check(ActionStatus(dialog).Visibility == Visibility.Visible && !Search(dialog).IsEnabled && !dialog.IsPrimaryButtonEnabled
+                    && Refresh(dialog).IsEnabled && !All<Button>(dialog).Any(button => AutomationProperties.GetName(button) == "Scoped candidate"), "Split hides its search/candidate inventory read error or leaves stale actions armed");
+                wire.DenyInventory = wire.TimeoutInventory = false; Invoke(Refresh(dialog)); await Until(() => Search(dialog).IsEnabled);
+                await SearchAndChooseAsync(dialog);
+            }
+            finally { wire.DenyInventory = wire.TimeoutInventory = false; wire.SearchGate?.TrySetResult(); wire.SearchGate = null; dialog.Hide(); await showing; }
+        }
     }
     private static async Task SplitPreviewInventoryFailuresAsync(FrameworkElement owner, Wire wire)
     {
