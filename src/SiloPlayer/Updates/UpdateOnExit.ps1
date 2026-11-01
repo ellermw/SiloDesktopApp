@@ -77,6 +77,8 @@ function Get-UpdateReleaseMetadata([string]$Tag) {
     # The tag is validated by Confirm-UpdateReleaseAuthority before constructing
     # this pinned, unauthenticated endpoint. Never follow a redirect or a caller URL.
     $uri=[uri]('https://api.github.com/repos/ellermw/SiloDesktopApp/releases/tags/'+$Tag)
+    # Windows PowerShell 5.1 may otherwise use only legacy TLS defaults.
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
     $request=[Net.WebRequest]::CreateHttp($uri)
     $request.AllowAutoRedirect=$false;$request.UseDefaultCredentials=$false;$request.Credentials=$null
     $request.UserAgent='SiloDesktopApp-Updater';$request.Accept='application/vnd.github+json'

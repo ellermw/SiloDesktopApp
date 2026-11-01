@@ -105,6 +105,9 @@ public sealed class FullInstallerAuthorityTests
         Assert.True(validation > helper.IndexOf("if ($paths.Versioned)", StringComparison.Ordinal));
         Assert.True(validation < helper.IndexOf("$setup=[Diagnostics.Process]::Start($start)", StringComparison.Ordinal));
         Assert.Contains("https://api.github.com/repos/ellermw/SiloDesktopApp/releases/tags/", helper);
+        var tls = helper.IndexOf("[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12", StringComparison.Ordinal);
+        Assert.True(tls > helper.IndexOf("function Get-UpdateReleaseMetadata", StringComparison.Ordinal));
+        Assert.True(tls < helper.IndexOf("$request=[Net.WebRequest]::CreateHttp($uri)", StringComparison.Ordinal));
         Assert.Contains("$request.AllowAutoRedirect=$false;$request.UseDefaultCredentials=$false;$request.Credentials=$null", helper);
         Assert.Contains("$request.Timeout=12000;$request.ReadWriteTimeout=12000", helper);
         Assert.Contains("$bytes.Length+$count -gt 524288", helper);

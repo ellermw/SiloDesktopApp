@@ -3,6 +3,21 @@ namespace SiloPlayer.Tests;
 public sealed class MainWindowSourceTests
 {
     [Fact]
+    public void UpdateStartupCompletesReadinessBeforeResolvingDisplayIdentity()
+    {
+        var startup = File.ReadAllText(Path.Combine(FindRepositoryRoot(), "src", "SiloPlayer", "MainWindow.UpdateStartup.cs"));
+        var ready = startup.IndexOf("SideBySideInstallation.RecordReady(root);", StringComparison.Ordinal);
+        var pipeReady = startup.IndexOf("await UpdateHostProtocol.WriteAsync(pipe,new(\"ready\",transaction)", StringComparison.Ordinal);
+        var confirmed = startup.IndexOf("if(confirmed.Kind!=\"confirmed\" || confirmed.TransactionId!=transaction)return;", StringComparison.Ordinal);
+        var identity = startup.IndexOf("ReleaseVersion.FromAssembly(typeof(App).Assembly)", StringComparison.Ordinal);
+        var comparison = startup.IndexOf("installed.GetWindowsVersion().ToString(4) != version", StringComparison.Ordinal);
+        var receipt = startup.IndexOf("SideBySideInstallation.GetBootReceiptDirectory(root)", StringComparison.Ordinal);
+        Assert.True(ready >= 0 && pipeReady > ready && confirmed > pipeReady);
+        Assert.True(identity > confirmed && comparison > identity && receipt > comparison,
+            "Invalid display identity must not suppress readiness or pipe confirmation, but must still gate success feedback.");
+    }
+
+    [Fact]
     public void SharedNavigationSuppressesStockSlidesAndWholePageOpacityFlashes()
     {
         var root = FindRepositoryRoot();
