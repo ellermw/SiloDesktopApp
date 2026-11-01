@@ -386,6 +386,16 @@
                                            Foreground="{StaticResource SecondaryTextBrush}" />
                             </StackPanel>
                             <PasswordBox x:Name="AccountConfirmPassword" Header="Confirm new password" PasswordChanged="AccountPassword_Changed" />
+                            <StackPanel x:Name="AccountSignOutOtherSessionsGroup" Spacing="4" Visibility="Collapsed">
+                                <CheckBox x:Name="AccountSignOutOtherSessions" IsChecked="False"
+                                          Checked="AccountSignOutOtherSessions_Changed" Unchecked="AccountSignOutOtherSessions_Changed"
+                                          AutomationProperties.HelpText="{Binding Text, ElementName=AccountSignOutOtherSessionsDescription, Mode=OneWay}">
+                                    <TextBlock Text="Sign out of other devices" TextWrapping="Wrap" />
+                                </CheckBox>
+                                <TextBlock x:Name="AccountSignOutOtherSessionsDescription" FontSize="12" TextWrapping="Wrap"
+                                           Margin="32,0,0,0" Foreground="{StaticResource SecondaryTextBrush}"
+                                           Text="Other browsers and apps must sign in again with the new password. This app stays signed in, and API keys keep working." />
+                            </StackPanel>
                             <Button x:Name="AccountPasswordSubmit" Content="Change password" Style="{StaticResource AccentButtonStyle}"
                                     Click="AccountPasswordSubmit_Click" />
                         </StackPanel>
@@ -730,6 +740,18 @@
                         <Border Style="{StaticResource SettingsSeparator}" />
 
                         <!-- Skip recaps -->
+                        <StackPanel Spacing="12" Margin="0,0,0,16"
+                                    Visibility="{x:Bind ViewModel.MarkerDetailsSettingsAvailable, Mode=OneWay, Converter={StaticResource BoolToVis}}">
+                            <ToggleSwitch x:Name="MarkerConfidenceToggle" Header="Show marker confidence"
+                                          IsOn="{x:Bind ViewModel.ShowMarkerConfidence, Mode=TwoWay}" />
+                            <TextBlock Text="Show the source's confidence above the skip button. Percentages are comparable only within the same source."
+                                       TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" />
+                            <ToggleSwitch x:Name="MarkerSourceToggle" Header="Show marker source"
+                                          IsOn="{x:Bind ViewModel.ShowMarkerSource, Mode=TwoWay}" />
+                            <TextBlock Text="Show whether the marker was detected, edited, or supplied by a provider."
+                                       TextWrapping="Wrap" Foreground="{StaticResource SecondaryTextBrush}" FontSize="13" />
+                            <Border Style="{StaticResource SettingsSeparator}" />
+                        </StackPanel>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />

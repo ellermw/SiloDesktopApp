@@ -4118,37 +4118,47 @@ public sealed partial class ItemDetailPage : Page
         // source of file_path/file_name; if it hasn't loaded yet, fall back to
         // the item-detail versions which may lack file_path for non-admins.
         var versions = _watchDetail?.Versions ?? item.Versions;
+        var client = App.Services.GetRequiredService<SiloApiClient>(); var context = client.CaptureContext();
+        var auth = App.Services.GetRequiredService<AuthService>(); var session = auth.SessionGeneration; var userId = auth.CurrentUser?.Id;
+        var libraryId = ViewModel.LibraryId; var token = _navigationCts?.Token ?? default;
+        bool Current() => !token.IsCancellationRequested && client.IsCurrentContext(context) && auth.SessionGeneration == session
+            && auth.CurrentUser?.Id == userId && AuthorizationPolicy.CanCurateMetadata(auth) && IsCurrentDetail(item.ContentId) && ViewModel.LibraryId == libraryId;
         var dialog = new MatchItemDialog(
             item.ContentId,
             item.Title,
             item.Year > 0 ? item.Year : null,
             item.Type,
-            libraryId: null,
+            libraryId: libraryId,
             versions: versions,
-            folderPaths: item.FolderPaths)
+            folderPaths: item.FolderPaths,
+            seriesId: item.SeriesId)
         {
             XamlRoot = this.XamlRoot
         };
 
+        dialog.BindNavigation(token);
+        if (!Current()) return;
         await dialog.ShowAsync();
         if (dialog.HasAppliedMatch)
-            await CompleteAppliedMatchAsync(item, dialog.AppliedContentId);
+        {
+            if (!Current()) return;
+            await CompleteAppliedMatchAsync(item, dialog.AppliedContentId, Current);
+        }
     }
 
-    private async Task CompleteAppliedMatchAsync(MediaItemDetail item, string? replacement)
+    private async Task CompleteAppliedMatchAsync(MediaItemDetail item, string? replacement, Func<bool>? current = null)
     {
-        App.Services.GetRequiredService<ItemDetailPrefetchCache>().Invalidate(item.ContentId);
+        if (current?.Invoke() == false) return;
         if (replacement != null && replacement != item.ContentId)
         {
             if (_currentContentId == item.ContentId)
                 App.Services.GetRequiredService<NavigationService>().NavigateReplacingCurrentEntry<ItemDetailPage>(MediaNavigationContext.Detail(replacement, ViewModel.LibraryId));
-            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.ItemMetadataRefreshed, item.ContentId, item.SeriesId));
             return;
         }
         if (_currentContentId != item.ContentId) return;
         await ViewModel.ReloadAsync(item.ContentId);
+        if (current?.Invoke() == false) return;
         UpdateUI();
-        WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(MediaSurfaceChangeKind.ItemMetadataRefreshed, item.ContentId, item.SeriesId));
     }
 
     // ===== Media Locations (permission-gated read-only detail) =====

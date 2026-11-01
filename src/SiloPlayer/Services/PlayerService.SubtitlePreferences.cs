@@ -26,6 +26,7 @@ public partial class PlayerService
 
     private void ObserveSubtitlePreferences()
     {
+        ObserveMarkerDetailsPreferences();
         if (ReferenceEquals(_subtitlePreferenceEvents, _settingsApi)) return;
         if (_subtitlePreferenceEvents != null) _subtitlePreferenceEvents.LocalProfileSettingChanged -= OnSubtitlePreferenceChanged;
         _subtitlePreferenceEvents = _settingsApi;
@@ -54,6 +55,7 @@ public partial class PlayerService
 
     private void ResetSubtitlePreferenceSession()
     {
+        ResetMarkerDetails();
         // A same-owner next item carries the last explicit draft while its
         // durable save settles. New playback must not cancel an accepted PUT.
         var carry = !_closing && _subtitleOffsetDraft.HasValue && _subtitlePreferences is { } previous

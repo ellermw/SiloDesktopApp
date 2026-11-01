@@ -20,7 +20,7 @@ public sealed class MatchItemDialogParitySourceTests
         Assert.Contains("x:Name=\"ResultsSection\"", xaml);
 
         Assert.Contains("ProviderIds = providerIds", code);
-        Assert.Contains("LibraryId = _libraryId", code);
+        Assert.Contains("LibraryId = scope.LibraryId", code);
         Assert.Contains("candidate.TitleIsFallback", code);
         Assert.Contains("candidate.MatchedTitle", code);
         Assert.Contains("candidate.MatchScore", code);

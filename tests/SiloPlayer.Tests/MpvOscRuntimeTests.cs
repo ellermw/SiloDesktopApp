@@ -5,6 +5,184 @@ namespace SiloPlayer.Tests;
 public sealed class MpvOscRuntimeTests
 {
     [Theory]
+    [InlineData("content")]
+    [InlineData("file")]
+    [InlineData("load")]
+    [InlineData("preference")]
+    public void OldMarkerDetailsCannotPaintAfterTheirOwnerWasReplaced(string departure)
+    {
+        var content = departure == "content" ? "old" : "current";
+        var file = departure == "file" ? 7 : 8;
+        var load = departure == "load" ? 1 : 2;
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            handlers['osc-set-markers']('{"content_id":"current","file_id":8,"load_generation":2,"intro_start":5,"intro_end":30}')
+            handlers['osc-set-marker-details']('{"content_id":"current","file_id":8,"load_generation":2,"preference_generation":2,"intro":"CURRENT"}')
+            handlers['osc-set-marker-details']('{"content_id":"{{content}}","file_id":{{file}},"load_generation":{{load}},"preference_generation":1,"intro":"OLD"}')
+            mp.set_property('user-data/details-owner', tostring(osc_test_state.marker_details.intro))
+            """, rawAss: true, resultProperty: "user-data/details-owner", beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """);
+        Assert.Equal("CURRENT", output);
+    }
+
+    [Fact]
+    public void SameTimingRepublishPreservesUndoWhenInitialResetFlagIsConsumed()
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: """
+            local state = osc_test_state
+            handlers['osc-set-markers']('{"content_id":"episode","intro_start":5,"intro_end":30,"reset_auto_skip":true}')
+            local pending = {target=30}
+            state.intro_pending, state.intro_undo_origin = pending, 7
+            state.intro_prompt_remaining, state.intro_prompt_key = 3.25, 'owner-key'
+            handlers['osc-set-markers']('{"content_id":"episode","intro_start":5,"intro_end":30,"reset_auto_skip":false}')
+            local kept = state.intro_pending == pending and state.intro_undo_origin == 7
+                and state.intro_prompt_remaining == 3.25 and state.intro_prompt_key == 'owner-key'
+            mp.set_property('user-data/timing-identity', tostring(kept))
+            """, rawAss: true, resultProperty: "user-data/timing-identity", beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """);
+        Assert.Equal("true", output);
+    }
+
+    [Theory]
+    [InlineData(35)]
+    [InlineData(45)]
+    public void SegmentProjectionDoesNotChangeRepublishedTimingIdentity(int position)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local state = osc_test_state
+            local payload = {content_id='episode', intro_start=5, intro_end=30,
+                marker_segments={ {kind='intro', start_seconds=5, end_seconds=30},
+                    {kind='intro', start_seconds=40, end_seconds=50} } }
+            local utils = require('mp.utils')
+            handlers['osc-set-markers'](utils.format_json(payload))
+            state.duration, state.time_pos = 100, {{position}}
+            osc_test_check()
+            assert(state.intro_start ~= 5, 'Active segment must differ from the singular payload')
+            local pending = {target=50}
+            state.intro_pending, state.intro_undo_origin = pending, 7
+            state.intro_prompt_remaining, state.intro_prompt_key = 3.25, 'owner-key'
+            handlers['osc-set-markers'](utils.format_json(payload))
+            local kept = state.intro_pending == pending and state.intro_undo_origin == 7
+                and state.intro_prompt_remaining == 3.25 and state.intro_prompt_key == 'owner-key'
+            payload.intro_end = 31
+            handlers['osc-set-markers'](utils.format_json(payload))
+            local range_reset = state.intro_pending == nil and state.intro_undo_origin == nil and state.intro_prompt_key == nil
+            state.intro_pending, state.intro_undo_origin, state.intro_prompt_key = pending, 7, 'owner-key'
+            payload.marker_segments[2].end_seconds = 51
+            handlers['osc-set-markers'](utils.format_json(payload))
+            local segment_reset = state.intro_pending == nil and state.intro_undo_origin == nil and state.intro_prompt_key == nil
+            mp.set_property('user-data/timing-identity', tostring(kept)..':'..tostring(range_reset)..':'..tostring(segment_reset))
+            """, rawAss: true, resultProperty: "user-data/timing-identity", beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """);
+        Assert.Equal("true:true:true", output);
+    }
+
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("[{\"kind\":\"intro\",\"start_seconds\":5,\"end_seconds\":30}]")]
+    public void SegmentProjectionRetainsSingularRangesForUnrepresentedKinds(string segments)
+    {
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local state = osc_test_state
+            handlers['osc-set-markers']([==[{"content_id":"episode","intro_start":5,"intro_end":30,
+                "recap_start":1,"recap_end":4,"credits_start":90,"credits_end":100,
+                "preview_start":70,"preview_end":75,"marker_segments":{{segments}}}]==])
+            state.duration, state.osc_disabled, state.next_ep_available = 100, false, false
+            state.intro_mode, state.auto_skip_recap, state.auto_skip_credits = 'ask', false, false
+            for _, marker in ipairs({
+                {'intro', 5, 30, 10, 'Skip Intro'},
+                {'recap', 1, 4, 2, 'Skip Recap'}, {'credits', 90, 100, 95, 'Skip Credits'},
+                {'preview', 70, 75, 72}
+            }) do
+                state.time_pos = marker[4]
+                osc_test_check()
+                assert(state[marker[1]..'_start'] == marker[2] and state[marker[1]..'_end'] == marker[3],
+                    marker[1]..' lost its range')
+                if marker[5] then
+                    assert(state.skip_visible and state.skip_label == marker[5] and state.skip_target == marker[3],
+                        marker[1]..' lost its skip pill')
+                end
+            end
+            state.time_pos = 80
+            osc_test_check()
+            assert(not state.skip_visible, 'No pill should appear outside a marker window')
+            state.intro_mode, state.time_pos = 'always', 10
+            osc_test_check()
+            assert(state.intro_pending and state.intro_pending.target == 30, 'Intro auto-skip was lost')
+            state.intro_pending = nil
+            state.auto_skip_recap, state.time_pos = true, 2
+            osc_test_check()
+            assert(state.recap_auto_skipped, 'Recap auto-skip was lost')
+            state.auto_skip_credits, state.time_pos = true, 95
+            osc_test_check()
+            assert(state.credits_auto_skipped, 'Credits auto-skip was lost')
+            mp.set_property('user-data/marker-fallback', 'preserved')
+            """, rawAss: true, resultProperty: "user-data/marker-fallback", beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            """);
+        Assert.Equal("preserved", output);
+    }
+
+    [Theory]
+    [InlineData("intro")]
+    [InlineData("recap")]
+    [InlineData("credits")]
+    public void MarkerDetailsAreEscapedAndDoNotResetPendingSkipState(string kind)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string>
+        { [kind] = "92% · TheIntroDB {\\fs99}provider\\Nname" });
+        var output = CaptureStats(1920, 1080, 1920, 1080, false, setup: $$"""
+            local state = osc_test_state
+            state.osc_disabled = false
+            state.duration = 100
+            state.{{kind}}_start = {{(kind == "credits" ? "90" : "0")}}
+            state.{{kind}}_end = {{(kind == "credits" ? "100" : "30")}}
+            state.time_pos = {{(kind == "credits" ? "95" : "5")}}
+            state.next_ep_available = false
+            osc_test_check()
+            local pending = {target=30}
+            state.intro_pending = pending
+            state.intro_prompt_remaining = 3.25
+            state.intro_undo_origin = 7
+            local key = state.intro_prompt_key
+            handlers['osc-set-marker-details']([==[{{json}}]==])
+            local preserved = state.intro_pending == pending and state.intro_prompt_remaining == 3.25
+                and state.intro_undo_origin == 7 and state.intro_prompt_key == key
+            local filled = marker_overlay or 'NO OVERLAY'
+            handlers['osc-set-marker-details']('{}')
+            local cleared = not marker_overlay:find('92%', 1, true) and state.intro_pending == pending
+                and state.intro_prompt_remaining == 3.25 and state.intro_undo_origin == 7
+            mp.set_property('user-data/marker-test', 'PRESERVED:'..tostring(preserved)..':CLEARED:'..tostring(cleared)..':'..filled)
+            """, rawAss: true, resultProperty: "user-data/marker-test", beforeScript: """
+            handlers = {}
+            local register = mp.register_script_message
+            mp.register_script_message = function(name, fn) handlers[name] = fn; return register(name, fn) end
+            local create = mp.create_osd_overlay
+            mp.create_osd_overlay = function(kind)
+                local overlay = create(kind)
+                overlay.update = function(self)
+                    if self.data and self.data:find('Skip ', 1, true) then marker_overlay = self.data end
+                end
+                return overlay
+            end
+            """);
+        Assert.Contains("PRESERVED:true", output);
+        Assert.Contains("CLEARED:true", output);
+        Assert.Contains("92%", output); Assert.Contains("TheIntroDB", output);
+        Assert.DoesNotContain("{\\fs99}", output);
+    }
+
+    [Theory]
     [InlineData("off", false, false)]
     [InlineData("select", false, false)]
     [InlineData("off", true, false)]

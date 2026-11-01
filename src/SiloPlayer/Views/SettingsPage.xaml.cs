@@ -484,6 +484,7 @@ public sealed partial class SettingsPage : Page
     {
         _layoutTransferActive = true;
         base.OnNavigatedTo(e);
+        _ = ViewModel.OpenMarkerDetailsSettingsAsync();
         var receiver = App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>();
         receiver.StatusChanged -= OnSiloCastStatusChanged;
         receiver.StatusChanged += OnSiloCastStatusChanged;
@@ -554,6 +555,7 @@ AudioPassthroughToggle.IsOn = App.Services.GetRequiredService<SiloPlayer.Core.Se
 
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
+        ViewModel.CloseMarkerDetailsSettings();
         App.Services.GetRequiredService<SiloPlayer.Services.SiloCast.SiloCastReceiverService>().StatusChanged -= OnSiloCastStatusChanged;
         DeactivateDevices();
         DeactivateLoginSessions();

@@ -53,7 +53,7 @@ public sealed class LocalizedMediaReads
 
     private static bool IsLocalizedRead(HttpMethod method, string path)
     {
-        if (method == HttpMethod.Post) return path is "/api/v2/catalog/query" or "/api/v2/catalog/items/query";
+        if (method == HttpMethod.Post) return path is "/api/v2/catalog/query" or "/api/v2/catalog/items/query" or "/api/v2/catalog/letters";
         if (method != HttpMethod.Get) return false;
         string[] roots = ["/api/v2/catalog", "/api/v2/home", "/api/v2/library", "/api/v2/libraries", "/api/v2/collections",
             "/api/v2/recommendations", "/api/v2/calendar", "/api/v2/people", "/api/v2/search", "/api/v2/sections",

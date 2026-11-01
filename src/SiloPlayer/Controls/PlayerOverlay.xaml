@@ -91,6 +91,10 @@
         </Grid>
 
         <!-- Skip Intro / Credits buttons (bottom right, above controls) -->
+        <TextBlock x:Name="SkipMarkerDetailsText" Visibility="Collapsed"
+                   HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="16,0,36,176"
+                   FontSize="12" Foreground="#BFFFFFFF" MaxWidth="480" MaxLines="2"
+                   TextWrapping="Wrap" TextAlignment="Right" IsHitTestVisible="False" />
         <Button x:Name="SkipIntroButton" Content="Skip Intro" Visibility="Collapsed"
             HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,24,120"
             Padding="20,10" Style="{StaticResource AccentButtonStyle}" Click="SkipIntro_Click" />

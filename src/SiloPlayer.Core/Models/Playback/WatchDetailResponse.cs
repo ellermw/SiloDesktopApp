@@ -198,6 +198,14 @@ public class TimeRange
 {
     public double Start { get; set; }
     public double End { get; set; }
+    // Current watch responses use *_seconds; realtime/older payloads use
+    // start/end. Set-only aliases retain compatibility without duplicate writes.
+    [JsonPropertyName("start_seconds")] public double WireStart { set => Start = value; }
+    [JsonPropertyName("end_seconds")] public double WireEnd { set => End = value; }
+    public string? Source { get; set; }
+    public string? Provider { get; set; }
+    public double? Confidence { get; set; }
+    public string? Algorithm { get; set; }
 }
 
 // ===== Watch Together (Watch Party) =====

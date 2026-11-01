@@ -10,7 +10,7 @@ using SiloPlayer.Views;
 
 namespace SiloPlayer.Controls;
 
-public sealed partial class PosterCard : UserControl
+public sealed partial class PosterCard : UserControl, IMediaItemOwner
 {
     private readonly UICustomizationService _uiCustomizationService;
     private bool _observingUICustomization;
@@ -96,6 +96,8 @@ public sealed partial class PosterCard : UserControl
         get => (MediaItem?)GetValue(MediaItemProperty);
         set => SetValue(MediaItemProperty, value);
     }
+
+    public event Action? MediaItemChanged;
 
     public static readonly DependencyProperty SelectionModeProperty =
         DependencyProperty.Register(nameof(SelectionMode), typeof(bool), typeof(PosterCard),
@@ -256,6 +258,7 @@ public sealed partial class PosterCard : UserControl
     private static void OnMediaItemChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         if (d is not PosterCard card) return;
+        if (!ReferenceEquals(e.OldValue, e.NewValue)) card.MediaItemChanged?.Invoke();
 
         card.ObserveArtwork(card.IsLoaded ? e.NewValue as MediaItem : null);
 

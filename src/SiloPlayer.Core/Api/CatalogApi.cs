@@ -127,22 +127,11 @@ public partial class CatalogApi(SiloApiClient client)
         if (!string.IsNullOrWhiteSpace(cursor)) query += $"&cursor={Uri.EscapeDataString(cursor)}";
 
         // V2 accepts structured JSON rule groups, not bracketed query keys.
-        var groups = new List<QueryGroup>();
+        var groups = BuildCatalogRuleGroups(studio, country, resolution, audioLanguage,
+            extraRules, extraRulesMatch, queryGroups, queryGroupsMatch);
         if (queryGroups != null)
         {
-            groups.AddRange(queryGroups.Where(group => group.Rules.Count > 0));
             query += $"&match={Uri.EscapeDataString(queryGroupsMatch == "any" ? "any" : "all")}";
-        }
-        else
-        {
-            var rules = new List<QueryRule>();
-            if (!string.IsNullOrWhiteSpace(studio)) rules.Add(new QueryRule { Field = "studio", Op = "is", Value = studio });
-            if (!string.IsNullOrWhiteSpace(country)) rules.Add(new QueryRule { Field = "country", Op = "is", Value = country });
-            if (!string.IsNullOrWhiteSpace(resolution)) rules.Add(new QueryRule { Field = "resolution", Op = "is", Value = resolution });
-            if (!string.IsNullOrWhiteSpace(audioLanguage)) rules.Add(new QueryRule { Field = "audio_language", Op = "is", Value = audioLanguage });
-            if (extraRules != null) rules.AddRange(extraRules);
-            if (rules.Count > 0)
-                groups.Add(new QueryGroup { Match = extraRulesMatch == "any" ? "any" : "all", Rules = rules });
         }
 
         if (groups.Count > 0)

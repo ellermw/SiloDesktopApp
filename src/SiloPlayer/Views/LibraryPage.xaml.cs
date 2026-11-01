@@ -165,6 +165,7 @@ public sealed partial class LibraryPage : Page,
         _eventChannel = App.Services.GetRequiredService<EventChannelClient>();
         _authService = App.Services.GetRequiredService<AuthService>();
         this.InitializeComponent();
+        InitializeLibraryLetters();
         CatalogToolbarChoices.Apply(BrowseTypeComboBox, SortComboBox, OrderComboBox);
         var savedWidth = App.Services.GetRequiredService<SettingsService>().Load().LibraryPosterWidth;
         _posterWidthOverride = savedWidth is { } width && double.IsFinite(width) ? Math.Clamp(width, 100, 300) : null;
@@ -530,6 +531,8 @@ public sealed partial class LibraryPage : Page,
     {
         if (_viewModelEventsAttached) return;
         ViewModel.WindowLoaded += OnLibraryWindowLoaded;
+        ViewModel.LetterJumpRequested += OnLibraryLetterJumpRequested;
+        ViewModel.PropertyChanged += LibraryLetters_PropertyChanged;
         _viewModelEventsAttached = true;
     }
 
@@ -537,6 +540,8 @@ public sealed partial class LibraryPage : Page,
     {
         if (!_viewModelEventsAttached) return;
         ViewModel.WindowLoaded -= OnLibraryWindowLoaded;
+        ViewModel.LetterJumpRequested -= OnLibraryLetterJumpRequested;
+        ViewModel.PropertyChanged -= LibraryLetters_PropertyChanged;
         _viewModelEventsAttached = false;
     }
 
@@ -961,6 +966,7 @@ public sealed partial class LibraryPage : Page,
         CollectionsPanel.Visibility = tag == "Collections" ? Visibility.Visible : Visibility.Collapsed;
 
         _currentTab = tag;
+        UpdateLibraryLetters();
         // B42: Persist tab selection so a return to this library lands on the same tab.
         SaveViewState(tag);
 
@@ -1549,6 +1555,7 @@ public sealed partial class LibraryPage : Page,
         var layout = GetGridLayout();
         _libraryVerticalOffset = offset;
         _currentFirstRow = VirtualGridScrollGate.GetFirstVisibleRow(offset, layout.RowHeight);
+        UpdateActiveLibraryLetter();
 
         var scrollToTopVisibility = offset > layout.RowHeight ? Visibility.Visible : Visibility.Collapsed;
         if (ScrollToTopButton.Visibility != scrollToTopVisibility)
@@ -1581,6 +1588,7 @@ public sealed partial class LibraryPage : Page,
 
             UpdateVirtualGridMetrics();
             QueueRenderVirtualGrid(force: true);
+            UpdateLibraryLetters();
         });
     }
 
@@ -1746,6 +1754,7 @@ public sealed partial class LibraryPage : Page,
         SaveViewState(_currentTab);
         UpdateAudiobookAxisButtons();
         var showBooks = axis == "books";
+        UpdateLibraryLetters();
         LibraryContentArea.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
         AudiobookGroupsPanel.Visibility = showBooks ? Visibility.Collapsed : Visibility.Visible;
         SortComboBox.Visibility = showBooks ? Visibility.Visible : Visibility.Collapsed;
@@ -2229,6 +2238,14 @@ public sealed partial class LibraryPage : Page,
         if (!_isNavigated || LibraryContentArea == null || LibraryContentArea.Visibility != Visibility.Visible || ViewModel.TotalCount <= 0)
             return;
 
+        if (ViewModel.IsLetterJumpInProgress)
+        {
+            // Recompute the latest viewport after the jump scrolls (or restores
+            // its old cards), without letting this debounce cancel the seek.
+            ScheduleVisibleRangeLoad(force);
+            return;
+        }
+
         var range = GetVisibleItemRange(GetGridLayout());
         range = ClampRealizedRange(range, GetGridLayout());
         if (range.EndIndex < range.StartIndex)
@@ -2334,11 +2351,13 @@ public sealed partial class LibraryPage : Page,
 
     private double GetLibraryViewportHeight()
     {
+        // A short native viewport is still authoritative. Inflating it to a
+        // poster height prevents exact jumps from reaching the scroll bottom.
+        if (LibraryScroller?.ViewportHeight > 0) return LibraryScroller.ViewportHeight;
         var padding = LibraryViewportHost?.Padding ?? default;
         return Math.Max(
             (double)Application.Current.Resources["PosterCardTotalHeight"],
-            LibraryScroller?.ViewportHeight > 0 ? LibraryScroller.ViewportHeight :
-                (LibraryViewportHost?.ActualHeight ?? 0) - padding.Top - padding.Bottom);
+            (LibraryViewportHost?.ActualHeight ?? 0) - padding.Top - padding.Bottom);
     }
 
     private void PosterSizeSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)
@@ -2603,6 +2622,7 @@ public sealed partial class LibraryPage : Page,
             // Leaving for an item detail may have canceled optional filters
             // before they arrived, even though the cards are already cached.
             if (FiltersSheet.IsOpen) _ = ViewModel.EnsureFiltersLoadedAsync();
+            _ = ViewModel.EnsureLetterIndexAsync();
             return;
         }
 

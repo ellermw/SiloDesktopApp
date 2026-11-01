@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Runtime.Loader;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.UI.Dispatching;
@@ -33,6 +34,12 @@ internal static class Program
             var path = Path.Combine(AppDirectory, name.Name + ".dll");
             return File.Exists(path) ? context.LoadFromAssemblyPath(path) : null;
         };
+        // SiloPlayer.dll is copied beside this host, but its native engine stays
+        // in the published app directory. Managed resolution does not cover P/Invoke.
+        AssemblyLoadContext.Default.ResolvingUnmanagedDll += (assembly, name) =>
+            assembly == typeof(SiloPlayer.Player.MpvInterop).Assembly && name == "libmpv-2.dll"
+                ? NativeLibrary.Load(Path.Combine(AppDirectory, name))
+                : IntPtr.Zero;
         AppDomain.CurrentDomain.UnhandledException += (_, e) => Log(e.ExceptionObject.ToString()!);
         try
         {
@@ -142,6 +149,35 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
                 await HomeCurrentNativeFixture.RunAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "match-split-online")
+            {
+                await MatchSplitScopeNativeFixture.RunAsync(parent, onlineOnly: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "match-split-spec")
+            {
+                await MatchSplitScopeNativeFixture.RunAsync(parent, specOnly: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "match-split-review")
+            {
+                await MatchSplitScopeNativeFixture.RunAsync(parent, reviewOnly: true);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "match-split-scope")
+            {
+                await MatchSplitScopeNativeFixture.RunAsync(parent);
+                await MatchSplitScopeNativeFixture.RunAsync(parent, reviewOnly: true);
+                await MatchSplitScopeNativeFixture.RunAsync(parent, specOnly: true);
+                await MatchSplitScopeNativeFixture.RunAsync(parent, onlineOnly: true);
+                await MediaToolsDialogsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "password-sessions")
+            {
+                await PasswordSessionsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "history-import-auth")
             {
                 await HistoryImportAuthNativeFixture.RunAsync();
@@ -233,6 +269,16 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "oct24-track-choices")
             {
                 await Oct24TrackChoicesNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "marker-details")
+            {
+                await MarkerDetailsNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "marker-review")
+            {
+                await MarkerDetailsNativeFixture.RunReviewAsync(parent);
                 Program.Log("PASS: native regression run completed."); Exit(); return;
             }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "burned-in-subtitle-switch")
@@ -412,6 +458,12 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "upstream-shell")
             {
                 await UpstreamShellNativeFixture.RunAsync();
+                Program.Log("PASS: native regression run completed.");
+                return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "library-letters")
+            {
+                await LibraryLettersNativeFixture.RunAsync(parent, _window);
                 Program.Log("PASS: native regression run completed.");
                 return;
             }
