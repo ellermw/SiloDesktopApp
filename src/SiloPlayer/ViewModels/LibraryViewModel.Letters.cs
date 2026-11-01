@@ -12,6 +12,8 @@ public partial class LibraryViewModel
     private string? _letterIndexKey;
     private Task? _letterIndexTask;
     private long _letterJumpVersion;
+    private long _activeLetterJumpVersion;
+    public bool IsLetterJumpInProgress => _activeLetterJumpVersion != 0;
     public event Action<int>? LetterJumpRequested;
 
     private string LetterQueryKey() => JsonSerializer.Serialize(new
@@ -102,30 +104,37 @@ public partial class LibraryViewModel
         var previousItems = _windowItems;
         var previousWindows = _recentWindows.ToArray();
         var previousHasMore = HasMore;
-        var load = LoadWindowAsync(entry.Position, PageSize, force: true);
-        var viewportVersion = _viewportRequestVersion;
-        await load;
-        if (jump != _letterJumpVersion || key != LetterQueryKey() || !ReferenceEquals(index, LetterIndex)
-            || viewportVersion != _viewportRequestVersion) return;
-        if (GetWindowItem(entry.Position) is null)
+        _activeLetterJumpVersion = jump;
+        try
         {
-            // Index and page reads are not a snapshot. A missing target must
-            // not strand the unchanged viewport on an empty/distant window.
-            _windowItems = previousItems;
-            WindowStartIndex = previousStart;
-            _recentWindows.Clear();
-            foreach (var window in previousWindows) _recentWindows.AddLast(window);
-            HasMore = previousHasMore;
-            WindowLoaded?.Invoke();
-            return;
+            await LoadWindowAsync(entry.Position, PageSize, force: true);
+            if (jump != _letterJumpVersion || key != LetterQueryKey() || !ReferenceEquals(index, LetterIndex)) return;
+            if (GetWindowItem(entry.Position) is null)
+            {
+                // Index and page reads are not a snapshot. A missing target must
+                // not strand the unchanged viewport on an empty/distant window.
+                _windowItems = previousItems;
+                WindowStartIndex = previousStart;
+                _recentWindows.Clear();
+                foreach (var window in previousWindows) _recentWindows.AddLast(window);
+                HasMore = previousHasMore;
+                WindowLoaded?.Invoke();
+                return;
+            }
+            if (entry.Position < TotalCount)
+                LetterJumpRequested?.Invoke(entry.Position);
         }
-        if (entry.Position < TotalCount)
-            LetterJumpRequested?.Invoke(entry.Position);
+        finally
+        {
+            // An older completion must not release a newer jump's viewport hold.
+            if (_activeLetterJumpVersion == jump) _activeLetterJumpVersion = 0;
+        }
     }
 
     private void ResetLetterIndex()
     {
         _letterJumpVersion++;
+        _activeLetterJumpVersion = 0;
         _letterIndexKey = null;
         _letterIndexTask = null;
         LetterIndex = null;

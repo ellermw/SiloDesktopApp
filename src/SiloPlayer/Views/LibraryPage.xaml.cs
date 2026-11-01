@@ -2238,6 +2238,14 @@ public sealed partial class LibraryPage : Page,
         if (!_isNavigated || LibraryContentArea == null || LibraryContentArea.Visibility != Visibility.Visible || ViewModel.TotalCount <= 0)
             return;
 
+        if (ViewModel.IsLetterJumpInProgress)
+        {
+            // Recompute the latest viewport after the jump scrolls (or restores
+            // its old cards), without letting this debounce cancel the seek.
+            ScheduleVisibleRangeLoad(force);
+            return;
+        }
+
         var range = GetVisibleItemRange(GetGridLayout());
         range = ClampRealizedRange(range, GetGridLayout());
         if (range.EndIndex < range.StartIndex)

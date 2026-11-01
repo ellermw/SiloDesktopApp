@@ -361,6 +361,67 @@ public sealed class LibraryLetterNavigationTests
         Assert.Equal(requests, wire.Seeks.Count);
     }
 
+    [Theory]
+    [InlineData(120, false)] // The old active viewport would cancel the seek.
+    [InlineData(300, false)] // An uncached viewport would replace the seek.
+    [InlineData(120, true)]
+    [InlineData(300, true)]
+    public async Task ViewportLoadsCannotCancelPendingLetterJump(int viewportStart, bool missingTarget)
+    {
+        using var wire = new Wire { CatalogExact = false, IndexTotal = 1200, TailPosition = 1199 };
+        var model = wire.Create();
+        await model.LoadCommand.ExecuteAsync(null); await model.EnsureLetterIndexAsync();
+        await model.LoadWindowAsync(120, 100);
+        var original = model.GetWindowItem(120);
+        var cached = model.GetWindowItem(0);
+        var originalStart = model.WindowStartIndex;
+        Assert.NotNull(original); Assert.NotNull(cached);
+        var jumped = new List<int>(); model.LetterJumpRequested += jumped.Add;
+        wire.HoldCatalog = true;
+        var pending = model.JumpToLetterCommand.ExecuteAsync(missingTarget ? "N" : "M");
+        try
+        {
+            Assert.True(model.IsLetterJumpInProgress);
+            var requests = wire.Seeks.Count;
+            await model.EnsureRangeLoadedAsync(viewportStart, viewportStart + 59)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(requests, wire.Seeks.Count);
+            Assert.False(pending.IsCompleted);
+            Assert.True(model.IsLetterJumpInProgress);
+        }
+        finally { wire.ReleaseCatalog.TrySetResult(); await pending; }
+
+        Assert.False(model.IsLetterJumpInProgress);
+        Assert.False(model.IsLoading);
+        Assert.Null(model.ErrorMessage);
+        if (missingTarget)
+        {
+            Assert.Empty(jumped);
+            Assert.Equal(originalStart, model.WindowStartIndex);
+            Assert.Same(original, model.GetWindowItem(120));
+            Assert.Same(cached, model.GetWindowItem(0));
+        }
+        else
+        {
+            Assert.Equal(new[] { 742 }, jumped);
+            Assert.NotNull(model.GetWindowItem(742));
+        }
+        // The viewport hold ends on both success and a missing target.
+        await model.EnsureRangeLoadedAsync(300, 359);
+        Assert.NotNull(model.GetWindowItem(300));
+    }
+
+    [Fact]
+    public void PageDefersViewportRequestsBeforeRecordingTheirRangeDuringLetterJump()
+    {
+        var source = File.ReadAllText(Path.Combine(TestRepository.Root, "src", "SiloPlayer", "Views", "LibraryPage.xaml.cs"));
+        var start = source.IndexOf("private async Task EnsureVisibleRangeLoadedAsync", StringComparison.Ordinal);
+        var end = source.IndexOf("var range = GetVisibleItemRange", start, StringComparison.Ordinal);
+        var guard = source[start..end];
+        Assert.Contains("if (ViewModel.IsLetterJumpInProgress)", guard);
+        Assert.Contains("ScheduleVisibleRangeLoad(force);", guard);
+    }
+
     [Fact]
     public async Task ANewerClickRetiresAnOlderPendingJump()
     {

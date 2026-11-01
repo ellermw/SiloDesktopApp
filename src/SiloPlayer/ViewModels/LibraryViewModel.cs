@@ -461,6 +461,9 @@ public partial class LibraryViewModel : ObservableObject
         var context = _catalogApi.CaptureContext();
         if (_catalogContext != null && _catalogContext != context) StartNewCatalogQuery();
         _catalogContext = context;
+        // The still-visible viewport must not cancel an explicit letter seek.
+        // The page retries its latest range once the jump has completed.
+        if (!force && IsLetterJumpInProgress) return Task.CompletedTask;
         var viewportVersion = ++_viewportRequestVersion;
         EnsureExactCountRequested();
         startIndex = TotalCount > 0 ? Math.Clamp(startIndex, 0, TotalCount - 1) : 0;
