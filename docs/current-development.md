@@ -1,3 +1,9 @@
+## November 2 — account playback-limit Beta candidate
+
+Fresh Beta base `6d3ac20fa114458be3ec8a21bf882d3a1dc3f7af` (source `1.2.544-beta.1`) and official server/WebUI `bf53b65450244751013a2965b39da4111d9a0f72`. This local candidate distinguishes account streaming/conversion allowances from server capacity using current WebUI titles and trimmed viewer guidance, with the existing retryability intact. It adds no automatic retry or version-stamp change. A new start after either account terminal uses a different playback attempt ID.
+
+Test-first: eight presentation assertions fail against the unchanged base; both synthetic start-after-limit tests already pass. Corrected focused tests pass 45/45 and full suite 3,068/3,068, zero failed/skipped. Evidence: `D:/SiloPlayer/.codex-tmp/server-align-nov02/limits/{focused-red,focused-green,full-green}`; exact verified input hashes in `verified-inputs.json`. All .NET work holds SiloOct18Build after pinned native-engine hash verification. Generated outputs were moved to D with their original paths junctioned back after C filled; failed unrelated build evidence is preserved. No installer or installed app was used. This pure Core presentation change awaits independent source review/Beta PR delivery; pipeline owns application build, stamps and packaging. Historical handoffs below retain their original context.
+
 # Current development — 1.2.519
 
 ## November 1 desktop follow-up

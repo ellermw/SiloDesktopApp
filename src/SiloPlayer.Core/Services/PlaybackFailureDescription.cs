@@ -66,6 +66,9 @@ public static class PlaybackFailureDescription
     {
         ArgumentNullException.ThrowIfNull(terminal);
         var fallback = terminal.ServerMessage;
+        var accountLimitMessage = string.IsNullOrWhiteSpace(fallback)
+            ? "Stop anything else playing or paused on your account, then try again."
+            : fallback.Trim();
         var (title, message) = terminal.Reason switch
         {
             "transcoding_disabled" => (
@@ -102,6 +105,12 @@ public static class PlaybackFailureDescription
             "capacity_unavailable" => (
                 "The server is busy",
                 "There's no capacity to convert this file right now. Please try again in a moment."),
+            "stream_limit_reached" => (
+                "Streaming limit reached",
+                accountLimitMessage),
+            "transcode_limit_reached" => (
+                "Video conversion limit reached",
+                accountLimitMessage),
             "session_expired" => (
                 "Playback session expired",
                 "This playback session is no longer active. Start it again to keep watching."),

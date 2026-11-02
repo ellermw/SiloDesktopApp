@@ -14,6 +14,8 @@ public sealed class PlaybackFailureDescriptionTests
         { "adaptation_exhausted", "No playable version found", "Silo couldn't find a way to play this file on this device. Try another version if one is available." },
         { "dv_conversion_unsupported", "This HDR format can't be converted", "This file's dynamic range can't be converted for this device, and it can't be played as-is." },
         { "capacity_unavailable", "The server is busy", "There's no capacity to convert this file right now. Please try again in a moment." },
+        { "stream_limit_reached", "Streaming limit reached", "Stop anything else playing or paused on your account, then try again." },
+        { "transcode_limit_reached", "Video conversion limit reached", "Stop anything else playing or paused on your account, then try again." },
         { "session_expired", "Playback session expired", "This playback session is no longer active. Start it again to keep watching." },
         { "policy_denied", "Playback unavailable", "You do not have permission to play this item." },
         { "subtitle_track_unavailable", "That subtitle track can't be used", "Silo couldn't prepare the selected subtitles for this device. Try a different track." },
@@ -40,6 +42,34 @@ public sealed class PlaybackFailureDescriptionTests
         Assert.Equal("Playback unavailable", description.Title);
         Assert.Equal("New server guidance", description.Message);
         Assert.False(description.CanRetry);
+    }
+
+    [Theory]
+    [InlineData("stream_limit_reached", "Streaming limit reached", true)]
+    [InlineData("transcode_limit_reached", "Video conversion limit reached", false)]
+    public void AccountLimitMessagesPreserveTrimmedServerGuidanceAndRetryability(
+        string reason, string title, bool retryable)
+    {
+        var description = PlaybackFailureDescription.Describe(
+            new PlaybackPlanTerminalException(reason, "  End another account session first.\r\n", retryable));
+
+        Assert.Equal(title, description.Title);
+        Assert.Equal("End another account session first.", description.Message);
+        Assert.Equal(retryable, description.CanRetry);
+    }
+
+    [Theory]
+    [InlineData("stream_limit_reached", "")]
+    [InlineData("stream_limit_reached", " \r\n\t")]
+    [InlineData("transcode_limit_reached", "")]
+    [InlineData("transcode_limit_reached", " \r\n\t")]
+    public void AccountLimitMessagesUseViewerGuidanceWhenServerTextIsBlank(string reason, string message)
+    {
+        var description = PlaybackFailureDescription.Describe(
+            new PlaybackPlanTerminalException(reason, message, retryable: true));
+
+        Assert.Equal("Stop anything else playing or paused on your account, then try again.", description.Message);
+        Assert.True(description.CanRetry);
     }
 
     [Theory]
