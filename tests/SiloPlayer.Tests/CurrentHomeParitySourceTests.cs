@@ -115,9 +115,10 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("CardsScrollViewer.ViewportWidth * 0.82", code);
         Assert.Contains("case VirtualKey.Left", code);
         Assert.Contains("case VirtualKey.Right", code);
-        Assert.Contains("RestoreScrollPositionAfterRebind", code);
-        Assert.Contains("isSameSection && !templateChanged", code);
-        Assert.Contains("background refreshes, progress updates, and item dismissals", code);
+        // Same-section rebinds preserve position and demand even when the card template changes.
+        Assert.Contains("RestoreScrollPositionAfterRebind(isSameSection, previousOffset)", code);
+        Assert.Matches(@"if \(!isSameSection\)\s*\{\s*_completionDemandArmed = false;", code);
+        Assert.Contains("_lastHorizontalOffset = clamped;", code);
     }
 
     [Fact]
