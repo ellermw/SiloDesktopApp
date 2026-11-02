@@ -7,6 +7,37 @@ namespace SiloPlayer.Tests;
 
 public sealed class PlaybackProtocolV3RecoveryTests
 {
+    public static IEnumerable<object?[]> AccountLimitDecisions()
+    {
+        foreach (var reason in new[] { "stream_limit_reached", "transcode_limit_reached" })
+        foreach (var message in new string?[] { null, "", " \r\n\t", "  Stop another session first.  " })
+        foreach (var replan in new[] { false, true })
+            yield return [reason, message, replan];
+    }
+
+    [Theory]
+    [MemberData(nameof(AccountLimitDecisions))]
+    public async Task AccountLimitGuidanceSurvivesActualDecisionAdaptation(string reason, string? message, bool replan)
+    {
+        var handler = new RecoveryPlaybackHandler { TerminalReason = reason, TerminalMessage = message };
+        using var manager = CreateManager(handler);
+        if (replan)
+        {
+            await manager.StartSessionAsync(42, forceStartPosition: true);
+            handler.ReturnTerminalOnReplan = true;
+        }
+        else handler.ReturnTerminalOnStart = true;
+        var error = await Assert.ThrowsAsync<PlaybackPlanTerminalException>(() => replan
+            ? manager.ReplanQualityAsync("720p", 10)
+            : manager.StartSessionAsync(42, forceStartPosition: true));
+        var description = PlaybackFailureDescription.Describe(error);
+        Assert.Equal(reason == "stream_limit_reached" ? "Streaming limit reached" : "Video conversion limit reached", description.Title);
+        Assert.Equal(string.IsNullOrWhiteSpace(message)
+            ? "Stop anything else playing or paused on your account, then try again." : message.Trim(), description.Message);
+        Assert.True(description.CanRetry);
+        await manager.StopSessionAsync();
+    }
+
     [Fact]
     public async Task RepeatedDirectStallsWithoutProgressStopWithoutEscalatingToRemux()
     {
@@ -214,7 +245,9 @@ public sealed class PlaybackProtocolV3RecoveryTests
     {
         private int _planNumber;
         public bool ReturnTerminalOnStart { get; set; }
+        public bool ReturnTerminalOnReplan { get; set; }
         public string TerminalReason { get; set; } = "source_unavailable";
+        public string? TerminalMessage { get; set; } = "The effective media source is unavailable.";
         public string SubtitleMode { get; set; } = "off";
         public List<string> StartBodies { get; } = [];
         public List<string> ReplanBodies { get; } = [];
@@ -237,7 +270,7 @@ public sealed class PlaybackProtocolV3RecoveryTests
                           "outcome": "terminal",
                           "terminal": {
                             "reason": "{{TerminalReason}}",
-                            "message": "The effective media source is unavailable.",
+                            "message": {{JsonSerializer.Serialize(TerminalMessage)}},
                             "retryable": true
                           }
                         }
@@ -249,6 +282,9 @@ public sealed class PlaybackProtocolV3RecoveryTests
 
             if (request.Method == HttpMethod.Post && path == "/api/v2/playback/session-1/replan")
             {
+                if (ReturnTerminalOnReplan)
+                    return JsonResponse(JsonSerializer.Serialize(new { protocol_version = 3, outcome = "terminal",
+                        terminal = new { reason = TerminalReason, message = TerminalMessage, retryable = true } }));
                 ReplanBodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
                 return JsonResponse(PlayableDecision(NextPlanNumber(), SubtitleMode));
             }

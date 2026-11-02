@@ -283,7 +283,8 @@ public partial class PlaybackManager : IDisposable
         {
             var terminal = decision.Terminal;
             var detail = terminal?.Message;
-            if (string.IsNullOrWhiteSpace(detail))
+            if (string.IsNullOrWhiteSpace(detail) &&
+                terminal?.Reason is not ("stream_limit_reached" or "transcode_limit_reached"))
                 detail = "The server could not find a compatible playback route.";
             throw new PlaybackPlanTerminalException(
                 terminal?.Reason ?? decision.Outcome,
