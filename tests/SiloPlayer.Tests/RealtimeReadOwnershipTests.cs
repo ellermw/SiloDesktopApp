@@ -386,7 +386,7 @@ public sealed class RealtimeReadOwnershipTests
     [InlineData("season", true)]
     [InlineData("episode", false)]
     [InlineData("episode", true)]
-    public async Task PreviouslyPendingSeriesSaveStillReconcilesWhenOnlyTheResponseRevealsItsScope(string type, bool settlesDuringRead)
+    public async Task NewlyDiscoveredSeriesSaveReconcilesContainersButDoesNotBlockSiblingLeaves(string type, bool settlesDuringRead)
     {
         using var f = new Fixture();
         f.Messenger.UnregisterAll(f.Vm);
@@ -406,6 +406,16 @@ public sealed class RealtimeReadOwnershipTests
                 await f.Cache.WaitForProgressSettlementAsync(CancellationToken.None);
             }
             f.Wire.HoldDetails = false; initial.Release();
+            if (type == "episode")
+            {
+                await loading.WaitAsync(TimeSpan.FromSeconds(2));
+                Assert.Equal(1, f.Wire.DetailReads);
+                Assert.Equal(0, f.Vm.Item!.UserData!.WatchedCount);
+                Assert.False(f.Vm.IsLoading);
+                Assert.Null(f.Vm.RemoteStateErrorMessage);
+                Assert.Equal(settlesDuringRead, save.Task.IsCompleted);
+                return;
+            }
             if (!settlesDuringRead)
             {
                 await initial.Settled.WaitAsync(TimeSpan.FromSeconds(5));
@@ -818,6 +828,77 @@ public sealed class RealtimeReadOwnershipTests
         Assert.Equal(EpisodeA, error.ContentId);
         Assert.Equal(3, f.Wire.WatchReads);
         Assert.Equal(3L, f.Revision.Current); // Each event advances once, not again on flush.
+    }
+
+    [Theory]
+    [InlineData("movie", false)]
+    [InlineData("movie", true)]
+    [InlineData("episode", false)]
+    [InlineData("episode", true)]
+    public async Task DirectLeafEventsDuringInitialAndCorrectiveReadsAreNotLost(string type, bool trailingEvent)
+    {
+        using var f = new Fixture();
+        f.Wire.DetailType = type;
+        f.Wire.DetailSeriesId = type == "episode" ? Series : null;
+        f.Wire.HoldDetails = true;
+        var loading = f.Vm.LoadInLibraryAsync(EpisodeA, 9);
+        var initial = await f.Wire.NextAsync();
+        f.Wire.Count = 1; f.Wire.DetailPosition = 100;
+        f.Raw(EpisodeA); f.Clock.Advance(200);
+        initial.Release();
+        var corrective = await f.Wire.NextAsync();
+        if (trailingEvent)
+        {
+            f.Wire.Count = 2; f.Wire.DetailPosition = 900; f.Wire.Played = true;
+            f.Raw(EpisodeA); f.Clock.Advance(200);
+        }
+        f.Wire.HoldDetails = false; corrective.Release();
+        await loading.WaitAsync(TimeSpan.FromSeconds(5));
+        await f.WaitCountAsync(trailingEvent ? 2 : 1);
+        Assert.Equal(trailingEvent ? 900 : 100, f.Vm.Item!.UserData!.PositionSeconds);
+        Assert.Equal(trailingEvent, f.Vm.IsWatched);
+        Assert.Equal(trailingEvent ? 3 : 2, f.Wire.DetailReads);
+        Assert.Null(f.Vm.RemoteStateErrorMessage);
+        Assert.All(f.Wire.CatalogUris, uri => Assert.Equal("?library_id=9", uri.Query));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task NeverSettlingSiblingSaveDoesNotHoldAnEpisodeInTheSameSeries(bool scoped, bool duringRead)
+    {
+        using var f = new Fixture();
+        f.Wire.DetailType = "episode"; f.Wire.DetailSeriesId = Series;
+        var save = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var progress = new PlaybackProgressUpdated(EpisodeB, 99, 100, false)
+            { SeriesId = Series, Persisted = save.Task };
+        try
+        {
+            if (!duringRead) f.Messenger.Send(progress);
+            f.Wire.HoldDetails = duringRead;
+            var loading = f.Vm.LoadInLibraryAsync(EpisodeA, scoped ? 9 : null);
+            if (duringRead)
+            {
+                var initial = await f.Wire.NextAsync();
+                f.Messenger.Send(progress);
+                f.Wire.HoldDetails = false; initial.Release();
+            }
+            await loading.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.False(save.Task.IsCompleted);
+            Assert.False(f.Vm.IsLoading);
+            Assert.Equal(EpisodeA, f.Vm.Item!.ContentId);
+            Assert.Equal(Series, f.Vm.Item.SeriesId);
+            Assert.Null(f.Vm.ErrorMessage);
+            Assert.Null(f.Vm.RemoteStateErrorMessage);
+            Assert.InRange(f.Wire.DetailReads, 1, scoped ? 1 : 2);
+            // A later owned leaf retry must use that same leaf-only cache barrier.
+            await f.Vm.RetryRemoteStateCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.False(save.Task.IsCompleted);
+            Assert.Null(f.Vm.RemoteStateErrorMessage);
+        }
+        finally { save.TrySetResult(); }
     }
 
     private sealed class QueuedStateContext : SynchronizationContext

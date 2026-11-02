@@ -152,6 +152,14 @@ public partial class ItemDetailViewModel : ObservableObject,
             || Seasons.Any(s => message.ContentIds.Contains(s.ContentId))
             || Episodes.Any(e => message.ContentIds.Contains(e.ContentId)));
 
+    // A direct event during initial loading also owns a corrective leaf read;
+    // mounted leaf companions still belong to navigation, not container refresh.
+    private bool IsRelatedInitialState(MediaStateInvalidated message, MediaItemDetail item) =>
+        message.ContentIds.Contains(item.ContentId) || IsRelatedState(message, item);
+
+    private static string? ProgressSeriesScope(MediaItemDetail item) =>
+        item.Type is "series" or "season" ? item.SeriesId : null;
+
     /// <summary>Refresh retained state without replacing the detail or changing playback/room intent.</summary>
     public Task RefreshMediaStateAsync(MediaStateInvalidated message)
     {
@@ -271,7 +279,7 @@ public partial class ItemDetailViewModel : ObservableObject,
                     foreach (var command in new IAsyncRelayCommand[] { ToggleFavoriteCommand, ToggleWatchlistCommand, SetRatingCommand })
                         if (command is { IsRunning: true, ExecutionTask: { } viewerMutation })
                             await viewerMutation.WaitAsync(ct);
-                    await _detailPrefetchCache.WaitForProgressSettlementAsync(ct, item.ContentId, item.SeriesId);
+                    await _detailPrefetchCache.WaitForProgressSettlementAsync(ct, item.ContentId, ProgressSeriesScope(item));
                     await WaitForLocalProgressSettlementAsync(ct);
                     // A mutation can start while another write/save is pending.
                 } while (ToggleWatchedCommand.IsRunning || ToggleFavoriteCommand.IsRunning
@@ -533,7 +541,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         try
         {
-            await _detailPrefetchCache.WaitForProgressSettlementAsync(ct, item.ContentId, item.SeriesId);
+            await _detailPrefetchCache.WaitForProgressSettlementAsync(ct, item.ContentId, ProgressSeriesScope(item));
             await WaitForLocalProgressSettlementAsync(ct);
             EnqueueStateRefresh(() =>
             {
@@ -926,7 +934,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             }
             ct.ThrowIfCancellationRequested();
             if (!ReferenceEquals(_loadCts, loadCts) || !_catalogApi.IsCurrentContext(loadContext)) return;
-            if (initialRevision != _initialStateRevision && _initialRemoteState is { } invalidation && IsRelatedState(invalidation, item))
+            if (initialRevision != _initialStateRevision && _initialRemoteState is { } invalidation && IsRelatedInitialState(invalidation, item))
             {
                 initialRevision = _initialStateRevision;
                 try
@@ -948,17 +956,17 @@ public partial class ItemDetailViewModel : ObservableObject,
             {
                 int nextInitialProgressRevision;
                 lock (_remoteStateGate)
-                    nextInitialProgressRevision = _initialProgressSaves.Count(save => ProgressAffectsDetail(save.Message, contentId, item.SeriesId));
+                    nextInitialProgressRevision = _initialProgressSaves.Count(save => ProgressAffectsDetail(save.Message, contentId, ProgressSeriesScope(item)));
                 if (localRevision == Volatile.Read(ref _localStateGeneration)
-                    && !_detailPrefetchCache.HasProgressSavesSince(settledProgressSaves, contentId, item.SeriesId)
+                    && !_detailPrefetchCache.HasProgressSavesSince(settledProgressSaves, contentId, ProgressSeriesScope(item))
                     && initialProgressRevision == nextInitialProgressRevision) break;
-                progressSettled = await WaitForInitialProgressSettlementAsync(contentId, item.SeriesId, progressWait.Token, ct);
+                progressSettled = await WaitForInitialProgressSettlementAsync(contentId, ProgressSeriesScope(item), progressWait.Token, ct);
                 if (!Current()) return;
                 if (!progressSettled) break;
                 localRevision = Volatile.Read(ref _localStateGeneration);
                 settledProgressSaves = _detailPrefetchCache.CaptureSettledProgressSaves();
                 lock (_remoteStateGate)
-                    initialProgressRevision = _initialProgressSaves.Count(save => ProgressAffectsDetail(save.Message, contentId, item.SeriesId));
+                    initialProgressRevision = _initialProgressSaves.Count(save => ProgressAffectsDetail(save.Message, contentId, ProgressSeriesScope(item)));
                 // Own a fresh read after settlement, including for leaves and
                 // library-scoped pages. A new save during it requires another.
                 try
@@ -978,7 +986,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             lock (_remoteStateGate)
             {
                 _pendingLocalProgressSave = Task.WhenAll(_initialProgressSaves
-                    .Where(save => ProgressAffectsDetail(save.Message, contentId, item.SeriesId)).Select(save => save.Settled));
+                    .Where(save => ProgressAffectsDetail(save.Message, contentId, ProgressSeriesScope(item))).Select(save => save.Settled));
                 _initialProgressSaves.Clear();
             }
             Item = item;
@@ -1010,8 +1018,14 @@ public partial class ItemDetailViewModel : ObservableObject,
             _initialRemoteState = null;
             // Let navigation paint the committed detail without waiting for
             // the shared, ownership-guarded realtime loop to drain.
-            if (initialRevision != _initialStateRevision && trailing != null)
-                _ = RefreshMediaStateAsync(trailing with { RefreshDetails = true });
+            if (initialRevision != _initialStateRevision && trailing != null && IsRelatedInitialState(trailing, item))
+                _ = RefreshMediaStateAsync(trailing with
+                {
+                    RefreshDetails = true,
+                    // A second direct leaf event uses the existing targeted
+                    // detail retry path instead of being dropped after paint.
+                    CatchUp = trailing.CatchUp || item.Type is not ("series" or "season")
+                });
             if (!progressSettled)
             {
                 _progressSettlementCts = new CancellationTokenSource();

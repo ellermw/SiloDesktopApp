@@ -253,7 +253,10 @@ internal static class RealtimeSeriesStateNativeFixture
             }
             await VerifyLegacySeriesActionAsync(parent, wire, client);
             foreach (var type in new[] { "series", "season" })
+            {
                 await VerifyTranslationReconnectAsync(parent, wire, client, type);
+                await VerifyTranslationReconnectAsync(parent, wire, client, type, overview: true);
+            }
             foreach (var type in new[] { "movie", "episode" })
             {
                 var page = new ItemDetailPage();
@@ -338,21 +341,22 @@ internal static class RealtimeSeriesStateNativeFixture
         }
     }
 
-    private static async Task VerifyTranslationReconnectAsync(StackPanel parent, Wire wire, SiloApiClient client, string type)
+    private static async Task VerifyTranslationReconnectAsync(StackPanel parent, Wire wire, SiloApiClient client, string type, bool overview = false)
     {
-        foreach (var phase in new[] { "status", "polling", "auto" })
+        foreach (var phase in overview ? new[] { "status", "polling", "auto", "timeout" } : new[] { "status", "polling", "auto" })
         {
             var page = new ItemDetailPage { Width = 900, Height = 720 };
             var vm = page.ViewModel;
             using var navigation = new CancellationTokenSource();
-            vm.Item = new() { ContentId = type, Type = type, Title = "Translation reconnect fixture" };
+            vm.Item = new() { ContentId = type, Type = type, Title = "Translation reconnect fixture",
+                PendingTranslationLanguage = overview ? "fr" : null };
             vm.Seasons.Add(new() { ContentId = "season", SeasonNumber = 1 });
-            vm.Episodes.Add(new() { ContentId = "loaded", PendingTranslationLanguage = "fr" });
+            vm.Episodes.Add(new() { ContentId = "loaded", PendingTranslationLanguage = overview ? null : "fr" });
             Set(page, "_currentContentId", type); Set(page, "_navigationCts", navigation);
             parent.Children.Add(page);
-            var button = (Button)page.FindName("TranslateEpisodesButton");
+            var button = (Button)page.FindName(overview ? "TranslateOverviewButton" : "TranslateEpisodesButton");
             Task? operation = null;
-            wire.TranslationOnView = phase == "auto" ? "auto" : "button";
+            wire.TranslationOnView = phase is "auto" or "timeout" ? "auto" : "button";
             try
             {
                 await Task.Delay(60);
@@ -363,8 +367,8 @@ internal static class RealtimeSeriesStateNativeFixture
                     wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
                     wire.ReleaseCompanion = new(TaskCreationOptions.RunContinuationsAsynchronously);
                 }
-                operation = (Task)typeof(ItemDetailPage).GetMethod("ConfigureEpisodesTranslationAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
-                    .Invoke(page, null)!;
+                operation = (Task)typeof(ItemDetailPage).GetMethod(overview ? "ConfigureOnViewTranslationAsync" : "ConfigureEpisodesTranslationAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(page, overview ? new object?[] { vm.Item } : null)!;
                 if (phase == "status")
                     await wire.CompanionStarted!.Task.WaitAsync(TimeSpan.FromSeconds(5));
                 else
@@ -374,19 +378,33 @@ internal static class RealtimeSeriesStateNativeFixture
                         await operation.WaitAsync(TimeSpan.FromSeconds(5));
                         Check(page.CanPreserveOnReconnect && button.IsEnabled && button.Visibility == Visibility.Visible,
                             "A configured idle translation button should allow preservation.");
-                        operation = (Task)typeof(ItemDetailPage).GetMethod("TranslateEpisodesAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
-                            .Invoke(page, null)!;
+                        operation = (Task)typeof(ItemDetailPage).GetMethod(overview ? "TranslateOverviewAsync" : "TranslateEpisodesAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                            .Invoke(page, overview ? new object?[] { vm.Item } : null)!;
                     }
                     await UntilAsync(() => !button.IsEnabled && button.Visibility == Visibility.Visible);
-                    Check((string)button.Content == "Translating descriptions\u2026", "Translation polling did not start.");
+                    Check((string)button.Content == (overview ? "Translating\u2026" : "Translating descriptions\u2026"), "Translation polling did not start.");
                 }
                 Check(!page.CanPreserveOnReconnect, "Pending page-owned translation work must require a reconnect remount.");
+                if (phase == "timeout")
+                {
+                    // Exercise the same cancellation path as the 45-second budget
+                    // without making the native fixture wait for the full window.
+                    ((CancellationTokenSource)typeof(ItemDetailPage).GetField("_translationCts", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(page)!).Cancel();
+                    await operation.WaitAsync(TimeSpan.FromSeconds(5));
+                    Check(button.IsEnabled && button.Visibility == Visibility.Collapsed && (string)button.Content == "Translate description",
+                        "An auto-mode timeout retained the disabled Translating control.");
+                    Check(page.CanPreserveOnReconnect, "A settled auto-mode timeout should not require a reconnect remount.");
+                    continue;
+                }
                 client.InvalidateAccessContext();
                 Check(!page.CanPreserveOnReconnect, "Retired translation work must not preserve a disabled or missing button.");
                 wire.ReleaseCompanion?.TrySetResult();
                 await operation.WaitAsync(TimeSpan.FromSeconds(5));
                 Check(!page.CanPreserveOnReconnect,
                     "Translation work that settles before shell catch-up must still remount to clear its stale key/button.");
+                if (overview && phase != "status")
+                    Check(button.IsEnabled && (string)button.Content == "Translate description",
+                        "Interrupted overview polling left a disabled Translating control.");
             }
             finally
             {
@@ -395,7 +413,7 @@ internal static class RealtimeSeriesStateNativeFixture
                 if (operation != null) await operation.WaitAsync(TimeSpan.FromSeconds(5));
                 vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page);
             }
-            Program.Log($"PASS: mounted {type} reconnect during episode translation {phase} requires remount, including after stale work settles.");
+            Program.Log($"PASS: mounted {type} reconnect during {(overview ? "overview" : "episode")} translation {phase} requires remount, including after stale work settles.");
         }
     }
 
@@ -451,7 +469,7 @@ internal static class RealtimeSeriesStateNativeFixture
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             var path = request.RequestUri!.AbsolutePath;
-            var translate = request.Method == HttpMethod.Post && path == "/api/v2/catalog/items/season/translate-description";
+            var translate = request.Method == HttpMethod.Post && path is "/api/v2/catalog/items/season/translate-description" or "/api/v2/catalog/items/series/translate-description";
             if (request.RequestUri.Host != "realtime-native.invalid" || (request.Method != HttpMethod.Get && !translate))
                 throw new InvalidOperationException("Only synthetic fixture reads and episode translations are authorized.");
             if (translate) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));

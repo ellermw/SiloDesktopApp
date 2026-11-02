@@ -43,6 +43,7 @@ public static class MediaItemMenu
         var authService = App.Services.GetRequiredService<AuthService>();
         var toast = App.Services.GetRequiredService<ToastService>();
         var client = App.Services.GetRequiredService<SiloApiClient>();
+        var menuOwner = client.CaptureIdentityContext();
         XamlRoot? DialogRoot() => owner?.XamlRoot ?? App.MainWindowInstance?.Content.XamlRoot;
 
         bool canCurateMetadata = AuthorizationPolicy.CanCurateMetadata(authService);
@@ -180,6 +181,7 @@ public static class MediaItemMenu
             var reset = BuildItem("Reset Progress", "\uE777", async () =>
             {
                 var context = catalog.CaptureContext();
+                if (!client.IsCurrentIdentityContext(menuOwner)) return;
                 await MediaItemCardActions.ResetProgressAsync(item);
                 if (!catalog.IsCurrentContext(context)) return;
                 stateChanged?.Invoke();
@@ -191,6 +193,7 @@ public static class MediaItemMenu
                 // A reconnect retires reads, not this retained menu's lifetime.
                 var context = catalog.CaptureContext();
                 reset.Visibility = Visibility.Collapsed;
+                if (!client.IsCurrentIdentityContext(menuOwner)) { reset.IsEnabled = false; return; }
                 if (!MediaItemActionPolicy.CanResetProgress(item.Type, item.PositionSeconds, true)) return;
                 try
                 {

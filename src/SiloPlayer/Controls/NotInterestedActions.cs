@@ -53,13 +53,16 @@ public static class NotInterestedActions
     public static MenuFlyoutItem CreateMenuItem(MediaItem item, Action? stateChanged = null)
     {
         var catalog = App.Services.GetRequiredService<CatalogApi>();
-        var action = new MenuFlyoutItem { Visibility = Visibility.Collapsed, Icon = new SymbolIcon(Symbol.Dislike) };
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        var owner = client.CaptureIdentityContext();
+        var action = new MenuFlyoutItem { Visibility = Visibility.Collapsed, Icon = new SymbolIcon(Symbol.Dislike), Tag = owner };
         void Update() { action.Text = item.UserState?.NotInterested == true ? "Show in Recommendations" : "Not Interested"; Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(action, action.Text); }
         Update();
         action.Click += async (_, _) =>
         {
             if (!action.IsEnabled) return;
             var context = catalog.CaptureContext();
+            if (!client.IsCurrentIdentityContext(owner)) { action.IsEnabled = false; return; }
             action.IsEnabled = false;
             try { if (await ToggleAsync(item) && catalog.IsCurrentContext(context)) { stateChanged?.Invoke(); Update(); } }
             finally { action.IsEnabled = true; }
@@ -70,6 +73,13 @@ public static class NotInterestedActions
     public static async Task RefreshMenuItemAsync(MenuFlyoutItem action, MediaItem item, ApiRequestContext context)
     {
         var catalog = App.Services.GetRequiredService<CatalogApi>();
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        if (action.Tag is ApiIdentityContext owner && !client.IsCurrentIdentityContext(owner))
+        {
+            action.IsEnabled = false;
+            action.Visibility = Visibility.Collapsed;
+            return;
+        }
         try
         {
             var available = item.Type is "movie" or "series" && await catalog.SupportsNotInterestedAsync(context);

@@ -33,6 +33,8 @@ public sealed partial class ItemDetailPage : Page
         && !ViewModel.IsLoading && !ViewModel.IsSeasonsLoading && !ViewModel.IsEpisodesLoading
         && _seasonEpisodesLoads == 0
         && !_isTranslatingEpisodes && _episodesTranslationStatusReads == 0 && !_episodesTranslationInterrupted
+        && !_isTranslatingOverview && _overviewTranslationStatusReads == 0 && !_overviewTranslationInterrupted
+        && _detailArtworkLoads == 0 && !_detailArtworkInterrupted
         && !ViewModel.SeasonsLoadFailed && !ViewModel.EpisodesLoadFailed && !ViewModel.SimilarLoadFailed
         && EpisodesLoadError.Visibility != Visibility.Visible
         && SeasonEpisodesFatalError.Visibility != Visibility.Visible;
@@ -49,6 +51,11 @@ public sealed partial class ItemDetailPage : Page
     private string? _revealedEpisodeOverviewId;
     private int _episodeSpoilerRevision;
     private bool _isTranslatingOverview;
+    private int _overviewTranslationStatusReads;
+    private bool _overviewTranslationInterrupted;
+    // Pending or failed artwork needs the remount recovery that retained cards skip.
+    private int _detailArtworkLoads;
+    private bool _detailArtworkInterrupted;
     private bool _translateButtonMode;
     private WatchDetailResponse? _watchDetail;
     private FileVersion? _selectedVersion;
@@ -998,12 +1005,16 @@ public sealed partial class ItemDetailPage : Page
         _translationCts?.Cancel();
         _translationCts?.Dispose();
         _translationCts = null;
+        _isTranslatingOverview = false;
+        _overviewTranslationInterrupted = false;
+        _translateButtonMode = false;
         _episodesTranslationCts?.Cancel();
         _episodesTranslationCts?.Dispose();
         _episodesTranslationCts = null;
         _episodesTranslationKey = null;
         _isTranslatingEpisodes = false;
         _episodesTranslationInterrupted = false;
+        _detailArtworkInterrupted = false;
         _imageCts?.Cancel();
         _imageCts?.Dispose();
         _imageCts = null;
@@ -2829,11 +2840,13 @@ public sealed partial class ItemDetailPage : Page
             return;
         }
 
+        var api = App.Services.GetRequiredService<CatalogApi>();
+        var context = api.CaptureContext();
+        var navigation = _navigationCts;
+        ++_overviewTranslationStatusReads;
         try
         {
-            var api = App.Services.GetRequiredService<CatalogApi>();
-            var context = api.CaptureContext();
-            var status = await api.GetMetadataAiStatusAsync(_navigationCts?.Token ?? default);
+            var status = await api.GetMetadataAiStatusAsync(navigation?.Token ?? default);
             if (!api.IsCurrentContext(context) || !IsCurrentDetail(item.ContentId)) return;
             if (!status.Enabled)
             {
@@ -2862,7 +2875,13 @@ public sealed partial class ItemDetailPage : Page
         }
         catch
         {
-            TranslateOverviewButton.Visibility = Visibility.Collapsed;
+            if (ReferenceEquals(_navigationCts, navigation)) TranslateOverviewButton.Visibility = Visibility.Collapsed;
+        }
+        finally
+        {
+            --_overviewTranslationStatusReads;
+            if (ReferenceEquals(_navigationCts, navigation) && !api.IsCurrentContext(context))
+                _overviewTranslationInterrupted = true;
         }
     }
 
@@ -2880,9 +2899,13 @@ public sealed partial class ItemDetailPage : Page
         _isTranslatingOverview = true;
         _translationCts?.Cancel();
         _translationCts?.Dispose();
-        _translationCts = CancellationTokenSource.CreateLinkedTokenSource(_navigationCts?.Token ?? default);
-        _translationCts.CancelAfter(TimeSpan.FromSeconds(45));
-        var ct = _translationCts.Token;
+        var navigation = _navigationCts;
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(navigation?.Token ?? default);
+        _translationCts = cts;
+        cts.CancelAfter(TimeSpan.FromSeconds(45));
+        var ct = cts.Token;
+        var api = App.Services.GetRequiredService<CatalogApi>();
+        var context = api.CaptureContext();
         TranslateOverviewButton.Visibility = Visibility.Visible;
         TranslateOverviewButton.IsEnabled = false;
         TranslateOverviewButton.Content = "Translating…";
@@ -2890,8 +2913,6 @@ public sealed partial class ItemDetailPage : Page
 
         try
         {
-            var api = App.Services.GetRequiredService<CatalogApi>();
-            var context = api.CaptureContext();
             await api.TranslateItemDescriptionAsync(item.ContentId, item.PendingTranslationLanguage!, ct);
             if (!api.IsCurrentContext(context)) return;
             while (!ct.IsCancellationRequested)
@@ -2921,15 +2942,18 @@ public sealed partial class ItemDetailPage : Page
         }
         finally
         {
-            _isTranslatingOverview = false;
-            if (IsCurrentDetail(item.ContentId))
+            if (ReferenceEquals(_translationCts, cts) && ReferenceEquals(_navigationCts, navigation))
             {
-                OverviewText.Opacity = 1;
-                if (_translateButtonMode && !string.IsNullOrWhiteSpace(ViewModel.Item?.PendingTranslationLanguage))
+                _isTranslatingOverview = false;
+                if (!api.IsCurrentContext(context)) _overviewTranslationInterrupted = true;
+                if (IsCurrentDetail(item.ContentId))
                 {
-                    TranslateOverviewButton.Visibility = Visibility.Visible;
+                    OverviewText.Opacity = 1;
                     TranslateOverviewButton.IsEnabled = true;
                     TranslateOverviewButton.Content = "Translate description";
+                    TranslateOverviewButton.Visibility = _translateButtonMode
+                        && !string.IsNullOrWhiteSpace(ViewModel.Item?.PendingTranslationLanguage)
+                        ? Visibility.Visible : Visibility.Collapsed;
                 }
             }
         }
@@ -7781,13 +7805,17 @@ public sealed partial class ItemDetailPage : Page
 
     private async Task LoadSeasonPosterAsync(Border posterBorder, Season season)
     {
+        var navigation = _navigationCts;
+        var token = navigation?.Token ?? CancellationToken.None;
+        var painted = false;
+        ++_detailArtworkLoads;
         try
         {
             var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
 
             var bytes = await imageService.GetImageAsync(
-                season.ContentId, "poster", season.PosterUrl!, httpClient, CancellationToken.None);
+                season.ContentId, "poster", season.PosterUrl!, httpClient, token);
 
             if (bytes == null) return;
 
@@ -7807,9 +7835,16 @@ public sealed partial class ItemDetailPage : Page
                 VerticalAlignment = VerticalAlignment.Center
             };
 
+            if (token.IsCancellationRequested || !ReferenceEquals(_navigationCts, navigation)) return;
             posterBorder.Child = image;
+            painted = true;
         }
         catch { }
+        finally
+        {
+            --_detailArtworkLoads;
+            if (!painted && ReferenceEquals(_navigationCts, navigation)) _detailArtworkInterrupted = true;
+        }
     }
 
     // ===== Series: Episode Grid =====
@@ -8487,6 +8522,8 @@ public sealed partial class ItemDetailPage : Page
         stillBorder.Tag = stillRevision;
         bool Current() => !token.IsCancellationRequested && ReferenceEquals(_navigationCts, navigationOwner) &&
             ReferenceEquals(ViewModel.Item, owner) && api.IsCurrentContext(context) && Equals(stillBorder.Tag, stillRevision);
+        var painted = false;
+        ++_detailArtworkLoads;
         try
         {
             var imageService = App.Services.GetRequiredService<ImageService>();
@@ -8525,7 +8562,13 @@ public sealed partial class ItemDetailPage : Page
             stillBorder.Child = image;
             // Clear the placeholder background so the image shows through
             stillBorder.Background = null;
+            painted = true;
         }
         catch { }
+        finally
+        {
+            --_detailArtworkLoads;
+            if (!painted && ReferenceEquals(_navigationCts, navigationOwner)) _detailArtworkInterrupted = true;
+        }
     }
 }
