@@ -26,7 +26,7 @@ public sealed partial class ItemDetailPage
         ApplyEpisodeSpoilers();
     }
 
-    private bool IsOverviewHidden(MediaItemDetail owner, MediaItemDetail source) =>
+    private bool IsOverviewHidden(MediaItemDetail owner, MediaItemDetail? source) =>
         ReferenceEquals(owner, source) && owner.Type == "episode" && _episodeSpoilerPreferences?.HideOverviews == true &&
         EpisodeSpoilerPolicy.IsUnwatched(owner.UserData?.Played, owner.UserData?.IsInProgress, owner.UserData?.PositionSeconds) &&
         _revealedEpisodeOverviewId != owner.ContentId;

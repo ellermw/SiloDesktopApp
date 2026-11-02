@@ -2733,9 +2733,7 @@ public sealed partial class ItemDetailPage : Page
         if (!IsLoaded || ViewModel.Item is not { } item) return;
         ++_episodeSpoilerRevision;
         var source = ViewModel.OverviewSource;
-        var hidden = ReferenceEquals(source, item) && item.Type == "episode" && _episodeSpoilerPreferences?.HideOverviews == true
-            && EpisodeSpoilerPolicy.IsUnwatched(item.UserData?.Played, item.UserData?.IsInProgress, item.UserData?.PositionSeconds)
-            && _revealedEpisodeOverviewId != item.ContentId;
+        var hidden = IsOverviewHidden(item, source);
         OverviewText.Visibility = hidden ? Visibility.Collapsed : Visibility.Visible;
         RevealEpisodeOverviewButton.Visibility = hidden && !string.IsNullOrWhiteSpace(item.Overview) ? Visibility.Visible : Visibility.Collapsed;
         OverviewTranslationLabel.Visibility = !hidden && !string.IsNullOrWhiteSpace(source?.Overview) && MachineTranslationPresentation.HasField(source?.MachineTranslatedFields) ? Visibility.Visible : Visibility.Collapsed;
