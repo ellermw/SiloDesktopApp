@@ -97,7 +97,7 @@ public class ItemDetailPlaybackStateTests : IDisposable
     {
         var saved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         int fetches = 0;
-        var cache = new ItemDetailPrefetchCache((id, _) =>
+        Task<MediaItemDetail> Fetch(string id, CancellationToken ct)
         {
             fetches++;
             return Task.FromResult(new MediaItemDetail
@@ -105,8 +105,9 @@ public class ItemDetailPlaybackStateTests : IDisposable
                 ContentId = id, Type = type,
                 UserData = new ItemDetailUserData { Played = saved.Task.IsCompleted && allWatched }
             });
-        });
-        var vm = _scope.Create(cache);
+        }
+        var cache = new ItemDetailPrefetchCache(Fetch);
+        var vm = _scope.CreateWithCatalog(Fetch, cache);
         vm.Item = await cache.GetAsync("parent", CancellationToken.None);
         var mountedItem = vm.Item;
         vm.Receive(new PlaybackProgressUpdated("child-episode", 99, 100, true));
@@ -117,7 +118,7 @@ public class ItemDetailPlaybackStateTests : IDisposable
         Assert.Equal(1, fetches);
         saved.SetResult();
         await refresh;
-        Assert.Equal(2, fetches); // Must invalidate the prefetched pre-play state.
+        Assert.Equal(2, fetches); // The mounted refresh owns a fresh catalog read.
         Assert.Equal(allWatched, vm.IsWatched);
         Assert.Same(mountedItem, vm.Item); // No full-page skeleton/rebuild.
     }
@@ -128,7 +129,7 @@ public class ItemDetailPlaybackStateTests : IDisposable
     public async Task OldContainerResponseCannotUpdateNewOrCanceledPage(bool cancel)
     {
         var response = new TaskCompletionSource<MediaItemDetail>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var vm = _scope.Create(new ItemDetailPrefetchCache((_, _) => response.Task));
+        var vm = _scope.CreateWithCatalog((_, _) => response.Task);
         vm.Item = new MediaItemDetail { ContentId = "old", Type = "series" };
         using var cts = new CancellationTokenSource();
         var refresh = vm.RefreshWatchedStateAsync(Task.CompletedTask, cts.Token);
@@ -143,8 +144,8 @@ public class ItemDetailPlaybackStateTests : IDisposable
     [Fact]
     public async Task FailedRefreshKeepsExistingWatchedState()
     {
-        var vm = _scope.Create(new ItemDetailPrefetchCache((_, _) =>
-            Task.FromException<MediaItemDetail>(new HttpRequestException("Unavailable"))));
+        var vm = _scope.CreateWithCatalog((_, _) =>
+            Task.FromException<MediaItemDetail>(new HttpRequestException("Unavailable")));
         vm.Item = new MediaItemDetail { ContentId = "series", Type = "series", UserData = new() { Played = true } };
         vm.IsWatched = true;
         await vm.RefreshWatchedStateAsync(Task.CompletedTask, CancellationToken.None);
@@ -166,7 +167,7 @@ public class ItemDetailPlaybackStateTests : IDisposable
         var refreshed = JsonSerializer.Deserialize<MediaItemDetail>("""
             {"content_id":"current","episode_count":4,"play_content_id":"next-episode"}
             """, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower })!;
-        var vm = _scope.Create(new ItemDetailPrefetchCache((_, _) => Task.FromResult(refreshed)));
+        var vm = _scope.CreateWithCatalog((_, _) => Task.FromResult(refreshed));
         var retained = new ItemDetailUserData
         {
             Played = watched, IsInProgress = true, PositionSeconds = 42, DurationSeconds = 100
@@ -198,7 +199,7 @@ public class ItemDetailPlaybackStateTests : IDisposable
     public async Task DelayedRefreshCannotOverwriteNewerWatchedMutation(bool initiallyWatched)
     {
         var response = new TaskCompletionSource<MediaItemDetail>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var vm = _scope.Create(new ItemDetailPrefetchCache((_, _) => response.Task));
+        var vm = _scope.CreateWithCatalog((_, _) => response.Task);
         vm.Item = new MediaItemDetail { ContentId = "current", Type = "series" };
         vm.IsWatched = initiallyWatched;
         var refresh = vm.RefreshWatchedStateAsync(Task.CompletedTask, CancellationToken.None);
@@ -214,11 +215,11 @@ public class ItemDetailPlaybackStateTests : IDisposable
     {
         var saved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var reads = 0;
-        var vm = _scope.Create(new ItemDetailPrefetchCache((id, _) =>
+        var vm = _scope.CreateWithCatalog((id, _) =>
         {
             reads++;
             return Task.FromResult(new MediaItemDetail { ContentId = id, UserData = new() { Played = true } });
-        }));
+        });
         vm.Item = new() { ContentId = "series", Type = "series", UserData = new() };
         var refresh = vm.RefreshWatchedStateAsync(saved.Task, CancellationToken.None);
         vm.Receive(new PlaybackProgressUpdated("episode", 99, 100, true) { SeriesId = "series", Persisted = saved.Task });
@@ -235,8 +236,8 @@ public class ItemDetailPlaybackStateTests : IDisposable
     {
         var retiring = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var closing = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var vm = _scope.Create(new ItemDetailPrefetchCache((id, _) =>
-            Task.FromResult(new MediaItemDetail { ContentId = id, UserData = new() { Played = true } })));
+        var vm = _scope.CreateWithCatalog((id, _) =>
+            Task.FromResult(new MediaItemDetail { ContentId = id, UserData = new() { Played = true } }));
         vm.Item = new MediaItemDetail { ContentId = "episode-a", Type = "episode" };
         vm.Receive(new PlaybackProgressUpdated("episode-b", 20, 100, false));
         var refresh = vm.RefreshWatchedStateAsync(Task.WhenAll(retiring.Task, closing.Task), CancellationToken.None);

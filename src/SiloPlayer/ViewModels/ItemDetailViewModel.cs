@@ -736,7 +736,9 @@ public partial class ItemDetailViewModel : ObservableObject,
             localRevision = Volatile.Read(ref _localStateGeneration);
             if (!Current() || ToggleWatchedCommand.IsRunning) return;
             _detailPrefetchCache.Invalidate(item.ContentId);
-            var refreshed = await ReadDetailAsync(item.ContentId, cancellationToken);
+            // Mounted snapshots own their request; realtime cache invalidation
+            // must not exhaust speculative-prefetch retries and drop this refresh.
+            var refreshed = await _catalogApi.GetItemDetailAsync(item.ContentId, libraryId, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (!Current()) return;
             if (refreshed.UserData is { } userData)

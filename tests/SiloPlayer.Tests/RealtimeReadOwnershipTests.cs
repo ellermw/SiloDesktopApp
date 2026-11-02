@@ -137,6 +137,39 @@ public sealed class RealtimeReadOwnershipTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task PostPlaybackSnapshotOwnsItsReadDuringRawRealtimeCacheInvalidation(bool scoped)
+    {
+        using var f = new Fixture();
+        if (scoped) await f.Vm.LoadInLibraryAsync(Series, 9);
+        f.Seed();
+        var mounted = f.Vm.Item;
+        var readsBefore = f.Wire.DetailReads;
+        f.Wire.Count = 2; f.Wire.Played = true;
+        f.Wire.DetailPosition = 999; f.Wire.Target = EpisodeB;
+        // Deliver raw events inside every GET, without flushing a separate
+        // mounted sweep that could mask a dropped post-playback refresh.
+        f.Wire.BeforeDetailResponse = () =>
+        {
+            f.Raw(EpisodeB); f.Raw(EpisodeB); f.Raw(EpisodeB);
+        };
+
+        await f.Vm.RefreshWatchedStateAsync(Task.CompletedTask, CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(readsBefore + 1, f.Wire.DetailReads);
+        Assert.Equal(3L, f.Revision.Current);
+        Assert.Same(mounted, f.Vm.Item);
+        Assert.True(f.Vm.IsWatched);
+        Assert.Equal(2, f.Vm.Item!.UserData!.WatchedCount);
+        Assert.Equal(999, f.Vm.Item.UserData.PositionSeconds);
+        Assert.Equal(EpisodeB, f.Vm.Item.PlayContentId);
+        Assert.Equal(2, f.Vm.Seasons[0].UserData!.WatchedCount);
+        Assert.All(f.Wire.CatalogUris, uri => Assert.Equal(scoped ? "?library_id=9" : "", uri.Query));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task SlowMountedSnapshotsSettleDuringRawAndCoalescedTrafficWithProductionCacheRegistration(bool scoped)
     {
         using var f = new Fixture();
