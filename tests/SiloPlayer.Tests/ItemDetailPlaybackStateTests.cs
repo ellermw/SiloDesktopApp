@@ -1,3 +1,4 @@
+using System.Text.Json;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
@@ -149,6 +150,46 @@ public class ItemDetailPlaybackStateTests : IDisposable
         await vm.RefreshWatchedStateAsync(Task.CompletedTask, CancellationToken.None);
         Assert.True(vm.IsWatched);
         Assert.True(vm.Item.UserData.Played);
+    }
+
+    [Theory]
+    [InlineData("movie", false)]
+    [InlineData("movie", true)]
+    [InlineData("episode", false)]
+    [InlineData("episode", true)]
+    [InlineData("series", false)]
+    [InlineData("series", true)]
+    [InlineData("season", false)]
+    [InlineData("season", true)]
+    public async Task PostPlaybackResponseWithoutUserDataPreservesWatchedStateAndResume(string type, bool watched)
+    {
+        var refreshed = JsonSerializer.Deserialize<MediaItemDetail>("""
+            {"content_id":"current","episode_count":4,"play_content_id":"next-episode"}
+            """, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower })!;
+        var vm = _scope.Create(new ItemDetailPrefetchCache((_, _) => Task.FromResult(refreshed)));
+        var retained = new ItemDetailUserData
+        {
+            Played = watched, IsInProgress = true, PositionSeconds = 42, DurationSeconds = 100
+        };
+        var item = new MediaItemDetail
+        {
+            ContentId = "current", Type = type, EpisodeCount = 2,
+            PlayContentId = "previous-episode", UserData = retained
+        };
+        vm.Item = item;
+        vm.IsWatched = watched;
+
+        await vm.RefreshWatchedStateAsync(Task.CompletedTask, CancellationToken.None);
+
+        Assert.Same(item, vm.Item);
+        Assert.Same(retained, item.UserData);
+        Assert.Equal(watched, vm.IsWatched);
+        Assert.Equal(watched, item.UserData!.Played);
+        Assert.True(item.UserData.IsInProgress);
+        Assert.Equal(42, item.UserData.PositionSeconds);
+        Assert.Equal(100, item.UserData.DurationSeconds);
+        Assert.Equal(4, item.EpisodeCount);
+        Assert.Equal("next-episode", item.PlayContentId);
     }
 
     [Theory]

@@ -26,6 +26,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     private long _watchedStateGeneration;
     // Write authority is independent of progress/read invalidation revisions.
     private long _watchedWriteGeneration;
+    private MediaSurfaceChanged? _suppressedWatchedFeedback;
     private bool _stateRefreshActive = true;
     private readonly SynchronizationContext? _stateContext = SynchronizationContext.Current;
     private readonly object _remoteStateGate = new();
@@ -555,6 +556,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     private void ApplyWatchedChange(MediaSurfaceChanged message)
     {
+        if (!_stateRefreshActive || ReferenceEquals(message, _suppressedWatchedFeedback)) return;
         var item = Item;
         if (item == null) return;
         var played = message.Kind == MediaSurfaceChangeKind.WatchedMarked;
@@ -737,8 +739,11 @@ public partial class ItemDetailViewModel : ObservableObject,
             var refreshed = await ReadDetailAsync(item.ContentId, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (!Current()) return;
-            item.UserData = refreshed.UserData;
-            IsWatched = item.UserData?.Played ?? false;
+            if (refreshed.UserData is { } userData)
+            {
+                item.UserData = userData;
+                IsWatched = userData.Played;
+            }
             if (refreshed.EpisodeCount.HasValue) item.EpisodeCount = refreshed.EpisodeCount;
             if (refreshed.SeasonCount.HasValue) item.SeasonCount = refreshed.SeasonCount;
             // Omitted legacy targets preserve the known action; explicit null
@@ -1134,11 +1139,16 @@ public partial class ItemDetailViewModel : ObservableObject,
             else
                 await _catalogApi.MarkWatchedAsync(contentId);
 
-            if (!Current()) return;
-            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
+            if (!_catalogApi.IsCurrentContext(context)) return;
+            var message = new MediaSurfaceChanged(
                 wasWatched ? MediaSurfaceChangeKind.WatchedCleared : MediaSurfaceChangeKind.WatchedMarked,
                 contentId,
-                seriesId, context: context));
+                seriesId, context: context);
+            // Accepted writes still invalidate app-lifetime state after navigation
+            // or newer local intent, without granting this VM stale feedback authority.
+            if (!Current()) _suppressedWatchedFeedback = message;
+            try { WeakReferenceMessenger.Default.Send(message); }
+            finally { _suppressedWatchedFeedback = null; }
         }
         catch
         {

@@ -7,6 +7,7 @@ using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Catalog;
 using SiloPlayer.Core.Services;
 using SiloPlayer.Messaging;
+using SiloPlayer.Services;
 using SiloPlayer.ViewModels;
 
 namespace SiloPlayer.Tests;
@@ -65,6 +66,72 @@ public sealed class ItemDetailWatchedMutationTests
         Assert.False(scope.Vm.IsWatched);
         Assert.False(scope.Vm.Item.UserData.Played);
         Assert.False(scope.Vm.Episodes[0].UserData!.Played);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AcceptedWriteAfterNavigationClearsGlobalCacheAndAdvancesWatchRevision(bool initiallyWatched)
+    {
+        using var scope = new Scope("series", initiallyWatched)
+            { Delayed = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        var reads = 0;
+        var cache = new ItemDetailPrefetchCache((id, _) =>
+        {
+            reads++;
+            return Task.FromResult(new MediaItemDetail { ContentId = id });
+        });
+        DetailCacheInvalidation.Attach(cache);
+        var revision = DetailCacheInvalidation.AttachUserStateRevision();
+        try
+        {
+            // An unrelated entry proves the app-lifetime Clear ran, not just
+            // the retired detail recipient's per-item invalidation.
+            var prefetched = await cache.GetAsync("navigation-prefetch", CancellationToken.None);
+            var stamp = revision.Current;
+            var item = scope.Vm.Item!;
+            var operation = scope.Vm.ToggleWatchedCommand.ExecuteAsync(null);
+            Assert.False(operation.IsCompleted);
+            scope.Vm.CancelPendingLoads();
+            var changes = new List<string?>();
+            scope.Vm.PropertyChanged += (_, e) => changes.Add(e.PropertyName);
+
+            scope.Delayed.SetResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            await operation;
+
+            Assert.True(revision.Current > stamp);
+            Assert.False(revision.IsCurrent(stamp, item.ContentId, item.SeriesId));
+            Assert.NotSame(prefetched, await cache.GetAsync("navigation-prefetch", CancellationToken.None));
+            Assert.Equal(2, reads);
+            Assert.Empty(changes);
+            Assert.Equal(initiallyWatched, item.UserData!.Played);
+            Assert.Equal(initiallyWatched, scope.Vm.Seasons[0].UserData!.Played);
+            Assert.Equal(initiallyWatched, scope.Vm.Episodes[0].UserData!.Played);
+            Assert.Equal(42, scope.Vm.Episodes[0].UserData!.PositionSeconds);
+        }
+        finally
+        {
+            WeakReferenceMessenger.Default.UnregisterAll(cache);
+            WeakReferenceMessenger.Default.UnregisterAll(revision);
+        }
+    }
+
+    [Fact]
+    public void RetiredDetailCannotApplyWatchedFeedbackToRetainedState()
+    {
+        using var scope = new Scope("series", false);
+        var sharedItem = scope.Vm.Item!;
+        var sharedSeason = scope.Vm.Seasons[0];
+        var sharedEpisode = scope.Vm.Episodes[0];
+        scope.Vm.CancelPendingLoads();
+
+        scope.Vm.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedMarked, sharedItem.ContentId));
+
+        Assert.False(sharedItem.UserData!.Played);
+        Assert.False(sharedSeason.UserData!.Played);
+        Assert.False(sharedEpisode.UserData!.Played);
+        Assert.Equal(42, sharedEpisode.UserData.PositionSeconds);
+        Assert.False(scope.Vm.IsWatched);
     }
 
     [Fact]
