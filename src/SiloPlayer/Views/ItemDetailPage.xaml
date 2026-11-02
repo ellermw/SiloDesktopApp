@@ -383,6 +383,18 @@
                                 </StackPanel>
                             </Border>
 
+                            <Border x:Name="MetadataRefreshError"
+                                    Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="12"
+                                    Visibility="{x:Bind ViewModel.MetadataRefreshErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="{x:Bind ViewModel.MetadataRefreshErrorMessage, Mode=OneWay}"
+                                               Foreground="{StaticResource SecondaryTextBrush}"
+                                               FontSize="14" TextWrapping="Wrap" />
+                                    <Button Content="Retry" HorizontalAlignment="Left"
+                                            Click="RetryMetadataRefresh_Click" />
+                                </StackPanel>
+                            </Border>
+
                             <!-- AudiobookContent renders these as two distinct subtitle
                                  lines between the title and metadata. Keeping them out of
                                  HeroCrewLine preserves the exact WebUI information order. -->

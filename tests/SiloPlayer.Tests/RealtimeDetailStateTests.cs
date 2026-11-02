@@ -962,6 +962,132 @@ public sealed class RealtimeDetailStateTests
     }
 
     [Theory]
+    [InlineData("series", "remapped-episode")]
+    [InlineData("series", null)]
+    [InlineData("season", "remapped-episode")]
+    [InlineData("season", null)]
+    public async Task SameIdMatchReloadReconcilesCountsTargetAndCompanions(string type, string? target)
+    {
+        using var scope = new Scope(type);
+        var mounted = scope.Vm.Item!;
+        mounted.SeasonCount = 1;
+        mounted.PlayContentId = "old-target";
+        var season = scope.Vm.Seasons[0];
+        var episode = scope.Vm.Episodes[0];
+        scope.Vm.SelectedSeasonNumber = 1;
+        scope.Vm.EpisodesSeasonContentId = "season";
+        scope.OverrideDetail = () => Task.FromResult(new MediaItemDetail
+        {
+            ContentId = mounted.ContentId, Type = type, Title = "Matched title",
+            EpisodeCount = 12, SeasonCount = 3, PlayContentId = target, PlaySeasonNumber = 2,
+            UserState = new() { IsFavorite = true, InWatchlist = true }, UserRating = 4,
+            UserData = new() { WatchedCount = 2, UnplayedCount = 10 }
+        });
+
+        await scope.Vm.ReloadAfterMatchAsync(mounted.ContentId).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Same(mounted, scope.Vm.Item);
+        Assert.Equal("Matched title", mounted.Title);
+        Assert.Equal(12, mounted.EpisodeCount);
+        Assert.Equal(3, mounted.SeasonCount);
+        Assert.Equal(target, mounted.PlayContentId);
+        Assert.Equal(2, mounted.PlaySeasonNumber);
+        Assert.True(scope.Vm.IsFavorite);
+        Assert.True(scope.Vm.InWatchlist);
+        Assert.Equal(4, scope.Vm.UserRating);
+        Assert.Same(season, Assert.Single(scope.Vm.Seasons));
+        Assert.Same(episode, Assert.Single(scope.Vm.Episodes));
+        Assert.Equal(1, scope.Vm.SelectedSeasonNumber);
+        Assert.Equal("season", scope.Vm.EpisodesSeasonContentId);
+        Assert.Equal(0, episode.UserData!.PositionSeconds);
+        if (type == "series") Assert.Equal(2, season.UserData!.WatchedCount);
+        Assert.Equal(2, scope.DetailReads);
+        Assert.Equal(1, scope.EpisodeReads);
+        Assert.Null(scope.Vm.ErrorMessage);
+        Assert.Null(scope.Vm.RemoteStateErrorMessage);
+    }
+
+    [Theory]
+    [InlineData("series")]
+    [InlineData("season")]
+    public async Task FailedMetadataReloadKeepsMountedContentAndMetadataOnlyRetryClearsItsInlineError(string type)
+    {
+        using var scope = new Scope(type);
+        var mounted = scope.Vm.Item!;
+        var season = scope.Vm.Seasons[0];
+        var episode = scope.Vm.Episodes[0];
+        scope.Vm.SelectedSeasonNumber = 1;
+        scope.Vm.EpisodesSeasonContentId = "season";
+        scope.OverrideResponse = request => request.RequestUri!.AbsolutePath == "/api/v2/catalog/items/" + mounted.ContentId
+            ? Unavailable() : null;
+
+        await scope.Vm.ReloadAsync(mounted.ContentId);
+
+        Assert.Same(mounted, scope.Vm.Item);
+        Assert.Null(scope.Vm.ErrorMessage);
+        Assert.Equal(DetailFailureKind.None, scope.Vm.FailureKind);
+        Assert.NotNull(scope.Vm.MetadataRefreshErrorMessage);
+        Assert.False(scope.Vm.IsLoading);
+        Assert.False(scope.Vm.IsMetadataRefreshing);
+        Assert.Same(season, Assert.Single(scope.Vm.Seasons));
+        Assert.Same(episode, Assert.Single(scope.Vm.Episodes));
+        Assert.Equal(0, scope.EpisodeReads);
+
+        // An unrelated state sweep must not dismiss a failed metadata refresh.
+        scope.OverrideResponse = null;
+        await scope.Vm.RefreshMediaStateAsync(scope.Message());
+        Assert.NotNull(scope.Vm.MetadataRefreshErrorMessage);
+        var viewerState = mounted.UserData;
+        var episodeReads = scope.EpisodeReads;
+        scope.OverrideDetail = () => Task.FromResult(new MediaItemDetail
+        {
+            ContentId = mounted.ContentId, Type = type, Title = "Recovered metadata",
+            PlayContentId = "obsolete-metadata-target", UserData = new() { Played = true }
+        });
+        scope.Vm.RemoteStateErrorMessage = "An independent state refresh still needs retry.";
+
+        // The page's inline metadata retry calls ReloadAsync, not LoadAsync or a state sweep.
+        await scope.Vm.ReloadAsync(mounted.ContentId);
+
+        Assert.Equal("Recovered metadata", mounted.Title);
+        Assert.Null(scope.Vm.MetadataRefreshErrorMessage);
+        Assert.NotNull(scope.Vm.RemoteStateErrorMessage);
+        Assert.Null(scope.Vm.ErrorMessage);
+        Assert.Equal(DetailFailureKind.None, scope.Vm.FailureKind);
+        Assert.Same(mounted, scope.Vm.Item);
+        Assert.Same(viewerState, mounted.UserData);
+        Assert.False(mounted.HasAuthoritativePlayTarget);
+        Assert.Same(season, Assert.Single(scope.Vm.Seasons));
+        Assert.Same(episode, Assert.Single(scope.Vm.Episodes));
+        Assert.Equal(1, scope.Vm.SelectedSeasonNumber);
+        Assert.Equal("season", scope.Vm.EpisodesSeasonContentId);
+        Assert.Equal(episodeReads, scope.EpisodeReads);
+        Assert.False(scope.Vm.IsLoading);
+    }
+
+    [Fact]
+    public async Task PendingMetadataReloadDoesNotHideMountedContentBehindTheInitialLoadSkeleton()
+    {
+        using var scope = new Scope("series");
+        var fresh = new TaskCompletionSource<MediaItemDetail>(TaskCreationOptions.RunContinuationsAsynchronously);
+        scope.OverrideDetail = () => fresh.Task;
+        var mounted = scope.Vm.Item!;
+        var reload = scope.Vm.ReloadAsync(mounted.ContentId);
+        await scope.ReadStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            Assert.True(scope.Vm.IsMetadataRefreshing);
+            Assert.False(scope.Vm.IsLoading);
+            Assert.Same(mounted, scope.Vm.Item);
+            Assert.Single(scope.Vm.Seasons);
+            Assert.Single(scope.Vm.Episodes);
+        }
+        finally { fresh.TrySetResult(scope.FreshDetail(mounted.ContentId, "series")); }
+        await reload.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(scope.Vm.IsMetadataRefreshing);
+    }
+
+    [Theory]
     [InlineData("series")]
     [InlineData("season")]
     public async Task MetadataReloadRetainsRowsSelectionAndStateForTheNextRemoteEvent(string type)
@@ -1092,6 +1218,7 @@ public sealed class RealtimeDetailStateTests
                 {
                     ["content_id"] = detail.ContentId, ["type"] = detail.Type,
                     ["title"] = detail.Title, ["overview"] = detail.Overview,
+                    ["episode_count"] = detail.EpisodeCount, ["season_count"] = detail.SeasonCount,
                     ["season_number"] = detail.SeasonNumber, ["pending_translation_language"] = detail.PendingTranslationLanguage,
                     ["user_state"] = detail.UserState == null ? null : new { is_favorite = detail.UserState.IsFavorite,
                         in_watchlist = detail.UserState.InWatchlist, not_interested = detail.UserState.NotInterested },

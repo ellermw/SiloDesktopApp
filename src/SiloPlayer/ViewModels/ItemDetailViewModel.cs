@@ -21,6 +21,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     private readonly ItemDetailPrefetchCache _detailPrefetchCache;
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _metadataLoadCts;
+    public bool IsMetadataRefreshing => _metadataLoadCts != null;
     private long _similarLoadGeneration;
     private long _seasonsLoadGeneration;
     private long _episodesLoadGeneration;
@@ -405,9 +406,13 @@ public partial class ItemDetailViewModel : ObservableObject,
                 if (_stateRefreshActive && !ct.IsCancellationRequested && ReferenceEquals(Item, item)
                     && LibraryId == libraryId && _catalogApi.IsCurrentContext(message.Context))
                 {
-                    if (itemChanged) OnPropertyChanged(nameof(Item));
-                    if (seasonsChanged) OnPropertyChanged(nameof(Seasons));
-                    if (episodesChanged) OnPropertyChanged(nameof(Episodes));
+                    // A reconnect may have retired a sweep after it committed
+                    // values but before it notified the preserved page. Repaint
+                    // catch-up even when those retained values compare equal.
+                    var repaint = message.CatchUp && refreshCompleted;
+                    if (itemChanged || repaint) OnPropertyChanged(nameof(Item));
+                    if (seasonsChanged || repaint) OnPropertyChanged(nameof(Seasons));
+                    if (episodesChanged || repaint) OnPropertyChanged(nameof(Episodes));
                     // A partial sweep is not a completed catch-up. Offer an
                     // inline retry without covering mounted content or changing
                     // the initial-load failure state used by reconnect handling.
@@ -799,6 +804,9 @@ public partial class ItemDetailViewModel : ObservableObject,
     private string? _remoteStateErrorMessage;
 
     [ObservableProperty]
+    private string? _metadataRefreshErrorMessage;
+
+    [ObservableProperty]
     private bool _isFavorite;
 
     [ObservableProperty]
@@ -903,6 +911,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         ErrorMessage = null;
         FailureKind = DetailFailureKind.None;
         RemoteStateErrorMessage = null;
+        MetadataRefreshErrorMessage = null;
         Item = null;
         Interlocked.Increment(ref _similarLoadGeneration);
         Interlocked.Increment(ref _seasonsLoadGeneration);
@@ -1068,6 +1077,20 @@ public partial class ItemDetailViewModel : ObservableObject,
             ? ReloadContainerMetadataAsync(item) : LoadAsync(contentId);
     }
 
+    /// <summary>A same-ID Match can also change structure and the server play target.</summary>
+    public async Task ReloadAfterMatchAsync(string contentId)
+    {
+        var item = Item;
+        var context = _catalogApi.CaptureContext();
+        var libraryId = LibraryId;
+        await ReloadAsync(contentId);
+        if (item?.ContentId != contentId || !ReferenceEquals(Item, item) || LibraryId != libraryId
+            || !_stateRefreshActive || !_catalogApi.IsCurrentContext(context)) return;
+        // Use the owned sweep's write barriers and stale-state guards rather
+        // than copying viewer/playback state out of the metadata response.
+        await RefreshMediaStateAsync(new(context, new HashSet<string>([contentId]), new HashSet<string>(), CatchUp: true));
+    }
+
     private async Task ReloadContainerMetadataAsync(MediaItemDetail item)
     {
         _metadataLoadCts?.Cancel();
@@ -1078,7 +1101,6 @@ public partial class ItemDetailViewModel : ObservableObject,
         bool Current() => !owner.IsCancellationRequested && ReferenceEquals(_metadataLoadCts, owner)
             && _stateRefreshActive && ReferenceEquals(Item, item) && LibraryId == libraryId
             && _catalogApi.IsCurrentContext(context);
-        IsLoading = true;
         try
         {
             var fresh = await _catalogApi.GetItemDetailAsync(item.ContentId, libraryId, owner.Token);
@@ -1135,8 +1157,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             item.EpisodeNumber = fresh.EpisodeNumber;
             item.IsSpecials = fresh.IsSpecials;
             item.FolderPaths = fresh.FolderPaths;
-            ErrorMessage = null;
-            FailureKind = DetailFailureKind.None;
+            MetadataRefreshErrorMessage = null;
             OnPropertyChanged(nameof(Item));
             OnPropertyChanged(nameof(RuntimeDisplay));
             OnPropertyChanged(nameof(GenresDisplay));
@@ -1146,22 +1167,13 @@ public partial class ItemDetailViewModel : ObservableObject,
         catch (Exception ex)
         {
             if (!Current()) return;
-            FailureKind = DetailFailurePolicy.Classify(ex);
-            ErrorMessage = DetailFailurePolicy.Message(FailureKind);
+            LocalLog.AppendException("state_trace.txt", ex, "container_metadata_refresh");
+            MetadataRefreshErrorMessage = "Silo couldn't refresh this item's metadata. Displayed information may be out of date.";
         }
         finally
         {
             if (ReferenceEquals(_metadataLoadCts, owner))
-            {
-                if (!owner.IsCancellationRequested && _stateRefreshActive && ReferenceEquals(Item, item)
-                    && !_catalogApi.IsCurrentContext(context))
-                {
-                    FailureKind = DetailFailureKind.Transient;
-                    ErrorMessage = DetailFailurePolicy.Message(FailureKind);
-                }
                 _metadataLoadCts = null;
-                IsLoading = false;
-            }
         }
     }
 
@@ -1406,7 +1418,12 @@ public partial class ItemDetailViewModel : ObservableObject,
     [RelayCommand]
     private async Task ToggleFavoriteAsync()
     {
-        if (Item == null) return;
+        var item = Item;
+        if (item == null) return;
+        var contentId = item.ContentId;
+        var seriesId = item.SeriesId;
+        var context = _catalogApi.CaptureContext();
+        bool Current() => _stateRefreshActive && ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context);
 
         // B13 + F4: optimistic flip, revert on failure, publish on success.
         bool wasFavorite = IsFavorite;
@@ -1415,18 +1432,18 @@ public partial class ItemDetailViewModel : ObservableObject,
         try
         {
             if (wasFavorite)
-                await _catalogApi.RemoveFavoriteAsync(Item.ContentId);
+                await _catalogApi.RemoveFavoriteAsync(contentId);
             else
-                await _catalogApi.AddFavoriteAsync(Item.ContentId);
+                await _catalogApi.AddFavoriteAsync(contentId);
 
-            Publish(
+            if (!Current()) return;
+            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                 wasFavorite ? MediaSurfaceChangeKind.FavoriteRemoved : MediaSurfaceChangeKind.FavoriteAdded,
-                Item.ContentId,
-                Item.SeriesId);
+                contentId, seriesId, context: context));
         }
         catch
         {
-            IsFavorite = wasFavorite;
+            if (Current()) IsFavorite = wasFavorite;
         }
         finally { Interlocked.Increment(ref _localStateGeneration); }
     }
@@ -1434,7 +1451,12 @@ public partial class ItemDetailViewModel : ObservableObject,
     [RelayCommand]
     private async Task ToggleWatchlistAsync()
     {
-        if (Item == null) return;
+        var item = Item;
+        if (item == null) return;
+        var contentId = item.ContentId;
+        var seriesId = item.SeriesId;
+        var context = _catalogApi.CaptureContext();
+        bool Current() => _stateRefreshActive && ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context);
 
         // B13 + F4: optimistic flip, revert on failure, publish on success.
         bool wasInList = InWatchlist;
@@ -1443,18 +1465,18 @@ public partial class ItemDetailViewModel : ObservableObject,
         try
         {
             if (wasInList)
-                await _catalogApi.RemoveFromWatchlistAsync(Item.ContentId);
+                await _catalogApi.RemoveFromWatchlistAsync(contentId);
             else
-                await _catalogApi.AddToWatchlistAsync(Item.ContentId);
+                await _catalogApi.AddToWatchlistAsync(contentId);
 
-            Publish(
+            if (!Current()) return;
+            WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
                 wasInList ? MediaSurfaceChangeKind.WatchlistRemoved : MediaSurfaceChangeKind.WatchlistAdded,
-                Item.ContentId,
-                Item.SeriesId);
+                contentId, seriesId, context: context));
         }
         catch
         {
-            InWatchlist = wasInList;
+            if (Current()) InWatchlist = wasInList;
         }
         finally { Interlocked.Increment(ref _localStateGeneration); }
     }

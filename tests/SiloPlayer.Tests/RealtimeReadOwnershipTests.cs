@@ -38,6 +38,136 @@ public sealed class RealtimeReadOwnershipTests
     }
 
     [Theory]
+    [InlineData("series", true)]
+    [InlineData("series", false)]
+    [InlineData("season", false)]
+    public async Task NewContextCatchUpRepaintsValuesCommittedByARetiredSweep(string type, bool holdSeasons)
+    {
+        using var f = new Fixture(); f.Seed();
+        if (type == "season")
+        {
+            f.Vm.Item!.Type = type;
+            f.Vm.Item.ContentId = "series:review-S01";
+            f.Vm.Item.SeriesId = Series;
+            f.Wire.DetailType = type; f.Wire.DetailSeriesId = Series;
+        }
+        var mounted = f.Vm.Item!;
+        mounted.EpisodeCount = 4;
+        var season = f.Vm.Seasons[0];
+        var episode = f.Vm.Episodes[0];
+        var changes = new List<string?>();
+        f.Vm.PropertyChanged += (_, e) => changes.Add(e.PropertyName);
+        f.Wire.Count = 2; f.Wire.Target = EpisodeB;
+        f.Wire.HoldSeasons = holdSeasons; f.Wire.HoldEpisodes = !holdSeasons;
+        var active = f.Vm.RefreshMediaStateAsync(f.Change(EpisodeA));
+        var held = await f.Wire.NextAsync();
+        Assert.Equal(8, mounted.EpisodeCount);
+        Assert.Equal(EpisodeB, mounted.PlayContentId);
+        Assert.DoesNotContain(nameof(f.Vm.Item), changes);
+        if (type == "series" && !holdSeasons)
+        {
+            Assert.Equal(2, season.UserData!.WatchedCount);
+            Assert.DoesNotContain(nameof(f.Vm.Seasons), changes);
+        }
+
+        // Reconnect retires reads without changing the mounted item/profile.
+        f.Client.InvalidateAccessContext();
+        f.Wire.HoldSeasons = false; f.Wire.HoldEpisodes = false;
+        var catchUp = f.Vm.RefreshMediaStateAsync(f.Change() with { CatchUp = true });
+        await Task.WhenAll(active, catchUp).WaitAsync(TimeSpan.FromSeconds(5));
+        await held.Settled.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Same(mounted, f.Vm.Item);
+        Assert.Same(season, Assert.Single(f.Vm.Seasons));
+        Assert.Same(episode, Assert.Single(f.Vm.Episodes));
+        Assert.Equal(2, mounted.UserData!.WatchedCount);
+        Assert.Equal(EpisodeB, mounted.PlayContentId);
+        Assert.Contains(nameof(f.Vm.Item), changes);
+        Assert.Contains(nameof(f.Vm.Seasons), changes);
+        Assert.Contains(nameof(f.Vm.Episodes), changes);
+    }
+
+    [Theory]
+    [InlineData(true, false, "navigation")]
+    [InlineData(true, true, "navigation")]
+    [InlineData(false, false, "navigation")]
+    [InlineData(false, true, "navigation")]
+    [InlineData(true, false, "same-id")]
+    [InlineData(true, true, "same-id")]
+    [InlineData(false, false, "same-id")]
+    [InlineData(false, true, "same-id")]
+    [InlineData(true, false, "profile")]
+    [InlineData(true, true, "profile")]
+    [InlineData(false, false, "profile")]
+    [InlineData(false, true, "profile")]
+    [InlineData(true, false, "context")]
+    [InlineData(true, true, "context")]
+    [InlineData(false, false, "context")]
+    [InlineData(false, true, "context")]
+    public async Task RetiredViewerWriteCannotPublishOrRollBackTheCurrentDetail(bool favorite, bool fail, string departure)
+    {
+        using var f = new Fixture(); f.Seed();
+        f.Wire.PendingWrite = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Wire.WriteStatus = fail ? HttpStatusCode.Forbidden : HttpStatusCode.NoContent;
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        f.Wire.OnWrite = () => started.TrySetResult();
+        var recipient = new object();
+        var messages = new List<MediaSurfaceChanged>();
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(recipient, (_, message) => messages.Add(message));
+        try
+        {
+            var operation = favorite ? f.Vm.ToggleFavoriteCommand.ExecuteAsync(null) : f.Vm.ToggleWatchlistCommand.ExecuteAsync(null);
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            if (departure == "navigation") await f.Vm.LoadInLibraryAsync(EpisodeB, 9);
+            else if (departure == "same-id") f.Vm.Item = new() { ContentId = Series, Type = "series", UserState = new() };
+            else if (departure == "profile") f.Client.SetProfile("replacement");
+            else f.Client.InvalidateAccessContext();
+            // Opposite values expose either a stale success publish or a stale rollback.
+            f.Vm.IsFavorite = fail; f.Vm.InWatchlist = fail;
+            var mounted = f.Vm.Item;
+            f.Wire.PendingWrite.SetResult();
+            await operation.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Same(mounted, f.Vm.Item);
+            Assert.Equal(fail, f.Vm.IsFavorite);
+            Assert.Equal(fail, f.Vm.InWatchlist);
+            Assert.Empty(messages);
+        }
+        finally { WeakReferenceMessenger.Default.UnregisterAll(recipient); }
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task CurrentViewerWritePublishesItsCapturedItemAndContext(bool favorite, bool initiallySet)
+    {
+        using var f = new Fixture(); f.Seed();
+        f.Vm.Item!.SeriesId = "parent-series";
+        f.Vm.IsFavorite = initiallySet; f.Vm.InWatchlist = initiallySet;
+        f.Wire.WriteMethod = initiallySet ? HttpMethod.Delete : HttpMethod.Put;
+        f.Wire.OnWrite = () => { };
+        var context = f.Client.CaptureContext();
+        var recipient = new object();
+        var messages = new List<MediaSurfaceChanged>();
+        WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(recipient, (_, message) => messages.Add(message));
+        try
+        {
+            await (favorite ? f.Vm.ToggleFavoriteCommand.ExecuteAsync(null) : f.Vm.ToggleWatchlistCommand.ExecuteAsync(null));
+            var message = Assert.Single(messages);
+            Assert.Equal(Series, message.ContentId);
+            Assert.Equal("parent-series", message.SeriesId);
+            Assert.Equal(context, message.Context);
+            Assert.Equal(favorite
+                ? initiallySet ? MediaSurfaceChangeKind.FavoriteRemoved : MediaSurfaceChangeKind.FavoriteAdded
+                : initiallySet ? MediaSurfaceChangeKind.WatchlistRemoved : MediaSurfaceChangeKind.WatchlistAdded, message.Kind);
+            Assert.Equal(!initiallySet, favorite ? f.Vm.IsFavorite : f.Vm.InWatchlist);
+        }
+        finally { WeakReferenceMessenger.Default.UnregisterAll(recipient); }
+    }
+
+    [Theory]
     [InlineData(MediaSurfaceChangeKind.FavoriteAdded)]
     [InlineData(MediaSurfaceChangeKind.WatchlistAdded)]
     [InlineData(MediaSurfaceChangeKind.RatingChanged)]
@@ -980,19 +1110,26 @@ public sealed class RealtimeReadOwnershipTests
         internal bool Favorite, Watchlist, NotInterested;
         internal int? Rating;
         internal Action? OnWrite;
+        internal TaskCompletionSource? PendingWrite;
+        internal HttpStatusCode WriteStatus = HttpStatusCode.NoContent;
+        internal HttpMethod WriteMethod = HttpMethod.Put;
         internal Action? BeforeWatchResponse;
         internal Action? BeforeDetailResponse;
         internal readonly List<Uri> CatalogUris = [];
         private readonly Channel<Read> _held = Channel.CreateUnbounded<Read>();
         private readonly List<Read> _all = [];
         internal Task<Read> NextAsync() => _held.Reader.ReadAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-        internal void ReleaseAll() { lock (_all) foreach (var read in _all) read.Release(); }
+        internal void ReleaseAll()
+        {
+            PendingWrite?.TrySetResult();
+            lock (_all) foreach (var read in _all) read.Release();
+        }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Assert.Equal("review-owned.invalid", request.RequestUri!.Host);
             if (request.Method != HttpMethod.Get && OnWrite is { } write)
             {
-                Assert.Equal(HttpMethod.Put, request.Method);
+                Assert.Equal(WriteMethod, request.Method);
                 Assert.Contains(request.RequestUri.AbsolutePath, new[]
                 {
                     $"/api/v2/favorites/{Uri.EscapeDataString(Series)}",
@@ -1000,7 +1137,8 @@ public sealed class RealtimeReadOwnershipTests
                     $"/api/v2/ratings/{Uri.EscapeDataString(Series)}"
                 });
                 write();
-                return new(HttpStatusCode.NoContent);
+                if (PendingWrite != null) await PendingWrite.Task.WaitAsync(ct);
+                return new(WriteStatus);
             }
             Assert.Equal(HttpMethod.Get, request.Method);
             var path = request.RequestUri.AbsolutePath;

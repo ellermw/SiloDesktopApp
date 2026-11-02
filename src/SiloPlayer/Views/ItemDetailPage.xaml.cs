@@ -30,7 +30,7 @@ public sealed partial class ItemDetailPage : Page
     public bool CanPreserveOnReconnect => ViewModel.Item != null
         && (ViewModel.Item.Type is "series" or "season")
         && ViewModel.FailureKind == DetailFailureKind.None
-        && !ViewModel.IsLoading && !ViewModel.IsSeasonsLoading && !ViewModel.IsEpisodesLoading
+        && !ViewModel.IsLoading && !ViewModel.IsMetadataRefreshing && !ViewModel.IsSeasonsLoading && !ViewModel.IsEpisodesLoading
         && _seasonEpisodesLoads == 0
         && !_isTranslatingEpisodes && _episodesTranslationStatusReads == 0 && !_episodesTranslationInterrupted
         && !_isTranslatingOverview && _overviewTranslationStatusReads == 0 && !_overviewTranslationInterrupted
@@ -3307,6 +3307,19 @@ public sealed partial class ItemDetailPage : Page
         Frame?.Navigate(typeof(ItemDetailPage), _currentContentId == null ? null : MediaNavigationContext.Detail(_currentContentId, ViewModel.LibraryId));
     }
 
+    private async void RetryMetadataRefresh_Click(object sender, RoutedEventArgs e)
+    {
+        var item = ViewModel.Item;
+        if (item == null || !IsCurrentDetail(item.ContentId)) return;
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        var context = client.CaptureContext();
+        var navigation = _navigationCts;
+        await ViewModel.ReloadAsync(item.ContentId);
+        if (ReferenceEquals(_navigationCts, navigation) && ReferenceEquals(ViewModel.Item, item)
+            && client.IsCurrentContext(context) && IsCurrentDetail(item.ContentId))
+            UpdateUI();
+    }
+
     private async Task SendDetailToRoomAsync(SiloPlayer.ViewModels.WatchTogetherRoomViewModel room)
     {
         if (ViewModel.Item == null || room.RoomId == null || room.RoomToken == null) return;
@@ -4274,7 +4287,7 @@ public sealed partial class ItemDetailPage : Page
             return;
         }
         if (_currentContentId != item.ContentId) return;
-        await ViewModel.ReloadAsync(item.ContentId);
+        await ViewModel.ReloadAfterMatchAsync(item.ContentId);
         if (current?.Invoke() == false) return;
         UpdateUI();
     }
