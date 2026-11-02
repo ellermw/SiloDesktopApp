@@ -100,6 +100,26 @@ public sealed class DetailCacheInvalidationTests
     }
 
     [Fact]
+    public async Task SharedDetailBarrierWaitsForNewSavesAndDoesNotRetainWriteFailures()
+    {
+        var (cache, _) = CreateCache();
+        var messenger = new WeakReferenceMessenger();
+        DetailCacheInvalidation.Attach(cache, messenger);
+        var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var successful = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        messenger.Send(new PlaybackProgressUpdated("episode-1", 90, 100, false) { Persisted = failed.Task });
+        var revision = cache.ProgressSaveRevision;
+        var waiting = cache.WaitForProgressSettlementAsync(CancellationToken.None);
+        messenger.Send(new PlaybackProgressUpdated("episode-2", 99, 100, true) { Persisted = successful.Task });
+        failed.SetException(new HttpRequestException("Synthetic final-save failure."));
+        Assert.False(waiting.IsCompleted);
+        Assert.True(cache.ProgressSaveRevision > revision);
+        successful.SetResult();
+        await waiting.WaitAsync(TimeSpan.FromSeconds(5));
+        await cache.WaitForProgressSettlementAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
     public void FinalSaveCompletingDuringTheFirstClearStillGetsTheSecondClear()
     {
         var finalSave = new TaskCompletionSource();

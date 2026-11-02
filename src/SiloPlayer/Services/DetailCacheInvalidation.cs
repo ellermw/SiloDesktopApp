@@ -23,7 +23,7 @@ public static class DetailCacheInvalidation
         messenger.Register<ItemDetailPrefetchCache, MediaSurfaceChanged>(cache, static (owner, _) => owner.Clear());
         messenger.Register<ItemDetailPrefetchCache, MediaStateInvalidated>(cache, static (owner, _) => owner.Clear());
         messenger.Register<ItemDetailPrefetchCache, PlaybackProgressUpdated>(cache,
-            static (owner, message) => ClearNowAndAfter(message.Persisted, owner.Clear));
+            static (owner, message) => owner.TrackProgressSave(message.Persisted));
     }
 
     /// <summary>

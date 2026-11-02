@@ -25,6 +25,60 @@ public sealed class ItemDetailPrefetchCache
     private long _clearedAt;
     private readonly Dictionary<string, long> _invalidatedAt = new(StringComparer.Ordinal);
     private const int MaxReadAttempts = 3;
+    private Task _pendingProgressSaves = Task.CompletedTask;
+    private long _progressSaveRevision;
+    private readonly Func<ApiRequestContext>? _progressContext;
+    private ApiRequestContext? _progressSaveContext;
+
+    public long ProgressSaveRevision
+    {
+        get { lock (_sync) { EnsureProgressContext(); return _progressSaveRevision; } }
+    }
+
+    private void EnsureProgressContext()
+    {
+        var context = _progressContext?.Invoke();
+        // Access-only read invalidation must not retire same-profile writes.
+        if ((_progressSaveContext?.AuthenticationGeneration, _progressSaveContext?.BaseUrl, _progressSaveContext?.ProfileId)
+            == (context?.AuthenticationGeneration, context?.BaseUrl, context?.ProfileId)) return;
+        _progressSaveContext = context;
+        _pendingProgressSaves = Task.CompletedTask;
+        ++_progressSaveRevision;
+    }
+
+    // Keep final saves alive independently of detail-page recipients. Scoped
+    // loads also use this barrier even though they bypass the prefetch cache.
+    public void TrackProgressSave(Task persisted)
+    {
+        lock (_sync)
+        {
+            EnsureProgressContext();
+            ++_progressSaveRevision;
+            Clear();
+            var settled = ClearAfterProgressSaveAsync(persisted);
+            _pendingProgressSaves = _pendingProgressSaves.IsCompleted
+                ? settled : Task.WhenAll(_pendingProgressSaves, settled);
+        }
+    }
+
+    public async Task WaitForProgressSettlementAsync(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            Task pending;
+            lock (_sync) { EnsureProgressContext(); pending = _pendingProgressSaves; }
+            await pending.WaitAsync(cancellationToken).ConfigureAwait(false);
+            lock (_sync)
+                if (ReferenceEquals(pending, _pendingProgressSaves)) return;
+        }
+    }
+
+    private Task ClearAfterProgressSaveAsync(Task persisted) => persisted.ContinueWith(static (save, state) =>
+    {
+        // The write owner reports errors; readers wait for settlement only.
+        _ = save.Exception;
+        ((ItemDetailPrefetchCache)state!).Clear();
+    }, this, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
 
     public ItemDetailPrefetchCache(CatalogApi catalogApi, AuthService authService)
         : this((contentId, cancellationToken) =>
@@ -36,6 +90,7 @@ public sealed class ItemDetailPrefetchCache
                 catalogApi.CaptureContext().RequestContextGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 catalogApi.LocalizedReadGeneration.ToString(System.Globalization.CultureInfo.InvariantCulture)))
     {
+        _progressContext = catalogApi.CaptureContext;
     }
 
     public ItemDetailPrefetchCache(

@@ -592,11 +592,14 @@ public partial class ItemDetailViewModel : ObservableObject,
     public void Receive(PlaybackProgressUpdated message)
     {
         _detailPrefetchCache.Invalidate(message.ContentId);
-        if (Item is { } item && (item.ContentId == message.ContentId
+        // While the initial snapshot is unknown, retain every final save: the
+        // changed leaf may belong to a container whose children are not loaded.
+        if ((Item == null && _loadCts is { IsCancellationRequested: false })
+            || (Item is { } item && (item.ContentId == message.ContentId
             || item.PlayContentId == message.ContentId
             || ((item.Type is "series" or "season") && !string.IsNullOrEmpty(message.SeriesId)
                 && (item.ContentId == message.SeriesId || item.SeriesId == message.SeriesId))
-            || Episodes.Any(e => e.ContentId == message.ContentId)))
+            || Episodes.Any(e => e.ContentId == message.ContentId))))
         {
             var settled = ProgressSaveSettledAsync(message.Persisted);
             lock (_remoteStateGate)
@@ -777,6 +780,11 @@ public partial class ItemDetailViewModel : ObservableObject,
         var ct = loadCts.Token;
         var loadContext = _catalogApi.CaptureContext();
         var initialRevision = _initialStateRevision;
+        var localRevision = Volatile.Read(ref _localStateGeneration);
+        var progressRevision = _detailPrefetchCache.ProgressSaveRevision;
+        var libraryId = LibraryId;
+        bool Current() => ReferenceEquals(_loadCts, loadCts) && !ct.IsCancellationRequested
+            && LibraryId == libraryId && _catalogApi.IsCurrentContext(loadContext);
 
         IsLoading = true;
         ErrorMessage = null;
@@ -803,6 +811,9 @@ public partial class ItemDetailViewModel : ObservableObject,
 
         try
         {
+            await _detailPrefetchCache.WaitForProgressSettlementAsync(ct);
+            await WaitForLocalProgressSettlementAsync(ct);
+            if (!Current()) return;
             MediaItemDetail item;
             try { item = await ReadDetailAsync(contentId, ct); }
             catch (UserStateChangedException) when (!ct.IsCancellationRequested)
@@ -814,9 +825,36 @@ public partial class ItemDetailViewModel : ObservableObject,
             if (initialRevision != _initialStateRevision && _initialRemoteState is { } invalidation && IsRelatedState(invalidation, item))
             {
                 initialRevision = _initialStateRevision;
-                item = await _catalogApi.GetItemDetailAsync(contentId, LibraryId, ct);
+                try
+                {
+                    item = await ReadRemoteStateAsync(
+                        () => _catalogApi.GetItemDetailAsync(contentId, libraryId, ct), invalidation.CatchUp, Current, ct);
+                }
+                catch (Exception ex) when (Current())
+                {
+                    // A corrective read must not turn a successful initial
+                    // snapshot into a full-page failure. Keep it and offer retry.
+                    LocalLog.AppendException("state_trace.txt", ex, "initial_detail_state_refresh");
+                    RemoteStateErrorMessage = "Silo couldn't refresh this item. Displayed information may be out of date.";
+                }
                 ct.ThrowIfCancellationRequested();
-                if (!ReferenceEquals(_loadCts, loadCts) || !_catalogApi.IsCurrentContext(loadContext)) return;
+                if (!Current()) return;
+            }
+            while (true)
+            {
+                await _detailPrefetchCache.WaitForProgressSettlementAsync(ct);
+                await WaitForLocalProgressSettlementAsync(ct);
+                if (!Current()) return;
+                if (localRevision == Volatile.Read(ref _localStateGeneration)
+                    && progressRevision == _detailPrefetchCache.ProgressSaveRevision) break;
+                localRevision = Volatile.Read(ref _localStateGeneration);
+                progressRevision = _detailPrefetchCache.ProgressSaveRevision;
+                // Own a fresh read after settlement, including for leaves and
+                // library-scoped pages. A new save during it requires another.
+                item = await ReadRemoteStateAsync(
+                    () => _catalogApi.GetItemDetailAsync(contentId, libraryId, ct), false, Current, ct);
+                ct.ThrowIfCancellationRequested();
+                if (!Current()) return;
             }
             Item = item;
 
