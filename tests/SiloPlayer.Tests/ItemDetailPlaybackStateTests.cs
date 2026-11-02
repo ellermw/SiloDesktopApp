@@ -25,6 +25,18 @@ public class ItemDetailPlaybackStateTests : IDisposable
     }
 
     [Fact]
+    public void ProgressWithinAnAlreadyStartedEpisodeNotifiesTheRetainedCard()
+    {
+        var vm = Create("series", false);
+        vm.Episodes.Add(new() { ContentId = "child", UserData = new() { IsInProgress = true, PositionSeconds = 10, DurationSeconds = 100 } });
+        var changes = new List<string?>();
+        vm.PropertyChanged += (_, e) => changes.Add(e.PropertyName);
+        vm.Receive(new PlaybackProgressUpdated("child", 50, 100, false));
+        Assert.Equal(50, vm.Episodes[0].UserData!.PositionSeconds);
+        Assert.Contains(nameof(vm.Episodes), changes);
+    }
+
+    [Fact]
     public void ClearedResumeRetiresInProgressOnRetainedDetailAndEpisodeRows()
     {
         var vm = Create("episode", false);
@@ -154,6 +166,27 @@ public class ItemDetailPlaybackStateTests : IDisposable
         response.SetResult(new MediaItemDetail { UserData = new() { Played = initiallyWatched } });
         await refresh;
         Assert.Equal(!initiallyWatched, vm.IsWatched);
+    }
+
+    [Fact]
+    public async Task ProgressReceivedWhileWaitingForFinalSaveDoesNotRetireAuthoritativeWatchedRead()
+    {
+        var saved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var reads = 0;
+        var vm = _scope.Create(new ItemDetailPrefetchCache((id, _) =>
+        {
+            reads++;
+            return Task.FromResult(new MediaItemDetail { ContentId = id, UserData = new() { Played = true } });
+        }));
+        vm.Item = new() { ContentId = "series", Type = "series", UserData = new() };
+        var refresh = vm.RefreshWatchedStateAsync(saved.Task, CancellationToken.None);
+        vm.Receive(new PlaybackProgressUpdated("episode", 99, 100, true) { SeriesId = "series", Persisted = saved.Task });
+        Assert.Equal(0, reads);
+        saved.SetResult();
+        await refresh.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(1, reads);
+        Assert.True(vm.IsWatched);
+        Assert.True(vm.Item.UserData!.Played);
     }
 
     [Fact]

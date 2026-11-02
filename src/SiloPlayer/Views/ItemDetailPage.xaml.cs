@@ -837,6 +837,9 @@ public sealed partial class ItemDetailPage : Page
         HeroInfoPanel.Children.Add(element);
     }
 
+    private Action? _pendingDetailUpdate;
+    private int _pendingDetailChanges;
+
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
     {
         var client = App.Services.GetRequiredService<SiloApiClient>();
@@ -849,23 +852,39 @@ public sealed partial class ItemDetailPage : Page
             DispatcherQueue.TryEnqueue(() => { if (Current()) UpdateStarRating(); });
         else if (args.PropertyName == nameof(ViewModel.IsWatched))
             DispatcherQueue.TryEnqueue(() => { if (Current()) UpdateWatchedButton(); });
-        else if (args.PropertyName == nameof(ViewModel.Seasons))
-            DispatcherQueue.TryEnqueue(() => { if (Current()) { BuildSeasonCards(); RefreshContainerCountBadges(); } });
-        else if (args.PropertyName is nameof(ViewModel.Item) or nameof(ViewModel.Episodes))
-            DispatcherQueue.TryEnqueue(() =>
+        else if (args.PropertyName is nameof(ViewModel.Item) or nameof(ViewModel.Episodes) or nameof(ViewModel.Seasons))
+        {
+            _pendingDetailChanges |= args.PropertyName == nameof(ViewModel.Item) ? 1
+                : args.PropertyName == nameof(ViewModel.Episodes) ? 2 : 4;
+            var queued = _pendingDetailUpdate != null;
+            // All notifications from a committed sweep share one dispatcher update.
+            // The latest owner also retires updates queued by an older navigation.
+            _pendingDetailUpdate = () =>
             {
+                var changes = _pendingDetailChanges;
+                _pendingDetailChanges = 0;
                 if (!Current()) return;
+                if ((changes & 4) != 0) BuildSeasonCards();
                 ApplyEpisodeSpoilers();
                 ApplySeasonAction();
-                if (args.PropertyName == nameof(ViewModel.Item))
+                RefreshContainerCountBadges();
+                if ((changes & 1) != 0)
                 {
-                    RefreshContainerCountBadges();
                     ApplyAuthoritativeSeriesAction();
                     BuildMoreFlyout();
-                    if (ViewModel.Item is { Type: "episode" })
-                        BuildSiblingEpisodeCards();
                 }
-            });
+            };
+            if (!queued && !DispatcherQueue.TryEnqueue(() =>
+            {
+                var update = _pendingDetailUpdate;
+                _pendingDetailUpdate = null;
+                update?.Invoke();
+            }))
+            {
+                _pendingDetailUpdate = null;
+                _pendingDetailChanges = 0;
+            }
+        }
     }
 
     private void RefreshContainerCountBadges()
@@ -2761,7 +2780,7 @@ public sealed partial class ItemDetailPage : Page
     private void ApplyEpisodeSpoilers()
     {
         if (!IsLoaded || ViewModel.Item is not { } item) return;
-        ++_episodeSpoilerRevision;
+        if (item.Type == "episode") ++_episodeSpoilerRevision;
         var hidden = item.Type == "episode" && _episodeSpoilerPreferences?.HideOverviews == true
             && EpisodeSpoilerPolicy.IsUnwatched(item.UserData?.Played, item.UserData?.IsInProgress, item.UserData?.PositionSeconds)
             && _revealedEpisodeOverviewId != item.ContentId;
@@ -2769,7 +2788,7 @@ public sealed partial class ItemDetailPage : Page
         RevealEpisodeOverviewButton.Visibility = hidden && !string.IsNullOrWhiteSpace(item.Overview) ? Visibility.Visible : Visibility.Collapsed;
         OverviewTranslationLabel.Visibility = !hidden && !string.IsNullOrWhiteSpace(item.Overview) && MachineTranslationPresentation.HasField(item.MachineTranslatedFields) ? Visibility.Visible : Visibility.Collapsed;
         if (hidden) TranslateOverviewButton.Visibility = Visibility.Collapsed;
-        if (ViewModel.Episodes.Count > 0 && item.Type is "series" or "season") LayoutEpisodeGrid();
+        if (ViewModel.Episodes.Count > 0 && item.Type is "series" or "season") RefreshEpisodeCards();
         if (item.Type == "episode") BuildSiblingEpisodeCards();
     }
     private void RevealEpisodeOverviewButton_Click(object sender, RoutedEventArgs e)
@@ -6831,6 +6850,7 @@ public sealed partial class ItemDetailPage : Page
             var item = ViewModel.Item;
             var context = catalogApi.CaptureContext();
             EpisodesResponse response;
+            var attempt = 0;
             while (true)
             {
                 var revision = ViewModel.WatchedStateRevision;
@@ -6838,7 +6858,7 @@ public sealed partial class ItemDetailPage : Page
                 response = await catalogApi.GetItemEpisodesAsync(seasonContentId, libraryId, ct);
                 if (ct.IsCancellationRequested || _currentContentId != ownerContentId || ViewModel.LibraryId != libraryId
                     || !ReferenceEquals(ViewModel.Item, item) || !catalogApi.IsCurrentContext(context)) return false;
-                if (revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
+                if (++attempt == 2 || revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
             }
             if (response?.Episodes != null && response.Episodes.Count > 0)
             {
@@ -7499,8 +7519,22 @@ public sealed partial class ItemDetailPage : Page
 
     private void BuildSeasonCards()
     {
-        SeasonsPanel.Children.Clear();
         _seasonCardWidth = SeasonWidth(ActualWidth);
+        var seasons = ViewModel.Seasons.OrderBy(season => season.SeasonNumber).ToArray();
+        var cards = SeasonsPanel.Children.OfType<Button>().ToArray();
+        if (cards.Length == seasons.Length && !cards.Where((card, index) => card.Content is not StackPanel content
+            || !ReferenceEquals(content.Tag, seasons[index]) || content.Width != _seasonCardWidth).Any())
+        {
+            for (var index = 0; index < cards.Length; index++)
+            {
+                if (cards[index].Content is not StackPanel content || content.Children[0] is not Grid posterHost) continue;
+                UpdateSeasonPosterState(posterHost, seasons[index]);
+                ((TextBlock)content.Children[2]).Text = FormatSeasonProgressText(seasons[index]);
+                AutomationProperties.SetName(cards[index], $"{((TextBlock)content.Children[1]).Text}, {FormatSeasonProgressText(seasons[index])}");
+            }
+            return;
+        }
+        SeasonsPanel.Children.Clear();
 
         if (ViewModel.Seasons.Count == 0)
         {
@@ -7559,6 +7593,77 @@ public sealed partial class ItemDetailPage : Page
         var posterHost = new Grid { Width = cardWidth, Height = cardWidth * 1.5 };
         posterHost.Children.Add(posterBorder);
 
+        UpdateSeasonPosterState(posterHost, season);
+
+        // Title
+        var titleText = new TextBlock
+        {
+            Text = title,
+            FontSize = 13,
+            LineHeight = 19.5,
+            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxLines = 1,
+            Margin = new Thickness(2, 10, 2, 0)
+        };
+
+        // Episode count / progress
+        var progressText = BuildSeasonProgressText(season);
+
+        var content = new StackPanel
+        {
+            Width = cardWidth,
+            Children = { posterHost, titleText, progressText },
+            Tag = season,
+        };
+
+        var cardButton = new Button
+        {
+            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
+            Padding = new Thickness(0),
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            VerticalContentAlignment = VerticalAlignment.Top,
+            Content = content,
+            Tag = season.ContentId,
+            CornerRadius = new CornerRadius(12),
+        };
+        AutomationProperties.SetName(cardButton, $"{title}, {FormatSeasonProgressText(season)}");
+
+        cardButton.PointerEntered += (_, _) =>
+        {
+            App.Services.GetRequiredService<ItemDetailPrefetchCache>()
+                .Prefetch(season.ContentId);
+            posterBorder.Opacity = 0.92;
+        };
+        cardButton.PointerExited += (_, _) =>
+        {
+            posterBorder.Opacity = 1;
+        };
+        cardButton.Click += (_, _) =>
+        {
+            if (string.IsNullOrWhiteSpace(season.ContentId)) return;
+            App.Services.GetRequiredService<ItemDetailPrefetchCache>()
+                .Prefetch(season.ContentId);
+            App.Services.GetRequiredService<NavigationService>()
+                .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(season.ContentId, ViewModel.LibraryId));
+        };
+        cardButton.GotFocus += (_, _) => App.Services
+            .GetRequiredService<ItemDetailPrefetchCache>()
+            .Prefetch(season.ContentId);
+
+        return cardButton;
+    }
+
+    private void UpdateSeasonPosterState(Grid posterHost, Season season)
+    {
+        var state = (season.EpisodeCount, season.UserData?.Played, season.UserData?.WatchedCount, season.UserData?.InProgressCount);
+        if (Equals(posterHost.Tag, state)) return;
+        posterHost.Tag = state;
+        // Retain the poster and focusable card; only the small state overlays change.
+        while (posterHost.Children.Count > 1) posterHost.Children.RemoveAt(1);
+        var cardWidth = posterHost.Width;
         // Completed checkmark (top-right green badge) — webui parity: the
         // circular bg-green-500/90 check overlay on fully-watched seasons.
         bool isCompleted = season.UserData?.Played == true;
@@ -7619,64 +7724,6 @@ public sealed partial class ItemDetailPage : Page
             posterHost.Children.Add(barTrack);
         }
 
-        // Title
-        var titleText = new TextBlock
-        {
-            Text = title,
-            FontSize = 13,
-            LineHeight = 19.5,
-            LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
-            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
-            Foreground = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["PrimaryTextBrush"],
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            MaxLines = 1,
-            Margin = new Thickness(2, 10, 2, 0)
-        };
-
-        // Episode count / progress
-        var progressText = BuildSeasonProgressText(season);
-
-        var content = new StackPanel
-        {
-            Width = cardWidth,
-            Children = { posterHost, titleText, progressText }
-        };
-
-        var cardButton = new Button
-        {
-            Style = (Style)Application.Current.Resources["GhostButtonStyle"],
-            Padding = new Thickness(0),
-            HorizontalContentAlignment = HorizontalAlignment.Left,
-            VerticalContentAlignment = VerticalAlignment.Top,
-            Content = content,
-            Tag = season.ContentId,
-            CornerRadius = new CornerRadius(12),
-        };
-        AutomationProperties.SetName(cardButton, $"{title}, {FormatSeasonProgressText(season)}");
-
-        cardButton.PointerEntered += (_, _) =>
-        {
-            App.Services.GetRequiredService<ItemDetailPrefetchCache>()
-                .Prefetch(season.ContentId);
-            posterBorder.Opacity = 0.92;
-        };
-        cardButton.PointerExited += (_, _) =>
-        {
-            posterBorder.Opacity = 1;
-        };
-        cardButton.Click += (_, _) =>
-        {
-            if (string.IsNullOrWhiteSpace(season.ContentId)) return;
-            App.Services.GetRequiredService<ItemDetailPrefetchCache>()
-                .Prefetch(season.ContentId);
-            App.Services.GetRequiredService<NavigationService>()
-                .Navigate<ItemDetailPage>(MediaNavigationContext.Detail(season.ContentId, ViewModel.LibraryId));
-        };
-        cardButton.GotFocus += (_, _) => App.Services
-            .GetRequiredService<ItemDetailPrefetchCache>()
-            .Prefetch(season.ContentId);
-
-        return cardButton;
     }
 
     private TextBlock BuildSeasonProgressText(Season season)
@@ -7870,8 +7917,26 @@ public sealed partial class ItemDetailPage : Page
         }
     }
 
+    private sealed record RetainedEpisodeCard(Episode Episode, Action Refresh);
+
+    private void RefreshEpisodeCards()
+    {
+        // Multi-season series auto-load season one for play routing, not display.
+        if (ViewModel.Item?.Type == "series" && ViewModel.Seasons.Count != 1) return;
+        if (EpisodesSection.Visibility != Visibility.Visible) return;
+        var cards = EpisodesPanel.Children.OfType<FrameworkElement>().ToArray();
+        if (cards.Length != ViewModel.Episodes.Count || cards.Where((card, index) =>
+            card.Tag is not RetainedEpisodeCard state || !ReferenceEquals(state.Episode, ViewModel.Episodes[index])).Any())
+        {
+            LayoutEpisodeGrid();
+            return;
+        }
+        foreach (var card in cards) ((RetainedEpisodeCard)card.Tag).Refresh();
+    }
+
     private void LayoutEpisodeGrid()
     {
+        if (ViewModel.Item?.Type == "series" && ViewModel.Seasons.Count != 1) return;
         EpisodesPanel.Children.Clear();
         EpisodesPanel.RowDefinitions.Clear();
         EpisodesPanel.ColumnDefinitions.Clear();
@@ -7944,7 +8009,6 @@ public sealed partial class ItemDetailPage : Page
             episode.UserData?.Played == true,
             episode.UserData?.PositionSeconds ?? 0,
             episode.UserData?.DurationSeconds ?? 0);
-        bool isInProgress = presentation.ShowProgress;
         bool isWatched = presentation.ShowWatchedIndicator;
 
         // ── Still image (16:9, fills card width) ──────────────────────────
@@ -7983,40 +8047,35 @@ public sealed partial class ItemDetailPage : Page
         var stillAspect = new EpisodeStillAspectPanel();
         stillAspect.Children.Add(stillWrapper);
 
-        // Progress bar overlay for in-progress episodes.
-        Grid? progressTrack = null;
-        if (isInProgress && episode.UserData!.DurationSeconds > 0)
+        // Keep the track mounted so a later progress update needs no card rebuild.
+        var progressFraction = presentation.ProgressRatio;
+        var progressTrack = new Grid
         {
-            var progressFraction = presentation.ProgressRatio;
-            progressTrack = new Grid
-            {
-                Height = 3,
-                VerticalAlignment = VerticalAlignment.Bottom,
-                HorizontalAlignment = HorizontalAlignment.Stretch,
-                Margin = new Thickness(8, 0, 8, 6),
-            };
-            progressTrack.Children.Add(new Border
-            {
-                Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x66, 0, 0, 0)),
-                CornerRadius = new CornerRadius(2),
-            });
-            var fill = new Border
-            {
-                Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"],
-                CornerRadius = new CornerRadius(2),
-                HorizontalAlignment = HorizontalAlignment.Left,
-            };
-            progressTrack.Children.Add(fill);
-            progressTrack.SizeChanged += (_, args) =>
-                fill.Width = args.NewSize.Width * Math.Clamp(progressFraction, 0, 1);
-            stillWrapper.Children.Add(progressTrack);
-        }
+            Height = 3,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Margin = new Thickness(8, 0, 8, 6),
+        };
+        progressTrack.Children.Add(new Border
+        {
+            Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x66, 0, 0, 0)),
+            CornerRadius = new CornerRadius(2),
+        });
+        var fill = new Border
+        {
+            Background = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["AccentBrush"],
+            CornerRadius = new CornerRadius(2),
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        progressTrack.Children.Add(fill);
+        progressTrack.SizeChanged += (_, args) =>
+            fill.Width = args.NewSize.Width * Math.Clamp(progressFraction, 0, 1);
+        stillWrapper.Children.Add(progressTrack);
 
         var hideOverview = _episodeSpoilerPreferences?.HideOverviews == true &&
             EpisodeSpoilerPolicy.IsUnwatched(episode.UserData?.Played, episode.UserData?.IsInProgress, episode.UserData?.PositionSeconds);
         var caption = new EpisodeCardCaption(episode, FormatDetailDate(episode.AirDate), hideOverview,
             _tvViewport != null && ActualWidth < 1024, isCurrent);
-        var watchedIndicator = caption.WatchedIndicator;
         var content = new StackPanel { Spacing = 0, Children = { stillAspect, caption } };
         var defaultBg = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         var mediaItem = new MediaItem
@@ -8093,18 +8152,13 @@ public sealed partial class ItemDetailPage : Page
                 mediaItem.UserState?.Played == true,
                 mediaItem.PositionSeconds ?? 0,
                 mediaItem.DurationSeconds ?? 0);
-            watchedIndicator.Visibility = current.ShowWatchedIndicator
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-            if (progressTrack != null)
-                progressTrack.Visibility = current.ShowProgress ? Visibility.Visible : Visibility.Collapsed;
+            progressTrack.Visibility = current.ShowProgress ? Visibility.Visible : Visibility.Collapsed;
+            progressFraction = current.ProgressRatio;
+            fill.Width = Math.Max(0, progressTrack.ActualWidth) * progressFraction;
             var hidden = _episodeSpoilerPreferences?.HideOverviews == true && EpisodeSpoilerPolicy.IsUnwatched(
                 mediaItem.UserState?.Played, mediaItem.UserState?.IsInProgress, mediaItem.PositionSeconds);
-            content.Children.Remove(caption);
-            caption = new EpisodeCardCaption(episode, FormatDetailDate(episode.AirDate), hidden,
-                _tvViewport != null && ActualWidth < 1024, isCurrent, current.ShowWatchedIndicator);
-            watchedIndicator = caption.WatchedIndicator;
-            content.Children.Add(caption);
+            caption.UpdateState(episode, FormatDetailDate(episode.AirDate), hidden,
+                _tvViewport != null && ActualWidth < 1024, current.ShowWatchedIndicator);
         }
 
         button.ContextFlyout = MediaItemMenu.Build(
@@ -8222,6 +8276,29 @@ public sealed partial class ItemDetailPage : Page
         root.GotFocus += (_, _) => SetActionLayerVisibility(true);
         root.LostFocus += (_, _) => SetActionLayerVisibility(false);
         UpdateQuickAction();
+        (bool?, bool?, double?, double?, bool, bool)? lastState = null;
+        var hideStill = EpisodeSpoilerPolicy.HideImage("episode", episode.StillIsEpisodeStill,
+            episode.UserData?.Played, episode.UserData?.IsInProgress, episode.UserData?.PositionSeconds,
+            _episodeSpoilerPreferences?.HideImages == true);
+        root.Tag = new RetainedEpisodeCard(episode, () =>
+        {
+            var state = (episode.UserData?.Played, episode.UserData?.IsInProgress, episode.UserData?.PositionSeconds,
+                episode.UserData?.DurationSeconds, _episodeSpoilerPreferences?.HideImages == true, _episodeSpoilerPreferences?.HideOverviews == true);
+            if (lastState == state) return;
+            lastState = state;
+            mediaItem.UserState ??= new();
+            mediaItem.UserState.Played = episode.UserData?.Played == true;
+            mediaItem.UserState.IsInProgress = episode.UserData?.IsInProgress == true;
+            mediaItem.PositionSeconds = episode.UserData?.PositionSeconds;
+            mediaItem.DurationSeconds = episode.UserData?.DurationSeconds;
+            UpdateQuickAction();
+            var nextHideStill = EpisodeSpoilerPolicy.HideImage("episode", episode.StillIsEpisodeStill,
+                episode.UserData?.Played, episode.UserData?.IsInProgress, episode.UserData?.PositionSeconds,
+                _episodeSpoilerPreferences?.HideImages == true);
+            if (hideStill != nextHideStill && !string.IsNullOrEmpty(episode.StillUrl))
+                _ = LoadEpisodeStillAsync(stillBorder, episode);
+            hideStill = nextHideStill;
+        });
 
         return root;
     }
@@ -8315,13 +8392,14 @@ public sealed partial class ItemDetailPage : Page
             var catalogApi = App.Services.GetRequiredService<CatalogApi>();
             var context = catalogApi.CaptureContext();
             EpisodesResponse response;
+            var attempt = 0;
             while (true)
             {
                 var revision = ViewModel.WatchedStateRevision;
                 var remoteRevision = ViewModel.RemoteStateRevision;
                 response = await catalogApi.GetItemEpisodesAsync(seasonContentId, libraryId, token);
                 if (!Current() || !ReferenceEquals(ViewModel.Item, item) || !catalogApi.IsCurrentContext(context)) return;
-                if (revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
+                if (++attempt == 2 || revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
             }
             ViewModel.Episodes.Clear();
             foreach (var episode in response.Episodes)
@@ -8359,6 +8437,7 @@ public sealed partial class ItemDetailPage : Page
         VerticalAlignment = vertical,
     };
 
+    private long _episodeStillLoadRevision;
     private async Task LoadEpisodeStillAsync(Border stillBorder, Episode episode)
     {
         var owner = ViewModel.Item;
@@ -8366,9 +8445,10 @@ public sealed partial class ItemDetailPage : Page
         var token = navigationOwner?.Token ?? CancellationToken.None;
         var api = App.Services.GetRequiredService<SiloApiClient>();
         var context = api.CaptureContext();
-        var spoilerRevision = _episodeSpoilerRevision;
+        var stillRevision = ++_episodeStillLoadRevision;
+        stillBorder.Tag = stillRevision;
         bool Current() => !token.IsCancellationRequested && ReferenceEquals(_navigationCts, navigationOwner) &&
-            ReferenceEquals(ViewModel.Item, owner) && api.IsCurrentContext(context) && spoilerRevision == _episodeSpoilerRevision;
+            ReferenceEquals(ViewModel.Item, owner) && api.IsCurrentContext(context) && Equals(stillBorder.Tag, stillRevision);
         try
         {
             var imageService = App.Services.GetRequiredService<ImageService>();
@@ -8381,7 +8461,6 @@ public sealed partial class ItemDetailPage : Page
             _episodeSpoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
             if (_episodeSpoilerPreferences != null) await _episodeSpoilerPreferences.EnsureLoadedAsync(token);
             if (!Current()) return;
-            var revision = _episodeSpoilerRevision;
             if (EpisodeSpoilerPolicy.HideImage("episode", episode.StillIsEpisodeStill, episode.UserData?.Played, episode.UserData?.IsInProgress, episode.UserData?.PositionSeconds, _episodeSpoilerPreferences?.HideImages == true))
                 bytes = await ArtworkEffects.BlurEpisodeStillAsync(bytes, token);
 
@@ -8404,7 +8483,7 @@ public sealed partial class ItemDetailPage : Page
             // Replace the placeholder. The stillBorder may be nested inside a
             // progress-overlay Grid, but it is still the same object reference
             // so setting its Child updates the visual tree correctly.
-            if (revision != _episodeSpoilerRevision || !Current()) return;
+            if (!Current()) return;
             stillBorder.Child = image;
             // Clear the placeholder background so the image shows through
             stillBorder.Background = null;

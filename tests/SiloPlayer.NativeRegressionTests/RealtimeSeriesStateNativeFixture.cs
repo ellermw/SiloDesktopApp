@@ -61,10 +61,19 @@ internal static class RealtimeSeriesStateNativeFixture
                         ((UIElement)page.FindName("SeasonsLoadingSkeleton")).Visibility = Visibility.Collapsed;
                     }
                     Call(page, "BuildSeasonCards"); Call(page, "BuildEpisodeRows"); Call(page, "UpdateWatchedButton");
+                    page.UpdateLayout();
+                    await Task.Delay(100); // Settle initial responsive reflow before retaining card identities.
                     // Initial navigation hides a season action when the server
                     // explicitly supplies null, even with loaded episode rows.
                     if (type == "season") ((UIElement)page.FindName("SplitPlayButton")).Visibility = Visibility.Collapsed;
                     var mounted = vm.Item;
+                    var episodePanel = (Panel)page.FindName("EpisodesPanel");
+                    var mountedCards = episodePanel.Children.ToArray();
+                    var loadedButton = Descendants<Button>(episodePanel).Single(button => button.Tag as string == "loaded");
+                    var mountedFlyout = loadedButton.ContextFlyout;
+                    var mountedCaption = Descendants<FrameworkElement>(loadedButton).Single(element => element.Name == "EpisodeCardCaption");
+                    var seasonPanel = (Panel)page.FindName("SeasonsPanel");
+                    var mountedSeasonCard = seasonPanel.Children[0];
                     using var data = JsonDocument.Parse("""
                         {"profile_id":"fixture-profile","content_id":"never-loaded","series_id":"series","change":"watched","played":true}
                         """);
@@ -72,6 +81,8 @@ internal static class RealtimeSeriesStateNativeFixture
                     await UntilAsync(() => vm.Item.UserData?.WatchedCount == 2);
                     await Task.Delay(100); page.UpdateLayout();
                     Check(ReferenceEquals(mounted, vm.Item), "Realtime refresh replaced the mounted detail.");
+                    Check(mountedCards.SequenceEqual(episodePanel.Children), "Aggregate-only refresh destroyed mounted episode cards.");
+                    Check(ReferenceEquals(mountedSeasonCard, seasonPanel.Children[0]), "State refresh destroyed the mounted season card/poster.");
                     Check(vm.Item.EpisodeCount == 6, "Realtime refresh discarded the authoritative episode total.");
                     if (type == "series")
                     {
@@ -120,6 +131,18 @@ internal static class RealtimeSeriesStateNativeFixture
                         "Realtime refresh replaced the retained episode instead of updating its state.");
                     Check(!HasWatchedBadge(page, "sibling") && vm.Episodes[0].UserData?.PositionSeconds == 31,
                         "A loaded episode's remote change repainted an unrelated sibling as watched.");
+                    Check(mountedCards.SequenceEqual(episodePanel.Children), "Episode state refresh destroyed focusable cards.");
+                    Check(ReferenceEquals(mountedFlyout, loadedButton.ContextFlyout) &&
+                        ReferenceEquals(mountedCaption, Descendants<FrameworkElement>(loadedButton).Single(element => element.Name == "EpisodeCardCaption")),
+                        "Episode refresh replaced the mounted flyout or caption instead of patching state in place.");
+                    if (type == "series")
+                    {
+                        vm.Seasons.Add(new() { ContentId = "second-season", SeasonNumber = 2 });
+                        Call(page, "ApplyEpisodeSpoilers");
+                        Call(page, "LayoutEpisodeGrid");
+                        Check(mountedCards.SequenceEqual(episodePanel.Children), "Hidden auto-selected episode rows were rebuilt on a multi-season series.");
+                        vm.Seasons.RemoveAt(1);
+                    }
                     await MediaParityNativeFixture.CaptureAsync(page, "realtime-state-" + type + ".png");
                     Check(page.CanPreserveOnReconnect, "A healthy mounted detail should survive reconnect.");
                     vm.Seasons.Clear(); vm.Episodes.Clear();

@@ -24,6 +24,8 @@ public partial class ItemDetailViewModel : ObservableObject,
     private long _seasonsLoadGeneration;
     private long _episodesLoadGeneration;
     private long _watchedStateGeneration;
+    // Write authority is independent of progress/read invalidation revisions.
+    private long _watchedWriteGeneration;
     private bool _stateRefreshActive = true;
     private readonly SynchronizationContext? _stateContext = SynchronizationContext.Current;
     private readonly object _remoteStateGate = new();
@@ -82,6 +84,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         if (Item == null) return;
         if (Item.ContentId == message.ItemId && message.Marked.HasValue)
         {
+            Interlocked.Increment(ref _localStateGeneration);
             (Item.UserState ??= new()).NotInterested = message.Marked.Value;
             OnPropertyChanged(nameof(Item));
         }
@@ -112,19 +115,18 @@ public partial class ItemDetailViewModel : ObservableObject,
         switch (message.Kind)
         {
             case MediaSurfaceChangeKind.FavoriteAdded:
-                IsFavorite = true;
-                break;
             case MediaSurfaceChangeKind.FavoriteRemoved:
-                IsFavorite = false;
+                Interlocked.Increment(ref _localStateGeneration);
+                (Item.UserState ??= new()).IsFavorite = IsFavorite = message.Kind == MediaSurfaceChangeKind.FavoriteAdded;
                 break;
             case MediaSurfaceChangeKind.WatchlistAdded:
-                InWatchlist = true;
-                break;
             case MediaSurfaceChangeKind.WatchlistRemoved:
-                InWatchlist = false;
+                Interlocked.Increment(ref _localStateGeneration);
+                (Item.UserState ??= new()).InWatchlist = InWatchlist = message.Kind == MediaSurfaceChangeKind.WatchlistAdded;
                 break;
             case MediaSurfaceChangeKind.RatingChanged:
-                UserRating = message.Rating;
+                Interlocked.Increment(ref _localStateGeneration);
+                Item.UserRating = UserRating = message.Rating;
                 break;
         }
     }
@@ -239,6 +241,9 @@ public partial class ItemDetailViewModel : ObservableObject,
                 _remoteStateReadCts = readOwner;
                 _remoteStateReadContext = message.Context;
             }
+            var itemChanged = false;
+            var seasonsChanged = false;
+            var episodesChanged = false;
             try
             {
                 // An echoed/other-device event must not retire the accepted
@@ -247,10 +252,13 @@ public partial class ItemDetailViewModel : ObservableObject,
                 {
                     if (ToggleWatchedCommand is { IsRunning: true, ExecutionTask: { } mutation })
                         await mutation.WaitAsync(ct);
+                    foreach (var command in new IAsyncRelayCommand[] { ToggleFavoriteCommand, ToggleWatchlistCommand, SetRatingCommand })
+                        if (command is { IsRunning: true, ExecutionTask: { } viewerMutation })
+                            await viewerMutation.WaitAsync(ct);
                     await WaitForLocalProgressSettlementAsync(ct);
-                    // A mark can start while the final progress save is pending.
-                    // Settle it too before accepting a new local-state baseline.
-                } while (ToggleWatchedCommand.IsRunning);
+                    // A mutation can start while another write/save is pending.
+                } while (ToggleWatchedCommand.IsRunning || ToggleFavoriteCommand.IsRunning
+                    || ToggleWatchlistCommand.IsRunning || SetRatingCommand.IsRunning);
                 if (!_stateRefreshActive || ct.IsCancellationRequested || !ReferenceEquals(Item, item)
                     || LibraryId != libraryId || !_catalogApi.IsCurrentContext(message.Context)) continue;
                 revision = Volatile.Read(ref _localStateGeneration);
@@ -262,35 +270,43 @@ public partial class ItemDetailViewModel : ObservableObject,
                 if (!Current()) continue;
                 // Keep aggregate feedback and later local watched deltas on the
                 // same server total. Missing legacy counts leave known totals intact.
-                if (refreshed.EpisodeCount.HasValue) item.EpisodeCount = refreshed.EpisodeCount;
-                if (refreshed.SeasonCount.HasValue) item.SeasonCount = refreshed.SeasonCount;
-                if (refreshed.UserData is { } userData)
+                if (refreshed.EpisodeCount.HasValue && item.EpisodeCount != refreshed.EpisodeCount)
+                { item.EpisodeCount = refreshed.EpisodeCount; itemChanged = true; }
+                if (refreshed.SeasonCount.HasValue && item.SeasonCount != refreshed.SeasonCount)
+                { item.SeasonCount = refreshed.SeasonCount; itemChanged = true; }
+                if (refreshed.UserData is { } userData && !SameUserData(item.UserData, userData))
                 {
                     item.UserData = userData;
                     IsWatched = userData.Played;
+                    itemChanged = true;
                 }
-                if (refreshed.HasAuthoritativePlayTarget)
+                if (refreshed.HasAuthoritativePlayTarget && (!item.HasAuthoritativePlayTarget
+                    || item.PlayContentId != refreshed.PlayContentId || item.PlaySeasonNumber != refreshed.PlaySeasonNumber))
                 {
                     item.PlayContentId = refreshed.PlayContentId;
                     item.PlaySeasonNumber = refreshed.PlaySeasonNumber;
+                    itemChanged = true;
                 }
                 if (message.CatchUp)
                 {
-                    if (refreshed.UserState != null)
+                    if (refreshed.UserState != null && (item.UserState == null
+                        || (item.UserState.Played, item.UserState.IsFavorite, item.UserState.InWatchlist, item.UserState.NotInterested)
+                            != (refreshed.UserState.Played, refreshed.UserState.IsFavorite, refreshed.UserState.InWatchlist, refreshed.UserState.NotInterested)))
                     {
                         item.UserState = refreshed.UserState;
                         IsFavorite = item.UserState.IsFavorite;
                         InWatchlist = item.UserState.InWatchlist;
+                        itemChanged = true;
                     }
-                    if (refreshed.HasAuthoritativeUserRating)
+                    if (refreshed.HasAuthoritativeUserRating && (!item.HasAuthoritativeUserRating || item.UserRating != refreshed.UserRating))
                     {
                         item.UserRating = refreshed.UserRating;
                         UserRating = item.UserRating;
+                        itemChanged = true;
                     }
                 }
-                // The authoritative detail is useful even if a companion read
-                // fails. Commit and notify before starting those independent reads.
-                OnPropertyChanged(nameof(Item));
+                // Notify the retained snapshot once all companion reads settle,
+                // including successful detail changes when a companion fails.
                 if (!Current()) continue;
                 // LoadSeasonsAsync stays active through auto-selected episodes;
                 // its already-committed seasons still need remote count refreshes.
@@ -304,14 +320,19 @@ public partial class ItemDetailViewModel : ObservableObject,
                         {
                             var loaded = Seasons.FirstOrDefault(s => s.ContentId == fresh.ContentId);
                             if (loaded == null) return fresh;
-                            loaded.EpisodeCount = fresh.EpisodeCount;
-                            if (fresh.UserData != null) loaded.UserData = fresh.UserData;
+                            if (loaded.EpisodeCount != fresh.EpisodeCount)
+                            { loaded.EpisodeCount = fresh.EpisodeCount; seasonsChanged = true; }
+                            if (fresh.UserData != null && !SameUserData(loaded.UserData, fresh.UserData))
+                            { loaded.UserData = fresh.UserData; seasonsChanged = true; }
                             return loaded;
                         }).ToArray();
-                        Seasons.Clear();
-                        foreach (var season in retained) Seasons.Add(season);
+                        if (!Seasons.SequenceEqual(retained))
+                        {
+                            Seasons.Clear();
+                            foreach (var season in retained) Seasons.Add(season);
+                            seasonsChanged = true;
+                        }
                         _seasonsLoaded = true;
-                        OnPropertyChanged(nameof(Seasons));
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested)
                     { System.Diagnostics.Debug.WriteLine($"Realtime seasons-state refresh failed: {ex.Message}"); }
@@ -338,9 +359,9 @@ public partial class ItemDetailViewModel : ObservableObject,
                         if (!Current()) continue;
                         if (episodes != null && SelectedSeasonNumber == selectedSeason && EpisodesSeasonContentId == episodesSeasonContentId)
                             foreach (var loaded in Episodes)
-                                if (episodes.Episodes.FirstOrDefault(e => e.ContentId == loaded.ContentId) is { UserData: { } fresh })
-                                    loaded.UserData = fresh;
-                        if (episodes != null) OnPropertyChanged(nameof(Episodes));
+                                if (episodes.Episodes.FirstOrDefault(e => e.ContentId == loaded.ContentId) is { UserData: { } fresh }
+                                    && !SameUserData(loaded.UserData, fresh))
+                                { loaded.UserData = fresh; episodesChanged = true; }
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested)
                     { System.Diagnostics.Debug.WriteLine($"Realtime episodes-state refresh failed: {ex.Message}"); }
@@ -351,6 +372,15 @@ public partial class ItemDetailViewModel : ObservableObject,
             catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Realtime detail-state refresh failed: {ex.Message}"); }
             finally
             {
+                // Values committed before a later local mutation still need
+                // painting; navigation/profile retirement must never paint them.
+                if (_stateRefreshActive && !ct.IsCancellationRequested && ReferenceEquals(Item, item)
+                    && LibraryId == libraryId && _catalogApi.IsCurrentContext(message.Context))
+                {
+                    if (itemChanged) OnPropertyChanged(nameof(Item));
+                    if (seasonsChanged) OnPropertyChanged(nameof(Seasons));
+                    if (episodesChanged) OnPropertyChanged(nameof(Episodes));
+                }
                 lock (_remoteStateGate)
                 {
                     if (ReferenceEquals(_remoteStateReadCts, readOwner))
@@ -371,6 +401,20 @@ public partial class ItemDetailViewModel : ObservableObject,
             }
         }
     }
+
+    private static bool SameUserData(ItemDetailUserData? left, ItemDetailUserData right) => left != null
+        && (left.Played, left.IsInProgress, left.PositionSeconds, left.DurationSeconds, left.WatchedCount,
+            left.UnplayedCount, left.InProgressCount, left.LastFileId, left.LastResolution, left.LastHdr, left.LastCodecVideo, left.LastEditionKey)
+        == (right.Played, right.IsInProgress, right.PositionSeconds, right.DurationSeconds, right.WatchedCount,
+            right.UnplayedCount, right.InProgressCount, right.LastFileId, right.LastResolution, right.LastHdr, right.LastCodecVideo, right.LastEditionKey);
+
+    private static bool SameUserData(SeasonUserData? left, SeasonUserData right) => left != null
+        && (left.Played, left.WatchedCount, left.UnplayedCount, left.InProgressCount)
+        == (right.Played, right.WatchedCount, right.UnplayedCount, right.InProgressCount);
+
+    private static bool SameUserData(EpisodeUserData? left, EpisodeUserData right) => left != null
+        && (left.Played, left.IsInProgress, left.PositionSeconds, left.DurationSeconds)
+        == (right.Played, right.IsInProgress, right.PositionSeconds, right.DurationSeconds);
 
     private async Task WaitForLocalProgressSettlementAsync(CancellationToken ct)
     {
@@ -415,6 +459,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         lock (_remoteStateGate)
         {
             Interlocked.Increment(ref _watchedStateGeneration);
+            Interlocked.Increment(ref _watchedWriteGeneration);
             Interlocked.Increment(ref _localStateGeneration);
             if (_activeRemoteState is { } active) _pendingRemoteState = MergeState(_pendingRemoteState, active);
         }
@@ -508,19 +553,19 @@ public partial class ItemDetailViewModel : ObservableObject,
                 if (_activeRemoteState is { } active) _pendingRemoteState = MergeState(_pendingRemoteState, active);
             }
         }
-        var episodeSpoilersChanged = false;
+        var episodeStateChanged = false;
         foreach (var episode in Episodes.Where(episode => episode.ContentId == message.ContentId))
         {
             episode.UserData ??= new EpisodeUserData();
             var data = episode.UserData;
-            var wasUnwatched = EpisodeSpoilerPolicy.IsUnwatched(data.Played, data.IsInProgress, data.PositionSeconds);
+            var previous = (data.Played, data.IsInProgress, data.PositionSeconds, data.DurationSeconds);
             data.PositionSeconds = message.PositionSeconds;
             if (message.DurationSeconds > 0) data.DurationSeconds = message.DurationSeconds;
             data.IsInProgress = message.PositionSeconds > 0 && !message.Completed;
             if (message.Completed) data.Played = true;
-            episodeSpoilersChanged |= wasUnwatched != EpisodeSpoilerPolicy.IsUnwatched(data.Played, data.IsInProgress, data.PositionSeconds);
+            episodeStateChanged |= previous != (data.Played, data.IsInProgress, data.PositionSeconds, data.DurationSeconds);
         }
-        if (episodeSpoilersChanged) OnPropertyChanged(nameof(Episodes));
+        if (episodeStateChanged) OnPropertyChanged(nameof(Episodes));
         // Progress update for the item we're currently displaying → refresh
         // the resume position so the "Resume at X:XX" label reflects the
         // latest watch state. We don't refetch the whole detail — just patch
@@ -550,16 +595,20 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         var item = Item;
         if (item?.Type is not ("movie" or "episode" or "series" or "season")) return;
-        var generation = Volatile.Read(ref _watchedStateGeneration);
+        var generation = Volatile.Read(ref _watchedWriteGeneration);
         var context = _catalogApi.CaptureContext();
         try
         {
             await pendingProgressSave.WaitAsync(cancellationToken);
-            if (!ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context) || generation != Volatile.Read(ref _watchedStateGeneration)) return;
+            await WaitForLocalProgressSettlementAsync(cancellationToken);
+            if (!ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context)
+                || ToggleWatchedCommand.IsRunning || generation != Volatile.Read(ref _watchedWriteGeneration)) return;
+            var localRevision = Volatile.Read(ref _localStateGeneration);
             _detailPrefetchCache.Invalidate(item.ContentId);
             var refreshed = await ReadDetailAsync(item.ContentId, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            if (!ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context) || generation != Volatile.Read(ref _watchedStateGeneration)) return;
+            if (!ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context)
+                || generation != Volatile.Read(ref _watchedWriteGeneration) || localRevision != Volatile.Read(ref _localStateGeneration)) return;
             item.UserData = refreshed.UserData;
             IsWatched = item.UserData?.Played ?? false;
         }
@@ -653,6 +702,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             _remoteStateReadCts?.Cancel();
         }
         Interlocked.Increment(ref _watchedStateGeneration);
+        Interlocked.Increment(ref _watchedWriteGeneration);
         Interlocked.Increment(ref _localStateGeneration);
         _loadCts?.Cancel();
         _loadCts?.Dispose();
@@ -823,6 +873,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         // clears the rating (matches webui toggle-off). Revert on failure.
         int? priorRating = UserRating;
         int? nextRating = (UserRating == rating) ? null : rating;
+        Interlocked.Increment(ref _localStateGeneration);
         UserRating = nextRating;
         try
         {
@@ -839,6 +890,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             if (Item?.ContentId == contentId)
                 UserRating = priorRating;
         }
+        finally { Interlocked.Increment(ref _localStateGeneration); }
     }
 
     [RelayCommand]
@@ -857,9 +909,9 @@ public partial class ItemDetailViewModel : ObservableObject,
         bool wasWatched = IsWatched;
         Interlocked.Increment(ref _localStateGeneration);
         IsWatched = !wasWatched;
-        var generation = Volatile.Read(ref _watchedStateGeneration);
-        bool Current() => ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context)
-            && generation == Volatile.Read(ref _watchedStateGeneration);
+        var generation = Interlocked.Increment(ref _watchedWriteGeneration);
+        bool Current() => _stateRefreshActive && ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context)
+            && generation == Volatile.Read(ref _watchedWriteGeneration);
         try
         {
             if (wasWatched)
@@ -923,6 +975,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         try
         {
             SeasonsResponse response;
+            var attempt = 0;
             while (true)
             {
                 var watchedRevision = WatchedStateRevision;
@@ -930,7 +983,7 @@ public partial class ItemDetailViewModel : ObservableObject,
                 response = await _catalogApi.GetSeasonsAsync(contentId, LibraryId);
                 if (generation != Volatile.Read(ref _seasonsLoadGeneration)
                     || !ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context)) return;
-                if (watchedRevision == WatchedStateRevision && remoteRevision == RemoteStateRevision) break;
+                if (++attempt == 2 || watchedRevision == WatchedStateRevision && remoteRevision == RemoteStateRevision) break;
             }
             Seasons.Clear();
             foreach (var season in response.Seasons)
@@ -975,6 +1028,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         try
         {
             EpisodesResponse response;
+            var attempt = 0;
             while (true)
             {
                 var watchedRevision = WatchedStateRevision;
@@ -982,7 +1036,7 @@ public partial class ItemDetailViewModel : ObservableObject,
                 response = await _catalogApi.GetEpisodesAsync(contentId, seasonNumber, LibraryId);
                 if (generation != Volatile.Read(ref _episodesLoadGeneration)
                     || !ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context)) return;
-                if (watchedRevision == WatchedStateRevision && remoteRevision == RemoteStateRevision) break;
+                if (++attempt == 2 || watchedRevision == WatchedStateRevision && remoteRevision == RemoteStateRevision) break;
             }
             foreach (var episode in response.Episodes)
                 Episodes.Add(episode);
@@ -1009,6 +1063,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
         // B13 + F4: optimistic flip, revert on failure, publish on success.
         bool wasFavorite = IsFavorite;
+        Interlocked.Increment(ref _localStateGeneration);
         IsFavorite = !wasFavorite;
         try
         {
@@ -1026,6 +1081,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         {
             IsFavorite = wasFavorite;
         }
+        finally { Interlocked.Increment(ref _localStateGeneration); }
     }
 
     [RelayCommand]
@@ -1035,6 +1091,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
         // B13 + F4: optimistic flip, revert on failure, publish on success.
         bool wasInList = InWatchlist;
+        Interlocked.Increment(ref _localStateGeneration);
         InWatchlist = !wasInList;
         try
         {
@@ -1052,5 +1109,6 @@ public partial class ItemDetailViewModel : ObservableObject,
         {
             InWatchlist = wasInList;
         }
+        finally { Interlocked.Increment(ref _localStateGeneration); }
     }
 }

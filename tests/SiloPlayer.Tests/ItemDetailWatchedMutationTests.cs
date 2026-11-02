@@ -127,6 +127,23 @@ public sealed class ItemDetailWatchedMutationTests
         Assert.False(scope.Vm.Episodes[0].UserData!.Played);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MatchingProgressCannotRetireWatchedWriteFeedbackOrRollback(bool fail)
+    {
+        using var scope = new Scope("series", false) { Delayed = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+        var localWrite = scope.Vm.ToggleWatchedCommand.ExecuteAsync(null);
+        // This episode is not loaded; its series alone matches the mounted detail.
+        scope.Vm.Receive(new PlaybackProgressUpdated("other-episode", 90, 100, false) { SeriesId = "current" });
+        scope.Delayed.SetResult(new HttpResponseMessage(fail ? HttpStatusCode.Forbidden : HttpStatusCode.NoContent));
+        await localWrite;
+        Assert.Equal(!fail, scope.Vm.IsWatched);
+        Assert.Equal(!fail, scope.Vm.Item!.UserData!.Played);
+        Assert.Equal(!fail, scope.Vm.Seasons[0].UserData!.Played);
+        Assert.Equal(!fail, scope.Vm.Episodes[0].UserData!.Played);
+    }
+
     [Fact]
     public async Task RemoteRefreshCannotRetireTheAcceptedFeedbackOfAPendingLocalWatchedWrite()
     {

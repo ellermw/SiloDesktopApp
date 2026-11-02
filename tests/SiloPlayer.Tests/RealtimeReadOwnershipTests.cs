@@ -15,6 +15,86 @@ namespace SiloPlayer.Tests;
 
 public sealed class RealtimeReadOwnershipTests
 {
+    [Fact]
+    public async Task UnchangedSweepsDoNotNotifyOrReplaceRetainedCollections()
+    {
+        using var f = new Fixture(); f.Seed();
+        var item = f.Vm.Item;
+        var season = f.Vm.Seasons[0];
+        var episode = f.Vm.Episodes[0];
+        var changes = new List<string?>();
+        var collectionChanges = 0;
+        f.Vm.PropertyChanged += (_, e) => changes.Add(e.PropertyName);
+        f.Vm.Seasons.CollectionChanged += (_, _) => collectionChanges++;
+        await f.Vm.RefreshMediaStateAsync(f.Change(EpisodeA));
+        await f.Vm.RefreshMediaStateAsync(f.Change(EpisodeA));
+        Assert.DoesNotContain(nameof(f.Vm.Item), changes);
+        Assert.DoesNotContain(nameof(f.Vm.Seasons), changes);
+        Assert.DoesNotContain(nameof(f.Vm.Episodes), changes);
+        Assert.Equal(0, collectionChanges);
+        Assert.Same(item, f.Vm.Item);
+        Assert.Same(season, f.Vm.Seasons[0]);
+        Assert.Same(episode, f.Vm.Episodes[0]);
+    }
+
+    [Theory]
+    [InlineData("favorite")]
+    [InlineData("watchlist")]
+    [InlineData("rating")]
+    [InlineData("not-interested")]
+    public async Task CatchUpRetainsItsScopeWhenViewerStateChangesDuringTheDetailRead(string mutation)
+    {
+        using var f = new Fixture(); f.Seed();
+        f.Wire.HoldDetails = true;
+        var refresh = f.Vm.RefreshMediaStateAsync(f.Change() with { CatchUp = true });
+        var oldDetail = await f.Wire.NextAsync();
+        f.Wire.OnWrite = () =>
+        {
+            f.Wire.Favorite = mutation == "favorite";
+            f.Wire.Watchlist = mutation == "watchlist";
+            f.Wire.Rating = mutation == "rating" ? 4 : null;
+        };
+        if (mutation == "favorite") await f.Vm.ToggleFavoriteCommand.ExecuteAsync(null);
+        else if (mutation == "watchlist") await f.Vm.ToggleWatchlistCommand.ExecuteAsync(null);
+        else if (mutation == "rating") await f.Vm.SetRatingCommand.ExecuteAsync(4);
+        else
+        {
+            f.Wire.NotInterested = true;
+            f.Vm.Receive(new NotInterestedChange(f.Client.CaptureContext(), Series, true));
+        }
+        f.Wire.HoldDetails = false; oldDetail.Release();
+        await refresh.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(mutation == "favorite", f.Vm.IsFavorite);
+        Assert.Equal(mutation == "watchlist", f.Vm.InWatchlist);
+        Assert.Equal(mutation == "rating" ? (int?)4 : null, f.Vm.UserRating);
+        Assert.Equal(mutation == "not-interested", f.Vm.Item!.UserState!.NotInterested);
+        Assert.Equal(2, f.Wire.DetailReads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InitialCompanionSettlesAfterOneTrailingReadDuringSustainedInvalidations(bool seasons)
+    {
+        using var f = new Fixture(); f.Seed();
+        f.Vm.Episodes.Clear();
+        if (seasons) f.Vm.Seasons.Clear();
+        f.Wire.HoldSeasons = seasons; f.Wire.HoldEpisodes = !seasons;
+        var loading = seasons ? f.Vm.LoadSeasonsCommand.ExecuteAsync(null) : f.Vm.SelectSeasonCommand.ExecuteAsync(1);
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var read = await f.Wire.NextAsync();
+            f.Wire.Count++;
+            await f.Vm.RefreshMediaStateAsync(f.Change()).WaitAsync(TimeSpan.FromSeconds(5));
+            read.Release();
+        }
+        await loading.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.False(f.Vm.IsSeasonsLoading);
+        Assert.False(f.Vm.IsEpisodesLoading);
+        Assert.Single(f.Vm.Episodes);
+        Assert.Equal(2, seasons ? f.Wire.SeasonReads : f.Wire.EpisodeReads);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -384,6 +464,9 @@ public sealed class RealtimeReadOwnershipTests
         internal double Position = 31;
         internal string? Target = EpisodeA;
         internal bool HoldDetails, HoldSeasons, HoldEpisodes;
+        internal bool Favorite, Watchlist, NotInterested;
+        internal int? Rating;
+        internal Action? OnWrite;
         internal Action? BeforeWatchResponse;
         internal Action? BeforeDetailResponse;
         internal readonly List<Uri> CatalogUris = [];
@@ -394,6 +477,18 @@ public sealed class RealtimeReadOwnershipTests
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             Assert.Equal("review-owned.invalid", request.RequestUri!.Host);
+            if (request.Method != HttpMethod.Get && OnWrite is { } write)
+            {
+                Assert.Equal(HttpMethod.Put, request.Method);
+                Assert.Contains(request.RequestUri.AbsolutePath, new[]
+                {
+                    $"/api/v2/favorites/{Uri.EscapeDataString(Series)}",
+                    $"/api/v2/watchlist/{Uri.EscapeDataString(Series)}",
+                    $"/api/v2/ratings/{Uri.EscapeDataString(Series)}"
+                });
+                write();
+                return new(HttpStatusCode.NoContent);
+            }
             Assert.Equal(HttpMethod.Get, request.Method);
             var path = request.RequestUri.AbsolutePath;
             object body;
@@ -422,7 +517,8 @@ public sealed class RealtimeReadOwnershipTests
                     DetailReads++; hold = HoldDetails;
                     BeforeDetailResponse?.Invoke();
                     body = new { content_id = Series, type = "series", episode_count = 8, play_content_id = Target,
-                        user_state = new { }, user_data = new { watched_count = Count, played = false } };
+                        user_state = new { is_favorite = Favorite, in_watchlist = Watchlist, not_interested = NotInterested },
+                        user_rating = Rating, user_data = new { watched_count = Count, played = false } };
                 }
             }
             var snapshot = JsonSerializer.Serialize(body);
