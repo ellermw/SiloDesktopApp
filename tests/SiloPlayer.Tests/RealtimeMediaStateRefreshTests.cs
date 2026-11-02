@@ -142,12 +142,30 @@ public sealed class RealtimeMediaStateRefreshTests
         Assert.False(immediate.RefreshDetails);
         Assert.False(immediate.CatchUp);
         Assert.Equal(new[] { "series" }, immediate.ContentIds);
+        Assert.Equal(new[] { "series" }, immediate.ViewerStateContentIds);
         fixture.Clock.Advance(200); fixture.Drain();
         var batch = Assert.Single(fixture.Messages.Where(m => m.RefreshDetails));
         Assert.Equal(new[] { "series" }, batch.ContentIds);
+        Assert.Equal(new[] { "series" }, batch.ViewerStateContentIds);
         Assert.Empty(batch.SeriesIds);
         Assert.False(batch.CatchUp);
         Assert.Equal(fixture.Client.CaptureContext(), batch.Context);
+    }
+
+    [Fact]
+    public void MixedBatchesRetainOnlyTheViewerStateContentScopeAndResetItAfterFlush()
+    {
+        using var fixture = new Fixture();
+        fixture.Send("favorite-movie", null, "favorite");
+        fixture.Send("playing-episode", "series", "progress");
+        fixture.Drain(); fixture.Clock.Advance(200); fixture.Drain();
+        var batch = Assert.Single(fixture.Messages.Where(m => m.RefreshDetails));
+        Assert.Equal(new[] { "favorite-movie", "playing-episode" }, batch.ContentIds.Order().ToArray());
+        Assert.Equal(new[] { "favorite-movie" }, batch.ViewerStateContentIds);
+        fixture.Messages.Clear();
+        fixture.Send("playing-episode", "series", "progress");
+        fixture.Drain(); fixture.Clock.Advance(200); fixture.Drain();
+        Assert.Empty(Assert.Single(fixture.Messages.Where(m => m.RefreshDetails)).ViewerStateContentIds!);
     }
 
     [Theory]

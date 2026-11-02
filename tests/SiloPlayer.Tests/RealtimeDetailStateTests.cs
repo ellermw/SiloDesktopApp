@@ -318,6 +318,14 @@ public sealed class RealtimeDetailStateTests
     [InlineData("season", "watchlist")]
     [InlineData("season", "rating")]
     [InlineData("season", "not_interested")]
+    [InlineData("movie", "favorite")]
+    [InlineData("movie", "watchlist")]
+    [InlineData("movie", "rating")]
+    [InlineData("movie", "not_interested")]
+    [InlineData("episode", "favorite")]
+    [InlineData("episode", "watchlist")]
+    [InlineData("episode", "rating")]
+    [InlineData("episode", "not_interested")]
     public async Task RealtimeViewerStateChangesAndRemovalsReconcileTheMountedItem(string type, string change)
     {
         using var scope = new Scope(type);
@@ -325,6 +333,9 @@ public sealed class RealtimeDetailStateTests
         messenger.Register<ItemDetailViewModel, MediaStateInvalidated>(scope.Vm, static (vm, message) => vm.Receive(message));
         using var refresh = new RealtimeMediaStateRefresh(scope.Client, callback => callback(), messenger);
         var item = scope.Vm.Item!;
+        var playbackState = item.UserData;
+        item.PlayContentId = "mounted-target";
+        if (type is "movie" or "episode") item.UserState = new() { Played = true };
         foreach (var enabled in new[] { true, false })
         {
             scope.FreshViewerState = new()
@@ -354,6 +365,13 @@ public sealed class RealtimeDetailStateTests
                 Assert.Equal(scope.FreshViewerState.NotInterested, item.UserState!.NotInterested);
                 Assert.Equal(scope.FreshRating, scope.Vm.UserRating);
                 Assert.Equal(scope.FreshRating, item.UserRating);
+                if (type is "movie" or "episode")
+                {
+                    Assert.Same(playbackState, item.UserData);
+                    Assert.True(item.UserState!.Played);
+                    Assert.Equal("mounted-target", item.PlayContentId);
+                    Assert.Equal(0, scope.EpisodeReads);
+                }
             }
             finally { scope.Vm.PropertyChanged -= handler; }
         }
@@ -365,6 +383,66 @@ public sealed class RealtimeDetailStateTests
         Content = new StringContent("""{"error":{"code":"service_unavailable","message":"Synthetic outage"}}""",
             Encoding.UTF8, "application/json")
     };
+
+    [Theory]
+    [InlineData("movie")]
+    [InlineData("episode")]
+    public async Task ViewerOnlyLeafRefreshKeepsPlaybackStateEvenWhenCatchUpIsMergedOrPromoted(string type)
+    {
+        using var scope = new Scope(type) { IncludeTarget = true, FreshTarget = "remote-target",
+            FreshViewerState = new() { IsFavorite = true }, FreshRating = 4 };
+        var item = scope.Vm.Item!;
+        var data = item.UserData;
+        item.PlayContentId = "mounted-target";
+        scope.Vm.RemoteStateErrorMessage = "A viewer-state retry is pending.";
+        await scope.Vm.RefreshMediaStateAsync(scope.Message(item.ContentId) with
+        {
+            CatchUp = true, ViewerStateContentIds = new HashSet<string>([item.ContentId])
+        });
+        Assert.True(scope.Vm.IsFavorite);
+        Assert.Equal(4, scope.Vm.UserRating);
+        Assert.Same(data, item.UserData);
+        Assert.Equal("mounted-target", item.PlayContentId);
+        Assert.Equal(0, scope.EpisodeReads);
+        Assert.Null(scope.Vm.RemoteStateErrorMessage);
+    }
+
+    [Theory]
+    [InlineData("movie")]
+    [InlineData("episode")]
+    public async Task ExplicitViewerStateRetryDoesNotAdvanceTheMountedLeafPlaybackState(string type)
+    {
+        using var scope = new Scope(type) { IncludeTarget = true, FreshTarget = "remote-target",
+            FreshViewerState = new() { IsFavorite = true } };
+        var item = scope.Vm.Item!;
+        var data = item.UserData;
+        item.PlayContentId = "mounted-target";
+        scope.OverrideResponse = _ => Unavailable();
+        await scope.Vm.RefreshMediaStateAsync(scope.Message(item.ContentId) with
+        {
+            ViewerStateContentIds = new HashSet<string>([item.ContentId])
+        });
+        Assert.NotNull(scope.Vm.RemoteStateErrorMessage);
+        scope.OverrideResponse = null;
+        await scope.Vm.RetryRemoteStateCommand.ExecuteAsync(null);
+        Assert.Null(scope.Vm.RemoteStateErrorMessage);
+        Assert.True(scope.Vm.IsFavorite);
+        Assert.Same(data, item.UserData);
+        Assert.Equal("mounted-target", item.PlayContentId);
+    }
+
+    [Theory]
+    [InlineData("movie")]
+    [InlineData("episode")]
+    public async Task AnotherItemsViewerScopeDoesNotEnableAPartialLeafProgressRefresh(string type)
+    {
+        using var scope = new Scope(type);
+        await scope.Vm.RefreshMediaStateAsync(scope.Message(scope.Vm.Item!.ContentId) with
+        {
+            ViewerStateContentIds = new HashSet<string>(["other-item"])
+        });
+        Assert.Equal(0, scope.DetailReads);
+    }
 
     [Fact]
     public async Task PersistentOwnedDetailFailureHasABoundedRetryAndAllowsLaterRefreshes()
@@ -970,6 +1048,8 @@ public sealed class RealtimeDetailStateTests
     {
         using var scope = new Scope(type);
         var mounted = scope.Vm.Item!;
+        mounted.SeriesId = "old-series";
+        mounted.SeriesTitle = "Old series";
         mounted.SeasonCount = 1;
         mounted.PlayContentId = "old-target";
         var season = scope.Vm.Seasons[0];
@@ -979,6 +1059,7 @@ public sealed class RealtimeDetailStateTests
         scope.OverrideDetail = () => Task.FromResult(new MediaItemDetail
         {
             ContentId = mounted.ContentId, Type = type, Title = "Matched title",
+            SeriesId = "matched-series", SeriesTitle = "Matched series",
             EpisodeCount = 12, SeasonCount = 3, PlayContentId = target, PlaySeasonNumber = 2,
             UserState = new() { IsFavorite = true, InWatchlist = true }, UserRating = 4,
             UserData = new() { WatchedCount = 2, UnplayedCount = 10 }
@@ -988,6 +1069,8 @@ public sealed class RealtimeDetailStateTests
 
         Assert.Same(mounted, scope.Vm.Item);
         Assert.Equal("Matched title", mounted.Title);
+        Assert.Equal("matched-series", mounted.SeriesId);
+        Assert.Equal("Matched series", mounted.SeriesTitle);
         Assert.Equal(12, mounted.EpisodeCount);
         Assert.Equal(3, mounted.SeasonCount);
         Assert.Equal(target, mounted.PlayContentId);
@@ -1005,6 +1088,39 @@ public sealed class RealtimeDetailStateTests
         Assert.Equal(1, scope.EpisodeReads);
         Assert.Null(scope.Vm.ErrorMessage);
         Assert.Null(scope.Vm.RemoteStateErrorMessage);
+        await scope.Vm.RefreshMediaStateAsync(scope.Message("unloaded", "old-series"));
+        Assert.Equal(2, scope.DetailReads);
+        await scope.Vm.RefreshMediaStateAsync(scope.Message("unloaded", "matched-series"));
+        Assert.Equal(3, scope.DetailReads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetainedSweepAdoptsParentIdentityAndPreservesItWhenLegacyResponsesOmitIt(bool clearParent)
+    {
+        using var scope = new Scope("season");
+        var mounted = scope.Vm.Item!;
+        scope.OverrideDetail = () => Task.FromResult(new MediaItemDetail
+        {
+            ContentId = mounted.ContentId, Type = "season", SeriesId = "new-series", SeriesTitle = "New series"
+        });
+        await scope.Vm.RefreshMediaStateAsync(scope.Message(mounted.ContentId));
+        Assert.Same(mounted, scope.Vm.Item);
+        Assert.Equal("new-series", mounted.SeriesId);
+        Assert.Equal("New series", mounted.SeriesTitle);
+        var reads = scope.DetailReads;
+        await scope.Vm.RefreshMediaStateAsync(scope.Message("unloaded", "series"));
+        Assert.Equal(reads, scope.DetailReads);
+        await scope.Vm.RefreshMediaStateAsync(scope.Message("unloaded", "new-series"));
+        Assert.Equal(reads + 1, scope.DetailReads);
+
+        scope.OverrideResponse = request => request.RequestUri!.AbsolutePath == "/api/v2/catalog/items/season"
+            ? new(HttpStatusCode.OK) { Content = new StringContent(clearParent
+                ? """{"content_id":"season","type":"season","series_id":null}"""
+                : """{"content_id":"season","type":"season"}""", Encoding.UTF8, "application/json") } : null;
+        await scope.Vm.RefreshMediaStateAsync(scope.Message(mounted.ContentId));
+        Assert.Equal(clearParent ? null : "new-series", mounted.SeriesId);
     }
 
     [Theory]
@@ -1104,6 +1220,7 @@ public sealed class RealtimeDetailStateTests
         scope.OverrideDetail = () => Task.FromResult(new MediaItemDetail
         {
             ContentId = mounted.ContentId, Type = type, Title = "Edited title", Overview = "Translated overview",
+            SeriesId = "edited-parent", SeriesTitle = "Edited parent",
             SeasonNumber = 1, PendingTranslationLanguage = null, PlayContentId = null,
             UserData = new() { Played = true, WatchedCount = 4 }
         });
@@ -1112,6 +1229,8 @@ public sealed class RealtimeDetailStateTests
 
         Assert.Same(mounted, scope.Vm.Item);
         Assert.Equal("Edited title", mounted.Title);
+        Assert.Equal("edited-parent", mounted.SeriesId);
+        Assert.Equal("Edited parent", mounted.SeriesTitle);
         Assert.Equal("Translated overview", mounted.Overview);
         Assert.Null(mounted.PendingTranslationLanguage);
         Assert.Same(viewerState, mounted.UserData);
@@ -1226,6 +1345,8 @@ public sealed class RealtimeDetailStateTests
                     ["user_data"] = new { watched_count = detail.UserData?.WatchedCount, unplayed_count = detail.UserData?.UnplayedCount,
                         in_progress_count = detail.UserData?.InProgressCount, played = detail.UserData?.Played }
                 };
+                if (detail.HasAuthoritativeSeriesId) body["series_id"] = detail.SeriesId;
+                if (detail.SeriesTitle != null) body["series_title"] = detail.SeriesTitle;
                 if (detail.HasAuthoritativePlayTarget) { body["play_content_id"] = detail.PlayContentId; body["play_season_number"] = detail.PlaySeasonNumber; }
                 return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
             }

@@ -35,6 +35,7 @@ public sealed partial class ItemDetailPage : Page
         && !_isTranslatingEpisodes && _episodesTranslationStatusReads == 0 && !_episodesTranslationInterrupted
         && !_isTranslatingOverview && _overviewTranslationStatusReads == 0 && !_overviewTranslationInterrupted
         && _detailArtworkLoads == 0 && !_detailArtworkInterrupted
+        && !_interruptedCardArtwork.Any(border => border.IsLoaded)
         && _detailCompanionLoads == 0 && !_detailCompanionInterrupted
         && !ViewModel.SeasonsLoadFailed && !ViewModel.EpisodesLoadFailed && !ViewModel.SimilarLoadFailed
         && EpisodesLoadError.Visibility != Visibility.Visible
@@ -57,6 +58,9 @@ public sealed partial class ItemDetailPage : Page
     // Pending or failed artwork needs the remount recovery that retained cards skip.
     private int _detailArtworkLoads;
     private bool _detailArtworkInterrupted;
+    // A successful retry recovers only its own card. Discarded cards no longer
+    // need remount recovery, and title artwork retains its separate latch.
+    private readonly HashSet<Border> _interruptedCardArtwork = [];
     private int _detailCompanionLoads;
     private bool _detailCompanionInterrupted;
     private bool _translateButtonMode;
@@ -912,6 +916,8 @@ public sealed partial class ItemDetailPage : Page
                 if ((changes & 1) != 0)
                 {
                     BuildMoreFlyout();
+                    if (item is { Type: "season" })
+                        BuildSeasonBreadcrumb(item, SeasonLabel(item));
                 }
             };
             if (!queued && !DispatcherQueue.TryEnqueue(() =>
@@ -1042,6 +1048,7 @@ public sealed partial class ItemDetailPage : Page
         _isTranslatingEpisodes = false;
         _episodesTranslationInterrupted = false;
         _detailArtworkInterrupted = false;
+        _interruptedCardArtwork.Clear();
         _detailCompanionInterrupted = false;
         _imageCts?.Cancel();
         _imageCts?.Dispose();
@@ -1351,6 +1358,7 @@ public sealed partial class ItemDetailPage : Page
             },
             Padding = new Thickness(0, 2, 0, 2),
             VerticalAlignment = VerticalAlignment.Center,
+            Tag = contentId,
         };
         if (!string.IsNullOrEmpty(contentId))
         {
@@ -1403,6 +1411,9 @@ public sealed partial class ItemDetailPage : Page
 
     private void BuildSeasonBreadcrumb(MediaItemDetail item, string seasonLabel)
     {
+        var state = (item.SeriesId, item.SeriesTitle, seasonLabel);
+        if (BreadcrumbPanel.Children.Count > 0 && Equals(BreadcrumbPanel.Tag, state)) return;
+        BreadcrumbPanel.Tag = state;
         BreadcrumbPanel.Children.Clear();
         if (!string.IsNullOrWhiteSpace(item.SeriesId) && !string.IsNullOrWhiteSpace(item.SeriesTitle))
         {
@@ -1418,6 +1429,9 @@ public sealed partial class ItemDetailPage : Page
         });
         BreadcrumbPanel.Visibility = Visibility.Visible;
     }
+
+    private static string SeasonLabel(MediaItemDetail item) => item.IsSpecials == true || item.SeasonNumber == 0
+        ? "Specials" : string.IsNullOrWhiteSpace(item.Title) ? $"Season {item.SeasonNumber ?? 0}" : item.Title;
 
     private void UICustomization_Changed(object? sender, EventArgs e)
         => DispatcherQueue.TryEnqueue(() => UpdateResponsiveLayout(ActualWidth));
@@ -1653,11 +1667,7 @@ public sealed partial class ItemDetailPage : Page
         }
         else if (item.Type == "season")
         {
-            var seasonLabel = item.IsSpecials == true || item.SeasonNumber == 0
-                ? "Specials"
-                : string.IsNullOrWhiteSpace(item.Title)
-                    ? $"Season {item.SeasonNumber ?? 0}"
-                    : item.Title;
+            var seasonLabel = SeasonLabel(item);
             TitleText.Text = string.IsNullOrWhiteSpace(item.SeriesTitle)
                 ? seasonLabel
                 : item.SeriesTitle;
@@ -7863,7 +7873,15 @@ public sealed partial class ItemDetailPage : Page
     {
         var navigation = _navigationCts;
         var token = navigation?.Token ?? CancellationToken.None;
-        var painted = false;
+        var owner = ViewModel.Item;
+        var api = App.Services.GetRequiredService<SiloApiClient>();
+        var context = api.CaptureContext();
+        var posterUrl = season.PosterUrl!;
+        var revision = ++_cardArtworkLoadRevision;
+        posterBorder.Tag = revision;
+        bool Current() => !token.IsCancellationRequested && ReferenceEquals(_navigationCts, navigation)
+            && ReferenceEquals(ViewModel.Item, owner) && api.IsCurrentContext(context) && Equals(posterBorder.Tag, revision);
+        var completed = false;
         ++_detailArtworkLoads;
         try
         {
@@ -7871,9 +7889,14 @@ public sealed partial class ItemDetailPage : Page
             var httpClient = App.Services.GetRequiredService<HttpClient>();
 
             var bytes = await imageService.GetImageAsync(
-                season.ContentId, "poster", season.PosterUrl!, httpClient, token);
+                season.ContentId, "poster", posterUrl, httpClient, token);
 
-            if (bytes == null) return;
+            if (!Current()) return;
+            if (bytes == null)
+            {
+                completed = imageService.IsKnownUnavailable(season.ContentId, "poster", posterUrl);
+                return;
+            }
 
             var bitmapImage = new BitmapImage
             {
@@ -7891,15 +7914,19 @@ public sealed partial class ItemDetailPage : Page
                 VerticalAlignment = VerticalAlignment.Center
             };
 
-            if (token.IsCancellationRequested || !ReferenceEquals(_navigationCts, navigation)) return;
+            if (!Current()) return;
             posterBorder.Child = image;
-            painted = true;
+            completed = true;
         }
         catch { }
         finally
         {
             --_detailArtworkLoads;
-            if (!painted && ReferenceEquals(_navigationCts, navigation)) _detailArtworkInterrupted = true;
+            if (ReferenceEquals(_navigationCts, navigation) && Equals(posterBorder.Tag, revision))
+            {
+                if (completed) _interruptedCardArtwork.Remove(posterBorder);
+                else _interruptedCardArtwork.Add(posterBorder);
+            }
         }
     }
 
@@ -8566,7 +8593,7 @@ public sealed partial class ItemDetailPage : Page
         VerticalAlignment = vertical,
     };
 
-    private long _episodeStillLoadRevision;
+    private long _cardArtworkLoadRevision;
     private async Task LoadEpisodeStillAsync(Border stillBorder, Episode episode)
     {
         var owner = ViewModel.Item;
@@ -8574,11 +8601,12 @@ public sealed partial class ItemDetailPage : Page
         var token = navigationOwner?.Token ?? CancellationToken.None;
         var api = App.Services.GetRequiredService<SiloApiClient>();
         var context = api.CaptureContext();
-        var stillRevision = ++_episodeStillLoadRevision;
+        var stillUrl = episode.StillUrl!;
+        var stillRevision = ++_cardArtworkLoadRevision;
         stillBorder.Tag = stillRevision;
         bool Current() => !token.IsCancellationRequested && ReferenceEquals(_navigationCts, navigationOwner) &&
             ReferenceEquals(ViewModel.Item, owner) && api.IsCurrentContext(context) && Equals(stillBorder.Tag, stillRevision);
-        var painted = false;
+        var completed = false;
         ++_detailArtworkLoads;
         try
         {
@@ -8586,9 +8614,14 @@ public sealed partial class ItemDetailPage : Page
             var httpClient = App.Services.GetRequiredService<HttpClient>();
 
             var bytes = await imageService.GetImageAsync(
-                episode.ContentId, "still", episode.StillUrl!, httpClient, token);
+                episode.ContentId, "still", stillUrl, httpClient, token);
 
-            if (bytes == null || !Current()) return;
+            if (!Current()) return;
+            if (bytes == null)
+            {
+                completed = imageService.IsKnownUnavailable(episode.ContentId, "still", stillUrl);
+                return;
+            }
             _episodeSpoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
             if (_episodeSpoilerPreferences != null) await _episodeSpoilerPreferences.EnsureLoadedAsync(token);
             if (!Current()) return;
@@ -8624,13 +8657,19 @@ public sealed partial class ItemDetailPage : Page
             stillBorder.Child = image;
             // Clear the placeholder background so the image shows through
             stillBorder.Background = null;
-            painted = true;
+            completed = true;
         }
         catch { }
         finally
         {
             --_detailArtworkLoads;
-            if (!painted && ReferenceEquals(_navigationCts, navigationOwner)) _detailArtworkInterrupted = true;
+            // A spoiler-policy repaint supersedes its predecessor's recovery
+            // state as well as its pixels, regardless of completion order.
+            if (ReferenceEquals(_navigationCts, navigationOwner) && Equals(stillBorder.Tag, stillRevision))
+            {
+                if (completed) _interruptedCardArtwork.Remove(stillBorder);
+                else _interruptedCardArtwork.Add(stillBorder);
+            }
         }
     }
 }

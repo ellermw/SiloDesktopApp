@@ -64,7 +64,16 @@ public class MediaItemDetail
     public string? ShowStatus { get; set; }
     public int? SeasonCount { get; set; }
     public int? EpisodeCount { get; set; }
-    public string? SeriesId { get; set; }
+    private string? _seriesId;
+    public string? SeriesId
+    {
+        get => _seriesId;
+        set { _seriesId = value; HasAuthoritativeSeriesId = true; }
+    }
+    // Preserve a known parent when a legacy state response omits the field;
+    // an explicit null can still authoritatively remove it.
+    [JsonIgnore]
+    public bool HasAuthoritativeSeriesId { get; private set; }
     public string? SeriesTitle { get; set; }
     public int? SeasonNumber { get; set; }
     public int? EpisodeNumber { get; set; }

@@ -283,6 +283,8 @@ internal static class RealtimeSeriesStateNativeFixture
                 finally { vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page); }
             }
             await VerifyLegacySeriesActionAsync(parent, wire, client);
+            await VerifyCardArtworkRecoveryAsync(parent, wire, client);
+            await VerifyMatchedParentBreadcrumbAsync(parent, wire, client);
             foreach (var type in new[] { "series", "season" })
             {
                 await VerifyTranslationReconnectAsync(parent, wire, client, type);
@@ -315,6 +317,117 @@ internal static class RealtimeSeriesStateNativeFixture
             }
         }
         finally { slot.SetValue(null, original); }
+    }
+
+    private static async Task VerifyCardArtworkRecoveryAsync(StackPanel parent, Wire wire, SiloApiClient client)
+    {
+        var slot = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var original = (IServiceProvider)slot.GetValue(null)!;
+        var cache = Path.Combine(Path.GetTempPath(), "SiloPlayer-native-card-art-" + Guid.NewGuid().ToString("N"));
+        using var images = new ImageService(cache);
+        using var http = new HttpClient(wire, disposeHandler: false);
+        slot.SetValue(null, new TitleArtServices(original, images, http));
+        using var navigation = new CancellationTokenSource();
+        var page = new ItemDetailPage { Width = 900, Height = 720 };
+        var still = new Border(); var poster = new Border();
+        page.ViewModel.Item = new() { ContentId = "season", Type = "season", Title = "Card artwork recovery" };
+        Set(page, "_currentContentId", "season"); Set(page, "_navigationCts", navigation);
+        parent.Children.Add(page); parent.Children.Add(still); parent.Children.Add(poster);
+        var episode = new Episode { ContentId = "card-episode", UserData = new() { Played = true } };
+        var season = new Season { ContentId = "card-season" };
+        var attempt = 0;
+        Task Read(bool episodeStill)
+        {
+            var url = "https://realtime-native.invalid/companion-poster.png?card=" + ++attempt;
+            if (episodeStill) episode.StillUrl = url; else season.PosterUrl = url;
+            return (Task)typeof(ItemDetailPage).GetMethod(episodeStill ? "LoadEpisodeStillAsync" : "LoadSeasonPosterAsync",
+                BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(page, episodeStill
+                    ? new object[] { still, episode } : new object[] { poster, season })!;
+        }
+        try
+        {
+            await UntilAsync(() => still.IsLoaded && poster.IsLoaded);
+            wire.CompanionFailure = "poster"; wire.CompanionStatus = HttpStatusCode.NotFound;
+            await Read(true); await Read(false);
+            Check(page.CanPreserveOnReconnect, "A missing episode still or season poster permanently latched remounting.");
+
+            wire.CompanionStatus = HttpStatusCode.ServiceUnavailable;
+            await Read(true); await Read(false);
+            Check(!page.CanPreserveOnReconnect, "Transient card failures must retain reconnect recovery.");
+            wire.CompanionFailure = null;
+            await Read(true);
+            Check(!page.CanPreserveOnReconnect, "One successful card retry cleared another card's failure.");
+            await Read(false);
+            Check(page.CanPreserveOnReconnect, "Successful card retries did not clear their recovery state.");
+
+            foreach (var newerFinishesFirst in new[] { true, false })
+            {
+                wire.HeldCompanion = "poster";
+                wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                var olderRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.ReleaseCompanion = olderRelease;
+                var older = Read(true);
+                await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                var newerRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.ReleaseCompanion = newerRelease;
+                var newer = Read(true);
+                await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                if (newerFinishesFirst) { newerRelease.SetResult(); await newer; olderRelease.SetResult(); await older; }
+                else { olderRelease.SetResult(); await older; newerRelease.SetResult(); await newer; }
+                Check(page.CanPreserveOnReconnect, "A superseded still latched recovery despite its successful replacement.");
+            }
+            wire.HeldCompanion = "poster";
+            wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            wire.ReleaseCompanion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var retired = Read(true);
+            await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            client.InvalidateAccessContext();
+            wire.ReleaseCompanion.SetResult(); await retired;
+            Check(!page.CanPreserveOnReconnect, "An access-retired still lost its remount recovery requirement.");
+            wire.HeldCompanion = null;
+            await Read(true);
+            Check(page.CanPreserveOnReconnect, "A later owned still could not recover an access-retired load.");
+        }
+        finally
+        {
+            wire.CompanionFailure = null; wire.HeldCompanion = null; wire.ReleaseCompanion?.TrySetResult(); navigation.Cancel();
+            page.ViewModel.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(page.ViewModel);
+            parent.Children.Remove(page); parent.Children.Remove(still); parent.Children.Remove(poster);
+            slot.SetValue(null, original); Directory.Delete(cache, recursive: true);
+        }
+    }
+
+    private static async Task VerifyMatchedParentBreadcrumbAsync(StackPanel parent, Wire wire, SiloApiClient client)
+    {
+        var page = new ItemDetailPage { Width = 900, Height = 720 };
+        var vm = page.ViewModel;
+        using var navigation = new CancellationTokenSource();
+        vm.Item = new() { ContentId = "season", Type = "season", Title = "Season 1", SeriesId = "old-series", SeriesTitle = "Old series" };
+        Set(page, "_currentContentId", "season"); Set(page, "_navigationCts", navigation);
+        var handler = (PropertyChangedEventHandler)typeof(ItemDetailPage).GetMethod("OnViewModelPropertyChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .CreateDelegate(typeof(PropertyChangedEventHandler), page);
+        vm.PropertyChanged += handler;
+        parent.Children.Add(page);
+        HyperlinkButton SeriesLink() => ((Panel)page.FindName("BreadcrumbPanel")).Children.OfType<HyperlinkButton>().First();
+        try
+        {
+            wire.ParentSeries = "matched-series";
+            await vm.ReloadAfterMatchAsync("season");
+            Call(page, "UpdateUI");
+            Check(SeriesLink().Tag as string == "matched-series" && ((TextBlock)SeriesLink().Content).Text == "Matched series",
+                "Same-ID Match left the breadcrumb linked to the old parent series.");
+            wire.ParentSeries = "newer-series";
+            await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(["season"]), new HashSet<string>()));
+            await UntilAsync(() => SeriesLink().Tag as string == "newer-series");
+            Check(vm.Item!.SeriesId == "newer-series", "A retained sweep did not adopt the fresh parent identity.");
+        }
+        finally
+        {
+            wire.ParentSeries = null;
+            vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm);
+            parent.Children.Remove(page);
+        }
     }
 
     private static async Task VerifyLegacySeriesActionAsync(StackPanel parent, Wire wire, SiloApiClient client)
@@ -687,6 +800,7 @@ internal static class RealtimeSeriesStateNativeFixture
         internal bool OmitTarget;
         internal bool FailEpisodes;
         internal bool Favorite;
+        internal string? ParentSeries;
         internal bool LoadedPlayed;
         internal string TranslationOnView = "button";
         internal double LoadedPosition = 31;
@@ -758,6 +872,8 @@ internal static class RealtimeSeriesStateNativeFixture
                     user_data = new { watched_count = Count, unplayed_count = 6 - Count, in_progress_count = 1, played = false } } } } :
                 path.Contains("progress/capabilities") ? new { clear_resume_position = true } : new { items = Array.Empty<object>() };
             if (OmitTarget && body is Dictionary<string, object?> detail) detail.Remove("play_content_id");
+            if (ParentSeries != null && body is Dictionary<string, object?> parentDetail)
+            { parentDetail["series_id"] = ParentSeries; parentDetail["series_title"] = "Matched series"; }
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
             if (HeldCompanion is { } companion && path.EndsWith("/" + companion) && ReleaseCompanion is { } release)
             {

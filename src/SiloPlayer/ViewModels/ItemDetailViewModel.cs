@@ -37,6 +37,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     private MediaStateInvalidated? _pendingRemoteState;
     private MediaStateInvalidated? _activeRemoteState;
     private MediaStateInvalidated? _initialRemoteState;
+    private bool _remoteStateRetryViewerOnly;
     private long _initialStateRevision;
     private long _remoteStateGeneration;
     private long _localStateGeneration;
@@ -142,11 +143,12 @@ public partial class ItemDetailViewModel : ObservableObject,
         new(message.Context ?? _catalogApi.CaptureContext(), new HashSet<string>([message.ContentId], StringComparer.Ordinal),
             string.IsNullOrEmpty(message.SeriesId) ? new HashSet<string>() : new HashSet<string>([message.SeriesId], StringComparer.Ordinal));
 
-    // Only containers have a complete retained-state refresh. A targeted
-    // catch-up also lets an initial-load correction/retry reconcile leaf detail
-    // state; reconnect still remounts leaves for their page-owned /watch reads.
+    // Only containers have a complete retained-state refresh. Direct viewer
+    // changes also refresh leaves, without touching their page-owned playback
+    // state. Targeted catch-up retains the initial-load correction/retry path.
     private bool IsRelatedState(MediaStateInvalidated message, MediaItemDetail item) =>
-        ((item.Type is "series" or "season") || (message.CatchUp && message.ContentIds.Contains(item.ContentId))) && (
+        ((item.Type is "series" or "season") || (message.CatchUp && message.ContentIds.Contains(item.ContentId))
+            || message.ViewerStateContentIds?.Contains(item.ContentId) == true) && (
             message.CatchUp || message.ContentIds.Contains(item.ContentId)
             || (!string.IsNullOrEmpty(item.SeriesId) && message.ContentIds.Contains(item.SeriesId))
             || message.SeriesIds.Contains(item.ContentId)
@@ -209,7 +211,8 @@ public partial class ItemDetailViewModel : ObservableObject,
     [RelayCommand]
     private Task RetryRemoteStateAsync() => RefreshMediaStateAsync(new(
         _catalogApi.CaptureContext(), new HashSet<string>(Item == null ? [] : [Item.ContentId]),
-        new HashSet<string>(), CatchUp: true));
+        new HashSet<string>(), CatchUp: true,
+        ViewerStateContentIds: _remoteStateRetryViewerOnly && Item != null ? new HashSet<string>([Item.ContentId]) : null));
 
     private void EnqueueStateRefresh(Action action)
     {
@@ -222,6 +225,8 @@ public partial class ItemDetailViewModel : ObservableObject,
         {
             ContentIds = earlier.ContentIds.Concat(later.ContentIds).ToHashSet(StringComparer.Ordinal),
             SeriesIds = earlier.SeriesIds.Concat(later.SeriesIds).ToHashSet(StringComparer.Ordinal),
+            ViewerStateContentIds = (earlier.ViewerStateContentIds ?? new HashSet<string>())
+                .Concat(later.ViewerStateContentIds ?? new HashSet<string>()).ToHashSet(StringComparer.Ordinal),
             CatchUp = earlier.CatchUp || later.CatchUp,
             RefreshDetails = earlier.RefreshDetails || later.RefreshDetails
         };
@@ -262,6 +267,8 @@ public partial class ItemDetailViewModel : ObservableObject,
             var episodesChanged = false;
             Exception? refreshFailure = null;
             var refreshCompleted = false;
+            var viewerOnlyLeaf = item != null && item.Type is not ("series" or "season")
+                && message.ViewerStateContentIds?.Contains(item.ContentId) == true;
             try
             {
                 lock (_remoteStateGate)
@@ -296,29 +303,40 @@ public partial class ItemDetailViewModel : ObservableObject,
                 var refreshed = await ReadRemoteStateAsync(
                     () => _catalogApi.GetItemDetailAsync(item.ContentId, libraryId, ct), message.CatchUp, Current, ct);
                 if (!Current()) continue;
-                // Keep aggregate feedback and later local watched deltas on the
-                // same server total. Missing legacy counts leave known totals intact.
-                if (refreshed.EpisodeCount.HasValue && item.EpisodeCount != refreshed.EpisodeCount)
-                { item.EpisodeCount = refreshed.EpisodeCount; itemChanged = true; }
-                if (refreshed.SeasonCount.HasValue && item.SeasonCount != refreshed.SeasonCount)
-                { item.SeasonCount = refreshed.SeasonCount; itemChanged = true; }
-                if (refreshed.UserData is { } userData && !SameUserData(item.UserData, userData))
+                // Viewer-only leaf refreshes must not partially advance catalog
+                // playback state while /watch and resume controls remain mounted.
+                if (!viewerOnlyLeaf)
                 {
-                    item.UserData = userData;
-                    IsWatched = userData.Played;
-                    itemChanged = true;
-                }
-                if (refreshed.HasAuthoritativePlayTarget && (!item.HasAuthoritativePlayTarget
-                    || item.PlayContentId != refreshed.PlayContentId || item.PlaySeasonNumber != refreshed.PlaySeasonNumber))
-                {
-                    item.PlayContentId = refreshed.PlayContentId;
-                    item.PlaySeasonNumber = refreshed.PlaySeasonNumber;
-                    itemChanged = true;
+                    if (refreshed.HasAuthoritativeSeriesId && item.SeriesId != refreshed.SeriesId)
+                    { item.SeriesId = refreshed.SeriesId; itemChanged = true; }
+                    if (refreshed.SeriesTitle != null && item.SeriesTitle != refreshed.SeriesTitle)
+                    { item.SeriesTitle = refreshed.SeriesTitle; itemChanged = true; }
+                    // Keep aggregate feedback and later local watched deltas on the
+                    // same server total. Missing legacy counts leave known totals intact.
+                    if (refreshed.EpisodeCount.HasValue && item.EpisodeCount != refreshed.EpisodeCount)
+                    { item.EpisodeCount = refreshed.EpisodeCount; itemChanged = true; }
+                    if (refreshed.SeasonCount.HasValue && item.SeasonCount != refreshed.SeasonCount)
+                    { item.SeasonCount = refreshed.SeasonCount; itemChanged = true; }
+                    if (refreshed.UserData is { } userData && !SameUserData(item.UserData, userData))
+                    {
+                        item.UserData = userData;
+                        IsWatched = userData.Played;
+                        itemChanged = true;
+                    }
+                    if (refreshed.HasAuthoritativePlayTarget && (!item.HasAuthoritativePlayTarget
+                        || item.PlayContentId != refreshed.PlayContentId || item.PlaySeasonNumber != refreshed.PlaySeasonNumber))
+                    {
+                        item.PlayContentId = refreshed.PlayContentId;
+                        item.PlaySeasonNumber = refreshed.PlaySeasonNumber;
+                        itemChanged = true;
+                    }
                 }
                 // Direct item invalidations also include cross-device viewer-state
                 // changes. Reconcile from REST, never from an event's scalar payload.
                 if (message.CatchUp || message.ContentIds.Contains(item.ContentId))
                 {
+                    if (viewerOnlyLeaf && refreshed.UserState is { } viewerState)
+                        viewerState.Played = item.UserState?.Played ?? item.UserData?.Played ?? IsWatched;
                     if (refreshed.UserState != null && (item.UserState == null
                         || (item.UserState.Played, item.UserState.IsFavorite, item.UserState.InWatchlist, item.UserState.NotInterested)
                             != (refreshed.UserState.Played, refreshed.UserState.IsFavorite, refreshed.UserState.InWatchlist, refreshed.UserState.NotInterested)))
@@ -417,8 +435,11 @@ public partial class ItemDetailViewModel : ObservableObject,
                     // inline retry without covering mounted content or changing
                     // the initial-load failure state used by reconnect handling.
                     if (Current() && (refreshFailure != null || refreshCompleted))
+                    {
+                        _remoteStateRetryViewerOnly = refreshFailure != null && viewerOnlyLeaf;
                         RemoteStateErrorMessage = refreshFailure == null ? null
                             : "Silo couldn't refresh this item. Displayed information may be out of date.";
+                    }
                 }
                 lock (_remoteStateGate)
                 {
@@ -876,6 +897,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             _pendingRemoteState = null;
             _activeRemoteState = null;
             _initialRemoteState = null;
+            _remoteStateRetryViewerOnly = false;
             _pendingLocalProgressSave = Task.CompletedTask;
             _initialProgressSaves.Clear();
             _progressSettlementCts?.Cancel();
@@ -1108,6 +1130,8 @@ public partial class ItemDetailViewModel : ObservableObject,
             // Metadata polling/editing must not retire companion reads, selected
             // rows, or newer local/remote viewer state. Keep the mounted snapshot
             // identity too: initial companion reads may still be using it.
+            // Type is navigation-owned: changing it requires type-specific
+            // page companions, not a retained metadata refresh.
             item.Status = fresh.Status;
             item.Title = fresh.Title;
             item.MachineTranslatedFields = fresh.MachineTranslatedFields;
@@ -1152,6 +1176,11 @@ public partial class ItemDetailViewModel : ObservableObject,
             item.AirTimezone = fresh.AirTimezone;
             item.AirDate = fresh.AirDate;
             item.ShowStatus = fresh.ShowStatus;
+            if (fresh.HasAuthoritativeSeriesId && item.SeriesId != fresh.SeriesId)
+            {
+                Interlocked.Increment(ref _localStateGeneration);
+                item.SeriesId = fresh.SeriesId;
+            }
             item.SeriesTitle = fresh.SeriesTitle;
             item.SeasonNumber = fresh.SeasonNumber;
             item.EpisodeNumber = fresh.EpisodeNumber;

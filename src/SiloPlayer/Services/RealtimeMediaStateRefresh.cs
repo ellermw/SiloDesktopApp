@@ -16,6 +16,7 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
     private readonly object _gate = new();
     private readonly HashSet<string> _items = new(StringComparer.Ordinal);
     private readonly HashSet<string> _series = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _viewerStateItems = new(StringComparer.Ordinal);
     private ApiRequestContext? _context;
     private DateTimeOffset _deadline;
     private ITimer? _timer;
@@ -45,7 +46,8 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
     }
 
     internal void Invalidate(MediaStateInvalidated message) =>
-        Queue(message.Context, message.ContentIds.ToArray(), message.SeriesIds.ToArray(), message.CatchUp);
+        Queue(message.Context, message.ContentIds.ToArray(), message.SeriesIds.ToArray(), message.CatchUp,
+            message.ViewerStateContentIds?.ToArray());
 
     public void ReceiveRealtime(string channel, string eventName, JsonElement data)
     {
@@ -57,7 +59,8 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
             || string.IsNullOrWhiteSpace(id) || string.IsNullOrEmpty(context.ProfileId)
             || (data.TryGetProperty("profile_id", out _) && Text(data, "profile_id") != context.ProfileId)) return;
         var series = Text(data, "series_id");
-        Queue(context, [id], string.IsNullOrWhiteSpace(series) ? [] : [series], false);
+        var viewerState = Text(data, "change") is "favorite" or "watchlist" or "rating" or "not_interested";
+        Queue(context, [id], string.IsNullOrWhiteSpace(series) ? [] : [series], false, viewerState ? [id] : []);
     }
 
     public void CatchUp(ApiRequestContext context) => Queue(context, [], [], true);
@@ -65,7 +68,7 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
     private static string? Text(JsonElement data, string name) =>
         data.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
-    private void Queue(ApiRequestContext context, string[] items, string[] series, bool catchUp)
+    private void Queue(ApiRequestContext context, string[] items, string[] series, bool catchUp, string[]? viewerStateItems = null)
     {
         if (string.IsNullOrEmpty(context.ProfileId)) return;
         long epoch;
@@ -76,7 +79,8 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
             // Retire in-flight /watch and detail reads on the receive thread,
             // before playback can accept them while the UI dispatcher is busy.
             _publish(new MediaStateInvalidated(context, items.ToHashSet(StringComparer.Ordinal),
-                series.ToHashSet(StringComparer.Ordinal), catchUp, RefreshDetails: false));
+                series.ToHashSet(StringComparer.Ordinal), catchUp, RefreshDetails: false,
+                ViewerStateContentIds: viewerStateItems?.ToHashSet(StringComparer.Ordinal)));
         }
         _enqueue(() =>
         {
@@ -91,6 +95,7 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
                 if (_items.Count == 0 && _series.Count == 0 && !_catchUp)
                     _deadline = _time.GetUtcNow() + TimeSpan.FromSeconds(1);
                 _items.UnionWith(items); _series.UnionWith(series); _catchUp |= catchUp;
+                if (viewerStateItems != null) _viewerStateItems.UnionWith(viewerStateItems);
                 var wait = _deadline - _time.GetUtcNow();
                 var schedule = ++_schedule;
                 if (wait <= TimeSpan.Zero)
@@ -113,7 +118,8 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
         {
             if (_disposed || epoch != _epoch || schedule != _schedule || _context is not { } context) return;
             var message = new MediaStateInvalidated(context, _items.ToHashSet(StringComparer.Ordinal),
-                _series.ToHashSet(StringComparer.Ordinal), _catchUp);
+                _series.ToHashSet(StringComparer.Ordinal), _catchUp,
+                ViewerStateContentIds: _viewerStateItems.ToHashSet(StringComparer.Ordinal));
             ClearPending();
             if (_isCurrentContext(context)) _publish(message);
         }
@@ -126,6 +132,7 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
     {
         _timer?.Dispose(); _timer = null; ++_schedule;
         _context = null; _items.Clear(); _series.Clear(); _catchUp = false;
+        _viewerStateItems.Clear();
     }
 
     public void Dispose() { lock (_gate) { _disposed = true; ++_epoch; ClearPending(); } }
