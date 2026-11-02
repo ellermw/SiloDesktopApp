@@ -72,6 +72,61 @@ public sealed class PlaybackFailureDescriptionTests
         Assert.True(description.CanRetry);
     }
 
+    public static IEnumerable<object[]> AccountLimitTransportFailures()
+    {
+        foreach (var code in new[] { "too_many_streams", "stream_limit_reached", "too_many_transcodes", "transcode_limit_reached" })
+        foreach (var status in new[] { 400, 401, 403, 404, 426, 429, 500, 503 })
+        foreach (var message in new[] { "", " \r\n\t", "  End another account session first.\r\n" })
+            yield return [code, status, message];
+    }
+
+    [Theory]
+    [MemberData(nameof(AccountLimitTransportFailures))]
+    public void TransportAccountLimitsMatchTerminalGuidanceBeforeGenericStatusHandling(
+        string code, int status, string message)
+    {
+        var reason = code is "too_many_streams" or "stream_limit_reached"
+            ? "stream_limit_reached" : "transcode_limit_reached";
+        var expected = PlaybackFailureDescription.Describe(
+            new PlaybackPlanTerminalException(reason, message, retryable: true));
+
+        var actual = PlaybackFailureDescription.DescribeTransport(new ApiException(code, message, status));
+
+        Assert.Equal(expected, actual);
+    }
+
+    public static IEnumerable<object?[]> AccountLimitExceptionMessages()
+    {
+        foreach (var reason in new[] { "stream_limit_reached", "transcode_limit_reached" })
+        foreach (var message in new string?[] { null, "", " \r\n\t", "  End another account session first.\r\n" })
+        foreach (var retryable in new[] { false, true })
+            yield return [reason, message, retryable];
+    }
+
+    [Theory]
+    [MemberData(nameof(AccountLimitExceptionMessages))]
+    public void AccountLimitExceptionMessageUsesTheSameViewerGuidanceAsThePresentation(
+        string reason, string? message, bool retryable)
+    {
+        var error = new PlaybackPlanTerminalException(reason, message, retryable);
+        var description = PlaybackFailureDescription.Describe(error);
+
+        Assert.Equal($"{description.Title}: {description.Message}", error.Message);
+        Assert.DoesNotContain("compatible playback route", error.Message);
+        Assert.DoesNotContain(reason, error.Message);
+        Assert.Equal(reason, error.Reason);
+        Assert.Equal(string.IsNullOrWhiteSpace(message) ? null : message.Trim(), error.ServerMessage);
+        Assert.Equal(retryable, error.Retryable);
+    }
+
+    [Fact]
+    public void OtherTerminalExceptionMessagesKeepTheirDiagnosticFallback()
+    {
+        var error = new PlaybackPlanTerminalException("future_reason", null, retryable: false);
+
+        Assert.Equal("The server could not find a compatible playback route. (future_reason)", error.Message);
+    }
+
     [Theory]
     [InlineData(426, "client_upgrade_required", "Update required")]
     [InlineData(404, "playback_session_not_found", "Playback session expired")]

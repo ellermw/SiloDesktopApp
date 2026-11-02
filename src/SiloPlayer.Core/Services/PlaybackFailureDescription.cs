@@ -10,6 +10,9 @@ public static class PlaybackFailureDescription
     public static PlaybackFailurePresentation? DescribeTransport(ApiException error)
     {
         ArgumentNullException.ThrowIfNull(error);
+        var accountLimit = DescribeAccountLimit(error.ErrorCode, error.Message, retryable: true);
+        if (accountLimit != null)
+            return accountLimit;
         if (error.StatusCode == 426 || error.ErrorCode == "client_upgrade_required")
         {
             return new PlaybackFailurePresentation(
@@ -65,10 +68,10 @@ public static class PlaybackFailureDescription
     public static PlaybackFailurePresentation Describe(PlaybackPlanTerminalException terminal)
     {
         ArgumentNullException.ThrowIfNull(terminal);
+        var accountLimit = DescribeAccountLimit(terminal.Reason, terminal.ServerMessage, terminal.Retryable);
+        if (accountLimit != null)
+            return accountLimit;
         var fallback = terminal.ServerMessage;
-        var accountLimitMessage = string.IsNullOrWhiteSpace(fallback)
-            ? "Stop anything else playing or paused on your account, then try again."
-            : fallback.Trim();
         var (title, message) = terminal.Reason switch
         {
             "transcoding_disabled" => (
@@ -105,12 +108,6 @@ public static class PlaybackFailureDescription
             "capacity_unavailable" => (
                 "The server is busy",
                 "There's no capacity to convert this file right now. Please try again in a moment."),
-            "stream_limit_reached" => (
-                "Streaming limit reached",
-                accountLimitMessage),
-            "transcode_limit_reached" => (
-                "Video conversion limit reached",
-                accountLimitMessage),
             "session_expired" => (
                 "Playback session expired",
                 "This playback session is no longer active. Start it again to keep watching."),
@@ -130,5 +127,21 @@ public static class PlaybackFailureDescription
         };
 
         return new PlaybackFailurePresentation(title, message, terminal.Retryable);
+    }
+
+    internal static PlaybackFailurePresentation? DescribeAccountLimit(string reason, string? serverMessage, bool retryable)
+    {
+        var title = reason switch
+        {
+            "stream_limit_reached" or "too_many_streams" => "Streaming limit reached",
+            "transcode_limit_reached" or "too_many_transcodes" => "Video conversion limit reached",
+            _ => null,
+        };
+        if (title == null)
+            return null;
+        var message = string.IsNullOrWhiteSpace(serverMessage)
+            ? "Stop anything else playing or paused on your account, then try again."
+            : serverMessage.Trim();
+        return new PlaybackFailurePresentation(title, message, retryable);
     }
 }

@@ -2169,6 +2169,7 @@ public partial class PlayerService : IDisposable
         // if an account has a one-stream limit, the guarded retry below waits
         // for retirement only when the server actually reports that limit.
         Task retiringSessionTask = Task.CompletedTask;
+        var retiringTranscode = _playbackManager?.CurrentSession?.PlayMethod == "transcode";
         if (_playbackManager != null)
         {
             lock (_bufferingGate) FlushBufferingSummaryCore();
@@ -2368,12 +2369,16 @@ public partial class PlayerService : IDisposable
                     preferences: qualityPreferences,
                     expectedIdentityContext: expectedIdentity);
             }
-            catch (ApiException ex) when (
-                ex.StatusCode == 429 &&
-                ex.ErrorCode == "too_many_streams" &&
-                !retiringSessionTask.IsCompleted)
+            catch (Exception ex) when (
+                !retiringSessionTask.IsCompleted &&
+                ((ex is ApiException api && api.StatusCode == 429 &&
+                    (api.ErrorCode == "too_many_streams" ||
+                        (retiringTranscode && api.ErrorCode == "too_many_transcodes"))) ||
+                 (ex is PlaybackPlanTerminalException terminal &&
+                    (terminal.Reason == "stream_limit_reached" ||
+                        (retiringTranscode && terminal.Reason == "transcode_limit_reached")))))
             {
-                LogToFile("state_trace.txt", "Next playback session reached a one-stream limit; waiting for the retiring session and retrying once.");
+                LogToFile("state_trace.txt", "Next playback session reached an account limit; waiting for the retiring session and retrying once.");
                 await retiringSessionTask.WaitAsync(requestToken);
                 EnsureCurrentOwner();
                 session = await _playbackManager.StartSessionAsync(
@@ -2535,10 +2540,6 @@ public partial class PlayerService : IDisposable
             var transportDescription = PlaybackFailureDescription.DescribeTransport(api);
             if (transportDescription != null)
                 return (transportDescription.Title, transportDescription.Message);
-            if (api.StatusCode == 429 && api.ErrorCode == "too_many_streams")
-                return ("Stream limit reached", "This account has reached its active stream limit. Stop another stream and try again.");
-            if (api.StatusCode == 429 && api.ErrorCode == "too_many_transcodes")
-                return ("Transcode limit reached", "This account has reached its active transcode limit. Try direct play or stop another transcode.");
             return ("Playback unavailable", string.IsNullOrWhiteSpace(api.Message) ? "Playback could not start." : api.Message);
         }
         if (ex is UserStateChangedException)

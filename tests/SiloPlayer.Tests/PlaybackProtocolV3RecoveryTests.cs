@@ -35,6 +35,7 @@ public sealed class PlaybackProtocolV3RecoveryTests
         Assert.Equal(string.IsNullOrWhiteSpace(message)
             ? "Stop anything else playing or paused on your account, then try again." : message.Trim(), description.Message);
         Assert.True(description.CanRetry);
+        Assert.Equal($"{description.Title}: {description.Message}", error.Message);
         await manager.StopSessionAsync();
     }
 

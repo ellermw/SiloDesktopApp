@@ -729,13 +729,47 @@ public sealed class PlayerServiceSourceTests
 
         Assert.Contains("retiringSessionTask = retiringManager.StopSessionAsync", method);
         Assert.Contains("_ = FinishClosingSessionAsync(retiringManager, retiringSessionTask)", method);
-        Assert.Contains("ex.ErrorCode == \"too_many_streams\"", method);
+        Assert.Contains("api.ErrorCode == \"too_many_streams\"", method);
         Assert.Contains("await retiringSessionTask.WaitAsync(requestToken)", method);
         var startupHandoffEnd = method.IndexOf("ErrorMessage = null;", StringComparison.Ordinal);
         Assert.True(startupHandoffEnd > 0);
         Assert.DoesNotContain(
             "await _playbackManager.StopSessionAsync();",
             method[..startupHandoffEnd]);
+    }
+
+    [Fact]
+    public void AccountLimitDuringRetirementRetriesOnceOnlyAfterStopAndOwnerCheck()
+    {
+        var source = File.ReadAllText(Path.Combine(
+            FindRepositoryRoot(), "src", "SiloPlayer", "Services", "PlayerService.cs"));
+        var start = source.IndexOf("private async Task PlayCoreAsync", StringComparison.Ordinal);
+        var end = source.IndexOf("private static (string Title, string Detail) DescribePlaybackError", start, StringComparison.Ordinal);
+        Assert.True(start >= 0 && end > start);
+        var method = source[start..end];
+
+        var transcodeSnapshot = method.IndexOf("var retiringTranscode = _playbackManager?.CurrentSession?.PlayMethod == \"transcode\";", StringComparison.Ordinal);
+        var stop = method.IndexOf("retiringSessionTask = retiringManager.StopSessionAsync", StringComparison.Ordinal);
+        Assert.True(transcodeSnapshot >= 0 && stop > transcodeSnapshot);
+
+        var firstStart = method.IndexOf("session = await _playbackManager.StartSessionAsync(", StringComparison.Ordinal);
+        var guard = method.IndexOf("catch (Exception ex) when (", firstStart, StringComparison.Ordinal);
+        var wait = method.IndexOf("await retiringSessionTask.WaitAsync(requestToken);", guard, StringComparison.Ordinal);
+        var ownerCheck = method.IndexOf("EnsureCurrentOwner();", wait, StringComparison.Ordinal);
+        var retry = method.IndexOf("session = await _playbackManager.StartSessionAsync(", ownerCheck, StringComparison.Ordinal);
+        Assert.True(firstStart >= 0 && guard > firstStart && wait > guard && ownerCheck > wait && retry > ownerCheck);
+
+        var filter = method[guard..wait];
+        Assert.Contains("!retiringSessionTask.IsCompleted &&", filter);
+        Assert.Contains("ex is ApiException api && api.StatusCode == 429", filter);
+        Assert.Contains("api.ErrorCode == \"too_many_streams\"", filter);
+        Assert.Contains("retiringTranscode && api.ErrorCode == \"too_many_transcodes\"", filter);
+        Assert.Contains("ex is PlaybackPlanTerminalException terminal", filter);
+        Assert.Contains("terminal.Reason == \"stream_limit_reached\"", filter);
+        Assert.Contains("retiringTranscode && terminal.Reason == \"transcode_limit_reached\"", filter);
+        Assert.Equal(2, method.Split("session = await _playbackManager.StartSessionAsync(", StringSplitOptions.None).Length - 1);
+        Assert.DoesNotContain("while (", method[firstStart..retry]);
+        Assert.DoesNotContain("for (", method[firstStart..retry]);
     }
 
     [Fact]
