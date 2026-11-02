@@ -111,7 +111,7 @@ internal static class BoxSetNativeFixture
         parent.Children.Add(destinationFrame); navigation.NavigationRequestHandler = null;
         Check(navigation.Navigate<BoxSetPage>(new BoxSetNavigationArgs("7", "12")), "actual Frame box-set navigation");
         for (var i = 0; i < 100 && (destinationFrame.Content as BoxSetPage)?.ViewModel.Detail == null; i++) await Task.Delay(10);
-        Check(destinationFrame.Content is BoxSetPage opened && opened.ViewModel.Detail?.Id == "7" && opened.ViewModel.Detail.LibraryId == "12", "activated dedicated destination loads scoped data");
+        Check(destinationFrame.Content is BoxSetPage opened && opened.ViewModel.Detail is { Id: "7", LibraryId: "12" }, "activated dedicated destination loads scoped data");
         destinationFrame.Content = null; parent.Children.Remove(destinationFrame);
         card.MediaItem = new MediaItem { Type = "movie", ContentId = "ordinary", Title = "Ordinary film" }; await Task.Delay(80);
         Check(card.Content is not BoxSetCard && card.IsTabStop, "recycled aggregate restores ordinary card/focus");
