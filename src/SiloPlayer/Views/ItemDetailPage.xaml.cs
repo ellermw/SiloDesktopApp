@@ -829,7 +829,9 @@ public sealed partial class ItemDetailPage : Page
 
     private void OnViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
     {
-        if (args.PropertyName == nameof(ViewModel.UserRating))
+        if (args.PropertyName == nameof(ViewModel.BoxSet))
+            DispatcherQueue.TryEnqueue(BuildBoxSetRow);
+        else if (args.PropertyName == nameof(ViewModel.UserRating))
             DispatcherQueue.TryEnqueue(UpdateStarRating);
         else if (args.PropertyName == nameof(ViewModel.IsWatched))
             DispatcherQueue.TryEnqueue(UpdateWatchedButton);
@@ -850,6 +852,10 @@ public sealed partial class ItemDetailPage : Page
 
     private void OnPageLoaded(object sender, RoutedEventArgs e)
     {
+        App.Services.GetRequiredService<CatalogApi>().LibraryCacheInvalidated -= RefreshBoxSetRow;
+        App.Services.GetRequiredService<CatalogApi>().LibraryCacheInvalidated += RefreshBoxSetRow;
+        App.Services.GetRequiredService<SiloApiClient>().LocalizedReads.Invalidated -= BoxSetLanguageChanged;
+        App.Services.GetRequiredService<SiloApiClient>().LocalizedReads.Invalidated += BoxSetLanguageChanged;
         SettingsViewModel.TitleArtPreferenceChanged -= OnTitleArtPreferenceChanged;
         SettingsViewModel.TitleArtPreferenceChanged += OnTitleArtPreferenceChanged;
         UpdateBackdropHeight();
@@ -915,6 +921,8 @@ public sealed partial class ItemDetailPage : Page
         _navigationCts?.Cancel();
         _navigationCts?.Dispose();
         _navigationCts = null;
+        App.Services.GetRequiredService<CatalogApi>().LibraryCacheInvalidated -= RefreshBoxSetRow;
+        App.Services.GetRequiredService<SiloApiClient>().LocalizedReads.Invalidated -= BoxSetLanguageChanged;
         ViewModel.PropertyChanged -= OnViewModelPropertyChanged;
         if (_rootElement != null)
         {

@@ -75,8 +75,10 @@ public partial class ItemDetailViewModel : ObservableObject,
     {
         if (message.Context is { } context && !_catalogApi.IsCurrentContext(context)) return;
         _detailPrefetchCache.Invalidate(message.ContentId);
+        if (message.Kind == MediaSurfaceChangeKind.ItemMetadataRefreshed) _ = RefreshBoxSetAsync();
         if (message.Kind is MediaSurfaceChangeKind.WatchedMarked or MediaSurfaceChangeKind.WatchedCleared)
         {
+            _ = RefreshBoxSetAsync();
             ApplyWatchedChange(message);
             return;
         }
@@ -223,6 +225,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     public void Receive(PlaybackProgressUpdated message)
     {
+        if (BoxSet?.Items.Any(x => x.ContentId == message.ContentId) == true) _ = RefreshBoxSetAfterPlaybackAsync(message);
         _detailPrefetchCache.Invalidate(message.ContentId);
         var episodeSpoilersChanged = false;
         foreach (var episode in Episodes.Where(episode => episode.ContentId == message.ContentId))
@@ -354,6 +357,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     public void CancelPendingLoads()
     {
+        RetireBoxSet();
         _loadCts?.Cancel();
         _loadCts?.Dispose();
         _loadCts = null;
@@ -363,6 +367,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     private async Task LoadAsync(string contentId)
     {
         CancelPendingLoads();
+        _boxSetRetired = false;
         var loadCts = new CancellationTokenSource();
         _loadCts = loadCts;
         var ct = loadCts.Token;
@@ -393,6 +398,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             ct.ThrowIfCancellationRequested();
             if (!ReferenceEquals(_loadCts, loadCts)) return;
             Item = item;
+            _ = RefreshBoxSetAsync();
 
             // Server commit 4172a16 inlines favorite/watchlist/rating on the item
             // detail response via `user_state` + `user_rating`. Prefer those over

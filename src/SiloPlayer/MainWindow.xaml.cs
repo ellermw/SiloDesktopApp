@@ -2098,6 +2098,7 @@ public sealed partial class MainWindow : Window
     private void OnNavigated_SynchronizeShellChrome(object? sender, Microsoft.UI.Xaml.Navigation.NavigationEventArgs e)
     {
         _sidebarPresentation.Navigate(e.SourcePageType == typeof(ItemDetailPage)
+            || e.SourcePageType == typeof(BoxSetPage)
             || e.SourcePageType == typeof(PersonDetailPage)
             || e.SourcePageType == typeof(RequestDetailPage));
         _lastShellPageType = e.SourcePageType;
