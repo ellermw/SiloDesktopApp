@@ -115,9 +115,10 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("CardsScrollViewer.ViewportWidth * 0.82", code);
         Assert.Contains("case VirtualKey.Left", code);
         Assert.Contains("case VirtualKey.Right", code);
-        Assert.Contains("RestoreScrollPositionAfterRebind", code);
-        Assert.Contains("isSameSection && !templateChanged", code);
-        Assert.Contains("background refreshes, progress updates, and item dismissals", code);
+        // Same-section rebinds preserve position and demand even when the card template changes.
+        Assert.Contains("RestoreScrollPositionAfterRebind(isSameSection, previousOffset)", code);
+        Assert.Matches(@"if \(!isSameSection\)\s*\{\s*_completionDemandArmed = false;", code);
+        Assert.Contains("_lastHorizontalOffset = clamped;", code);
     }
 
     [Fact]
@@ -259,7 +260,11 @@ public sealed class CurrentHomeParitySourceTests
         Assert.Contains("QueueRealtimeRefreshAsync(reason, delay, cts, context)", viewModel);
         Assert.Contains("if (context.HasValue && (!_homeApi.IsCurrentContext(context.Value) || _loadedContext != context)) return", viewModel);
         Assert.Contains("await FetchSectionItemsInBatchesAsync(generation, _sectionLoadCts.Token)", viewModel);
-        Assert.Contains("ApplyRefreshedSection(completed)", viewModel);
+        // Batch refresh and retry share the read-result helper, which must
+        // preserve whole-read projection ownership for expanded rows.
+        Assert.Contains("ApplySectionReadResult(completed, read.Shown, read.Whole, removalRevision)", viewModel);
+        Assert.Contains("ApplySectionReadResult(completed, shown, whole, removalRevision)", viewModel);
+        Assert.Contains("ApplyRefreshedSection(completed, whole)", viewModel);
         Assert.Contains("QueueRealtimeRefresh(message.Completed ? \"playback_completed\" : \"playback_progress\")", viewModel);
     }
 

@@ -136,6 +136,20 @@ internal sealed class RegressionApp : Application, IXamlMetadataProvider
             _window.AppWindow.Move(new Windows.Graphics.PointInt32(-20000, -20000));
             _window.AppWindow.Show(false);
             await Task.Delay(150); // Allow the hidden native tree to acquire its XamlRoot.
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-row-review")
+            {
+                await HomeRowReviewNativeFixture.RunAsync(parent);
+                await HomeRowWindowNativeFixture.RunAsync(parent);
+                await HomeCurrentNativeFixture.RunAsync(parent);
+                await HomeDismissalNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
+            if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "home-row-window")
+            {
+                await HomeRowWindowNativeFixture.RunAsync(parent);
+                await HomeCurrentNativeFixture.RunAsync(parent);
+                Program.Log("PASS: native regression run completed."); Exit(); return;
+            }
             if (Environment.GetEnvironmentVariable("SILO_NATIVE_TEST_ONLY") == "episode-quickplay-review")
             {
                 await EpisodeQuickPlayNativeFixture.VerifyReviewAsync(parent);
