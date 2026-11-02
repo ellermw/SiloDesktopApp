@@ -112,6 +112,65 @@ public sealed class RealtimeReadOwnershipTests
     }
 
     [Fact]
+    public async Task RemoteChangeDuringInitialSeasonsReadRetriesStaleCounts()
+    {
+        using var f = new Fixture(); f.Seed();
+        f.Vm.Seasons.Clear(); f.Vm.Episodes.Clear();
+        f.Wire.HoldSeasons = true;
+        var loading = f.Vm.LoadSeasonsCommand.ExecuteAsync(null);
+        var initial = await f.Wire.NextAsync();
+        var watchedRevision = f.Vm.WatchedStateRevision;
+        f.Wire.Count = 2;
+        try
+        {
+            await f.Vm.RefreshMediaStateAsync(f.Change(EpisodeB)).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(2, f.Vm.Item!.UserData!.WatchedCount);
+            Assert.Equal(watchedRevision, f.Vm.WatchedStateRevision);
+            Assert.False(loading.IsCompleted);
+        }
+        finally
+        {
+            f.Wire.HoldSeasons = false; initial.Release();
+            await loading.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        Assert.Equal(2, Assert.Single(f.Vm.Seasons).UserData!.WatchedCount);
+        Assert.Equal(2, f.Wire.SeasonReads);
+        Assert.False(f.Vm.IsWatched);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RemoteChangeDuringInitialEpisodeReadRetriesStaleRowState(bool autoSelect)
+    {
+        using var f = new Fixture(); f.Seed();
+        f.Wire.HoldEpisodes = true;
+        var loading = autoSelect ? f.Vm.LoadSeasonsCommand.ExecuteAsync(null) : f.Vm.SelectSeasonCommand.ExecuteAsync(1);
+        var initial = await f.Wire.NextAsync();
+        Assert.Empty(f.Vm.Episodes);
+        var watchedRevision = f.Vm.WatchedStateRevision;
+        f.Wire.Count = 2; f.Wire.Position = 900;
+        try
+        {
+            await f.Vm.RefreshMediaStateAsync(f.Change(EpisodeA)).WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal(2, f.Vm.Item!.UserData!.WatchedCount);
+            Assert.Equal(2, Assert.Single(f.Vm.Seasons).UserData!.WatchedCount);
+            Assert.Equal(watchedRevision, f.Vm.WatchedStateRevision);
+            Assert.False(loading.IsCompleted);
+        }
+        finally
+        {
+            f.Wire.HoldEpisodes = false; initial.Release();
+            await loading.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+
+        Assert.Equal(900, Assert.Single(f.Vm.Episodes).UserData!.PositionSeconds);
+        Assert.Equal(2, f.Wire.EpisodeReads);
+        Assert.False(f.Vm.IsWatched);
+    }
+
+    [Fact]
     public async Task LocalFinalProgressOwnsTheRowOverAnOlderRemoteEpisodeSnapshot()
     {
         using var f = new Fixture(); f.Seed();
@@ -321,10 +380,10 @@ public sealed class RealtimeReadOwnershipTests
 
     private sealed class Backend : HttpMessageHandler
     {
-        internal int Count, DetailReads, EpisodeReads, WatchReads;
+        internal int Count, DetailReads, SeasonReads, EpisodeReads, WatchReads;
         internal double Position = 31;
         internal string? Target = EpisodeA;
-        internal bool HoldDetails, HoldEpisodes;
+        internal bool HoldDetails, HoldSeasons, HoldEpisodes;
         internal Action? BeforeWatchResponse;
         internal Action? BeforeDetailResponse;
         internal readonly List<Uri> CatalogUris = [];
@@ -352,7 +411,11 @@ public sealed class RealtimeReadOwnershipTests
                     EpisodeReads++; hold = HoldEpisodes;
                     body = new { items = new[] { new { content_id = EpisodeA, season_number = 1, user_data = new { position_seconds = Position, played = false } } } };
                 }
-                else if (path.EndsWith("/seasons")) body = new { items = new[] { new { content_id = "series:review-S01", season_number = 1, episode_count = 8, user_data = new { watched_count = Count } } } };
+                else if (path.EndsWith("/seasons"))
+                {
+                    SeasonReads++; hold = HoldSeasons;
+                    body = new { items = new[] { new { content_id = "series:review-S01", season_number = 1, episode_count = 8, user_data = new { watched_count = Count } } } };
+                }
                 else
                 {
                     Assert.StartsWith("/api/v2/catalog/items/", path);

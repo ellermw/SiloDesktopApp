@@ -6834,10 +6834,11 @@ public sealed partial class ItemDetailPage : Page
             while (true)
             {
                 var revision = ViewModel.WatchedStateRevision;
+                var remoteRevision = ViewModel.RemoteStateRevision;
                 response = await catalogApi.GetItemEpisodesAsync(seasonContentId, libraryId, ct);
                 if (ct.IsCancellationRequested || _currentContentId != ownerContentId || ViewModel.LibraryId != libraryId
                     || !ReferenceEquals(ViewModel.Item, item) || !catalogApi.IsCurrentContext(context)) return false;
-                if (revision == ViewModel.WatchedStateRevision) break;
+                if (revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
             }
             if (response?.Episodes != null && response.Episodes.Count > 0)
             {
@@ -8317,9 +8318,10 @@ public sealed partial class ItemDetailPage : Page
             while (true)
             {
                 var revision = ViewModel.WatchedStateRevision;
+                var remoteRevision = ViewModel.RemoteStateRevision;
                 response = await catalogApi.GetItemEpisodesAsync(seasonContentId, libraryId, token);
                 if (!Current() || !ReferenceEquals(ViewModel.Item, item) || !catalogApi.IsCurrentContext(context)) return;
-                if (revision == ViewModel.WatchedStateRevision) break;
+                if (revision == ViewModel.WatchedStateRevision && remoteRevision == ViewModel.RemoteStateRevision) break;
             }
             ViewModel.Episodes.Clear();
             foreach (var episode in response.Episodes)

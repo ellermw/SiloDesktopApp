@@ -33,11 +33,14 @@ public partial class ItemDetailViewModel : ObservableObject,
     private MediaStateInvalidated? _activeRemoteState;
     private MediaStateInvalidated? _initialRemoteState;
     private long _initialStateRevision;
+    private long _remoteStateGeneration;
     private long _localStateGeneration;
     private Task _pendingLocalProgressSave = Task.CompletedTask;
     private CancellationTokenSource? _remoteStateReadCts;
     private ApiRequestContext? _remoteStateReadContext;
     public long WatchedStateRevision => Volatile.Read(ref _watchedStateGeneration);
+    // Companion loads retry coalesced remote changes without retiring local write feedback.
+    public long RemoteStateRevision => Volatile.Read(ref _remoteStateGeneration);
     public int? LibraryId { get; private set; }
     public Task LoadInLibraryAsync(string contentId, int? libraryId)
     {
@@ -176,6 +179,7 @@ public partial class ItemDetailViewModel : ObservableObject,
             if (!IsRelatedState(message, item)) return Task.CompletedTask;
             if (_remoteStateReadContext is { } reading && reading != message.Context) _remoteStateReadCts?.Cancel();
             if (!message.RefreshDetails) return Task.CompletedTask;
+            Interlocked.Increment(ref _remoteStateGeneration);
             // A still-owned snapshot finishes even when another sweep is due.
             // Retain its scope in the trailing work until all of its reads settle.
             _pendingRemoteState = MergeState(_pendingRemoteState, MergeState(_activeRemoteState, message));
@@ -288,7 +292,9 @@ public partial class ItemDetailViewModel : ObservableObject,
                 // fails. Commit and notify before starting those independent reads.
                 OnPropertyChanged(nameof(Item));
                 if (!Current()) continue;
-                if (item.Type == "series" && !IsSeasonsLoading && (_seasonsLoaded || Seasons.Count > 0))
+                // LoadSeasonsAsync stays active through auto-selected episodes;
+                // its already-committed seasons still need remote count refreshes.
+                if (item.Type == "series" && (_seasonsLoaded || !IsSeasonsLoading && Seasons.Count > 0))
                 {
                     try
                     {
@@ -920,10 +926,11 @@ public partial class ItemDetailViewModel : ObservableObject,
             while (true)
             {
                 var watchedRevision = WatchedStateRevision;
+                var remoteRevision = RemoteStateRevision;
                 response = await _catalogApi.GetSeasonsAsync(contentId, LibraryId);
                 if (generation != Volatile.Read(ref _seasonsLoadGeneration)
                     || !ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context)) return;
-                if (watchedRevision == WatchedStateRevision) break;
+                if (watchedRevision == WatchedStateRevision && remoteRevision == RemoteStateRevision) break;
             }
             Seasons.Clear();
             foreach (var season in response.Seasons)
@@ -971,10 +978,11 @@ public partial class ItemDetailViewModel : ObservableObject,
             while (true)
             {
                 var watchedRevision = WatchedStateRevision;
+                var remoteRevision = RemoteStateRevision;
                 response = await _catalogApi.GetEpisodesAsync(contentId, seasonNumber, LibraryId);
                 if (generation != Volatile.Read(ref _episodesLoadGeneration)
                     || !ReferenceEquals(Item, item) || !_catalogApi.IsCurrentContext(context)) return;
-                if (watchedRevision == WatchedStateRevision) break;
+                if (watchedRevision == WatchedStateRevision && remoteRevision == RemoteStateRevision) break;
             }
             foreach (var episode in response.Episodes)
                 Episodes.Add(episode);

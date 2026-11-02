@@ -32,7 +32,7 @@ internal static class RealtimeSeriesStateNativeFixture
         {
             foreach (var type in new[] { "series", "season" })
             {
-                wire.Count = 2; wire.Target = "new-target";
+                wire.Count = 2; wire.Target = "new-target"; wire.LoadedPlayed = false; wire.LoadedPosition = 31;
                 var page = new ItemDetailPage { Width = 900, Height = 720 };
                 var vm = page.ViewModel;
                 using var navigation = new CancellationTokenSource();
@@ -42,6 +42,8 @@ internal static class RealtimeSeriesStateNativeFixture
                 vm.Seasons.Add(new() { ContentId = "season", SeasonNumber = 1, Title = "Season 1", EpisodeCount = 4, UserData = new() { UnplayedCount = 4 } });
                 vm.Episodes.Add(new() { ContentId = "sibling", Title = "Untouched sibling", SeasonNumber = 1, EpisodeNumber = 1,
                     Runtime = 20, UserData = new() { PositionSeconds = 31 } });
+                vm.Episodes.Add(new() { ContentId = "loaded", Title = "Loaded episode", SeasonNumber = 1, EpisodeNumber = 2,
+                    Runtime = 20, UserData = new() { PositionSeconds = 31, DurationSeconds = 1200 } });
                 Set(page, "_currentContentId", vm.Item.ContentId); Set(page, "_navigationCts", navigation);
                 var handler = (PropertyChangedEventHandler)typeof(ItemDetailPage).GetMethod("OnViewModelPropertyChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
                     .CreateDelegate(typeof(PropertyChangedEventHandler), page);
@@ -106,6 +108,18 @@ internal static class RealtimeSeriesStateNativeFixture
                         await Task.Delay(100);
                         Check(action.Visibility == Visibility.Visible, "A season Play action cannot recover after its target returns.");
                     }
+                    var loadedEpisode = vm.Episodes.Single(episode => episode.ContentId == "loaded");
+                    Check(!HasWatchedBadge(page, "loaded"), "The loaded episode was already painted watched before its remote event.");
+                    wire.LoadedPlayed = true; wire.LoadedPosition = 0;
+                    using var loadedData = JsonDocument.Parse("""
+                        {"profile_id":"fixture-profile","content_id":"loaded","series_id":"series","change":"watched","played":true}
+                        """);
+                    refresh.ReceiveRealtime("user_state", "user_state.changed", loadedData.RootElement);
+                    await UntilAsync(() => loadedEpisode.UserData?.Played == true && HasWatchedBadge(page, "loaded"));
+                    Check(ReferenceEquals(loadedEpisode, vm.Episodes.Single(episode => episode.ContentId == "loaded")),
+                        "Realtime refresh replaced the retained episode instead of updating its state.");
+                    Check(!HasWatchedBadge(page, "sibling") && vm.Episodes[0].UserData?.PositionSeconds == 31,
+                        "A loaded episode's remote change repainted an unrelated sibling as watched.");
                     await MediaParityNativeFixture.CaptureAsync(page, "realtime-state-" + type + ".png");
                     Check(page.CanPreserveOnReconnect, "A healthy mounted detail should survive reconnect.");
                     vm.Seasons.Clear(); vm.Episodes.Clear();
@@ -120,6 +134,7 @@ internal static class RealtimeSeriesStateNativeFixture
                     {
                         await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
                         Check(!page.CanPreserveOnReconnect, "A held initial companion must remount on reconnect, even with empty rows.");
+                        wire.Count = 5; wire.LoadedPlayed = false; wire.LoadedPosition = 600;
                         await vm.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(),
                             new HashSet<string>(), CatchUp: true));
                         Check(!page.CanPreserveOnReconnect, "Detail catch-up alone cannot make a pre-reconnect companion safe to preserve.");
@@ -130,6 +145,10 @@ internal static class RealtimeSeriesStateNativeFixture
                         wire.ReleaseCompanion.TrySetResult();
                         await initialCompanion.WaitAsync(TimeSpan.FromSeconds(5));
                     }
+                    Check(vm.Episodes.Single(episode => episode.ContentId == "loaded").UserData is { Played: false, PositionSeconds: 600 },
+                        "A remote invalidation during the initial episode load left its pre-event row state mounted.");
+                    if (type == "series") Check(vm.Seasons.Single().UserData?.WatchedCount == 5,
+                        "A remote invalidation during the initial seasons load left its pre-event count mounted.");
                     Check(page.CanPreserveOnReconnect, "Settled successful companions should allow preservation again.");
                     vm.IsEpisodesLoading = true;
                     Check(!page.CanPreserveOnReconnect, "A pending selected-season query must remount on reconnect.");
@@ -184,6 +203,14 @@ internal static class RealtimeSeriesStateNativeFixture
         finally { slot.SetValue(null, original); }
     }
 
+    private static bool HasWatchedBadge(ItemDetailPage page, string contentId)
+    {
+        var row = Descendants<Button>((Panel)page.FindName("EpisodesPanel"))
+            .SingleOrDefault(button => button.Tag as string == contentId);
+        return row != null && Descendants<Grid>(row).Any(grid =>
+            AutomationProperties.GetName(grid) == "Watched" && grid.Visibility == Visibility.Visible);
+    }
+
     private static async Task UntilAsync(Func<bool> condition)
     { for (var i = 0; i < 250; i++) { if (condition()) return; await Task.Delay(20); } throw new TimeoutException("Native realtime state did not refresh."); }
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
@@ -205,6 +232,8 @@ internal static class RealtimeSeriesStateNativeFixture
         internal int Count = 2;
         internal string? Target = "new-target";
         internal bool FailEpisodes;
+        internal bool LoadedPlayed;
+        internal double LoadedPosition = 31;
         internal string? HeldCompanion;
         internal TaskCompletionSource? CompanionStarted;
         internal TaskCompletionSource? ReleaseCompanion;
@@ -216,12 +245,15 @@ internal static class RealtimeSeriesStateNativeFixture
             if (FailEpisodes && path.EndsWith("/episodes"))
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
                     { Content = new StringContent("{\"error\":{\"code\":\"service_unavailable\",\"message\":\"Synthetic companion failure\"}}", Encoding.UTF8, "application/json") });
-            object body = path.StartsWith("/api/v2/catalog/items/") ?
+            object body = path.EndsWith("/episodes") ? new { items = new[] {
+                    new { content_id = "sibling", season_number = 1, user_data = new { played = false, position_seconds = 31d, duration_seconds = 1200d } },
+                    new { content_id = "loaded", season_number = 1, user_data = new { played = LoadedPlayed, position_seconds = LoadedPosition, duration_seconds = 1200d } } } } :
+                path.StartsWith("/api/v2/catalog/items/") ?
                 new { content_id = path.Split('/').Last(), type = path.Split('/').Last(),
                     play_content_id = Target, play_season_number = 1, episode_count = 6, season_count = 1,
                     user_data = new { watched_count = Count, unplayed_count = 6 - Count, in_progress_count = 1, played = false, position_seconds = 900 }, user_state = new { } } :
                 path.EndsWith("/seasons") ? new { items = new[] { new { content_id = "season", season_number = 1, episode_count = 6,
-                    user_data = new { watched_count = 2, unplayed_count = 4, in_progress_count = 1, played = false } } } } :
+                    user_data = new { watched_count = Count, unplayed_count = 6 - Count, in_progress_count = 1, played = false } } } } :
                 path.Contains("progress/capabilities") ? new { clear_resume_position = false } : new { items = Array.Empty<object>() };
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
             if (HeldCompanion is { } companion && path.EndsWith("/" + companion) && ReleaseCompanion is { } release)
