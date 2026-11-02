@@ -38,6 +38,45 @@ public sealed class RealtimeReadOwnershipTests
     }
 
     [Theory]
+    [InlineData(MediaSurfaceChangeKind.FavoriteAdded)]
+    [InlineData(MediaSurfaceChangeKind.WatchlistAdded)]
+    [InlineData(MediaSurfaceChangeKind.RatingChanged)]
+    public async Task QueuedCatchUpRetainsItsScopeWhenViewerStateChangesBeforeTheFirstOwnedRead(MediaSurfaceChangeKind kind)
+    {
+        var queued = new QueuedStateContext();
+        var previous = SynchronizationContext.Current;
+        Fixture f;
+        Task refresh;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(queued);
+            f = new Fixture(); f.Seed();
+            f.Wire.Count = 2;
+            f.Wire.Favorite = kind == MediaSurfaceChangeKind.FavoriteAdded;
+            f.Wire.Watchlist = kind == MediaSurfaceChangeKind.WatchlistAdded;
+            f.Wire.Rating = kind == MediaSurfaceChangeKind.RatingChanged ? 4 : null;
+            refresh = f.Vm.RefreshMediaStateAsync(f.Change() with { CatchUp = true });
+            f.Vm.Receive(new MediaSurfaceChanged(kind, Series, rating: 4, context: f.Client.CaptureContext()));
+        }
+        finally { SynchronizationContext.SetSynchronizationContext(previous); }
+        using (f)
+        {
+            Assert.Equal(0, f.Wire.DetailReads);
+            var mounted = f.Vm.Item;
+            queued.Drain();
+            await refresh.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Same(mounted, f.Vm.Item);
+            Assert.Equal(2, f.Vm.Item!.UserData!.WatchedCount);
+            Assert.Equal(2, f.Vm.Seasons[0].UserData!.WatchedCount);
+            Assert.Equal(f.Wire.Favorite, f.Vm.IsFavorite);
+            Assert.Equal(f.Wire.Watchlist, f.Vm.InWatchlist);
+            Assert.Equal(f.Wire.Rating, f.Vm.UserRating);
+            Assert.Equal(1, f.Wire.DetailReads);
+        }
+    }
+
+    [Theory]
     [InlineData("favorite")]
     [InlineData("watchlist")]
     [InlineData("rating")]
@@ -403,6 +442,18 @@ public sealed class RealtimeReadOwnershipTests
         Assert.Equal(EpisodeA, error.ContentId);
         Assert.Equal(3, f.Wire.WatchReads);
         Assert.Equal(3L, f.Revision.Current); // Each event advances once, not again on flush.
+    }
+
+    private sealed class QueuedStateContext : SynchronizationContext
+    {
+        private readonly Queue<(SendOrPostCallback Callback, object? State)> _queue = new();
+        public override void Post(SendOrPostCallback callback, object? state) => _queue.Enqueue((callback, state));
+        internal void Drain()
+        {
+            // Only hold the initial yield; subsequent asynchronous reads use
+            // the caller's normal test context rather than an unpumped queue.
+            while (_queue.TryDequeue(out var work)) work.Callback(work.State);
+        }
     }
 
     private const string Series = "series:review";

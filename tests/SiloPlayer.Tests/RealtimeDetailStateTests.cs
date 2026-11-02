@@ -36,6 +36,67 @@ public sealed class RealtimeDetailStateTests
         Assert.Equal(1, scope.DetailReads);
     }
 
+    [Theory]
+    [InlineData("series")]
+    [InlineData("season")]
+    public async Task TransientOwnedDetailFailureRetriesTheFullCatchUpScope(string type)
+    {
+        using var scope = new Scope(type)
+        {
+            IncludeTarget = true, FreshTarget = "retried-target",
+            FreshViewerState = new() { IsFavorite = true }
+        };
+        scope.Vm.SelectedSeasonNumber = 1;
+        var mounted = scope.Vm.Item;
+        var attempts = 0;
+        scope.OverrideResponse = request =>
+        {
+            if (request.RequestUri!.AbsolutePath != "/api/v2/catalog/items/" + type || ++attempts != 1) return null;
+            return new(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent("""{"error":{"code":"service_unavailable","message":"Transient detail failure"}}""",
+                    Encoding.UTF8, "application/json")
+            };
+        };
+
+        await scope.Vm.RefreshMediaStateAsync(scope.Message("sibling") with { CatchUp = true })
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, attempts);
+        Assert.Same(mounted, scope.Vm.Item);
+        Assert.Equal(2, mounted!.UserData!.WatchedCount);
+        Assert.Equal("retried-target", mounted.PlayContentId);
+        Assert.True(scope.Vm.IsFavorite);
+        Assert.Equal(1, scope.EpisodeReads);
+        Assert.Equal(0, scope.Vm.Episodes[0].UserData!.PositionSeconds);
+        if (type == "series") Assert.Equal(2, scope.Vm.Seasons[0].UserData!.WatchedCount);
+    }
+
+    [Fact]
+    public async Task PersistentOwnedDetailFailureHasABoundedRetryAndAllowsLaterRefreshes()
+    {
+        using var scope = new Scope("series");
+        var attempts = 0;
+        scope.OverrideResponse = request =>
+        {
+            if (request.RequestUri!.AbsolutePath != "/api/v2/catalog/items/series") return null;
+            attempts++;
+            return new(HttpStatusCode.ServiceUnavailable)
+            {
+                Content = new StringContent("""{"error":{"code":"service_unavailable","message":"Persistent detail failure"}}""",
+                    Encoding.UTF8, "application/json")
+            };
+        };
+
+        await scope.Vm.RefreshMediaStateAsync(scope.Message()).WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, attempts);
+        Assert.Equal(0, scope.Vm.Item!.UserData!.WatchedCount);
+        scope.OverrideResponse = null;
+        await scope.Vm.RefreshMediaStateAsync(scope.Message()).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, scope.Vm.Item.UserData.WatchedCount);
+    }
+
     [Fact]
     public async Task UnrelatedSeriesDoesNotReloadTheOpenDetail()
     {

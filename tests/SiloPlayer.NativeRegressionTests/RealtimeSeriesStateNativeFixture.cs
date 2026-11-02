@@ -32,7 +32,7 @@ internal static class RealtimeSeriesStateNativeFixture
         {
             foreach (var type in new[] { "series", "season" })
             {
-                wire.Count = 2; wire.Target = "new-target"; wire.LoadedPlayed = false; wire.LoadedPosition = 31;
+                wire.Count = 2; wire.Target = "new-target"; wire.LoadedPlayed = false; wire.LoadedPosition = 31; wire.Favorite = false;
                 var page = new ItemDetailPage { Width = 900, Height = 720 };
                 var vm = page.ViewModel;
                 using var navigation = new CancellationTokenSource();
@@ -144,6 +144,21 @@ internal static class RealtimeSeriesStateNativeFixture
                         vm.Seasons.RemoveAt(1);
                     }
                     await MediaParityNativeFixture.CaptureAsync(page, "realtime-state-" + type + ".png");
+                    page.Width = 1200;
+                    page.UpdateLayout();
+                    await Task.Delay(100);
+                    if (type == "series") Check(((UIElement)page.FindName("FavoriteButton")).Visibility == Visibility.Visible,
+                        "The wide-layout series hero Favorite button must be visible for catch-up verification.");
+                    Call(page, "UpdateFavoriteButton");
+                    var favoriteIcon = (FontIcon)page.FindName("FavoriteIcon");
+                    var outlineHeart = favoriteIcon.Glyph;
+                    wire.Favorite = true;
+                    refresh.CatchUp(client.CaptureContext());
+                    await UntilAsync(() => vm.IsFavorite && favoriteIcon.Glyph != outlineHeart);
+                    Check(ReferenceEquals(mounted, vm.Item), "Favorite catch-up replaced the mounted detail.");
+                    wire.Favorite = false;
+                    refresh.CatchUp(client.CaptureContext());
+                    await UntilAsync(() => !vm.IsFavorite && favoriteIcon.Glyph == outlineHeart);
                     Check(page.CanPreserveOnReconnect, "A healthy mounted detail should survive reconnect.");
                     vm.Seasons.Clear(); vm.Episodes.Clear();
                     wire.HeldCompanion = type == "series" ? "seasons" : "episodes";
@@ -255,6 +270,7 @@ internal static class RealtimeSeriesStateNativeFixture
         internal int Count = 2;
         internal string? Target = "new-target";
         internal bool FailEpisodes;
+        internal bool Favorite;
         internal bool LoadedPlayed;
         internal double LoadedPosition = 31;
         internal string? HeldCompanion;
@@ -274,7 +290,7 @@ internal static class RealtimeSeriesStateNativeFixture
                 path.StartsWith("/api/v2/catalog/items/") ?
                 new { content_id = path.Split('/').Last(), type = path.Split('/').Last(),
                     play_content_id = Target, play_season_number = 1, episode_count = 6, season_count = 1,
-                    user_data = new { watched_count = Count, unplayed_count = 6 - Count, in_progress_count = 1, played = false, position_seconds = 900 }, user_state = new { } } :
+                    user_data = new { watched_count = Count, unplayed_count = 6 - Count, in_progress_count = 1, played = false, position_seconds = 900 }, user_state = new { is_favorite = Favorite } } :
                 path.EndsWith("/seasons") ? new { items = new[] { new { content_id = "season", season_number = 1, episode_count = 6,
                     user_data = new { watched_count = Count, unplayed_count = 6 - Count, in_progress_count = 1, played = false } } } } :
                 path.Contains("progress/capabilities") ? new { clear_resume_position = false } : new { items = Array.Empty<object>() };

@@ -852,6 +852,8 @@ public sealed partial class ItemDetailPage : Page
             DispatcherQueue.TryEnqueue(() => { if (Current()) UpdateStarRating(); });
         else if (args.PropertyName == nameof(ViewModel.IsWatched))
             DispatcherQueue.TryEnqueue(() => { if (Current()) UpdateWatchedButton(); });
+        else if (args.PropertyName == nameof(ViewModel.IsFavorite))
+            DispatcherQueue.TryEnqueue(() => { if (Current()) { UpdateFavoriteButton(); BuildMoreFlyout(); } });
         else if (args.PropertyName is nameof(ViewModel.Item) or nameof(ViewModel.Episodes) or nameof(ViewModel.Seasons))
         {
             _pendingDetailChanges |= args.PropertyName == nameof(ViewModel.Item) ? 1

@@ -235,17 +235,19 @@ public partial class ItemDetailViewModel : ObservableObject,
             bool Current() => _stateRefreshActive && ReferenceEquals(Item, item) && LibraryId == libraryId
                 && !ct.IsCancellationRequested && revision == Volatile.Read(ref _localStateGeneration)
                 && _catalogApi.IsCurrentContext(message.Context);
-            lock (_remoteStateGate)
-            {
-                if (item == null || !Current() || !IsRelatedState(message, item)) continue;
-                _remoteStateReadCts = readOwner;
-                _remoteStateReadContext = message.Context;
-            }
             var itemChanged = false;
             var seasonsChanged = false;
             var episodesChanged = false;
             try
             {
+                lock (_remoteStateGate)
+                {
+                    // Even an early local-revision rejection must retain the
+                    // active scope through the finally block below.
+                    if (item == null || !Current() || !IsRelatedState(message, item)) continue;
+                    _remoteStateReadCts = readOwner;
+                    _remoteStateReadContext = message.Context;
+                }
                 // An echoed/other-device event must not retire the accepted
                 // feedback or rollback authority of an in-flight local mark.
                 do
@@ -266,7 +268,15 @@ public partial class ItemDetailViewModel : ObservableObject,
                 // Mounted reads own their transport and snapshot. Raw ticks
                 // still clear speculative cache entries, without retrying or
                 // discarding this request each time another device advances.
-                var refreshed = await _catalogApi.GetItemDetailAsync(item.ContentId, libraryId, ct);
+                MediaItemDetail refreshed;
+                try { refreshed = await _catalogApi.GetItemDetailAsync(item.ContentId, libraryId, ct); }
+                catch (Exception ex) when (!ct.IsCancellationRequested && Current())
+                {
+                    // Retain this sweep's complete scope for one owned retry.
+                    // A persistent outage must not spin an unbounded read loop.
+                    System.Diagnostics.Debug.WriteLine($"Retrying realtime detail-state refresh: {ex.Message}");
+                    refreshed = await _catalogApi.GetItemDetailAsync(item.ContentId, libraryId, ct);
+                }
                 if (!Current()) continue;
                 // Keep aggregate feedback and later local watched deltas on the
                 // same server total. Missing legacy counts leave known totals intact.
@@ -369,7 +379,11 @@ public partial class ItemDetailViewModel : ObservableObject,
                 if (message.CatchUp && _similarLoaded && Current()) await LoadSimilarAsync();
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-            catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Realtime detail-state refresh failed: {ex.Message}"); }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Realtime detail-state refresh failed: {ex.Message}");
+                LocalLog.AppendException("state_trace.txt", ex, "realtime_detail_state_refresh");
+            }
             finally
             {
                 // Values committed before a later local mutation still need
@@ -910,8 +924,8 @@ public partial class ItemDetailViewModel : ObservableObject,
         Interlocked.Increment(ref _localStateGeneration);
         IsWatched = !wasWatched;
         var generation = Interlocked.Increment(ref _watchedWriteGeneration);
-        bool Current() => _stateRefreshActive && ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context)
-            && generation == Volatile.Read(ref _watchedWriteGeneration);
+        bool Current() => ReferenceEquals(Item, item) && _catalogApi.IsCurrentContext(context)
+            && _stateRefreshActive && generation == Volatile.Read(ref _watchedWriteGeneration);
         try
         {
             if (wasWatched)
