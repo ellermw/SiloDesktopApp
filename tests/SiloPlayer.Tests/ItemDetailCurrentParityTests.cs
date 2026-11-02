@@ -725,11 +725,23 @@ public sealed class ItemDetailCurrentParityTests
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
         var loadStart = page.IndexOf("await ViewModel.LoadSeasonsCommand.ExecuteAsync(null);", StringComparison.Ordinal);
         var cardPaint = page.IndexOf("BuildSeasonCards();", loadStart, StringComparison.Ordinal);
-        var targetAction = page.IndexOf("ApplyAuthoritativeSeriesAction();", loadStart, StringComparison.Ordinal);
+        var targetAction = page.IndexOf("await ApplySeriesActionAsync();", loadStart, StringComparison.Ordinal);
 
         Assert.True(loadStart >= 0);
         Assert.True(cardPaint > loadStart);
         Assert.True(targetAction > cardPaint);
+
+        // The wrapper also supports omitted legacy targets, but an explicit
+        // detail target must still be applied before any companion read/await.
+        var actionStart = page.IndexOf("private async Task ApplySeriesActionAsync()", StringComparison.Ordinal);
+        var actionEnd = page.IndexOf("private bool ApplyAuthoritativeSeriesAction()", actionStart, StringComparison.Ordinal);
+        Assert.True(actionStart >= 0 && actionEnd > actionStart);
+        var action = page[actionStart..actionEnd];
+        var authoritative = action.IndexOf("ApplyAuthoritativeSeriesAction()", StringComparison.Ordinal);
+        var companion = action.IndexOf("await LoadSeriesPrimaryEpisodesAsync(", StringComparison.Ordinal);
+        Assert.True(authoritative >= 0 && companion > authoritative);
+        Assert.Contains("if (item?.Type != \"series\" || ApplyAuthoritativeSeriesAction()) return;", action);
+        Assert.DoesNotContain("await ", action[..authoritative]);
         Assert.DoesNotContain("FindSeriesContinueWatchingEpisodeAsync", page);
         Assert.Contains("SeasonsLoadingSkeleton.Visibility = Visibility.Visible", page);
         Assert.Contains("SeasonsLoadError.Visibility", page);

@@ -51,13 +51,12 @@ public static class MediaItemMenu
         bool isFavorite = item.UserState?.IsFavorite ?? false;
         bool inWatchlist = item.UserState?.InWatchlist ?? false;
         bool isLeaf = item.Type is "movie" or "episode" or "audiobook";
-        bool hasPartialProgress = item.PositionSeconds is > 0 && !isWatched;
 
         // Current WebUI order: restart, watched state, collection actions,
         // manga details, permission-gated maintenance, then surface-specific dismissal.
-        if (isLeaf && (hasPartialProgress || isWatched))
+        if (isLeaf)
         {
-            flyout.Items.Add(BuildItem(
+            var restart = BuildItem(
                 item.Type == "audiobook" ? "Listen from Beginning" : "Play from Beginning",
                 "\uE768",
                 async () =>
@@ -68,7 +67,12 @@ public static class MediaItemMenu
                             .PlayAsync(item.ContentId, fromStart: true);
                     }
                     catch (Exception ex) { toast.Error(ex); }
-                }));
+                });
+            void RefreshRestartAction() => restart.Visibility = item.PositionSeconds is > 0 || item.UserState?.Played == true
+                ? Visibility.Visible : Visibility.Collapsed;
+            RefreshRestartAction();
+            flyout.Items.Add(restart);
+            flyout.Opening += (_, _) => RefreshRestartAction();
         }
 
         if (item.UserState != null)
@@ -171,7 +175,8 @@ public static class MediaItemMenu
             flyout.Opening += async (_, _) => await NotInterestedActions.RefreshMenuItemAsync(interest, item, interestContext);
         }
 
-        if (MediaItemActionPolicy.CanResetProgress(item.Type, item.PositionSeconds, true))
+        // Retained menus must also support a leaf gaining progress after construction.
+        if (item.Type is "movie" or "episode")
         {
             var context = catalog.CaptureContext();
             var reset = BuildItem("Reset Progress", "\uE777", async () =>
@@ -184,6 +189,9 @@ public static class MediaItemMenu
             flyout.Items.Insert(Math.Min(2, flyout.Items.Count), reset);
             flyout.Opening += async (_, _) =>
             {
+                reset.Visibility = Visibility.Collapsed;
+                if (!catalog.IsCurrentContext(context)
+                    || !MediaItemActionPolicy.CanResetProgress(item.Type, item.PositionSeconds, true)) return;
                 try
                 {
                     var capabilities = await catalog.GetProgressCapabilitiesAsync();

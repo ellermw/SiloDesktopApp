@@ -32,7 +32,7 @@ internal static class RealtimeSeriesStateNativeFixture
         {
             foreach (var type in new[] { "series", "season" })
             {
-                wire.Count = 2; wire.Target = "new-target"; wire.LoadedPlayed = false; wire.LoadedPosition = 31; wire.Favorite = false;
+                wire.Count = 2; wire.Target = "new-target"; wire.LoadedPlayed = false; wire.LoadedPosition = 0; wire.Favorite = false;
                 var page = new ItemDetailPage { Width = 900, Height = 720 };
                 var vm = page.ViewModel;
                 using var navigation = new CancellationTokenSource();
@@ -43,7 +43,7 @@ internal static class RealtimeSeriesStateNativeFixture
                 vm.Episodes.Add(new() { ContentId = "sibling", Title = "Untouched sibling", SeasonNumber = 1, EpisodeNumber = 1,
                     Runtime = 20, UserData = new() { PositionSeconds = 31 } });
                 vm.Episodes.Add(new() { ContentId = "loaded", Title = "Loaded episode", SeasonNumber = 1, EpisodeNumber = 2,
-                    Runtime = 20, UserData = new() { PositionSeconds = 31, DurationSeconds = 1200 } });
+                    Runtime = 20, UserData = new() { PositionSeconds = 0, DurationSeconds = 1200 } });
                 Set(page, "_currentContentId", vm.Item.ContentId); Set(page, "_navigationCts", navigation);
                 var handler = (PropertyChangedEventHandler)typeof(ItemDetailPage).GetMethod("OnViewModelPropertyChanged", BindingFlags.Instance | BindingFlags.NonPublic)!
                     .CreateDelegate(typeof(PropertyChangedEventHandler), page);
@@ -74,6 +74,7 @@ internal static class RealtimeSeriesStateNativeFixture
                     var watchedAction = ((MenuFlyout)mountedFlyout).Items.OfType<MenuFlyoutItem>()
                         .Single(action => action.Text == "Mark Watched");
                     var mountedCaption = Descendants<FrameworkElement>(loadedButton).Single(element => element.Name == "EpisodeCardCaption");
+                    await VerifyProgressActionsAsync((MenuFlyout)mountedFlyout, loadedButton, restart: false, reset: false);
                     var seasonPanel = (Panel)page.FindName("SeasonsPanel");
                     var mountedSeasonCard = seasonPanel.Children[0];
                     using var data = JsonDocument.Parse("""
@@ -123,6 +124,15 @@ internal static class RealtimeSeriesStateNativeFixture
                     }
                     var loadedEpisode = vm.Episodes.Single(episode => episode.ContentId == "loaded");
                     Check(!HasWatchedBadge(page, "loaded"), "The loaded episode was already painted watched before its remote event.");
+                    wire.LoadedPosition = 600;
+                    using var progressData = JsonDocument.Parse("""
+                        {"profile_id":"fixture-profile","content_id":"loaded","series_id":"series","change":"progress"}
+                        """);
+                    refresh.ReceiveRealtime("user_state", "user_state.changed", progressData.RootElement);
+                    await UntilAsync(() => loadedEpisode.UserData?.PositionSeconds == 600);
+                    await VerifyProgressActionsAsync((MenuFlyout)mountedFlyout, loadedButton, restart: true, reset: true);
+                    Check(ReferenceEquals(mountedFlyout, loadedButton.ContextFlyout) && mountedCards.SequenceEqual(episodePanel.Children),
+                        "Gaining partial progress replaced the retained card or context flyout.");
                     wire.LoadedPlayed = true; wire.LoadedPosition = 0;
                     using var loadedData = JsonDocument.Parse("""
                         {"profile_id":"fixture-profile","content_id":"loaded","series_id":"series","change":"watched","played":true}
@@ -144,8 +154,16 @@ internal static class RealtimeSeriesStateNativeFixture
                         Check(AutomationProperties.GetName(watchedAction) == "Mark Unwatched"
                             && watchedAction.Icon is FontIcon { Glyph: "\uE711" },
                             "The retained episode menu did not refresh its watched label, accessible name and icon on opening.");
+                        var actions = ((MenuFlyout)mountedFlyout).Items.OfType<MenuFlyoutItem>();
+                        Check(actions.Any(action => action.Text == "Play from Beginning" && action.Visibility == Visibility.Visible)
+                            && !actions.Any(action => action.Text == "Reset Progress" && action.Visibility == Visibility.Visible),
+                            "A watched episode with no resume position must offer restart but not Reset Progress.");
                     }
                     finally { mountedFlyout.Hide(); }
+                    wire.LoadedPlayed = false;
+                    refresh.ReceiveRealtime("user_state", "user_state.changed", loadedData.RootElement);
+                    await UntilAsync(() => loadedEpisode.UserData?.Played == false && !HasWatchedBadge(page, "loaded"));
+                    await VerifyProgressActionsAsync((MenuFlyout)mountedFlyout, loadedButton, restart: false, reset: false);
                     if (type == "series")
                     {
                         vm.Seasons.Add(new() { ContentId = "second-season", SeasonNumber = 2 });
@@ -310,6 +328,18 @@ internal static class RealtimeSeriesStateNativeFixture
         }
     }
 
+    private static async Task VerifyProgressActionsAsync(MenuFlyout flyout, Button owner, bool restart, bool reset)
+    {
+        bool Visible(string label) => flyout.Items.OfType<MenuFlyoutItem>()
+            .Any(item => item.Text == label && item.Visibility == Visibility.Visible);
+        flyout.ShowAt(owner);
+        try
+        {
+            await UntilAsync(() => Visible("Play from Beginning") == restart && Visible("Reset Progress") == reset);
+        }
+        finally { flyout.Hide(); }
+    }
+
     private static bool HasWatchedBadge(ItemDetailPage page, string contentId)
     {
         var row = Descendants<Button>((Panel)page.FindName("EpisodesPanel"))
@@ -364,7 +394,7 @@ internal static class RealtimeSeriesStateNativeFixture
                     ["user_state"] = new { is_favorite = Favorite } } :
                 path.EndsWith("/seasons") ? new { items = new[] { new { content_id = "season", season_number = 1, episode_count = 6,
                     user_data = new { watched_count = Count, unplayed_count = 6 - Count, in_progress_count = 1, played = false } } } } :
-                path.Contains("progress/capabilities") ? new { clear_resume_position = false } : new { items = Array.Empty<object>() };
+                path.Contains("progress/capabilities") ? new { clear_resume_position = true } : new { items = Array.Empty<object>() };
             if (OmitTarget && body is Dictionary<string, object?> detail) detail.Remove("play_content_id");
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") };
             if (HeldCompanion is { } companion && path.EndsWith("/" + companion) && ReleaseCompanion is { } release)

@@ -69,7 +69,15 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
     {
         if (string.IsNullOrEmpty(context.ProfileId)) return;
         long epoch;
-        lock (_gate) { if (_disposed) return; epoch = _epoch; }
+        lock (_gate)
+        {
+            if (_disposed || !_isCurrentContext(context)) return;
+            epoch = _epoch;
+            // Retire in-flight /watch and detail reads on the receive thread,
+            // before playback can accept them while the UI dispatcher is busy.
+            _publish(new MediaStateInvalidated(context, items.ToHashSet(StringComparer.Ordinal),
+                series.ToHashSet(StringComparer.Ordinal), catchUp, RefreshDetails: false));
+        }
         _enqueue(() =>
         {
             lock (_gate)
@@ -80,9 +88,6 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
                     ClearPending();
                     _context = context;
                 }
-                // Immediately protect prefetched /watch and detail reads. No scalar patching.
-                _publish(new MediaStateInvalidated(context, items.ToHashSet(StringComparer.Ordinal),
-                    series.ToHashSet(StringComparer.Ordinal), catchUp, RefreshDetails: false));
                 if (_items.Count == 0 && _series.Count == 0 && !_catchUp)
                     _deadline = _time.GetUtcNow() + TimeSpan.FromSeconds(1);
                 _items.UnionWith(items); _series.UnionWith(series); _catchUp |= catchUp;

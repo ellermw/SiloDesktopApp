@@ -74,18 +74,21 @@ public sealed class RealtimeMediaStateRefreshTests
     [InlineData("profile")]
     [InlineData("subscription")]
     [InlineData("window")]
-    public void RetiredOwnershipCannotPublishAlreadyQueuedEventsOrTimers(string departure)
+    public void RetiredOwnershipCannotPublishDeferredRefreshes(string departure)
     {
         using var fixture = new Fixture();
         fixture.Send("first", "series"); fixture.Drain();
         fixture.Clock.Advance(200); // timer callback is now queued
-        fixture.Send("queued", "series"); // receipt callback is also queued
+        fixture.Send("queued", "series"); // invalidated now; visible refresh is still queued
+        Assert.Equal(2, fixture.Messages.Count);
+        Assert.All(fixture.Messages, message => Assert.False(message.RefreshDetails));
         if (departure == "profile") fixture.Client.SetProfile("replacement");
         else if (departure == "subscription") fixture.Refresh.Reset();
         else fixture.Refresh.Dispose();
         fixture.Drain();
-        Assert.Single(fixture.Messages); // only the original immediate invalidation
-        Assert.False(fixture.Messages[0].RefreshDetails);
+        fixture.Clock.Advance(200); fixture.Drain();
+        Assert.Equal(2, fixture.Messages.Count); // no deferred publication after ownership retires
+        Assert.All(fixture.Messages, message => Assert.False(message.RefreshDetails));
     }
 
     [Fact]
@@ -98,11 +101,17 @@ public sealed class RealtimeMediaStateRefreshTests
         var revision = DetailCacheInvalidation.AttachUserStateRevision(fixture.Messenger);
         await cache.GetAsync("series", CancellationToken.None);
         var stamp = revision.Current;
-        fixture.Send("never-cached", "series"); fixture.Drain();
-        await cache.GetAsync("series", CancellationToken.None);
-        Assert.Equal(2, reads);
+        fixture.Send("never-cached", "series");
+        // Neither cache nor /watch freshness may wait for the UI dispatcher.
+        Assert.False(Assert.Single(fixture.Messages).RefreshDetails);
         Assert.False(revision.IsCurrent(stamp, "never-cached", "series"));
         Assert.True(revision.IsCurrent(stamp, "unrelated", "other-series"));
+        await cache.GetAsync("series", CancellationToken.None);
+        Assert.Equal(2, reads);
+        var receivedRevision = revision.Current;
+        fixture.Drain(); fixture.Clock.Advance(200); fixture.Drain();
+        Assert.Single(fixture.Messages.Where(message => message.RefreshDetails));
+        Assert.Equal(receivedRevision, revision.Current);
     }
 
     [Fact]
