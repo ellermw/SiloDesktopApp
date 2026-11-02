@@ -39,6 +39,10 @@ public class PlaybackStartResponse
 
 public class SubtitleTrackInfo
 {
+    public int? StreamIndex { get; set; }
+    public string? ContainerTrackId { get; set; }
+    public bool? NativeSelectable { get; set; }
+    public bool Unplayable { get; set; }
     public string? SyncKey { get; set; }
     public string? TrackId { get; set; }
     public long? Id { get; set; }
