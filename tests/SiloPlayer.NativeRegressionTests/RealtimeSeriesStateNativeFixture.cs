@@ -256,6 +256,7 @@ internal static class RealtimeSeriesStateNativeFixture
             {
                 await VerifyTranslationReconnectAsync(parent, wire, client, type);
                 await VerifyTranslationReconnectAsync(parent, wire, client, type, overview: true);
+                await VerifyTitleArtReconnectAsync(parent, wire, client, type);
             }
             foreach (var type in new[] { "movie", "episode" })
             {
@@ -417,6 +418,84 @@ internal static class RealtimeSeriesStateNativeFixture
         }
     }
 
+    private static async Task VerifyTitleArtReconnectAsync(StackPanel parent, Wire wire, SiloApiClient client, string type)
+    {
+        foreach (var phase in new[] { "settings", "logo" })
+        {
+            var slot = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var original = (IServiceProvider)slot.GetValue(null)!;
+            var cache = Path.Combine(Path.GetTempPath(), "SiloPlayer-native-title-art-" + Guid.NewGuid().ToString("N"));
+            using var images = new ImageService(cache);
+            using var http = new HttpClient(wire, disposeHandler: false);
+            slot.SetValue(null, new TitleArtServices(original, images, http));
+            using var navigation = new CancellationTokenSource();
+            var page = new ItemDetailPage { Width = 900, Height = 720 };
+            var vm = page.ViewModel;
+            vm.Item = new() { ContentId = type, Type = type, Title = "Title-art reconnect fixture",
+                LogoUrl = "https://realtime-native.invalid/title-art-logo.png" };
+            Set(page, "_currentContentId", type); Set(page, "_navigationCts", navigation);
+            parent.Children.Add(page);
+            Task? operation = null;
+            try
+            {
+                await Task.Delay(60);
+                Check(page.CanPreserveOnReconnect, "An idle title-art surface should allow preservation.");
+                ((TextBlock)page.FindName("TitleText")).Text = vm.Item.Title;
+                ((UIElement)page.FindName("TitleText")).Visibility = Visibility.Collapsed;
+                ((UIElement)page.FindName("TitleArtPending")).Visibility = Visibility.Visible;
+                wire.HeldTitleArt = phase;
+                wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.ReleaseCompanion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                var load = typeof(ItemDetailPage).GetMethod("LoadTitleArtPreferenceAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                operation = (Task)load.Invoke(page, [vm.Item, navigation.Token])!;
+                await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Check(!page.CanPreserveOnReconnect, "Pending title-art settings/download must require a reconnect remount.");
+                client.InvalidateAccessContext();
+                wire.ReleaseCompanion.TrySetResult();
+                await operation.WaitAsync(TimeSpan.FromSeconds(5));
+                Check(!page.CanPreserveOnReconnect,
+                    "Retired title-art work that settles before shell catch-up must still require a remount.");
+                Check(((UIElement)page.FindName("TitleText")).Visibility == Visibility.Collapsed,
+                    "A retired title-art response unexpectedly painted the old page.");
+                Check(((UIElement)page.FindName("TitleArtPending")).Visibility ==
+                    (phase == "settings" ? Visibility.Visible : Visibility.Collapsed),
+                    "The fixture did not interrupt the requested title-art phase.");
+
+                wire.HeldTitleArt = null;
+                var replacement = new ItemDetailPage { Width = 900, Height = 720 };
+                replacement.ViewModel.Item = new() { ContentId = type, Type = type, Title = vm.Item.Title, LogoUrl = vm.Item.LogoUrl };
+                Set(replacement, "_currentContentId", type); Set(replacement, "_navigationCts", navigation);
+                ((TextBlock)replacement.FindName("TitleText")).Text = replacement.ViewModel.Item.Title;
+                parent.Children.Add(replacement);
+                try
+                {
+                    await (Task)load.Invoke(replacement, [replacement.ViewModel.Item, navigation.Token])!;
+                    Check(((UIElement)replacement.FindName("TitleArtPending")).Visibility == Visibility.Collapsed
+                        && ((UIElement)replacement.FindName("TitleText")).Visibility == Visibility.Visible,
+                        "The reconnect remount did not resolve the missing logo to a visible text title.");
+                    Check(replacement.CanPreserveOnReconnect, "A settled replacement title should allow preservation.");
+                }
+                finally
+                {
+                    replacement.ViewModel.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(replacement.ViewModel);
+                    parent.Children.Remove(replacement);
+                }
+                Program.Log($"PASS: mounted {type} reconnect during title-art {phase} requires remount before and after retirement; replacement resolves its title.");
+            }
+            finally
+            {
+                wire.HeldTitleArt = null; wire.ReleaseCompanion?.TrySetResult(); navigation.Cancel();
+                try { if (operation != null) await operation.WaitAsync(TimeSpan.FromSeconds(5)); }
+                finally
+                {
+                    vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page);
+                    slot.SetValue(null, original);
+                    Directory.Delete(cache, recursive: true);
+                }
+            }
+        }
+    }
+
     private static async Task VerifyProgressActionsAsync(MenuFlyout flyout, Button owner, bool restart, bool reset)
     {
         bool Visible(string label) => flyout.Items.OfType<MenuFlyoutItem>()
@@ -453,6 +532,11 @@ internal static class RealtimeSeriesStateNativeFixture
             type == typeof(UICustomizationService) ? new UICustomizationService(new SettingsApi(client)) : original.GetService(type);
     }
 
+    private sealed class TitleArtServices(IServiceProvider original, ImageService images, HttpClient http) : IServiceProvider
+    {
+        public object? GetService(Type type) => type == typeof(ImageService) ? images : type == typeof(HttpClient) ? http : original.GetService(type);
+    }
+
     private sealed class Wire : HttpMessageHandler
     {
         internal int Count = 2;
@@ -464,6 +548,7 @@ internal static class RealtimeSeriesStateNativeFixture
         internal string TranslationOnView = "button";
         internal double LoadedPosition = 31;
         internal string? HeldCompanion;
+        internal string? HeldTitleArt;
         internal TaskCompletionSource? CompanionStarted;
         internal TaskCompletionSource? ReleaseCompanion;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -473,6 +558,19 @@ internal static class RealtimeSeriesStateNativeFixture
             if (request.RequestUri.Host != "realtime-native.invalid" || (request.Method != HttpMethod.Get && !translate))
                 throw new InvalidOperationException("Only synthetic fixture reads and episode translations are authorized.");
             if (translate) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
+            var titleArtPhase = path == "/title-art-logo.png" ? "logo"
+                : path == "/api/v2/settings/values/effective" && request.RequestUri.Query.Contains("keys=ui.title_art", StringComparison.Ordinal) ? "settings" : null;
+            if (titleArtPhase != null)
+            {
+                var titleArtResponse = titleArtPhase == "logo" ? new HttpResponseMessage(HttpStatusCode.NotFound)
+                    : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"items\":[{\"key\":\"ui.title_art\",\"value\":true}]}", Encoding.UTF8, "application/json") };
+                if (HeldTitleArt == titleArtPhase && ReleaseCompanion is { } titleArtRelease)
+                {
+                    CompanionStarted?.TrySetResult();
+                    return ReleaseAsync(titleArtResponse, titleArtRelease.Task, ct);
+                }
+                return Task.FromResult(titleArtResponse);
+            }
             if (FailEpisodes && path.EndsWith("/episodes"))
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
                     { Content = new StringContent("{\"error\":{\"code\":\"service_unavailable\",\"message\":\"Synthetic companion failure\"}}", Encoding.UTF8, "application/json") });

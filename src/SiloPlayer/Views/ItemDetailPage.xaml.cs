@@ -7227,20 +7227,33 @@ public sealed partial class ItemDetailPage : Page
         if (string.IsNullOrWhiteSpace(item.LogoUrl)) return;
         var client = App.Services.GetRequiredService<SiloPlayer.Core.Api.SiloApiClient>();
         var authority = client.CaptureContext();
-        var show = true;
+        var navigation = _navigationCts;
+        // Both the preference read and the awaited logo load own the title area.
+        // Reconnect must remount if either is pending or drops a retired response.
+        ++_detailArtworkLoads;
         try
         {
-            var result = await App.Services.GetRequiredService<SiloPlayer.Core.Api.SettingsApi>().GetEffectiveSettingsAsync(["ui.title_art"], ct);
-            var value = result.Settings.FirstOrDefault(setting => setting.Key == "ui.title_art")?.EffectiveValue;
-            if (bool.TryParse(value, out var choice)) show = choice;
+            var show = true;
+            try
+            {
+                var result = await App.Services.GetRequiredService<SiloPlayer.Core.Api.SettingsApi>().GetEffectiveSettingsAsync(["ui.title_art"], ct);
+                var value = result.Settings.FirstOrDefault(setting => setting.Key == "ui.title_art")?.EffectiveValue;
+                if (bool.TryParse(value, out var choice)) show = choice;
+            }
+            catch (OperationCanceledException) { return; }
+            catch { /* Missing or failed reads resolve to the published contract default. */ }
+            if (ct.IsCancellationRequested || revision != _titleArtRevision || !client.IsCurrentContext(authority) || !ReferenceEquals(ViewModel.Item, item)) return;
+            HeroLogoImage.Source = null; HeroLogoImage.Visibility = Visibility.Collapsed;
+            TitleArtPending.Visibility = Visibility.Collapsed;
+            TitleText.Visibility = show ? Visibility.Collapsed : Visibility.Visible;
+            if (show) await LoadHeroLogoAsync(item.ContentId, item.LogoUrl, ct, revision);
         }
-        catch (OperationCanceledException) { return; }
-        catch { /* Missing or failed reads resolve to the published contract default. */ }
-        if (ct.IsCancellationRequested || revision != _titleArtRevision || !client.IsCurrentContext(authority) || !ReferenceEquals(ViewModel.Item, item)) return;
-        HeroLogoImage.Source = null; HeroLogoImage.Visibility = Visibility.Collapsed;
-        TitleArtPending.Visibility = Visibility.Collapsed;
-        TitleText.Visibility = show ? Visibility.Collapsed : Visibility.Visible;
-        if (show) await LoadHeroLogoAsync(item.ContentId, item.LogoUrl, ct, revision);
+        finally
+        {
+            --_detailArtworkLoads;
+            if (ReferenceEquals(_navigationCts, navigation) && revision == _titleArtRevision
+                && !client.IsCurrentContext(authority)) _detailArtworkInterrupted = true;
+        }
     }
 
     private async Task LoadHeroLogoAsync(string contentId, string logoUrl, CancellationToken ct, long revision)
@@ -8536,7 +8549,11 @@ public sealed partial class ItemDetailPage : Page
             _episodeSpoilerPreferences ??= App.Services.GetService<EpisodeSpoilerPreferences>();
             if (_episodeSpoilerPreferences != null) await _episodeSpoilerPreferences.EnsureLoadedAsync(token);
             if (!Current()) return;
-            if (EpisodeSpoilerPolicy.HideImage("episode", episode.StillIsEpisodeStill, episode.UserData?.Played, episode.UserData?.IsInProgress, episode.UserData?.PositionSeconds, _episodeSpoilerPreferences?.HideImages == true))
+            bool HideStill() => EpisodeSpoilerPolicy.HideImage("episode", episode.StillIsEpisodeStill,
+                episode.UserData?.Played, episode.UserData?.IsInProgress, episode.UserData?.PositionSeconds,
+                _episodeSpoilerPreferences?.HideImages == true);
+            var hideStill = HideStill();
+            if (hideStill)
                 bytes = await ArtworkEffects.BlurEpisodeStillAsync(bytes, token);
 
             var bitmapImage = new BitmapImage
@@ -8557,8 +8574,10 @@ public sealed partial class ItemDetailPage : Page
 
             // Replace the placeholder. The stillBorder may be nested inside a
             // progress-overlay Grid, but it is still the same object reference
-            // so setting its Child updates the visual tree correctly.
-            if (!Current()) return;
+            // so setting its Child updates the visual tree correctly. Recheck
+            // spoiler policy after blur/decode awaits, even before the queued
+            // preference-change callback has refreshed the retained card.
+            if (!Current() || hideStill != HideStill()) return;
             stillBorder.Child = image;
             // Clear the placeholder background so the image shows through
             stillBorder.Background = null;

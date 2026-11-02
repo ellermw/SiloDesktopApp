@@ -638,6 +638,28 @@ public sealed class ItemDetailCurrentParityTests
     }
 
     [Fact]
+    public void EpisodeStillPaintRechecksSpoilerPolicyAfterAsynchronousImageWork()
+    {
+        var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
+        var start = page.IndexOf("private async Task LoadEpisodeStillAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        var still = page[start..];
+        var policy = still.IndexOf("bool HideStill() => EpisodeSpoilerPolicy.HideImage(", StringComparison.Ordinal);
+        var snapshot = still.IndexOf("var hideStill = HideStill();", StringComparison.Ordinal);
+        var blur = still.IndexOf("await ArtworkEffects.BlurEpisodeStillAsync(", StringComparison.Ordinal);
+        var decode = still.IndexOf("await bitmapImage.SetSourceAsync(", StringComparison.Ordinal);
+        var guard = still.IndexOf("if (!Current() || hideStill != HideStill()) return;", StringComparison.Ordinal);
+        var paint = still.IndexOf("stillBorder.Child = image;", StringComparison.Ordinal);
+
+        Assert.True(policy >= 0 && snapshot > policy && blur > snapshot && decode > blur && guard > decode && paint > guard);
+        Assert.Contains("_episodeSpoilerPreferences?.HideImages == true", still[policy..snapshot]);
+        Assert.Contains("episode.UserData?.Played", still[policy..snapshot]);
+        Assert.Contains("episode.UserData?.IsInProgress", still[policy..snapshot]);
+        Assert.Contains("episode.UserData?.PositionSeconds", still[policy..snapshot]);
+        Assert.DoesNotContain("await ", still[guard..paint]);
+    }
+
+    [Fact]
     public void EpisodeRepaintPreservesWatchControlsAndMatchesMetadataSemantics()
     {
         var page = Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml.cs");
