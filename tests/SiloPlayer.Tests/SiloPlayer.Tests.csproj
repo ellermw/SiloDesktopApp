@@ -26,6 +26,7 @@
     <ProjectReference Include="..\..\src\SiloPlayer.Core\SiloPlayer.Core.csproj" />
     <ProjectReference Include="..\..\src\SiloPlayer.Player\SiloPlayer.Player.csproj" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.cs" Link="Production\LibraryViewModel.cs" />
+    <Compile Include="..\..\src\SiloPlayer\ViewModels\LibraryViewModel.Letters.cs" Link="Production\LibraryViewModel.Letters.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\ItemDetailViewModel.cs" Link="Production\ItemDetailViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\RecommendationsViewModel.cs" Link="Production\RecommendationsViewModel.cs" />
     <Compile Include="..\..\src\SiloPlayer\ViewModels\RecommendationSectionViewModel.cs" Link="Production\RecommendationSectionViewModel.cs" />

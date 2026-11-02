@@ -3,6 +3,8 @@ using Microsoft.Extensions.DependencyInjection;
 using SiloPlayer.Views.Dialogs;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Navigation;
 using SiloPlayer.Core.Api;
 using SiloPlayer.Core.Models.Home;
 using SiloPlayer.Core.Services;
@@ -211,7 +213,7 @@ public static class MediaItemMenu
             if (maintenance.CanMatch)
             {
                 flyout.Items.Add(BuildItem("Match Item", "\uE721", async () =>
-                    await ShowMatchItemDialogAsync(item, catalog, toast, stateChanged, DialogRoot())));
+                    await ShowMatchItemDialogAsync(item, catalog, toast, stateChanged, DialogRoot(), owner)));
             }
         }
 
@@ -328,13 +330,38 @@ public static class MediaItemMenu
         CatalogApi catalog,
         ToastService toast,
         Action? stateChanged,
-        XamlRoot? root)
+        XamlRoot? root,
+        FrameworkElement? owner)
     {
         if (root == null) return;
 
+        var client = App.Services.GetRequiredService<SiloApiClient>(); var context = client.CaptureContext();
+        var auth = App.Services.GetRequiredService<AuthService>(); var session = auth.SessionGeneration; var userId = auth.CurrentUser?.Id;
+        var navigation = App.Services.GetService<NavigationService>(); var frame = navigation?.Frame;
+        for (DependencyObject? node = owner; node != null; node = VisualTreeHelper.GetParent(node))
+            if (node is Frame sourceFrame) { frame = sourceFrame; break; }
+        var surface = owner ?? frame?.Content as FrameworkElement ?? root.Content as FrameworkElement;
+        if (surface?.IsLoaded != true) return;
+        var itemOwner = surface as IMediaItemOwner;
+        bool OwnsItem() => itemOwner == null || ReferenceEquals(itemOwner.MediaItem, item);
+        var frameContent = frame?.Content;
+        bool Authorized() => client.IsCurrentContext(context) && auth.SessionGeneration == session
+            && auth.CurrentUser?.Id == userId && AuthorizationPolicy.CanCurateMetadata(auth);
+        using var lifetime = new CancellationTokenSource();
+        void Departed(object sender, RoutedEventArgs args) => lifetime.Cancel();
+        void Navigated(object sender, NavigationEventArgs args) => lifetime.Cancel();
+        void AuthorityChanged() { if (!Authorized()) lifetime.Cancel(); }
+        void ItemChanged() { if (!OwnsItem()) lifetime.Cancel(); }
+        if (itemOwner != null) itemOwner.MediaItemChanged += ItemChanged;
+        surface.Unloaded += Departed; if (frame != null) frame.Navigated += Navigated;
+        auth.UserChanged += AuthorityChanged; auth.LoggedOut += AuthorityChanged;
+        bool Current() => !lifetime.IsCancellationRequested && OwnsItem() && surface.IsLoaded && surface.XamlRoot == root
+            && (frame == null || ReferenceEquals(frame.Content, frameContent)) && Authorized();
         try
         {
-            var detail = await catalog.GetItemDetailAsync(item.ContentId);
+            if (!Current()) return;
+            var detail = await catalog.GetItemDetailAsync(item.ContentId, lifetime.Token);
+            if (!Current()) return;
             var dialog = new MatchItemDialog(
                 detail.ContentId,
                 detail.Title,
@@ -342,28 +369,30 @@ public static class MediaItemMenu
                 detail.Type,
                 libraryId: null,
                 versions: detail.Versions,
-                folderPaths: detail.FolderPaths)
+                folderPaths: detail.FolderPaths,
+                seriesId: detail.SeriesId)
             {
                 XamlRoot = root,
             };
+            dialog.BindNavigation(lifetime.Token);
             await dialog.ShowAsync();
             if (dialog.HasAppliedMatch)
             {
+                if (!Current()) return;
                 var moved = dialog.AppliedContentId is {} target && target != item.ContentId;
-                App.Services.GetService<ItemDetailPrefetchCache>()?.Invalidate(item.ContentId);
-                var navigation = App.Services.GetService<NavigationService>();
                 if (moved && navigation?.Frame?.Content is ItemDetailPage current && current.ViewModel.Item?.ContentId == item.ContentId)
                     navigation.NavigateReplacingCurrentEntry<ItemDetailPage>(dialog.AppliedContentId);
                 else stateChanged?.Invoke();
-                WeakReferenceMessenger.Default.Send(new MediaSurfaceChanged(
-                    MediaSurfaceChangeKind.ItemMetadataRefreshed,
-                    item.ContentId,
-                    item.SeriesId));
             }
         }
         catch (Exception ex)
         {
-            toast.Error(ex);
+            if (Current()) toast.Error(ex);
+        }
+        finally
+        {
+            if (itemOwner != null) itemOwner.MediaItemChanged -= ItemChanged;
+            surface.Unloaded -= Departed; if (frame != null) frame.Navigated -= Navigated; auth.UserChanged -= AuthorityChanged; auth.LoggedOut -= AuthorityChanged;
         }
     }
 

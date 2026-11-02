@@ -1,0 +1,199 @@
+using System.Net;
+using System.Text.Json;
+using SiloPlayer.Core.Api;
+using SiloPlayer.Core.Models.Playback;
+using SiloPlayer.Core.Services;
+
+namespace SiloPlayer.Tests;
+
+public sealed class MarkerProvenanceTests
+{
+    [Fact]
+    public async Task ActualWatchReadRetainsCurrentWireRangeAndProvenance()
+    {
+        using var http = new HttpClient(new Wire());
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://marker-fixture.invalid");
+        var detail = await new PlaybackApi(client).GetWatchDetailAsync("episode");
+        var intro = detail.Versions.Single().Intro!;
+        Assert.Equal(5, intro.Start); Assert.Equal(30, intro.End);
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(intro, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower }));
+        Assert.Equal("plugin", json.RootElement.GetProperty("source").GetString());
+        Assert.Equal(.92, json.RootElement.GetProperty("confidence").GetDouble());
+    }
+
+    [Theory]
+    [InlineData(null, "scanner", null, "Detected")]
+    [InlineData(.915, "plugin", "plugin:7:introdb", "92% · TheIntroDB")]
+    [InlineData(0d, "manual", null, "0% · Edited")]
+    [InlineData(2d, "online", "new-provider", "100% · new-provider")]
+    [InlineData(-1d, "online", null, "0% · Online")]
+    [InlineData(null, null, "built_in", "Detected")]
+    [InlineData(null, null, null, null)]
+    public void LabelsMatchOfficialVocabulary(double? confidence, string? source, string? provider, string? expected)
+        => Assert.Equal(expected, MarkerProvenance.Label(new() { Confidence = confidence, Source = source, Provider = provider }, true, true));
+
+    [Fact]
+    public void AbsentAndNonfiniteConfidenceStayAbsentAndFlagsAreIndependent()
+    {
+        Assert.Null(MarkerProvenance.Label(new() { Source = "scanner" }, true, false));
+        Assert.Null(MarkerProvenance.Label(new() { Confidence = double.NaN }, true, false));
+        Assert.Null(MarkerProvenance.Label(new() { Confidence = double.PositiveInfinity }, true, false));
+        Assert.Null(MarkerProvenance.Label(new() { Confidence = .95, Source = "scanner" }, false, false));
+        Assert.Equal("95%", MarkerProvenance.Label(new() { Confidence = .95, Source = "scanner" }, true, false));
+    }
+
+    [Fact]
+    public void RepeatedOccurrenceAndLiveReplacementPreserveMetadataUntilExplicitlyCleared()
+    {
+        var version = new FileVersion { MarkerSegments = [new() { Kind = "intro", StartSeconds = 30, EndSeconds = 40 }] };
+        using var update = JsonDocument.Parse("""{"intro":{"start":0,"end":10,"source":"plugin","provider":"introdb","confidence":0.8,"algorithm":"v4"}}""");
+        PlaybackMarkerUpdate.Apply(version, update.RootElement);
+        var repeated = PlaybackMarkerRanges.Active(version.MarkerSegments, "intro", 35, version.Intro)!;
+        Assert.Equal(30, repeated.Start); Assert.Equal("80% · TheIntroDB", MarkerProvenance.Label(repeated, true, true));
+        using var edited = JsonDocument.Parse("""{"intro":{"start_seconds":0,"end_seconds":10,"source":"manual"}}""");
+        PlaybackMarkerUpdate.Apply(version, edited.RootElement);
+        Assert.Equal(.8, version.Intro!.Confidence); Assert.Equal("80% · Edited", MarkerProvenance.Label(version.Intro, true, true));
+        using var cleared = JsonDocument.Parse("""{"intro":{"start_seconds":0,"end_seconds":10,"provider":null,"confidence":null,"algorithm":null}}""");
+        PlaybackMarkerUpdate.Apply(version, cleared.RootElement);
+        Assert.Null(version.Intro!.Confidence); Assert.Equal("Edited", MarkerProvenance.Label(version.Intro, true, true));
+        using var withdrawn = JsonDocument.Parse("""{"intro":null,"marker_segments":[]}""");
+        PlaybackMarkerUpdate.Apply(version, withdrawn.RootElement);
+        Assert.Null(version.Intro); Assert.Empty(version.MarkerSegments!);
+    }
+
+    [Theory]
+    [InlineData("source", "\"plugin\"", "plugin", "introdb", .92, "v4")]
+    [InlineData("source", "\"manual\"", "manual", "introdb", .92, "v4")]
+    [InlineData("provider", "\"other\"", "plugin", "other", .92, "v4")]
+    [InlineData("confidence", "\"0.8\"", "plugin", "introdb", .8, "v4")]
+    [InlineData("algorithm", "\"v5\"", "plugin", "introdb", .92, "v5")]
+    [InlineData("source", "null", null, "introdb", .92, "v4")]
+    [InlineData("provider", "null", "plugin", null, .92, "v4")]
+    [InlineData("confidence", "null", "plugin", "introdb", null, "v4")]
+    [InlineData("algorithm", "null", "plugin", "introdb", .92, null)]
+    public void PartialProvenanceUpdatesReplaceOnlyPresentFields(string field, string value,
+        string? source, string? provider, double? confidence, string? algorithm)
+    {
+        var version = new FileVersion { Intro = new() { Start = 5, End = 30,
+            Source = "plugin", Provider = "introdb", Confidence = .92, Algorithm = "v4" } };
+        using var message = JsonDocument.Parse($$$"""{"intro":{"start":5,"end":40,"{{{field}}}":{{{value}}}}}""");
+        PlaybackMarkerUpdate.Apply(version, message.RootElement);
+        Assert.Equal(5, version.Intro!.Start); Assert.Equal(40, version.Intro.End);
+        Assert.Equal(source, version.Intro.Source); Assert.Equal(provider, version.Intro.Provider);
+        Assert.Equal(confidence, version.Intro.Confidence); Assert.Equal(algorithm, version.Intro.Algorithm);
+        Assert.Equal(MarkerProvenance.Label(new() { Source = source, Provider = provider, Confidence = confidence }, true, true),
+            MarkerProvenance.Label(version.Intro, true, true));
+    }
+
+    [Fact]
+    public void TimingOnlyNoOpNotificationRetainsTheWatchProvenance()
+    {
+        var original = new TimeRange { Start = 5, End = 30, Source = "plugin", Provider = "introdb", Confidence = .92, Algorithm = "v4" };
+        var version = new FileVersion { Intro = original,
+            MarkerSegments = [new() { Kind = "intro", StartSeconds = 5, EndSeconds = 30 }] };
+        using var message = JsonDocument.Parse("""{"intro":{"start":5,"end":30},"credits":null,"recap":null,"preview":null,"marker_segments":[{"kind":"intro","start_seconds":5,"end_seconds":30}]}""");
+        PlaybackMarkerUpdate.Apply(version, message.RootElement);
+        Assert.Same(original, version.Intro);
+        Assert.Equal("92% · TheIntroDB", MarkerProvenance.Label(version.Intro, true, true));
+    }
+
+    [Fact]
+    public void MixedTimingSnapshotPreservesDetailsPerKind()
+    {
+        TimeRange Marker(double start, double end) => new() { Start = start, End = end,
+            Source = "plugin", Provider = "introdb", Confidence = .92, Algorithm = "v4" };
+        var version = new FileVersion { Intro = Marker(5, 30), Credits = Marker(90, 100),
+            Recap = Marker(1, 4), Preview = Marker(70, 75) };
+        var intro = version.Intro; var recap = version.Recap; var preview = version.Preview;
+        using var message = JsonDocument.Parse("""{"intro":{"start":5,"end":30},"credits":{"start":85,"end":100},"recap":{"start":1,"end":4},"preview":{"start":70,"end":75},"marker_segments":[{"kind":"credits","start_seconds":85,"end_seconds":100}]}""");
+        PlaybackMarkerUpdate.Apply(version, message.RootElement);
+        Assert.Same(intro, version.Intro); Assert.Same(recap, version.Recap); Assert.Same(preview, version.Preview);
+        Assert.Equal(85, version.Credits!.Start);
+        Assert.Single(version.MarkerSegments!);
+        foreach (var range in new[] { version.Intro, version.Credits, version.Recap, version.Preview })
+        {
+            Assert.Equal("92% · TheIntroDB", MarkerProvenance.Label(range, true, true));
+            Assert.Equal("v4", range!.Algorithm);
+        }
+    }
+
+    [Theory]
+    [InlineData("start", "end")]
+    [InlineData("start_seconds", "end_seconds")]
+    public void TimingChangeWithoutDetailsRetainsAcceptedProvenance(string start, string end)
+    {
+        var version = new FileVersion { Intro = new() { Start = 5, End = 30,
+            Source = "plugin", Provider = "introdb", Confidence = .92, Algorithm = "v4" } };
+        using var message = JsonDocument.Parse($$$"""{"intro":{"{{{start}}}":5,"{{{end}}}":40}}""");
+        PlaybackMarkerUpdate.Apply(version, message.RootElement);
+        Assert.Equal(40, version.Intro!.End);
+        Assert.Equal("92% · TheIntroDB", MarkerProvenance.Label(version.Intro, true, true));
+        Assert.Equal("v4", version.Intro.Algorithm);
+        using var cleared = JsonDocument.Parse("""{"intro":{"start":5,"end":40,"source":null,"provider":null,"confidence":null,"algorithm":null}}""");
+        PlaybackMarkerUpdate.Apply(version, cleared.RootElement);
+        Assert.Null(MarkerProvenance.Label(version.Intro, true, true));
+        Assert.Null(version.Intro!.Algorithm);
+    }
+
+    [Theory]
+    [InlineData(23, true, false)]
+    [InlineData(24, false, false)]
+    [InlineData(24, true, true)]
+    public async Task CapabilityGatesEffectiveRequests(int revision, bool batched, bool expected)
+    {
+        using var handler = new SettingsWire(revision, batched); using var http = new HttpClient(handler);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://marker-settings.invalid");
+        var preferences = await new SettingsApi(client).GetMarkerDetailsPreferencesAsync(client.CaptureContext());
+        Assert.Equal(expected, preferences.Supported); Assert.Equal(expected ? 1 : 0, handler.EffectiveRequests);
+        Assert.Equal(expected, preferences.ShowConfidence); Assert.Equal(expected, preferences.ShowSource);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RetiredProfileNeverAcceptsDelayedSettings(bool holdEffective)
+    {
+        using var handler = new DelayedSettings(holdEffective); using var http = new HttpClient(handler);
+        var client = new SiloApiClient(http); client.SetBaseUrl("https://marker-owner.invalid"); client.SetProfile("before");
+        var read = new SettingsApi(client).GetMarkerDetailsPreferencesAsync(client.CaptureContext());
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        client.SetProfile("after"); handler.Release.SetResult();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => read);
+        Assert.Equal(holdEffective ? 1 : 0, handler.EffectiveReads);
+    }
+
+    private sealed class DelayedSettings(bool holdEffective) : HttpMessageHandler
+    {
+        internal readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal readonly TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal int EffectiveReads;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var effective = request.RequestUri!.AbsolutePath.EndsWith("/effective");
+            if (effective) EffectiveReads++;
+            if (effective == holdEffective) { Started.SetResult(); await Release.Task; }
+            return new(HttpStatusCode.OK) { Content = new StringContent(effective
+                ? """{"items":[{"key":"playback.show_marker_confidence","value":true},{"key":"playback.show_marker_source","value":true}]}"""
+                : """{"api_version":1,"manifest_revision":24,"supports_batched_effective":true,"supports_idempotent_writes":true}""") };
+        }
+    }
+
+    private sealed class SettingsWire(int revision, bool batched) : HttpMessageHandler
+    {
+        internal int EffectiveRequests;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            var body = request.RequestUri!.AbsolutePath.EndsWith("/capabilities")
+                ? JsonSerializer.Serialize(new { api_version = 1, manifest_revision = revision, supports_batched_effective = batched, supports_idempotent_writes = true })
+                : """{"items":[{"key":"playback.show_marker_confidence","value":true,"source":"profile"},{"key":"playback.show_marker_source","value":true,"source":"profile_device"}]}""";
+            if (!request.RequestUri.AbsolutePath.EndsWith("/capabilities")) EffectiveRequests++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body) });
+        }
+    }
+
+    private sealed class Wire : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+            => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"content_id":"episode","versions":[{"file_id":"7","intro":{"start_seconds":5,"end_seconds":30,"source":"plugin","provider":"plugin:3:introdb","confidence":0.92,"algorithm":"introdb:v4"}}]}""") });
+    }
+}

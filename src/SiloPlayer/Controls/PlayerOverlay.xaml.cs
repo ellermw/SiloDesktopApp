@@ -76,6 +76,7 @@ public sealed partial class PlayerOverlay : UserControl
         _playerService.StateChanged += OnPlayerStateChanged;
         _playerService.BufferingChanged += OnBufferingChanged;
         _playerService.MarkersChanged += OnMarkersChanged;
+        _playerService.MarkerDetailsChanged += OnMarkerDetailsChanged;
         _playerService.ChaptersChanged += OnChaptersChanged;
 
         // Sync the fullscreen icon eagerly so the first paint after re-activation
@@ -155,6 +156,7 @@ public sealed partial class PlayerOverlay : UserControl
         _playerService.StateChanged -= OnPlayerStateChanged;
         _playerService.BufferingChanged -= OnBufferingChanged;
         _playerService.MarkersChanged -= OnMarkersChanged;
+        _playerService.MarkerDetailsChanged -= OnMarkerDetailsChanged;
         _playerService.ChaptersChanged -= OnChaptersChanged;
 
         // Stop timers
@@ -525,6 +527,15 @@ public sealed partial class PlayerOverlay : UserControl
             && pos >= credits.Start
             && pos < credits.End;
         SkipCreditsButton.Visibility = showCredits ? Visibility.Visible : Visibility.Collapsed;
+        var label = showIntro ? _playerService.GetMarkerDetailsLabel("intro")
+            : showCredits ? _playerService.GetMarkerDetailsLabel("credits") : null;
+        SkipMarkerDetailsText.Text = label ?? "";
+        SkipMarkerDetailsText.Visibility = label is null ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void OnMarkerDetailsChanged()
+    {
+        if (_isActive) UpdateSkipButtons(_playerService.Position);
     }
 
     private static bool IsPlausibleCreditsMarker(TimeRange credits, double duration)

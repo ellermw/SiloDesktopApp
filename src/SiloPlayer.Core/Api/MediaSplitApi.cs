@@ -19,6 +19,8 @@ public sealed class MediaSplitApi(SiloApiClient client)
             if (string.IsNullOrEmpty(cursor) || !seen.Add(cursor)) throw new InvalidOperationException("Incomplete item file list. Reload to try again.");
         }
     }
+    // Split supports the connected server's scheme for inventory, search and
+    // mutation alike. Keep its context guards without Match's HTTPS-only gate.
     public async Task<ItemMatchSearchResponse> SearchAsync(ApiRequestContext context, string id, ItemMatchSearchRequest request, CancellationToken ct = default)
     {
         Current(context, ct); var result = await client.SendRequestAsync<ItemMatchSearchResponse>(context, HttpMethod.Post,

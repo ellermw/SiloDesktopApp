@@ -10,7 +10,7 @@ using SiloPlayer.Views;
 
 namespace SiloPlayer.Controls;
 
-public sealed class LibraryGridCard : Canvas
+public sealed class LibraryGridCard : Canvas, IMediaItemOwner
 {
     private readonly Border _posterBackground;
     private readonly Image _posterImage;
@@ -41,7 +41,18 @@ public sealed class LibraryGridCard : Canvas
     private static readonly AsyncWorkThrottle s_imageLoadThrottle = new(maxConcurrency: 8);
     private static readonly SemaphoreSlim s_bitmapCreateLock = new(1);
 
-    public MediaItem? MediaItem { get; private set; }
+    private MediaItem? _mediaItem;
+    public MediaItem? MediaItem
+    {
+        get => _mediaItem;
+        private set
+        {
+            if (ReferenceEquals(_mediaItem, value)) return;
+            _mediaItem = value;
+            MediaItemChanged?.Invoke();
+        }
+    }
+    public event Action? MediaItemChanged;
     public string? SortKey { get; private set; }
 
     public LibraryGridCard()
