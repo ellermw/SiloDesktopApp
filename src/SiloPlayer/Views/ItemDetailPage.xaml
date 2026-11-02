@@ -370,6 +370,19 @@
 
                             <TextBlock x:Name="TaglineTranslationLabel" Text="AI-translated tagline" FontSize="11" Foreground="{StaticResource TertiaryTextBrush}" Visibility="Collapsed" />
 
+                            <!-- Background refresh failures never replace the mounted detail. -->
+                            <Border x:Name="RemoteStateRefreshError"
+                                    Background="{StaticResource SurfaceBrush}" CornerRadius="8" Padding="12"
+                                    Visibility="{x:Bind ViewModel.RemoteStateErrorMessage, Mode=OneWay, Converter={StaticResource NullToVis}}">
+                                <StackPanel Spacing="8">
+                                    <TextBlock Text="{x:Bind ViewModel.RemoteStateErrorMessage, Mode=OneWay}"
+                                               Foreground="{StaticResource SecondaryTextBrush}"
+                                               FontSize="14" TextWrapping="Wrap" />
+                                    <Button Content="Retry" HorizontalAlignment="Left"
+                                            Command="{x:Bind ViewModel.RetryRemoteStateCommand}" />
+                                </StackPanel>
+                            </Border>
+
                             <!-- AudiobookContent renders these as two distinct subtitle
                                  lines between the title and metadata. Keeping them out of
                                  HeroCrewLine preserves the exact WebUI information order. -->

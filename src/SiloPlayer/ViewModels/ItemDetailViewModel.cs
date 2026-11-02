@@ -182,8 +182,8 @@ public partial class ItemDetailViewModel : ObservableObject,
             if (_remoteStateReadContext is { } reading && reading != message.Context) _remoteStateReadCts?.Cancel();
             if (!message.RefreshDetails) return Task.CompletedTask;
             // A later event may recover an exhausted sweep, but must reconcile
-            // its full catch-up state before dismissing the page's retry UI.
-            if (FailureKind != DetailFailureKind.None) message = message with { CatchUp = true };
+            // its full catch-up state before dismissing the inline retry UI.
+            if (RemoteStateErrorMessage != null) message = message with { CatchUp = true };
             Interlocked.Increment(ref _remoteStateGeneration);
             // A still-owned snapshot finishes even when another sweep is due.
             // Retain its scope in the trailing work until all of its reads settle.
@@ -191,6 +191,10 @@ public partial class ItemDetailViewModel : ObservableObject,
             return _remoteStateRefresh ??= RefreshRemoteStateLoopAsync();
         }
     }
+
+    [RelayCommand]
+    private Task RetryRemoteStateAsync() => RefreshMediaStateAsync(new(
+        _catalogApi.CaptureContext(), new HashSet<string>(), new HashSet<string>(), CatchUp: true));
 
     private void EnqueueStateRefresh(Action action)
     {
@@ -405,14 +409,12 @@ public partial class ItemDetailViewModel : ObservableObject,
                     if (itemChanged) OnPropertyChanged(nameof(Item));
                     if (seasonsChanged) OnPropertyChanged(nameof(Seasons));
                     if (episodesChanged) OnPropertyChanged(nameof(Episodes));
-                    // A partial sweep is not a completed catch-up. After bounded
-                    // retries, use the existing page-level Retry action rather
-                    // than silently leaving preserved content stale.
+                    // A partial sweep is not a completed catch-up. Offer an
+                    // inline retry without covering mounted content or changing
+                    // the initial-load failure state used by reconnect handling.
                     if (Current() && (refreshFailure != null || refreshCompleted))
-                    {
-                        FailureKind = refreshFailure == null ? DetailFailureKind.None : DetailFailurePolicy.Classify(refreshFailure);
-                        ErrorMessage = refreshFailure == null ? null : DetailFailurePolicy.Message(FailureKind);
-                    }
+                        RemoteStateErrorMessage = refreshFailure == null ? null
+                            : "Silo couldn't refresh this item. Displayed information may be out of date.";
                 }
                 lock (_remoteStateGate)
                 {
@@ -684,6 +686,9 @@ public partial class ItemDetailViewModel : ObservableObject,
     private DetailFailureKind _failureKind;
 
     [ObservableProperty]
+    private string? _remoteStateErrorMessage;
+
+    [ObservableProperty]
     private bool _isFavorite;
 
     [ObservableProperty]
@@ -776,6 +781,7 @@ public partial class ItemDetailViewModel : ObservableObject,
         IsLoading = true;
         ErrorMessage = null;
         FailureKind = DetailFailureKind.None;
+        RemoteStateErrorMessage = null;
         Item = null;
         Interlocked.Increment(ref _similarLoadGeneration);
         Interlocked.Increment(ref _seasonsLoadGeneration);

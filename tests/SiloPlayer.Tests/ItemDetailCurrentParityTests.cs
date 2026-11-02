@@ -37,6 +37,22 @@ public sealed class ItemDetailCurrentParityTests
         Assert.Contains("SiblingEpisodesSection.Visibility = Visibility.Collapsed;", code);
     }
 
+    [Fact]
+    public void BackgroundRefreshRetryIsInlineAndSeparateFromTheLoadErrorOverlay()
+    {
+        var document = XDocument.Parse(Read("src", "SiloPlayer", "Views", "ItemDetailPage.xaml"));
+        XNamespace x = "http://schemas.microsoft.com/winfx/2006/xaml";
+        var inline = document.Descendants().Single(element => (string?)element.Attribute(x + "Name") == "RemoteStateRefreshError");
+        Assert.Contains("ViewModel.RemoteStateErrorMessage", (string?)inline.Attribute("Visibility") ?? "");
+        Assert.Contains(inline.Ancestors(), element => (string?)element.Attribute(x + "Name") == "HeroInfoPanel");
+        var retry = inline.Descendants().Single(element => element.Name.LocalName == "Button");
+        Assert.Equal("{x:Bind ViewModel.RetryRemoteStateCommand}", (string?)retry.Attribute("Command"));
+        Assert.Null(retry.Attribute("Click")); // Never navigate through RetryDetail_Click.
+        var overlay = document.Descendants().Single(element => (string?)element.Attribute(x + "Name") == "DetailErrorPanel");
+        Assert.Contains("ViewModel.ErrorMessage,", (string?)overlay.Attribute("Visibility") ?? "");
+        Assert.DoesNotContain(inline, overlay.Descendants());
+    }
+
     private static readonly JsonSerializerOptions ApiJson = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,

@@ -140,19 +140,23 @@ public sealed class RealtimeDetailStateTests
     }
 
     [Theory]
-    [InlineData("detail")]
-    [InlineData("seasons")]
-    [InlineData("episodes")]
-    public async Task ExhaustedCatchUpExposesRetryAndASuccessfulSweepClearsIt(string failedRead)
+    [InlineData("series", "detail", false)]
+    [InlineData("series", "seasons", false)]
+    [InlineData("series", "episodes", false)]
+    [InlineData("series", "detail", true)]
+    [InlineData("season", "detail", true)]
+    [InlineData("season", "episodes", true)]
+    public async Task ExhaustedCatchUpExposesOnlyInlineRetryAndAFullRecoveryClearsIt(
+        string type, string failedRead, bool explicitRetry)
     {
-        using var scope = new Scope("series");
+        using var scope = new Scope(type);
         scope.Vm.SelectedSeasonNumber = 1;
         var attempts = 0;
         var item = scope.Vm.Item;
         scope.OverrideResponse = request =>
         {
             var path = request.RequestUri!.AbsolutePath;
-            if (failedRead == "detail" ? path != "/api/v2/catalog/items/series" : !path.EndsWith("/" + failedRead))
+            if (failedRead == "detail" ? path != "/api/v2/catalog/items/" + type : !path.EndsWith("/" + failedRead))
                 return null;
             attempts++;
             return Unavailable();
@@ -163,21 +167,26 @@ public sealed class RealtimeDetailStateTests
 
         Assert.Equal(4, attempts);
         Assert.Same(item, scope.Vm.Item);
-        Assert.Equal(DetailFailureKind.Transient, scope.Vm.FailureKind);
-        Assert.False(string.IsNullOrWhiteSpace(scope.Vm.ErrorMessage));
+        Assert.Equal(DetailFailureKind.None, scope.Vm.FailureKind);
+        Assert.Null(scope.Vm.ErrorMessage);
+        Assert.False(string.IsNullOrWhiteSpace(scope.Vm.RemoteStateErrorMessage));
+        if (failedRead != "detail") Assert.Equal(2, item!.UserData!.WatchedCount);
         scope.OverrideResponse = null;
         scope.FreshViewerState = new() { IsFavorite = true, InWatchlist = true };
         scope.FreshRating = 4;
-        // A narrower later event must not dismiss retry UI while losing the
-        // failed catch-up's viewer state or episode companion scope.
-        await scope.Vm.RefreshMediaStateAsync(scope.Message());
+        // Both inline Retry and a narrower later event must recover the full
+        // catch-up's viewer state and episode companion scope without remounting.
+        if (explicitRetry) await scope.Vm.RetryRemoteStateCommand.ExecuteAsync(null).WaitAsync(TimeSpan.FromSeconds(5));
+        else await scope.Vm.RefreshMediaStateAsync(scope.Message()).WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Same(item, scope.Vm.Item);
+        Assert.Null(scope.Vm.RemoteStateErrorMessage);
         Assert.Null(scope.Vm.ErrorMessage);
         Assert.Equal(DetailFailureKind.None, scope.Vm.FailureKind);
         Assert.True(scope.Vm.IsFavorite);
         Assert.True(scope.Vm.InWatchlist);
         Assert.Equal(4, scope.Vm.UserRating);
         Assert.Equal(2, item!.UserData!.WatchedCount);
-        Assert.Equal(2, scope.Vm.Seasons[0].UserData!.WatchedCount);
+        if (type == "series") Assert.Equal(2, scope.Vm.Seasons[0].UserData!.WatchedCount);
         Assert.Equal(0, scope.Vm.Episodes[0].UserData!.PositionSeconds);
     }
 
@@ -204,6 +213,8 @@ public sealed class RealtimeDetailStateTests
 
         Assert.Equal(1, attempts);
         Assert.Null(scope.Vm.ErrorMessage);
+        Assert.Null(scope.Vm.RemoteStateErrorMessage);
+        Assert.Equal(DetailFailureKind.None, scope.Vm.FailureKind);
         Assert.Equal(0, scope.Vm.Item!.UserData!.WatchedCount);
     }
 
@@ -284,11 +295,13 @@ public sealed class RealtimeDetailStateTests
 
         Assert.Equal(2, attempts);
         Assert.Equal(0, scope.Vm.Item!.UserData!.WatchedCount);
-        Assert.Equal(DetailFailureKind.Transient, scope.Vm.FailureKind);
-        Assert.False(string.IsNullOrWhiteSpace(scope.Vm.ErrorMessage));
+        Assert.Equal(DetailFailureKind.None, scope.Vm.FailureKind);
+        Assert.Null(scope.Vm.ErrorMessage);
+        Assert.False(string.IsNullOrWhiteSpace(scope.Vm.RemoteStateErrorMessage));
         scope.OverrideResponse = null;
         await scope.Vm.RefreshMediaStateAsync(scope.Message()).WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(2, scope.Vm.Item.UserData.WatchedCount);
+        Assert.Null(scope.Vm.RemoteStateErrorMessage);
         Assert.Null(scope.Vm.ErrorMessage);
         Assert.Equal(DetailFailureKind.None, scope.Vm.FailureKind);
     }
