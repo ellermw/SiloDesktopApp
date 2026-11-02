@@ -4,6 +4,8 @@ public partial class ItemDetailViewModel
 {
     private CancellationTokenSource? _boxSetCts;
     private BoxSetDetail? _boxSet;
+    // Survives an in-flight refresh so final playback writes still invalidate this visit.
+    private BoxSetDetail? _boxSetMembership;
     private bool _boxSetRetired;
     private long _boxSetLifetime;
     public BoxSetDetail? BoxSet { get => _boxSet; private set => SetProperty(ref _boxSet, value); }
@@ -13,7 +15,7 @@ public partial class ItemDetailViewModel
         try { await message.Persisted; } catch { return; }
         if (ReferenceEquals(Item, item) && LibraryId == library && !_boxSetRetired && _boxSetLifetime == lifetime && _catalogApi.IsCurrentContext(owner)) await RefreshBoxSetAsync();
     }
-    private void RetireBoxSet() { _boxSetRetired = true; _boxSetLifetime++; CancelBoxSet(); }
+    private void RetireBoxSet() { _boxSetRetired = true; _boxSetLifetime++; _boxSetMembership = null; CancelBoxSet(); }
     private void CancelBoxSet()
     {
         _boxSetCts?.Cancel(); _boxSetCts?.Dispose(); _boxSetCts = null; BoxSet = null;
@@ -28,9 +30,14 @@ public partial class ItemDetailViewModel
             && LibraryId == library && _catalogApi.IsCurrentContext(context) && _catalogApi.MetadataLanguageGeneration == language;
         try
         {
-            if (!await _catalogApi.BoxSetsEnabledAsync(library, ct) || !Current()) return;
+            if (!await _catalogApi.BoxSetsEnabledAsync(library, ct) || !Current())
+            { if (Current()) _boxSetMembership = null; return; }
             var response = await _catalogApi.GetItemBoxSetAsync(item.ContentId, library, ct);
-            if (Current() && response.BoxSet is { Items.Count: > 0 } detail) BoxSet = detail;
+            if (Current())
+            {
+                _boxSetMembership = response.BoxSet;
+                if (response.BoxSet is { Items.Count: > 0 } detail) BoxSet = detail;
+            }
         }
         catch (OperationCanceledException) { }
         catch { /* Membership is optional. Ordinary detail remains usable. */ }

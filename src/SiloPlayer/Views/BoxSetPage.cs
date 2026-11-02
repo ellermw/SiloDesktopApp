@@ -17,6 +17,7 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
     public BoxSetViewModel ViewModel { get; }
     public int? CurrentLibraryId => int.TryParse(ViewModel.Detail?.LibraryId, out var id) ? id : null;
     public StackPanel Body { get; } = new() { Spacing = 20, Margin = new Thickness(24), MaxWidth = 1400, HorizontalAlignment = HorizontalAlignment.Stretch };
+    private SiloPlayer.Core.Models.Catalog.BoxSetDetail? _knownMembership;
     private bool _active;
     private long _visit;
     private readonly CatalogApi _catalog;
@@ -27,9 +28,9 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
         InitializeComponent();
         _catalog = catalog; _client = client; ViewModel = new(catalog);
         Content = new ScrollViewer { Content = Body, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        ViewModel.PropertyChanged += (_, _) => Render();
+        ViewModel.PropertyChanged += (_, _) => { if (ViewModel.Detail is {} detail) _knownMembership = detail; Render(); };
         Loaded += (_, _) => { _active = true; _visit++; WeakReferenceMessenger.Default.Register<MediaSurfaceChanged>(this); WeakReferenceMessenger.Default.Register<PlaybackProgressUpdated>(this); _catalog.LibraryCacheInvalidated += Refresh; _client.LocalizedReads.Invalidated += LanguageChanged; };
-        Unloaded += (_, _) => { _active = false; _visit++; WeakReferenceMessenger.Default.UnregisterAll(this); _catalog.LibraryCacheInvalidated -= Refresh; _client.LocalizedReads.Invalidated -= LanguageChanged; ViewModel.Cancel(); };
+        Unloaded += (_, _) => { _active = false; _visit++; _knownMembership = null; WeakReferenceMessenger.Default.UnregisterAll(this); _catalog.LibraryCacheInvalidated -= Refresh; _client.LocalizedReads.Invalidated -= LanguageChanged; ViewModel.Cancel(); };
     }
     private async void Refresh() { if (_active) await ViewModel.RefreshAsync(); }
     private void LanguageChanged(long _) => DispatcherQueue.TryEnqueue(Refresh);
@@ -40,14 +41,22 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
     }
     public async void Receive(PlaybackProgressUpdated message)
     {
-        var detail = ViewModel.Detail; var visit = _visit; var owner = _catalog.CaptureContext();
+        var detail = _knownMembership; var visit = _visit; var owner = _catalog.CaptureContext();
         if (!_active || detail?.Items.Any(x => x.ContentId == message.ContentId) != true) return;
         try { await message.Persisted; } catch { return; }
-        if (_active && visit == _visit && _catalog.IsCurrentContext(owner) && ViewModel.IsCurrent
-            && ViewModel.Detail is {} current && current.Id == detail.Id && current.LibraryId == detail.LibraryId) await ViewModel.RefreshAsync();
+        if (_active && visit == _visit && _catalog.IsCurrentContext(owner) && ViewModel.IsCurrent) await ViewModel.RefreshAsync();
     }
-    protected override async void OnNavigatedTo(NavigationEventArgs e) { base.OnNavigatedTo(e); if (e.Parameter is BoxSetNavigationArgs route) await ViewModel.LoadAsync(route.Id, route.LibraryId); }
-    protected override void OnNavigatedFrom(NavigationEventArgs e) { _active = false; _visit++; ViewModel.Cancel(); base.OnNavigatedFrom(e); }
+    protected override async void OnNavigatedTo(NavigationEventArgs e) { base.OnNavigatedTo(e); _knownMembership = null; _visit++; if (e.Parameter is BoxSetNavigationArgs route) await ViewModel.LoadAsync(route.Id, route.LibraryId); }
+    protected override void OnNavigatedFrom(NavigationEventArgs e) { _active = false; _visit++; _knownMembership = null; ViewModel.Cancel(); base.OnNavigatedFrom(e); }
+    private async Task PlayPrimaryAsync()
+    {
+        var detail = ViewModel.Detail; var movie = detail?.PlayTarget;
+        if (movie == null) return;
+        await ViewModel.PlayAsync((id, library, owner, ct) => MoviePlaybackEntry.PlayAsync(movie, library, owner, ct,
+            () => ViewModel.IsCurrent && ReferenceEquals(ViewModel.Detail, detail) && id == movie.ContentId,
+            (target, scope, context, cancellation) => App.Services.GetRequiredService<PlayerService>().PlayAsync(target,
+                libraryId: scope, expectedContext: context, cancellationToken: cancellation)));
+    }
     public void Render()
     {
         Body.Children.Clear();
@@ -87,12 +96,12 @@ public sealed partial class BoxSetPage : Page, IRecipient<MediaSurfaceChanged>, 
             ? (set.PlayLabel == "Continue" ? "Continue · " : "Play ") + next.Title : set.PlayLabel;
         var play = new Button { Name = "BoxSetPlay", Style = (Style)Application.Current.Resources["AccentButtonStyle"], Height = 44, CornerRadius = new CornerRadius(22), Padding = new Thickness(24, 0, 24, 0), Content = new TextBlock { Text = actionText, TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 400 }, HorizontalAlignment = HorizontalAlignment.Left, MaxWidth = 440, IsEnabled = set.PlayTarget != null && ViewModel.IsCurrent };
         AutomationProperties.SetName(play, actionText);
-        play.Click += async (_, _) => { try { await ViewModel.PlayAsync((id, library, owner, ct) => App.Services.GetRequiredService<PlayerService>().PlayAsync(id, libraryId: library, expectedContext: owner, cancellationToken: ct)); } catch (OperationCanceledException) { } catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); } };
+        play.Click += async (_, _) => { if (!play.IsEnabled) return; play.IsEnabled = false; try { await PlayPrimaryAsync(); } catch (OperationCanceledException) { } catch (Exception ex) { App.Services.GetRequiredService<ToastService>().Error(ex); } finally { if (ViewModel.IsCurrent && ReferenceEquals(ViewModel.Detail, set)) play.IsEnabled = set.PlayTarget != null; } };
         info.Children.Add(play); hero.Children.Add(info); Body.Children.Add(hero);
         hero.SizeChanged += (_, _) => { var narrow = hero.ActualWidth < 400; artwork.Width = hero.ActualWidth < 600 ? 110 : 160; artwork.Height = artwork.Width * 1.5; hero.ColumnDefinitions[0].Width = narrow ? new GridLength(0) : GridLength.Auto; artwork.Visibility = narrow ? Visibility.Collapsed : Visibility.Visible; };
         Body.Children.Add(new TextBlock { Text = "Movies", FontSize = 24 });
         var movies = new ItemsControl { ItemsPanel = (ItemsPanelTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load("<ItemsPanelTemplate xmlns='http://schemas.microsoft.com/winfx/2006/xaml/presentation'><ItemsWrapGrid Orientation='Horizontal'/></ItemsPanelTemplate>") };
-        foreach (var movie in set.Items) if (movie.Type == "movie" && !movie.ContentId.StartsWith("box_set:")) movies.Items.Add(new PosterCard { MediaItem = movie, Margin = new Thickness(0, 0, 16, 16) });
+        foreach (var movie in set.Items.Where(SiloPlayer.Core.Models.Catalog.BoxSetDetail.IsMovieMember)) movies.Items.Add(new PosterCard { MediaItem = movie, Margin = new Thickness(0, 0, 16, 16) });
         Body.Children.Add(movies);
         if (set.Items.Count == 0) Body.Children.Add(new TextBlock { Text = "No movies available." });
     }

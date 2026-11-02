@@ -108,10 +108,22 @@ internal static class BoxSetNativeFixture
         Check(ItemMaintenanceActionPolicy.Resolve(true, "box_set") == default, "aggregate maintenance boundary");
         // Exercise Frame activation and the production parameterless destination, beyond route interception.
         var destinationFrame = navigation.Frame!; destinationFrame.Width = 540; destinationFrame.Height = 600;
-        parent.Children.Add(destinationFrame); navigation.NavigationRequestHandler = null;
+        parent.Children.Add(destinationFrame); navigation.NavigationRequestHandler = null; wire.Empty = false; wire.Played = 1;
+        Program.Log("TRACE: before actual Frame box-set activation.");
         Check(navigation.Navigate<BoxSetPage>(new BoxSetNavigationArgs("7", "12")), "actual Frame box-set navigation");
         for (var i = 0; i < 100 && (destinationFrame.Content as BoxSetPage)?.ViewModel.Detail == null; i++) await Task.Delay(10);
         Check(destinationFrame.Content is BoxSetPage opened && opened.ViewModel.Detail is { Id: "7", LibraryId: "12" }, "activated dedicated destination loads scoped data");
+        Program.Log("TRACE: actual Frame box-set activation succeeded.");
+        var activated = (BoxSetPage)destinationFrame.Content;
+        wire.Hold = true; wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var heldRefresh = activated.ViewModel.RefreshAsync(); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Check(activated.ViewModel.Detail == null, "held read clears public detail");
+        var duringReadPersisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        activated.Receive(new SiloPlayer.Messaging.PlaybackProgressUpdated("first", 100, 100, true) { Persisted = duringReadPersisted.Task });
+        wire.Hold = false; wire.Release.TrySetResult(); await heldRefresh;
+        var duringReadCount = wire.Reads; wire.Played = 3; duringReadPersisted.TrySetResult();
+        for (var i = 0; i < 100 && wire.Reads == duringReadCount; i++) await Task.Delay(10);
+        Check(wire.Reads > duringReadCount && activated.ViewModel.Detail?.PlayedCount == 3, "message during held read must requery after final playback write");
         destinationFrame.Content = null; parent.Children.Remove(destinationFrame);
         card.MediaItem = new MediaItem { Type = "movie", ContentId = "ordinary", Title = "Ordinary film" }; await Task.Delay(80);
         Check(card.Content is not BoxSetCard && card.IsTabStop, "recycled aggregate restores ordinary card/focus");
@@ -142,16 +154,18 @@ internal static class BoxSetNativeFixture
     }
     private sealed class Wire : HttpMessageHandler
     {
+        internal bool Hold;
+        internal TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal int Reads;
         internal int Played=1; internal bool Empty; internal HttpStatusCode Status=HttpStatusCode.OK;
         internal string Title="The Very Long Adventure Box Set";
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
         {
-            var path=request.RequestUri!.AbsolutePath; if(path.Contains("box-sets/")) Reads++; object body;
+            var path=request.RequestUri!.AbsolutePath; if(path.Contains("box-sets/")) { Reads++; Started.TrySetResult(); if(Hold) await Release.Task; } object body;
             if(path.EndsWith("capabilities")) body=new { box_sets=true };
             else if(path.EndsWith("libraries")) body=new { items=new[] { new { id=2,box_sets_enabled=true }, new { id=12,box_sets_enabled=true } } };
             else body=new { id="7",library_id="12",title=Title,overview="A synthetic release-ordered collection with missing artwork.",movie_count=Empty?0:3,played_count=Played,first_year=2001,last_year=2011,items=Empty?Array.Empty<object>():new object[] { new { content_id="first",type="movie",title="First",user_state=new { played=true } },new { content_id="second",type="movie",title="Second",user_state=new { played=Played==3 } },new { content_id="third",type="movie",title="Third",user_state=new { played=Played==3 } } } };
-            return Task.FromResult(new HttpResponseMessage(path.Contains("box-sets/")?Status:HttpStatusCode.OK) { Content=new StringContent(System.Text.Json.JsonSerializer.Serialize(body)) });
+            return new HttpResponseMessage(path.Contains("box-sets/")?Status:HttpStatusCode.OK) { Content=new StringContent(System.Text.Json.JsonSerializer.Serialize(body)) };
         }
     }
 }

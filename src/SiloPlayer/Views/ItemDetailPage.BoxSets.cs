@@ -23,7 +23,7 @@ public sealed partial class ItemDetailPage
         var current = 0; var index = 0;
         foreach (var movie in set.Items)
         {
-            if (movie.Type != "movie" || movie.ContentId.StartsWith("box_set:")) continue;
+            if (!SiloPlayer.Core.Models.Catalog.BoxSetDetail.IsMovieMember(movie)) continue;
             var panel = new Grid();
             var card = new PosterCard { MediaItem = movie };
             // The returned set's library owns every member action, even from an unscoped detail.

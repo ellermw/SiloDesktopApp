@@ -225,7 +225,7 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     public void Receive(PlaybackProgressUpdated message)
     {
-        if (BoxSet?.Items.Any(x => x.ContentId == message.ContentId) == true) _ = RefreshBoxSetAfterPlaybackAsync(message);
+        if (Item is { Type: "movie" } movie && (movie.ContentId == message.ContentId || _boxSetMembership?.Items.Any(x => x.ContentId == message.ContentId) == true)) _ = RefreshBoxSetAfterPlaybackAsync(message);
         _detailPrefetchCache.Invalidate(message.ContentId);
         var episodeSpoilersChanged = false;
         foreach (var episode in Episodes.Where(episode => episode.ContentId == message.ContentId))

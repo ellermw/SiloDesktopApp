@@ -29,6 +29,21 @@ public sealed class BoxSetOwnershipTests
         movie.CancelPendingLoads(); var reads = wire.DetailReads;
         await movie.RefreshBoxSetAsync(); Assert.Equal(reads, wire.DetailReads); Assert.Null(movie.BoxSet);
     }
+    [Fact] public async Task PlaybackWriteArrivingDuringHeldMembershipReadMustRefreshAfterPersistence()
+    {
+        using var wire = new Wire(); using var http = new HttpClient(wire); var api = new CatalogApi(Client(http));
+        var movie = new ItemDetailViewModel(api, new ItemDetailPrefetchCache((_, _) => throw new InvalidOperationException()));
+        movie.Item = new MediaItemDetail { ContentId = "film", Type = "movie" }; await movie.RefreshBoxSetAsync();
+        wire.Hold = true; wire.Started = new(TaskCreationOptions.RunContinuationsAsynchronously); wire.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var refreshing = movie.RefreshBoxSetAsync(); await wire.Started.Task.WaitAsync(TimeSpan.FromSeconds(2)); Assert.Null(movie.BoxSet);
+        var persisted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        movie.Receive(new SiloPlayer.Messaging.PlaybackProgressUpdated("first", 100, 100, true) { Persisted = persisted.Task });
+        wire.Hold = false; wire.Release.TrySetResult(); await refreshing;
+        wire.AllPlayed = true; var reads = wire.DetailReads; persisted.TrySetResult();
+        for (var i = 0; i < 100 && wire.DetailReads == reads; i++) await Task.Delay(10);
+        Assert.True(wire.DetailReads > reads, "A playback message received while the public row is cleared still owns a post-write refresh.");
+        Assert.Equal(2, movie.BoxSet!.PlayedCount); movie.CancelPendingLoads();
+    }
     [Fact] public async Task QueuedRefreshCannotSuppressPersistedPlaybackState()
     {
         using var wire = new Wire(); using var http = new HttpClient(wire); var api = new CatalogApi(Client(http));

@@ -21,8 +21,8 @@ public class BoxSetSummary
 public sealed class BoxSetDetail : BoxSetSummary
 {
     public List<MediaItem> Items { get; set; } = [];
-    [JsonIgnore] public MediaItem? PlayTarget => Items.FirstOrDefault(x => IsMovie(x) && x.UserState?.Played != true) ?? Items.FirstOrDefault(IsMovie);
-    private static bool IsMovie(MediaItem x) => x.Type == "movie" && !string.IsNullOrWhiteSpace(x.ContentId) && !x.ContentId.StartsWith("box_set:", StringComparison.Ordinal);
+    [JsonIgnore] public MediaItem? PlayTarget => Items.FirstOrDefault(x => IsMovieMember(x) && x.UserState?.Played != true) ?? Items.FirstOrDefault(IsMovieMember);
+    public static bool IsMovieMember(MediaItem x) => x.Type == "movie" && !string.IsNullOrWhiteSpace(x.ContentId) && !x.ContentId.StartsWith("box_set:", StringComparison.Ordinal);
     [JsonIgnore] public string PlayLabel => PlayedCount > 0 && PlayedCount < MovieCount ? "Continue" : "Play";
 }
 public sealed class BoxSetList { public List<BoxSetSummary> Items { get; set; } = []; }
