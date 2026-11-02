@@ -40,6 +40,7 @@ public class HomeSectionWithItems
 }
 public class MediaItem
 {
+    public SiloPlayer.Core.Models.Catalog.BoxSetSummary? BoxSet { get; set; }
     public int? AdvisoryAge { get; set; }
     public event EventHandler? ArtworkUrlsChanged;
 
