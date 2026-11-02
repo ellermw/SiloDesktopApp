@@ -52,7 +52,7 @@ public sealed class RealtimeMediaStateRefresh : IDisposable
         // Capture before any dispatcher work. The payload never outlives its JSON owner.
         var context = _captureContext();
         if (channel != "user_state" || eventName != "user_state.changed" || data.ValueKind != JsonValueKind.Object
-            || Text(data, "change") is not ("watched" or "progress")
+            || Text(data, "change") is not ("watched" or "progress" or "favorite" or "watchlist" or "rating" or "not_interested")
             || Text(data, "content_id") is not { Length: > 0 } id
             || string.IsNullOrWhiteSpace(id) || string.IsNullOrEmpty(context.ProfileId)
             || (data.TryGetProperty("profile_id", out _) && Text(data, "profile_id") != context.ProfileId)) return;

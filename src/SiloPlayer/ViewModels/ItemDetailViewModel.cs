@@ -181,6 +181,9 @@ public partial class ItemDetailViewModel : ObservableObject,
             if (!IsRelatedState(message, item)) return Task.CompletedTask;
             if (_remoteStateReadContext is { } reading && reading != message.Context) _remoteStateReadCts?.Cancel();
             if (!message.RefreshDetails) return Task.CompletedTask;
+            // A later event may recover an exhausted sweep, but must reconcile
+            // its full catch-up state before dismissing the page's retry UI.
+            if (FailureKind != DetailFailureKind.None) message = message with { CatchUp = true };
             Interlocked.Increment(ref _remoteStateGeneration);
             // A still-owned snapshot finishes even when another sweep is due.
             // Retain its scope in the trailing work until all of its reads settle.
@@ -238,6 +241,8 @@ public partial class ItemDetailViewModel : ObservableObject,
             var itemChanged = false;
             var seasonsChanged = false;
             var episodesChanged = false;
+            Exception? refreshFailure = null;
+            var refreshCompleted = false;
             try
             {
                 lock (_remoteStateGate)
@@ -268,15 +273,8 @@ public partial class ItemDetailViewModel : ObservableObject,
                 // Mounted reads own their transport and snapshot. Raw ticks
                 // still clear speculative cache entries, without retrying or
                 // discarding this request each time another device advances.
-                MediaItemDetail refreshed;
-                try { refreshed = await _catalogApi.GetItemDetailAsync(item.ContentId, libraryId, ct); }
-                catch (Exception ex) when (!ct.IsCancellationRequested && Current())
-                {
-                    // Retain this sweep's complete scope for one owned retry.
-                    // A persistent outage must not spin an unbounded read loop.
-                    System.Diagnostics.Debug.WriteLine($"Retrying realtime detail-state refresh: {ex.Message}");
-                    refreshed = await _catalogApi.GetItemDetailAsync(item.ContentId, libraryId, ct);
-                }
+                var refreshed = await ReadRemoteStateAsync(
+                    () => _catalogApi.GetItemDetailAsync(item.ContentId, libraryId, ct), message.CatchUp, Current, ct);
                 if (!Current()) continue;
                 // Keep aggregate feedback and later local watched deltas on the
                 // same server total. Missing legacy counts leave known totals intact.
@@ -297,7 +295,9 @@ public partial class ItemDetailViewModel : ObservableObject,
                     item.PlaySeasonNumber = refreshed.PlaySeasonNumber;
                     itemChanged = true;
                 }
-                if (message.CatchUp)
+                // Direct item invalidations also include cross-device viewer-state
+                // changes. Reconcile from REST, never from an event's scalar payload.
+                if (message.CatchUp || message.ContentIds.Contains(item.ContentId))
                 {
                     if (refreshed.UserState != null && (item.UserState == null
                         || (item.UserState.Played, item.UserState.IsFavorite, item.UserState.InWatchlist, item.UserState.NotInterested)
@@ -324,7 +324,8 @@ public partial class ItemDetailViewModel : ObservableObject,
                 {
                     try
                     {
-                        var seasons = await _catalogApi.GetSeasonsAsync(item.ContentId, libraryId, ct);
+                        var seasons = await ReadRemoteStateAsync(
+                            () => _catalogApi.GetSeasonsAsync(item.ContentId, libraryId, ct), message.CatchUp, Current, ct);
                         if (!Current()) continue;
                         var retained = seasons.Seasons.Select(fresh =>
                         {
@@ -345,7 +346,10 @@ public partial class ItemDetailViewModel : ObservableObject,
                         _seasonsLoaded = true;
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested)
-                    { System.Diagnostics.Debug.WriteLine($"Realtime seasons-state refresh failed: {ex.Message}"); }
+                    {
+                        refreshFailure = ex;
+                        LocalLog.AppendException("state_trace.txt", ex, "realtime_seasons_state_refresh");
+                    }
                 }
                 if (!Current()) continue;
                 // A named series relates its aggregate seasons, not its other episode leaves.
@@ -361,11 +365,14 @@ public partial class ItemDetailViewModel : ObservableObject,
                     {
                         EpisodesResponse? episodes = null;
                         if (item.Type == "season")
-                            episodes = await _catalogApi.GetItemEpisodesAsync(item.ContentId, libraryId, ct);
+                            episodes = await ReadRemoteStateAsync(
+                                () => _catalogApi.GetItemEpisodesAsync(item.ContentId, libraryId, ct), message.CatchUp, Current, ct);
                         else if (item.Type == "series" && episodesSeasonContentId != null)
-                            episodes = await _catalogApi.GetItemEpisodesAsync(episodesSeasonContentId, libraryId, ct);
+                            episodes = await ReadRemoteStateAsync(
+                                () => _catalogApi.GetItemEpisodesAsync(episodesSeasonContentId, libraryId, ct), message.CatchUp, Current, ct);
                         else if (item.Type == "series" && selectedSeason >= 0)
-                            episodes = await _catalogApi.GetEpisodesAsync(item.ContentId, selectedSeason, libraryId, ct);
+                            episodes = await ReadRemoteStateAsync(
+                                () => _catalogApi.GetEpisodesAsync(item.ContentId, selectedSeason, libraryId, ct), message.CatchUp, Current, ct);
                         if (!Current()) continue;
                         if (episodes != null && SelectedSeasonNumber == selectedSeason && EpisodesSeasonContentId == episodesSeasonContentId)
                             foreach (var loaded in Episodes)
@@ -374,14 +381,18 @@ public partial class ItemDetailViewModel : ObservableObject,
                                 { loaded.UserData = fresh; episodesChanged = true; }
                     }
                     catch (Exception ex) when (!ct.IsCancellationRequested)
-                    { System.Diagnostics.Debug.WriteLine($"Realtime episodes-state refresh failed: {ex.Message}"); }
+                    {
+                        refreshFailure ??= ex;
+                        LocalLog.AppendException("state_trace.txt", ex, "realtime_episodes_state_refresh");
+                    }
                 }
                 if (message.CatchUp && _similarLoaded && Current()) await LoadSimilarAsync();
+                refreshCompleted = true;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Realtime detail-state refresh failed: {ex.Message}");
+                refreshFailure = ex;
                 LocalLog.AppendException("state_trace.txt", ex, "realtime_detail_state_refresh");
             }
             finally
@@ -394,6 +405,14 @@ public partial class ItemDetailViewModel : ObservableObject,
                     if (itemChanged) OnPropertyChanged(nameof(Item));
                     if (seasonsChanged) OnPropertyChanged(nameof(Seasons));
                     if (episodesChanged) OnPropertyChanged(nameof(Episodes));
+                    // A partial sweep is not a completed catch-up. After bounded
+                    // retries, use the existing page-level Retry action rather
+                    // than silently leaving preserved content stale.
+                    if (Current() && (refreshFailure != null || refreshCompleted))
+                    {
+                        FailureKind = refreshFailure == null ? DetailFailureKind.None : DetailFailurePolicy.Classify(refreshFailure);
+                        ErrorMessage = refreshFailure == null ? null : DetailFailurePolicy.Message(FailureKind);
+                    }
                 }
                 lock (_remoteStateGate)
                 {
@@ -412,6 +431,26 @@ public partial class ItemDetailViewModel : ObservableObject,
                         _pendingRemoteState = MergeState(_pendingRemoteState, message);
                     if (ReferenceEquals(_activeRemoteState, message)) _activeRemoteState = null;
                 }
+            }
+        }
+    }
+
+    private static async Task<T> ReadRemoteStateAsync<T>(
+        Func<Task<T>> read, bool catchUp, Func<bool> current, CancellationToken ct)
+    {
+        // Keep the active merged scope and its read owner throughout recovery.
+        // Reconnect can precede REST readiness; normal events get one trailing
+        // retry, while catch-up gets three, with bounded exponential backoff.
+        var attempts = catchUp ? 4 : 2;
+        for (var attempt = 1; ; attempt++)
+        {
+            try { return await read(); }
+            catch (Exception) when (!ct.IsCancellationRequested && current() && attempt < attempts)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(500 * (1 << (attempt - 1))), ct);
+                // Profile departure or newer local intent must not authorize
+                // another read under a different owner during the delay.
+                if (!current()) throw;
             }
         }
     }

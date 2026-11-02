@@ -121,8 +121,30 @@ public sealed class RealtimeMediaStateRefreshTests
     }
 
     [Theory]
+    [InlineData("favorite")]
+    [InlineData("watchlist")]
+    [InlineData("rating")]
+    [InlineData("not_interested")]
+    public void ViewerStateEventsRefreshOnlyTheirCapturedContentScope(string change)
+    {
+        using var fixture = new Fixture();
+        fixture.Send("series", null, change); fixture.Drain();
+        var immediate = Assert.Single(fixture.Messages);
+        Assert.False(immediate.RefreshDetails);
+        Assert.False(immediate.CatchUp);
+        Assert.Equal(new[] { "series" }, immediate.ContentIds);
+        fixture.Clock.Advance(200); fixture.Drain();
+        var batch = Assert.Single(fixture.Messages.Where(m => m.RefreshDetails));
+        Assert.Equal(new[] { "series" }, batch.ContentIds);
+        Assert.Empty(batch.SeriesIds);
+        Assert.False(batch.CatchUp);
+        Assert.Equal(fixture.Client.CaptureContext(), batch.Context);
+    }
+
+    [Theory]
     [InlineData("other", "progress", "episode", "user_state", "user_state.changed")]
-    [InlineData("profile", "favorite", "episode", "user_state", "user_state.changed")]
+    [InlineData("profile", "unknown", "episode", "user_state", "user_state.changed")]
+    [InlineData("other", "favorite", "series", "user_state", "user_state.changed")]
     [InlineData("profile", "watched", " ", "user_state", "user_state.changed")]
     [InlineData("profile", "progress", "episode", "notifications", "user_state.changed")]
     [InlineData("profile", "progress", "episode", "user_state", "wrong")]

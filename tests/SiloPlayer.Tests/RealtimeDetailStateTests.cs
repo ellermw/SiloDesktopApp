@@ -72,6 +72,198 @@ public sealed class RealtimeDetailStateTests
         if (type == "series") Assert.Equal(2, scope.Vm.Seasons[0].UserData!.WatchedCount);
     }
 
+    [Theory]
+    [InlineData("series")]
+    [InlineData("season")]
+    public async Task CatchUpRetainsViewerAndCompanionScopeThroughARestOutage(string type)
+    {
+        using var scope = new Scope(type)
+        {
+            IncludeTarget = true, FreshTarget = "recovered-target",
+            FreshViewerState = new() { IsFavorite = true, InWatchlist = true }, FreshRating = 4
+        };
+        scope.Vm.SelectedSeasonNumber = 1;
+        var item = scope.Vm.Item;
+        var detailAttempts = 0;
+        var companionAttempts = 0;
+        scope.OverrideResponse = request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path == "/api/v2/catalog/items/" + type && ++detailAttempts <= 2)
+                return Unavailable();
+            if (path.EndsWith(type == "series" ? "/seasons" : "/episodes") && ++companionAttempts <= 2)
+                return Unavailable();
+            return null;
+        };
+
+        await scope.Vm.RefreshMediaStateAsync(scope.Message() with { CatchUp = true })
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(3, detailAttempts);
+        Assert.Equal(3, companionAttempts);
+        Assert.Same(item, scope.Vm.Item);
+        Assert.Equal(2, item!.UserData!.WatchedCount);
+        Assert.Equal("recovered-target", item.PlayContentId);
+        Assert.True(scope.Vm.IsFavorite);
+        Assert.True(scope.Vm.InWatchlist);
+        Assert.Equal(4, scope.Vm.UserRating);
+        Assert.Equal(0, scope.Vm.Episodes[0].UserData!.PositionSeconds);
+        if (type == "series") Assert.Equal(2, scope.Vm.Seasons[0].UserData!.WatchedCount);
+        Assert.Null(scope.Vm.ErrorMessage);
+        Assert.Equal(DetailFailureKind.None, scope.Vm.FailureKind);
+    }
+
+    [Theory]
+    [InlineData("series", "seasons", false)]
+    [InlineData("series", "episodes", false)]
+    [InlineData("series", "episodes", true)]
+    [InlineData("season", "episodes", false)]
+    public async Task TransientCompanionFailureRetriesWithoutWaitingForAnotherEvent(
+        string type, string companion, bool canonicalSeason)
+    {
+        using var scope = new Scope(type);
+        scope.Vm.SelectedSeasonNumber = 1;
+        if (canonicalSeason) scope.Vm.EpisodesSeasonContentId = "season";
+        var attempts = 0;
+        scope.OverrideResponse = request => request.RequestUri!.AbsolutePath.EndsWith("/" + companion)
+            && ++attempts == 1 ? Unavailable() : null;
+
+        await scope.Vm.RefreshMediaStateAsync(scope.Message("sibling"))
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(2, attempts);
+        Assert.Equal(1, scope.DetailReads);
+        Assert.Equal(2, scope.Vm.Item!.UserData!.WatchedCount);
+        if (type == "series") Assert.Equal(2, scope.Vm.Seasons[0].UserData!.WatchedCount);
+        Assert.Equal(0, scope.Vm.Episodes[0].UserData!.PositionSeconds);
+        Assert.Null(scope.Vm.ErrorMessage);
+    }
+
+    [Theory]
+    [InlineData("detail")]
+    [InlineData("seasons")]
+    [InlineData("episodes")]
+    public async Task ExhaustedCatchUpExposesRetryAndASuccessfulSweepClearsIt(string failedRead)
+    {
+        using var scope = new Scope("series");
+        scope.Vm.SelectedSeasonNumber = 1;
+        var attempts = 0;
+        var item = scope.Vm.Item;
+        scope.OverrideResponse = request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (failedRead == "detail" ? path != "/api/v2/catalog/items/series" : !path.EndsWith("/" + failedRead))
+                return null;
+            attempts++;
+            return Unavailable();
+        };
+
+        await scope.Vm.RefreshMediaStateAsync(scope.Message() with { CatchUp = true })
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(4, attempts);
+        Assert.Same(item, scope.Vm.Item);
+        Assert.Equal(DetailFailureKind.Transient, scope.Vm.FailureKind);
+        Assert.False(string.IsNullOrWhiteSpace(scope.Vm.ErrorMessage));
+        scope.OverrideResponse = null;
+        scope.FreshViewerState = new() { IsFavorite = true, InWatchlist = true };
+        scope.FreshRating = 4;
+        // A narrower later event must not dismiss retry UI while losing the
+        // failed catch-up's viewer state or episode companion scope.
+        await scope.Vm.RefreshMediaStateAsync(scope.Message());
+        Assert.Null(scope.Vm.ErrorMessage);
+        Assert.Equal(DetailFailureKind.None, scope.Vm.FailureKind);
+        Assert.True(scope.Vm.IsFavorite);
+        Assert.True(scope.Vm.InWatchlist);
+        Assert.Equal(4, scope.Vm.UserRating);
+        Assert.Equal(2, item!.UserData!.WatchedCount);
+        Assert.Equal(2, scope.Vm.Seasons[0].UserData!.WatchedCount);
+        Assert.Equal(0, scope.Vm.Episodes[0].UserData!.PositionSeconds);
+    }
+
+    [Theory]
+    [InlineData("navigation")]
+    [InlineData("profile")]
+    public async Task RetiredCatchUpCannotRetryOrShowAnErrorAfterBackoff(string departure)
+    {
+        using var scope = new Scope("series");
+        var failed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var attempts = 0;
+        scope.OverrideResponse = _ =>
+        {
+            attempts++;
+            failed.TrySetResult();
+            return Unavailable();
+        };
+        var operation = scope.Vm.RefreshMediaStateAsync(scope.Message() with { CatchUp = true });
+        await failed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        if (departure == "navigation") scope.Vm.CancelPendingLoads();
+        else scope.Client.SetProfile("replacement");
+
+        await operation.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(1, attempts);
+        Assert.Null(scope.Vm.ErrorMessage);
+        Assert.Equal(0, scope.Vm.Item!.UserData!.WatchedCount);
+    }
+
+    [Theory]
+    [InlineData("series", "favorite")]
+    [InlineData("series", "watchlist")]
+    [InlineData("series", "rating")]
+    [InlineData("series", "not_interested")]
+    [InlineData("season", "favorite")]
+    [InlineData("season", "watchlist")]
+    [InlineData("season", "rating")]
+    [InlineData("season", "not_interested")]
+    public async Task RealtimeViewerStateChangesAndRemovalsReconcileTheMountedItem(string type, string change)
+    {
+        using var scope = new Scope(type);
+        var messenger = new WeakReferenceMessenger();
+        messenger.Register<ItemDetailViewModel, MediaStateInvalidated>(scope.Vm, static (vm, message) => vm.Receive(message));
+        using var refresh = new RealtimeMediaStateRefresh(scope.Client, callback => callback(), messenger);
+        var item = scope.Vm.Item!;
+        foreach (var enabled in new[] { true, false })
+        {
+            scope.FreshViewerState = new()
+            {
+                IsFavorite = change == "favorite" && enabled,
+                InWatchlist = change == "watchlist" && enabled,
+                NotInterested = change == "not_interested" && enabled
+            };
+            scope.FreshRating = change == "rating" && enabled ? 4 : null;
+            var applied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            System.ComponentModel.PropertyChangedEventHandler handler = (_, e) =>
+            {
+                if (e.PropertyName == nameof(scope.Vm.Item)) applied.TrySetResult();
+            };
+            scope.Vm.PropertyChanged += handler;
+            try
+            {
+                using var data = JsonDocument.Parse(JsonSerializer.Serialize(new
+                {
+                    profile_id = "profile", content_id = item.ContentId, change
+                }));
+                refresh.ReceiveRealtime("user_state", "user_state.changed", data.RootElement);
+                await applied.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.Same(item, scope.Vm.Item);
+                Assert.Equal(scope.FreshViewerState.IsFavorite, scope.Vm.IsFavorite);
+                Assert.Equal(scope.FreshViewerState.InWatchlist, scope.Vm.InWatchlist);
+                Assert.Equal(scope.FreshViewerState.NotInterested, item.UserState!.NotInterested);
+                Assert.Equal(scope.FreshRating, scope.Vm.UserRating);
+                Assert.Equal(scope.FreshRating, item.UserRating);
+            }
+            finally { scope.Vm.PropertyChanged -= handler; }
+        }
+        Assert.Equal(2, scope.DetailReads);
+    }
+
+    private static HttpResponseMessage Unavailable() => new(HttpStatusCode.ServiceUnavailable)
+    {
+        Content = new StringContent("""{"error":{"code":"service_unavailable","message":"Synthetic outage"}}""",
+            Encoding.UTF8, "application/json")
+    };
+
     [Fact]
     public async Task PersistentOwnedDetailFailureHasABoundedRetryAndAllowsLaterRefreshes()
     {
@@ -92,9 +284,13 @@ public sealed class RealtimeDetailStateTests
 
         Assert.Equal(2, attempts);
         Assert.Equal(0, scope.Vm.Item!.UserData!.WatchedCount);
+        Assert.Equal(DetailFailureKind.Transient, scope.Vm.FailureKind);
+        Assert.False(string.IsNullOrWhiteSpace(scope.Vm.ErrorMessage));
         scope.OverrideResponse = null;
         await scope.Vm.RefreshMediaStateAsync(scope.Message()).WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(2, scope.Vm.Item.UserData.WatchedCount);
+        Assert.Null(scope.Vm.ErrorMessage);
+        Assert.Equal(DetailFailureKind.None, scope.Vm.FailureKind);
     }
 
     [Fact]
