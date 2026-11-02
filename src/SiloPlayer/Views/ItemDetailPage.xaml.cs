@@ -32,6 +32,7 @@ public sealed partial class ItemDetailPage : Page
         && ViewModel.FailureKind == DetailFailureKind.None
         && !ViewModel.IsLoading && !ViewModel.IsSeasonsLoading && !ViewModel.IsEpisodesLoading
         && _seasonEpisodesLoads == 0
+        && !_isTranslatingEpisodes && _episodesTranslationStatusReads == 0 && !_episodesTranslationInterrupted
         && !ViewModel.SeasonsLoadFailed && !ViewModel.EpisodesLoadFailed && !ViewModel.SimilarLoadFailed
         && EpisodesLoadError.Visibility != Visibility.Visible
         && SeasonEpisodesFatalError.Visibility != Visibility.Visible;
@@ -41,6 +42,9 @@ public sealed partial class ItemDetailPage : Page
     private CancellationTokenSource? _episodesTranslationCts;
     private string? _episodesTranslationKey;
     private bool _isTranslatingEpisodes;
+    private int _episodesTranslationStatusReads;
+    // Retired translation work may settle before the shell decides whether to remount.
+    private bool _episodesTranslationInterrupted;
     private EpisodeSpoilerPreferences? _episodeSpoilerPreferences;
     private string? _revealedEpisodeOverviewId;
     private int _episodeSpoilerRevision;
@@ -999,6 +1003,7 @@ public sealed partial class ItemDetailPage : Page
         _episodesTranslationCts = null;
         _episodesTranslationKey = null;
         _isTranslatingEpisodes = false;
+        _episodesTranslationInterrupted = false;
         _imageCts?.Cancel();
         _imageCts?.Dispose();
         _imageCts = null;
@@ -7875,9 +7880,11 @@ public sealed partial class ItemDetailPage : Page
         var owner = _currentContentId;
         var api = App.Services.GetRequiredService<CatalogApi>();
         var context = api.CaptureContext();
+        var navigation = _navigationCts;
+        ++_episodesTranslationStatusReads;
         try
         {
-            var status = await api.GetMetadataAiStatusAsync(_navigationCts?.Token ?? default);
+            var status = await api.GetMetadataAiStatusAsync(navigation?.Token ?? default);
             if (!api.IsCurrentContext(context) || owner == null || !IsCurrentDetail(owner) || key != _episodesTranslationKey || !status.Enabled) return;
             if (status.OnView == "auto") await TranslateEpisodesAsync();
             else if (status.OnView == "button")
@@ -7888,6 +7895,12 @@ public sealed partial class ItemDetailPage : Page
             }
         }
         catch { }
+        finally
+        {
+            --_episodesTranslationStatusReads;
+            if (ReferenceEquals(_navigationCts, navigation) && !api.IsCurrentContext(context))
+                _episodesTranslationInterrupted = true;
+        }
     }
 
     private async void TranslateEpisodesButton_Click(object sender, RoutedEventArgs e) => await TranslateEpisodesAsync();
@@ -7934,6 +7947,7 @@ public sealed partial class ItemDetailPage : Page
             if (ReferenceEquals(_episodesTranslationCts, cts))
             {
                 _isTranslatingEpisodes = false;
+                if (!api.IsCurrentContext(context)) _episodesTranslationInterrupted = true;
                 if (owner != null && IsCurrentDetail(owner) && api.IsCurrentContext(context))
                 { TranslateEpisodesButton.IsEnabled = true; TranslateEpisodesButton.Content = "Translate descriptions"; }
             }

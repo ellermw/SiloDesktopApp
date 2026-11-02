@@ -252,6 +252,8 @@ internal static class RealtimeSeriesStateNativeFixture
                 finally { vm.PropertyChanged -= handler; vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page); }
             }
             await VerifyLegacySeriesActionAsync(parent, wire, client);
+            foreach (var type in new[] { "series", "season" })
+                await VerifyTranslationReconnectAsync(parent, wire, client, type);
             foreach (var type in new[] { "movie", "episode" })
             {
                 var page = new ItemDetailPage();
@@ -336,6 +338,67 @@ internal static class RealtimeSeriesStateNativeFixture
         }
     }
 
+    private static async Task VerifyTranslationReconnectAsync(StackPanel parent, Wire wire, SiloApiClient client, string type)
+    {
+        foreach (var phase in new[] { "status", "polling", "auto" })
+        {
+            var page = new ItemDetailPage { Width = 900, Height = 720 };
+            var vm = page.ViewModel;
+            using var navigation = new CancellationTokenSource();
+            vm.Item = new() { ContentId = type, Type = type, Title = "Translation reconnect fixture" };
+            vm.Seasons.Add(new() { ContentId = "season", SeasonNumber = 1 });
+            vm.Episodes.Add(new() { ContentId = "loaded", PendingTranslationLanguage = "fr" });
+            Set(page, "_currentContentId", type); Set(page, "_navigationCts", navigation);
+            parent.Children.Add(page);
+            var button = (Button)page.FindName("TranslateEpisodesButton");
+            Task? operation = null;
+            wire.TranslationOnView = phase == "auto" ? "auto" : "button";
+            try
+            {
+                await Task.Delay(60);
+                Check(page.CanPreserveOnReconnect, "An idle translation surface should allow preservation.");
+                if (phase == "status")
+                {
+                    wire.HeldCompanion = "metadata-ai";
+                    wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    wire.ReleaseCompanion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                }
+                operation = (Task)typeof(ItemDetailPage).GetMethod("ConfigureEpisodesTranslationAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(page, null)!;
+                if (phase == "status")
+                    await wire.CompanionStarted!.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                else
+                {
+                    if (phase == "polling")
+                    {
+                        await operation.WaitAsync(TimeSpan.FromSeconds(5));
+                        Check(page.CanPreserveOnReconnect && button.IsEnabled && button.Visibility == Visibility.Visible,
+                            "A configured idle translation button should allow preservation.");
+                        operation = (Task)typeof(ItemDetailPage).GetMethod("TranslateEpisodesAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                            .Invoke(page, null)!;
+                    }
+                    await UntilAsync(() => !button.IsEnabled && button.Visibility == Visibility.Visible);
+                    Check((string)button.Content == "Translating descriptions\u2026", "Translation polling did not start.");
+                }
+                Check(!page.CanPreserveOnReconnect, "Pending page-owned translation work must require a reconnect remount.");
+                client.InvalidateAccessContext();
+                Check(!page.CanPreserveOnReconnect, "Retired translation work must not preserve a disabled or missing button.");
+                wire.ReleaseCompanion?.TrySetResult();
+                await operation.WaitAsync(TimeSpan.FromSeconds(5));
+                Check(!page.CanPreserveOnReconnect,
+                    "Translation work that settles before shell catch-up must still remount to clear its stale key/button.");
+            }
+            finally
+            {
+                wire.HeldCompanion = null; wire.ReleaseCompanion?.TrySetResult(); wire.TranslationOnView = "button";
+                navigation.Cancel();
+                if (operation != null) await operation.WaitAsync(TimeSpan.FromSeconds(5));
+                vm.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(vm); parent.Children.Remove(page);
+            }
+            Program.Log($"PASS: mounted {type} reconnect during episode translation {phase} requires remount, including after stale work settles.");
+        }
+    }
+
     private static async Task VerifyProgressActionsAsync(MenuFlyout flyout, Button owner, bool restart, bool reset)
     {
         bool Visible(string label) => flyout.Items.OfType<MenuFlyoutItem>()
@@ -380,19 +443,23 @@ internal static class RealtimeSeriesStateNativeFixture
         internal bool FailEpisodes;
         internal bool Favorite;
         internal bool LoadedPlayed;
+        internal string TranslationOnView = "button";
         internal double LoadedPosition = 31;
         internal string? HeldCompanion;
         internal TaskCompletionSource? CompanionStarted;
         internal TaskCompletionSource? ReleaseCompanion;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
-            if (request.RequestUri!.Host != "realtime-native.invalid" || request.Method != HttpMethod.Get)
-                throw new InvalidOperationException("Only synthetic local read fixtures are authorized.");
-            var path = request.RequestUri.AbsolutePath;
+            var path = request.RequestUri!.AbsolutePath;
+            var translate = request.Method == HttpMethod.Post && path == "/api/v2/catalog/items/season/translate-description";
+            if (request.RequestUri.Host != "realtime-native.invalid" || (request.Method != HttpMethod.Get && !translate))
+                throw new InvalidOperationException("Only synthetic fixture reads and episode translations are authorized.");
+            if (translate) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NoContent));
             if (FailEpisodes && path.EndsWith("/episodes"))
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
                     { Content = new StringContent("{\"error\":{\"code\":\"service_unavailable\",\"message\":\"Synthetic companion failure\"}}", Encoding.UTF8, "application/json") });
-            object body = path.EndsWith("/episodes") ? new { items = new[] {
+            object body = path == "/api/v2/capabilities/metadata-ai" ? new { state = "available", allowed = true, on_view = TranslationOnView } :
+                path.EndsWith("/episodes") ? new { items = new[] {
                     new { content_id = "sibling", season_number = 1, user_data = new { played = false, position_seconds = 31d, duration_seconds = 1200d } },
                     new { content_id = "loaded", season_number = 1, user_data = new { played = LoadedPlayed, position_seconds = LoadedPosition, duration_seconds = 1200d } } } } :
                 path.StartsWith("/api/v2/catalog/items/") ?
