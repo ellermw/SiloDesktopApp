@@ -961,6 +961,62 @@ public sealed class RealtimeDetailStateTests
         Assert.Equal(90, episode.UserData.PositionSeconds);
     }
 
+    [Theory]
+    [InlineData("series")]
+    [InlineData("season")]
+    public async Task MetadataReloadRetainsRowsSelectionAndStateForTheNextRemoteEvent(string type)
+    {
+        using var scope = new Scope(type);
+        var mounted = scope.Vm.Item!;
+        var season = scope.Vm.Seasons[0];
+        var episode = scope.Vm.Episodes[0];
+        var viewerState = mounted.UserData;
+        scope.Vm.IsSeries = type == "series";
+        scope.Vm.SelectedSeasonNumber = 1;
+        scope.Vm.EpisodesSeasonContentId = "season";
+        scope.Vm.SimilarItems.Add(new() { ContentId = "similar" });
+        scope.OverrideDetail = () => Task.FromResult(new MediaItemDetail
+        {
+            ContentId = mounted.ContentId, Type = type, Title = "Edited title", Overview = "Translated overview",
+            SeasonNumber = 1, PendingTranslationLanguage = null, PlayContentId = null,
+            UserData = new() { Played = true, WatchedCount = 4 }
+        });
+
+        await scope.Vm.ReloadAsync(mounted.ContentId);
+
+        Assert.Same(mounted, scope.Vm.Item);
+        Assert.Equal("Edited title", mounted.Title);
+        Assert.Equal("Translated overview", mounted.Overview);
+        Assert.Null(mounted.PendingTranslationLanguage);
+        Assert.Same(viewerState, mounted.UserData);
+        Assert.False(mounted.HasAuthoritativePlayTarget);
+        Assert.Same(season, Assert.Single(scope.Vm.Seasons));
+        Assert.Same(episode, Assert.Single(scope.Vm.Episodes));
+        Assert.Single(scope.Vm.SimilarItems);
+        Assert.Equal(1, scope.Vm.SelectedSeasonNumber);
+        Assert.Equal("season", scope.Vm.EpisodesSeasonContentId);
+        Assert.False(scope.Vm.IsLoading);
+
+        scope.OverrideDetail = null;
+        scope.ContainerPlayed = true;
+        var changes = new List<string?>();
+        scope.Vm.PropertyChanged += (_, e) => changes.Add(e.PropertyName);
+        await scope.Vm.RefreshMediaStateAsync(scope.Message("sibling"));
+
+        Assert.Same(season, Assert.Single(scope.Vm.Seasons));
+        Assert.Same(episode, Assert.Single(scope.Vm.Episodes));
+        Assert.True(episode.UserData!.Played);
+        Assert.Equal(0, episode.UserData.PositionSeconds);
+        Assert.Contains(nameof(scope.Vm.Episodes), changes);
+        if (type == "series")
+        {
+            Assert.Equal(2, season.UserData!.WatchedCount);
+            Assert.Contains(nameof(scope.Vm.Seasons), changes);
+        }
+        scope.Vm.Receive(new MediaSurfaceChanged(MediaSurfaceChangeKind.WatchedCleared, "sibling", "series"));
+        Assert.False(episode.UserData.Played);
+    }
+
     private sealed class Scope : HttpMessageHandler
     {
         private readonly HttpClient _http;
@@ -1035,6 +1091,8 @@ public sealed class RealtimeDetailStateTests
                 var body = new Dictionary<string, object?>
                 {
                     ["content_id"] = detail.ContentId, ["type"] = detail.Type,
+                    ["title"] = detail.Title, ["overview"] = detail.Overview,
+                    ["season_number"] = detail.SeasonNumber, ["pending_translation_language"] = detail.PendingTranslationLanguage,
                     ["user_state"] = detail.UserState == null ? null : new { is_favorite = detail.UserState.IsFavorite,
                         in_watchlist = detail.UserState.InWatchlist, not_interested = detail.UserState.NotInterested },
                     ["user_rating"] = detail.UserRating,

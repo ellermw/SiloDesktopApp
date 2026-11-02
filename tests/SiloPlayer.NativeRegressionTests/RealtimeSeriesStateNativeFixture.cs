@@ -22,7 +22,7 @@ internal static class RealtimeSeriesStateNativeFixture
     {
         var slot = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
         var original = (IServiceProvider)slot.GetValue(null)!;
-        var wire = new Wire();
+        var wire = new Wire { CompanionArtwork = await CreateCompanionArtworkAsync() };
         using var http = new HttpClient(wire);
         var client = new SiloApiClient(http); client.SetBaseUrl("https://realtime-native.invalid"); client.SetProfile("fixture-profile");
         using var auth = new AuthService(client, new AuthApi(client));
@@ -197,6 +197,37 @@ internal static class RealtimeSeriesStateNativeFixture
                     refresh.CatchUp(client.CaptureContext());
                     await UntilAsync(() => !vm.IsFavorite && favoriteIcon.Glyph == outlineHeart);
                     Check(page.CanPreserveOnReconnect, "A healthy mounted detail should survive reconnect.");
+                    foreach (var metadataAction in new[] { "translation", "edit" })
+                    {
+                        var retainedSeasons = vm.Seasons.ToArray();
+                        var retainedEpisodes = vm.Episodes.ToArray();
+                        var selection = vm.SelectedSeasonNumber;
+                        var episodeSource = vm.EpisodesSeasonContentId;
+                        if (metadataAction == "translation")
+                        {
+                            vm.Item.PendingTranslationLanguage = "fr";
+                            await (Task)typeof(ItemDetailPage).GetMethod("TranslateOverviewAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+                                .Invoke(page, [vm.Item])!;
+                        }
+                        else
+                        {
+                            await vm.ReloadAsync(vm.Item.ContentId);
+                            Call(page, "UpdateUI");
+                        }
+                        await Task.Delay(100); page.UpdateLayout();
+                        Check(vm.Item.Overview == "Refreshed metadata" && vm.Item.PendingTranslationLanguage == null,
+                            "Mounted metadata reload did not commit the translated/edited description.");
+                        Check(retainedSeasons.SequenceEqual(vm.Seasons) && retainedEpisodes.SequenceEqual(vm.Episodes)
+                            && vm.SelectedSeasonNumber == selection && vm.EpisodesSeasonContentId == episodeSource,
+                            "Translation/editing emptied or replaced the mounted rows/selection.");
+                        var cardsAfterMetadata = episodePanel.Children.ToArray();
+                        wire.LoadedPlayed = metadataAction == "translation";
+                        refresh.ReceiveRealtime("user_state", "user_state.changed", loadedData.RootElement);
+                        await UntilAsync(() => loadedEpisode.UserData?.Played == wire.LoadedPlayed
+                            && HasWatchedBadge(page, "loaded") == wire.LoadedPlayed);
+                        Check(cardsAfterMetadata.SequenceEqual(episodePanel.Children),
+                            "A remote event after translation/editing failed to refresh the retained native cards in place.");
+                    }
                     vm.Seasons.Clear(); vm.Episodes.Clear();
                     wire.HeldCompanion = type == "series" ? "seasons" : "episodes";
                     wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -257,6 +288,7 @@ internal static class RealtimeSeriesStateNativeFixture
                 await VerifyTranslationReconnectAsync(parent, wire, client, type);
                 await VerifyTranslationReconnectAsync(parent, wire, client, type, overview: true);
                 await VerifyTitleArtReconnectAsync(parent, wire, client, type);
+                await VerifyCompanionReconnectAsync(parent, wire, client, type);
             }
             foreach (var type in new[] { "movie", "episode" })
             {
@@ -496,6 +528,116 @@ internal static class RealtimeSeriesStateNativeFixture
         }
     }
 
+    private static async Task<byte[]> CreateCompanionArtworkAsync()
+    {
+        using var stream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
+        var encoder = await Windows.Graphics.Imaging.BitmapEncoder.CreateAsync(Windows.Graphics.Imaging.BitmapEncoder.PngEncoderId, stream);
+        encoder.SetPixelData(Windows.Graphics.Imaging.BitmapPixelFormat.Bgra8, Windows.Graphics.Imaging.BitmapAlphaMode.Straight,
+            1, 1, 96, 96, [0, 0, 255, 255]);
+        await encoder.FlushAsync();
+        stream.Seek(0);
+        using var reader = new Windows.Storage.Streams.DataReader(stream);
+        await reader.LoadAsync((uint)stream.Size);
+        var bytes = new byte[(int)stream.Size];
+        reader.ReadBytes(bytes);
+        return bytes;
+    }
+
+    private static async Task VerifyCompanionReconnectAsync(StackPanel parent, Wire wire, SiloApiClient client, string type)
+    {
+        var phases = type == "series" ? new[] { "backdrop", "poster", "request-status", "request-detail", "advisory" }
+            : new[] { "backdrop", "poster", "advisory" };
+        foreach (var phase in phases)
+        {
+            var slot = typeof(SiloPlayer.App).GetField("_services", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var original = (IServiceProvider)slot.GetValue(null)!;
+            var cache = Path.Combine(Path.GetTempPath(), "SiloPlayer-native-companion-" + Guid.NewGuid().ToString("N"));
+            using var images = new ImageService(cache);
+            using var http = new HttpClient(wire, disposeHandler: false);
+            slot.SetValue(null, new TitleArtServices(original, images, http));
+            using var navigation = new CancellationTokenSource();
+            ItemDetailPage Page()
+            {
+                var result = new ItemDetailPage { Width = 900, Height = 720 };
+                result.ViewModel.Item = new() { ContentId = type, Type = type, Title = "Companion recovery", TmdbId = "42",
+                    AdvisoryAge = 18, BackdropUrl = "https://realtime-native.invalid/companion-backdrop.png",
+                    PosterUrl = "https://realtime-native.invalid/companion-poster.png" };
+                Set(result, "_currentContentId", type); Set(result, "_navigationCts", navigation);
+                return result;
+            }
+            Task Read(ItemDetailPage target)
+            {
+                var method = phase == "backdrop" ? "LoadBackdropAsync" : phase == "poster" ? "LoadHeroPosterAsync"
+                    : phase == "advisory" ? "LoadAdvisoryDisplayAsync" : "LoadSeriesRequestActionAsync";
+                return (Task)typeof(ItemDetailPage).GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic)!
+                    .Invoke(target, [phase == "poster" ? (object)target.ViewModel.Item!.PosterUrl! : target.ViewModel.Item!, navigation.Token])!;
+            }
+            var page = Page();
+            parent.Children.Add(page);
+            Task? operation = null;
+            try
+            {
+                await Task.Delay(60);
+                Check(page.CanPreserveOnReconnect, "Idle companion fixture should permit preservation.");
+                wire.CompanionFailure = phase; wire.CompanionStatus = HttpStatusCode.ServiceUnavailable;
+                wire.HeldCompanion = phase;
+                wire.CompanionStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                wire.ReleaseCompanion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                operation = Read(page);
+                await wire.CompanionStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                Check(!page.CanPreserveOnReconnect, "A pending hero/request/advisory read must require remounting.");
+                wire.HeldCompanion = null; wire.ReleaseCompanion.TrySetResult();
+                await operation.WaitAsync(TimeSpan.FromSeconds(5));
+                Check(!page.CanPreserveOnReconnect, "A failed companion that settles before reconnect lost its recovery requirement.");
+                client.InvalidateAccessContext();
+                await page.ViewModel.RefreshMediaStateAsync(new(client.CaptureContext(), new HashSet<string>(), new HashSet<string>(), CatchUp: true));
+                Check(!page.CanPreserveOnReconnect, "State catch-up cannot recover missing hero/request/advisory content.");
+
+                wire.CompanionFailure = null;
+                var replacement = Page();
+                parent.Children.Add(replacement);
+                try
+                {
+                    await Read(replacement).WaitAsync(TimeSpan.FromSeconds(5));
+                    Check(replacement.CanPreserveOnReconnect, "A successfully recovered companion should permit preservation.");
+                    if (phase is "backdrop" or "poster")
+                    {
+                        var image = (Image)replacement.FindName(phase == "backdrop" ? "BackdropImage" : "HeroPosterImage");
+                        Check(image.Source != null, "Reconnect remount did not paint the missing hero artwork.");
+                        // A definitive absence is healthy, not an interrupted download.
+                        replacement.ViewModel.Item!.BackdropUrl += "?v=missing";
+                        replacement.ViewModel.Item.PosterUrl += "?v=missing";
+                        wire.CompanionFailure = phase; wire.CompanionStatus = HttpStatusCode.NotFound;
+                        await Read(replacement).WaitAsync(TimeSpan.FromSeconds(5));
+                        Check(replacement.CanPreserveOnReconnect, "A definitive artwork 404 incorrectly requires another remount.");
+                    }
+                    else if (phase == "advisory")
+                        Check(((UIElement)replacement.FindName("AdvisoryAgeBadge")).Visibility == Visibility.Visible,
+                            "Reconnect remount did not recover the advisory badge.");
+                    else
+                        Check(((MenuFlyout)replacement.FindName("MoreFlyout")).Items.OfType<MenuFlyoutItem>()
+                            .Any(item => item.Text == "Request seasons"), "Reconnect remount did not recover Request seasons.");
+                }
+                finally
+                {
+                    replacement.ViewModel.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(replacement.ViewModel);
+                    parent.Children.Remove(replacement);
+                }
+                Program.Log($"PASS: mounted {type} failed {phase} read requires reconnect remount and recovers its content.");
+            }
+            finally
+            {
+                wire.CompanionFailure = null; wire.HeldCompanion = null; wire.ReleaseCompanion?.TrySetResult(); navigation.Cancel();
+                try { if (operation != null) await operation.WaitAsync(TimeSpan.FromSeconds(5)); }
+                finally
+                {
+                    page.ViewModel.CancelPendingLoads(); WeakReferenceMessenger.Default.UnregisterAll(page.ViewModel); parent.Children.Remove(page);
+                    slot.SetValue(null, original); Directory.Delete(cache, recursive: true);
+                }
+            }
+        }
+    }
+
     private static async Task VerifyProgressActionsAsync(MenuFlyout flyout, Button owner, bool restart, bool reset)
     {
         bool Visible(string label) => flyout.Items.OfType<MenuFlyoutItem>()
@@ -528,6 +670,7 @@ internal static class RealtimeSeriesStateNativeFixture
     {
         public object? GetService(Type type) => type == typeof(SiloApiClient) ? client : type == typeof(AuthService) ? auth : type == typeof(CatalogApi) ? catalog :
             type == typeof(SettingsApi) ? new SettingsApi(client) : type == typeof(PlaybackApi) ? new PlaybackApi(client) :
+            type == typeof(RequestsApi) ? new RequestsApi(client) :
             type == typeof(ItemDetailViewModel) ? new ItemDetailViewModel(catalog, new ItemDetailPrefetchCache(catalog, auth)) :
             type == typeof(UICustomizationService) ? new UICustomizationService(new SettingsApi(client)) : original.GetService(type);
     }
@@ -549,6 +692,9 @@ internal static class RealtimeSeriesStateNativeFixture
         internal double LoadedPosition = 31;
         internal string? HeldCompanion;
         internal string? HeldTitleArt;
+        internal string? CompanionFailure;
+        internal HttpStatusCode CompanionStatus;
+        internal byte[] CompanionArtwork = [];
         internal TaskCompletionSource? CompanionStarted;
         internal TaskCompletionSource? ReleaseCompanion;
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
@@ -571,6 +717,30 @@ internal static class RealtimeSeriesStateNativeFixture
                 }
                 return Task.FromResult(titleArtResponse);
             }
+            var companionPhase = path == "/companion-backdrop.png" ? "backdrop" : path == "/companion-poster.png" ? "poster"
+                : path == "/api/v2/requests/status" ? "request-status"
+                : path == "/api/v2/requests/detail/series/42" ? "request-detail"
+                : path == "/api/v2/settings/values/effective" && request.RequestUri.Query.Contains("keys=catalog.show_advisory_age", StringComparison.Ordinal) ? "advisory" : null;
+            if (companionPhase != null)
+            {
+                var status = CompanionFailure == companionPhase ? CompanionStatus : HttpStatusCode.OK;
+                var companionResponse = new HttpResponseMessage(status);
+                if (status != HttpStatusCode.OK)
+                    companionResponse.Content = new StringContent("{\"error\":{\"code\":\"service_unavailable\",\"message\":\"Synthetic companion failure\"}}", Encoding.UTF8, "application/json");
+                else if (companionPhase is "backdrop" or "poster")
+                    companionResponse.Content = new ByteArrayContent(CompanionArtwork);
+                else
+                    companionResponse.Content = new StringContent(companionPhase == "request-status"
+                        ? "{\"requests_enabled\":true,\"allowed\":true,\"season_requests_supported\":true,\"missing_seasons_requestable\":true}"
+                        : companionPhase == "request-detail" ? "{\"request\":{\"requestable\":true},\"seasons\":[{\"season_number\":2}]}"
+                        : "{\"items\":[{\"key\":\"catalog.show_advisory_age\",\"value\":true}]}", Encoding.UTF8, "application/json");
+                if (HeldCompanion == companionPhase && ReleaseCompanion is { } companionRelease)
+                {
+                    CompanionStarted?.TrySetResult();
+                    return ReleaseAsync(companionResponse, companionRelease.Task, ct);
+                }
+                return Task.FromResult(companionResponse);
+            }
             if (FailEpisodes && path.EndsWith("/episodes"))
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
                     { Content = new StringContent("{\"error\":{\"code\":\"service_unavailable\",\"message\":\"Synthetic companion failure\"}}", Encoding.UTF8, "application/json") });
@@ -581,6 +751,7 @@ internal static class RealtimeSeriesStateNativeFixture
                 path.StartsWith("/api/v2/catalog/items/") ?
                 new Dictionary<string, object?> { ["content_id"] = path.Split('/').Last(), ["type"] = path.Split('/').Last(),
                     ["play_content_id"] = Target, ["play_season_number"] = 1, ["episode_count"] = 6, ["season_count"] = 1,
+                    ["title"] = "Edited title", ["overview"] = "Refreshed metadata", ["season_number"] = 1,
                     ["user_data"] = new { watched_count = Count, unplayed_count = 6 - Count, in_progress_count = 1, played = false, position_seconds = 900 },
                     ["user_state"] = new { is_favorite = Favorite } } :
                 path.EndsWith("/seasons") ? new { items = new[] { new { content_id = "season", season_number = 1, episode_count = 6,

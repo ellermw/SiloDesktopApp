@@ -20,6 +20,7 @@ public partial class ItemDetailViewModel : ObservableObject,
     private readonly CatalogApi _catalogApi;
     private readonly ItemDetailPrefetchCache _detailPrefetchCache;
     private CancellationTokenSource? _loadCts;
+    private CancellationTokenSource? _metadataLoadCts;
     private long _similarLoadGeneration;
     private long _seasonsLoadGeneration;
     private long _episodesLoadGeneration;
@@ -859,6 +860,8 @@ public partial class ItemDetailViewModel : ObservableObject,
     public void CancelPendingLoads()
     {
         _localProgressRefresh.Reset();
+        _metadataLoadCts?.Cancel();
+        _metadataLoadCts = null;
         lock (_remoteStateGate)
         {
             _stateRefreshActive = false;
@@ -1056,12 +1059,110 @@ public partial class ItemDetailViewModel : ObservableObject,
 
     /// <summary>
     /// Invalidates prefetched detail after a server-side metadata or state
-    /// mutation, then performs a definitive reload.
+    /// mutation. Mounted containers retain their rows and playback-state owner.
     /// </summary>
     public Task ReloadAsync(string contentId)
     {
         _detailPrefetchCache.Invalidate(contentId);
-        return LoadAsync(contentId);
+        return _stateRefreshActive && Item is { Type: "series" or "season" } item && item.ContentId == contentId
+            ? ReloadContainerMetadataAsync(item) : LoadAsync(contentId);
+    }
+
+    private async Task ReloadContainerMetadataAsync(MediaItemDetail item)
+    {
+        _metadataLoadCts?.Cancel();
+        using var owner = new CancellationTokenSource();
+        _metadataLoadCts = owner;
+        var context = _catalogApi.CaptureContext();
+        var libraryId = LibraryId;
+        bool Current() => !owner.IsCancellationRequested && ReferenceEquals(_metadataLoadCts, owner)
+            && _stateRefreshActive && ReferenceEquals(Item, item) && LibraryId == libraryId
+            && _catalogApi.IsCurrentContext(context);
+        IsLoading = true;
+        try
+        {
+            var fresh = await _catalogApi.GetItemDetailAsync(item.ContentId, libraryId, owner.Token);
+            if (!Current()) return;
+            // Metadata polling/editing must not retire companion reads, selected
+            // rows, or newer local/remote viewer state. Keep the mounted snapshot
+            // identity too: initial companion reads may still be using it.
+            item.Status = fresh.Status;
+            item.Title = fresh.Title;
+            item.MachineTranslatedFields = fresh.MachineTranslatedFields;
+            item.SortTitle = fresh.SortTitle;
+            item.OriginalTitle = fresh.OriginalTitle;
+            item.Year = fresh.Year;
+            item.Overview = fresh.Overview;
+            item.Tagline = fresh.Tagline;
+            item.PendingTranslationLanguage = fresh.PendingTranslationLanguage;
+            item.Runtime = fresh.Runtime;
+            item.ContentRating = fresh.ContentRating;
+            item.AdvisoryAge = fresh.AdvisoryAge;
+            item.Themes = fresh.Themes;
+            item.Genres = fresh.Genres;
+            item.Ratings = fresh.Ratings;
+            item.RatingTmdb = fresh.RatingTmdb;
+            item.RatingImdb = fresh.RatingImdb;
+            item.RatingRtCritic = fresh.RatingRtCritic;
+            item.RatingRtAudience = fresh.RatingRtAudience;
+            item.ImdbId = fresh.ImdbId;
+            item.TmdbId = fresh.TmdbId;
+            item.TvdbId = fresh.TvdbId;
+            item.PosterIsEpisodeStill = fresh.PosterIsEpisodeStill;
+            item.BackdropIsEpisodeStill = fresh.BackdropIsEpisodeStill;
+            item.PosterUrl = fresh.PosterUrl;
+            item.PosterThumbhash = fresh.PosterThumbhash;
+            item.BackdropUrl = fresh.BackdropUrl;
+            item.BackdropThumbhash = fresh.BackdropThumbhash;
+            item.LogoUrl = fresh.LogoUrl;
+            item.Cast = fresh.Cast;
+            item.Crew = fresh.Crew;
+            item.Studios = fresh.Studios;
+            item.Networks = fresh.Networks;
+            item.Countries = fresh.Countries;
+            item.LockedFields = fresh.LockedFields;
+            item.Videos = fresh.Videos;
+            item.Extras = fresh.Extras;
+            item.ReleaseDate = fresh.ReleaseDate;
+            item.FirstAirDate = fresh.FirstAirDate;
+            item.LastAirDate = fresh.LastAirDate;
+            item.AirTime = fresh.AirTime;
+            item.AirTimezone = fresh.AirTimezone;
+            item.AirDate = fresh.AirDate;
+            item.ShowStatus = fresh.ShowStatus;
+            item.SeriesTitle = fresh.SeriesTitle;
+            item.SeasonNumber = fresh.SeasonNumber;
+            item.EpisodeNumber = fresh.EpisodeNumber;
+            item.IsSpecials = fresh.IsSpecials;
+            item.FolderPaths = fresh.FolderPaths;
+            ErrorMessage = null;
+            FailureKind = DetailFailureKind.None;
+            OnPropertyChanged(nameof(Item));
+            OnPropertyChanged(nameof(RuntimeDisplay));
+            OnPropertyChanged(nameof(GenresDisplay));
+            OnPropertyChanged(nameof(RatingDisplay));
+        }
+        catch (OperationCanceledException) when (owner.IsCancellationRequested) { }
+        catch (Exception ex)
+        {
+            if (!Current()) return;
+            FailureKind = DetailFailurePolicy.Classify(ex);
+            ErrorMessage = DetailFailurePolicy.Message(FailureKind);
+        }
+        finally
+        {
+            if (ReferenceEquals(_metadataLoadCts, owner))
+            {
+                if (!owner.IsCancellationRequested && _stateRefreshActive && ReferenceEquals(Item, item)
+                    && !_catalogApi.IsCurrentContext(context))
+                {
+                    FailureKind = DetailFailureKind.Transient;
+                    ErrorMessage = DetailFailurePolicy.Message(FailureKind);
+                }
+                _metadataLoadCts = null;
+                IsLoading = false;
+            }
+        }
     }
 
     private async Task CheckFavoriteWatchlistAsync(string contentId, CancellationTokenSource owner)

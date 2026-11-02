@@ -35,6 +35,7 @@ public sealed partial class ItemDetailPage : Page
         && !_isTranslatingEpisodes && _episodesTranslationStatusReads == 0 && !_episodesTranslationInterrupted
         && !_isTranslatingOverview && _overviewTranslationStatusReads == 0 && !_overviewTranslationInterrupted
         && _detailArtworkLoads == 0 && !_detailArtworkInterrupted
+        && _detailCompanionLoads == 0 && !_detailCompanionInterrupted
         && !ViewModel.SeasonsLoadFailed && !ViewModel.EpisodesLoadFailed && !ViewModel.SimilarLoadFailed
         && EpisodesLoadError.Visibility != Visibility.Visible
         && SeasonEpisodesFatalError.Visibility != Visibility.Visible;
@@ -56,6 +57,8 @@ public sealed partial class ItemDetailPage : Page
     // Pending or failed artwork needs the remount recovery that retained cards skip.
     private int _detailArtworkLoads;
     private bool _detailArtworkInterrupted;
+    private int _detailCompanionLoads;
+    private bool _detailCompanionInterrupted;
     private bool _translateButtonMode;
     private WatchDetailResponse? _watchDetail;
     private FileVersion? _selectedVersion;
@@ -143,22 +146,46 @@ public sealed partial class ItemDetailPage : Page
             section.RegisterPropertyChangedCallback(VisibilityProperty, (_, _) => SizeTvViewport());
     }
 
+    private async Task ReadDetailCompanionAsync(MediaItemDetail item, CancellationToken ct,
+        Func<Func<bool>, Task<bool>> read)
+    {
+        var client = App.Services.GetRequiredService<SiloApiClient>();
+        var context = client.CaptureContext();
+        var navigation = _navigationCts;
+        var completed = false;
+        bool Current() => !ct.IsCancellationRequested && client.IsCurrentContext(context)
+            && ReferenceEquals(_navigationCts, navigation) && IsCurrentDetail(item.ContentId);
+        ++_detailCompanionLoads;
+        try { completed = await read(Current); }
+        catch (OperationCanceledException) { }
+        catch { /* Optional companions must not block detail rendering. */ }
+        finally
+        {
+            --_detailCompanionLoads;
+            // An intentional image repaint can cancel its predecessor. A
+            // failed or access-retired read still needs reconnect remounting,
+            // even when it settles before the shell makes that decision.
+            if (!completed && ReferenceEquals(_navigationCts, navigation)
+                && (!ct.IsCancellationRequested || !client.IsCurrentContext(context)))
+                _detailCompanionInterrupted = true;
+        }
+    }
+
     private async Task LoadAdvisoryDisplayAsync(SiloPlayer.Core.Models.Catalog.MediaItemDetail item, CancellationToken ct)
     {
         if (item.AdvisoryAge is not > 0) return;
-        try
+        await ReadDetailCompanionAsync(item, ct, async current =>
         {
             var api = App.Services.GetRequiredService<SiloPlayer.Core.Api.SettingsApi>();
             var setting = await api.GetEffectiveSettingsAsync(["catalog.show_advisory_age"], ct);
-            if (ct.IsCancellationRequested || ViewModel.Item != item) return;
+            if (!current()) return false;
             if (setting.Settings.FirstOrDefault()?.EffectiveValue == "true")
             {
                 AdvisoryAgeText.Text = $"{item.AdvisoryAge}+";
                 AdvisoryAgeBadge.Visibility = Visibility.Visible;
             }
-        }
-        catch (OperationCanceledException) { }
-        catch { /* Optional advisory display does not block details or alter access. */ }
+            return true;
+        });
     }
 
     private void EnsureTvViewport()
@@ -1015,6 +1042,7 @@ public sealed partial class ItemDetailPage : Page
         _isTranslatingEpisodes = false;
         _episodesTranslationInterrupted = false;
         _detailArtworkInterrupted = false;
+        _detailCompanionInterrupted = false;
         _imageCts?.Cancel();
         _imageCts?.Dispose();
         _imageCts = null;
@@ -3421,7 +3449,7 @@ public sealed partial class ItemDetailPage : Page
                 var dialog = new SiloPlayer.Views.Dialogs.EditMetadataDialog(item) { XamlRoot = XamlRoot };
                 await dialog.ShowAsync();
                 if (dialog.HasSaved && IsCurrentDetail(item.ContentId) && client.IsCurrentContext(authority))
-                { await ViewModel.LoadCommand.ExecuteAsync(item.ContentId); if (IsCurrentDetail(item.ContentId) && client.IsCurrentContext(authority)) UpdateUI(); }
+                { await ViewModel.ReloadAsync(item.ContentId); if (IsCurrentDetail(item.ContentId) && client.IsCurrentContext(authority)) UpdateUI(); }
             };
             MoreFlyout.Items.Add(edit); hasOverflowActions = true;
         }
@@ -3625,18 +3653,21 @@ public sealed partial class ItemDetailPage : Page
     private async Task LoadSeriesRequestActionAsync(MediaItemDetail item, CancellationToken ct)
     {
         if (!int.TryParse(item.TmdbId, out var tmdbId)) return;
-        try
+        await ReadDetailCompanionAsync(item, ct, async current =>
         {
             var api = App.Services.GetRequiredService<RequestsApi>();
             var status = await api.GetStatusAsync(ct);
-            if (!status.RequestsEnabled || status.Allowed == false || !status.SeasonRequestsSupported || !status.MissingSeasonsRequestable) return;
+            if (!current()) return false;
+            if (!status.RequestsEnabled || status.Allowed == false || !status.SeasonRequestsSupported || !status.MissingSeasonsRequestable) return true;
             var detail = await api.GetDetailAsync("series", tmdbId, ct);
-            if (!IsCurrentDetail(item.ContentId) || ct.IsCancellationRequested || !detail.Request.Requestable || !(detail.Seasons?.Any(RequestViewerPolicy.SeasonRequestable) ?? false)) return;
-            _requestSeasonsContentId = item.ContentId;
-            BuildMoreFlyout();
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-        catch (Exception ex) { System.Diagnostics.Debug.WriteLine($"Season request capability unavailable: {ex.GetType().Name}"); }
+            if (!current()) return false;
+            if (detail.Request.Requestable && (detail.Seasons?.Any(RequestViewerPolicy.SeasonRequestable) ?? false))
+            {
+                _requestSeasonsContentId = item.ContentId;
+                BuildMoreFlyout();
+            }
+            return true;
+        });
     }
 
     private async Task RequestSeriesSeasonsAsync(MediaItemDetail item, int tmdbId)
@@ -7155,7 +7186,7 @@ public sealed partial class ItemDetailPage : Page
 
         if (string.IsNullOrEmpty(item.BackdropUrl)) return;
 
-        try
+        await ReadDetailCompanionAsync(item, ct, async current =>
         {
             var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
@@ -7163,18 +7194,17 @@ public sealed partial class ItemDetailPage : Page
             var bytes = await imageService.GetImageAsync(
                 item.ContentId, "backdrop", item.BackdropUrl, httpClient, ct);
 
-            if (ct.IsCancellationRequested || bytes == null) return;
+            if (!current()) return false;
+            if (bytes == null) return imageService.IsKnownUnavailable(item.ContentId, "backdrop", item.BackdropUrl);
 
             var bitmapImage = new BitmapImage();
             using var stream = new MemoryStream(bytes);
             await bitmapImage.SetSourceAsync(stream.AsRandomAccessStream());
 
-            if (ct.IsCancellationRequested) return;
-
+            if (!current()) return false;
             BackdropImage.Source = bitmapImage;
-        }
-        catch (OperationCanceledException) { }
-        catch { }
+            return true;
+        });
     }
 
     /// <summary>
@@ -7184,16 +7214,17 @@ public sealed partial class ItemDetailPage : Page
     /// </summary>
     private async Task LoadHeroPosterAsync(string posterUrl, CancellationToken ct)
     {
-        try
+        var item = ViewModel.Item;
+        if (item == null) return;
+        await ReadDetailCompanionAsync(item, ct, async current =>
         {
             var imageService = App.Services.GetRequiredService<ImageService>();
             var httpClient = App.Services.GetRequiredService<HttpClient>();
-            var item = ViewModel.Item;
-            if (item == null) return;
 
             var bytes = await imageService.GetImageAsync(
                 item.ContentId, "poster", posterUrl, httpClient, ct);
-            if (ct.IsCancellationRequested || bytes == null) return;
+            if (!current()) return false;
+            if (bytes == null) return imageService.IsKnownUnavailable(item.ContentId, "poster", posterUrl);
 
             var bitmap = new BitmapImage
             {
@@ -7202,12 +7233,11 @@ public sealed partial class ItemDetailPage : Page
             };
             using var stream = new MemoryStream(bytes);
             await bitmap.SetSourceAsync(stream.AsRandomAccessStream());
-            if (ct.IsCancellationRequested || ViewModel.Item?.ContentId != item.ContentId) return;
+            if (!current()) return false;
             HeroPosterImage.Source = bitmap;
             HeroPosterFallback.Visibility = Visibility.Collapsed;
-        }
-        catch (OperationCanceledException) { }
-        catch { /* best-effort */ }
+            return true;
+        });
     }
 
     private long _titleArtRevision;
